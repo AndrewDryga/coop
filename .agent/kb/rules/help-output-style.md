@@ -2,7 +2,7 @@
 name: help-output-style
 description: "UPPERCASE help headings, aligned command rows, practical prose and numbered how-tos"
 scope: cli-output
-sources: [internal/cli/help.go, internal/cli/fork_cmd.go, internal/cli/presetcmd.go, internal/cli/help_test.go, internal/cli/conformance_test.go]
+sources: [internal/cli/help.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/cli/presetcmd.go, internal/cli/help_test.go, internal/cli/conformance_test.go]
 check: "none"
 updated: 2026-09-11
 ---
@@ -42,6 +42,15 @@ TestCLIConformance cover portions of the historical rules, not this entire contr
 their relevant coverage during implementation; `check: none` remains honest until that lands.
 
 ## Changelog
+- 2026-09-11 — the runtime/integration family's pages are byte-pinned against the approved manual
+  (`internal/cli/testdata/approved/{14,15,67,69,73,74,75,76,77}-*.txt`, TestApprovedRuntimeHelpPages):
+  run, shell, ACP, the sessions family and each of its five leaves, sign, completion, prompt and
+  version. Leaf pages register in the SAME `commandHelp` map under their full path
+  ("sessions serve"), so `coop help <family> <leaf>`, `coop <family> <leaf> --help` and the manual
+  read one source; `helpForPath` resolves the leaf before falling back to the family. All of these
+  pages end themselves, so they joined `selfContainedHelp` and dropped the all-commands footer.
+  `TestAllHelpAvoidsMiddleDots` exempts the prompt page: its EXAMPLE quotes `coop prompt`'s own
+  output, which this card's last bullet already allows.
 - 2026-09-11 — refined uppercase scope after the user rejected uppercase runtime edit/run
   instructions. Swept preset creation, account actions, service hints and help examples; retained
   formal reference headings while turning runtime guidance into direct prose. Retired task flags

@@ -1,0 +1,30 @@
+coop run — run a command in the box
+
+Usage:
+  coop run [options] -- <command> [<args>...]
+
+EXAMPLES
+  coop run -- npm test
+  coop run -- curl https://example.com
+  coop run --readonly --egress none -- git status
+
+OPTIONS
+  --readonly  mount the repository read-only
+  --bare      run without the repository or project context
+
+  --egress <mode>        choose filtered, open, or none
+  --allow-domain <host>  allow TLS access to this host on port 443
+                          repeat to allow more hosts
+  --egress-rules <path>   load network rules from a file
+
+  Put Coop options before --. Everything after it belongs to your command.
+  --readonly and --bare cannot be combined.
+  These two modes require Docker and --egress open or none.
+
+NETWORK ACCESS
+  filtered  allow traffic permitted by approved network rules
+  open      allow unrestricted internet access
+  none      block internet access
+
+For more details see:
+  coop help net

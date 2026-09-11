@@ -1,0 +1,23 @@
+coop sessions serve — start the local session service
+
+Usage:
+  coop sessions serve [options]
+
+OPTIONS
+  --state <path>     directory containing session data
+  --policies <path>  file defining the allowed sessions
+  --socket <path>    Unix socket used by local clients
+
+DEFAULT PATHS
+  Session data  ~/.local/state/coop/sessions
+  Policies      ~/.config/coop/session-policies.yaml
+  Socket        <session data>/control.sock
+
+RUNNING THE SERVICE
+  Leave this command running. Press Ctrl-C to stop it.
+
+  Check it from another terminal:
+  coop sessions doctor
+
+  To connect it to a remote controller:
+  coop help sessions connect

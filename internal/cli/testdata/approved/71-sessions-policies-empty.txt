@@ -1,0 +1,6 @@
+
+✗ Could not load remote session configurations
+
+      /Users/andrewdryga/.config/coop/session-policies.yaml must define at least one configuration.
+
+  Help: coop help sessions policies

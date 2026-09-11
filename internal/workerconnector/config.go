@@ -34,6 +34,8 @@ type fileConfig struct {
 	IdentityFile           string                   `json:"identity_file"`
 	EnrollmentTokenFile    string                   `json:"enrollment_token_file"`
 	CoopSocket             string                   `json:"coop_socket"`
+	SessionStateDir        string                   `json:"session_state_dir,omitempty"`
+	SessionPolicyPath      string                   `json:"session_policy_path,omitempty"`
 	JournalDir             string                   `json:"journal_dir"`
 	SandboxDigest          string                   `json:"sandbox_digest"`
 	PolicyDigests          map[string]string        `json:"policy_digests"`
@@ -57,6 +59,12 @@ type Config struct {
 	RequestTimeout      time.Duration
 	ResponderURL        string
 	RenewBefore         time.Duration
+	// Which LOCAL session service this configuration is about, so a command that may start one
+	// (`coop sessions connect`) knows unambiguously which state root and policy file it would be
+	// starting — rather than inferring them from the socket's parent directory. Empty means the
+	// documented defaults: ~/.local/state/coop/sessions and ~/.config/coop/session-policies.yaml.
+	SessionStateDir   string
+	SessionPolicyPath string
 }
 
 func LoadConfig(path, buildVersion string, now time.Time) (Config, error) {
@@ -97,6 +105,13 @@ func LoadConfig(path, buildVersion string, now time.Time) (Config, error) {
 	if raw.EnrollmentTokenFile != "" && !filepath.IsAbs(raw.EnrollmentTokenFile) {
 		return Config{}, errors.New("worker enrollment token path must be absolute")
 	}
+	for name, value := range map[string]string{
+		"session data directory": raw.SessionStateDir, "session policy": raw.SessionPolicyPath,
+	} {
+		if value != "" && !filepath.IsAbs(value) {
+			return Config{}, fmt.Errorf("worker %s path must be absolute", name)
+		}
+	}
 	if raw.PollIntervalMS < 100 || raw.PollIntervalMS > 60_000 || raw.RequestTimeoutMS < 100 || raw.RequestTimeoutMS > 300_000 {
 		return Config{}, errors.New("worker poll interval or request timeout is invalid")
 	}
@@ -122,10 +137,12 @@ func LoadConfig(path, buildVersion string, now time.Time) (Config, error) {
 	return Config{
 		CAFile: raw.CAFile, CoopSocket: raw.CoopSocket, EnrollmentTokenFile: raw.EnrollmentTokenFile,
 		Hello: hello, IdentityFile: raw.IdentityFile, JournalDir: raw.JournalDir,
-		PollInterval:   time.Duration(raw.PollIntervalMS) * time.Millisecond,
-		RequestTimeout: time.Duration(raw.RequestTimeoutMS) * time.Millisecond,
-		ResponderURL:   raw.ResponderURL,
-		RenewBefore:    time.Duration(raw.RenewBeforeSeconds) * time.Second,
+		PollInterval:      time.Duration(raw.PollIntervalMS) * time.Millisecond,
+		RequestTimeout:    time.Duration(raw.RequestTimeoutMS) * time.Millisecond,
+		ResponderURL:      raw.ResponderURL,
+		RenewBefore:       time.Duration(raw.RenewBeforeSeconds) * time.Second,
+		SessionStateDir:   raw.SessionStateDir,
+		SessionPolicyPath: raw.SessionPolicyPath,
 	}, nil
 }
 

@@ -2,8 +2,8 @@
 name: network-consumers
 description: how the loop, direct/ACP runs and remote sessions consume one frozen network capture, and which surface reads which evidence
 subsystem: networking
-sources: [internal/networkreport/report.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/session/schema.go, internal/workerproto/protocol.go]
-updated: 2026-09-10
+sources: [internal/networkreport/report.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/cli/session_policies_view.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/session/schema.go, internal/workerproto/protocol.go]
+updated: 2026-09-11
 ---
 
 Admission happens ONCE per unit of work and the resulting `*box.CapturedEgress` is passed down; no
@@ -145,6 +145,13 @@ number — never Ctrl-C inferred from 130.
   summary is `Networking stats:` from the same renderer (`View.Inline`), the launch section is
   `Configuring network access` / `Applied N approved network rules`, and `forget` now leaves a
   withdrawal marker that fails closed. Every view is pinned in `internal/cli/testdata/approved`.
+- 2026-09-11 — `box.ResolveSessionNetworkSnapshot` returns the COMPILED snapshot beside the mode,
+  so a reader can be shown a session policy's actual grants (provider bundles, then the project's
+  approved rules) instead of the policy YAML, which omits whatever the project contributed.
+  `sessionsvc.ResolvePolicyNetworkSnapshot` carries it to `coop sessions policies`' human view
+  (`internal/cli/session_policies_view.go`); `ResolvePolicyNetwork` and the `policy_networks` JSON
+  are byte-identical to before. A policy this host cannot resolve becomes a visible issue in that
+  view, never a fabricated permission summary.
 - 2026-09-10 — `approve` reviews the exact project-file snapshot with no `--mode` and skips a no-op; the
   pending check it shares with `coop init`, bare `coop net` and every `AdmitNetwork` launch lives in
   `networkstate` (`pendingApproval`); a filtered launch qualifies the host itself. Rows above updated.

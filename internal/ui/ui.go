@@ -148,6 +148,27 @@ func Warn(format string, a ...any) {
 	emit(fmt.Sprintf("%s⚠%s %s\n", cYellow, cReset, fmt.Sprintf(format, a...)))
 }
 
+// Warning is a top-level caution BLOCK: the amber ⚠ headline at column zero, the bounded reason
+// six spaces in after a blank line, and the action two spaces in after another. It is Fail's shape
+// for something that did not stop the command — services that would not start, a trace that could
+// not be opened, ports that were not published — so a person reads a warning and a failure the
+// same way. Only the mark is colored; reason and action are each optional. Warn stays the ONE-LINE
+// form, for a heads-up with nothing further to say.
+func Warning(headline, reason, action string) {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s⚠%s %s\n", cYellow, cReset, headline)
+	if reason != "" {
+		b.WriteString("\n")
+		for _, line := range strings.Split(strings.TrimRight(reason, "\n"), "\n") {
+			b.WriteString("      " + line + "\n")
+		}
+	}
+	if action != "" {
+		b.WriteString("\n  " + action + "\n")
+	}
+	emit(b.String())
+}
+
 // Count renders a number with its noun, pluralized — Count(1, "task") = "1 task", Count(2, "task")
 // = "2 tasks". Pass an explicit plural for an irregular noun: Count(2, "box", "boxes") = "2 boxes".
 // Use it for human counts in results so output reads "2 forks", not "2 fork(s)".

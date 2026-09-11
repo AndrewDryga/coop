@@ -1,0 +1,7 @@
+
+✗ Could not sign these commits
+
+      The selected range contains a merge commit.
+
+  Choose a linear range with --from.
+  Help: coop help sign

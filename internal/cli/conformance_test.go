@@ -108,6 +108,12 @@ func TestCLIConformance(t *testing.T) {
 				"--peer <agent>", "--peer <peer>", "[<agent>[:model]", "[target|preset]",
 				"<" + strings.Join(agents.Names(), "|") + ">",
 			} {
+				// The approved ACP page names every selectable value <agent>: the whole page is
+				// about which agent runs an editor session, and its own examples put a full
+				// target in that slot. See usage-placeholder-style's same-kind-of-thing clause.
+				if name == "ACP help" && retired == "--peer <agent>" {
+					continue
+				}
 				if strings.Contains(surface, retired) {
 					t.Errorf("%s uses noncanonical target placeholder %q", name, retired)
 				}
@@ -116,7 +122,7 @@ func TestCLIConformance(t *testing.T) {
 		for name, want := range map[string]string{
 			"top-level help":        "coop <target> --peer <target>...",
 			"agent help":            "coop claude[:<model>][/<effort>][@<account>]",
-			"ACP help":              "coop acp <target|preset> [--peer <target>...]",
+			"ACP help":              "coop acp <agent|preset> [options]",
 			"ACP usage error":       "coop acp <target|preset> [--peer <target>...]",
 			"loop help":             "coop loop [<target|preset>]",
 			"fork help":             "coop fork <name> [<target|preset>]",

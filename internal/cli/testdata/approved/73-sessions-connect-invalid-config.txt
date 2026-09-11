@@ -1,0 +1,7 @@
+
+✗ Could not start the worker
+
+      /path/to/worker.json could not be used:
+      unsupported worker configuration version 2
+
+  Help: coop help sessions connect

@@ -2,7 +2,7 @@
 name: usage-placeholder-style
 description: "usage metavariables use angle brackets and stable names; optionality stays outside the placeholder"
 scope: cli-grammar
-sources: [internal/ui/usage.go, internal/cli/help.go, internal/cli/fork_cmd.go, internal/cli/presetcmd.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/loop_cmd.go, internal/cli/models.go, internal/cli/profiles.go, internal/cli/completion.go, internal/cli/worker_cmd.go, internal/tasks/cmd.go, internal/tasks/backlog.go, internal/forkctl/rm.go, internal/forkctl/review.go, internal/forkctl/merge.go, internal/forkctl/supervise.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/cli/conformance_test.go]
+sources: [internal/ui/usage.go, internal/cli/help.go, internal/cli/fork_cmd.go, internal/cli/presetcmd.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/loop_cmd.go, internal/cli/models.go, internal/cli/profiles.go, internal/cli/completion.go, internal/cli/session_connect.go, internal/tasks/cmd.go, internal/tasks/backlog.go, internal/forkctl/rm.go, internal/forkctl/review.go, internal/forkctl/merge.go, internal/forkctl/supervise.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/cli/conformance_test.go]
 check: none
 updated: 2026-09-11
 ---
@@ -59,6 +59,13 @@ legitimately need paths, refs, task fields, and argument groups that the old tab
 Related: [[help-output-style]].
 
 ## Changelog
+- 2026-09-11 — the approved ACP page names every selectable value `<agent>` (`coop acp
+  <agent|preset> [options]`, `--peer <agent>`): the whole page is about which agent runs an editor
+  session, and its own examples put a full target in that slot — the same-kind-of-thing clause
+  above. `TestCLIConformance/target_placeholders` exempts that one page and pins its canonical form;
+  every other surface still says `<target>`. `coop worker connect --config <absolute-path>` is
+  retired with the command; `coop sessions connect --config <path>` resolves a relative path itself,
+  so the page no longer demands an absolute one.
 - 2026-09-11 — the approved shared error transcripts set two forms this table did not have:
   `coop tasks claim <task-id>` (a usage error names the KIND of id, since the command path is the
   only other context the reader has) and `coop login <agent>[@<account>]` (the missing-argument

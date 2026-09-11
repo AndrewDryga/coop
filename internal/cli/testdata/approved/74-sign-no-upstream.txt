@@ -1,0 +1,7 @@
+
+✗ Could not determine which commits to sign
+
+      This branch has no upstream.
+
+  Use --from with the last commit you pushed.
+  Help: coop help sign

@@ -1,0 +1,21 @@
+coop sessions compact — back up session data and reduce its disk usage
+
+Usage:
+  coop sessions compact --backup <path> [--state <path>]
+
+OPTIONS
+  --backup <path>  save a verified database backup to a new file
+  --state <path>   use this session-data directory
+
+EXAMPLE
+  coop sessions compact --backup /path/to/session-backup.sqlite
+
+BEFORE RUNNING
+  Stop the session service.
+  Choose a new backup file outside the session-data directory.
+  Its parent directory must already exist.
+
+  The backup contains private session data. Keep it protected.
+
+DEFAULT SESSION DATA
+  ~/.local/state/coop/sessions

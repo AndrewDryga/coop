@@ -328,7 +328,7 @@ func (a *app) cmdRun(args []string) (int, error) {
 	if len(args) > 0 && args[0] == "--" {
 		args = args[1:] // everything after -- runs verbatim
 	} else if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
-		printCommandHelp(runHelp) // not forwarded to the box, where it would exec `--help` and crash
+		printHelpPage(runHelp) // not forwarded to the box, where it would exec `--help` and crash
 		return 0, nil
 	}
 	if len(args) == 0 {
@@ -773,23 +773,22 @@ func promptLine(c tasks.TaskCounts, forks, looping int, signWarn bool) string {
 		seg = append(seg, fmt.Sprintf("%d todo", c.Todo))
 	}
 	if c.Doing > 0 {
-		seg = append(seg, fmt.Sprintf("%d doing", c.Doing))
+		seg = append(seg, fmt.Sprintf("%d in progress", c.Doing))
 	}
 	if c.Blocked > 0 {
 		seg = append(seg, fmt.Sprintf("%d blocked", c.Blocked))
 	}
-	if looping > 0 {
-		seg = append(seg, fmt.Sprintf("%d looping", looping))
-	}
+	// Running loops qualify the fork count rather than standing beside it: a loop runs IN a fork,
+	// so two separate numbers read as two separate populations.
 	if forks > 0 {
-		word := "forks"
-		if forks == 1 {
-			word = "fork"
+		row := ui.Count(forks, "fork")
+		if looping > 0 {
+			row += fmt.Sprintf(" (%d running)", looping)
 		}
-		seg = append(seg, fmt.Sprintf("%d %s", forks, word))
+		seg = append(seg, row)
 	}
 	if signWarn {
-		seg = append(seg, "unsigned")
+		seg = append(seg, "unsigned commit")
 	}
 	return strings.Join(seg, " · ")
 }

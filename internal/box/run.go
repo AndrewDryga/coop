@@ -453,7 +453,8 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	defer func() {
 		if channel != nil {
 			if err := channel.close(); err != nil {
-				ui.Warn("task channel: %v", err)
+				// The launch itself is unaffected: only live task updates are missing from it.
+				ui.Warning("Task updates are unavailable in this box", err.Error(), "")
 			}
 		}
 	}()
@@ -468,6 +469,10 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// nothing a person still has to read.
 	started := false
 	var teardownErr error
+	// The truthful teardown reason, taken where the main process returns and printed by the
+	// filtered cleanup below — "has stopped" is a claim about the box, so it waits until the
+	// removal that backs it is confirmed. Empty while the box runs, and for one that never started.
+	stopped := ""
 	defer func() {
 		switch {
 		case !started:
@@ -497,7 +502,15 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		if filtered != nil {
 			defer func() {
 				workload := filtered.workloadOutcome(exitCode, result, spec.Ctx.Err() != nil)
+				// This process owns the box, its gateway, its volumes and its receipt: none of it
+				// is --rm, so the stop is only real once cleanup says so. A teardown slow enough
+				// to look like a hang says what it is waiting on while it runs.
+				settled := func() {}
+				if stopped != "" {
+					settled = sections.stopping()
+				}
 				gone, cleanupErr := filtered.cleanup(workload)
+				settled()
 				if execution.ID != "" && gone {
 					cleanupErr = errors.Join(cleanupErr, forkspace.EndExecution(spec.ActivityRepo, execution))
 				}
@@ -514,6 +527,11 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 					spec.OnNetworkReport(report)
 				}
 				if sections.on && filtered.started() {
+					// Only a confirmed removal earns the completed sentence; a cleanup that
+					// could not finish leaves the box's fate to the error it just returned.
+					if gone && cleanupErr == nil {
+						sections.stopped(stopped)
+					}
 					filtered.printRun()
 				}
 			}()
@@ -756,7 +774,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 				excludesPath = filepath.Join(cfg.HomeInBox, boxGitIgnoreName)
 				gitMounts = append(gitMounts, extraMount{p, excludesPath})
 			} else {
-				ui.Warn("global Git ignore: could not copy into box; continuing without it: %v", err)
+				ui.Warning("The box could not use your global Git ignore file", err.Error(), "")
 			}
 		}
 		p, err := artifacts.writeFile(artifacts.parent, gitConfigForBox(coAuthor, hooksPath, excludesPath, spec.AssignedTask))
@@ -826,7 +844,8 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		// confirmed the workload is gone.
 		if execution.ID != "" && filtered == nil {
 			if cleanupErr := forkspace.EndExecution(spec.ActivityRepo, execution); cleanupErr != nil {
-				ui.Warn("sandbox activity %s cleanup failed: %v — work result preserved; inspect 'coop tasks watch --json'", execution.ID, cleanupErr)
+				ui.Warning("Coop could not finish recording this box's activity", cleanupErr.Error(),
+					"Inspect what was recorded with coop tasks watch --json.")
 			}
 			execution = forkspace.ExecutionRecord{}
 		}
@@ -868,7 +887,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		sections.starting()
 		code, launchErr := filtered.launch(spec.Ctx, spec, options, stdin, stdout, stderr)
 		if started = filtered.started(); started {
-			sections.stopping(stopReason(code, launchErr, interrupt))
+			// The reason is only knowable here; the sentence it feeds prints from the teardown
+			// above, once the box this process owns is actually gone.
+			stopped = stopReason(code, launchErr, interrupt)
 		}
 		return finish(code, launchErr)
 	}
@@ -894,20 +915,25 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			if spec.Review {
 				return finish(-1, fmt.Errorf("start review services: %w", err))
 			}
-			ui.Note("services: %v — not starting them (run 'coop up' to retry)", err)
+			sections.servicesSkipped(err.Error())
+			if !sections.on {
+				ui.Note("services: %v — not starting them (run 'coop up' to retry)", err)
+			}
 			startServices = false
 		} else if len(live) > 0 {
 			if spec.Review {
 				return finish(-1, fmt.Errorf("start review services: an agent box is running in this project (%s) — sidecars start only when none is", DescribeLiveBoxes(live)))
 			}
-			if !spec.Quiet {
+			// Services already UP stay reachable; only the start was skipped.
+			sections.servicesSkipped("Another box is running in this project (" + DescribeLiveBoxes(live) + ").")
+			if !sections.on && !spec.Quiet {
 				ui.Note("sidecars not started: an agent box is running in this project (%s) — they start when none is; services already up are still reachable", DescribeLiveBoxes(live))
 			}
 			startServices = false
 		}
 		if cf := composeFile; cf != "" && startServices {
 			reviewServicesAttempted = spec.Review
-			if !spec.Quiet {
+			if !sections.on && !spec.Quiet {
 				ui.Note("starting sibling services (%s)", filepath.Base(cf))
 			}
 			// Discard compose's own progress UI — it repaints with carriage returns and would overprint
@@ -926,9 +952,13 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 					}
 					return finish(-1, fmt.Errorf("start review services: %w", err))
 				}
-				ui.Note("services: %v — continuing without them (run 'coop up' to retry)", err)
+				sections.servicesFailed(boundedCause(composeStderr.String(), err))
+				if !sections.on {
+					ui.Note("services: %v — continuing without them (run 'coop up' to retry)", err)
+				}
 				servicesErr = err
 			} else {
+				sections.services(started.names)
 				servicePorts = started.ports
 			}
 		}
@@ -1012,8 +1042,10 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// The plain client ran the box to its end, so its exit status is the main process's. A client
 	// that could not start is the one case with no box to stop; the deferred narration above
 	// renders that failure.
+	// The plain client ran the box to its end and removed it (--rm), so the stop is confirmed the
+	// moment it returns: there is no teardown of coop's own left to wait for.
 	if started = runErr == nil; started {
-		sections.stopping(stopReason(code, nil, nil))
+		sections.stopped(stopReason(code, nil, nil))
 	}
 	return finish(code, runErr)
 }
@@ -1045,7 +1077,8 @@ func prepareBoxEnvFile(cfg *config.Config, spec RunSpec, artifacts compositionAr
 		if err != nil {
 			// Fail closed: if the peer keys can't be stripped, omit the env file
 			// entirely rather than leak them into a scoped box.
-			ui.Note("env: omitted (could not filter peer API keys): %v", err)
+			// Values are never echoed: the cause names the failure, not the keys it was filtering.
+			ui.Warning("The project environment was not loaded", err.Error(), "")
 			return "", "", nil
 		}
 		return p, p, nil
@@ -2021,7 +2054,8 @@ func appendPublish(args []string, cfg *config.Config, spec RunSpec, free func(in
 		return args
 	}
 	if cfg.Egress != "open" {
-		fmt.Fprintf(os.Stderr, "Serve ports need network egress (COOP_EGRESS=open) — not publishing\n")
+		// A box with no network has nothing to bind; saying so is the whole answer.
+		ui.Warning("Project ports were not published", "This run has internet access turned off.", "")
 		return args
 	}
 	// Run decides publication once (the agent's note reads the same plan); a caller that assembled
@@ -2032,16 +2066,27 @@ func appendPublish(args []string, cfg *config.Config, spec RunSpec, free func(in
 	if plan == nil {
 		plan = servePublicationPlan(cfg, spec, free)
 	}
+	var published []servePublication
 	for _, s := range plan {
 		// The assigned host-facing URL is stable workspace discovery even when another process from
 		// this workspace already owns the port. Only the current box's publish mapping is conditional.
 		args = append(args, "-e", fmt.Sprintf("COOP_SERVE_URL_%d=http://localhost:%d", s.Port, s.Host))
 		if !s.Published {
-			fmt.Fprintf(os.Stderr, "Host port %d (for :%d) is in use — not publishing this box\n", s.Host, s.Port)
+			// The host port and the box port can differ, so both are named: one is the URL to open,
+			// the other is what the dev server inside the box listens on.
+			ui.Warning(fmt.Sprintf("Could not publish box port %d", s.Port),
+				fmt.Sprintf("Host port %d is already in use.", s.Host),
+				"Free that port, then start the box again.")
 			continue
 		}
 		args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d", s.Host, s.Port))
-		fmt.Fprintf(os.Stderr, "Serving box :%d at http://localhost:%d\n", s.Port, s.Host)
+		published = append(published, s)
+	}
+	if len(published) > 0 {
+		ui.Section("Available on this host")
+		for _, s := range published {
+			ui.Note("  http://localhost:%d → box port %d", s.Host, s.Port)
+		}
 	}
 	return args
 }

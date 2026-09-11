@@ -1,0 +1,14 @@
+Remote session configurations
+Each name defines which project and agents a remote application can use.
+
+code-review
+  Project  /Users/andrewdryga/Projects/os/coop
+  Access   Read-only
+  Agent    codex:gpt-5.6-sol/high@personal
+  Network  Filtered — only approved network traffic is allowed
+    OpenAI provider endpoints
+    github.com:443 · TLS
+
+  Remote hostnames and IP addresses are shared with the remote controller.
+
+Edit configurations: ~/.config/coop/session-policies.yaml

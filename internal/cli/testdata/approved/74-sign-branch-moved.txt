@@ -1,0 +1,6 @@
+
+✗ Could not apply the signed commits
+
+      The branch changed while Coop was signing.
+
+  Review the current branch before running coop sign again.

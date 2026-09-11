@@ -68,17 +68,17 @@ func traceLog() io.Writer {
 	_ = os.MkdirAll(filepath.Dir(path), 0o755) // config dir normally exists; create it if not
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "coop acp: trace enabled but couldn't open %s: %v\n", path, err)
+		traceWarn(path, "could not be opened", err)
 		traceGaveUp = true
 		return nil
 	}
 	if err := f.Chmod(0o600); err != nil { // also tighten logs created by older Coop versions
 		_ = f.Close()
-		fmt.Fprintf(os.Stderr, "coop acp: trace enabled but couldn't secure %s: %v\n", path, err)
+		traceWarn(path, "could not be protected", err)
 		traceGaveUp = true
 		return nil
 	}
-	fmt.Fprintf(os.Stderr, "coop acp: tracing the ACP wire to %s\n", path)
+	fmt.Fprintf(os.Stderr, "Recording an ACP trace\n  %s\n", path)
 	traceOut = f
 	if fi, err := f.Stat(); err == nil {
 		traceWritten = fi.Size() // account for anything already there (re-opened same-pid file)
@@ -113,13 +113,13 @@ func rotateLocked() io.Writer {
 	_ = os.Rename(path, path+".1")
 	nf, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "coop acp: trace rotate failed: %v\n", err)
+		traceWarn(path, "could not be reopened after rotation", err)
 		traceOut, traceGaveUp = nil, true
 		return nil
 	}
 	if err := nf.Chmod(0o600); err != nil {
 		_ = nf.Close()
-		fmt.Fprintf(os.Stderr, "coop acp: trace rotate couldn't secure %s: %v\n", path, err)
+		traceWarn(path, "could not be protected after rotation", err)
 		traceOut, traceGaveUp = nil, true
 		return nil
 	}
@@ -261,4 +261,13 @@ func traceLine(tag string, line []byte) {
 		return
 	}
 	writeLocked(fmt.Sprintf("%s | %s %s", ts, tag, s))
+}
+
+// traceWarn reports that the trace could not be recorded, in the shared warning shape: the amber
+// headline, then the actual file and the actual cause six spaces in. It writes the bytes directly
+// rather than through internal/ui, which the import DAG grants only to the presentation owners —
+// and an ACP child's stderr is an editor log, never a terminal, so there is no color to add. It
+// never claims a trace exists: every caller gives up on tracing right after.
+func traceWarn(path, what string, err error) {
+	fmt.Fprintf(os.Stderr, "⚠ Could not record the ACP trace\n\n      %s %s:\n      %v\n", path, what, err)
 }

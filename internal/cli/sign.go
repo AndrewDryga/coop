@@ -29,14 +29,20 @@ func signBase(repo, from string) (string, error) {
 		if u := gitOut(repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"); u != "" {
 			base = u
 		} else {
-			return "", errors.New("this branch has no upstream, so its unpushed range is unknown — pass --from <ref> (e.g. the commit you last pushed)")
+			return "", ui.CommandFailed("Could not determine which commits to sign", "This branch has no upstream.",
+				[2]string{"", "Use --from with the last commit you pushed."},
+				[2]string{"Help:", "coop help sign"})
 		}
 	}
 	if gitOut(repo, "rev-parse", "--verify", "--quiet", base+"^{commit}") == "" {
 		return "", fmt.Errorf("no such commit: %s", base)
 	}
 	if merges := gitOut(repo, "rev-list", "--merges", base+"..HEAD"); merges != "" {
-		return "", fmt.Errorf("the range %s..HEAD contains a merge commit — re-signing would linearize history; push the merge first, or sign a linear range with --from", base)
+		// Re-signing rebases the range, which would linearize a merge; a linear range is the only
+		// safe answer, and pushing the merge unsigned first is not one.
+		return "", ui.CommandFailed("Could not sign these commits", "The selected range contains a merge commit.",
+			[2]string{"", "Choose a linear range with --from."},
+			[2]string{"Help:", "coop help sign"})
 	}
 	return base, nil
 }
@@ -78,7 +84,8 @@ func signRangeBase(repo, base, head string) (string, error) {
 func (a *app) signUnpushed(repo, base string) (int, error) {
 	branchRef := gitOut(repo, "symbolic-ref", "--quiet", "HEAD")
 	if !strings.HasPrefix(branchRef, "refs/heads/") {
-		return 0, errors.New("cannot re-sign a detached HEAD; check out the branch first")
+		return 0, ui.CommandFailed("Could not sign these commits", "No branch is checked out.",
+			[2]string{"", "Check out the branch you want to sign."})
 	}
 	oldHead := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
 	resolvedBase := gitOut(repo, "rev-parse", "--verify", base+"^{commit}")
@@ -90,7 +97,9 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 		return 0, err
 	}
 	if merges := gitOut(repo, "rev-list", "--merges", base+".."+oldHead); merges != "" {
-		return 0, fmt.Errorf("the range %s..HEAD contains a merge commit — re-signing would linearize history", base)
+		return 0, ui.CommandFailed("Could not sign these commits", "The selected range contains a merge commit.",
+			[2]string{"", "Choose a linear range with --from."},
+			[2]string{"Help:", "coop help sign"})
 	}
 	n := rangeCount(repo, base, oldHead)
 	if n == 0 {
@@ -151,10 +160,12 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 		a.beforeSignRefUpdate(repo, branchRef, oldHead, newHead)
 	}
 	if currentRef := gitOut(repo, "symbolic-ref", "--quiet", "HEAD"); currentRef != branchRef {
-		return 0, fmt.Errorf("checked-out branch changed during re-signing (%s to %s); refusing to update it", branchRef, currentRef)
+		return 0, ui.CommandFailed("Could not apply the signed commits", "The branch changed while Coop was signing.",
+			[2]string{"", "Review the current branch before running coop sign again."})
 	}
 	if err := forkspace.GitRefCommand(context.Background(), repo, "update-ref", "-m", "coop: re-sign commits", branchRef, newHead, oldHead).Run(); err != nil {
-		return 0, fmt.Errorf("branch moved during re-signing; signed candidate was not applied: %w", err)
+		return 0, ui.CommandFailed("Could not apply the signed commits", "The branch changed while Coop was signing.\n"+err.Error(),
+			[2]string{"", "Review the current branch before running coop sign again."})
 	}
 	return n, nil
 }
@@ -178,7 +189,11 @@ func (a *app) signOnBoxExit(repo, preHead string, isFork bool) {
 		return
 	}
 	if n, err := a.signUnpushed(repo, preHead); err != nil {
-		ui.Warn("could not sign this session's commits: %v — run `coop sign`", err)
+		// A warning, not a failure: the session's work is committed either way. The cause is the
+		// host signing operation's own — a branch that moved, a scratch cleanup, a key problem —
+		// and it is carried verbatim rather than diagnosed as a key fault.
+		ui.Warning("Could not sign this session's commits", err.Error(),
+			"Run coop sign after fixing your Git signing setup.")
 	} else if n > 0 {
 		ui.Note("signed %s with your host key", ui.Count(n, "commit"))
 	}
@@ -205,13 +220,13 @@ func (a *app) cmdSign(args []string) (int, error) {
 		switch args[i] {
 		case "--from":
 			if i+1 >= len(args) {
-				return 2, errors.New("--from needs a <ref>")
+				return 2, ui.MissingOptionValue("--from", "coop sign", "coop sign --from origin/main")
 			}
 			from, i = args[i+1], i+1
 		case "-h", "--help":
 			return helpForPath([]string{"sign"}, a.cfg, false)
 		default:
-			return 2, fmt.Errorf("coop sign: unexpected argument %q", args[i])
+			return 2, ui.UnexpectedArgument(args[i], "coop sign", "coop sign [--from <ref>]")
 		}
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
@@ -226,10 +241,21 @@ func (a *app) cmdSign(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	// An explicit --from is TRUSTED, not verified against the remote: those commits may well be
+	// pushed already, so the result counts commits and says which reference they follow. Only the
+	// default range — git's own @{upstream}..HEAD — has the evidence to call them unpushed.
 	if n == 0 {
-		ui.Note("nothing to sign — no unpushed commits")
+		if from != "" {
+			ui.Note("No commits after %s to sign.", from)
+			return 0, nil
+		}
+		ui.Note("No unpushed commits to sign.")
 		return 0, nil
 	}
-	ui.OK("signed %s with your host key", ui.Count(n, "unpushed commit"))
+	if from != "" {
+		ui.OK("Signed %s with your host key", ui.Count(n, "commit"))
+		return 0, nil
+	}
+	ui.OK("Signed %s with your host key", ui.Count(n, "unpushed commit"))
 	return 0, nil
 }

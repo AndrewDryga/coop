@@ -1,0 +1,8 @@
+# Coop Bash completion.
+# Generate: coop completion bash > ~/.config/coop/completion.bash
+# Source this file from ~/.bashrc.
+_coop() {
+  local IFS=$'\n'
+  COMPREPLY=($(coop __complete "${COMP_WORDS[@]:1:COMP_CWORD}" 2>/dev/null))
+}
+complete -o default -F _coop coop

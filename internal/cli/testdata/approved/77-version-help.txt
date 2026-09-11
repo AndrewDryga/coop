@@ -1,0 +1,8 @@
+coop version — print the installed Coop version
+
+Usage:
+  coop version
+
+ALIASES
+  coop -v
+  coop --version

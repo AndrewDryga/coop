@@ -1,0 +1,18 @@
+coop prompt — print a short project status for your shell or tmux
+
+Usage:
+  coop prompt
+
+OUTPUT
+  Shows task counts, forks, running fork loops, and an unsigned-commit marker.
+  Empty counts are omitted. When there is nothing to show, it prints nothing.
+
+EXAMPLE
+  2 todo · 1 in progress · 1 blocked · 3 forks (2 running) · unsigned commit
+
+TMUX
+  Add this to ~/.tmux.conf:
+  set -g status-right '#(cd "#{pane_current_path}" && coop prompt)'
+
+SHELL PROMPTS
+  Run coop prompt from your prompt's custom-command configuration.

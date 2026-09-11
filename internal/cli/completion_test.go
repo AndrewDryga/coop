@@ -180,7 +180,13 @@ func TestZshCompletionPreservesEmptyWord(t *testing.T) {
 	if !strings.Contains(zshCompletion, `coop __complete "${(@)words[2,$CURRENT]}"`) {
 		t.Fatalf("zsh completion must quote the word array expansion:\n%s", zshCompletion)
 	}
-	for _, want := range []string{"source that file AFTER", "compdef _coop coop", "alias coop='nocorrect coop'"} {
+	// The generated comments name the SAME user-controlled path the help page does, so following
+	// either one lands in the same place; the executable body is unchanged.
+	for _, want := range []string{
+		"# Source this file after compinit in ~/.zshrc.",
+		"coop completion zsh > ~/.config/coop/completion.zsh",
+		"compdef _coop coop", "alias coop='nocorrect coop'",
+	} {
 		if !strings.Contains(zshCompletion, want) {
 			t.Fatalf("zsh integration missing %q:\n%s", want, zshCompletion)
 		}

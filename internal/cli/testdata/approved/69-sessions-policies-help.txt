@@ -1,0 +1,20 @@
+coop sessions policies — show remote session configurations
+
+Usage: coop sessions policies [options]
+
+Each configuration names the project a remote application can use, its agents and
+accounts, whether they can edit files, and the network rules they must follow.
+
+OPTIONS
+  --policies <path>  read configurations from this file
+  --json            print verification data for remote applications as JSON
+
+DEFAULT FILE
+  ~/.config/coop/session-policies.yaml
+
+EXAMPLES
+  coop sessions policies
+  coop sessions policies --json
+
+To connect this machine to a remote controller:
+  coop help sessions connect

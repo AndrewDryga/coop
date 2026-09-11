@@ -88,14 +88,27 @@ func renderDelegate(as []delegateInput) string {
 }
 
 const delegateWrapperTmpl = `#!/bin/sh
-# coop-delegate — hand a write-capable delegate role one implementation task.
+# coop-delegate — give a preset role a task that may edit files
 # Generated and mounted by coop from the active preset; do not edit.
+#
+# Usage:
 #   coop-delegate <role> [<prompt>]
-# The prompt is the trailing argument, or piped on stdin (use a quoted heredoc).
-# The delegate MAY edit the worktree; it must NOT commit — the lead reviews the
-# diff, runs the gate, and owns the commit. Runs are serialized via a global lock.
-# A role target ladder advances only after a proven non-zero rate-limit failure,
-# and only while the Git/filesystem snapshot and Git history remain unchanged.
+#
+# EXAMPLE
+#   coop-delegate <role> "Add tests for the changed parser."
+#
+#   Omit the prompt argument to read it from stdin.
+#   The role must use mode: delegate in the active preset.
+#
+# AFTER THE TASK
+#   Review the changes, run the project's checks, and commit them yourself.
+#   Delegates do not commit and run one at a time.
+#
+# LIMITS
+#   COOP_DELEGATE_TIMEOUT sets the timeout in whole seconds, from 1 to 86400.
+#
+# A role target ladder advances only after a proven non-zero rate-limit failure, and only while the
+# Git/filesystem snapshot and Git history remain unchanged.
 set -u
 umask 077
 delegate_stream_limit=@@STREAM_LIMIT@@

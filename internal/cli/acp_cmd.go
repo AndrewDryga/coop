@@ -365,11 +365,21 @@ func (a *app) ensureACPImage() error {
 	if box.ImageExists(a.rt, img) {
 		return nil
 	}
-	ui.Note("image %q is missing — building it now; the first connect will take a few minutes", img)
-	if err := box.BuildWith(a.rt, a.cfg, repo, false, resolveVersion(), strings.NewReader(""), os.Stderr); err != nil {
-		return fmt.Errorf("image %q is missing and building it failed: %w\n  build it by hand with 'coop build', then reconnect", img, err)
+	// `image inspect` fails the same way whether the image is missing or the daemon is gone, so
+	// probe the daemon before blaming the image — otherwise a stopped Docker is reported as a
+	// build the editor should wait through.
+	if err := a.rt.EnsureDaemon(); err != nil {
+		return ui.CommandFailed("Could not prepare the Coop box", "Docker is unavailable.",
+			[2]string{"", "Start Docker, then reconnect your editor."})
 	}
-	ui.Note("built %s — continuing", img)
+	ui.Heading("Checking the Coop box")
+	ui.Note("  The box image is missing.")
+	ui.Note("  Building it now…")
+	if err := box.BuildWith(a.rt, a.cfg, repo, false, resolveVersion(), strings.NewReader(""), os.Stderr); err != nil {
+		return ui.CommandFailed("Could not prepare the Coop box", err.Error(),
+			[2]string{"", "Fix what the build reported above, then reconnect your editor."})
+	}
+	ui.Pass("Box ready")
 	return nil
 }
 
@@ -405,7 +415,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 				}
 			}
 		} else {
-			fmt.Fprintf(os.Stderr, "coop acp: resume state unreadable (%v) — starting fresh\n", rerr)
+			fmt.Fprintf(os.Stderr, "⚠ Could not restore the editor session\n\n      The saved session state could not be read.\n      %v\n\n  Starting a new session.\n", rerr)
 		}
 	}
 	// SIGHUP → a graceful reload (re-exec the freshly-built binary in place). SIGTERM/SIGINT stay

@@ -37,7 +37,8 @@ func (a *app) sweepOrphanBoxes(repo string) {
 	ctx, cancel := context.WithTimeout(context.Background(), orphanSweepTimeout)
 	defer cancel()
 	if n, _ := box.ReapOrphanBoxes(ctx, a.rt, repo); n > 0 {
-		ui.Detail("removed %s whose coop process is gone", ui.Count(n, "orphaned box", "orphaned boxes"))
+		// The count is the runtime's own verified removals, never the number attempted.
+		ui.Note("Removed %s whose Coop processes had stopped", ui.Count(n, "box", "boxes"))
 	}
 	// Networks are not scoped to a repo — a coop project's leftover network from ANY workspace
 	// eats one of Docker's ~31 subnets — so one pass per process covers them all.
@@ -46,7 +47,7 @@ func (a *app) sweepOrphanBoxes(repo string) {
 	}
 	a.sweptNetworks = true
 	if n, _ := box.ReapOrphanNetworks(ctx, a.rt); n > 0 {
-		ui.Detail("removed %s no container uses", ui.Count(n, "orphaned coop network", "orphaned coop networks"))
+		ui.Note("Removed %s", ui.Count(n, "unused Coop network"))
 	}
 	// A filtered run's gateway is exact-owned by the process that launched it,
 	// and the ordinary sweep above cannot see it: those containers carry

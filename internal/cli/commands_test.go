@@ -980,7 +980,7 @@ func TestCmdRunMetaCases(t *testing.T) {
 		if code != 0 || err != nil {
 			t.Errorf("cmdRun(%q) = (%d, %v), want (0, nil)", h, code, err)
 		}
-		if !strings.Contains(string(out), "coop run — run a raw command") {
+		if !strings.Contains(string(out), "coop run — run a command in the box") {
 			t.Errorf("cmdRun(%q) should print run's help, got:\n%s", h, out)
 		}
 	}
@@ -1071,7 +1071,9 @@ func TestHelpDocumentsPeerAndAgentHelp(t *testing.T) {
 }
 
 // TestPromptLine: coop prompt's line shows non-zero segments only, "·"-separated, in a fixed
-// order (todo, doing, blocked, looping, forks); "" when idle so an embedding prompt stays clean.
+// order (todo, in progress, blocked, forks); "" when idle so an embedding prompt stays clean.
+// Running loops QUALIFY the fork count — a loop runs in a fork, so two separate numbers would
+// read as two separate populations.
 func TestPromptLine(t *testing.T) {
 	if got := promptLine(tasks.TaskCounts{}, 0, 0, false); got != "" {
 		t.Errorf("idle should be empty, got %q", got)
@@ -1079,17 +1081,17 @@ func TestPromptLine(t *testing.T) {
 	if got := promptLine(tasks.TaskCounts{Done: 9}, 0, 0, false); got != "" {
 		t.Errorf("done-only isn't actionable state — should be empty, got %q", got)
 	}
-	if got := promptLine(tasks.TaskCounts{Todo: 3, Blocked: 1}, 2, 1, false); got != "3 todo · 1 blocked · 1 looping · 2 forks" {
+	if got := promptLine(tasks.TaskCounts{Todo: 3, Blocked: 1}, 2, 1, false); got != "3 todo · 1 blocked · 2 forks (1 running)" {
 		t.Errorf("got %q", got)
 	}
-	if got := promptLine(tasks.TaskCounts{Doing: 2}, 1, 0, false); got != "2 doing · 1 fork" { // singular fork
+	if got := promptLine(tasks.TaskCounts{Doing: 2}, 1, 0, false); got != "2 in progress · 1 fork" { // singular fork, no running loop to qualify it
 		t.Errorf("got %q", got)
 	}
 	// The unsigned nudge appends when set; alone (no other state) it's the whole line.
-	if got := promptLine(tasks.TaskCounts{Todo: 1}, 0, 0, true); got != "1 todo · unsigned" {
+	if got := promptLine(tasks.TaskCounts{Todo: 1}, 0, 0, true); got != "1 todo · unsigned commit" {
 		t.Errorf("got %q", got)
 	}
-	if got := promptLine(tasks.TaskCounts{}, 0, 0, true); got != "unsigned" {
+	if got := promptLine(tasks.TaskCounts{}, 0, 0, true); got != "unsigned commit" {
 		t.Errorf("unsigned alone should be the whole line, got %q", got)
 	}
 }

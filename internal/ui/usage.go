@@ -6,18 +6,22 @@ import (
 	"strings"
 )
 
-// UsageError is coop's ONE shape for rejected input: a red headline naming exactly what was
-// refused and the full command it was refused for, an optional six-space cause explaining the
-// constraint, then aligned label rows pointing at the fix. Every parser builds one from DATA
-// (the command path, the offending token, a usage line) instead of formatting its own sentence,
-// so a new command gets the approved shape for free and no family drifts into its own layout.
+// UsageError is coop's ONE shape for a command that could not proceed: a red headline naming
+// exactly what was refused and the full command it was refused for, an optional six-space cause
+// explaining the constraint, then aligned label rows pointing at the fix. Every parser builds one
+// from DATA (the command path, the offending token, a usage line) instead of formatting its own
+// sentence, so a new command gets the approved shape for free and no family drifts into its own
+// layout. Rejected INPUT is the common case (see the constructors below); a RUNTIME failure a
+// person reads the same way uses the same block through Failure.
 //
-// Callers return it like any error; Main renders it (see Render) and exits 2.
+// Callers return it like any error; Main renders it (see Render) and exits 2 for rejected input,
+// or the status the command returned.
 type UsageError struct {
 	Headline string      // "Unknown command \"coop doctro\"" — what was refused, with the full command
 	Cause    string      // optional reason, indented six spaces ("Choose claude, codex, …"); one sentence per line
 	Choices  []string    // optional values that would settle it (the run IDs a prefix matched)
 	Rows     [][2]string // label → command ("Did you mean:" → "coop doctor"), aligned on the label
+	ExitCode int         // process exit code; 0 means the usual 2 for rejected input (CommandFailed sets 1)
 }
 
 // Error flattens the block to one line, for a log, a wrap, or a machine consumer that only ever
@@ -33,6 +37,11 @@ func (e *UsageError) Error() string {
 	}
 	return strings.Join(parts, " — ")
 }
+
+// Continuation is the label of a row that CONTINUES the row above it — a second spelling of the
+// same usage. It renders under that row's value instead of at the label column, and never widens
+// the label column. A row labeled "" is an ordinary action sentence at the label column.
+const Continuation = "\x00continuation"
 
 // Render is the exact approved block: a leading blank line, the red ✗ headline, a blank line, the
 // six-space cause between blank lines when there is one, then the two-space rows whose commands
@@ -60,12 +69,27 @@ func (e *UsageError) Render(p Palette) string {
 	if len(e.Rows) > 0 {
 		w := 0
 		for _, r := range e.Rows {
+			if r[0] == Continuation {
+				continue // a continuation borrows the width above it
+			}
 			if n := len([]rune(r[0])); n > w {
 				w = n
 			}
 		}
 		b.WriteString("\n")
 		for _, r := range e.Rows {
+			switch r[0] {
+			case Continuation:
+				// A second spelling of the row above — it sits under that row's VALUE, so the two
+				// read as one usage rather than as two unrelated instructions.
+				fmt.Fprintf(&b, "  %s %s\n", strings.Repeat(" ", w), r[1])
+				continue
+			case "":
+				// A plain action sentence: it answers the headline on its own, so it sits at the
+				// label column rather than pretending to continue a labeled row.
+				b.WriteString("  " + r[1] + "\n")
+				continue
+			}
 			label := r[0] + strings.Repeat(" ", w-len([]rune(r[0])))
 			fmt.Fprintf(&b, "  %s %s\n", label, r[1])
 		}
@@ -220,4 +244,17 @@ func StandaloneValue(value, option, command string) *UsageError {
 		Headline: fmt.Sprintf("Value %q must be used alone for %q in %q", value, option, command),
 		Rows:     [][2]string{{"Help:", HelpCommand(command)}},
 	}
+}
+
+// CommandFailed is a RUNTIME failure the command RETURNS, drawn in the same block as a rejected
+// input: the red headline, the bounded cause six spaces in, and the labeled route to the page that
+// explains it. Rejected input and a command that could not do its job are different kinds of wrong,
+// but a person reads them the same way, so they share one shape instead of drifting into two — they
+// part only at the exit code, which stays 1 here because nothing about the input was wrong. cause is
+// the ACTUAL bounded reason — a validator's message, a runtime's error — never a guessed diagnosis;
+// rows are the command's own follow-up (`Help:` → its page), empty when there is nothing useful to
+// say. Use ui.Failure instead when the failure must print as it happens (a loop mid-run) rather than
+// end the command.
+func CommandFailed(headline, cause string, rows ...[2]string) *UsageError {
+	return &UsageError{Headline: headline, Cause: cause, Rows: rows, ExitCode: 1}
 }

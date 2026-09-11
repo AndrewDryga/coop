@@ -366,6 +366,174 @@ coop sessions doctor --socket /var/lib/coop-sessions/control.sock
 
 `doctor` exits nonzero when either `/healthz` or `/readyz` fails.
 
+## Connect this machine to a remote controller
+
+`coop sessions connect` connects this machine's local session service to a compatible fleet
+controller. It makes outbound mutual-TLS HTTPS requests; it does not open an inbound TCP port. The
+controller sends versioned commands, not arbitrary shell commands. Provider work still runs through
+the local service and its trusted policies, never as a connector-local fallback.
+
+```bash
+coop sessions connect --config /etc/coop/worker.json
+```
+
+One command is enough: it validates the configuration first, then uses the ready local service, or
+starts one when none is running. A service that is listening but not ready is not absent — its
+socket is left alone and no second service is started. Ctrl-C stops the connection and, only if this
+invocation created it, the service it started; a service that was already running is left alone.
+
+Which local service a configuration is about comes from two optional fields, so autostart is never a
+guess:
+
+| Field | Default |
+| --- | --- |
+| `session_state_dir` | `~/.local/state/coop/sessions` |
+| `session_policy_path` | `~/.config/coop/session-policies.yaml` |
+
+`coop_socket` is still required and must sit inside the resolved `session_state_dir`: the socket is
+the service's front door, and pointing it at a service that stores its sessions somewhere else would
+connect a controller to a machine whose policies nobody checked. The state root is never inferred
+from the socket's parent directory, and no session policy file is ever generated.
+
+To run the local service on its own instead — for a supervisor that manages the two separately —
+see [Run](#run) above; `coop sessions serve` is unchanged.
+
+Export the policy digests from the same file the service loads:
+
+```bash
+coop sessions policies --policies /etc/coop/session-policies.yaml --json
+```
+
+Copy `policy_digests` and `policy_authority_digests` from that output into the worker configuration.
+Keep the service's policies, worker advertisements and controller placement authority aligned. The
+fleet operator supplies the worker/workspace identities, controller origin, trusted CA, enrollment
+token and expected sandbox/repository advertisements. Do not derive those values from the example or
+substitute a different digest that merely has the right length.
+
+### Configure and enroll
+
+Start with [worker.json](examples/worker.json), saving your completed configuration as
+`/etc/coop/worker.json`. The example passes configuration validation, but its hostname, hashes,
+policy name, paths and capacity are demonstration values, not deployment authority.
+
+The format is strict JSON: no comments, unknown fields, trailing documents or environment-variable
+expansion. Use literal absolute paths, not `~` or `$HOME` in JSON. In particular:
+
+- `responder_url` is the controller's HTTPS origin, without an API endpoint, query or fragment.
+  Serve its worker API routes directly, or rewrite internally at your proxy. The connector refuses
+  HTTP redirects, including same-origin redirects; it does not forward credentials or transfer
+  bytes to a redirect destination.
+- `ca_file` contains exactly one trusted CA certificate in PEM format.
+- `enrollment_token_file` is an owner-private regular file, at most 128 bytes. Its token must be
+  32–128 bytes with no embedded whitespace. Obtain it through your controller's enrollment process;
+  do not place the token in command arguments or the JSON file.
+- `identity_file` starts absent. Do not precreate an empty file: the connector generates the key
+  and saves its certificate bundle here during enrollment, with mode `0600`.
+- `journal_dir` is persistent, owner-private storage, not a cache or disposable directory.
+- `session_state_dir` and `session_policy_path` are optional and name the LOCAL session service this
+  configuration is about, so `coop sessions connect` knows exactly which service it would start.
+  Omitted, the documented defaults apply. `coop_socket` must resolve inside `session_state_dir`.
+- `repositories`, `capabilities` and `capacity` are deployment advertisements. Populate them to
+  match the controller's contract and actual worker resources. Coop only advertises its
+  implementation capabilities — `repository-freshness` version `2` and
+  `repository-source-selector` version `1` — after the running local daemon proves each one in
+  `GET /v1/capabilities`; putting either in JSON cannot override that check, and a configured
+  claim is removed. The two are versioned independently, so a partially upgraded fleet advertises
+  only what each daemon actually supports and a controller can withhold source-selecting work
+  from workers that do not have it.
+
+Keep the configuration and enrollment file private (`0600`) and their containing directories
+owned by the daemon/connector user. That user must be able to create the identity and journal,
+and remove the enrollment token after use. Do not copy another worker's identity or journal.
+
+A `create_session` command may carry a `source` selector beside its policy and digests
+(`{"kind":"default"}`, `{"kind":"branch","name":…}`, `{"kind":"pull_request","number":…}` with an
+optional `expected_head_commit`, or `{"kind":"commit","sha":…}`). The connector validates its
+shape and bounds, forwards it unchanged to the daemon — which owns the authority decision — and
+refuses a malformed one with `invalid_command` before any daemon call. A create fence carries the
+same request, selector included, so it occupies the create's exact ledger identity. See
+the endpoint reference below for what each selector resolves to.
+
+Run it under your process supervisor:
+
+```bash
+coop sessions connect --config /etc/coop/worker.json
+```
+
+The first poll enrolls using the supplied token, saves the worker-owned identity, consumes the
+local token file, then polls with its client certificate. Successful polls are quiet. Verify
+enrollment and worker eligibility in your controller, not just by checking that the process lives.
+
+`poll_interval_ms` must be 100–60000 and `request_timeout_ms` 100–300000. The example polls each
+second with a 30-second request timeout. `renew_before_seconds` is 60–86400; omitted or zero
+defaults to one hour. Choose a renewal window shorter than your controller's certificate lifetime.
+
+### Workspace storage
+
+Every hello carries an optional `storage` object: the worker's own account of the volume its fork
+workspaces land on, taken from the daemon's [`GET /v1/storage`](#health) and forwarded
+verbatim.
+
+```json
+{
+  "version": 1,
+  "measured_at": "2026-09-11T04:05:06Z",
+  "capacity_bytes": 536870912000, "free_bytes": 107374182400, "reserve_bytes": 26843545600,
+  "high_watermark_bytes": 510027366400, "low_watermark_bytes": 483183820800,
+  "disposable_bytes": 8589934592,
+  "protected_bytes": 21474836480,
+  "unattributed_bytes": null,
+  "allocation": "open",
+  "refusal_reason": null
+}
+```
+
+`disposable_bytes` is what a discard could still return; `protected_bytes` is what this worker is
+holding on purpose, including the hardlinked repository baseline the forks share. A `null`
+`unattributed_bytes` means the worker found storage it could not attribute, or could not finish
+measuring — treat it as unknown, never as zero. `allocation` is `refused` with a `refusal_reason` of
+`reserve_exhausted` or `protected_storage_exceeds_budget` while this worker will not accept a new
+workspace; placement and cleanup of work it already has continue either way.
+
+The watermarks are USED-byte levels and the reserve is a free-byte floor. By default they are
+derived from the measured capacity: a reserve of 5%, allocation closing when free space falls under
+one reserve, and reopening only once two reserves are free — the hysteresis is what stops a worker
+from flapping after every reclaimed workspace. A worker that cannot measure its volume, or whose
+daemon predates this endpoint, simply omits the object and keeps polling.
+
+The worker also reclaims fork storage it can prove is garbage: its own generation record, no session
+naming it, no reservation, no live worker or sandbox activity, older than the reclaim age, and a
+clean tree fully contained by its parent. Everything else — a dirty workspace, an unmerged branch, a
+directory with no coop generation record — is reported in `/v1/storage` and left alone. An
+interrupted removal is resumable: the workspace is renamed into an owner-private staging directory
+before any deletion, and no discard reports success until those bytes are physically gone.
+
+### Restart and recovery
+
+Stop the connector with `SIGINT` or `SIGTERM`. Preserve the identity file and the entire journal
+directory across restarts, together with the same worker/workspace configuration. A restart loads
+the existing identity rather than enrolling again; certificate renewal is automatic over mutual TLS.
+
+Commands are journaled before execution. Unacknowledged terminal results are resent after restart.
+Redelivery of a command with a recorded result reuses its receipt rather than executing it again;
+reusing that command ID with a different payload is refused. An asynchronous
+session creation can have its result acknowledged while creation is still running: the journal
+retains its original operation identity until session activity can be bound. Event cursors advance
+only after exact acknowledgements, so unacknowledged events replay and acknowledged events do not.
+Do not prune journal files or keep only the `commands` directory when moving or backing up a worker.
+
+If a review outlives its request, its uncertain transport receipt stays unchanged.
+The existing `reconcile_operation` command returns the saved public operation/review
+envelope once that exact review succeeds; pending or failed operations still return
+their operation metadata. This reads the completed result and never reruns the gate.
+The daemon and connector must both support completed-review lookup.
+
+An unavailable daemon or controller is reported and retried; it does not authorize local execution
+or receipt deletion. A malformed or expired saved identity fails closed instead of silently
+re-enrolling, even if an enrollment token is present. Check file ownership, configured trust,
+clock and controller renewal status, then follow the controller operator's identity-recovery
+procedure. Do not delete the identity or journal as a routine reconnect fix.
+
 ## Request rules
 
 Examples below use curl's Unix-socket support:

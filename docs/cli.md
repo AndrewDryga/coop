@@ -73,27 +73,73 @@ Documentation: https://coop.dryga.com
 
 ==============================================================================
 
-coop run — run a raw command in the box.
+coop run — run a command in the box
 
-  Usage: coop run [--readonly|--bare] -- <cmd...>
+Usage:
+  coop run [options] -- <command> [<args>...]
 
-  Everything after -- runs verbatim in the sandbox — same mounts, secret-shadowing,
-  and network as an agent. "coop run echo hi" works too; use -- when the command has
-  flags coop would otherwise read (e.g. coop run -- npm test --watch).
+EXAMPLES
+  coop run -- npm test
+  coop run -- curl https://example.com
+  coop run --readonly --egress none -- git status
 
-  --readonly and --bare run the command under the restricted profile of the same-named
-  agent runs ('coop help claude'): a read-only root, the repo read-only or absent, scratch
-  in memory only. The deterministic way to prove what such a run can and cannot write.
+OPTIONS
+  --readonly  mount the repository read-only
+  --bare      run without the repository or project context
+
+  --egress <mode>        choose filtered, open, or none
+  --allow-domain <host>  allow TLS access to this host on port 443
+                          repeat to allow more hosts
+  --egress-rules <path>   load network rules from a file
+
+  Put Coop options before --. Everything after it belongs to your command.
+  --readonly and --bare cannot be combined.
+  These two modes require Docker and --egress open or none.
+
+NETWORK ACCESS
+  filtered  allow traffic permitted by approved network rules
+  open      allow unrestricted internet access
+  none      block internet access
+
+For more details see:
+  coop help net
 
 ==============================================================================
 
-coop shell — open an interactive shell in the box.
+coop shell — open a shell in the box
 
-  Usage: coop shell [--readonly|--bare]
+Usage:
+  coop shell [options]
 
-  A shell in the sandbox at your repo — same mounts, secret-shadowing, and
-  network as an agent run. Exit to return. --readonly and --bare open it under
-  the restricted profile of the same-named agent runs ('coop help claude').
+EXAMPLES
+  coop shell
+  coop shell --readonly --egress none
+
+OPTIONS
+  --readonly  mount the repository read-only
+  --bare      open a shell without the repository or project context
+
+  --egress <mode>        choose filtered, open, or none
+  --allow-domain <host>  allow TLS access to this host on port 443
+                          repeat to allow more hosts
+  --egress-rules <path>   load network rules from a file
+
+  --readonly and --bare cannot be combined.
+  These two modes require Docker and --egress open or none.
+
+USING THE SHELL
+  The shell opens in your project inside the box.
+  Type exit or press Ctrl-D to return to your host.
+
+  With --bare, the project is not mounted.
+
+NETWORK ACCESS
+  filtered  allow traffic permitted by approved network rules
+  open      allow unrestricted internet access
+  none      block internet access
+
+For more details see:
+  coop help net
 
 ==============================================================================
 
@@ -1147,24 +1193,30 @@ Returns a nonzero status if possible secrets remain or the scan cannot finish.
 
 ==============================================================================
 
-coop sign — re-sign this branch's unpushed commits with your host key.
+coop sign — sign this branch's unpushed commits with your host key
 
-  Usage: coop sign [--from <ref>]
+Usage:
+  coop sign [--from <ref>]
 
-  Box commits are made UNSIGNED — no signing key ever enters a box — so a remote
-  that requires signed commits (a protected main, like many projects) rejects
-  work a loop or an interactive box produced. 'coop sign' re-signs them on the
-  HOST, where your signing key lives, using your GLOBAL git signing config (so a
-  poisoned repo can't point gpg.program at a planted binary).
+EXAMPLES
+  coop sign
+  coop sign --from origin/main
 
-  The range is the UNPUSHED one — @{upstream}..HEAD — git's own rule for what is
-  safe to rewrite: it never touches pushed history and never pushes. With no
-  upstream, pass --from <ref> (e.g. the commit you last pushed). It refuses a
-  range containing a merge commit. Signing runs in an isolated linked worktree,
-  verifies that commit trees are unchanged, then compare-and-swaps the branch ref;
-  staged, unstaged, and untracked files in your active checkout remain untouched.
-  'coop loop' signs each cycle automatically when you sign by default
-  (commit.gpgsign=true).
+OPTIONS
+  --from <ref>   sign commits after this Git reference
+
+HOW IT WORKS
+  By default, Coop signs commits after the branch's upstream reference.
+  Without an upstream, use --from with the last commit you pushed.
+
+  Signing changes commit IDs. It preserves the committed files and your
+  working changes. The selected range must not contain merge commits.
+
+  Coop uses your host's Git signing settings.
+
+AUTOMATIC SIGNING
+  When commit.gpgsign is enabled, Coop signs commits after ordinary agent runs
+  and loop cycles. Fork commits are signed when you merge the fork.
 
 ==============================================================================
 
@@ -1253,151 +1305,261 @@ Set COOP_NO_UPDATE_CHECK=1 to turn off those notices.
 
 ==============================================================================
 
-coop version — print coop's version and exit.
+coop version — print the installed Coop version
 
-  Usage: coop version
+Usage:
+  coop version
 
-  Prints coop's build version (git tag or commit). Takes no arguments; -v and
-  --version are aliases.
-
-==============================================================================
-
-coop acp <target|preset> — serve as an ACP agent over stdio (for editors).
-
-  Usage: coop acp <target|preset> [--peer <target>...]
-
-  Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
-  command at e.g. ["acp","claude"] — one entry per target or preset.
-  The initial target is required; credential order is never launch intent. The
-  PROVIDER dropdown can still switch a plain session live. coop always proxies
-  the session, so the editor stays connected across a box restart (a rebuild/OOM)
-  — it reconnects and replays the handshake, no lost session.
-
-  coop owns the editor's toolbar: it runs the agent in yolo mode (the box is the
-  sandbox, so no permission prompts), defaults the model dropdown to coop's model,
-  drops the permission-mode and subagent pickers, and gives a normal session three
-  dropdowns — PRESET (the recipe), PROVIDER (who runs), and ACCOUNT (the lead's login).
-  An active preset is different: only PRESET renders because its ladder owns the provider,
-  model, effort, account, and roles. Persisted Provider/Account sets while those controls
-  are hidden are acknowledged and ignored. Selecting None returns the normal Provider and
-  Account controls with the effective provider and Account set to Auto; select None first
-  whenever you want to choose a Provider or Account manually.
-  In a plain session, an account or same-provider switch is transparent — the conversation is
-  preserved (a shared, credential-independent session store). A PROVIDER switch (picking another
-  signed-in agent, or a cross-provider preset rung rotating in on a rate limit)
-  re-creates the session on the new agent and carries the conversation BEST-EFFORT:
-  coop prepends the thread so far — message text plus one-line tool narration, no tool
-  payloads, labeled approximate — budgeted by COOP_ACP_CARRY_TOKENS (default 200000;
-  trim it below the smallest window you switch into). A switch made MID-TURN re-sends
-  the in-flight prompt once the new box is up, so the turn completes on the new target
-  instead of erroring. On a rate limit it auto-rotates across the ladder's rungs —
-  accounts, models, providers.
-
-  The target pins the session's agent, model, and account — an editor can run two
-  entries on different ones, e.g. ["acp","claude:opus@work"].
-
-  A bare preset name in the who-runs slot runs the session under that orchestration
-  preset (its lead is the agent; see 'coop help presets').
-
-  --peer <target>... lets the session ask NAMED peers for a read-only second opinion
-  (repeatable; only those peers' credentials are mounted) — the orchestrator pattern,
-  from your editor. Preset consult roles use the same read-only wrapper and keep their
-  role names, target ladders, and personas.
-
-  --bare serves a Q&A agent with no repository, no project context and no tools: the
-  shared base image under the restricted profile of 'coop <target> --bare', a target only
-  (no preset, no --peer), and no supervisor or toolbar — there is nothing to switch. Its
-  no-tools switch rides the ACP session/new the client sends, so it is what 'coop sessions
-  serve' launches for a bare policy; an editor entry gets the same box. --readonly is not
-  offered here: a fork fronts read-only with 'coop fork <name> acp <target> --readonly'.
-
-  To make plain provider switching near-instant, coop keeps a box warm per OTHER signed-in
-  provider (spawned in the background at session start), so a switch pays only the ACP
-  replay, not a container + adapter cold-boot. Set COOP_ACP_WARM=0 to disable
-  prewarming (one fewer idle box per signed-in provider) on a low-RAM machine.
-
-  Picking up a rebuilt coop WITHOUT restarting your editor: send the running server
-  SIGHUP — 'pkill -HUP -f "coop acp"'. It re-execs the freshly-installed binary in
-  place (same process, same stdio), tears down its box, and re-establishes your open
-  threads against a fresh box on the new binary — the editor never sees a disconnect.
-  (SIGTERM/SIGINT still STOP it; only SIGHUP reloads. A box restart already picks up
-  box-side changes, so SIGHUP is for supervisor-side changes to coop itself.)
-
-  Debugging a misbehaving session: set COOP_ACP_TRACE=1 in the editor's server env, or
-  create ~/.config/coop/acp-debug, and coop appends the editor<->box ACP wire to
-  ~/.config/coop/acp-trace-<pid>.log (the sentinel works on an already-running server).
-  The log is size-capped and auto-rotated so it can't grow unbounded; it holds prompts
-  and file contents, so treat it as sensitive.
+ALIASES
+  coop -v
+  coop --version
 
 ==============================================================================
 
-coop sessions — serve and inspect local remote sessions.
+coop acp — connect your editor to an agent running in a Coop box
 
-  Usage: coop sessions serve [--state <path>] [--policies <path>] [--socket <path>]
-         coop sessions doctor [--socket <path>] [--json]
-         coop sessions policies [--policies <path>] [--json]
-         coop sessions compact [--state <path>] --backup <path>
+Usage:
+  coop acp <agent|preset> [options]
 
-  'serve' owns the state root and exposes the v1 JSON API over an owner-only Unix
-  socket. It never listens on TCP. 'doctor' checks only that Unix socket and exits
-  nonzero when the service is unavailable or unready. 'policies' validates the
-  trusted policy file and prints the immutable policy and model-independent authority
-  digests a fleet worker must advertise; JSON output contains policy_file,
-  policy_digests, and policy_authority_digests. 'compact' stops
-  if the state root is active, writes and verifies a new SQLite backup, replaces
-  legacy full-turn retry receipts with prompt-free receipts, checks integrity,
-  then vacuums reclaimed pages. It never overwrites the backup path.
+EDITOR SETUP
+  Set the editor's agent command to coop and its arguments to:
 
-  A policy's target: takes one target or a LIST of up to 4 — a fallback ladder, and
-  it may cross providers: [codex:gpt-5.6-sol/xhigh@oncall, claude@oncall]. A rate
-  limit moves the session to the next free rung and re-delivers the same turn; when
-  every rung is cooling the turn fails 'rate_limited' for the client to retry.
+  ["acp", "claude"]
+  ["acp", "codex:gpt-6-astra/high@personal"]
+  ["acp", "frontier"]
 
-  Defaults:
-    state    ~/.local/state/coop/sessions
-    policies ~/.config/coop/session-policies.yaml
-    socket   <state>/control.sock
+  Your editor must support ACP, the Agent Client Protocol.
+
+OPTIONS
+  --peer <agent>          start a peer provider for read-only advice
+                         repeat to add more peers
+  --bare                 run without the repository, project context, or tools
+
+  --egress <mode>        choose filtered, open, or none
+  --allow-domain <host>  allow TLS access to this host on port 443
+                         repeat to allow more hosts
+  --egress-rules <path>   load network rules from a file
+
+  --bare requires a single agent, without peers or a preset.
+  It requires Docker and --egress open or none.
+
+SWITCHING AGENTS
+  Use the editor's Provider and Account controls to change who runs the session.
+  A preset chooses its agents automatically. Select None in Preset to choose
+  a provider or account yourself.
+
+  Switching providers carries the conversation into a new agent session.
+  Account changes keep the conversation with the same provider.
+
+READ-ONLY WORK
+  coop fork investigation acp claude --readonly
+
+  Replace investigation with your fork's name.
+
+TROUBLESHOOTING
+  Set COOP_ACP_TRACE=1 in your editor's agent environment to record a trace.
+  Trace files are saved as ~/.config/coop/acp-trace-<pid>.log and may contain
+  your prompts and file contents.
+
+  COOP_ACP_WARM=0 disables background boxes kept ready for provider switching.
+  COOP_ACP_CARRY_TOKENS sets the conversation size carried between providers.
+
+  After replacing the Coop binary, send SIGHUP to the specific ACP process
+  to reload it. SIGINT and SIGTERM stop it.
+
+RELATED HELP
+  coop help models
+  coop help presets
+For more details see:
+  coop help net
 
 ==============================================================================
 
-coop worker — connect one private Coop daemon to Responder.
+coop sessions — let other applications start and manage agents
 
-  Usage: coop worker connect --config <absolute-path>
+Usage: coop sessions <command>
 
-  The connector opens one outbound mutual-TLS HTTPS poll stream and maps only
-  versioned Responder commands to the owner-private Coop Unix API. It journals
-  each command before execution and resends terminal results until Responder
-  durably acknowledges them. It never opens an inbound TCP port or accepts a
-  generic shell command. Populate policy_digests and policy_authority_digests
-  from the exact output of 'coop sessions policies --json'.
+COMMANDS
+  connect   connect this machine to a remote controller
+  serve     run the local session service on its own
+  doctor    check whether the local service is ready
+  policies  show the policies that control allowed sessions
+  compact   back up session data and reduce its disk usage
 
-==============================================================================
+CONNECT THIS MACHINE
+  coop sessions connect --config /path/to/worker.json
 
-coop prompt — one compact status line for a shell prompt, tmux, or menubar.
+  Uses the running local service, or starts it if needed.
+  The configuration selects the controller and the sessions it is allowed to request.
 
-  Usage: coop prompt
-
-  Prints this repo's state on ONE line — task counts and fork/loop activity, with a
-  compact separator between non-zero segments. Nothing prints when the queue is empty
-  and no forks exist, so an embedding prompt stays clean.
-
-  Read-only and cheap: it reads the task dirs + fork pidfiles (plus one git-root
-  lookup) — never a per-fork git call and never docker — so it's safe to run on
-  every prompt redraw. Wire it into your shell prompt (a starship custom command)
-  or tmux, e.g. set -g status-right '#(cd #{pane_current_path}; coop prompt)'.
+COMMAND HELP
+  coop help sessions connect
+  coop help sessions serve
+  coop help sessions doctor
+  coop help sessions policies
+  coop help sessions compact
 
 ==============================================================================
 
-coop completion <bash|zsh> — print a shell completion script.
+coop sessions serve — start the local session service
 
-  Usage: coop completion <bash|zsh>
+Usage:
+  coop sessions serve [options]
 
-  bash: coop completion bash > ~/.local/share/bash-completion/completions/coop
-  zsh:  coop completion zsh > "${fpath[1]}/_coop"
-        then add 'source "${fpath[1]}/_coop"' AFTER compinit in ~/.zshrc. Existing
-        file-only installs must add this source line; it enables command-local nocorrect
-        for coop arguments without changing Zsh correction for other commands.
+OPTIONS
+  --state <path>     directory containing session data
+  --policies <path>  file defining the allowed sessions
+  --socket <path>    Unix socket used by local clients
 
-  Completes commands and verbs, and — via a hidden 'coop __complete' — live values
-  (fork names, task ids, credentials), all from local reads.
+DEFAULT PATHS
+  Session data  ~/.local/state/coop/sessions
+  Policies      ~/.config/coop/session-policies.yaml
+  Socket        <session data>/control.sock
+
+RUNNING THE SERVICE
+  Leave this command running. Press Ctrl-C to stop it.
+
+  Check it from another terminal:
+  coop sessions doctor
+
+  To connect it to a remote controller:
+  coop help sessions connect
+
+==============================================================================
+
+coop sessions doctor — check the local session service
+
+Usage:
+  coop sessions doctor [options]
+
+OPTIONS
+  --socket <path>  check this Unix socket
+  --json           print the result as JSON
+
+EXAMPLES
+  coop sessions doctor
+  coop sessions doctor --socket /path/to/control.sock
+
+  The command succeeds when the service responds and is ready for sessions.
+
+==============================================================================
+
+coop sessions policies — show remote session configurations
+
+Usage: coop sessions policies [options]
+
+Each configuration names the project a remote application can use, its agents and
+accounts, whether they can edit files, and the network rules they must follow.
+
+OPTIONS
+  --policies <path>  read configurations from this file
+  --json            print verification data for remote applications as JSON
+
+DEFAULT FILE
+  ~/.config/coop/session-policies.yaml
+
+EXAMPLES
+  coop sessions policies
+  coop sessions policies --json
+
+To connect this machine to a remote controller:
+  coop help sessions connect
+
+==============================================================================
+
+coop sessions compact — back up session data and reduce its disk usage
+
+Usage:
+  coop sessions compact --backup <path> [--state <path>]
+
+OPTIONS
+  --backup <path>  save a verified database backup to a new file
+  --state <path>   use this session-data directory
+
+EXAMPLE
+  coop sessions compact --backup /path/to/session-backup.sqlite
+
+BEFORE RUNNING
+  Stop the session service.
+  Choose a new backup file outside the session-data directory.
+  Its parent directory must already exist.
+
+  The backup contains private session data. Keep it protected.
+
+DEFAULT SESSION DATA
+  ~/.local/state/coop/sessions
+
+==============================================================================
+
+coop sessions connect — connect this machine to a remote controller
+
+Usage: coop sessions connect --config <path>
+
+OPTIONS
+  --config <path>  JSON file with this machine's connection and session settings
+
+CONFIGURATION
+  Selects the controller, certificates, repositories, and allowed session policies.
+  Uses the ready local service, or starts one when none is running.
+
+  Default session policies: ~/.config/coop/session-policies.yaml
+  Default session storage:  ~/.local/state/coop/sessions
+
+  Review session configurations:
+    coop sessions policies
+
+RUNNING
+  Leave this command running. Connection failures are retried automatically.
+  Press Ctrl-C to stop connecting. A service started by this command also stops;
+  a service that was already running is left alone.
+
+==============================================================================
+
+coop prompt — print a short project status for your shell or tmux
+
+Usage:
+  coop prompt
+
+OUTPUT
+  Shows task counts, forks, running fork loops, and an unsigned-commit marker.
+  Empty counts are omitted. When there is nothing to show, it prints nothing.
+
+EXAMPLE
+  2 todo · 1 in progress · 1 blocked · 3 forks (2 running) · unsigned commit
+
+TMUX
+  Add this to ~/.tmux.conf:
+  set -g status-right '#(cd "#{pane_current_path}" && coop prompt)'
+
+SHELL PROMPTS
+  Run coop prompt from your prompt's custom-command configuration.
+
+==============================================================================
+
+coop completion — print shell integration for Bash or Zsh
+
+Usage:
+  coop completion <bash|zsh>
+
+BASH
+  Save the completion script:
+  mkdir -p ~/.config/coop
+  coop completion bash > ~/.config/coop/completion.bash
+
+  Add this to ~/.bashrc:
+  source ~/.config/coop/completion.bash
+
+ZSH
+  Save the integration script:
+  mkdir -p ~/.config/coop
+  coop completion zsh > ~/.config/coop/completion.zsh
+
+  Add this after compinit in ~/.zshrc:
+  source ~/.config/coop/completion.zsh
+
+  This also stops Zsh from suggesting corrections to Coop arguments such
+  as claude and codex.
+
+WHAT IT COMPLETES
+  Commands, options, agents, models, accounts, presets, forks, and task IDs.
 ```

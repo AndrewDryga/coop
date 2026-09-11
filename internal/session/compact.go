@@ -27,6 +27,12 @@ type TurnOperationCompactionResult struct {
 	DatabaseBytesAfter  int64
 }
 
+// ErrCompactionUnfinished marks a failure that happened AFTER the retry-receipt rewrite committed:
+// the receipts really are compacted and only the space reclamation behind them did not finish. It
+// is the one thing a caller cannot infer from the result — an accumulated count proves nothing
+// about a transaction that never committed — so the stage is carried on the error itself.
+var ErrCompactionUnfinished = errors.New("retry receipts were compacted, but compaction did not finish")
+
 // CompactTurnOperationResults opens an existing session database exclusively,
 // creates and verifies a new backup, rewrites legacy full-turn receipts, checks
 // database integrity, and only then vacuums reclaimed pages. It deliberately is
@@ -89,17 +95,17 @@ func (s *Store) compactTurnOperationResults(ctx context.Context, backupPath stri
 		return result, fmt.Errorf("compact retry receipts (backup retained at %s): %w", backupPath, err)
 	}
 	if _, err := s.db.ExecContext(ctx, "VACUUM"); err != nil {
-		return result, fmt.Errorf("retry receipts compacted and backup retained at %s, but reclaim database space: %w", backupPath, err)
+		return result, fmt.Errorf("%w: retained at %s, but reclaim database space: %w", ErrCompactionUnfinished, backupPath, err)
 	}
 	if err := checkpointWAL(ctx, s.db); err != nil {
-		return result, fmt.Errorf("retry receipts compacted and backup retained at %s, but checkpoint compacted database: %w", backupPath, err)
+		return result, fmt.Errorf("%w: retained at %s, but checkpoint compacted database: %w", ErrCompactionUnfinished, backupPath, err)
 	}
 	result.DatabaseBytesAfter, err = regularFileSize(databasePath)
 	if err != nil {
-		return result, fmt.Errorf("retry receipts compacted and backup retained at %s, but measure compacted database: %w", backupPath, err)
+		return result, fmt.Errorf("%w: retained at %s, but measure compacted database: %w", ErrCompactionUnfinished, backupPath, err)
 	}
 	if err := verifySQLiteDatabase(databasePath, SchemaVersion); err != nil {
-		return result, fmt.Errorf("retry receipts compacted and backup retained at %s, but verify compacted database: %w", backupPath, err)
+		return result, fmt.Errorf("%w: retained at %s, but verify compacted database: %w", ErrCompactionUnfinished, backupPath, err)
 	}
 	return result, nil
 }

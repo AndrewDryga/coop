@@ -1,0 +1,6 @@
+
+✗ Could not compact session data
+
+      /path/to/session-backup.sqlite already exists.
+
+  Choose a new backup path.

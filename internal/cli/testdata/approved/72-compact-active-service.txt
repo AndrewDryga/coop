@@ -1,0 +1,6 @@
+
+✗ Could not compact session data
+
+      The session service is using this data directory.
+
+  Stop the service, then run the command again.

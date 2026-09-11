@@ -888,7 +888,7 @@ func TestACPControlAutoRotate(t *testing.T) {
 	if sel := c.selection(); sel.Account != "work" {
 		t.Errorf("expected rotation to work, selection = %+v", sel)
 	}
-	if !strings.Contains(string(out), "switched to work") {
+	if !strings.Contains(string(out), `Switched to \"work\". Send your last message again.`) {
 		t.Errorf("editor should get coop's switched-to note, got: %s", out)
 	}
 
@@ -1284,7 +1284,7 @@ func TestACPControlAuthenticationGivesPinnedLoginRecovery(t *testing.T) {
 	if restart {
 		t.Fatal("a pinned account with no automatic fallback must not restart-loop")
 	}
-	if !bytes.Contains(out, []byte("run: coop login claude@personal")) || bytes.Contains(out, []byte("OAuth session expired")) || !bytes.Contains(out, []byte(`"code":-32603`)) {
+	if !bytes.Contains(out, []byte("Sign in to claude@personal on the host: coop login claude@personal")) || bytes.Contains(out, []byte("OAuth session expired")) || !bytes.Contains(out, []byte(`"code":-32603`)) {
 		t.Fatalf("pinned account recovery is not actionable: %s", out)
 	}
 }
@@ -1351,7 +1351,7 @@ func TestACPControlAuthenticationAutoSkipsRateLimitedFallback(t *testing.T) {
 	c.limited[accountLimitKey("claude", "work")] = time.Now().Add(time.Hour)
 	authError := []byte(`{"jsonrpc":"2.0","id":7,"error":{"code":-32000,"message":"Authentication required"}}` + "\n")
 	out, restart := c.toEditor(authError)
-	if !restart || !bytes.Contains(out, []byte("switched to claude@backup")) {
+	if !restart || !bytes.Contains(out, []byte("Coop switched this session to claude@backup")) {
 		t.Fatalf("automatic auth fallback should skip cooling work: out=%s restart=%v", out, restart)
 	}
 	if c.autoAccount != "backup" {
@@ -1373,7 +1373,7 @@ func TestACPControlWaitsForReset(t *testing.T) {
 	if !restart {
 		t.Fatal("must restart to wait on the reset")
 	}
-	if !strings.Contains(string(out), "Waiting for a reset on credential personal") {
+	if !strings.Contains(string(out), `Waiting for account \"personal\" to reset its usage limit at `) {
 		t.Errorf("editor should get the waiting status, got: %s", out)
 	}
 	if !strings.Contains(string(out), "config_option_update") {

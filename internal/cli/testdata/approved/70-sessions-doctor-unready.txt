@@ -1,0 +1,6 @@
+
+✗ Session service is not ready
+
+      The service responded but cannot accept sessions yet.
+
+  Check the output of coop sessions serve.

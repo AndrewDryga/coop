@@ -1,0 +1,34 @@
+coop shell — open a shell in the box
+
+Usage:
+  coop shell [options]
+
+EXAMPLES
+  coop shell
+  coop shell --readonly --egress none
+
+OPTIONS
+  --readonly  mount the repository read-only
+  --bare      open a shell without the repository or project context
+
+  --egress <mode>        choose filtered, open, or none
+  --allow-domain <host>  allow TLS access to this host on port 443
+                          repeat to allow more hosts
+  --egress-rules <path>   load network rules from a file
+
+  --readonly and --bare cannot be combined.
+  These two modes require Docker and --egress open or none.
+
+USING THE SHELL
+  The shell opens in your project inside the box.
+  Type exit or press Ctrl-D to return to your host.
+
+  With --bare, the project is not mounted.
+
+NETWORK ACCESS
+  filtered  allow traffic permitted by approved network rules
+  open      allow unrestricted internet access
+  none      block internet access
+
+For more details see:
+  coop help net

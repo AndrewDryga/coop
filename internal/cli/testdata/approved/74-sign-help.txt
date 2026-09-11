@@ -1,0 +1,24 @@
+coop sign — sign this branch's unpushed commits with your host key
+
+Usage:
+  coop sign [--from <ref>]
+
+EXAMPLES
+  coop sign
+  coop sign --from origin/main
+
+OPTIONS
+  --from <ref>   sign commits after this Git reference
+
+HOW IT WORKS
+  By default, Coop signs commits after the branch's upstream reference.
+  Without an upstream, use --from with the last commit you pushed.
+
+  Signing changes commit IDs. It preserves the committed files and your
+  working changes. The selected range must not contain merge commits.
+
+  Coop uses your host's Git signing settings.
+
+AUTOMATIC SIGNING
+  When commit.gpgsign is enabled, Coop signs commits after ordinary agent runs
+  and loop cycles. Fork commits are signed when you merge the fork.

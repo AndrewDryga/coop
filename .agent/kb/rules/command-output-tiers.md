@@ -2,7 +2,7 @@
 name: command-output-tiers
 description: "Unprefixed human output, truthful progress, useful results, and readable consequences"
 scope: cli-output
-sources: [internal/ui/ui.go, internal/ui/usage.go, internal/ui/section.go, internal/box/launch_sections.go, internal/cli/launch_box.go, internal/cli/commands.go]
+sources: [internal/ui/ui.go, internal/ui/usage.go, internal/ui/section.go, internal/box/launch_sections.go, internal/box/run.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/session_cmd.go]
 check: "none"
 updated: 2026-09-11
 ---
@@ -59,6 +59,18 @@ is not proof the live helpers conform; regression tests must exercise all output
 See also [[help-output-style]] and [[no-color-in-width-fields]].
 
 ## Changelog
+- 2026-09-11 — the shared shapes this card describes now EXIST, so a slice stops hand-rolling them:
+  `ui.Failure` is a runtime failure in the `ui.UsageError` block (headline, six-space cause that may
+  be several lines, two-space rows; an empty label renders as plain prose); `ui.Warning` is the same
+  block at column zero with ⚠, for something that did not stop the command; `ui.Heading` is
+  `ui.Section` without the leading blank, for the FIRST section of a command's output — a narration
+  tracks "have I opened one yet" itself (`launchSections.section`) instead of every command starting
+  with a stray empty line. The box-stop rule is implemented: `launchSections.stopped` prints
+  `The Coop box has stopped — <reason>.` only after the teardown this process owns confirms removal,
+  and `stopping()` says `Stopping the Coop box…` only when that teardown outlasts its threshold.
+  Swept: the launch narration, the ACP trace/session-restore copy (which writes the same bytes by
+  hand — `internal/acpproxy` may not import `internal/ui`), sessions doctor/compact/policies, sign,
+  and the serve-port and services adjuncts. Remaining `coop:`-era text: none in human output.
 - 2026-09-11 — the shared input-error renderer (a2cfb50, `ui.UsageError`) joins the card as the one
   shape rejected input takes; its fixtures are gated byte for byte.
 - 2026-09-11 — second full correction batch: swept login, preset, loop, deletion, network and

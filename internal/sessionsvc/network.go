@@ -96,23 +96,33 @@ type PolicyNetwork struct {
 // them and again on a fenced create, so an approval edited on the host between those two moments
 // becomes an explicit refusal instead of a session running under rules nobody pinned.
 func ResolvePolicyNetwork(cfg *config.Config, policy Policy) (PolicyNetwork, error) {
+	network, _, err := ResolvePolicyNetworkSnapshot(cfg, policy)
+	return network, err
+}
+
+// ResolvePolicyNetworkSnapshot is ResolvePolicyNetwork plus the compiled snapshot behind it, so a
+// reader can be shown the grants this policy actually resolves to — the provider bundles and the
+// project's approved rules together — rather than re-deriving them from the policy YAML, which
+// would omit whatever the project itself contributed. The PolicyNetwork is byte-identical to what
+// ResolvePolicyNetwork returns: this is evidence for a human view, not a new wire field.
+func ResolvePolicyNetworkSnapshot(cfg *config.Config, policy Policy) (PolicyNetwork, egress.Snapshot, error) {
 	if policy.Mode == agents.ModeBare {
 		// Nothing host-side feeds a bare policy's reach — see admitSessionNetwork.
-		return PolicyNetwork{Mode: policy.Egress.resolvedMode()}, nil
+		return PolicyNetwork{Mode: policy.Egress.resolvedMode()}, egress.Snapshot{}, nil
 	}
 	if cfg == nil {
 		// No host configuration means no credentials, no runtime and no authority root to
 		// resolve against — the same answer admission gives.
 		if policy.Egress.configured() && policy.Egress.resolvedMode() != egress.Open {
-			return PolicyNetwork{}, errors.New("restricted networking requires host configuration")
+			return PolicyNetwork{}, egress.Snapshot{}, errors.New("restricted networking requires host configuration")
 		}
-		return PolicyNetwork{Mode: egress.Open}, nil
+		return PolicyNetwork{Mode: egress.Open}, egress.Snapshot{}, nil
 	}
 	// The session's own workspace, fork and companions do not exist yet, and none of them reach
 	// the compile: they describe what a launch MOUNTS, while the fingerprint is compiled from the
 	// project's approval, the policy's rules, the provider bundles and the shared MCP hosts. The
 	// policy's repository stands in for them, which is the project the approval belongs to anyway.
-	mode, fingerprint, err := box.ResolveSessionNetwork(cfg,
+	mode, snapshot, err := box.ResolveSessionNetworkSnapshot(cfg,
 		sessionNetworkAdmissionSpec(cfg, policy, policy.Repository, "", nil),
 		box.SessionNetworkAdmission{
 			Mode:               sessionPolicyEgressMode(policy),
@@ -121,9 +131,9 @@ func ResolvePolicyNetwork(cfg *config.Config, policy Policy) (PolicyNetwork, err
 			OmitMCP:            policy.OmitMCP,
 		})
 	if err != nil {
-		return PolicyNetwork{}, err
+		return PolicyNetwork{}, egress.Snapshot{}, err
 	}
-	return PolicyNetwork{Mode: mode, Fingerprint: fingerprint}, nil
+	return PolicyNetwork{Mode: mode, Fingerprint: snapshot.Fingerprint}, snapshot, nil
 }
 
 // resolvePolicyNetwork is the daemon's own resolution of one policy, fresh from host state.

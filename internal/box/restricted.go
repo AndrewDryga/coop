@@ -597,20 +597,28 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	if spec.Ctx != nil {
 		code, runErr := rt.RunInterruptible(spec.Ctx, stdin, stdout, stderr, args...)
 		started = true
-		sections.stopping(stopReason(code, runErr, nil))
+		reason := stopReason(code, runErr, nil)
 		if spec.Ctx.Err() == nil || spec.RunID == "" {
+			sections.stopped(reason) // the client ran to its end and --rm took the box with it
 			return code, runErr
 		}
+		// A cancelled client leaves the daemon's container behind, so the stop is only real once
+		// this backstop removal proves it.
+		settled := sections.stopping()
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_, cleanupErr := rt.RemoveByLabel(cleanupCtx, LabelRun, spec.RunID)
+		settled()
+		if cleanupErr == nil {
+			sections.stopped(reason)
+		}
 		return code, errors.Join(runErr, cleanupErr)
 	}
 	code, runErr := rt.Run(stdin, stdout, stderr, args...)
 	// The plain client ran the box to its end, so its exit status is the main process's; a client
 	// that could not start is the one case with no box to stop, narrated as the failure above.
 	if started = runErr == nil; started {
-		sections.stopping(stopReason(code, nil, nil))
+		sections.stopped(stopReason(code, nil, nil))
 	}
 	return code, runErr
 }

@@ -1,0 +1,6 @@
+
+✗ Could not sign these commits
+
+      No branch is checked out.
+
+  Check out the branch you want to sign.

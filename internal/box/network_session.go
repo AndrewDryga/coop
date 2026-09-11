@@ -114,35 +114,48 @@ func AdmitSessionNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, o
 // A policy it cannot resolve — no approval for the project, no host setup record, a rule this
 // runtime cannot enforce — is an error, never a quiet open answer.
 func ResolveSessionNetwork(cfg *config.Config, spec RunSpec, options SessionNetworkAdmission) (egress.Mode, string, error) {
-	plan, err := planSessionNetwork(cfg, spec, options)
+	mode, snapshot, err := ResolveSessionNetworkSnapshot(cfg, spec, options)
 	if err != nil {
 		return "", "", err
+	}
+	return mode, snapshot.Fingerprint, nil
+}
+
+// ResolveSessionNetworkSnapshot is ResolveSessionNetwork with its EVIDENCE: the compiled snapshot
+// a filtered policy resolves to, so a reader can be shown the grants themselves — the provider
+// bundles and the project's approved rules — instead of the policy YAML they could already read.
+// The fingerprint on it is the one ResolveSessionNetwork returns; an open or offline policy
+// resolves to no snapshot, because nothing was compiled to show.
+func ResolveSessionNetworkSnapshot(cfg *config.Config, spec RunSpec, options SessionNetworkAdmission) (egress.Mode, egress.Snapshot, error) {
+	plan, err := planSessionNetwork(cfg, spec, options)
+	if err != nil {
+		return "", egress.Snapshot{}, err
 	}
 	mode, err := networkstate.PreviewAdmissionMode(plan.root, plan.project, plan.exposed, plan.input)
 	if err != nil {
-		return "", "", err
+		return "", egress.Snapshot{}, err
 	}
 	if mode != egress.Filtered {
-		return mode, "", nil
+		return mode, egress.Snapshot{}, nil
 	}
 	if err := plan.prepareFiltered(cfg, spec, options); err != nil {
-		return "", "", err
+		return "", egress.Snapshot{}, err
 	}
 	// OpenExisting, never Open: asking what a policy resolves to must not be the act that creates
 	// this host's owner key. A host with no network authority yet has no fingerprint to report.
 	store, err := networkstate.OpenExisting(plan.root, plan.exposed)
 	if errors.Is(err, os.ErrNotExist) {
-		return "", "", errors.New("this host has no network records to resolve against — run 'coop net setup', then 'coop net approve' in the project")
+		return "", egress.Snapshot{}, errors.New("this host has no network records to resolve against — run 'coop net setup', then 'coop net approve' in the project")
 	}
 	if err != nil {
-		return "", "", err
+		return "", egress.Snapshot{}, err
 	}
 	defer store.Close()
 	policy, err := resolveFilteredNetwork(cfg, spec, store, plan.project, plan.input)
 	if err != nil {
-		return "", "", err
+		return "", egress.Snapshot{}, err
 	}
-	return mode, policy.Fingerprint, nil
+	return mode, policy, nil
 }
 
 // sessionNetworkPlan is what a session policy resolves to before any store is opened: the

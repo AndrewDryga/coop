@@ -1,0 +1,14 @@
+coop sessions doctor — check the local session service
+
+Usage:
+  coop sessions doctor [options]
+
+OPTIONS
+  --socket <path>  check this Unix socket
+  --json           print the result as JSON
+
+EXAMPLES
+  coop sessions doctor
+  coop sessions doctor --socket /path/to/control.sock
+
+  The command succeeds when the service responds and is ready for sessions.

@@ -138,7 +138,8 @@ func Main(argv []string) int {
 }
 
 // reportExit renders a command's error the way its kind deserves and returns the process exit code:
-// rejected input gets the shared usage block (see ui.UsageError) and exit 2, a launch section that
+// rejected input gets the shared usage block (see ui.UsageError) and exit 2, a runtime failure drawn
+// in that same block (ui.CommandFailed) exits 1 because the input was fine, a launch section that
 // already rendered its own failure (ui.Fail) is not repeated, and everything else gets one ✗ line.
 func reportExit(code int, err error) int {
 	if err != nil {
@@ -147,7 +148,10 @@ func reportExit(code int, err error) int {
 		case errors.As(err, &usage):
 			ui.PrintUsageError(usage)
 			if code <= 0 {
-				code = 2
+				code = usage.ExitCode
+				if code == 0 {
+					code = 2
+				}
 			}
 		case errors.Is(err, ui.ErrReported):
 		default:
@@ -280,8 +284,6 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return a.cmdPrompt(rest)
 	case "sessions": // host-local: the owner-private remote session controller
 		return a.cmdSessions(rest)
-	case "worker": // host-local: outbound mTLS connector for one private Coop daemon
-		return a.cmdWorker(rest)
 	case "completion": // pure-local: print a shell completion script
 		return cmdCompletion(rest)
 	case "__complete": // hidden: dynamic completion candidates for the shell scripts
@@ -331,7 +333,7 @@ func (a *app) cmdBacklog(args []string) (int, error) {
 // completion menu, and the manual's coverage list. Keep in sync with the dispatch switch above.
 var topLevelCommands = []string{
 	"run", "shell", "login", "credentials", "presets", "models", "acp", "fork", "tasks", "context", "backlog",
-	"loop", "up", "down", "init", "doctor", "net", "check-secrets", "sign", "build", "update", "completion", "prompt", "sessions", "worker", "help", "version",
+	"loop", "up", "down", "init", "doctor", "net", "check-secrets", "sign", "build", "update", "completion", "prompt", "sessions", "help", "version",
 }
 
 // helpForPath prints the page for one command PATH, so `coop help tasks add` and
@@ -355,7 +357,10 @@ func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
 			guess, _ := nearestCommand(path[1], verbs)
 			return 2, ui.UnknownCommandPath(path[:2], guess, asHelp)
 		}
-		if leaf := cmd + " " + path[1]; commandHelp[leaf] != "" {
+		// A leaf with its own page answers for itself. Leaf pages register under the FULL path
+		// ("sessions serve"), in the same commandHelp map as their family, so the manual and
+		// `coop help <family> <leaf>` can never disagree about which page a leaf has.
+		if leaf := strings.Join(path, " "); commandHelp[leaf] != "" {
 			printTopicHelp(leaf, commandHelp[leaf])
 			return 0, nil
 		}
@@ -387,7 +392,7 @@ func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
 		code, _ := forkHelp(name)
 		return code, nil
 	case cmd == "run":
-		printCommandHelp(runHelp)
+		printHelpPage(runHelp) // self-contained: the page closes with its own `coop help net` pointer
 		return 0, nil
 	case cmd == "help":
 		// `coop help help` — help IS the top-level reference, so print it (not a broken pointer
@@ -428,8 +433,6 @@ func familyVerbs(cmd string) ([]string, bool) {
 		return netCommands, true
 	case "sessions":
 		return sessionCommands, true
-	case "worker":
-		return workerCommands, true
 	}
 	return nil, false
 }

@@ -1,0 +1,9 @@
+Remote session configurations
+Each name defines which project and agents a remote application can use.
+
+questions
+  Access   Questions and answers only; no project files or tools
+  Agent    claude:opus@personal
+  Network  Unrestricted
+
+Edit configurations: ~/.config/coop/session-policies.yaml

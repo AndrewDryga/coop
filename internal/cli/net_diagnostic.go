@@ -171,7 +171,7 @@ func netCheckQuery(opts netDiagnosticOptions) (netDiagnosticOptions, error) {
 				Headline: "An IP address needs a run and connection type",
 				Rows: [][2]string{
 					{"Usage:", "coop net check <ip> --run <run> --protocol <tcp|udp> --port <n>"},
-					{"", "coop net check <ip> --run <run> --icmp"},
+					{ui.Continuation, "coop net check <ip> --run <run> --icmp"},
 					{"Help:", "coop help net check"},
 				},
 			}

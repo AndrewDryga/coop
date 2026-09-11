@@ -7,6 +7,8 @@
   "identity_file": "/var/lib/coop-worker/identity.pem",
   "enrollment_token_file": "/etc/coop/worker-enrollment-token",
   "coop_socket": "/var/lib/coop-sessions/control.sock",
+  "session_state_dir": "/var/lib/coop-sessions",
+  "session_policy_path": "/etc/coop/session-policies.yaml",
   "journal_dir": "/var/lib/coop-worker/journal",
   "sandbox_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "policy_digests": {

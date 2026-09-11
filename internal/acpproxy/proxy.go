@@ -1923,7 +1923,7 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 							if recoveryMessage != "" {
 								message = recoveryMessage
 							}
-							fmt.Fprintf(warnOut, "coop acp: session %s could not be re-created after the box restarted: %s\n", eid, message)
+							fmt.Fprintf(warnOut, "\n✗ Could not restore the editor session\n\n      The agent could not reopen the session after its box restarted.\n      %s\n\n  Start a new session in your editor.\n", message)
 							Trace("replay: session %s re-create failed: %s", eid, message)
 							failures = append(failures, replayFailure{eid, message})
 						}
@@ -1938,7 +1938,7 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 							}
 							failures = append(failures, replayFailure{eid, message})
 						} else if !responseSucceeded(h) {
-							fmt.Fprintf(warnOut, "coop acp: session %s did not reload after the box restarted; re-creating it fresh (context carried best-effort): %s\n", eid, h.Error)
+							fmt.Fprintf(warnOut, "⚠ Could not restore the editor session\n\n      The saved session state could not be read.\n      %s\n\n  Starting a new session.\n", h.Error)
 							Trace("replay: session %s did NOT reload — re-creating: %s", eid, h.Error)
 							recreate = append(recreate, eid)
 						} else {
@@ -2146,7 +2146,7 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 			return errReplaySuperseded
 		}
 		line := sessionNoticeLine(f.editorID,
-			"⚠ coop: this session could not be re-established after the box restarted: "+f.msg+
+			"⚠ This session could not be re-established after the box restarted: "+f.msg+
 				"\nSwitch the provider or account back (or close the conflicting session), then send a message to retry.")
 		traceLine("box→editor(replay-failed)", line)
 		_, _ = p.out.Write(line)
@@ -2790,7 +2790,7 @@ func loadRequest(id, sid string, params json.RawMessage) []byte {
 }
 
 func errorResponse(id string) []byte {
-	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32000,"message":"coop: agent restarted, please retry"}}` + "\n")
+	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32000,"message":"The agent restarted — send your message again."}}` + "\n")
 }
 
 func successResponse(id string) []byte {
@@ -2799,21 +2799,21 @@ func successResponse(id string) []byte {
 
 func sessionUnavailableResponse(id, sessionID, provider string) []byte {
 	message, _ := json.Marshal(fmt.Sprintf(
-		"coop: session %s is not available on provider %s; switch back or start a new thread", sessionID, provider,
+		"Session %s is not available on provider %s. Switch back, or start a new thread.", sessionID, provider,
 	))
 	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32002,"message":` + string(message) + `}}` + "\n")
 }
 
 func sessionIDCollisionResponse(id, sessionID string) []byte {
 	message, _ := json.Marshal(fmt.Sprintf(
-		"coop: provider returned duplicate session id %s; the existing thread remains active", sessionID,
+		"The provider returned a duplicate session id %s. The existing thread remains active.", sessionID,
 	))
 	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32603,"message":` + string(message) + `}}` + "\n")
 }
 
 func authenticationUnavailableResponse(id, provider, methodID string) []byte {
 	message, _ := json.Marshal(fmt.Sprintf(
-		"coop: authentication method %q is not advertised by provider %s; use that provider's Coop account selector or run coop login %s@account",
+		"Authentication method %q is not advertised by provider %s. Use its Account selector, or run coop login %s@account on the host.",
 		methodID, provider, provider,
 	))
 	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32602,"message":` + string(message) + `}}` + "\n")
@@ -2821,19 +2821,19 @@ func authenticationUnavailableResponse(id, provider, methodID string) []byte {
 
 func authenticationBusyResponse(id, provider, account string) []byte {
 	message, _ := json.Marshal(fmt.Sprintf(
-		"coop: authentication is already in progress for %s@%s; wait for it to finish before retrying",
+		"Authentication is already in progress for %s@%s. Wait for it to finish, then retry.",
 		provider, account,
 	))
 	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32003,"message":` + string(message) + `}}` + "\n")
 }
 
 func targetErrorResponse(id, detail string) []byte {
-	message, _ := json.Marshal("coop: ACP target settings failed: " + detail + "; switch the target or retry the session")
+	message, _ := json.Marshal("The session settings could not be applied: " + detail + ". Switch the target, or retry the session.")
 	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32001,"message":` + string(message) + `}}` + "\n")
 }
 
 func restartPromptRejectedResponse(id, reason string) []byte {
-	message, _ := json.Marshal("coop: cannot accept this prompt while the provider switch is finishing: " + reason)
+	message, _ := json.Marshal("This prompt cannot be accepted while the provider switch is finishing: " + reason)
 	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32001,"message":` + string(message) + `}}` + "\n")
 }
 
@@ -2842,7 +2842,7 @@ func lifecyclePromptResponse(id, action string) []byte {
 	if action == "deleted" {
 		recovery = "start a new thread"
 	}
-	message, _ := json.Marshal(fmt.Sprintf("coop: prompt cancelled because the thread was %s; %s", action, recovery))
+	message, _ := json.Marshal(fmt.Sprintf("The prompt was cancelled because the thread was %s. %s", action, recovery))
 	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32004,"message":` + string(message) + `}}` + "\n")
 }
 

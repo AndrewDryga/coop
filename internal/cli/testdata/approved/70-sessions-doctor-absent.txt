@@ -1,0 +1,6 @@
+
+✗ Session service is unavailable
+
+      No service is listening at /Users/andrewdryga/.local/state/coop/sessions/control.sock.
+
+  Run coop sessions serve to start it.

@@ -2,7 +2,7 @@
 name: worker-storage-accounting
 description: the worker measures allocated blocks and charges a hardlinked baseline once, stages a discard by renaming before deleting, and closes allocation on used-byte watermarks with a free-byte reserve underneath
 subsystem: worker
-sources: [internal/forkspace/usage.go, internal/forkspace/discard_stage.go, internal/sessionsvc/storage.go, internal/sessionsvc/workspace.go, internal/workerproto/storage.go, internal/workerconnector/storage.go, docs/session-api.md, docs/worker.md]
+sources: [internal/forkspace/usage.go, internal/forkspace/discard_stage.go, internal/sessionsvc/storage.go, internal/sessionsvc/workspace.go, internal/workerproto/storage.go, internal/workerconnector/storage.go, docs/session-api.md]
 updated: 2026-09-11
 ---
 
@@ -48,4 +48,6 @@ only seconds old is treated as a create still in flight, because
 `ensureSessionWorkspaceContext` writes the workspace before the session row exists.
 
 ## Changelog
+- 2026-09-11 — `docs/worker.md` folded into `docs/session-api.md` with the `coop sessions connect`
+  consolidation; the workspace-storage section lives there now.
 - 2026-09-11 — created with the worker-side byte accounting, pressure check and owned-orphan scan.

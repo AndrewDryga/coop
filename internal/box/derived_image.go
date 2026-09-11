@@ -100,15 +100,21 @@ func filteredProjectImage(ctx context.Context, rt runtime.Runtime, docker filter
 		// project's own layers are still code that runs as root at build time, so
 		// say when nobody has committed the file that defines them.
 		if fileUntracked(repo, dfRel) {
-			ui.Note("note: %s is untracked in git — it defines this box, and an agent can author one; review it", dfRel)
+			ui.Warning("The project Dockerfile is not tracked by Git",
+				dfRel+" controls what is installed in the box.",
+				"Review the file before using this image.")
 		}
 		// A first build takes minutes. Silence reads as a hung launch, so the
 		// operator gets the same narration `coop build` gives them.
-		ui.Note("building %s from %s on coop's client image", tag, dfRel)
+		ui.Section("Building the project box")
+		ui.Note("  Using %s", dfRel)
 		buildErrOut = os.Stderr
 	}
 	if err := buildProjectOnBase(rt, repo, dfRel, tag, definition.Tag, buildErrOut); err != nil {
 		return "", fmt.Errorf("this project's %s did not build on coop's client image: %w", dfRel, err)
+	}
+	if !spec.Quiet {
+		ui.Pass("Project box built")
 	}
 	built, _, err := docker.Image(ctx, tag)
 	if err != nil {

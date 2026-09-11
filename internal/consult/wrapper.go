@@ -94,23 +94,46 @@ func renderConsult(as []consultInput) string {
 	sort.Strings(names)
 	peerAlt := strings.Join(names, " | ")
 	peerList := strings.Join(names, "|")
+	// The guidance's examples name a target this run actually has, so an agent never copies one
+	// that does not exist here. A run with no peers or roles keeps the slot readable.
+	example := "<peer|role>"
+	if len(names) > 0 {
+		example = names[0]
+	}
 
 	var b strings.Builder
 	b.WriteString(`#!/bin/sh
-# coop-consult — ask a peer read-only, with optional cross-turn continuity.
+# coop-consult — ask a peer or preset role for read-only advice
 # Generated and mounted by coop; do not edit.
-#   coop-consult <peer|role> (--fresh|--continue) [<prompt>]
-# <peer> is ` + peerList + ` (an explicit --peer). A preset CONSULT ROLE — or a
-# native role degraded under a non-Claude lead — is addressed by its ROLE name. Its
-# COOP_CONSULT_<ROLE>_TARGETS value is an ordered fallback ladder; each target remains
-# READ-ONLY. --fresh starts at rung one. --continue resumes the successful rung and,
-# if that provider is now rate limited, starts the next provider fresh. Each rung is
-# attempted once. Nothing is bounded by default: a working model is left to work, because killing
-# one costs the whole answer AND the retry that follows. COOP_CONSULT_TIMEOUT (seconds) and
-# COOP_CONSULT_STREAM_LIMIT (bytes) can each impose a bound; if you set a timeout, keep it under
-# the box's descendant drain (COOP_DESCENDANT_TIMEOUT, internal/box/image.go) — a consult is
-# spawned detached, so one that outlives its provider has to expire on its own before the drain
-# notices it, or coop's own wrapper holds the box open and the handoff un-completes a finished task.
+#
+# Usage:
+#   coop-consult <peer|role> --fresh [<prompt>]
+#   coop-consult <peer|role> --continue [<prompt>]
+#
+# OPTIONS
+#   --fresh     start a new conversation
+#   --continue  continue the previous conversation
+#
+# EXAMPLES
+#   coop-consult ` + example + ` --fresh "Review this plan."
+#   coop-consult ` + example + ` --continue "Does the revised plan address your concern?"
+#
+#   Omit the prompt argument to read it from stdin.
+#   Use a peer or role configured for this run: ` + peerList + `.
+#
+# LIMITS
+#   COOP_CONSULT_TIMEOUT sets the timeout in whole seconds; 0 means unlimited.
+#   COOP_CONSULT_STREAM_LIMIT sets the output limit in bytes; 0 means unlimited.
+#
+# A preset CONSULT ROLE — or a native role degraded under a non-Claude lead — is addressed by its
+# ROLE name. Its COOP_CONSULT_<ROLE>_TARGETS value is an ordered fallback ladder; each target
+# remains READ-ONLY. --fresh starts at rung one. --continue resumes the successful rung and, if
+# that provider is now rate limited, starts the next provider fresh. Each rung is attempted once.
+# Nothing is bounded by default: a working model is left to work, because killing one costs the
+# whole answer AND the retry that follows. If you set a timeout, keep it under the box's descendant
+# drain (COOP_DESCENDANT_TIMEOUT, internal/box/image.go) — a consult is spawned detached, so one
+# that outlives its provider has to expire on its own before the drain notices it, or coop's own
+# wrapper holds the box open and the handoff un-completes a finished task.
 set -u
 umask 077
 

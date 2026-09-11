@@ -1,0 +1,56 @@
+coop acp — connect your editor to an agent running in a Coop box
+
+Usage:
+  coop acp <agent|preset> [options]
+
+EDITOR SETUP
+  Set the editor's agent command to coop and its arguments to:
+
+  ["acp", "claude"]
+  ["acp", "codex:gpt-6-astra/high@personal"]
+  ["acp", "frontier"]
+
+  Your editor must support ACP, the Agent Client Protocol.
+
+OPTIONS
+  --peer <agent>          start a peer provider for read-only advice
+                         repeat to add more peers
+  --bare                 run without the repository, project context, or tools
+
+  --egress <mode>        choose filtered, open, or none
+  --allow-domain <host>  allow TLS access to this host on port 443
+                         repeat to allow more hosts
+  --egress-rules <path>   load network rules from a file
+
+  --bare requires a single agent, without peers or a preset.
+  It requires Docker and --egress open or none.
+
+SWITCHING AGENTS
+  Use the editor's Provider and Account controls to change who runs the session.
+  A preset chooses its agents automatically. Select None in Preset to choose
+  a provider or account yourself.
+
+  Switching providers carries the conversation into a new agent session.
+  Account changes keep the conversation with the same provider.
+
+READ-ONLY WORK
+  coop fork investigation acp claude --readonly
+
+  Replace investigation with your fork's name.
+
+TROUBLESHOOTING
+  Set COOP_ACP_TRACE=1 in your editor's agent environment to record a trace.
+  Trace files are saved as ~/.config/coop/acp-trace-<pid>.log and may contain
+  your prompts and file contents.
+
+  COOP_ACP_WARM=0 disables background boxes kept ready for provider switching.
+  COOP_ACP_CARRY_TOKENS sets the conversation size carried between providers.
+
+  After replacing the Coop binary, send SIGHUP to the specific ACP process
+  to reload it. SIGINT and SIGTERM stop it.
+
+RELATED HELP
+  coop help models
+  coop help presets
+For more details see:
+  coop help net

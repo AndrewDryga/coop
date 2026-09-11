@@ -236,7 +236,7 @@ func TestProxyTargetSettingFailureBlocksPrompt(t *testing.T) {
 	first, second := readLine(t, h.clientOut), readLine(t, h.clientOut)
 	joined := string(first) + string(second)
 	if !strings.Contains(joined, "target rejected") || !strings.Contains(joined, `"sessionId":"S1"`) ||
-		!strings.Contains(joined, `"id":3`) || !strings.Contains(joined, "ACP target settings failed") {
+		!strings.Contains(joined, `"id":3`) || !strings.Contains(joined, "The session settings could not be applied") {
 		t.Fatalf("setting notice and held-prompt failure were incomplete:\n%s", joined)
 	}
 	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":4,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}`)
@@ -396,7 +396,7 @@ func TestProxyRejectsRequestsDuringReloadHandoff(t *testing.T) {
 	}
 	p.beginReload()
 	p.fromClient([]byte(`{"jsonrpc":"2.0","id":10,"method":"session/new","params":{"cwd":"/w"}}` + "\n"))
-	if got := out.String(); !strings.Contains(got, `"id":9`) || !strings.Contains(got, `"id":10`) || strings.Count(got, "agent restarted, please retry") != 2 {
+	if got := out.String(); !strings.Contains(got, `"id":9`) || !strings.Contains(got, `"id":10`) || strings.Count(got, "The agent restarted — send your message again.") != 2 {
 		t.Fatalf("request raced with reload without a retry response: %s", got)
 	}
 }
@@ -1301,8 +1301,12 @@ func TestProxyReplayRecreatesFailedLoad(t *testing.T) {
 	if len(recreated) != 1 || recreated[0] != "S1" {
 		t.Errorf("SessionRecreated fired %v, want exactly [S1]", recreated)
 	}
-	if !strings.Contains(buf.String(), "re-creating it fresh") || !strings.Contains(buf.String(), "S1") {
-		t.Errorf("expected a re-create warning naming S1, got: %q", buf.String())
+	// The warning is the shared unreadable-session block: the cause the agent gave, and the fact
+	// that a new session starts. It never claims the saved conversation survived.
+	if !strings.Contains(buf.String(), "⚠ Could not restore the editor session") ||
+		!strings.Contains(buf.String(), "Starting a new session.") ||
+		!strings.Contains(buf.String(), "no such session") {
+		t.Errorf("expected the unreadable-session warning, got: %q", buf.String())
 	}
 
 	// A SECOND restart before any prompt ran on S1b: the re-created session has no transcript on
@@ -1474,8 +1478,9 @@ func TestProxyReplayRecreateFails(t *testing.T) {
 	if len(recreated) != 0 {
 		t.Errorf("SessionRecreated fired %v for a failed re-create, want none", recreated)
 	}
-	if !strings.Contains(buf.String(), "could not be re-created") {
-		t.Errorf("expected the re-create failure warning, got: %q", buf.String())
+	if !strings.Contains(buf.String(), "✗ Could not restore the editor session") ||
+		!strings.Contains(buf.String(), "The agent could not reopen the session after its box restarted.") {
+		t.Errorf("expected the re-create failure block, got: %q", buf.String())
 	}
 
 	// A failed replay cannot make the editor thread immortal. Close is handled locally and retains

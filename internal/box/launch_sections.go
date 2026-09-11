@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -19,8 +20,8 @@ import (
 )
 
 // An interactive launch is narrated for the person watching the terminal: bold, unprefixed
-// sections for the host-side work before the agent's output begins, one `coop:` line when the
-// box stops, and the sealed network run after it. Every other embedding keeps its bounded log —
+// sections for the host-side work before the agent's output begins, one unprefixed sentence when
+// the box has stopped, and the sealed network run after it. Every other embedding keeps its log —
 // a loop iteration owns a live bar, a doctor probe captures its output, an ACP child's stderr is
 // an editor's log — so for those every method here is a no-op.
 
@@ -38,6 +39,17 @@ type launchSections struct {
 
 func newLaunchSections(spec RunSpec) *launchSections {
 	return &launchSections{on: spec.interactive(), subject: launchSubject(spec)}
+}
+
+// section opens one narration section. The first one leads the command's output, so it carries no
+// blank line in front of it; every later one is separated from what came before.
+func (s *launchSections) section(title string) {
+	if s.opened {
+		ui.Section(title)
+		return
+	}
+	ui.Heading(title)
+	s.opened = true
 }
 
 func launchSubject(spec RunSpec) string {
@@ -58,8 +70,7 @@ func (s *launchSections) box(nudges []string) {
 	if !s.on || len(nudges) == 0 {
 		return
 	}
-	s.opened = true
-	ui.Section("Checking the Coop box")
+	s.section("Checking the Coop box")
 	for _, nudge := range nudges {
 		ui.Caution("%s", nudge)
 	}
@@ -71,8 +82,7 @@ func (s *launchSections) secrets(hidden int) {
 	if !s.on {
 		return
 	}
-	s.opened = true
-	ui.Section("Protecting secrets")
+	s.section("Protecting secrets")
 	if hidden == 0 {
 		ui.Pass("No secret paths to hide")
 		return
@@ -87,11 +97,9 @@ func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egre
 	if !s.on {
 		return
 	}
-	s.opened = true
-	// One heading in every mode: this section is coop APPLYING the selected
-	// network access, which it does for unrestricted and offline runs too — not
-	// a promise that a filter is running.
-	ui.Section("Configuring network access")
+	// One heading in every mode: this section is coop APPLYING the selected network access, which
+	// it does for unrestricted and offline runs too — not a promise that a filter is running.
+	s.section("Configuring network access")
 	switch {
 	case policy != nil:
 		for _, row := range networkAllowances(*policy) {
@@ -177,18 +185,34 @@ func (s *launchSections) starting() {
 	if !s.on {
 		return
 	}
-	s.opened = true
-	ui.Section("Starting " + s.subject)
+	s.section("Starting " + s.subject)
 }
 
-// stopping is the one lifecycle line an interactive box prints when its teardown begins. It
-// carries the `coop:` anchor because it follows arbitrary agent output; it says "stopping", not
-// "stopped", because cleanup has not run yet.
-func (s *launchSections) stopping(reason string) {
+// stopped is the one lifecycle sentence an interactive box prints, and it is a CLAIM: the box has
+// stopped. So it waits until the stop is confirmed — the main process returned AND whatever
+// teardown this process owns has removed the box — and never announces a stop still in progress.
+// The reason is the truthful one stopReason derived; a blank line sets the sentence off from
+// whatever arbitrary output the agent or shell left above it.
+func (s *launchSections) stopped(reason string) {
 	if !s.on {
 		return
 	}
-	ui.Note("stopping the box — %s", reason)
+	ui.Note("\nThe Coop box has stopped — %s.", reason)
+}
+
+// stopSlow is how long a teardown may run before a person watching a silent terminal deserves to
+// be told what it is waiting on. A var so a test can drop it to zero.
+var stopSlow = 2 * time.Second
+
+// stopping notes that shutdown is underway, but ONLY when it outlasts stopSlow: a fast teardown
+// needs no narration, and the completed sentence follows either way. It returns the stop for the
+// timer, which the caller defers so the notice can never print after the box is already gone.
+func (s *launchSections) stopping() func() {
+	if !s.on {
+		return func() {}
+	}
+	timer := time.AfterFunc(stopSlow, func() { ui.Note("\nStopping the Coop box…") })
+	return func() { timer.Stop() }
 }
 
 // failed renders a launch that stopped before its main process as the nested failure of the
@@ -279,4 +303,57 @@ func (h *hostInterrupt) reason() string {
 		return "stopped by SIGTERM"
 	}
 	return "stopped by signal " + h.sig.String()
+}
+
+// services narrates the project's sibling services: the section, each service Compose actually
+// resolved, and the result. The names are the resolved ones, so a section never lists a service
+// this project does not declare.
+func (s *launchSections) services(names []string) {
+	if !s.on {
+		return
+	}
+	s.section("Starting project services")
+	for _, name := range names {
+		ui.Note("  %s", name)
+	}
+	ui.Pass("Services started")
+}
+
+// servicesFailed is a launch that CONTINUES without the services it could not start. It is a
+// warning, not a failure: the box is about to run, and the person needs the compose error and the
+// command that retries it. A review launch refuses the whole launch instead and never reaches here.
+func (s *launchSections) servicesFailed(cause string) {
+	if !s.on {
+		return
+	}
+	ui.Warning("Project services could not start", cause, "Run coop up to retry.")
+}
+
+// servicesSkipped is a launch that did not even attempt them, with the reason it did not. It never
+// claims services already running are unavailable — only that none were started now.
+func (s *launchSections) servicesSkipped(cause string) {
+	if !s.on {
+		return
+	}
+	ui.Warning("Project services were not started", cause, "Stop that box, then run coop up.")
+}
+
+// boundedCause is the bounded reason a warning or failure carries: what the tool itself printed,
+// then the error, trimmed to the first few lines so a launch never dumps a screen of Compose
+// output into the middle of its narration. Empty tool output falls back to the error alone.
+func boundedCause(output string, err error) string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if err != nil {
+		lines = append(lines, err.Error())
+	}
+	kept := make([]string, 0, 4)
+	for _, line := range lines {
+		if line = strings.TrimSpace(line); line != "" {
+			kept = append(kept, line)
+		}
+		if len(kept) == 4 {
+			break
+		}
+	}
+	return strings.Join(kept, "\n")
 }

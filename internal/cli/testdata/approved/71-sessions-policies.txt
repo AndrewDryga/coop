@@ -1,0 +1,24 @@
+Remote session configurations
+Each name defines which project and agents a remote application can use.
+
+code-review
+  Project  /Users/andrewdryga/Projects/os/coop
+  Access   Read-only
+  Agent    codex:gpt-5.6-sol/high@personal
+  Network  Filtered — only approved network traffic is allowed
+    OpenAI provider endpoints
+    github.com:443 · TLS
+
+code-work
+  Project  /Users/andrewdryga/Projects/os/coop
+  Access   Read, edit, and commit in a separate project copy
+  Agents   codex:gpt-5.6-sol/high@personal
+           claude:opus/high@work
+  Network  Filtered — only approved network traffic is allowed
+    OpenAI and Anthropic provider endpoints
+    github.com:443 · TLS
+    registry.npmjs.org:443 · TLS
+
+Agents are tried in order when one reaches its usage limit.
+
+Edit configurations: ~/.config/coop/session-policies.yaml

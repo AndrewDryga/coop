@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"slices"
 	"strconv"
 
@@ -16,6 +15,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // serviceGrants lists the sidecars this policy actually approved. A Compose
@@ -86,16 +86,29 @@ func filteredPublish(cfg *config.Config, spec RunSpec, free func(int) bool) (opt
 	if !spec.Serve || len(spec.servePorts) == 0 {
 		return nil, nil, nil
 	}
+	// The URLs are collected and printed as ONE section after the loop, in the same shape an open
+	// run prints them — a filtered box is the same box to the person opening the link.
+	var urls []string
 	for _, port := range spec.servePorts {
 		host := project.HostPort(spec.Repo, port)
 		env = append(env, "-e", fmt.Sprintf("COOP_SERVE_URL_%d=http://localhost:%d", port, host))
 		if !free(host) {
-			fmt.Fprintf(os.Stderr, "Host port %d (for :%d) is in use — not publishing this box\n", host, port)
+			// Both ports are named: one is the URL to open, the other is what the dev server
+			// inside the box listens on, and they can differ.
+			ui.Warning(fmt.Sprintf("Could not publish box port %d", port),
+				fmt.Sprintf("Host port %d is already in use.", host),
+				"Free that port, then start the box again.")
 			continue
 		}
 		options = append(options, "-p", fmt.Sprintf("127.0.0.1:%d:%d", host, port))
 		published = append(published, port)
-		fmt.Fprintf(os.Stderr, "Serving box :%d at http://localhost:%d\n", port, host)
+		urls = append(urls, fmt.Sprintf("  http://localhost:%d → box port %d", host, port))
+	}
+	if len(urls) > 0 {
+		ui.Section("Available on this host")
+		for _, url := range urls {
+			ui.Note("%s", url)
+		}
 	}
 	return options, published, env
 }

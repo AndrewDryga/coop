@@ -21,9 +21,11 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
@@ -159,13 +161,19 @@ func parseSessionCompactFlags(args []string) (state, backup string, err error) {
 
 // sessionCommands are the `coop sessions` subcommands — the one list the dispatch below, the
 // unknown-subcommand correction, the help router and shell completion all read.
-var sessionCommands = []string{"serve", "doctor", "policies", "compact"}
+var sessionCommands = []string{"connect", "serve", "doctor", "policies", "compact"}
 
 func (a *app) cmdSessions(args []string) (int, error) {
 	if len(args) == 0 {
 		return groupHelp("sessions")
 	}
 	switch args[0] {
+	case "connect":
+		path, err := parseSessionConnectFlags(args[1:])
+		if err != nil {
+			return 2, err
+		}
+		return runSessionConnect(a.cfg, path)
 	case "serve":
 		state, policy, socket, _, err := parseSessionsFlags(args[1:], "serve")
 		if err != nil {
@@ -208,17 +216,77 @@ func runSessionCompact(state, backup string) (int, error) {
 	defer stopSignals()
 	result, err := sessionsvc.CompactSessionState(ctx, state, backup)
 	if err != nil {
-		return 1, err
+		return 1, sessionCompactFailure(result, err)
 	}
-	if result.CompactedOperations == 0 {
-		ui.Note("no legacy turn retry receipts needed compaction")
+	// Two separate facts, each labeled rather than printed as an unexplained arrow: the logical
+	// receipt bytes the rewrite saved, and the allocated database bytes VACUUM reclaimed. Zero
+	// legacy receipts is not "nothing happened" — the backup was still made and verified.
+	rows := [][2]string{}
+	if result.CompactedOperations > 0 {
+		ui.OK("Session data compacted")
+		rows = append(rows,
+			[2]string{"Retry records", fmt.Sprintf("%d compacted", result.CompactedOperations)},
+			[2]string{"Record data", byteChange(result.ResultBytesBefore, result.ResultBytesAfter)})
 	} else {
-		ui.OK("compacted %s (%d -> %d bytes)", ui.Count(result.CompactedOperations, "turn retry receipt"), result.ResultBytesBefore, result.ResultBytesAfter)
+		ui.Note("No older retry records needed compaction.")
 	}
-	ui.Note("database: %d -> %d bytes", result.DatabaseBytesBefore, result.DatabaseBytesAfter)
-	ui.Note("backup: %s (%d bytes)", result.BackupPath, result.BackupBytes)
-	ui.Warn("backup contains private session data; protect it and remove it after recovery is no longer needed")
+	rows = append(rows,
+		[2]string{"Database", byteChange(result.DatabaseBytesBefore, result.DatabaseBytesAfter)},
+		[2]string{"Backup", result.BackupPath + " · " + ui.Bytes(uint64(result.BackupBytes))})
+	ui.Note("")
+	for _, row := range rows {
+		ui.Note("  %s  %s", padRight(row[0], sessionLabelWidth(rows)), row[1])
+	}
+	ui.Note("")
+	ui.Warn("The backup contains private session data")
+	ui.Note("  Keep it protected until you no longer need it for recovery.")
 	return 0, nil
+}
+
+func sessionLabelWidth(rows [][2]string) int {
+	w := 0
+	for _, row := range rows {
+		if n := utf8.RuneCountInString(row[0]); n > w {
+			w = n
+		}
+	}
+	return w
+}
+
+func byteChange(before, after int64) string {
+	return ui.Bytes(uint64(before)) + " → " + ui.Bytes(uint64(after))
+}
+
+// sessionCompactFailure says which STAGE failed, from what the run actually proved. A verified
+// backup exists only once BackupPath is set (backupSQLiteDatabase removes its own incomplete
+// output), and only ErrCompactionUnfinished proves the receipt rewrite committed — a partial
+// count does not. Everything else keeps the bounded cause it came with.
+func sessionCompactFailure(result sessionsvc.CompactionResult, err error) error {
+	detail := sessionsvc.BoundedDetail(err.Error())
+	switch {
+	case errors.Is(err, sessionsvc.ErrCompactionUnfinished):
+		// The marker's own sentence is the stage, which the headline already carries; what a
+		// person still needs is the bounded reason under it.
+		detail = strings.TrimPrefix(strings.TrimPrefix(detail, sessionsvc.ErrCompactionUnfinished.Error()), "\n")
+		return ui.CommandFailed("Could not finish compacting session data",
+			"Retry records were compacted, but database space could not be reclaimed.\n"+strings.TrimLeft(detail, ": "),
+			[2]string{"Backup:", result.BackupPath})
+	case strings.Contains(detail, "another session daemon owns this state root"):
+		return ui.CommandFailed("Could not compact session data",
+			"The session service is using this data directory.",
+			[2]string{"", "Stop the service, then run the command again."})
+	case strings.Contains(detail, "already exists"):
+		return ui.CommandFailed("Could not compact session data", detail,
+			[2]string{"", "Choose a new backup path."})
+	case result.BackupPath == "":
+		// Nothing was retained: backupSQLiteDatabase deletes its output when it cannot verify it.
+		return ui.CommandFailed("Could not compact session data",
+			"The session backup could not be verified.\n"+detail)
+	default:
+		return ui.CommandFailed("Could not compact session data",
+			"The session database could not be prepared for compaction.\n"+detail,
+			[2]string{"Backup:", result.BackupPath})
+	}
 }
 
 type sessionPoliciesResult struct {
@@ -244,7 +312,10 @@ type sessionPolicyNetwork struct {
 	Unresolved         string   `json:"unresolved,omitempty"`
 }
 
-func sessionPolicyNetworkOf(cfg *config.Config, policy sessionsvc.Policy) sessionPolicyNetwork {
+// sessionPolicyNetworkOf is the JSON projection AND, beside it, the compiled snapshot the human
+// view reads. The projection's fields, names and digests are unchanged: a remote application
+// verifies against them, so the human view takes the snapshot rather than widening the wire.
+func sessionPolicyNetworkOf(cfg *config.Config, policy sessionsvc.Policy) (sessionPolicyNetwork, egress.Snapshot) {
 	out := sessionPolicyNetwork{
 		Mode: string(policy.Egress.Mode), ExportDestinations: policy.Egress.ExportDestinations,
 	}
@@ -254,7 +325,7 @@ func sessionPolicyNetworkOf(cfg *config.Config, policy sessionsvc.Policy) sessio
 	for _, rule := range policy.Egress.Rules {
 		out.Rules = append(out.Rules, box.NetworkRuleText(rule))
 	}
-	resolved, err := sessionsvc.ResolvePolicyNetwork(cfg, policy)
+	resolved, snapshot, err := sessionsvc.ResolvePolicyNetworkSnapshot(cfg, policy)
 	switch {
 	case err != nil:
 		out.Unresolved = err.Error()
@@ -263,7 +334,7 @@ func sessionPolicyNetworkOf(cfg *config.Config, policy sessionsvc.Policy) sessio
 	default:
 		out.Mode = string(resolved.Mode)
 	}
-	return out
+	return out, snapshot
 }
 
 func runSessionPolicies(cfg *config.Config, policyPath string, jsonOutput bool) (int, error) {
@@ -273,7 +344,14 @@ func runSessionPolicies(cfg *config.Config, policyPath string, jsonOutput bool) 
 	}
 	policies, err := sessionsvc.LoadPolicies(policyPath, cfg)
 	if err != nil {
-		return 1, err
+		// The loader's own validation — ownership, writable ancestry, symlinks, limits, version,
+		// names, repositories, accounts — keeps its cause; only the file is added in front of it.
+		cause := policyPath + " " + err.Error()
+		if strings.Contains(err.Error(), "must define at least one policy") {
+			cause = policyPath + " must define at least one configuration."
+		}
+		return 1, ui.CommandFailed("Could not load remote session configurations", cause,
+			[2]string{"Help:", "coop help sessions policies"})
 	}
 	result := sessionPoliciesResult{
 		PolicyFile:             policyPath,
@@ -282,48 +360,27 @@ func runSessionPolicies(cfg *config.Config, policyPath string, jsonOutput bool) 
 		PolicyNetworks:         make(map[string]sessionPolicyNetwork, len(policies)),
 	}
 	names := make([]string, 0, len(policies))
+	snapshots := make(map[string]egress.Snapshot, len(policies))
 	for name, policy := range policies {
 		names = append(names, name)
 		result.PolicyDigests[name] = sessionsvc.ResolvedPolicyDigest(policy)
 		result.PolicyAuthorityDigests[name] = sessionsvc.ResolvedPolicyAuthorityDigest(policy)
-		result.PolicyNetworks[name] = sessionPolicyNetworkOf(cfg, policy)
+		network, snapshot := sessionPolicyNetworkOf(cfg, policy)
+		result.PolicyNetworks[name], snapshots[name] = network, snapshot
 	}
-	if jsonOutput {
+	if jsonOutput { // the verification data a remote application reads — unchanged fields and digests
 		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
 			return 1, err
 		}
 		return 0, nil
 	}
 	sort.Strings(names)
-	renderSessionPolicies(os.Stdout, ui.For(os.Stdout), result, names)
-	return 0, nil
-}
-
-// renderSessionPolicies prints one labeled block per policy (entity-blocks-with-labeled-fields):
-// the two digests are separate facts a fleet operator copies into a worker config, so each gets
-// its own labeled line instead of an unlabeled tab-separated row.
-func renderSessionPolicies(w io.Writer, p ui.Palette, result sessionPoliciesResult, names []string) {
-	fmt.Fprintf(w, "%s %s\n", p.Dim("Policy file:"), result.PolicyFile)
+	views := make([]sessionConfigurationView, 0, len(names))
 	for _, name := range names {
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, p.Bold(p.Cyan(name)))
-		fmt.Fprintf(w, "  %s     %s\n", p.Dim("Policy digest:"), result.PolicyDigests[name])
-		fmt.Fprintf(w, "  %s  %s\n", p.Dim("Authority digest:"), result.PolicyAuthorityDigests[name])
-		network := result.PolicyNetworks[name]
-		fmt.Fprintf(w, "  %s           %s\n", p.Dim("Network:"), network.Mode)
-		for _, rule := range network.Rules {
-			fmt.Fprintf(w, "  %s             %s\n", p.Dim("allow:"), rule)
-		}
-		if network.ExportDestinations {
-			fmt.Fprintf(w, "  %s            %s\n", p.Dim("export:"), "destinations are exported to the authorized worker")
-		}
-		switch {
-		case network.Unresolved != "":
-			fmt.Fprintf(w, "  %s       %s\n", p.Dim("Fingerprint:"), "unresolved on this host — "+network.Unresolved)
-		case network.Fingerprint != "":
-			fmt.Fprintf(w, "  %s       %s\n", p.Dim("Fingerprint:"), network.Fingerprint)
-		}
+		views = append(views, sessionConfigurationViewOf(name, policies[name], result.PolicyNetworks[name], snapshots[name]))
 	}
+	renderSessionConfigurations(os.Stdout, ui.For(os.Stdout), tildeify(policyPath), views)
+	return 0, nil
 }
 
 func runSessionServe(cfg *config.Config, state, policy, socket string) (int, error) {
@@ -331,15 +388,30 @@ func runSessionServe(cfg *config.Config, state, policy, socket string) (int, err
 	if err != nil {
 		return 2, err
 	}
-	if err := sessionsvc.EnsureAncestors(filepath.Dir(state)); err != nil {
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	if err := serveLocalSession(ctx, cfg, state, policy, socket, nil); err != nil {
 		return 1, err
+	}
+	return 0, nil
+}
+
+// serveLocalSession runs the local session service until ctx ends: it owns the state root's lock,
+// the policy file and the socket, and returns only when the server has shut down. listening, when
+// given, is called once the socket is accepting — the caller still has to PROVE readiness before
+// claiming it (see sessionServiceReady); binding a socket is not a promise to accept sessions.
+// `coop sessions serve` and `coop sessions connect`'s autostart share this one body, so a service
+// started either way is the same service.
+func serveLocalSession(ctx context.Context, cfg *config.Config, state, policy, socket string, listening func()) error {
+	if err := sessionsvc.EnsureAncestors(filepath.Dir(state)); err != nil {
+		return err
 	}
 	// The optional `storage:` block in the same policy file. Absent, the daemon derives its limits
 	// from the measured volume; present and incoherent, it refuses to start rather than discovering
 	// the problem the first time the disk fills.
 	storageLimits, configuredStorage, err := sessionsvc.LoadStorageLimits(policy)
 	if err != nil {
-		return 1, err
+		return err
 	}
 	serviceConfig := sessionsvc.Config{
 		StateRoot: state, PolicyPath: policy, SourceConfig: cfg, Executable: os.Args[0],
@@ -350,28 +422,29 @@ func runSessionServe(cfg *config.Config, state, policy, socket string) (int, err
 	}
 	service, err := sessionsvc.NewService(serviceConfig)
 	if err != nil {
-		return 1, err
+		return err
 	}
 	defer service.Stop()
-	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stopSignals()
 	if err := service.Start(ctx); err != nil {
-		return 1, err
+		return err
 	}
 	listener, cleanup, err := sessionsvc.ListenSocket(state, socket)
 	if err != nil {
-		return 1, err
+		return err
 	}
 	defer cleanup()
 	server := &http.Server{Handler: sessionsvc.NewHTTPHandler(service)}
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- server.Serve(listener) }()
+	if listening != nil {
+		listening()
+	}
 	select {
 	case err := <-serveDone:
 		if errors.Is(err, http.ErrServerClosed) {
-			return 0, nil
+			return nil
 		}
-		return 1, err
+		return err
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), sessionsvc.DefaultStopTimeout)
 		shutdownErr := server.Shutdown(shutdownCtx)
@@ -379,12 +452,12 @@ func runSessionServe(cfg *config.Config, state, policy, socket string) (int, err
 		if shutdownErr != nil {
 			_ = server.Close()
 			<-serveDone
-			return 1, shutdownErr
+			return shutdownErr
 		}
 		if err := <-serveDone; err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return 1, err
+			return err
 		}
-		return 0, nil
+		return nil
 	}
 }
 
@@ -445,6 +518,7 @@ type sessionDoctorResult struct {
 }
 
 func runSessionDoctor(socket string, jsonOutput bool) (int, error) {
+	socketGiven := socket != "" // a named socket keeps its own remedy; the default's is the default service
 	_, _, socket, err := sessionCLIPaths("", "", socket)
 	if err != nil {
 		return 2, err
@@ -472,19 +546,44 @@ func runSessionDoctor(socket string, jsonOutput bool) (int, error) {
 	if result.Error == "" && !result.Ready {
 		result.Error = "session service is not ready"
 	}
-	if jsonOutput {
+	if jsonOutput { // the machine projection is unchanged, with no human header or footer around it
 		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
 			return 1, err
 		}
-	} else if result.Error != "" {
-		ui.Error("session service is unavailable or unready: %s", result.Error)
-	} else {
-		ui.OK("session service is healthy and ready at %s", result.Socket)
+		if result.Error != "" || !result.Healthy || !result.Ready {
+			return 1, nil
+		}
+		return 0, nil
 	}
-	if result.Error != "" || !result.Healthy || !result.Ready {
-		return 1, nil
+	if result.Error == "" && result.Healthy && result.Ready {
+		ui.OK("Session service is ready")
+		ui.Note("  %s", result.Socket)
+		return 0, nil
 	}
-	return 0, nil
+	return 1, sessionDoctorFailure(result, socketGiven, healthErr)
+}
+
+// sessionDoctorFailure names the ACTUAL reason the service could not be used. "Nothing is
+// listening" is claimed only for a socket that refused the connection — a permission error, an
+// unreadable socket or a malformed response each keeps its own cause. A service that answered but
+// is not ready is a different failure from one that is not there. When the user named the socket,
+// the remedy stays with THAT service: `coop sessions serve` alone would listen somewhere else.
+func sessionDoctorFailure(result sessionDoctorResult, socketGiven bool, healthErr error) error {
+	start := [2]string{"", "Run coop sessions serve to start it."}
+	if socketGiven {
+		start = [2]string{"", "Start the service that listens at " + result.Socket + "."}
+	}
+	switch {
+	case healthErr == nil && !result.Ready:
+		return ui.CommandFailed("Session service is not ready",
+			"The service responded but cannot accept sessions yet.",
+			[2]string{"", "Check the output of coop sessions serve."})
+	case errors.Is(healthErr, syscall.ENOENT) || errors.Is(healthErr, syscall.ECONNREFUSED):
+		return ui.CommandFailed("Session service is unavailable",
+			"No service is listening at "+result.Socket+".", start)
+	default:
+		return ui.CommandFailed("Session service is unavailable", result.Error, start)
+	}
 }
 
 func sessionUnixHTTPClient(socket string) *http.Client {

@@ -644,8 +644,8 @@ func (c *Control) maybeRecoverAuthentication(line []byte) (out []byte, restart, 
 				return c.configOptionUpdate(session), true, true
 			}
 			currentTarget, nextTarget := loginTarget(provider, currentAccount), loginTarget(provider, next)
-			msg := fmt.Sprintf("coop: authentication failed for %s; switched to %s. Retry the request. Repair the failed credential with: %s",
-				agents.DisplayTarget(currentTarget), agents.DisplayTarget(nextTarget), agents.LoginCommand(currentTarget))
+			msg := fmt.Sprintf("Sign in to %s on the host: %s. Coop switched this session to %s — send your last message again.",
+				agents.DisplayTarget(currentTarget), agents.LoginCommand(currentTarget), agents.DisplayTarget(nextTarget))
 			return rewriteErrorMessage(line, msg), true, true
 		}
 	}
@@ -661,8 +661,10 @@ func loginTarget(provider, account string) string {
 
 func rewriteAuthenticationRecovery(line []byte, provider, account string) []byte {
 	target := loginTarget(provider, account)
+	// Authentication is not a usage limit: the account has to be signed in again on the HOST,
+	// where the credential lives, and no wait or resend will fix it.
 	return rewriteErrorMessage(line, fmt.Sprintf(
-		"coop: authentication failed for %s — run: %s",
+		"Sign in to %s on the host: %s",
 		agents.DisplayTarget(target), agents.LoginCommand(target),
 	))
 }
@@ -1065,7 +1067,7 @@ func (c *Control) maybeRotate(line []byte) (out []byte, rotated bool) {
 			return c.configOptionUpdate(session), true
 		}
 		// Couldn't identify the prompt — fall back to switching + asking the user to resend.
-		return rewriteErrorMessage(line, fmt.Sprintf("coop: %s is rate limited — switched to %s; resend your last message", currentAccount, next)), true
+		return rewriteErrorMessage(line, fmt.Sprintf("Account %q reached its usage limit. Switched to %q. Send your last message again.", currentAccount, next)), true
 	}
 
 	// Nothing free right now: wait for the nearest reset, then re-send on that account. Needs a known
@@ -1175,8 +1177,9 @@ func (c *Control) waitStatus(session, account string, at, now time.Time) []byte 
 	c.nextID++
 	n := c.nextID
 	c.mu.Unlock()
-	text := fmt.Sprintf("Waiting for a reset on credential %s in %s (at %s) — your message will send automatically.",
-		account, formatWait(at.Sub(now)), at.Local().Format("Mon 15:04 MST"))
+	// A wait that resends by itself must not also tell the user to resend.
+	text := fmt.Sprintf("Waiting for account %q to reset its usage limit at %s (in %s). Your message will send automatically.",
+		account, at.Local().Format("Mon 15:04 MST"), formatWait(at.Sub(now)))
 	upd := map[string]any{
 		"jsonrpc": "2.0",
 		"method":  "session/update",
@@ -2674,7 +2677,7 @@ func (c *Control) fromEditor(line []byte) (handled bool, resp []byte, toAdapter 
 	}
 	if h.Method == "authenticate" || h.Method == "logout" {
 		provider, account := c.authenticationTarget()
-		message := fmt.Sprintf("coop manages authentication per credential — run: %s", agents.LoginCommand(loginTarget(provider, account)))
+		message := fmt.Sprintf("Sign in on the host: %s", agents.LoginCommand(loginTarget(provider, account)))
 		return true, rpcErrorResponse(h.ID, -32601, message), nil, false
 	}
 	// Remember each session's in-flight prompt so a rate-limit rotation/wait can re-send it, and

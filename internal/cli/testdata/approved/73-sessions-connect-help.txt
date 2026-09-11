@@ -1,0 +1,21 @@
+coop sessions connect — connect this machine to a remote controller
+
+Usage: coop sessions connect --config <path>
+
+OPTIONS
+  --config <path>  JSON file with this machine's connection and session settings
+
+CONFIGURATION
+  Selects the controller, certificates, repositories, and allowed session policies.
+  Uses the ready local service, or starts one when none is running.
+
+  Default session policies: ~/.config/coop/session-policies.yaml
+  Default session storage:  ~/.local/state/coop/sessions
+
+  Review session configurations:
+    coop sessions policies
+
+RUNNING
+  Leave this command running. Connection failures are retried automatically.
+  Press Ctrl-C to stop connecting. A service started by this command also stops;
+  a service that was already running is left alone.

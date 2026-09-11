@@ -1,0 +1,7 @@
+
+✗ Could not finish compacting session data
+
+      Retry records were compacted, but database space could not be reclaimed.
+      database or disk is full
+
+  Backup: /path/to/session-backup.sqlite

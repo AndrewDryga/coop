@@ -107,6 +107,10 @@ func TestAllHelpAvoidsMiddleDots(t *testing.T) {
 	for name, help := range commandHelp {
 		pages[name] = help
 	}
+	// The prompt page's EXAMPLE quotes `coop prompt`'s own one-line output, whose segments are
+	// separated by ·. help-output-style keeps an embedded runtime example in its real formatting;
+	// the rule is about not joining separate command explanations with middle dots.
+	delete(pages, "prompt")
 	for name, help := range pages {
 		if strings.Contains(help, "·") {
 			t.Errorf("%s help should not use middle-dot separators:\n%s", name, help)
@@ -219,10 +223,9 @@ func TestManualOpensWithTheApprovedMenu(t *testing.T) {
 
 // wantManualOrder is the page order of the approved full reference, restricted to the pages that
 // exist today: the box, the agents, accounts and models, the work queues, loops and forks, this
-// project's services, the checks, setup, and the integrations last. `worker` has no page in the
-// approved reference (its content is proposed to move under sessions, which is its own review), so
-// it keeps its current page here, beside the family it belongs to. Leaf pages arrive with the
-// slices that write them.
+// project's services, the checks, setup, and the integrations last. `coop worker` is retired: its
+// workflow is `coop sessions connect`, whose page sits with the rest of the sessions leaves.
+// Other families' leaf pages arrive with the slices that write them.
 var wantManualOrder = []string{
 	"run", "shell", "claude", "codex", "gemini", "grok",
 	"login", "credentials", "credentials default", "credentials rm", "credentials account",
@@ -236,7 +239,8 @@ var wantManualOrder = []string{
 	"doctor", "net", "net runs", "net inspect", "net check", "net blocked", "net approve",
 	"net watch", "net export", "net forget", "net setup", "net recover", "check-secrets", "sign",
 	"init", "build", "update", "version",
-	"acp", "sessions", "worker", "prompt", "completion",
+	"acp", "sessions", "sessions serve", "sessions doctor", "sessions policies", "sessions compact", "sessions connect",
+	"prompt", "completion",
 }
 
 // The manual presents every page in the approved order, each behind the same separator.

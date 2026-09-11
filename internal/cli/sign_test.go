@@ -322,7 +322,7 @@ func TestSignUnpushed(t *testing.T) {
 		}
 		hookErr = gitRun(repo, "update-ref", ref, competing, oldHead)
 	}
-	if _, err := a.signUnpushed(repo, base); err == nil || !strings.Contains(err.Error(), "branch moved during re-signing") {
+	if _, err := a.signUnpushed(repo, base); err == nil || !strings.Contains(err.Error(), "The branch changed while Coop was signing") {
 		t.Fatalf("concurrent ref move error = %v", err)
 	}
 	if hookErr != nil {

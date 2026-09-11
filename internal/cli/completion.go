@@ -18,8 +18,9 @@ import (
 // commands/verbs — it reads them from the same code the dispatch and help do. All candidate lookups
 // are local filesystem reads (fork dirs, task ids, credential profiles); nothing hits a container.
 
-const bashCompletion = `# coop bash completion. Install: coop completion bash > /etc/bash_completion.d/coop
-#   (or: coop completion bash > ~/.local/share/bash-completion/completions/coop)
+const bashCompletion = `# Coop Bash completion.
+# Generate: coop completion bash > ~/.config/coop/completion.bash
+# Source this file from ~/.bashrc.
 _coop() {
   local IFS=$'\n'
   COMPREPLY=($(coop __complete "${COMP_WORDS[@]:1:COMP_CWORD}" 2>/dev/null))
@@ -28,8 +29,9 @@ complete -o default -F _coop coop
 `
 
 const zshCompletion = `#compdef coop
-# coop zsh integration. Generate to "${fpath[1]}/_coop", then source that file AFTER
-# compinit from .zshrc. Sourcing installs completion plus a command-local nocorrect alias.
+# Coop Zsh integration.
+# Generate: coop completion zsh > ~/.config/coop/completion.zsh
+# Source this file after compinit in ~/.zshrc.
 _coop() {
   local -a cands
   cands=(${(f)"$(coop __complete "${(@)words[2,$CURRENT]}" 2>/dev/null)"})
@@ -50,7 +52,8 @@ func cmdCompletion(args []string) (int, error) {
 	case "zsh":
 		fmt.Print(zshCompletion)
 	default:
-		return 2, fmt.Errorf("coop completion: unsupported shell %q — use bash or zsh", args[0])
+		return 2, ui.InvalidOptionValue(args[0], "shell", "coop completion",
+			"Choose bash or zsh.", "coop completion zsh")
 	}
 	return 0, nil
 }

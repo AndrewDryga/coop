@@ -18,6 +18,14 @@ func Section(title string) {
 	emit(fmt.Sprintf("\n%s%s%s\n", cBold, title, cReset))
 }
 
+// Heading is Section for the FIRST one in a sequence: the same bold title with no blank line in
+// front of it, because there is nothing above it to separate it from. A narration keeps its own
+// "have I opened a section yet" answer and calls Heading once, then Section — rather than opening
+// every command's output with a stray empty line.
+func Heading(title string) {
+	emit(fmt.Sprintf("%s%s%s\n", cBold, title, cReset))
+}
+
 // Pass prints a section result that succeeded: an indented green ✓ and the plain result text.
 // Only the mark is colored — the sentence stays in the normal foreground.
 func Pass(format string, a ...any) {

@@ -177,11 +177,14 @@ func TestRunSessionCompactCreatesANewBackup(t *testing.T) {
 		t.Fatalf("sessions compact = code %d err %v output %q", code, runErr, output)
 	}
 	joined := strings.Join(output, "\n")
+	// Zero legacy receipts is not "nothing happened": the verified backup was still written, and
+	// both byte facts are labeled rather than printed as an unexplained arrow.
 	for _, want := range []string{
-		"no legacy turn retry receipts needed compaction",
-		"database:",
-		"backup: " + backup,
-		"contains private session data",
+		"No older retry records needed compaction.",
+		"  Database  ",
+		"  Backup    " + backup + " · ",
+		"⚠ The backup contains private session data",
+		"  Keep it protected until you no longer need it for recovery.",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("compact output missing %q: %q", want, output)
@@ -315,45 +318,22 @@ func TestSessionPolicyNetworkReportsWhatItCannotResolve(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	network := sessionPolicyNetworkOf(cfg, policies["filtered"])
+	network, snapshot := sessionPolicyNetworkOf(cfg, policies["filtered"])
 	if network.Fingerprint != "" || !strings.Contains(network.Unresolved, "coop net setup") {
 		t.Fatalf("unresolvable policy network = %+v; want no fingerprint and the reason", network)
 	}
+	// The human view raises the unresolved reach as an ISSUE instead of listing rules it could not
+	// compile — a partial list would read as this configuration's complete access.
 	var out bytes.Buffer
-	renderSessionPolicies(&out, ui.Palette{}, sessionPoliciesResult{
-		PolicyFile: policyPath, PolicyDigests: map[string]string{"filtered": "aaaa"},
-		PolicyAuthorityDigests: map[string]string{"filtered": "bbbb"},
-		PolicyNetworks:         map[string]sessionPolicyNetwork{"filtered": network},
-	}, []string{"filtered"})
-	if !strings.Contains(out.String(), "Fingerprint:       unresolved on this host — ") {
-		t.Fatalf("policies output hides the unresolved reach:\n%s", out.String())
-	}
-}
-
-// `coop sessions policies` lists two facts per policy; each policy is a labeled block, never an
-// unlabeled tab row (entity-blocks-with-labeled-fields).
-func TestRenderSessionPoliciesUsesLabeledBlocks(t *testing.T) {
-	var out bytes.Buffer
-	renderSessionPolicies(&out, ui.Palette{}, sessionPoliciesResult{
-		PolicyFile:             "/etc/coop/session-policies.yaml",
-		PolicyDigests:          map[string]string{"observe": "aaaa", "engineer": "bbbb"},
-		PolicyAuthorityDigests: map[string]string{"observe": "cccc", "engineer": "dddd"},
-		PolicyNetworks: map[string]sessionPolicyNetwork{
-			"engineer": {Mode: "filtered", Fingerprint: "eeee"},
-			"observe":  {Mode: "open"},
-		},
-	}, []string{"engineer", "observe"})
+	view := sessionConfigurationViewOf("filtered", policies["filtered"], network, snapshot)
+	renderSessionConfigurations(&out, ui.Palette{}, policyPath, []sessionConfigurationView{view})
 	got := out.String()
-	for _, want := range []string{
-		"Policy file: /etc/coop/session-policies.yaml",
-		"\nengineer\n  Policy digest:     bbbb\n  Authority digest:  dddd\n  Network:           filtered\n  Fingerprint:       eeee\n",
-		"\nobserve\n  Policy digest:     aaaa\n  Authority digest:  cccc\n  Network:           open\n",
-	} {
+	for _, want := range []string{"⚠ Network access needs approval", "coop net setup", "Run coop net approve in " + real + ".\n"} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("policies output lacks %q:\n%s", want, got)
+			t.Fatalf("unresolved configuration lacks %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "\t") {
-		t.Fatalf("policies output must not fall back to tab rows:\n%s", got)
+	if strings.Contains(got, "Network  ") || strings.Contains(got, "example.com") {
+		t.Fatalf("an unresolved configuration must not print a rule summary:\n%s", got)
 	}
 }

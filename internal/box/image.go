@@ -425,6 +425,8 @@ func BuildWith(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, 
 	if err != nil {
 		return err
 	}
+	// The CLI announces a build in the approved words (cli.announceBuild), so this legacy entry —
+	// used by an automatic rebuild inside a fork or loop launch — says only the plain fact, once.
 	if !plan.Project {
 		ui.Note("building %s (shared base)", cfg.BaseImage)
 	} else {

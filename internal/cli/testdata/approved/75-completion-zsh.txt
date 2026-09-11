@@ -1,0 +1,11 @@
+#compdef coop
+# Coop Zsh integration.
+# Generate: coop completion zsh > ~/.config/coop/completion.zsh
+# Source this file after compinit in ~/.zshrc.
+_coop() {
+  local -a cands
+  cands=(${(f)"$(coop __complete "${(@)words[2,$CURRENT]}" 2>/dev/null)"})
+  compadd -- $cands
+}
+compdef _coop coop
+alias coop='nocorrect coop'

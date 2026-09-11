@@ -1,0 +1,26 @@
+coop completion — print shell integration for Bash or Zsh
+
+Usage:
+  coop completion <bash|zsh>
+
+BASH
+  Save the completion script:
+  mkdir -p ~/.config/coop
+  coop completion bash > ~/.config/coop/completion.bash
+
+  Add this to ~/.bashrc:
+  source ~/.config/coop/completion.bash
+
+ZSH
+  Save the integration script:
+  mkdir -p ~/.config/coop
+  coop completion zsh > ~/.config/coop/completion.zsh
+
+  Add this after compinit in ~/.zshrc:
+  source ~/.config/coop/completion.zsh
+
+  This also stops Zsh from suggesting corrections to Coop arguments such
+  as claude and codex.
+
+WHAT IT COMPLETES
+  Commands, options, agents, models, accounts, presets, forks, and task IDs.

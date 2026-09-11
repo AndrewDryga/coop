@@ -230,7 +230,7 @@ spelled out here (there's room to render them).
 |---|---|
 | `coop sessions serve [--state <path>] [--policies <path>] [--socket <path>]` | run the session controller over an owner-only Unix socket (it never listens on TCP) |
 | `coop sessions doctor [--json]` · `policies [--json]` · `compact --backup <path>` | check the socket · print the trusted policy and authority digests a fleet worker must advertise · back up, then compact turn retry receipts |
-| `coop worker connect --config <absolute-path>` | join one private Coop daemon to an external fleet controller over an outbound mutual-TLS poll stream; see [worker setup and recovery](docs/worker.md) |
+| `coop sessions connect --config <path>` | connect this machine to an external fleet controller over an outbound mutual-TLS poll stream, using the running local service or starting one; see [connect this machine](docs/session-api.md#connect-this-machine-to-a-remote-controller) |
 
 **Services** — the box's `.agent/compose.yml` sidecars ([details](#services))
 

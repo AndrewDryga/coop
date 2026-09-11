@@ -67,7 +67,7 @@ func TestLaunchSectionsNarrateAFilteredInteractiveLaunch(t *testing.T) {
 		s.internet(&config.Config{Egress: "filtered"}, spec, &policy)
 		s.starting()
 	})
-	want := "\nProtecting secrets\n" +
+	want := "Protecting secrets\n" +
 		"  ✓ 8 secret paths hidden from the box\n" +
 		"\nConfiguring network access\n" +
 		"  ✓ OpenAI endpoints allowed\n" +
@@ -98,8 +98,8 @@ func TestInternetSectionIsOneHeadingInEveryMode(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := captureStderr(t, func() { newLaunchSections(c.spec).internet(c.cfg, c.spec, nil) })
-		if got != "\nConfiguring network access\n"+c.want {
-			t.Errorf("%s: rendered %q, want %q", c.name, got, "\nConfiguring network access\n"+c.want)
+		if got != "Configuring network access\n"+c.want {
+			t.Errorf("%s: rendered %q, want %q", c.name, got, "Configuring network access\n"+c.want)
 		}
 	}
 }
@@ -117,7 +117,7 @@ func TestNetworkAllowancesNeverOmitAGrant(t *testing.T) {
 	if strings.Join(rows, "|") != strings.Join(want, "|") {
 		t.Fatalf("allowances = %q, want %q", rows, want)
 	}
-	if got := captureStderr(t, func() { newLaunchSections(RunSpec{Cmd: []string{"sh"}}).secrets(0) }); got != "\nProtecting secrets\n  ✓ No secret paths to hide\n" {
+	if got := captureStderr(t, func() { newLaunchSections(RunSpec{Cmd: []string{"sh"}}).secrets(0) }); got != "Protecting secrets\n  ✓ No secret paths to hide\n" {
 		t.Fatalf("zero secrets rendered %q", got)
 	}
 }
@@ -132,7 +132,7 @@ func TestBoxSectionCarriesImageNudgesAsCautions(t *testing.T) {
 	got := captureStderr(t, func() {
 		s.box([]string{"box image is 40 days old — 'coop update' refreshes the agent CLIs baked into it"})
 	})
-	want := "\nChecking the Coop box\n  ⚠ box image is 40 days old — 'coop update' refreshes the agent CLIs baked into it\n"
+	want := "Checking the Coop box\n  ⚠ box image is 40 days old — 'coop update' refreshes the agent CLIs baked into it\n"
 	if got != want {
 		t.Fatalf("nudges rendered %q, want %q", got, want)
 	}
@@ -168,7 +168,8 @@ func TestLaunchSectionsAreSilentOutsideInteractiveRuns(t *testing.T) {
 			s.secrets(3)
 			s.internet(&config.Config{Egress: "open"}, spec, nil)
 			s.starting()
-			s.stopping("main process exited with status 0")
+			s.stopping()()
+			s.stopped("main process exited with status 0")
 			if err := s.failed(cause); err != cause {
 				t.Errorf("%+v: failed() = %v, want the cause untouched", spec, err)
 			}
@@ -199,7 +200,7 @@ func TestLaunchFailureIsRenderedOnceAndMarkedReported(t *testing.T) {
 		s.starting()
 		err = s.failed(errors.New("network gateway did not become ready; no agent started"))
 	})
-	want := "\nStarting Claude Code\n  ✗ Could not start Claude Code\n\n        network gateway did not become ready; no agent started\n"
+	want := "Starting Claude Code\n  ✗ Could not start Claude Code\n\n        network gateway did not become ready; no agent started\n"
 	if got != want {
 		t.Fatalf("failure rendered %q, want %q", got, want)
 	}
@@ -345,10 +346,10 @@ func TestRunNarratesAnInteractiveOpenLaunchAndItsStop(t *testing.T) {
 	if err != nil || code != 3 {
 		t.Fatalf("Run = %d, %v; want the box's own exit 3", code, err)
 	}
-	want := "\nProtecting secrets\n  ✓ No secret paths to hide\n" +
+	want := "Protecting secrets\n  ✓ No secret paths to hide\n" +
 		"\nConfiguring network access\n  ⚠ Unrestricted — nothing is blocked\n" +
 		"\nStarting sh\n" +
-		"stopping the box — main process exited with status 3\n"
+		"\nThe Coop box has stopped — main process exited with status 3.\n"
 	if got != want {
 		t.Fatalf("interactive open run narrated:\n%q\nwant:\n%q", got, want)
 	}
@@ -363,7 +364,7 @@ func TestRunNarratesAnInteractiveOpenLaunchAndItsStop(t *testing.T) {
 	if code != -1 || !errors.Is(err, ui.ErrReported) {
 		t.Fatalf("Run = %d, %v; want -1 and a reported error", code, err)
 	}
-	if !strings.Contains(got, "\nStarting sh\n  ✗ Could not start sh\n\n        ") || strings.Contains(got, "stopping the box") {
+	if !strings.Contains(got, "\nStarting sh\n  ✗ Could not start sh\n\n        ") || strings.Contains(got, "has stopped") {
 		t.Fatalf("a client that never started narrated:\n%q", got)
 	}
 	// An image with something to say opens the narration with its own section — a caution, not a
@@ -374,7 +375,7 @@ func TestRunNarratesAnInteractiveOpenLaunchAndItsStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	got = captureStderr(t, func() { _, _ = Run(cfg, runtime.Runtime{Name: shim}, spec) })
-	if !strings.HasPrefix(got, "\nChecking the Coop box\n  ⚠ box image is 40 days old — 'coop update' refreshes the agent CLIs baked into it\n\nProtecting secrets\n") {
+	if !strings.HasPrefix(got, "Checking the Coop box\n  ⚠ box image is 40 days old — 'coop update' refreshes the agent CLIs baked into it\n\nProtecting secrets\n") {
 		t.Fatalf("an old image narrated:\n%q", got)
 	}
 }
