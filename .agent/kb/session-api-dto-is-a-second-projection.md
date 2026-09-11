@@ -51,6 +51,9 @@ the artifact endpoint).
   through `publicSession`, and an off-the-wire assertion in `service_restricted_test.go`); a blank
   mode is normalized to `normal` in the copier because an operation receipt written before modes
   existed carries none.
+- 2026-09-10 — completed-review GET uses the same public operation/review projection as POST;
+  it never exports raw Operation.Result. Empty policy_findings and not_publishable_reasons
+  now remain JSON arrays, proven against wire bytes in review_lookup_test.go.
 - 2026-09-03 — made the candidate projection explicitly state-dependent: old completed operation
   receipts may still contain a staged candidate, but `publicTurn` exposes it only while the turn is
   `awaiting_validation`. Acceptance keeps the digest and receipt, not a second message copy.
