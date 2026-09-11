@@ -1,0 +1,20 @@
+coop backlog add — save an idea for later
+
+Usage: coop backlog add "<title>" [<options>]
+
+OPTIONS
+  --tasks <path>       choose one task queue
+  --context <text>     explain the problem and why it matters
+  --acceptance <text>  describe the intended result
+  --approach <text>    describe a possible approach
+  --subtask <text>     add a checklist item; repeat for more items
+
+  Without the text options, Coop creates a template for you to fill in.
+  If you use any text option, include --context, --acceptance and --approach.
+  Repeat a text option to add another paragraph.
+
+EXAMPLES
+  coop backlog add "Redesign account permissions"
+  coop backlog add "Redesign account permissions" --tasks web/.agent/tasks
+
+Ready to start: coop backlog promote <id>

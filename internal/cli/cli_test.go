@@ -358,7 +358,7 @@ func TestForkHelpTemplate(t *testing.T) {
 	old := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
-	code, _ := forkHelp()
+	code, _ := forkHelp("")
 	_ = w.Close()
 	os.Stdout = old
 	out, _ := io.ReadAll(r)
@@ -366,10 +366,11 @@ func TestForkHelpTemplate(t *testing.T) {
 	if code != 0 {
 		t.Errorf("forkHelp exit = %d, want 0", code)
 	}
-	if !strings.Contains(s, "  Usage: coop fork ") {
+	if !strings.Contains(s, "Usage: coop fork <name> [<target|preset>] [<options>]") {
 		t.Errorf("fork help missing a Usage line:\n%s", s)
 	}
-	if !strings.HasSuffix(strings.TrimRight(s, "\n"), "Run 'coop help' for all commands.") {
-		t.Errorf("fork help should end with the standard footer:\n%s", s)
+	// The page ends with its own next step, so it never gets the generic all-commands footer.
+	if !strings.HasSuffix(strings.TrimRight(s, "\n"), "Command options: coop help fork <command>") {
+		t.Errorf("fork help should end with its own pointer:\n%s", s)
 	}
 }

@@ -161,7 +161,14 @@ func (c *Control) runGateMode(gateRepo, treeDir, img string, review bool) (bool,
 	if err != nil {
 		return false, err
 	}
-	ui.Note("revalidating: %s", strings.Join(gate, " "))
+	// Live progress: the checks are about to run against a temporary copy rebased onto the parent
+	// branch, so say which tree is being checked and with what, before anything can pass or fail.
+	if review {
+		ui.Note("Checking the changes after rebasing onto %s", gitBranch(gateRepo))
+	} else {
+		ui.Note("Running project checks")
+	}
+	ui.Note("  Running: %s", strings.Join(gate, " "))
 	reviewBase := strings.TrimSpace(gitOut(treeDir, "rev-parse", "--verify", "refs/coop/session-parent^{commit}"))
 	if reviewBase == "" {
 		reviewBase = strings.TrimSpace(gitOut(gateRepo, "rev-parse", "--verify", "HEAD^{commit}"))
@@ -539,7 +546,7 @@ func (c *Control) mergeOne(repo, img, name string, force bool) (outcome mergeOut
 	if target == "" || target == "HEAD" {
 		target = "the current commit (detached HEAD)"
 	}
-	ui.Note("landing %s onto %s", name, target)
+	ui.Note("Rebasing onto %s", target)
 	if hasGeneration {
 		candidate, hasCandidate, err := tasks.ReadForkCandidate(repo, identity)
 		if err != nil {
@@ -821,17 +828,24 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	ref := "review/" + name
 	ahead := gitOut(repo, "rev-list", "--count", "HEAD.."+ref)
 	ins, del := parseShortstat(gitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
-	ui.Note("rebase %s onto %s — %s commit(s), +%d -%d", ref, gitBranch(repo), ahead, ins, del)
+	aheadN, _ := strconv.Atoi(ahead)
+	ui.Note("Merge fork %s into %s", name, gitBranch(repo))
+	ui.Note("  %s · +%d −%d", ui.Count(aheadN, "commit"), ins, del)
 	if _, s := c.host.forkCost(ws); s != "" {
-		ui.Note("fork cost: %s", s)
+		ui.Note("  Reported cost: %s", s)
 	}
-	if !approve("rebase and land?", yes) {
+	ui.Note("")
+	if !approve("Merge these commits?", yes) {
+		ui.Note("")
+		ui.Note("Cancelled. No commits merged.")
 		return 0, nil
 	}
 	result, err := c.mergeOne(repo, img, name, force)
 	defer result.approval.close()
 	if result.landed {
-		ui.OK("landed %s", name) // say it BEFORE any error: the commits are in the parent either way
+		// Say it BEFORE any error: the commits are in the parent branch either way.
+		ui.Note("")
+		ui.OK("Merged fork %s into %s", name, gitBranch(repo))
 	}
 	if err != nil {
 		// A landed fork whose queue reconciliation failed keeps its workspace and its exit code: the
@@ -845,20 +859,32 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	// The merge landed the committed work (via review/<name>); an interrupted iteration can still leave
 	// uncommitted changes in the fork's worktree, so keep a dirty fork with a note rather than discard it.
 	if gitDirty(ws) {
-		ui.Warn("keeping fork %s — its worktree has uncommitted changes; inspect, then 'coop fork rm %s --force'", name, name)
+		ui.Alert("The fork still has uncommitted changes",
+			"The fork was kept so you can review those files.",
+			[2]string{"Open it:", "coop fork open " + name})
 		return 0, nil
 	}
 	// Default-No delete confirm (the land above was the default-Yes step); --yes is already required
 	// for a non-interactive run, so this only prompts at a TTY. Declining just keeps the landed fork.
-	if ui.DestroyGate("remove the landed fork "+name, yes) == nil {
+	ui.Note("")
+	if forkHasServices(repo, name) {
+		ui.Note("Will be permanently deleted:")
+		ui.Note("  - This fork's service containers, Docker volumes, and their stored data.")
+		ui.Note("")
+	}
+	if ui.DestroyGate("Delete the merged fork", yes) == nil {
 		if err := destroyLandedFork(c.rt, repo, name, result.approval, box.ConfigExposureRoots(c.cfg)...); err != nil {
 			if isForkMergeLifecycleError(err) {
 				return 1, err
 			}
 			return -1, err
 		}
-		ui.OK("removed fork %s", name)
+		ui.Note("")
+		ui.OK("Deleted fork %s", name)
+		return 0, nil
 	}
+	ui.Note("")
+	ui.Note("Kept fork %s.", name)
 	return 0, nil
 }
 
@@ -868,28 +894,55 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 // conflict or gate failure, leaving the remaining forks untouched.
 func (c *Control) forkMergeAll(repo string, names []string, img string, force, yes bool) (int, error) {
 	if len(names) == 0 {
-		ui.Note("no forks to merge")
+		ui.Note("No forks to merge.")
 		return 0, nil
 	}
 	// Never touch a fork whose loop is still running — rebasing/deleting its live worktree corrupts
 	// in-flight work and orphans the worker. Skip those with a notice and land the rest.
 	skip := map[string]bool{}
-	if live := runningForkNames(repo, names); len(live) > 0 {
-		ui.Note("skipping %s: %s — stop each with 'coop fork stop <name>' to land", ui.Count(len(live), "running/cleanup-pending fork"), strings.Join(live, ", "))
-		for _, n := range live {
-			skip[n] = true
-		}
+	live := runningForkNames(repo, names)
+	for _, n := range live {
+		skip[n] = true
 	}
 	if len(skip) == len(names) {
-		ui.Note("no forks to merge — every fork is running or awaiting cleanup")
+		ui.Note("No forks are ready to merge. %s running or need cleanup.",
+			ui.Count(len(live), "fork is", "forks are"))
+		for _, n := range live {
+			ui.Note("  Stop it: coop fork stop %s", n)
+		}
 		return 0, nil
 	}
+	eligible := make([]string, 0, len(names))
+	for _, n := range names {
+		if !skip[n] {
+			eligible = append(eligible, n)
+		}
+	}
+	ui.Note("Merge %s into %s", ui.Count(len(eligible), "fork"), gitBranch(repo))
+	for _, n := range eligible {
+		ui.Note("  %s", n)
+	}
+	if len(live) > 0 {
+		ui.Note("")
+		ui.Note("Will be kept:")
+		for _, n := range live {
+			ui.Note("  - %s is still running and will be skipped.", n)
+		}
+	}
+	ui.Note("")
+	ui.Note("After merging:")
+	ui.Note("  - The %s fork %s will be deleted.", ui.List(eligible, "and"), pluralFolder(len(eligible)))
+	if anyForkHasServices(repo, eligible) {
+		ui.Note("  - Their service containers, Docker volumes, and their stored data will be deleted.")
+	}
+	ui.Note("")
 	// Landing every fork also DELETES each one — and unlike the single-fork path (which prompts per
 	// fork), this runs unattended. Ask once before destroying anything; --yes (already required for a
 	// non-interactive run) skips the prompt.
-	if err := ui.DestroyGate(fmt.Sprintf("rebase, land and remove up to %s", ui.Count(len(names)-len(skip), "fork")), yes); err != nil {
-		return 2, err
+	if err := ui.DestroyGate("Merge and delete these forks", yes); err != nil {
+		return 2, ForkCancelled(err)
 	}
+	ui.Note("")
 	var landed []string
 	for _, n := range names {
 		if skip[n] {
@@ -904,26 +957,80 @@ func (c *Control) forkMergeAll(repo string, names []string, img string, force, y
 		}
 		result, err := c.mergeOne(repo, img, n, force)
 		if result.landed {
-			ui.OK("landed %s", n)
+			ui.OK("Merged fork %s into %s", n, gitBranch(repo))
 			// Keep the fork when its worktree still holds uncommitted work (an interrupted iteration),
 			// and when its queue reconciliation failed — deleting a workspace right after an
 			// unexplained bookkeeping failure removes the one thing left to inspect.
 			if gitDirty(ws) {
-				ui.Warn("keeping fork %s — uncommitted changes; 'coop fork rm %s --force' after review", n, n)
+				ui.Note("Kept fork %s — it still has uncommitted changes.", n)
 			} else if err == nil {
 				if destroyErr := destroyLandedFork(c.rt, repo, n, result.approval, box.ConfigExposureRoots(c.cfg)...); destroyErr != nil {
-					ui.Warn("could not complete cleanup for landed fork %s: %v", n, destroyErr)
+					ui.Alert("Merged fork "+n+", but its cleanup is incomplete", destroyErr.Error())
+				} else {
+					ui.OK("Deleted fork %s", n)
 				}
 			}
 			landed = append(landed, n)
 		}
 		result.approval.close()
 		if err != nil {
-			ui.Error("%v", err)
-			ui.Note("rebase queue stopped at %s — %d landed, the rest left untouched", n, len(landed))
-			return 1, nil
+			remaining := remainingForks(names, skip, landed, n)
+			cause := fmt.Sprintf("%v\nMerged: %s.", err, mergedList(landed))
+			if len(remaining) > 0 {
+				cause += "\nUntouched: " + ui.List(remaining, "and") + "."
+			}
+			ui.Failure("Could not merge fork "+n, cause)
+			return 1, ui.Reported(err)
 		}
 	}
-	ui.OK("%s landed", ui.Count(len(landed), "fork"))
+	ui.Note("")
+	ui.OK("Merged %s", ui.Count(len(landed), "fork"))
 	return 0, nil
+}
+
+// forkHasServices reports whether removing this fork would also remove service containers and
+// their volumes, so a confirmation can name that loss instead of implying only a checkout goes.
+func forkHasServices(repo, name string) bool {
+	return box.ComposeFileAt(forkspace.Workspace(repo, name), project.DefaultCompose) != ""
+}
+
+func anyForkHasServices(repo string, names []string) bool {
+	for _, n := range names {
+		if forkHasServices(repo, n) {
+			return true
+		}
+	}
+	return false
+}
+
+func pluralFolder(n int) string {
+	if n == 1 {
+		return "folder"
+	}
+	return "folders"
+}
+
+// mergedList names what actually landed before a failure, so a halted batch reports durable
+// results rather than a bare count.
+func mergedList(landed []string) string {
+	if len(landed) == 0 {
+		return "nothing"
+	}
+	return ui.List(landed, "and")
+}
+
+// remainingForks is the eligible forks a halted batch never touched — named, so nobody has to
+// diff the list themselves.
+func remainingForks(names []string, skip map[string]bool, landed []string, failed string) []string {
+	done := map[string]bool{failed: true}
+	for _, n := range landed {
+		done[n] = true
+	}
+	var out []string
+	for _, n := range names {
+		if !skip[n] && !done[n] {
+			out = append(out, n)
+		}
+	}
+	return out
 }

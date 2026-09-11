@@ -99,7 +99,7 @@ func TestAllHelpAvoidsMiddleDots(t *testing.T) {
 	pages := map[string]string{
 		"top-level": helpText(&config.Config{}),
 		"run":       runHelp,
-		"fork":      forkHelpText(ui.Palette{}),
+		"fork":      forkHelpText(""),
 	}
 	for _, name := range agents.Names() { // one generated page per agent, not one shared essay
 		pages["agent "+name] = agentHelp(name)
@@ -139,7 +139,7 @@ func TestHelpRowsAlign(t *testing.T) {
 		text string
 	}{
 		{"top level", helpText(&config.Config{RepoOverride: t.TempDir(), ConfigDir: "/c", BoxHome: "/b"})},
-		{"fork", forkHelpText(ui.Palette{})},
+		{"fork", forkHelpText("")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -227,7 +227,11 @@ var wantManualOrder = []string{
 	"run", "shell", "claude", "codex", "gemini", "grok",
 	"login", "credentials", "credentials default", "credentials rm", "credentials account",
 	"models", "presets init", "presets",
-	"tasks", "backlog", "context", "loop", "fork",
+	"tasks",
+	"backlog", "backlog ls", "backlog add", "backlog promote", "backlog rm",
+	"context", "loop",
+	"fork", "fork acp", "fork ls", "fork review", "fork merge", "fork rm",
+	"fork stop", "fork logs", "fork path", "fork open",
 	"up", "down",
 	"doctor", "net", "net runs", "net inspect", "net check", "net blocked", "net approve",
 	"net watch", "net export", "net forget", "net setup", "net recover", "check-secrets", "sign",

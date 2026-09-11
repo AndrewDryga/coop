@@ -7,7 +7,6 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
-	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // TestCLIConformance graduates the committed .agent/kb/rules into the gate: it walks the CLI surface as
@@ -57,7 +56,7 @@ func TestCLIConformance(t *testing.T) {
 	// help-output-style: every canonical verb appears in its family's help — a verb added to the
 	// dispatch without a help row is drift this catches.
 	t.Run("verbs_documented_in_help", func(t *testing.T) {
-		forkHelpTxt := captureStdout(t, func() { _, _ = forkHelp() })
+		forkHelpTxt := captureStdout(t, func() { _, _ = forkHelp("") })
 		for _, v := range forkspace.VerbList() {
 			if !strings.Contains(forkHelpTxt, v) {
 				t.Errorf("fork verb %q has no row in forkHelp", v)
@@ -95,7 +94,7 @@ func TestCLIConformance(t *testing.T) {
 			"ACP help":              commandHelp["acp"],
 			"ACP usage error":       errText("extra ACP argument", acpUsageErr),
 			"loop help":             commandHelp["loop"],
-			"fork help":             forkHelpText(ui.Palette{}),
+			"fork help":             forkHelpText(""),
 			"fork usage error":      errText("empty fork", forkUsageErr),
 			"fork peer error":       errText("valueless fork peer", forkPeerErr),
 			"fork ACP usage error":  errText("invalid fork ACP target", forkACPUsageErr),

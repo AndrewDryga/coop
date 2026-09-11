@@ -41,67 +41,93 @@ import (
 // Forks live in a sibling directory <repo>-forks/, one subdirectory per fork — that layout, its
 // names, and its lifecycle state file are internal/forkspace's contract; this file is the commands.
 
-// forkHelp prints the fork family usage (shown for `coop fork [...] -h|--help`).
-func forkHelp() (int, error) {
-	fmt.Print(forkHelpText(ui.For(os.Stdout)))
+// forkHelp prints the fork family page (shown for a bare `coop fork` and for
+// `coop fork [<name>] -h|--help`). name is the fork the reader asked about, "" for the family page.
+func forkHelp(name string) (int, error) {
+	printHelpPage(forkHelpText(name))
 	return 0, nil
 }
 
-// forkHelpText builds the fork family usage with palette p — p == ui.Palette{} gives the plain,
-// byte-stable reference render that `coop help --all` and gendocs concatenate into the manual.
-func forkHelpText(p ui.Palette) string {
-	rows := []struct{ cmd, desc string }{
-		{"coop fork <name> <target>", "open or re-enter a fork with an agent target"},
-		{"coop fork <name> <preset>", "open or re-enter a fork with an orchestration preset"},
-		{"coop fork ls [--json]", "list fork workers, sandboxes, task progress, and problems"},
-		{"coop fork logs [<name>]", "tail a fork's loop log (no name: all forks)"},
-		{"coop fork review <name>", "dossier + diff (--stat, --tool, --open, --gate)"},
-		{"coop fork <name> acp <target>", "front the fork as an ACP agent (for editors)"},
-		{"coop fork merge <name>", "rebase onto your branch and land one fork"},
-		{"coop fork merge --all", "rebase and land every fork"},
-		{"coop fork rm <name>", "discard a fork (confirms; --force may stop it and return/discard task authority)"},
-		{"coop fork open <name>", "open the fork in your editor"},
-		{"coop fork path <name>", "print the fork's filesystem path"},
-		{"coop fork stop <name>", "stop a detached loop"},
+// forkHelpText is the fork family page. Asked about ONE fork (`coop fork login --help`), its usage
+// line and START WORK examples name that fork, so the reader can copy the line they need — help
+// never launches it. The command index below stays generic: those rows are other forks' commands.
+// name == "" is the reference form the manual and `coop help fork` print, with the approved
+// placeholder fork.
+func forkHelpText(name string) string {
+	slot, example := "<name>", "login"
+	if name != "" {
+		slot, example = name, name
 	}
-	flags := []struct{ flag, desc string }{
-		{"-c, --continue", "resume the prior session (the default on re-entry)"},
-		{"    --new", "start a fresh agent session on re-entry"},
-		{"    --fresh", "recreate the fork (confirms; --force may stop it and discard Git/task work)"},
-		{"    --loop", "work the fork's task queue until done instead of opening an interactive session"},
-		{"-d, --detach", "with --loop, run it in the background"},
-		{"-t, --tasks", "with --loop, select one canonical task queue (default: every project queue)"},
-		{"    --peer <target>", "with --loop, a peer iterations may consult read-only (repeatable)"},
-		{"-f, --force (merge)", "bypass the risky-file policy; the rebase gate still must pass"},
-		{"-f, --force (rm/fresh)", "stop the worker; discard Git work, assignments, candidates, and pending proposals"},
-		{"-y, --yes", "merge/rm/--fresh: skip the delete confirm (required without a TTY)"},
-		{"-f, --follow", "logs: keep streaming new output"},
-		{"    --readonly", "acp: front the fork read-only under the restricted profile (writes to scratch only; no project hooks or MCP)"},
-	}
-	pad := func(s string, w int) string {
-		n := w - len(s)
-		if n < 2 {
-			n = 2
-		}
-		return s + strings.Repeat(" ", n)
+	start := [][2]string{
+		{"coop fork " + example + " claude", "create a fork and start Claude"},
+		{"coop fork " + example, "continue an existing fork's session"},
+		{"coop fork " + example + " frontier", "use a preset"},
+		{"coop fork " + example + " claude -d", "work through tasks in the background"},
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s — a throwaway clone handed to an agent; review and land it like a PR.\n\n", p.Bold("coop fork"))
-	fmt.Fprint(&b, "  Usage: coop fork <name> [<target|preset>] | ls | review | merge | logs | rm | stop | open | path\n\n")
-	for _, r := range rows {
-		fmt.Fprintf(&b, "  %s%s\n", pad(r.cmd, 34), r.desc)
-	}
-	fmt.Fprintf(&b, "\n%s (every short flag has a long form):\n", p.Bold("FLAGS"))
-	for _, f := range flags {
-		fmt.Fprintf(&b, "  %s%s\n", pad(f.flag, 26), f.desc)
-	}
-	fmt.Fprintf(&b, "\n%s  --open opens $COOP_EDITOR (else your global git core.editor); --tool uses your global git diff.tool.\n", p.Bold("REVIEW"))
-	fmt.Fprint(&b, "        --gate rebases in an isolated scratch clone and runs the parent's gate; source mutations fail review.\n")
-	fmt.Fprintf(&b, "%s   new fork actions are verb-first (coop fork <verb> <name>); a fork can't be named a reserved verb.\n", p.Bold("NAMES"))
-	fmt.Fprintf(&b, "%s   fork loops share the project's canonical queue; the host assigns one task at a time.\n", p.Bold("TASKS"))
-	fmt.Fprint(&b, "        Stop keeps its assignment; merge alone completes that canonical task. Copied queues are retired.\n")
-	fmt.Fprint(&b, "\nRun 'coop help' for all commands.\n") // match every other command's help footer
+	fmt.Fprintf(&b, `coop fork — let an agent work in a separate copy of your project
+
+Usage: coop fork %s [<target|preset>] [<options>]
+       coop fork <command> [<args>...]
+
+START WORK
+`, slot)
+	b.WriteString(helpRowsAt(start, 33))
+	b.WriteString(`
+REVIEW AND MERGE
+  ls             show forks and their progress
+  review <name>  review a fork's changes
+  merge <name>   merge its commits into your current branch
+  merge --all    merge eligible forks one at a time
+
+MANAGE
+  logs [<name>]  show one fork's logs, or all forks
+  stop <name>    stop a fork's background loop
+  open <name>    open a fork in your editor
+  path <name>    print its folder path
+  rm <name>      delete a fork
+
+SESSION OPTIONS
+  -c, --continue  continue the last session (default when reopening)
+  --new           start a new conversation in the existing fork
+  --fresh         delete the fork and its service data, then recreate it
+  -f, --force     with --fresh, stop active work and discard unmerged changes
+  -y, --yes       with --fresh, skip confirmation
+
+LOOP OPTIONS
+  --loop              work through the project's task queue
+  -d, --detach        run the loop in the background (implies --loop)
+  -t, --tasks <path>  select one project task queue
+  --peer <target>     start with read-only peer agents; repeatable
+  --egress <mode>     internet access: filtered, open or none
+  --allow-domain <name> allow this exact domain over TLS on port 443; repeatable
+  --egress-rules <file> add this file's network rules for the loop
+
+  Task, peer and network options above apply to fork loops.
+  Each fork receives one project task at a time. Its task is completed in the
+  project queue when you merge the reviewed work. Stopping keeps it resumable.
+
+EDITOR INTEGRATION
+  coop fork <name> acp <target>  use an existing fork from an ACP editor
+  See coop help fork <name> acp for its options.
+
+  Model and account syntax: coop help models
+  Command options: coop help fork <command>`)
 	return b.String()
+}
+
+// printForkHeader opens an interactive fork launch: what is happening to which fork, its exact
+// folder, and — on re-entry — the facts that decide what the agent will see. A creation has
+// nothing to say beyond the folder, so its rows are empty and the path stands alone.
+func printForkHeader(action, name, ws string, rows []string) {
+	ui.Note("%s: %s", action, name)
+	if len(rows) == 0 {
+		ui.Note("")
+	}
+	ui.Note("  %s", ws)
+	for _, row := range rows {
+		ui.Note("  %s", row)
+	}
 }
 
 // forkctl binds the fork control plane to this run: the config, the runtime as detected so far
@@ -124,7 +150,7 @@ func (a *app) forkctl() *forkctl.Control {
 // reserved verb runs that subcommand; anything else opens (or resumes) a fork by name.
 func (a *app) cmdFork(args []string) (int, error) {
 	if len(args) == 0 {
-		return forkHelp()
+		return forkHelp("")
 	}
 	fc := a.forkctl()
 	switch args[0] {
@@ -401,11 +427,10 @@ func (a *app) forkCreate(args []string) (int, error) {
 	existed := pathExists(ws)
 	// Read provider memory before --fresh destroys it, and reject a brand-new provider-less fork
 	// before clone/image work. An explicit target or preset already set agentSet and always wins.
+	rememberedAgent := false
 	if !fa.agentSet {
 		if remembered := forkctl.ReadForkAgent(ws); remembered != "" {
-			if existed && !fa.worker && remembered != fa.agent {
-				ui.Note("using this fork's agent: %s (pass an agent to switch)", remembered)
-			}
+			rememberedAgent = existed && !fa.worker && remembered != fa.agent
 			fa.agent = remembered
 		}
 	}
@@ -479,9 +504,11 @@ func (a *app) forkCreate(args []string) (int, error) {
 					return 1, fmt.Errorf("--fresh: fork %q owns canonical task assignments, a reviewed candidate, proposals, or cleanup state — merge it, or add --force to resolve them before recreation", fa.name)
 				}
 			}
-			description := forkctl.ForkDestroyDescription(fa.name, originalDirty, originalUnmerged, originalTaskState) + "; recreate it from the current parent"
-			if err := ui.DestroyGate(description, fa.yes); err != nil {
-				return 2, err
+			preview := forkctl.ForkDestroyDescription(needsStop, originalDirty, originalUnmerged, originalTaskState)
+			preview.Will = append(preview.Will, "Create a new fork from your current project branch.")
+			forkctl.PrintForkDestroyPreview("Recreate fork: "+fa.name, ws, preview)
+			if err := ui.DestroyGate("Recreate this fork", fa.yes); err != nil {
+				return 2, forkctl.ForkCancelled(err)
 			}
 		}
 		if needsStop {
@@ -599,7 +626,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 				}
 			}
 		}
-		ui.Note("forking %s → %s (secrets are gitignored, so they don't come along)", filepath.Base(repo), ws)
+		printForkHeader("Creating fork", fa.name, ws, nil)
 		if _, err := forkspace.Setup(repo, fa.name); err != nil {
 			unlock()
 			return -1, err
@@ -626,13 +653,11 @@ func (a *app) forkCreate(args []string) (int, error) {
 				unlock()
 				return 1, fmt.Errorf("recover missing fork %q before creation: %w", fa.name, recoverErr)
 			}
-			ui.Note("forking %s → %s (secrets are gitignored, so they don't come along)", filepath.Base(repo), ws)
+			printForkHeader("Creating fork", fa.name, ws, nil)
 			if _, err := forkspace.Setup(repo, fa.name); err != nil {
 				unlock()
 				return -1, err
 			}
-		} else {
-			ui.Note("resuming fork %s (%s)", fa.name, ws)
 		}
 		forkIdentity, err = forkspace.EnsureGenerationLocked(repo, fa.name)
 		if err == nil {
@@ -711,7 +736,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 	// Resume the agent's prior session by default when re-entering a fork (opt out with
 	// --new; --fresh recreates the fork, so it starts new too). Falls back to a fresh
 	// run when no session for this fork exists. See forkLaunchCmd.
-	cmd, err := a.forkLaunchCmd(fa, ws, existed)
+	cmd, err := a.forkLaunchCmd(fa, ws, existed, rememberedAgent)
 	if err != nil {
 		return -1, fmt.Errorf("prepare fork session before launch: %w — fix ownership or permissions of %s and retry", err, filepath.Join(ws, ".coop"))
 	}
@@ -750,7 +775,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 // exactly it later — so a loop or consult that shares the cwd can never hijack the
 // "continue". codex can't preset an id, so coop persists the native id it discovers
 // after a run and resumes that exact session later.
-func (a *app) forkLaunchCmd(fa forkArgs, ws string, existed bool) ([]string, error) {
+func (a *app) forkLaunchCmd(fa forkArgs, ws string, existed bool, rememberedAgent bool) ([]string, error) {
 	ag, ok := agents.Get(fa.agent)
 	if !ok {
 		return a.defaultCmd(fa.agent), nil
@@ -773,11 +798,25 @@ func (a *app) forkLaunchCmd(fa forkArgs, ws string, existed bool) ([]string, err
 			id = sid
 		}
 	}
+	var rows []string
+	if rememberedAgent {
+		rows = append(rows, "Agent: "+fa.agent+" (saved for this fork)")
+	}
 	if (existed && !fa.fresh && !fa.newSession) || fa.cont {
+		// The continuation row is printed only where continuity is PROVEN: a path that falls back
+		// to a fresh run must never promise a resumed conversation.
 		if rc, resumed := ag.Resume(a.cfg, sessionCWD, id); resumed {
-			ui.Note("continuing your last %s session in this fork", fa.agent)
+			if existed && !fa.fresh {
+				printForkHeader("Opening fork", fa.name, ws, append(rows, "Continuing the last "+titleName(fa.agent)+" session"))
+			}
 			return rc, nil
 		}
+	}
+	if existed && !fa.fresh {
+		if fa.newSession {
+			rows = append(rows, "Starting a new "+titleName(fa.agent)+" conversation")
+		}
+		printForkHeader("Opening fork", fa.name, ws, rows)
 	}
 	return ag.StartSession(a.cfg, id), nil
 }
@@ -1017,7 +1056,8 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 	}
 	defer func() {
 		if err := forkspace.EndExecution(repo, controller); err != nil {
-			ui.Warn("fork %s loop ended but activity cleanup failed: %v", name, err)
+			ui.Alert("Fork "+name+" stopped; cleanup incomplete", fmt.Sprintf("%v", err),
+				[2]string{"Retry:", "coop fork stop " + name})
 		}
 	}()
 	authorityQueues, err := forkCanonicalQueues(repo, tasksPath)
@@ -1071,7 +1111,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 			if retired, err := tasks.RetireStaleForkCandidate(repo, identity, head); err != nil {
 				return 1, err
 			} else if retired {
-				ui.Note("fork %s moved past its reviewed candidate — retired it; the next signoff republishes the new HEAD", name)
+				ui.Note("Fork %s changed after its review. It needs another review before merging.", name)
 				continue
 			}
 			if _, _, err := tasks.PublishForkCandidate(repo, identity, head, tree); err != nil {
@@ -1094,7 +1134,8 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 		}
 		switch assignment.Outcome {
 		case tasks.ForkAssignmentUnavailable:
-			ui.Note("no canonical task lease available — %s; stopping this executor", assignment.Busy)
+			ui.Note("No task is available for fork %s.", name)
+			ui.Note("  The remaining tasks are assigned to other agents.")
 			return 0, nil
 		case tasks.ForkAssignmentExecutorDrained:
 			imported, importErr := tasks.ImportForkProposals(repo, identity)
@@ -1102,7 +1143,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 				return 1, fmt.Errorf("import fork task proposals: %w", importErr)
 			}
 			for _, proposal := range imported {
-				ui.OK("imported discovered task %s into %s", proposal.TaskID, proposal.Root)
+				ui.OK("Added discovered task: %s", proposal.TaskID)
 			}
 			if importedForkTask(imported) {
 				continue
@@ -1112,7 +1153,10 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 				return 1, inspectErr
 			}
 			if forkAssignmentsBlocked(assignments) {
-				ui.Note("fork %s is paused on blocked canonical work; unblock it, then resume this same fork", name)
+				ui.Note("Fork %s is waiting for your decision.", name)
+				ui.Note("")
+				ui.Note("  Answer it: coop tasks decisions")
+				ui.Note("  Continue:  coop fork %s %s --loop", name, agent)
 				return 0, nil
 			}
 			head = gitOut(ws, "rev-parse", "HEAD")
@@ -1120,7 +1164,11 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 			if _, published, err := tasks.PublishForkCandidate(repo, identity, head, tree); err != nil {
 				return 1, err
 			} else if published {
-				ui.OK("fork %s candidate is reviewed and ready to merge", name)
+				ui.Note("")
+				ui.OK("Fork %s is ready to merge", name)
+				ui.Note("")
+				ui.Note("  Review: coop fork review %s", name)
+				ui.Note("  Merge:  coop fork merge %s", name)
 			}
 			if !detached {
 				forkctl.ForkNextSteps(name)
@@ -1181,7 +1229,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 			return 1, fmt.Errorf("import fork task proposals: %w", err)
 		}
 		for _, proposal := range imported {
-			ui.OK("imported discovered task %s into %s", proposal.TaskID, proposal.Root)
+			ui.OK("Added discovered task: %s", proposal.TaskID)
 		}
 		if result.State == tasks.StateInProgress {
 			return 0, nil

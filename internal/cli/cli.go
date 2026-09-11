@@ -165,11 +165,16 @@ func reportExit(code int, err error) int {
 
 // helpPath is the command path a help request is ABOUT: the leading plain words of argv, stopping
 // at the first option, at `--` (everything after it belongs to the agent), and at two words deep —
-// past a family and its subcommand, the rest is arguments, not a deeper page.
+// past a family and its subcommand, the rest is arguments, not a deeper page. fork is the one
+// family that takes a third word: its commands sit AFTER the fork name (`coop fork login acp`).
 func helpPath(argv []string) []string {
+	depth := 2
+	if len(argv) > 0 && argv[0] == "fork" {
+		depth = 3
+	}
 	var path []string
 	for _, arg := range argv {
-		if len(path) == 2 || arg == "--" || arg == "help" || strings.HasPrefix(arg, "-") {
+		if len(path) == depth || arg == "--" || arg == "help" || strings.HasPrefix(arg, "-") {
 			break
 		}
 		path = append(path, arg)
@@ -363,9 +368,23 @@ func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
 			return 0, nil
 		}
 	}
+	// `coop help fork <name> acp` names a fork BETWEEN the family and its command, so fork's leaf
+	// pages also resolve on the last word — `coop help fork login acp` is that page, not a fork
+	// called "acp".
+	if cmd == "fork" && len(path) > 1 {
+		if leaf := cmd + " " + path[len(path)-1]; commandHelp[leaf] != "" {
+			printTopicHelp(leaf, commandHelp[leaf])
+			return 0, nil
+		}
+	}
 	switch {
 	case cmd == "fork":
-		code, _ := forkHelp()
+		// `coop fork login --help` is the launch contract for THAT fork; `coop help fork` the family.
+		name := ""
+		if len(path) > 1 {
+			name = path[1]
+		}
+		code, _ := forkHelp(name)
 		return code, nil
 	case cmd == "run":
 		printCommandHelp(runHelp)

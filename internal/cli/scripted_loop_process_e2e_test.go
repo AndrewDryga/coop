@@ -68,7 +68,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 				})
 				cancel()
 				trace := readProcessTrace(t, suite.layout.Trace)
-				if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stdout, "fixture-loop-complete-"+provider) || !strings.Contains(result.Stderr, "task limit reached") {
+				if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stdout, "fixture-loop-complete-"+provider) || !strings.Contains(result.Stderr, "Paused after 1 of 1 requested task") {
 					t.Fatalf("coop loop %s = exit %d err %v\nstdout:\n%s\nstderr:\n%s\ntrace:\n%s", target, result.ExitCode, result.Err, result.Stdout, result.Stderr, readProcessFile(t, suite.layout.Trace))
 				}
 
@@ -109,8 +109,8 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 		})
 		cancel()
 		if result.Err != nil || result.ExitCode != 0 ||
-			!strings.Contains(result.Stderr, "starting a fresh observed attempt (1/3)") ||
-			!strings.Contains(result.Stderr, "starting a fresh observed attempt (2/3)") ||
+			!strings.Contains(result.Stderr, "Starting a fresh attempt · 2 of 3.") ||
+			!strings.Contains(result.Stderr, "Starting a fresh attempt · 3 of 3.") ||
 			strings.Contains(result.Stderr, "iteration failed") || strings.Contains(result.Stderr, "no progress") {
 			t.Fatalf("background handoff loop = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
@@ -161,7 +161,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 		})
 		cancel()
 		if result.ExitCode == 0 ||
-			!strings.Contains(result.Stderr, "live background work 3 times") ||
+			!strings.Contains(result.Stderr, "Stopped after 3 attempts left background work running") ||
 			strings.Contains(result.Stderr, "iteration failed") || strings.Contains(result.Stderr, "no progress") {
 			t.Fatalf("background handoff cap = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}

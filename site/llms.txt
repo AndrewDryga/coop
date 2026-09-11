@@ -465,239 +465,390 @@ PROJECTS
 
 ==============================================================================
 
-coop backlog — park the genuinely LARGE as task folders (.agent/tasks/xx_backlog/).
+coop backlog — save ideas that need more planning
 
-  Usage: coop backlog [--tasks <path>]... [ls | add "<title>" | rm <id> | promote <id>]
+Usage: coop backlog [--tasks <path>]... [<command>]
 
-  (bare)           list the backlog drawer
-  add "<title>"    capture an idea (--context/--acceptance/--approach/--subtask fill it inline)
-  promote <id>     move it into 00_todo/ when it's ready to work (then coop tasks claim)
-  rm <id>          drop an idea (--yes skips the confirm)
+COMMANDS
+  ls             list ideas (also the default)
+  add "<title>"  save an idea
+  promote <id>   move an idea to the task queue
+  rm <id>        delete an idea
 
-  The backlog is the SAME task-folder format as the queue, in an xx_backlog/ drawer that lives
-  OUTSIDE the lifecycle — the loop, the Stop hook, and 'coop tasks' all ignore it, so an idea
-  sits here with no nagging until you promote it (a folder move, not a rewrite). This drawer is
-  for work one iteration couldn't finish, or that needs a spec or a decision before anyone can
-  start; everything else goes straight to the queue ('coop tasks add'), and a close call belongs
-  in the queue too. Defaults to .agent/tasks/ — or, in a monorepo, every subproject's queue (see
-  coop tasks): ls rolls up across them and rm/promote find the item in whichever queue holds it,
-  while add needs a single --tasks.
+  Backlog items live in .agent/tasks/xx_backlog/.
+  Agents leave them alone until you promote them.
+  Put work that is ready to start directly in coop tasks.
 
-==============================================================================
+EXAMPLES
+  coop backlog add "Redesign account permissions"
+  coop backlog promote account-permissions
 
-coop context — compile the committed docs relevant to a scope (instructions + rules + KB).
-
-  Usage: coop context [--changed] [--task <id> [--tasks <path>...]] [--json | --rendered] [<path>...]
-
-  Selects which committed docs an agent needs for the paths in play — canonical
-  AGENTS.md/CLAUDE.md (always, whole) plus the .agent/project.yaml 'context.routes'
-  whose globs match — so a session carries less than the whole repo's instructions.
-
-  Scope is DETERMINISTIC (never inferred from a prompt), from any of:
-    paths...         explicit repo-relative paths
-    --changed        paths git reports changed (staged, unstaged, untracked)
-    --task <id>      the paths a queued task declares (a 'paths:' frontmatter list)
-    (current subproject, when run inside one)
-
-  Task IDs use the same exact-then-unique-fragment matching as coop tasks. Ambiguous
-  matches are errors; --tasks <path> selects a queue for --task (repeatable). Explicit
-  queues override COOP_TASKS, which otherwise overrides project-derived queues.
-
-  Output: a report of each file + the route that selected it; --json for the same
-  as data; --rendered to print the compiled content itself (canonical first, whole).
-  A route include that is missing or escapes the repo is an error; canonical files
-  are discovered, never truncated. Config comes from the committed project.yaml (so a
-  fork inherits the parent's routes); scope comes from the fork's own tree.
-
-  Define routes in .agent/project.yaml:
-    context:
-      routes:
-        - paths: ["portal/**", "**/*.ex"]
-          include: [.agent/kb/portal.md]
+  Command options: coop help backlog <command>
 
 ==============================================================================
 
-coop loop [<target|preset>] — work the task queue until done, then sign off.
+coop backlog ls — list saved ideas
 
-  Usage: coop loop [<target|preset>] [--tasks <path>]... [--peer <target>...] [--max-tasks <n>] [--preflight] [--no-mcp] [--debug-on-fail] [--egress <mode>] [--allow-domain <domain>]...
+Usage: coop backlog ls [--tasks <path>]...
 
-  A fresh agent per iteration works the todo tasks; when the queue empties, a DEMANDING
-  signoff pass (a senior reviewer's bar) re-checks each shipped task — goal met (every
-  acceptance criterion + subtask), standards followed (AGENTS.md + .agent/kb/rules, no scope
-  creep), the FAILURE path tested, the change polished (docs/CHANGELOG updated), plus
-  bookkeeping — then runs the repo's gate ONCE across the whole repo, reopening anything
-  short of "merge with no changes". If the signoff reopened work, the loop drains and
-  signs off AGAIN, repeating until a signoff reopens nothing (verified done) or the round
-  cap is hit — then the task it keeps reopening is blocked for a human (exit 3), not
-  reported as done. A later review or verify pass that leaves work actionable exits 1 so
-  automation cannot mistake it for verified done. The cap SCALES with the batch: half the tasks worked this run, clamped
-  to [3, loop.yaml signoff.rounds] (default 5) — a small batch still gets a few tries, a big
-  overnight batch can't ping-pong one stuck task forever. On a rate limit it rotates to the
-  next target in its agent: ladder, or waits out the reset when all are limited.
+  By default, includes every configured project queue.
+  Repeat --tasks to select several queues.
 
-  Every review closes with one AUDIT EVIDENCE line per subject and a structured PASS/FAIL receipt
-  naming the exact sorted task IDs it proposes reopening. By default the whole repository,
-  including task queues, is read-only. Coop validates the complete proposal, acquires host task
-  authority, and applies exact-subject reopens. A successful process with malformed structured
-  output gets one immediate full-review retry over the same subjects with a fixed format
-  correction; both attempts are recorded. A malformed second verdict, lifecycle churn,
-  interruption, failed process, or out-of-scope proposal mutates no task. writes: repo permits
-  source fixes, but task lifecycle is still host-applied.
-
-  Completion requires exactly one Coop-Task binding in the current iteration range and exactly
-  one binding for that task reachable from HEAD. Reopened work must amend or rewrite the original
-  task commit; a second bound commit is rejected and the task is restored to in-progress.
-
-  One committed .agent/loop.yaml configures every step (preflight/work/between/signoff/verify),
-  each with its own agent: model ladder and prompt — between is the per-task reviewer, signoff the
-  final review, verify an optional post-signoff pass that e2e-tests the affected features. Prompts
-  never REPLACE a coop built-in: signoff.prompt APPENDS to its senior review; between.prompt,
-  verify.prompt, and preflight.prompt SET their pass. Ordinary between review is opt-in and has no
-  built-in prompt, but a completed task that edits a gate-defining file always gets an immediate
-  protected audit; it uses between.agent/prompt when configured, otherwise the signoff target and
-  a focused built-in prompt. Preflight's built-in tidy is coop itself, run host-side, so its prompt
-  is the optional agent cleanup on top. The review
-  passes are handed the run's CHANGE CONTEXT — every task completed this loop, by its Coop-Task
-  trailer, with the files it touched — so "e2e the affected features" resolves against a concrete
-  list; place it inline with {loop.changes} / {loop.tasks} / {loop.affected}. signoff.rounds is the
-  round cap, preflight.enabled the pre-loop cleanup, work.command a raw per-iteration override, and
-  mcp: false runs every stage's box without the shared MCP config — the servers' tool schemas ride
-  at the front of every model request, so a drain that never uses those tools shouldn't pay for
-  them each iteration (leave it on if a verify: pass depends on MCP tooling). A missing file or
-  field = the built-in default. (coop init scaffolds a commented loop.yaml.) The launch announces
-  the exact loop.yaml snapshot the run derives from — a short sha256 digest, or an explicit
-  absent/built-in-defaults state — and pins it for the whole run; ladders, prompts, caps, and
-  writes are one coherent read. A mid-run edit never hot-reloads: before each later box launch
-  coop compares the on-disk bytes with that snapshot and warns once per new digest that the run
-  keeps its startup config — restart the loop to apply the change.
-
-  Each step's agent: is a ladder of TARGET (provider[:model][/effort][@account]) or PRESET-NAME
-  rungs: signoff.agent runs the final review on its own, typically STRONGER model (the cheap
-  work loop does the work, a capable model signs it off), between.agent the per-task audit, and
-  work.agent the work rotation when the launch names no target and no preset.
-
-  A preset in the who-runs slot runs the loop under that orchestration preset: its lead is
-  the agent, its lead agent: ladder is the rotation, and each iteration gets the preset's role
-  routing + wrappers ('coop help presets'). With no preset, the loop rotates the agent's
-  default model across all signed-in accounts.
-
-  The target is a one-off ladder for this run (no preset needed): a bare provider
-  (claude) fans the agent's default model across all signed-in accounts, claude:opus
-  pins the model, claude@work,personal is an explicit account ladder — the loop rotates
-  the rungs on a rate limit. A rung without a model uses COOP_<AGENT>_MODEL, then a model
-  baked into COOP_<AGENT>_CMD, then the agent CLI's own default — so overnight runs can
-  grind on a cheaper model.
-
-  --peer <target>... lets each iteration ask NAMED peers for a read-only second opinion
-  (repeatable; coop-consult on PATH, only those peers' credentials mounted) — the
-  orchestrator pattern running unattended. Off by default: it widens each box's
-  credential scope to exactly the named peers. Also on fork loops:
-  coop fork <name> <target> --loop --peer codex --peer gemini.
-
-  On macOS, coop holds a caffeinate assertion for the run so the machine doesn't
-  idle-sleep mid-drain and stall an overnight loop (COOP_CAFFEINATE=0 to disable).
-  Set COOP_SPINNER=0 to freeze live spinners and suppress the fast repaint ticker while
-  debugging or recording the terminal.
-
-  Every attempt is supervised for SILENCE, not slowness: 10m to its first model action,
-  30m between recognized actions, 2h on any one foreground tool. Only the provider's own
-  structured stream feeds those clocks — never CPU or process names — and an open tool
-  suspends the idle one, so long reasoning and a slow gate finish untouched (a provider
-  whose stream reports no tool calls gets a single conservative 2h post-progress budget
-  instead). Silence past a deadline kills that attempt alone: any completion it wrote is
-  restored, the task stays actionable, and a fresh attempt starts — on the next rung when
-  the ladder has one — while three in a row on one stage stops the run instead of
-  churning. The warning names the deadline that fired and the silence it observed. There
-  is no off switch: it is what stops one wedged provider CLI from holding an overnight
-  drain, its task lease, and its credential until you notice.
-
-  Ctrl-C is a soft interrupt: the current iteration finishes its completion binding,
-  host signing, and mandatory between/protected audit, then exits 130 before final
-  signoff or another claim. Press Ctrl-C again to stop now (tearing the running box
-  down). (A detached fork has no terminal — stop it with 'coop fork stop'.)
-
-  Defaults to .agent/tasks/ — or, in a monorepo, every queue named by the top-level
-  .agent/project.yaml ('subprojects:' + the root's own), so one loop drains all the
-  components' work with no setup. Repeat --tasks (or set COOP_TASKS) to override the
-  set; the loop keeps going while any queue has unfinished work. The whole repo is
-  mounted either way.
-
-  A fork loop does not copy or mount those queues. The host assigns one canonical task at a
-  time and exposes only that task through an execution projection. Stop/crash keeps the exact
-  assignment resumable; projected done becomes a reviewed fork candidate, and the canonical
-  task reaches done only when that exact candidate lands. Multiple forks may therefore share
-  the same queue without duplicate work. --tasks on a fork selects one canonical queue; it does
-  not create a fork-local queue.
-
-  --max-tasks <n>   work at most N selected tasks, counting each only after it reaches done
-                    or blocked following retries and its immediate audit; then pause
-                    successfully before another task or final signoff; N must be positive,
-                    and an empty actionable queue starts no box
-  --preflight       run the pre-loop tidy: coop itself returns blocked/ tasks whose decision
-                    now has an answer to todo — host-side, no box; an agent runs only for a
-                    loop.yaml preflight.prompt cleanup (default it on with preflight.enabled;
-                    --no-preflight overrides). Makes no code changes or commits.
-  --no-mcp          run this loop's boxes without the shared MCP config (the committed form
-                    is loop.yaml mcp: false)
-  --debug-on-fail   on a failure at a terminal, open a box shell, then retry
-                    on exit (a no-op in unattended runs)
-  --egress <mode>   open | filtered | none for this run ('coop help net'). Restricted egress
-                    is admitted ONCE at the start: the operator's grants, the project's
-                    approved requests, and the core endpoints of every rung the run may
-                    rotate onto are frozen into one policy every iteration, review and
-                    pre-flight box launches under. Refusals print between iterations and
-                    once more at the end; 'coop net runs' has every run
-  --allow-domain    an exact name this run may reach over TLS 443 (repeatable)
-  --egress-rules    a file of universal rules for this run only
-
-  Exit codes: 0 = queue verified done or an intentional --max-tasks pause; 1 = failure;
-  2 = usage; 3 = stopped with a task blocked on a human decision (including one the
-  review kept reopening past the round cap) — resolve with 'coop tasks decisions', then
-  re-run; 130 = interrupted before queue verification. So cron/CI can branch without
-  parsing output.
-
-  loop.yaml work.command overrides the per-iteration command.
+EXAMPLE
+  coop backlog ls --tasks web/.agent/tasks
 
 ==============================================================================
 
-coop fork — a throwaway clone handed to an agent; review and land it like a PR.
+coop backlog add — save an idea for later
 
-  Usage: coop fork <name> [<target|preset>] | ls | review | merge | logs | rm | stop | open | path
+Usage: coop backlog add "<title>" [<options>]
 
-  coop fork <name> <target>         open or re-enter a fork with an agent target
-  coop fork <name> <preset>         open or re-enter a fork with an orchestration preset
-  coop fork ls [--json]             list fork workers, sandboxes, task progress, and problems
-  coop fork logs [<name>]           tail a fork's loop log (no name: all forks)
-  coop fork review <name>           dossier + diff (--stat, --tool, --open, --gate)
-  coop fork <name> acp <target>     front the fork as an ACP agent (for editors)
-  coop fork merge <name>            rebase onto your branch and land one fork
-  coop fork merge --all             rebase and land every fork
-  coop fork rm <name>               discard a fork (confirms; --force may stop it and return/discard task authority)
-  coop fork open <name>             open the fork in your editor
-  coop fork path <name>             print the fork's filesystem path
-  coop fork stop <name>             stop a detached loop
+OPTIONS
+  --tasks <path>       choose one task queue
+  --context <text>     explain the problem and why it matters
+  --acceptance <text>  describe the intended result
+  --approach <text>    describe a possible approach
+  --subtask <text>     add a checklist item; repeat for more items
 
-FLAGS (every short flag has a long form):
-  -c, --continue            resume the prior session (the default on re-entry)
-      --new                 start a fresh agent session on re-entry
-      --fresh               recreate the fork (confirms; --force may stop it and discard Git/task work)
-      --loop                work the fork's task queue until done instead of opening an interactive session
-  -d, --detach              with --loop, run it in the background
-  -t, --tasks               with --loop, select one canonical task queue (default: every project queue)
-      --peer <target>       with --loop, a peer iterations may consult read-only (repeatable)
-  -f, --force (merge)       bypass the risky-file policy; the rebase gate still must pass
-  -f, --force (rm/fresh)    stop the worker; discard Git work, assignments, candidates, and pending proposals
-  -y, --yes                 merge/rm/--fresh: skip the delete confirm (required without a TTY)
-  -f, --follow              logs: keep streaming new output
-      --readonly            acp: front the fork read-only under the restricted profile (writes to scratch only; no project hooks or MCP)
+  Without the text options, Coop creates a template for you to fill in.
+  If you use any text option, include --context, --acceptance and --approach.
+  Repeat a text option to add another paragraph.
 
-REVIEW  --open opens $COOP_EDITOR (else your global git core.editor); --tool uses your global git diff.tool.
-        --gate rebases in an isolated scratch clone and runs the parent's gate; source mutations fail review.
-NAMES   new fork actions are verb-first (coop fork <verb> <name>); a fork can't be named a reserved verb.
-TASKS   fork loops share the project's canonical queue; the host assigns one task at a time.
-        Stop keeps its assignment; merge alone completes that canonical task. Copied queues are retired.
+EXAMPLES
+  coop backlog add "Redesign account permissions"
+  coop backlog add "Redesign account permissions" --tasks web/.agent/tasks
 
-Run 'coop help' for all commands.
+Ready to start: coop backlog promote <id>
+
+==============================================================================
+
+coop backlog promote — move an idea to the task queue
+
+Usage: coop backlog promote <id> [--tasks <path>]...
+
+  Fill in its problem, completion criteria and approach before promoting it.
+  The task becomes todo, where an agent or loop can pick it up.
+
+EXAMPLE
+  coop backlog promote account-permissions
+
+==============================================================================
+
+coop backlog rm — permanently delete a saved idea
+
+Usage: coop backlog rm <id> [--tasks <path>]... [--yes]
+
+OPTIONS
+  -y, --yes  skip confirmation
+
+  Deletes the idea's folder, including its notes and saved files.
+
+EXAMPLE
+  coop backlog rm account-permissions
+
+==============================================================================
+
+coop context — show the instructions relevant to your work
+
+Usage: coop context [<path>...] [<options>]
+
+OPTIONS
+  --changed       use files changed in Git
+  --task <id>     use paths listed in a task's frontmatter
+  --tasks <path>  choose a queue for --task; repeat for more queues
+  --rendered      print the selected files' contents
+  --json          print the selection for scripts
+
+  Coop includes shared agent instructions and any matching context routes.
+  Use paths relative to the repository. Inside a subproject, its path is included.
+  You can combine explicit paths, --changed and --task.
+  Choose either --rendered or --json for the output format.
+
+EXAMPLES
+  coop context internal/cli/help.go
+  coop context --changed
+  coop context --task login-retries --rendered
+
+CONFIGURE ROUTES — .agent/project.yaml
+  context:
+    routes:
+      - paths: ["web/**"]
+        include: [.agent/kb/web.md]
+
+  This includes .agent/kb/web.md when the selected work is under web/.
+
+==============================================================================
+
+coop loop — let agents work through your task queue
+
+Usage: coop loop [<target|preset>] [<options>]
+
+HOW IT WORKS
+  A fresh agent works on each task, then a final review checks the completed work.
+  The review can reopen tasks. Coop continues until the work passes review or
+  needs your decision.
+
+EXAMPLES
+  coop loop claude
+  coop loop frontier
+  coop loop codex --max-tasks 1
+
+OPTIONS
+  --tasks <path>         choose a task queue; repeat for more queues
+  --peer <target>        start with read-only peer agents; repeat for more peers
+  --max-tasks <n>        pause after N tasks finish or become blocked
+  --preflight            resolve answered decisions and release stale claims first
+  --no-preflight         skip that preparation
+  --no-mcp               run without configured MCP servers
+  --debug-on-fail        open a box shell after a failure, then retry when you exit
+  --egress <mode>        internet access: filtered, open or none
+  --allow-domain <name>  allow this exact domain over TLS on port 443; repeatable
+  --egress-rules <file>  add this file's network rules for the run
+
+  --max-tasks pauses before the final review. The limit must be positive.
+  --debug-on-fail opens a shell only when running in a terminal.
+
+STOP AND CONTINUE
+  Press Ctrl-C to finish the current task attempt and its required review, then stop.
+  Press it again to stop immediately. Run the same command to continue.
+  For a background fork loop: coop fork stop <name>
+
+CONFIGURE STEPS — .agent/loop.yaml
+  preflight  optional preparation before starting
+  work       the agent that works on each task
+  between    optional review after each task
+  signoff    final review of completed work
+  verify     optional checks after the final review
+
+  Set work.agent to choose the default when no target or preset is given.
+  Review steps can each use their own agent and prompt. Signoff prompts add to
+  Coop's built-in review. Between and verify prompts define those checks.
+  Changes to this file apply when you restart the loop.
+
+  Step options:
+    preflight  enabled, prompt
+    work       agent, command
+    between    enabled, agent, prompt, writes
+    signoff    agent, prompt, rounds, writes
+    verify     enabled, agent, prompt, writes
+
+  agent: accepts a list of targets or presets. See coop help models.
+  writes: tasks keeps reviews read-only; repo lets the reviewer edit source files.
+  Between and verify require a prompt when enabled.
+  mcp: false disables MCP servers for every step.
+
+NETWORK ACCESS
+  The run's approved access covers its work and review agents for the entire loop.
+  See coop help net for rules and approvals.
+
+EXIT STATUS
+  0    review passed, or the requested task limit was reached
+  1    the run failed or left work to do
+  2    invalid command or configuration
+  3    stopped for a decision
+  130  interrupted before final review completed
+
+==============================================================================
+
+coop fork — let an agent work in a separate copy of your project
+
+Usage: coop fork <name> [<target|preset>] [<options>]
+       coop fork <command> [<args>...]
+
+START WORK
+  coop fork login claude         create a fork and start Claude
+  coop fork login                continue an existing fork's session
+  coop fork login frontier       use a preset
+  coop fork login claude -d      work through tasks in the background
+
+REVIEW AND MERGE
+  ls             show forks and their progress
+  review <name>  review a fork's changes
+  merge <name>   merge its commits into your current branch
+  merge --all    merge eligible forks one at a time
+
+MANAGE
+  logs [<name>]  show one fork's logs, or all forks
+  stop <name>    stop a fork's background loop
+  open <name>    open a fork in your editor
+  path <name>    print its folder path
+  rm <name>      delete a fork
+
+SESSION OPTIONS
+  -c, --continue  continue the last session (default when reopening)
+  --new           start a new conversation in the existing fork
+  --fresh         delete the fork and its service data, then recreate it
+  -f, --force     with --fresh, stop active work and discard unmerged changes
+  -y, --yes       with --fresh, skip confirmation
+
+LOOP OPTIONS
+  --loop              work through the project's task queue
+  -d, --detach        run the loop in the background (implies --loop)
+  -t, --tasks <path>  select one project task queue
+  --peer <target>     start with read-only peer agents; repeatable
+  --egress <mode>     internet access: filtered, open or none
+  --allow-domain <name> allow this exact domain over TLS on port 443; repeatable
+  --egress-rules <file> add this file's network rules for the loop
+
+  Task, peer and network options above apply to fork loops.
+  Each fork receives one project task at a time. Its task is completed in the
+  project queue when you merge the reviewed work. Stopping keeps it resumable.
+
+EDITOR INTEGRATION
+  coop fork <name> acp <target>  use an existing fork from an ACP editor
+  See coop help fork <name> acp for its options.
+
+  Model and account syntax: coop help models
+  Command options: coop help fork <command>
+
+==============================================================================
+
+coop fork <name> acp — use an existing fork from an ACP editor
+
+Usage: coop fork <name> acp <target> [<options>]
+
+OPTIONS
+  --readonly       mount the fork read-only
+  --peer <target>  start with read-only peer agents; repeatable
+
+  Read-only mode has no peer agents, project hooks or MCP servers.
+  The editor controls whether to start or resume a conversation.
+
+EXAMPLE
+  coop fork login acp claude:opus
+
+  Create the fork first: coop fork login claude
+  Editor setup: coop help acp
+
+==============================================================================
+
+coop fork ls — show forks and their progress
+
+Usage: coop fork ls [--json]
+
+OPTIONS
+  --json  print workspace details for scripts
+
+  Shows each fork's agent, activity, tasks, changes and reported cost.
+
+EXAMPLE
+  coop fork ls
+
+==============================================================================
+
+coop fork review — inspect a fork before merging
+
+Usage: coop fork review <name> [<options>]
+
+OPTIONS
+  --stat  show a change summary instead of the full diff
+  --tool  open the diff with your global Git diff tool
+  --open  open the fork in your editor
+  --gate  test the fork after rebasing a temporary copy onto your current branch
+
+  Shows commits, the agent's task notes and changes that need your attention.
+  --gate leaves the fork and your working tree unchanged. It cannot be used
+  with --open.
+
+EXAMPLES
+  coop fork review login
+  coop fork review login --stat --gate
+
+  Merge after review: coop fork merge login
+
+==============================================================================
+
+coop fork merge — bring a fork's commits into your current branch
+
+Usage: coop fork merge <name> [<options>]
+       coop fork merge --all [<options>]
+
+OPTIONS
+  --all        merge eligible forks one at a time
+  -f, --force  allow changes otherwise blocked by the merge policy
+  -y, --yes    confirm merging and removal without prompting
+
+  Review the diff first. Your working tree must be clean and the fork stopped.
+  Coop rebases the commits, runs configured project checks and merges the result.
+  --force does not bypass those checks.
+
+  After merging, Coop asks before deleting a clean fork. With --all, one prompt
+  covers the batch and removal. Forks with uncommitted work are kept.
+  Removing a fork also removes its service containers and Docker volumes.
+
+EXAMPLES
+  coop fork review login
+  coop fork merge login
+  coop fork merge --all
+
+==============================================================================
+
+coop fork rm — delete a fork and its local work
+
+Usage: coop fork rm <name> [<options>]
+
+OPTIONS
+  -f, --force  stop active work and discard uncommitted or unmerged changes
+  -y, --yes    skip confirmation
+
+  Deleting a fork removes its files and local session data, plus its service
+  containers and Docker volumes.
+  Assigned tasks return to the project queue. Proposed tasks that have not been
+  imported are discarded; tasks already imported into the project are kept.
+
+EXAMPLES
+  coop fork rm login
+  coop fork rm login --force
+
+==============================================================================
+
+coop fork stop — stop a fork's background loop
+
+Usage: coop fork stop <name>
+
+  Stops the worker and its running boxes. The fork's work and assigned task stay
+  available so you can continue it later.
+
+EXAMPLES
+  coop fork stop login
+  coop fork login claude --loop
+
+==============================================================================
+
+coop fork logs — show a fork's loop output
+
+Usage: coop fork logs [<name>] [--follow]
+
+OPTIONS
+  -f, --follow  keep showing new output
+
+  Without a name, includes all forks and labels each line with its fork name.
+  Press Ctrl-C to leave the log view; the loop keeps running.
+
+EXAMPLES
+  coop fork logs login
+  coop fork logs login --follow
+  coop fork logs --follow
+
+==============================================================================
+
+coop fork path — print a fork's folder path
+
+Usage: coop fork path <name>
+
+EXAMPLE
+  coop fork path login
+
+==============================================================================
+
+coop fork open — open a fork in your editor
+
+Usage: coop fork open <name>
+
+  Uses COOP_EDITOR, your global Git editor or an available editor.
+
+EXAMPLE
+  coop fork open login
 
 ==============================================================================
 

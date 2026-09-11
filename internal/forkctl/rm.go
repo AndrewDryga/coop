@@ -114,27 +114,80 @@ func ForkRmSafe(unmerged, dirty, force bool) error {
 	return nil
 }
 
-func ForkDestroyDescription(name string, dirty, unmerged bool, summary tasks.ForkTaskStateSummary) string {
-	parts := []string{"delete fork " + name}
-	if dirty {
-		parts = append(parts, "discard uncommitted files")
+// ForkCancelled turns a declined confirmation into the plain sentence a person expects, and keeps
+// any other gate refusal (a pipe with no --yes) as the error it is. It is emitted only BEFORE any
+// mutation, so it can truthfully say the fork was kept.
+func ForkCancelled(err error) error {
+	if err != nil && err.Error() == "cancelled" {
+		ui.Note("")
+		ui.Note("Cancelled. The fork was kept.")
+		return ui.Reported(err)
 	}
-	if unmerged {
-		parts = append(parts, "discard unmerged commits")
+	return err
+}
+
+// ForkDestroyPreview is what a deletion will actually do, grouped the way a person decides:
+// what Coop is about to DO, what is gone for good, and what survives. Only present consequences
+// appear — a group with nothing in it is omitted, never rendered as an empty promise.
+type ForkDestroyPreview struct {
+	Will    []string // actions Coop takes, in the order it takes them
+	Deleted []string // unrecoverable losses
+	Kept    []string // what the deletion deliberately leaves behind
+}
+
+// ForkDestroyDescription builds that preview from the snapshot taken BEFORE the confirmation, so
+// the question a person answers describes the exact state they were shown.
+func ForkDestroyDescription(needsStop, dirty, unmerged bool, summary tasks.ForkTaskStateSummary) ForkDestroyPreview {
+	var p ForkDestroyPreview
+	if needsStop {
+		p.Will = append(p.Will, "Stop its running worker.")
 	}
 	if summary.Assignments > 0 {
-		parts = append(parts, fmt.Sprintf("return %d canonical task assignment(s) to the project queue", summary.Assignments))
+		p.Will = append(p.Will, fmt.Sprintf("Return %s to the project queue.", ui.Count(summary.Assignments, "assigned task")))
 	}
+	switch {
+	case dirty && unmerged:
+		p.Deleted = append(p.Deleted, "Uncommitted changes and unmerged commits.")
+	case dirty:
+		p.Deleted = append(p.Deleted, "Uncommitted changes.")
+	case unmerged:
+		p.Deleted = append(p.Deleted, "Unmerged commits.")
+	}
+	// The workspace is never the whole loss: a fork owns its own service containers and volumes,
+	// and removing it removes their stored data too.
+	p.Deleted = append(p.Deleted, "Service containers, Docker volumes, and their stored data.")
 	if summary.Candidate {
-		parts = append(parts, "discard its reviewed merge candidate")
+		p.Deleted = append(p.Deleted, "1 reviewed set of changes waiting to merge.")
 	}
 	if pending := summary.PreparedProposals + summary.PendingProposals; pending > 0 {
-		parts = append(parts, fmt.Sprintf("discard %d not-yet-imported task proposal(s)", pending))
+		p.Deleted = append(p.Deleted, fmt.Sprintf("%s not yet added to the project.", ui.Count(pending, "proposed task")))
 	}
 	if summary.ImportedReceipts > 0 {
-		parts = append(parts, fmt.Sprintf("retain %d imported canonical task(s) and retire their fork receipts", summary.ImportedReceipts))
+		p.Kept = append(p.Kept, fmt.Sprintf("%s already added to the project.", ui.Count(summary.ImportedReceipts, "task")))
 	}
-	return strings.Join(parts, "; ")
+	return p
+}
+
+// PrintForkDestroyPreview shows the blast radius above the question, so the answer is informed:
+// the fork and its exact folder, then what happens, what is lost, and what is kept.
+func PrintForkDestroyPreview(heading, path string, p ForkDestroyPreview) {
+	ui.Note("%s", heading)
+	ui.Note("")
+	ui.Note("  %s", path)
+	group := func(title string, items []string) {
+		if len(items) == 0 {
+			return
+		}
+		ui.Note("")
+		ui.Note("%s", title)
+		for _, item := range items {
+			ui.Note("  - %s", item)
+		}
+	}
+	group("Coop will:", p.Will)
+	group("Will be permanently deleted:", p.Deleted)
+	group("Will be kept:", p.Kept)
+	ui.Note("")
 }
 
 // ForkUnmerged reports whether the fork's branch tip is NOT yet an ancestor of the
@@ -208,7 +261,7 @@ func (c *Control) ForkRm(args []string) (int, error) {
 		if !recovered {
 			return -1, fmt.Errorf("no such fork: %s", name)
 		}
-		ui.OK("removed orphaned fork state %s", name)
+		ui.OK("Removed leftover state for fork %s", name)
 		return 0, nil
 	}
 	handle, originalWS, err := forkspace.Pin(ws)
@@ -243,8 +296,10 @@ func (c *Control) ForkRm(args []string) (int, error) {
 	}
 	// Confirm the (unrecoverable) delete — default-No at a TTY, refuse piped without --yes. Distinct
 	// from --force above, which overrides the unmerged/dirty guard, not this prompt.
-	if err := ui.DestroyGate(ForkDestroyDescription(name, initialDirty, initialUnmerged, initialTaskState), hasYes(args)); err != nil {
-		return 2, err
+	PrintForkDestroyPreview(fmt.Sprintf("Delete fork %q", name), ws,
+		ForkDestroyDescription(needsStop, initialDirty, initialUnmerged, initialTaskState))
+	if err := ui.DestroyGate("Delete this fork", hasYes(args)); err != nil {
+		return 2, ForkCancelled(err)
 	}
 	if needsStop {
 		if code, err := c.ForkStop([]string{name}); err != nil {
@@ -317,7 +372,8 @@ func (c *Control) ForkRm(args []string) (int, error) {
 			return -1, fmt.Errorf("remove fork %s generation: %w", name, err)
 		}
 	}
-	ui.OK("removed fork %s", name)
+	ui.Note("")
+	ui.OK("Deleted fork %s", name)
 	return 0, nil
 }
 

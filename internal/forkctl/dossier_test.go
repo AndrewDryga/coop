@@ -122,20 +122,25 @@ func TestForkBriefDossier(t *testing.T) {
 	out := captureStdout(t, func() { c.forkBrief(repo, t.TempDir(), "risky", "risky", forkReviewGateUnchecked, false) })
 
 	for _, want := range []string{
-		"why:", // no completed task in the fixture ws
-		"policy:", ".envrc", "possible secret in conf.yaml",
-		"block 'coop fork merge' without --force",
-		dossierConfig + ":", dossierCode + ":", dossierTests + ":",
-		"AGENTS.md", "gate:", "none configured (COOP_GATE or .agent/project.yaml gate:)", "diff:",
+		"Changes in fork risky", "Into: main", "Commits",
+		"⚠ This change needs your review before merging",
+		".envrc", "possible secret in conf.yaml",
+		"Merge is blocked by the project's merge policy:",
+		"Files", dossierConfig + ":", dossierCode + ":", dossierTests + ":",
+		"AGENTS.md", "⚠ No project checks are configured",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dossier missing %q:\n%s", want, out)
 		}
 	}
-	// Order: the agent's claim, then policy, then files (instructions before code
-	// before tests), then gate, then the diff label.
+	// A fixture with no completed task has no notes to show, and an empty section is not evidence.
+	if strings.Contains(out, "Agent's notes") {
+		t.Errorf("an absent task log must not print an empty notes section:\n%s", out)
+	}
+	// Order: what changed, the commits, what needs review, the files (instructions before code
+	// before tests), then what the checks say.
 	idx := func(s string) int { return strings.Index(out, s) }
-	order := []string{"why:", "policy:", "files:", dossierConfig + ":", dossierCode + ":", dossierTests + ":", "gate:", "diff:"}
+	order := []string{"Changes in fork risky", "Commits", "needs your review", "Files", dossierConfig + ":", dossierCode + ":", dossierTests + ":", "No project checks are configured"}
 	for i := 1; i < len(order); i++ {
 		if idx(order[i-1]) == -1 || idx(order[i-1]) >= idx(order[i]) {
 			t.Fatalf("section %q should print before %q:\n%s", order[i-1], order[i], out)
@@ -150,8 +155,9 @@ func TestForkBriefDossier(t *testing.T) {
 	git(t, repo, "checkout", "-q", "main")
 
 	out = captureStdout(t, func() { c.forkBrief(repo, t.TempDir(), "benign", "benign", forkReviewGateUnchecked, false) })
-	if !strings.Contains(out, "nothing flagged") {
-		t.Errorf("clean fork should show the policy ✓:\n%s", out)
+	// A healthy scan says nothing: every line on screen means something needs attention.
+	if strings.Contains(out, "needs your review") {
+		t.Errorf("a clean fork must not raise a review alert:\n%s", out)
 	}
 	if strings.Contains(out, dossierConfig+":") {
 		t.Errorf("empty config section should be omitted:\n%s", out)
@@ -163,13 +169,13 @@ func TestForkBriefDossier(t *testing.T) {
 	// Gate configured → the evidence line flips.
 	c.cfg.Gate = []string{"make", "check"}
 	out = captureStdout(t, func() { c.forkBrief(repo, t.TempDir(), "benign", "benign", forkReviewGateUnchecked, true) })
-	if !strings.Contains(out, "runs at merge — rolled back on failure") {
+	if !strings.Contains(out, "Project checks will run when you merge.") {
 		t.Errorf("configured gate line missing:\n%s", out)
 	}
 
 	// Empty diff → no diff-derived sections (no policy/files/gate), header + why + diff only.
 	out = captureStdout(t, func() { c.forkBrief(repo, t.TempDir(), "empty", "main", forkReviewGateUnchecked, true) })
-	for _, absent := range []string{"policy:", "files:", "gate:"} {
+	for _, absent := range []string{"needs your review", "Files", dossierCode + ":"} {
 		if strings.Contains(out, absent) {
 			t.Errorf("empty diff should omit %q:\n%s", absent, out)
 		}

@@ -60,16 +60,18 @@ func TestNetworkLogPrintsBetweenIterationsNotDuringOne(t *testing.T) {
 		Alerts: []string{"denial_burst (warning): open over 5000ms, threshold 20 denials"},
 		Event:  "ev-9",
 	}
+	log.setStage("Task attempt 1")
 	if during := captureStderr(t, func() { log.record(report) }); during != "" {
 		t.Fatalf("recording a report printed %q while the bar was up", during)
 	}
 	out := captureStderr(t, log.finishIteration)
 	for _, want := range []string{
-		"iteration 1 — 2 destinations were refused",
-		"a.example (dns) ×4",
-		"b.example (tls)",
-		"network alert: denial_burst (warning)",
-		"To see why: coop net blocked ev-9 --run run-1",
+		"⚠ Task attempt 1 could not reach 2 remote addresses",
+		"a.example · DNS · blocked 4 times",
+		"b.example · TLS · blocked 1 time",
+		"The network filter raised an alert",
+		"denial_burst (warning)",
+		"Explain: coop net blocked a.example --run run-1",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("iteration block %q is missing %q", out, want)
@@ -114,11 +116,11 @@ func TestNetworkLogSummaryRanksAndPointsAtTheReceipts(t *testing.T) {
 	log.finishIteration()
 
 	out := captureStderr(t, log.summary)
-	if !strings.Contains(out, "4 destinations were refused across 2 filtered runs, with 1 alert") {
+	if !strings.Contains(out, "Traffic to 4 remote addresses was blocked across 2 network runs, with 1 alert") {
 		t.Errorf("summary headline missing from %q", out)
 	}
 	// Ranked by count across the whole run, bounded to three, ties by first seen.
-	for _, want := range []string{"b.example (tls) ×9", "a.example (dns) ×7", "c.example (dns) ×1", "coop net runs"} {
+	for _, want := range []string{"b.example · blocked 9 times", "a.example · blocked 7 times", "c.example · blocked 1 time", "Run details: coop net runs"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("summary %q is missing %q", out, want)
 		}
@@ -138,16 +140,16 @@ func TestNetworkIterationLineStaysBounded(t *testing.T) {
 	for _, name := range []string{"a", "b", "c", "d", "e"} {
 		report.Denials = append(report.Denials, box.NetworkDenial{Destination: name, Basis: "dns", Count: 1})
 	}
-	out := captureStderr(t, func() { printNetworkIteration(report, 7) })
-	if !strings.Contains(out, "iteration 7 — 8 destinations were refused") {
+	out := captureStderr(t, func() { printNetworkIteration(report, "Task attempt 7") })
+	if !strings.Contains(out, "Task attempt 7 could not reach 8 remote addresses") {
 		t.Errorf("block %q does not count the omitted destinations", out)
 	}
-	for _, want := range []string{"a (dns)", "b (dns)", "c (dns)", "… and 5 more"} {
+	for _, want := range []string{"a · DNS", "b · DNS", "c · DNS", "… 5 more remote addresses"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("block %q is missing %q", out, want)
 		}
 	}
-	if strings.Contains(out, "d (dns)") {
+	if strings.Contains(out, "d · DNS") {
 		t.Errorf("block %q named more than three destinations", out)
 	}
 }

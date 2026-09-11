@@ -432,7 +432,13 @@ func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, _ st
 		return -1, err
 	}
 	if state == StateBacklog {
-		ui.OK("backlogged %s — promote it when it's ready: coop backlog promote %s", id, id)
+		// A saved idea reports what was saved and where; only the unfilled scaffold asks for notes,
+		// because only it has placeholders left to replace.
+		ui.OK("Saved idea: %s", title)
+		ui.Note("\n  %s", displayPath(filepath.Join(root, state, id, "task.md")))
+		if !structured {
+			ui.Note("\nAdd your notes to this file.")
+		}
 		return 0, nil
 	}
 	ui.OK("Created task: %s", title)
@@ -2420,7 +2426,10 @@ func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, e
 		// the folder also drops its ref, so :p/:n never revisit a gone task.
 		if line == ":d" {
 			readConfirmation := false
-			gateErr := ui.DestroyGate("delete task "+t.ID, false, func(prompt string) bool {
+			gateErr := ui.DestroyGate("Delete task "+t.ID, false, func(prompt string) bool {
+				// The permanent loss, in the future tense, BEFORE the question — the same shape
+				// every other destructive preview uses.
+				fmt.Fprintf(out, "\n  Its instructions, progress and saved evidence will be permanently deleted.\n\n")
 				fmt.Fprintf(out, "%s [y/N]: ", p.Red(prompt))
 				if !sc.Scan() {
 					return false

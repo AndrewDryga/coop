@@ -46,8 +46,8 @@ func (b *loopBar) line() string {
 	}
 	// Reserve the screen's no-wrap column plus the fixed spinner, bar, separators, and elapsed
 	// suffix. Counts and blocked state inside progressLineWidth win over optional activity text.
-	progressW := width - 1 - ui.SpinnerWidth - (20 + 2) - len([]rune(elapsedText)) - 3
-	return fmt.Sprintf("%s %s %s %s",
+	progressW := width - 1 - ui.SpinnerWidth - (20 + 2) - len([]rune(elapsedText)) - 5
+	return fmt.Sprintf("%s %s %s · %s",
 		ui.SpinFrame(b.spin),
 		ui.ProgressBarStates(b.c.Done, b.c.Doing, b.c.Blocked, b.c.Total(), 20),
 		progressLineWidth(b.c, b.activity, progressW),
@@ -93,13 +93,14 @@ func spinLoop(bar *loopBar, stop <-chan struct{}) {
 	}
 }
 
-// elapsed formats the time since start as m:ss.
+// elapsed formats the time since start as mm:ss — a fixed-width clock, so the bar's right edge
+// stops jumping a column at every tenth minute.
 func elapsed(start time.Time) string {
 	d := time.Since(start)
 	if d < 0 {
 		d = 0
 	}
-	return fmt.Sprintf("%d:%02d", int(d/time.Minute), int(d%time.Minute/time.Second))
+	return fmt.Sprintf("%02d:%02d", int(d/time.Minute), int(d%time.Minute/time.Second))
 }
 
 // lineWriter buffers bytes and calls fn for each complete line, so the agent's streamed output

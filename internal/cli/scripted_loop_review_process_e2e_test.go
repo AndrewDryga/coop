@@ -57,7 +57,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReviewPTY(t, suite, work)
-		if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stdout+result.Stderr, "queue verified done") || strings.Contains(result.Stderr, "review verdict invalid") {
+		if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stdout+result.Stderr, "All tasks passed final review") || strings.Contains(result.Stderr, "review verdict invalid") {
 			t.Fatalf("Codex review wrapper matrix = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
@@ -90,9 +90,12 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReview(t, suite, work, 20*time.Second)
 		if result.Err != nil || result.ExitCode != 0 ||
-			!strings.Contains(result.Stderr, "discarding its receipt and starting a fresh observed attempt (1/3)") ||
-			!strings.Contains(result.Stderr, "discarding its receipt and starting a fresh observed attempt (2/3)") ||
-			!strings.Contains(result.Stdout+result.Stderr, "queue verified done") {
+			// The alert renders its reason indented, one line each, so match the lines rather
+			// than the format string that produced them.
+			!strings.Contains(result.Stderr, "Starting a fresh attempt · 2 of 3.") ||
+			!strings.Contains(result.Stderr, "Starting a fresh attempt · 3 of 3.") ||
+			!strings.Contains(result.Stderr, "Its result was discarded.") ||
+			!strings.Contains(result.Stdout+result.Stderr, "All tasks passed final review") {
 			t.Fatalf("background review handoff = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
@@ -129,7 +132,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReviewPTY(t, suite, work)
 		if result.Err != nil || result.ExitCode != 0 ||
-			!strings.Contains(result.Stdout+result.Stderr, "queue verified done") ||
+			!strings.Contains(result.Stdout+result.Stderr, "All tasks passed final review") ||
 			strings.Contains(result.Stderr, "structured verdict was malformed") {
 			t.Fatalf("Codex split footer echo = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
@@ -165,7 +168,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReviewPTY(t, suite, work)
-		if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stdout+result.Stderr, "review left 1 task actionable") {
+		if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stdout+result.Stderr, "Final review left 1 task to finish") {
 			t.Fatalf("review verdict correction matrix = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		// The retry rescues this, so without the cause in the warning a fault that costs a whole
@@ -256,7 +259,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReviewPTY(t, suite, work)
-		if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stdout+result.Stderr, "queue verified done") {
+		if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stdout+result.Stderr, "All tasks passed final review") {
 			t.Fatalf("review stage matrix = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
@@ -330,20 +333,26 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		result := process.Wait(ctx)
 		cancel()
 		combined := result.Stdout + result.Stderr
-		if result.Err != nil || result.ExitCode != 0 || !strings.Contains(combined, "queue verified done") {
+		if result.Err != nil || result.ExitCode != 0 || !strings.Contains(combined, "All tasks passed final review") {
 			t.Fatalf("config drift run = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
-		if want := "loop config: " + loopcfg.File + " (sha256 " + loopcfg.Digest(startupConfig) + ")"; !strings.Contains(combined, want) {
-			t.Fatalf("missing startup snapshot announcement %q\nstdout:\n%s\nstderr:\n%s", want, result.Stdout, result.Stderr)
+		// The run names the configuration it derives from in its opening line; the exact digest
+		// stays in the diagnostic metadata, not in the sentence a person reads.
+		if want := "using configuration " + loopcfg.File; !strings.Contains(combined, want) {
+			t.Fatalf("missing startup configuration announcement %q\nstdout:\n%s\nstderr:\n%s", want, result.Stdout, result.Stderr)
 		}
+		_ = startupConfig
 		// One actionable warning for the new digest across BOTH post-edit launches (between and
 		// signoff) — not one per launch, and never a silent continue.
-		if got := strings.Count(combined, "restart to apply"); got != 1 {
+		if got := strings.Count(combined, "Restart the loop to use the new settings."); got != 1 {
 			t.Fatalf("drift warnings = %d, want exactly 1\nstdout:\n%s\nstderr:\n%s", got, result.Stdout, result.Stderr)
 		}
-		if !strings.Contains(combined, loopcfg.Digest(edited)) {
-			t.Fatalf("drift warning does not name the new digest %s\nstderr:\n%s", loopcfg.Digest(edited), result.Stderr)
+		// The warning is once per NEW digest — the digest itself is diagnostic metadata now, so
+		// what the run proves here is that a second launch on the same edit stays silent.
+		if got := strings.Count(combined, "Loop settings changed"); got != 1 {
+			t.Fatalf("drift headlines = %d, want exactly 1 for one edit\nstdout:\n%s\nstderr:\n%s", got, result.Stdout, result.Stderr)
 		}
+		_ = loopcfg.Digest(edited)
 		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
 			t.Fatal("config drift run did not leave the reviewed task done")
 		}
@@ -408,9 +417,8 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReview(t, suite, work, 20*time.Second)
 		if result.Err != nil || result.ExitCode != 0 ||
-			!strings.Contains(result.Stderr, "concurrent host completion during review: "+hostID) ||
-			!strings.Contains(result.Stderr, "running another signoff round") ||
-			!strings.Contains(result.Stderr, "2/2 in 1 iterations") {
+			!strings.Contains(result.Stderr, "Another session completed 1 task during this review.") ||
+			!strings.Contains(result.Stderr, "All tasks passed final review · 2/2 done") {
 			t.Fatalf("concurrent completion loop = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, hostID)) ||
@@ -454,8 +462,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReview(t, suite, work, 20*time.Second)
 		if result.Err != nil || result.ExitCode != 0 ||
-			!strings.Contains(result.Stderr, "verify observed concurrent host completion of "+hostID) ||
-			!strings.Contains(result.Stderr, "returning to signoff before exit") {
+			!strings.Contains(result.Stderr, "Another session completed 1 task during this review.") {
 			t.Fatalf("verify concurrent completion = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, hostID)) ||
@@ -489,7 +496,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReview(t, suite, work, 20*time.Second)
-		if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stderr, "switching to") {
+		if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stderr, "Continuing with") {
 			t.Fatalf("between rotation = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
@@ -1066,7 +1073,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReview(t, suite, work, 20*time.Second)
-		if result.Err != nil || result.ExitCode != 3 || !strings.Contains(result.Stderr, "signoff still reopening after 3 rounds") {
+		if result.Err != nil || result.ExitCode != 3 || !strings.Contains(result.Stderr, "Final review could not resolve 1 task after 3 rounds") {
 			t.Fatalf("signoff cap = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		blocked := filepath.Join(suite.layout.Repo, tasksRoot, stateBlocked, taskID)
@@ -1101,7 +1108,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReview(t, suite, work, 20*time.Second)
-		if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stderr, "review left 1 task actionable") {
+		if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stderr, "Final review left 1 task to finish") {
 			t.Fatalf("verify reopen = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		if _, err := os.Stat(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID, "task.md")); err != nil {
@@ -1162,7 +1169,10 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		result := runLoopReview(t, suite, work, 30*time.Second)
 		output := result.Stdout + result.Stderr
 		if result.Err != nil || result.ExitCode != 0 ||
-			!strings.Contains(output, fmt.Sprintf("review target %q authentication failed — switching to %q", dead, healthy)) {
+			// The review stage says it is continuing the REVIEW on the next rung, which is what
+			// distinguishes this rotation from the work stage's.
+			!strings.Contains(output, dead+" could not sign in") ||
+			!strings.Contains(output, "Continuing the review with "+healthy) {
 			t.Fatalf("signoff auth rotation = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		// A review stage records one row for its settled outcome, not one per attempt — the
@@ -1204,7 +1214,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		result := process.Wait(ctx)
 		cancel()
-		if result.ExitCode != loop.LoopInterruptedExitCode || !strings.Contains(result.Stdout+result.Stderr, "interrupted") || strings.Contains(result.Stderr, "completion ownership") {
+		if result.ExitCode != loop.LoopInterruptedExitCode || !strings.Contains(result.Stdout+result.Stderr, "stopping") || strings.Contains(result.Stderr, "completion ownership") {
 			t.Fatalf("hard stop after reopen = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) ||
@@ -1231,7 +1241,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReview(t, suite, work, 30*time.Second)
-		if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stderr, "review stage reached the model output limit 6 times") || strings.Contains(result.Stderr, "queue verified done") {
+		if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stderr, "review stage reached the model output limit 6 times") || strings.Contains(result.Stderr, "All tasks passed final review") {
 			t.Fatalf("signoff output cap = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		if _, err := os.Stat(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID, "task.md")); err != nil {
@@ -1270,7 +1280,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		result := process.Wait(ctx)
 		cancel()
-		if result.ExitCode != loop.LoopInterruptedExitCode || !strings.Contains(result.Stdout+result.Stderr, "between-tasks audit") || strings.Contains(result.Stdout+result.Stderr, "running signoff") {
+		if result.ExitCode != loop.LoopInterruptedExitCode || !strings.Contains(result.Stdout+result.Stderr, "Reviewing task: ") || strings.Contains(result.Stdout+result.Stderr, "Reviewing completed work") {
 			t.Fatalf("soft-stop audit = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
@@ -1304,16 +1314,16 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-release-"+taskID), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		awaitLoopProcessOutput(t, process, "between-tasks audit", 5*time.Second)
+		awaitLoopProcessOutput(t, process, "Reviewing task: ", 5*time.Second)
 		awaitLoopTraceEventCount(t, suite.layout.Trace, "provider", "exit", 2, 5*time.Second)
-		awaitLoopProcessOutput(t, process, "model rate limited — waiting", 5*time.Second)
+		awaitLoopProcessOutput(t, process, "Continuing in ", 5*time.Second)
 		if err := syscall.Kill(coopPID, syscall.SIGINT); err != nil {
 			t.Fatal(err)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		result := process.Wait(ctx)
 		cancel()
-		if result.ExitCode != loop.LoopInterruptedExitCode || !strings.Contains(result.Stdout+result.Stderr, "interrupted") {
+		if result.ExitCode != loop.LoopInterruptedExitCode || !strings.Contains(result.Stdout+result.Stderr, "stopping") {
 			t.Fatalf("hard-stop audit = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)

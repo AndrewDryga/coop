@@ -1706,8 +1706,11 @@ func TestRunDecisionBrowserDelete(t *testing.T) {
 			t.Errorf(":d should remove %s from disk (stat err=%v)", d.Dir, err)
 		}
 	}
-	if !strings.Contains(out.String(), "delete task 2026-09-11-alpha? [y/N]") {
-		t.Errorf("delete confirm should name the task it removes and default to No:\n%s", out.String())
+	// The preview names the permanent loss in the future tense the destructive gate now uses —
+	// what WILL be deleted, before the question, and the question itself names the task.
+	if !strings.Contains(out.String(), "will be permanently deleted") ||
+		!strings.Contains(out.String(), "Delete task 2026-09-11-alpha? [y/N]") {
+		t.Errorf("delete confirm should name the permanent loss and the task before asking:\n%s", out.String())
 	}
 	index, err = ReadCompletionWindowIndex(root)
 	if err != nil {

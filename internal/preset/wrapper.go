@@ -396,7 +396,11 @@ for target do
 		exit 1
 	fi
 	if [ "$st" -eq 0 ]; then
-		echo "[coop-delegate $role: done on $target — review 'git status --short', 'git diff', and 'git diff --cached'; run the gate, then commit yourself]"
+		# The delegate's own reply is above; this line only reports that the command returned,
+		# on the agent that actually ran. It claims nothing about what changed or whether it
+		# passed — the lead's review/gate/commit duties are in the generated contract, not
+		# repeated after every invocation.
+		echo "[coop-delegate $role: finished on $target]"
 		exit 0
 	fi
 	case "$st" in

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -41,45 +40,6 @@ func composeTarget(agent, model, effort, credential string) (string, error) {
 		target += "@" + acct
 	}
 	return target, nil
-}
-
-// truncate shortens s to n runes, marking elision with an ellipsis.
-func truncate(s string, n int) string {
-	if n <= 0 {
-		return "" // guards the r[:n-1] / r[:n] negative-index panic on a non-positive width
-	}
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	if n <= 1 {
-		return string(r[:n])
-	}
-	return string(r[:n-1]) + "…"
-}
-
-// padRight right-pads s to w columns counted in RUNES — unlike fmt's %-Ns, which counts bytes and
-// so mis-pads a value carrying a multibyte glyph (e.g. a truncated name's "…").
-func padRight(s string, w int) string {
-	if n := utf8.RuneCountInString(s); n < w {
-		return s + strings.Repeat(" ", w-n)
-	}
-	return s
-}
-
-// colWidth is the width to size a table column to: the widest value (counted in runes), clamped
-// to [min, max]. Values longer than max are meant to be ellipsis-truncated to max by the caller.
-func colWidth(values []string, min, max int) int {
-	w := min
-	for _, v := range values {
-		if n := utf8.RuneCountInString(v); n > w {
-			w = n
-		}
-	}
-	if w > max {
-		w = max
-	}
-	return w
 }
 
 // indent prefixes every line of s with two spaces.

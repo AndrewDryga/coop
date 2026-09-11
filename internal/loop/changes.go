@@ -9,7 +9,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/AndrewDryga/coop/internal/tasks"
-	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // This file gives the loop's review stages (and the human closing digest) a structured picture of
@@ -509,68 +508,6 @@ func substituteLoopVars(prompt string, cs loopChangeSet, h *loopHealth) string {
 		prompt = strings.ReplaceAll(prompt, k, v)
 	}
 	return prompt
-}
-
-// humanDigest is the human-facing closing block printed above the loop's verdict banner: what shipped
-// (per task + its areas), what's blocked on a decision, and any task the run flagged — so you see what
-// to review/e2e at a glance instead of a bare counter. Empty when the run changed nothing and blocked
-// nothing (the bare banner stands).
-func (cs loopChangeSet) humanDigest(h *loopHealth, blocked []string, cost runCost) string {
-	if cs.empty() && len(blocked) == 0 && cost.total.usd == 0 {
-		return ""
-	}
-	var b strings.Builder
-	if len(cs.tasks) > 0 {
-		b.WriteString(ui.Bold("Shipped this run:") + "\n")
-		for _, t := range cs.tasks {
-			subj := ""
-			if len(t.commits) > 0 {
-				subj = t.commits[0].subject
-			}
-			line := fmt.Sprintf("  • %-30s %s  (%s)", t.id, subj, strings.Join(subsystemsOf(t.files), ", "))
-			if c := cost.byTask[t.id]; c.usd > 0 {
-				line += "  " + ui.Dim(fmt.Sprintf("$%.2f", c.usd))
-			}
-			b.WriteString(line + "\n")
-		}
-	}
-	if len(cs.subsystems) > 0 {
-		fmt.Fprintf(&b, "  Touched: %s\n", strings.Join(cs.subsystems, ", "))
-	}
-	if cost.total.usd > 0 {
-		fmt.Fprintf(&b, "  %s $%.2f · %s in / %s out\n", ui.Bold("Cost:"), cost.total.usd, humanTokens(cost.total.inTok), humanTokens(cost.total.outTok))
-	}
-	if len(cost.byModel) > 1 { // a preset run spreads work + review (+ peers) across models — show the split
-		parts := make([]string, len(cost.byModel))
-		for i, m := range cost.byModel {
-			price := "—" // a peer-only model (e.g. a codex consult) reports tokens but no cost
-			if m.cost.usd > 0 {
-				price = fmt.Sprintf("$%.2f", m.cost.usd)
-			}
-			parts[i] = fmt.Sprintf("%s %s (%s/%s)", m.model, price, humanTokens(m.cost.inTok), humanTokens(m.cost.outTok))
-		}
-		fmt.Fprintf(&b, "  by model: %s\n", strings.Join(parts, " · "))
-	}
-	if len(blocked) > 0 {
-		fmt.Fprintf(&b, "  %s %s — %s\n", ui.Yellow("Blocked (needs you):"), ui.Count(len(blocked), "task"), abbrev(blocked, 4))
-	}
-	var shaky []string
-	for _, t := range cs.tasks {
-		if th := h.byTask[t.id]; th != nil && th.shaky() {
-			why := "flagged"
-			switch {
-			case th.reopens > 0:
-				why = fmt.Sprintf("reopened %d×", th.reopens)
-			case len(th.gateFiles) > 0:
-				why = "edited its gate"
-			}
-			shaky = append(shaky, t.id+" ("+why+")")
-		}
-	}
-	if len(shaky) > 0 {
-		fmt.Fprintf(&b, "  %s %s\n", ui.Yellow("Look at:"), abbrev(shaky, 4))
-	}
-	return strings.TrimRight(b.String(), "\n")
 }
 
 // costSummary renders a cost as one compact line — total $, tokens, and the by-model split when more
