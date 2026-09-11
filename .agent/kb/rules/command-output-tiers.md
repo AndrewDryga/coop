@@ -29,6 +29,12 @@ updated: 2026-09-11
   headline naming the full command, an optional six-space cause stating the actual constraint,
   then aligned `Did you mean:` / `Usage:` / `Example:` / `Help:` rows; exit 2, stderr only.
   `internal/ui/usage.go` holds the constructors; `internal/cli/testdata/approved` pins the bytes.
+- A command that could not do its job uses that same block (`ui.CommandFailed`) and exits 1: a
+  person reads both the same way, and the exit code is what a script has to tell them apart.
+  A library below the CLI reports the parts as data (`config.Failure`, `project.FileError`) and
+  `asUsage` in `internal/cli/cli.go` draws them — rendering stays at the edges
+  ([[internal-import-dag]]). The cause never echoes the value it refused: a settings file and the
+  environment both carry tokens, and the person already knows what they typed.
 - A deletion preview asks about a future action. Say "permanently delete" or "will be deleted",
   never "deleted" before confirmation. Put exact affected resources in a short list, followed
   by a simple confirmation. Do not repeat the same threat in three headings or list unrelated

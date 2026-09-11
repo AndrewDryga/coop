@@ -57,8 +57,8 @@ func quote(s string) string { return "\"" + s + "\"" }
 // usageBlock renders a rejected-input error exactly as a plain (NO_COLOR, piped) terminal shows it.
 func usageBlock(t *testing.T, err error) string {
 	t.Helper()
-	var usage *ui.UsageError
-	if !errors.As(err, &usage) {
+	usage := asUsage(err)
+	if usage == nil {
 		t.Fatalf("error is not a shared usage refusal: %#v", err)
 	}
 	return usage.Render(ui.Palette{})

@@ -154,7 +154,7 @@ func TestMainConfAbsentVersusInvalid(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "missing.conf")
 		t.Setenv("COOP_CONF", path)
 		if _, err := Load(); err == nil || !strings.Contains(err.Error(), path) ||
-			!strings.Contains(err.Error(), "unset or repoint COOP_CONF") {
+			!strings.Contains(err.Error(), "point COOP_CONF somewhere else") {
 			t.Fatalf("explicit missing config error = %v, want path and recovery", err)
 		}
 	})
@@ -163,18 +163,18 @@ func TestMainConfAbsentVersusInvalid(t *testing.T) {
 		body string
 		want string
 	}{
-		{"missing equals", "COOP_HOMES\n", "expected KEY=VALUE"},
-		{"empty key", "=true\n", "key is empty"},
-		{"unmatched quote", "COOP_GATE='make check\n", "unmatched outer quote"},
-		{"duplicate key", "COOP_HOMES=true\nCOOP_HOMES=true\n", "duplicate"},
-		{"unknown key", "COOP_HOEMS=false\n", "unknown configuration key"},
-		{"relocation key", "COOP_CONF=/tmp/elsewhere\n", "unknown configuration key"},
-		{"environment-only spinner", "COOP_SPINNER=0\n", "unknown configuration key"},
-		{"environment-only ACP warm", "COOP_ACP_WARM=0\n", "unknown configuration key"},
-		{"retired key", "COOP_LOOP_MODEL=old\n", "retired"},
-		{"misspelled adapter", "COOP_CLUADE_CMD=claude\n", "unknown configuration key"},
-		{"misspelled adapter suffix", "COOP_CODEX_MODLE=gpt\n", "unknown configuration key"},
-		{"overlong line", "COOP_GATE=" + strings.Repeat("x", maxMainConfLineBytes) + "\n", "read line"},
+		{"missing equals", "COOP_HOMES\n", "This line is not a setting."},
+		{"empty key", "=true\n", "This line has no setting name."},
+		{"unmatched quote", "COOP_GATE='make check\n", `Setting "COOP_GATE" has an unmatched quote.`},
+		{"duplicate key", "COOP_HOMES=true\nCOOP_HOMES=true\n", "is set twice"},
+		{"unknown key", "COOP_HOEMS=false\n", `Unknown setting "COOP_HOEMS".`},
+		{"relocation key", "COOP_CONF=/tmp/elsewhere\n", `Unknown setting "COOP_CONF".`},
+		{"environment-only spinner", "COOP_SPINNER=0\n", `Unknown setting "COOP_SPINNER".`},
+		{"environment-only ACP warm", "COOP_ACP_WARM=0\n", `Unknown setting "COOP_ACP_WARM".`},
+		{"retired key", "COOP_LOOP_MODEL=old\n", `Setting "COOP_LOOP_MODEL" was retired.`},
+		{"misspelled adapter", "COOP_CLUADE_CMD=claude\n", `Unknown setting "COOP_CLUADE_CMD".`},
+		{"misspelled adapter suffix", "COOP_CODEX_MODLE=gpt\n", `Unknown setting "COOP_CODEX_MODLE".`},
+		{"overlong line", "COOP_GATE=" + strings.Repeat("x", maxMainConfLineBytes) + "\n", "This line is too long to read."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			clearAgentEnv(t)

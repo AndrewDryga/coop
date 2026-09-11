@@ -1,0 +1,4 @@
+
+✗ Could not read .agent/project.yaml
+
+      The file is a symbolic link. Coop requires a regular project file.

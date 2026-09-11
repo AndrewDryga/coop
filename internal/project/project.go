@@ -124,6 +124,33 @@ type Review struct {
 // the common single-repo case. A present-but-invalid file (bad YAML, an unknown key, an out-of-range
 // port, a bad box value, or a subproject path that escapes the repo) IS an error, so a typo surfaces
 // instead of silently doing nothing. Subproject paths are cleaned in place.
+// FileError is a refusal to read the project file, kept as the sentence that says what is wrong
+// with it. The file's name is not in it — every one of these is about File — and the block a person
+// sees is built by the CLI, which owns the terminal (internal/importdag_test.go).
+type FileError struct{ Cause string }
+
+func (e *FileError) Error() string { return "read " + File + ": " + e.Cause }
+
+func readError(cause string) error { return &FileError{Cause: cause} }
+
+// fileReason turns a filesystem error into the one sentence a person can act on: the bare reason
+// ("Permission denied."), without the operation and path the headline already carries.
+func fileReason(err error) string {
+	var perr *os.PathError
+	if errors.As(err, &perr) {
+		err = perr.Err
+	}
+	msg := err.Error()
+	if msg == "" {
+		return "It could not be read."
+	}
+	msg = strings.ToUpper(msg[:1]) + msg[1:]
+	if !strings.HasSuffix(msg, ".") {
+		msg += "."
+	}
+	return msg
+}
+
 func Load(repo string) (*Project, error) {
 	path := filepath.Join(repo, filepath.FromSlash(File))
 	agentDir := filepath.Dir(path)
@@ -132,30 +159,30 @@ func Load(repo string) (*Project, error) {
 		return &Project{}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("inspect %s parent %s: %w", path, agentDir, err)
+		return nil, readError(fileReason(err))
 	}
 	if dirInfo.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("%s: parent %s is a symbolic link; coop reads project config without following links — replace it with a real directory and retry", path, agentDir)
+		return nil, readError("Its " + filepath.Base(agentDir) + " folder is a symbolic link. Coop reads project config without following links.")
 	}
 	if !dirInfo.IsDir() {
-		return nil, fmt.Errorf("%s parent %s must be a directory", path, agentDir)
+		return nil, readError("Its " + filepath.Base(agentDir) + " path is not a folder.")
 	}
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return &Project{}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("inspect %s: %w", path, err)
+		return nil, readError(fileReason(err))
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("%s is a symbolic link; coop reads project config without following links — replace it with a regular file and retry", path)
+		return nil, readError("The file is a symbolic link. Coop requires a regular project file.")
 	}
 	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s must be a regular file", path)
+		return nil, readError("The path is not a regular file. Coop requires a regular project file.")
 	}
 	data, err := readProjectFile(path, dirInfo, info)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", path, err)
+		return nil, readError(fileReason(err))
 	}
 	return Parse(data)
 }

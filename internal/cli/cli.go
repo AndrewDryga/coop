@@ -18,6 +18,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/preset"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -143,9 +144,9 @@ func Main(argv []string) int {
 // already rendered its own failure (ui.Fail) is not repeated, and everything else gets one ✗ line.
 func reportExit(code int, err error) int {
 	if err != nil {
-		var usage *ui.UsageError
+		usage := asUsage(err)
 		switch {
-		case errors.As(err, &usage):
+		case usage != nil:
 			ui.PrintUsageError(usage)
 			if code <= 0 {
 				code = usage.ExitCode
@@ -165,6 +166,34 @@ func reportExit(code int, err error) int {
 		code = 1
 	}
 	return code
+}
+
+// asUsage is where a failure REPORTED AS DATA becomes the block a person reads. The engines below
+// the CLI keep rendering at the edges (internal/importdag_test.go), so they hand up the parts —
+// where the problem is, what is wrong, what to change — and the terminal's owner draws them in the
+// one shape every refusal uses. Anything that already is a ui.UsageError passes through unchanged.
+func asUsage(err error) *ui.UsageError {
+	var usage *ui.UsageError
+	if errors.As(err, &usage) {
+		return usage
+	}
+	var settings *config.Failure
+	if errors.As(err, &settings) {
+		cause := settings.Problem
+		if settings.Where != "" {
+			cause = settings.Where + "\n" + settings.Problem
+		}
+		var rows [][2]string
+		if settings.Action != "" {
+			rows = append(rows, [2]string{"", settings.Action})
+		}
+		return ui.CommandFailed(settings.Headline, cause, rows...)
+	}
+	var projectFile *project.FileError
+	if errors.As(err, &projectFile) {
+		return ui.CommandFailed("Could not read "+project.File, projectFile.Cause)
+	}
+	return nil
 }
 
 // helpPath is the command path a help request is ABOUT: the leading plain words of argv, stopping

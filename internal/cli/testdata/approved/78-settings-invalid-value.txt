@@ -1,0 +1,4 @@
+
+✗ Invalid value for COOP_PIDS
+
+      Use a positive whole number, or 0/unlimited to remove the limit.

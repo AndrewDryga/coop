@@ -1,0 +1,7 @@
+
+✗ Could not load Coop settings
+
+      /Users/example/.config/coop/config:12
+      Unknown setting "COOP_PIDD".
+
+  Check the setting name in this file.

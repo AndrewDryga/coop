@@ -100,7 +100,7 @@ func TestLoadRejectsPresentUnsafeEntries(t *testing.T) {
 			t.Fatal(err)
 		}
 		assertPolicyError(t, repo)
-		assertSymlinkRemedy(t, repo, "replace it with a regular file")
+		assertSymlinkRemedy(t, repo, "Coop requires a regular project file.")
 	})
 
 	t.Run("dangling symlink", func(t *testing.T) {
@@ -124,7 +124,7 @@ func TestLoadRejectsPresentUnsafeEntries(t *testing.T) {
 			t.Fatal(err)
 		}
 		assertPolicyError(t, repo)
-		assertSymlinkRemedy(t, repo, "replace it with a real directory")
+		assertSymlinkRemedy(t, repo, "Coop reads project config without following links.")
 	})
 
 	t.Run("directory", func(t *testing.T) {
@@ -311,10 +311,10 @@ func TestHostPort(t *testing.T) {
 // assertSymlinkRemedy checks that a refused symlink is named as one, with what to do about it —
 // a dotfile-managed .agent or project.yaml is a common setup, and "must be a directory" (which it
 // is) or "must be a regular file" sent people looking in the wrong place.
-func assertSymlinkRemedy(t *testing.T, repo, remedy string) {
+func assertSymlinkRemedy(t *testing.T, repo, requirement string) {
 	t.Helper()
 	_, err := Load(repo)
-	if err == nil || !strings.Contains(err.Error(), "is a symbolic link") || !strings.Contains(err.Error(), remedy) {
-		t.Fatalf("Load error = %v; want the symlink named with the remedy %q", err, remedy)
+	if err == nil || !strings.Contains(err.Error(), "is a symbolic link") || !strings.Contains(err.Error(), requirement) {
+		t.Fatalf("Load error = %v; want the link named and the requirement %q", err, requirement)
 	}
 }

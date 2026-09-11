@@ -5,6 +5,7 @@ package config
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -148,7 +149,7 @@ func Load() (*Config, error) {
 		raw := get(key, strconv.FormatBool(def))
 		value, err := parseBool(raw)
 		if err != nil {
-			return false, configValueError(key, raw, err)
+			return false, configValueError(key, err)
 		}
 		return value, nil
 	}
@@ -156,7 +157,7 @@ func Load() (*Config, error) {
 		raw := get(key, strconv.Itoa(def))
 		value, err := parsePositiveInt(raw)
 		if err != nil {
-			return 0, configValueError(key, raw, err)
+			return 0, configValueError(key, err)
 		}
 		return value, nil
 	}
@@ -205,20 +206,19 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	if carryTokens > math.MaxInt/4 {
-		raw := get("COOP_ACP_CARRY_TOKENS", strconv.Itoa(200_000))
-		return nil, configValueError("COOP_ACP_CARRY_TOKENS", raw, fmt.Errorf("must be at most %d", math.MaxInt/4))
+		return nil, configValueError("COOP_ACP_CARRY_TOKENS", advice(fmt.Sprintf("Use a whole number no larger than %d.", math.MaxInt/4)))
 	}
 	pids, err := parsePids(get("COOP_PIDS", "4096"))
 	if err != nil {
-		return nil, configValueError("COOP_PIDS", get("COOP_PIDS", "4096"), err)
+		return nil, configValueError("COOP_PIDS", err)
 	}
 	egress, err := parseEgress(get("COOP_EGRESS", "open"))
 	if err != nil {
-		return nil, configValueError("COOP_EGRESS", get("COOP_EGRESS", "open"), err)
+		return nil, configValueError("COOP_EGRESS", err)
 	}
 	consultTimeout, err := parseConsultTimeout(get("COOP_CONSULT_TIMEOUT", "0"))
 	if err != nil {
-		return nil, configValueError("COOP_CONSULT_TIMEOUT", get("COOP_CONSULT_TIMEOUT", "0"), err)
+		return nil, configValueError("COOP_CONSULT_TIMEOUT", err)
 	}
 
 	c := &Config{
@@ -465,7 +465,11 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode, preserveMode bo
 	if err := syncDir(filepath.Dir(path)); err != nil {
 		// The new contents are already in place — only their survival of a crash is unconfirmed.
 		// Say that, so this doesn't read as "the write was lost" and get retried blind.
-		return fmt.Errorf("wrote %s but could not sync its directory: %w", path, err)
+		return &Failure{
+			Headline: "Could not finish saving the change",
+			Problem:  "The file was written, but its folder could not be synced.",
+			Action:   "Check the file before retrying.",
+		}
 	}
 	return nil
 }
@@ -855,58 +859,91 @@ func loadMainConf(path string, explicit bool) (map[string]string, error) {
 		line = strings.TrimPrefix(line, "export ")
 		key, value, ok := strings.Cut(line, "=")
 		if !ok {
-			return nil, mainConfLineError(path, lineNumber, "expected KEY=VALUE")
+			return nil, settingsError(path, lineNumber, "This line is not a setting.", "Write settings as KEY=value, one per line.")
 		}
 		key = strings.TrimSpace(key)
 		value = strings.TrimSpace(value)
 		if key == "" {
-			return nil, mainConfLineError(path, lineNumber, "configuration key is empty")
+			return nil, settingsError(path, lineNumber, "This line has no setting name.", "Write settings as KEY=value, one per line.")
 		}
 		if _, exists := out[key]; exists {
-			return nil, mainConfLineError(path, lineNumber, "duplicate configuration key %s", key)
+			return nil, settingsError(path, lineNumber, fmt.Sprintf("Setting %q is set twice in this file.", key), "Keep the line you want and delete the other.")
 		}
-		if err := validateMainConfigKey(key); err != nil {
-			return nil, mainConfLineError(path, lineNumber, "%v", err)
+		if problem, action := validateMainConfigKey(key); problem != "" {
+			return nil, settingsError(path, lineNumber, problem, action)
 		}
 		if len(value) > 0 && (value[0] == '\'' || value[0] == '"') {
 			if len(value) < 2 || value[len(value)-1] != value[0] {
-				return nil, mainConfLineError(path, lineNumber, "unmatched outer quote for %s", key)
+				return nil, settingsError(path, lineNumber, fmt.Sprintf("Setting %q has an unmatched quote.", key), "Close the quote, or remove both quotes.")
 			}
 			value = value[1 : len(value)-1]
 		}
 		if err := validateMainConfigValue(key, value); err != nil {
-			return nil, mainConfLineError(path, lineNumber, "%s=%q: %v", key, value, err)
+			return nil, settingsError(path, lineNumber, fmt.Sprintf("Invalid value for %s.", key), err.Error())
 		}
 		out[key] = value
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, mainConfLineError(path, lineNumber+1, "read line: %v", err)
+		if errors.Is(err, bufio.ErrTooLong) {
+			return nil, settingsError(path, lineNumber+1, "This line is too long to read.",
+				fmt.Sprintf("Keep each setting under %d characters.", maxMainConfLineBytes))
+		}
+		return nil, settingsError(path, lineNumber+1, "This line could not be read.", fileReason(err))
 	}
 	return out, nil
 }
 
-func mainConfFileError(path string, explicit bool, err error) error {
-	if explicit {
-		return fmt.Errorf("read coop config %s: %w; create or fix that file, or unset or repoint COOP_CONF", path, err)
+// settingsError is the one block every problem with the settings file takes: where it is (with the
+// line, when a line carries it), what is wrong in a sentence, and the one change that fixes it. The
+// offending VALUE never appears — this file may hold a token — and no setting name is guessed.
+func settingsError(path string, line int, problem, action string) error {
+	where := path
+	if line > 0 {
+		where = fmt.Sprintf("%s:%d", path, line)
 	}
-	return fmt.Errorf("read coop config %s: %w; fix or remove that file", path, err)
+	return &Failure{Headline: "Could not load Coop settings", Where: where, Problem: problem, Action: action}
 }
 
-func mainConfLineError(path string, line int, format string, args ...any) error {
-	return fmt.Errorf("%s:%d: %s", path, line, fmt.Sprintf(format, args...))
+func mainConfFileError(path string, explicit bool, err error) error {
+	action := "Fix or remove that file."
+	if explicit {
+		action = "Fix that file, or point COOP_CONF somewhere else."
+	}
+	return settingsError(path, 0, fileReason(err), action)
 }
 
-func validateMainConfigKey(key string) error {
+// fileReason turns a filesystem error into the one sentence a person can act on: the bare reason
+// ("Permission denied."), without the operation and path the block already shows.
+func fileReason(err error) string {
+	var perr *os.PathError
+	if errors.As(err, &perr) {
+		err = perr.Err
+	}
+	msg := err.Error()
+	if msg == "" {
+		return "It could not be read."
+	}
+	msg = strings.ToUpper(msg[:1]) + msg[1:]
+	if !strings.HasSuffix(msg, ".") {
+		msg += "."
+	}
+	return msg
+}
+
+// validateMainConfigKey answers with the problem and the fix, or two empty strings when the setting
+// is one Coop reads. A retired setting is named as retired rather than as a typo: deleting the line
+// is the fix, and a near-miss suggestion would send the reader looking for a setting that is gone.
+func validateMainConfigKey(key string) (problem, action string) {
 	if _, retired := retiredMainConfigKeys[key]; retired {
-		return fmt.Errorf("%s is retired", key)
+		return fmt.Sprintf("Setting %q was retired.", key), "Delete this line — Coop no longer reads it."
 	}
 	if _, ok := mainConfigKeys[key]; ok {
-		return nil
+		return "", ""
 	}
 	if _, ok := adapterConfigKeys[key]; ok {
-		return nil
+		return "", ""
 	}
-	return fmt.Errorf("unknown configuration key %s", key)
+	return fmt.Sprintf("Unknown setting %q.", key), "Check the setting name in this file."
 }
 
 func validateMainConfigValue(key, value string) error {
@@ -918,7 +955,7 @@ func validateMainConfigValue(key, value string) error {
 	case "COOP_ACP_CARRY_TOKENS":
 		n, err := parsePositiveInt(value)
 		if err == nil && n > math.MaxInt/4 {
-			return fmt.Errorf("must be at most %d", math.MaxInt/4)
+			return advice(fmt.Sprintf("Use a whole number no larger than %d.", math.MaxInt/4))
 		}
 		return err
 	case "COOP_CONSULT_TIMEOUT":
@@ -935,8 +972,40 @@ func validateMainConfigValue(key, value string) error {
 	}
 }
 
-func configValueError(key, value string, err error) error {
-	return fmt.Errorf("%s=%q: %w", key, value, err)
+// advice is a parser's answer to "what should I type instead?" — a whole sentence, because it is
+// read by a person rather than joined into a longer error. It implements error so the parsers keep
+// their ordinary (value, error) shape, and configValueError can pass the sentence straight through.
+type advice string
+
+func (a advice) Error() string { return string(a) }
+
+// Failure is a settings problem this package could not work around, kept as the PARTS a person
+// needs — where it is, what is wrong, and the one change that fixes it — rather than as a rendered
+// block: config is a leaf library, and the CLI owns the terminal (internal/importdag_test.go).
+// Where is empty when no file carries the problem, Action when there is nothing useful to add.
+type Failure struct {
+	Headline string
+	Where    string
+	Problem  string
+	Action   string
+}
+
+func (f *Failure) Error() string {
+	parts := []string{f.Headline}
+	for _, p := range []string{f.Where, f.Problem, f.Action} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	return strings.Join(parts, ": ")
+}
+
+// configValueError refuses ONE setting's value. It names the setting and what to type instead, and
+// never echoes the value itself — a settings file and the environment both carry tokens, and the
+// person already knows what they wrote. The parsers own the "Use …" sentence, so the accepted values
+// come from the code that accepts them.
+func configValueError(key string, err error) error {
+	return &Failure{Headline: "Invalid value for " + key, Problem: err.Error()}
 }
 
 func environmentFlag(key string, def bool) (bool, error) {
@@ -946,7 +1015,7 @@ func environmentFlag(key string, def bool) (bool, error) {
 	}
 	value, err := parseBool(raw)
 	if err != nil {
-		return false, configValueError(key, raw, err)
+		return false, configValueError(key, err)
 	}
 	return value, nil
 }
@@ -958,18 +1027,18 @@ func parseBool(value string) (bool, error) {
 	case "0", "false", "no", "off":
 		return false, nil
 	default:
-		return false, fmt.Errorf("expected one of 1|true|yes|on|0|false|no|off")
+		return false, advice("Use true or false.")
 	}
 }
 
 func parsePositiveInt(value string) (int, error) {
 	value = strings.TrimSpace(value)
 	if !decimalDigits(value) {
-		return 0, fmt.Errorf("expected a positive integer")
+		return 0, advice("Use a positive whole number.")
 	}
 	n, err := strconv.Atoi(value)
 	if err != nil || n <= 0 {
-		return 0, fmt.Errorf("expected a positive integer")
+		return 0, advice("Use a positive whole number.")
 	}
 	return n, nil
 }
@@ -980,11 +1049,11 @@ func parsePids(value string) (string, error) {
 		return value, nil
 	}
 	if !decimalDigits(value) {
-		return "", fmt.Errorf("expected 0, unlimited, empty, or a positive integer")
+		return "", advice("Use a positive whole number, or 0/unlimited to remove the limit.")
 	}
 	n, err := strconv.Atoi(value)
 	if err != nil || n <= 0 {
-		return "", fmt.Errorf("expected 0, unlimited, empty, or a positive integer")
+		return "", advice("Use a positive whole number, or 0/unlimited to remove the limit.")
 	}
 	return strconv.Itoa(n), nil
 }
@@ -992,7 +1061,7 @@ func parsePids(value string) (string, error) {
 func parseEgress(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value != "open" && value != "filtered" && value != "none" {
-		return "", fmt.Errorf("expected open, filtered or none")
+		return "", advice("Use open, filtered or none.")
 	}
 	return value, nil
 }
@@ -1000,11 +1069,11 @@ func parseEgress(value string) (string, error) {
 func parseConsultTimeout(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if !decimalDigits(value) {
-		return "", fmt.Errorf("expected whole seconds from 0 through 86400")
+		return "", advice("Use whole seconds from 0 through 86400.")
 	}
 	n, err := strconv.Atoi(value)
 	if err != nil || n < 0 || n > 86400 {
-		return "", fmt.Errorf("expected whole seconds from 0 through 86400")
+		return "", advice("Use whole seconds from 0 through 86400.")
 	}
 	if n == 0 {
 		return "", nil
