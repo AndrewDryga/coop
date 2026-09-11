@@ -312,7 +312,7 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 		// The live board watches the queue(s) themselves draining, task-centric across however many
 		// are configured and including active forks.
 		if len(rels) == 0 {
-			return 2, errors.New("coop tasks watch: no task queue configured — set COOP_TASKS or pass --tasks <path>")
+			return 2, noQueueConfigured("coop tasks watch")
 		}
 		jsonOutput := false
 		for _, arg := range rest[1:] {
@@ -359,11 +359,18 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 		case "":
 			return tasksListAll(repo, rels, nil)
 		default:
-			return 2, fmt.Errorf("coop tasks %s works one queue at a time — pass a single --tasks <path> (ls, lint, decisions, and the id commands span all %d configured queues)", sub, len(rels))
+			return 2, &ui.UsageError{
+				Headline: fmt.Sprintf("%q works one queue at a time", "coop tasks "+sub),
+				Cause:    fmt.Sprintf("This project has %s.", ui.Count(len(rels), "task queue")),
+				Rows: [][2]string{
+					{"Usage:", "coop tasks --tasks <path> " + sub},
+					{"Help:", ui.HelpCommand("coop tasks")},
+				},
+			}
 		}
 	}
 	if len(rels) == 0 {
-		return 2, errors.New("coop tasks: no task queue configured — set COOP_TASKS or pass --tasks <path>")
+		return 2, noQueueConfigured("coop tasks")
 	}
 	return tasksInQueue(host, repo, rels[0], rest, flags)
 }
@@ -389,13 +396,17 @@ func tasksInQueue(host Host, repo, rel string, rest, flags []string) (int, error
 			// subcommand — then help + exit 0 reads as a silent no-op. If the swallowed value
 			// names a subcommand, the user almost certainly meant `coop tasks <sub>`.
 			if len(flags) == 1 && isTasksSubcommand(flags[0]) {
-				return 2, fmt.Errorf("`--tasks` takes a queue dir, not a subcommand — did you mean `coop tasks %s`? (no task queue %q here)", flags[0], rel)
+				return 2, ui.UnknownValue("queue folder", flags[0], "coop tasks --tasks",
+					"", "coop tasks "+flags[0])
 			}
 			return host.groupHelp("tasks")
 		case "add":
 			// fall through — tasksFolderAdd creates the queue dir
 		default:
-			return -1, fmt.Errorf("no task queue at %s — run 'coop init' (or 'coop tasks --tasks %s add \"<title>\"' to start one here)", rel, rel)
+			return -1, ui.CommandFailed("No task queue at "+rel,
+				"This project has not been set up for tasks yet.",
+				[2]string{"Set it up:", "coop init"},
+				[2]string{"Or start a queue here:", "coop tasks --tasks " + rel + ` add "<title>"`})
 		}
 	}
 	return CmdTasksFolder(repo, root, rest)
@@ -733,4 +744,18 @@ func tasksDecisionsRollup(repo string, rels []string) (int, error) {
 		ui.Note("no open decisions across %s", ui.Count(len(rels), "configured queue"))
 	}
 	return 0, nil
+}
+
+// noQueueConfigured is the refusal when nothing told Coop WHICH queue to work: no COOP_TASKS, no
+// --tasks, and no queue in this project. command is the one the person typed, so its page is the
+// one they are sent to.
+func noQueueConfigured(command string) error {
+	return &ui.UsageError{
+		Headline: fmt.Sprintf("No task queue configured for %q", command),
+		Cause:    "Coop needs to know which queue to work.",
+		Rows: [][2]string{
+			{"Usage:", command + " --tasks <path>"},
+			{"Help:", ui.HelpCommand(command)},
+		},
+	}
 }
