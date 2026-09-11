@@ -1,92 +1,81 @@
 ---
 name: command-output-tiers
-description: "no tool prefix on human output: a dim progress log, a plain anchor line, a bright next-steps block, outcome glyphs"
+description: "Unprefixed human output, truthful progress, useful results, and readable consequences"
 scope: cli-output
 sources: [internal/ui/ui.go, internal/ui/usage.go, internal/ui/section.go, internal/box/launch_sections.go, internal/cli/launch_box.go, internal/cli/commands.go]
 check: "none"
 updated: 2026-09-11
 ---
 
-# Command output: dim log, one plain anchor, a bright "next steps" block
+# Command output: no prefixes, useful results, truthful progress
 
-A command that scaffolds or sets things up (e.g. `coop init`) emits three visually distinct
-tiers, so the log of what happened never drowns out what the user must do next:
+- Do not prefix human content with `coop:`, including after provider/build output. The command
+  and concrete headings identify the speaker. Do not rewrite provider bytes or machine schemas.
+- Active setup/launch work uses sentence-case sections with indented results. Reserve ✓ for
+  a proved success, ⚠ for an actual caution, and ✗ for failure. `Starting Codex` has no success
+  icon: the provider session has not yet completed.
+- State what has actually happened. `The Coop box has stopped` follows confirmed stop, never
+  the event that merely begins cleanup. While waiting, say `Stopping the Coop box…`.
+  Separate process exit, stopped box, and remaining resource cleanup.
+- Passive inspection shows useful facts and only-present issues, not ten healthy statuses.
+  Doctor and active qualification still show the checks the user requested.
+- Avoid routine current-directory headers and default image labels. Show paths when they
+  identify an actionable file, different scope, ambiguity, or an exact destructive target.
+  Show a nondefault image/fallback when it materially affects the operation or its evidence.
+- Use blank lines between sections, two-space nesting, and six-space error causes. Standalone
+  footer actions start at column zero. Indentation must mean actual nesting, not decoration.
+- Rejected input is data, not a sentence a parser writes: build a `ui.UsageError` (the command
+  path, the offending token, a usage line) and let it render — a leading blank line, one red `✗`
+  headline naming the full command, an optional six-space cause stating the actual constraint,
+  then aligned `Did you mean:` / `Usage:` / `Example:` / `Help:` rows; exit 2, stderr only.
+  `internal/ui/usage.go` holds the constructors; `internal/cli/testdata/approved` pins the bytes.
+- A deletion preview asks about a future action. Say "permanently delete" or "will be deleted",
+  never "deleted" before confirmation. Put exact affected resources in a short list, followed
+  by a simple confirmation. Do not repeat the same threat in three headings or list unrelated
+  kept resources. Group retained data only when it resolves a real ambiguity.
+- Runtime next actions are ordinary prose, not uppercase pseudo-option sections: "Please edit
+  the preset template: <path>" and "To run it, use:". Keep short identity once where useful:
+  "Signing in to claude@work", not a provider heading plus an account ledger.
+- Network wording names the real concept: network access for mode; network rules for approved
+  selectors/protocols/ports; network traffic for allowed/blocked activity; remote address for
+  a recorded hostname/IP/port. Never use "website" as a synonym for an IP or ICMP rule.
+- Active launch uses "Configuring network access" in every mode. A config file supplies the
+  rules; it is not the component that enforces them.
+- Bulk user-managed exceptions belong in an editable file with stable entries, not a hundred
+  per-item commands. Precise scope and persistence are part of the design, not cosmetic labels.
+- Actionable details beat state ledgers: account detail gives launch/default/sign-in actions;
+  preset lists explain the lead/roles relationship; AI-facing helper results report actual work
+  rather than repeating the lead's standing instructions.
+- Green success, amber warning, red error, cyan emphasis, dim optional hints. Do not dim error
+  causes or remedies. Pad columns before styling; preserve meaning without color and in pipes.
+- Derive next actions from actual state and label them. Keep setup's per-file logs subordinate
+  to meaningful results; never repeat a redundant final "all okay" ledger.
 
-- **Routine progress** — every "wrote X", "linked X", "added skill X", "commit gate: Y" — is a
-  faint, indented `ui.Detail` line. A long run reads as one quiet block.
-- **One closing anchor** — a single `ui.Note("scaffolded into <repo>")` closes the dim block at
-  normal brightness. NO `coop:` prefix: human output never carries a tool prefix, so the line
-  reads as the sentence it is.
-- **Next steps** — the actions the user runs next go in a `ui.Steps(...)` block: a blank line, a
-  bold `next steps:` header, one cyan-`→` line per action. Assemble them in the CALLER from what
-  actually landed (a build step only if a `Dockerfile.agent` exists, `coop up` only if services
-  were added), not a fixed script — and never inline among the progress log.
-- **A standalone result** — a synchronous query/result command (`coop tasks` …, `coop check-secrets`,
-  `coop credentials`, `coop fork review`, `coop tasks watch`) prints only its own outcome,
-  with no agent output and no dim progress block to stand out from. Voice it by outcome, with NO
-  command-name echo: `ui.OK` (green ✓) a success, `ui.Warn` (amber ⚠) a non-fatal caution,
-  `ui.Error` (red ✗) a failure, `ui.Note` (plain) a neutral note. State the *result* — `tasks lint:
-  clean` becomes `✓ no issues — 12 tasks checked`.
-- **An interactive launch's sections** — the host-side work a person watches BEFORE the agent's
-  output begins (`coop claude`, `coop run`) — are bold, unprefixed headings (`ui.Section`) with
-  indented results (`ui.Pass` ✓ / `ui.Caution` ⚠): the invocation already says who is speaking.
-  `Checking the Coop box` (only when there is a repair to do),
-  `Protecting secrets`, one `Internet access` heading whatever the mode, `Starting <Agent>` with no
-  success glyph because the agent's output IS the result. A section that fails ends with `ui.Fail`:
-  the indented red ✗ headline, a blank line, the concrete reason six spaces further in, a blank
-  line, the remedy one level under the section — reason and remedy never dimmed — and the error
-  comes back `ui.Reported`, so the dispatcher's fallback `✗` does not repeat it. What coop says
-  AFTER agent output — `stopping the box — …`, `Network run <id>` — is plain too; following a
-  provider's output is not a reason to stamp a prefix on it.
-- **Rejected input** — a usage error is not a sentence a parser writes. Build a `ui.UsageError`
-  from DATA (the command path, the offending token, a usage line) and let it render: a leading
-  blank line, one red `✗` headline, an optional six-space cause, then two-space `Did you mean:` /
-  `Usage:` / `Example:` / `Help:` rows whose commands align past the widest label. Exit 2, stderr
-  only, stdout empty. `internal/ui/usage.go` holds the constructors; `internal/cli/testdata/approved`
-  pins the bytes.
-
-**Why:** the user pasted 28 identical `coop:` lines and said "it makes it very hard to see what
-user needs to do and what is actual log… add some spacing, coloring and formatting." A flat,
-uniformly-prefixed stream buries the 3 lines that matter behind 25 that don't. Later, on
-`coop tasks decisions` printing `coop: no open decisions — nothing is blocked`, the user said the
-prefix is "not needed when it's clear what outputs it" — a command you invoked directly, with
-nothing else writing to the terminal, is exactly that clear case. Then, on `coop tasks lint`
-printing `coop: tasks lint: clean`, the user said it's "not human readable — prefix, then task name
-again" and asked for nice outputs and super-clear errors — hence the ✓/⚠/✗ result glyphs, dropping
-the command-name echo, and errors that name the fix.
-
-**How to apply:**
-- Routine per-file/per-step progress → `ui.Detail` (dim, indented).
-- A status line coop speaks in its own voice → `ui.Note` (plain, normal brightness). There is no
-  prefixing helper: `ui.Info` was retired, and a literal `"coop: "` in human output is a bug.
-- Standalone command results (`coop tasks`, `coop check-secrets`, `coop credentials`,
-  `coop fork review`, `coop tasks watch`, …) → a glyph helper by outcome: `ui.OK` ✓ / `ui.Warn` ⚠ /
-  `ui.Error` ✗ / `ui.Note` (neutral), and never echo the command name you were invoked as (no
-  `tasks lint:` / `check-secrets:` prefix).
-- Errors (every returned error reaches the user through `ui.Error`'s red ✗) say what failed AND how
-  to fix it — name the file/flag and the exact command to run, not just the symptom. Rejected INPUT
-  goes through `ui.UsageError` instead, so every command refuses the same way.
-- Machine surfaces are untouched by all of this: `--json`, the ACP/JSON-RPC streams, generated file
-  comments and git reflog messages keep their own identifiers.
-- Next-step actions → collect a `[]string` in the command and pass it to `ui.Steps`; derive each
-  step from real state (see `initNextSteps` in `internal/cli/commands.go`).
-- Pre-launch work on an interactive run → `ui.Section` / `ui.Pass` / `ui.Caution` / `ui.Fail`
-  (`internal/box/launch_sections.go`, `internal/cli/launch_box.go`), gated on the run being
-  interactive (`!Batch && !Quiet && !ForceNoTTY`) so a loop, a probe and an ACP child keep their
-  bounded one-line log. A remedy names the command to REPEAT (`run 'coop codex' again`), never a
-  manual detour the launch retries itself (`coop build`).
+**How to apply:** reuse the existing UI helpers and renderers; change their prefix behavior
+as needed rather than introducing another styling layer. Keep raw command output, ACP, JSON,
+completion scripts, and supervised bounded logs on their existing streams. An in-app task design
+is not proof the live helpers conform; regression tests must exercise all output tiers.
 
 See also [[help-output-style]] and [[no-color-in-width-fields]].
 
 ## Changelog
-- 2026-09-11 — the approved CLI review removed the `coop:` prefix from ALL human output, including
-  after provider output: `ui.Info` is retired (its 87 call sites now call `ui.Note`), the network
-  summary's `View.Prefix` field is gone, and the literal `coop: ` was stripped from the box
-  entrypoint's supervisor lines, the serve-port notices and the self-update notices. Left alone
-  deliberately: the ACP/JSON-RPC payloads in `internal/acpproxy` and `internal/acpctl`, the
-  generated `mcp.json` comment, the `coop: re-sign commits` git reflog message and the
-  `.git/info/exclude` marker — protocols, file markers and third-party surfaces, not human output.
-  Added the rejected-input tier (`ui.UsageError`) from the same review.
+- 2026-09-11 — the shared input-error renderer (a2cfb50, `ui.UsageError`) joins the card as the one
+  shape rejected input takes; its fixtures are gated byte for byte.
+- 2026-09-11 — second full correction batch: swept login, preset, loop, deletion, network and
+  session fixtures. Made pre-delete tense explicit, simplified runtime next actions, normalized
+  network rule/traffic/address terms, and moved hash-heavy settings behind useful permissions.
+  Current source still has website copy in launch_sections/net_approve/help/init; removal and
+  fixture tests are in the same design task. No implementation compliance is claimed.
+- 2026-09-11 — superseded the old single-`coop:` anchor and after-provider exception. Swept
+  launch/teardown, task/watch, account/preset, network, services/build/doctor, session and helper
+  examples in the CLI design task. Removed routine scope/image noise; tied completed-stop copy
+  to stop evidence; grouped deletion consequences. Existing UI source still needs the task's
+  implementation and rendering tests; `check: none` does not claim a new gate.
+
+### Earlier history
+
+These entries record earlier decisions; the current rule above supersedes conflicting guidance.
+
 - 2026-09-10 — added the interactive-launch sections tier (`ui.Section`/`Pass`/`Caution`/`Fail`,
   `ui.Reported`) from the network-output redesign: the user asked for named sections instead of
   isolated `coop:` status lines and a `coop build` nag on every launch. Swept `internal/box/run.go`

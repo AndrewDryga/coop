@@ -1,39 +1,33 @@
 ---
 name: entity-blocks-with-labeled-fields
-description: "multi-fact listings get one labeled block per entity, not one dense row"
+description: "useful facts first; compact tables for comparisons, labeled blocks for detailed permissions and roles"
 scope: cli-output
-sources: [internal/cli/profiles.go, internal/cli/presetcmd.go, internal/ui/ui.go]
+sources: [internal/cli/profiles.go, internal/cli/presetcmd.go, internal/cli/session_cmd.go, internal/ui/ui.go]
 check: "none"
 updated: 2026-09-11
 ---
 
-# Multi-fact listings: one labeled block per entity, not one dense row
+# List useful facts, not implementation bookkeeping
 
-When each entity in a listing carries more than one fact, give each entity a block: a bold
-header naming it, then indented `label  value` lines — quiet labels, plain values. State a
-fact as a fact ("refreshed 7 hours ago", "default  yes"), not as a cryptic tag, and put the
-fix for a problem right where the problem shows.
+Choose the layout from the reader's job. A preset overview compares a few repeated fields,
+so a compact table works. Roles and session permissions have variable-length details, so use
+one labeled block per entity. Do not turn either into an exhaustive ledger.
 
-**Why:** `coop models` packed ids, a live-ness tag, and the env default into one long row
-per agent. The user sketched the block form ("Models: …", "Last refreshed at: …") and
-asked for color and real readability (2026-07-10). A dense row makes every fact compete
-for the same line; a block gives each fact a labeled home, and the header gives the eye a
-stable landmark to scan by.
+A field earns its place by helping the reader choose, act, or understand a permission:
+project, selected agent/account, write access and network rules matter in session configuration.
+Verification hashes belong in JSON, not ahead of those facts. Account detail gives useful
+launch/default/sign-in actions; token ages, "Default yes", and internal storage paths do not
+justify a block merely because the implementation can supply them.
 
-**The other half of the rule: count the facts first.** A block is for an entity with
-several facts *a person needs at once* — the single-credential view (`coop credentials
-claude work`: refreshed / default / dir). When an entity really carries ONE fact, a block
-is padding: `coop models` was rebuilt in 2026-09 as a header plus its ids, because
-freshness turned out to be coop's job (it refreshes what it renders) rather than a field
-the reader has to judge, and the env default is one sentence, not a column. A block per
-task in `coop tasks` would be noise the same way (see [[tag-exceptions-not-every-row]]).
+**Why:** the user rejected tidy-looking but useless account and session output, and requested
+a table for preset comparison. Formatting cannot rescue a view that omits the user's question.
 
 **How to apply:**
 - Header: `p.Bold(displayAgentName(id))` at column 0 — the entity's own name, nothing else.
 - Fields: two-space indent, the label then the plain value, one fact per line; optional
   fields appear only when set. Blank line between blocks.
-- A problem replaces its fact in the same place and carries the exact command that fixes
-  it, dim, on the line beneath ([[command-output-tiers]]).
+- A problem replaces its fact and carries the exact remedy nearby; keep the cause and remedy
+  at readable contrast ([[command-output-tiers]]).
 - Commands the user should copy-paste render cyan; pad plain first, then style
   ([[no-color-in-width-fields]]).
 - An operation's per-entity outcome (a failed refresh, a failed login) folds into that
@@ -44,6 +38,10 @@ task in `coop tasks` would be noise the same way (see [[tag-exceptions-not-every
 See also [[command-output-tiers]], [[list-output-echoes-source]].
 
 ## Changelog
+- 2026-09-11 — refined from the second complete CLI feedback batch: preset overview is a table,
+  lead/roles use aligned Agent/Prompt values, account detail gives actions, and remote sessions
+  lead with project/agent/access/network facts. Swept the saved account/preset/session examples;
+  digest-first current source is mapped to the task, not claimed fixed in code.
 - 2026-09-11 — a preset's roles became blocks too (`presetDetail`, presetcmd.go): the role name
   leads, then `Mode:`/`Agent:`/`When:`/`Prompt:`. Two things the card had not said, learned from
   the approved transcript: the LABELS align on one gutter measured across every entity, not just

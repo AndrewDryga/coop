@@ -4,7 +4,7 @@ description: "every unrecoverable delete routes through the one shared `ui.Destr
 scope: security
 sources: [internal/ui/confirm.go]
 check: "none"
-updated: 2026-09-10
+updated: 2026-09-11
 ---
 
 # Every unrecoverable delete goes through the one shared confirmation gate
@@ -12,10 +12,12 @@ updated: 2026-09-10
 Any command that irreversibly deletes user state (a task folder, a credential profile + its login
 token, a fork clone) routes its confirmation through the single `ui.DestroyGate(what, yes)` helper
 (`internal/ui/confirm.go`), never a hand-rolled prompt or a silent `os.RemoveAll`. The gate: with
-`--yes` it proceeds; piped (no TTY) it REFUSES and says to pass `--yes`; at a TTY it asks
-"`<what>`? this can't be undone" defaulting to **No**, so a stray Enter cancels. `what` names the
+`--yes` it proceeds; piped (no TTY) it REFUSES and says to pass `--yes`; at a TTY it asks for confirmation defaulting to **No**, so a stray Enter cancels. `what` names the
 blast radius — the resolved id, the profile, or the count — echoed BEFORE the delete, so the user
-sees exactly what's at stake.
+sees exactly what's at stake. The preview names the future permanent deletion; a short
+`Continue? [y/N]` can follow it without repeating the whole consequence. Never print a completed
+`deleted` label before the user agrees. The existing helper needs the reviewed presentation
+update; keep its safety decisions shared, not a new per-command prompt implementation.
 
 **Why:** the v3 audit found `coop tasks rm` `os.RemoveAll`-ing a substring-matched folder with no
 prompt (and echoing the id only *after*), `rm --all-done` wiping every archive unprompted, and
@@ -50,6 +52,10 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
 See also [[destructive-verb-rm]] (the verb is named `rm`) and [[bare-subcommand-shows-help]].
 
 ## Changelog
+- 2026-09-11 — clarified future-tense previews and short confirmations after the user rejected
+  a 'Permanently deleted' ledger printed before asking. Swept account and service-volume examples,
+  plus task/fork deletion siblings in the design task; preserved the single gate and all authority
+  checks. Runtime helper copy updates remain implementation work.
 - 2026-08-10 — path-only, no claim change: the fork/fleet extraction moved five of the ten
   `ui.DestroyGate` call sites out of `internal/cli` into `internal/forkctl` (`rm.go`, `fleet.go`,
   `merge.go`); `internal/cli/fork_cmd.go` keeps the `--fresh` one and `profiles.go` its own. Still

@@ -91,11 +91,11 @@ updated: <YYYY-MM-DD>                # last edit
 - [menus-offer-only-accepted-tokens](menus-offer-only-accepted-tokens.md) — an interactive menu shows only the tokens the parser accepts, and names an unknown answer instead of dropping it
 
 **CLI output** — what the terminal shows
-- [help-output-style](help-output-style.md) — UPPERCASE headers, one command per line, no `·`, command cell ≤ 32 runes
-- [command-output-tiers](command-output-tiers.md) — dim progress log, one `coop:` anchor, a bright next-steps block; standalone results use ✓/⚠/✗
+- [help-output-style](help-output-style.md) — UPPERCASE help headings, aligned command rows, practical prose and numbered how-tos
+- [command-output-tiers](command-output-tiers.md) — unprefixed human output, truthful progress, useful results, and readable consequences
 - [task-watch-shows-work-not-workspace-ownership](task-watch-shows-work-not-workspace-ownership.md) — tasks watch renders task-affecting activity, never an idle workspace reservation by itself
 - [no-color-in-width-fields](no-color-in-width-fields.md) — pad plain text to the column width, then style; never style inside `%-16s`
-- [entity-blocks-with-labeled-fields](entity-blocks-with-labeled-fields.md) — multi-fact listings get one labeled block per entity, not one dense row
+- [entity-blocks-with-labeled-fields](entity-blocks-with-labeled-fields.md) — useful facts first; compact comparison tables, labeled permission and role details
 - [tag-exceptions-not-every-row](tag-exceptions-not-every-row.md) — tag only the exceptional row; explain the scheme once in a dim caption
 - [inspection-reports-exceptions-only](inspection-reports-exceptions-only.md) — an inspection leads with what happened and prints exceptions only; a qualification prints the checks it proved
 - [list-output-echoes-source](list-output-echoes-source.md) — list output echoes the canonical shape and separates grouped sections with whitespace
@@ -137,6 +137,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [hermetic-git-tests](hermetic-git-tests.md) — a test that runs git pins `GIT_CONFIG_GLOBAL` *and* `GIT_CONFIG_SYSTEM`; identity envs alone still let the host's config in
 
 **Agent workflow** — how an agent works here, not what it ships
+- [batch-delegated-editorial-decisions](batch-delegated-editorial-decisions.md) — finish delegated editorial work in coherent batches; ask only about material choices
 - [requested-outcome-controls-stopping](requested-outcome-controls-stopping.md) — full implementation requests continue past verified slices through the requested final acceptance criteria
 - [run-the-real-invocation-last](run-the-real-invocation-last.md) — a green gate is not proof a feature works; the last check is the user’s own command, in a real repo, after the last commit
 - [fix-the-bug-not-the-feature](fix-the-bug-not-the-feature.md) — root-cause the misbehavior; deleting the feature is never the fix without the human
