@@ -28,7 +28,7 @@ func TestCLIConformance(t *testing.T) {
 		if code, err := cmdTasksFolder("", t.TempDir(), []string{"ls"}); code != 0 || err != nil {
 			t.Errorf("coop tasks ls = (%d, %v), want (0, nil)", code, err)
 		}
-		if _, err := cmdTasksFolder("", t.TempDir(), []string{"list"}); err == nil || !strings.Contains(err.Error(), "unknown tasks command") {
+		if _, err := cmdTasksFolder("", t.TempDir(), []string{"list"}); err == nil || !strings.Contains(err.Error(), `Unknown command "coop tasks list"`) {
 			t.Errorf("coop tasks list should be unknown (no compat alias in v3), got %v", err)
 		}
 	})
@@ -42,10 +42,10 @@ func TestCLIConformance(t *testing.T) {
 			"tasks": func(args []string) (int, error) { return cmdTasksFolder("", t.TempDir(), args) },
 		}
 		for name, run := range closed {
-			if _, err := run([]string{"rm"}); err != nil && strings.Contains(err.Error(), "unknown") {
+			if _, err := run([]string{"rm"}); err != nil && strings.Contains(err.Error(), "Unknown command") {
 				t.Errorf("%s: rm was not accepted: %v", name, err)
 			}
-			if _, err := run([]string{"remove"}); err == nil || !strings.Contains(err.Error(), "unknown") {
+			if _, err := run([]string{"remove"}); err == nil || !strings.Contains(err.Error(), "Unknown command") {
 				t.Errorf("%s: remove should be unknown (no compat alias in v3), got %v", name, err)
 			}
 		}
@@ -86,7 +86,7 @@ func TestCLIConformance(t *testing.T) {
 		_, forkACPUsageErr := newApp().forkACP("work", []string{"not-a-target"})
 		_, forkACPTargetErr := newApp().forkACP("work", nil)
 		_, acpUsageErr := newApp().cmdACP([]string{"codex", "extra"})
-		_, _, _, _, _, _, _, loopUsageErr := parseLoopArgs([]string{"--unknown"}, false)
+		_, _, _, _, _, _, _, loopUsageErr := parseLoopArgs([]string{"claude", "extra"}, false)
 		_, _, peerUsageErr := extractPeer([]string{"--peer"})
 
 		surfaces := map[string]string{
@@ -100,7 +100,7 @@ func TestCLIConformance(t *testing.T) {
 			"fork peer error":       errText("valueless fork peer", forkPeerErr),
 			"fork ACP usage error":  errText("invalid fork ACP target", forkACPUsageErr),
 			"fork ACP target error": errText("missing fork ACP target", forkACPTargetErr),
-			"loop usage error":      errText("unknown loop argument", loopUsageErr),
+			"loop usage error":      errText("extra loop argument", loopUsageErr),
 			"peer usage error":      errText("valueless peer", peerUsageErr),
 			"no-provider error":     errText("missing loop target", noProviderErr("loop")),
 		}
@@ -125,7 +125,7 @@ func TestCLIConformance(t *testing.T) {
 			"fork peer error":       "--peer <target>",
 			"fork ACP usage error":  "coop fork work acp <target> [--readonly] [--peer <target>...]",
 			"fork ACP target error": "coop fork work acp <target>",
-			"loop usage error":      "--peer <target>",
+			"loop usage error":      "coop loop [<target|preset>]",
 			"peer usage error":      "--peer <target>",
 			"no-provider error":     "coop loop <target|preset>",
 		} {
@@ -185,7 +185,9 @@ func TestCLIConformance(t *testing.T) {
 			"context help":      "[<path>...]",
 			"preset error":      "coop presets [init] [<preset>]",
 			"preset init error": "coop presets init [<preset>]",
-			"login error":       "coop login <" + strings.Join(agents.Names(), "|") + ">[@<account>]",
+			// The approved missing-argument transcript says <agent>: the error is about the slot,
+			// not the closed provider list, which the login page still spells out.
+			"login error": "coop login <agent>[@<account>]",
 		} {
 			if !strings.Contains(surfaces[name], want) {
 				t.Errorf("%s missing canonical form %q", name, want)
@@ -198,7 +200,7 @@ func TestCLIConformance(t *testing.T) {
 	// design — a non-verb IS a fork name — so no-stray doesn't apply there.)
 	t.Run("unknown_verb_rejected", func(t *testing.T) {
 		if _, err := cmdTasksFolder("", t.TempDir(), []string{"definitely-not-a-verb"}); err == nil ||
-			!strings.Contains(err.Error(), "unknown tasks command") {
+			!strings.Contains(err.Error(), `Unknown command "coop tasks definitely-not-a-verb"`) {
 			t.Error("an unknown tasks verb should hit the unknown-command error")
 		}
 	})

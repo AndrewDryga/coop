@@ -31,12 +31,11 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// View is the heading context one projection is rendered in. Standalone
-// `coop net inspect` writes an unprefixed stdout view; a result that follows
-// agent output carries coop's voice anchor in Prefix. There is one body.
+// View is the heading context one projection is rendered in — standalone
+// `coop net inspect` and the summary that follows a run share one body. Human
+// output carries no tool prefix, after agent output as anywhere else.
 type View struct {
-	ID     string
-	Prefix string
+	ID string
 	// Cleanup is what coop's one bounded recovery attempt learned about a run
 	// whose cleanup was still owed. Zero when nothing was owed or attempted.
 	Cleanup Cleanup
@@ -55,7 +54,7 @@ type Cleanup struct {
 // was made for; the bytes are the same with color off.
 func WriteRun(w io.Writer, p ui.Palette, view View, inspection networkstate.Inspection) {
 	observed := inspection.Observed
-	fmt.Fprintf(w, "%s%s\n", view.Prefix, p.Bold(p.Cyan("Network run "+view.ID)))
+	fmt.Fprintf(w, "%s\n", p.Bold(p.Cyan("Network run "+view.ID)))
 	// Totals under a live run are still moving, so they would otherwise read as
 	// final. A terminal run needs no lifecycle line at all.
 	switch {

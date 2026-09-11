@@ -55,8 +55,9 @@ func TestRejectArgs(t *testing.T) {
 	if err == nil {
 		t.Fatal("an unexpected arg should error")
 	}
-	if s := err.Error(); !strings.Contains(s, "coop build") || !strings.Contains(s, "--help") {
-		t.Errorf("error should name the command and point to --help: %q", s)
+	// It names the first extra token, the command it was given to, and that command's own page.
+	if s := err.Error(); !strings.Contains(s, `Unexpected argument "help" for "coop build"`) || !strings.Contains(s, "coop help build") {
+		t.Errorf("error should name the argument, the command and its help: %q", s)
 	}
 }
 
@@ -133,8 +134,9 @@ func TestMainBarePrintsHelp(t *testing.T) {
 	}
 }
 
-// `coop help <cmd>` shows that command's help (≡ `coop <cmd> --help`), and `coop help <unknown>`
-// is a usage error (exit 2) — the help arg used to be ignored, always printing the top-level help.
+// `coop help <cmd> [<sub>]` shows that command's page (≡ `coop <cmd> [<sub>] --help`), and
+// `coop help <unknown>` is a usage error (exit 2) — the help arg used to be ignored, always
+// printing the top-level menu.
 func TestMainHelpSubcommand(t *testing.T) {
 	useEmptyMainConfig(t)
 	old := os.Stdout
@@ -142,9 +144,10 @@ func TestMainHelpSubcommand(t *testing.T) {
 	os.Stdout = w
 	codeBuild := Main([]string{"help", "build"}) // == coop build --help, no runtime needed
 	cfg := &config.Config{}
-	codeFork := helpForCommand("fork", cfg)     // the fork family help
-	codeClaude := helpForCommand("claude", cfg) // a known agent → points at its own --help
-	codeBogus := helpForCommand("bogus", cfg)   // unknown → usage error (to stderr)
+	codeFork, _ := helpForPath([]string{"fork"}, cfg, true)          // the fork family help
+	codeClaude, _ := helpForPath([]string{"claude"}, cfg, true)      // coop's own page for the agent
+	codeLeaf, _ := helpForPath([]string{"tasks", "add"}, cfg, true)  // a real leaf resolves
+	codeBogus, bogusErr := helpForPath([]string{"bogus"}, cfg, true) // unknown → usage error
 	_ = w.Close()
 	os.Stdout = old
 	out, _ := io.ReadAll(r)
@@ -153,13 +156,16 @@ func TestMainHelpSubcommand(t *testing.T) {
 		t.Errorf("`coop help build` = %d; want 0 + build's help, got:\n%s", codeBuild, out)
 	}
 	if codeFork != 0 {
-		t.Errorf("helpForCommand(fork) = %d, want 0", codeFork)
+		t.Errorf("helpForPath(fork) = %d, want 0", codeFork)
 	}
-	if codeClaude != 0 {
-		t.Errorf("helpForCommand(claude) = %d, want 0", codeClaude)
+	if codeClaude != 0 || !strings.Contains(string(out), "coop claude — run Claude") {
+		t.Errorf("helpForPath(claude) = %d; want 0 + coop's own Claude page, got:\n%s", codeClaude, out)
 	}
-	if codeBogus != 2 {
-		t.Errorf("helpForCommand(bogus) = %d, want 2 (unknown command)", codeBogus)
+	if codeLeaf != 0 {
+		t.Errorf("helpForPath(tasks add) = %d, want 0", codeLeaf)
+	}
+	if codeBogus != 2 || bogusErr == nil {
+		t.Errorf("helpForPath(bogus) = (%d, %v), want (2, unknown-command error)", codeBogus, bogusErr)
 	}
 }
 
@@ -190,13 +196,13 @@ func TestHelpForHelpAndVersion(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 	cfg := &config.Config{}
-	codeHelp := helpForCommand("help", cfg)
-	codeVer := helpForCommand("version", cfg)
+	codeHelp, _ := helpForPath([]string{"help"}, cfg, true)
+	codeVer, _ := helpForPath([]string{"version"}, cfg, true)
 	_ = w.Close()
 	os.Stdout = old
 	out, _ := io.ReadAll(r)
 	if codeHelp != 0 || codeVer != 0 {
-		t.Errorf("helpForCommand help=%d version=%d, want 0/0", codeHelp, codeVer)
+		t.Errorf("helpForPath help=%d version=%d, want 0/0", codeHelp, codeVer)
 	}
 	if s := string(out); strings.Contains(s, "forwards --help") {
 		t.Errorf("help/version must not print the broken passthrough pointer:\n%s", s)
@@ -206,14 +212,14 @@ func TestHelpForHelpAndVersion(t *testing.T) {
 	}
 }
 
-// unknownErr is the one shape for a rejected subcommand/agent/value, with a typo hint for a
-// near-miss. Subcommand groups use it for their own accepted verbs.
+// unknownErr is the shape for a rejected VALUE (an agent name, a credential attribute), with a
+// typo hint for a near-miss. Rejected commands and options use the approved blocks instead.
 func TestUnknownErr(t *testing.T) {
-	if got := unknownErr("tasks command", "bogus", []string{"list", "lint"}).Error(); got != `unknown tasks command "bogus" — use: list, lint` {
+	if got := unknownErr("agent", "bogus", []string{"claude", "codex"}).Error(); got != `unknown agent "bogus" — use: claude, codex` {
 		t.Errorf("unknownErr = %q", got)
 	}
 	// A ≥4-char near-miss gets a "did you mean".
-	if got := unknownErr("tasks command", "cliam", []string{"claim", "lint"}).Error(); !strings.Contains(got, `did you mean "claim"`) {
+	if got := unknownErr("agent", "codexx", []string{"claude", "codex"}).Error(); !strings.Contains(got, `did you mean "codex"`) {
 		t.Errorf("expected a suggestion in: %q", got)
 	}
 }
@@ -327,9 +333,9 @@ For a guide to using multiple models and providers together:
   coop help presets
 `
 	var code int
-	out := captureStdout(t, func() { code = helpForCommand("claude", &config.Config{}) })
+	out := captureStdout(t, func() { code, _ = helpForPath([]string{"claude"}, &config.Config{}, true) })
 	if code != 0 {
-		t.Fatalf("helpForCommand(claude) = %d, want 0", code)
+		t.Fatalf("helpForPath(claude) = %d, want 0", code)
 	}
 	if out != want {
 		t.Errorf("coop help claude drifted from the approved page:\n--- got ---\n%s\n--- want ---\n%s", out, want)

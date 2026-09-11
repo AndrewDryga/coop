@@ -1,0 +1,5 @@
+
+✗ Unexpected argument "codex" for "coop login"
+
+  Usage: coop login <agent>[@<account>]
+  Help:  coop help login

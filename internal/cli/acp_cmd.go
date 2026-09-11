@@ -88,7 +88,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// supervisor exists for (a project toolbar, provider switching, warm boxes), so it runs the
 	// box directly below. --readonly is not offered here: an editor session mounts its repository
 	// writable, and the read-only form that fronts a pinned fork is `coop fork <name> acp --readonly`.
-	if args, err = a.takeExposureFlags(args); err != nil {
+	if args, err = a.takeExposureFlags("coop acp", args); err != nil {
 		return 2, err
 	}
 	if a.mode == agents.ModeReadOnly {
@@ -145,7 +145,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// Reject leftover tokens rather than silently ignore them (loop/fork do the same) — the ACP
 	// adapter takes no extra args, so `coop acp claude foo`/`--nope` is a mistake worth surfacing.
 	if leftover := args[consumed:]; len(leftover) > 0 {
-		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp <target|preset> [--peer <target>...])", leftover[0])
+		return 2, ui.UnexpectedArgument(leftover[0], "coop acp", "coop acp <target|preset> [--peer <target>...]")
 	}
 	if a.mode == agents.ModeBare {
 		if !toolSet {
@@ -365,11 +365,11 @@ func (a *app) ensureACPImage() error {
 	if box.ImageExists(a.rt, img) {
 		return nil
 	}
-	ui.Info("image %q is missing — building it now; the first connect will take a few minutes", img)
+	ui.Note("image %q is missing — building it now; the first connect will take a few minutes", img)
 	if err := box.BuildWith(a.rt, a.cfg, repo, false, resolveVersion(), strings.NewReader(""), os.Stderr); err != nil {
 		return fmt.Errorf("image %q is missing and building it failed: %w\n  build it by hand with 'coop build', then reconnect", img, err)
 	}
-	ui.Info("built %s — continuing", img)
+	ui.Note("built %s — continuing", img)
 	return nil
 }
 

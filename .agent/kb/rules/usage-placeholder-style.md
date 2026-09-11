@@ -2,7 +2,7 @@
 name: usage-placeholder-style
 description: "usage metavariables use angle brackets and stable names; optionality stays outside the placeholder"
 scope: cli-grammar
-sources: [internal/cli/help.go, internal/cli/fork_cmd.go, internal/cli/presetcmd.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/loop_cmd.go, internal/cli/models.go, internal/cli/profiles.go, internal/cli/completion.go, internal/cli/worker_cmd.go, internal/tasks/cmd.go, internal/tasks/backlog.go, internal/forkctl/rm.go, internal/forkctl/review.go, internal/forkctl/merge.go, internal/forkctl/supervise.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/cli/conformance_test.go]
+sources: [internal/ui/usage.go, internal/cli/help.go, internal/cli/fork_cmd.go, internal/cli/presetcmd.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/loop_cmd.go, internal/cli/models.go, internal/cli/profiles.go, internal/cli/completion.go, internal/cli/worker_cmd.go, internal/tasks/cmd.go, internal/tasks/backlog.go, internal/forkctl/rm.go, internal/forkctl/review.go, internal/forkctl/merge.go, internal/forkctl/supervise.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/cli/conformance_test.go]
 check: none
 updated: 2026-09-11
 ---
@@ -25,7 +25,8 @@ Use these established names:
 | model, target, preset | `<model>`, `<target>`, `<preset>`, `<target|preset>` |
 | fork or other resource name | `<name>` |
 | filesystem path | `<path>` or `<absolute-path>` when absoluteness is required |
-| task/ref/count/shell | `<id>`, `<ref>`, `<n>`, `<bash|zsh>` |
+| task/ref/count/shell | `<task-id>` in a usage error, `<id>` inside a task page, `<ref>`, `<n>`, `<bash|zsh>` |
+| an option group too long to spell out | `[<options>]` |
 | structured task fields | `<title>`, `<project>`, `<context>`, `<acceptance>`, `<approach>`, `<subtask>` |
 | prompt text | `<prompt>` |
 
@@ -47,6 +48,8 @@ legitimately need paths, refs, task fields, and argument groups that the old tab
 **How to apply:**
 - Reuse the nearest semantic placeholder before adding a new one; never abbreviate a value to one
   letter.
+- A shared usage error carries the owning command's syntax as DATA (`internal/ui/usage.go`), so the
+  placeholder is written once per command, next to its parser — not re-spelled per error.
 - Keep `...` outside a closing angle bracket for repeated individual values. Preserve `<cmd...>`
   only for the established raw-command tail, where command and arguments are intentionally one slot.
 - `TestCLIConformance/usage_metavariables` pins the public forms that previously drifted, and its
@@ -56,6 +59,13 @@ legitimately need paths, refs, task fields, and argument groups that the old tab
 Related: [[help-output-style]].
 
 ## Changelog
+- 2026-09-11 — the approved shared error transcripts set two forms this table did not have:
+  `coop tasks claim <task-id>` (a usage error names the KIND of id, since the command path is the
+  only other context the reader has) and `coop login <agent>[@<account>]` (the missing-argument
+  error names the slot; the login page still spells the closed provider list). `[<options>]` is
+  recorded from the reviewed pages for an option group too long to spell out in a usage line. The
+  task PAGES keep `<id>` — they are rewritten with their own review slice; swept the tasks family
+  and left that mismatch deliberate and flagged rather than half-renaming it here.
 - 2026-09-11 — recorded the approved presets page's `<name>` slot (the page's only value is a
   preset) and pinned it in `TestCLIConformance/usage_metavariables`. Swept the rest of the presets
   surface: the top-level row, `coop <target|preset>`, and every `coop presets` usage error still

@@ -322,7 +322,7 @@ func (a *app) cmdRun(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	if args, err = a.takeExposureFlags(args); err != nil {
+	if args, err = a.takeExposureFlags("coop run", args); err != nil {
 		return 2, err
 	}
 	// Intercept the meta cases before entering the box. We can't lean on the dispatch's --help
@@ -358,7 +358,7 @@ func (a *app) launchAgent(target string, args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	if args, err = a.takeExposureFlags(args); err != nil {
+	if args, err = a.takeExposureFlags("coop "+target, args); err != nil {
 		return 2, err
 	}
 	peerVals, args, err := extractPeer(args)
@@ -403,7 +403,7 @@ func (a *app) launchPreset(p *preset.Preset, args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	if args, err = a.takeExposureFlags(args); err != nil {
+	if args, err = a.takeExposureFlags("coop "+p.Name, args); err != nil {
 		return 2, err
 	}
 	if a.mode.Restricted() {
@@ -434,7 +434,7 @@ func (a *app) nudgeIfUnauthed(tool string) {
 		return
 	}
 	if !box.ProfileAuthed(a.cfg, tool, a.cfg.ActiveProfile(tool)) {
-		ui.Info("%s isn't signed in — run 'coop login %s' (first run: coop build → coop login → coop doctor)", tool, tool)
+		ui.Note("%s isn't signed in — run 'coop login %s' (first run: coop build → coop login → coop doctor)", tool, tool)
 	}
 }
 
@@ -452,7 +452,7 @@ func (a *app) selectRunProfile(tool, profile string) error {
 		return fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", tool, profile, tool, profile)
 	}
 	if !box.ProfileAuthed(a.cfg, tool, profile) {
-		ui.Info("note: %s account %q isn't signed in — run: coop login %s@%s", tool, profile, tool, profile)
+		ui.Note("note: %s account %q isn't signed in — run: coop login %s@%s", tool, profile, tool, profile)
 	}
 	a.cfg.SetActiveProfile(tool, profile)
 	return nil
@@ -553,16 +553,26 @@ func (a *app) defaultCmd(tool string) []string {
 	return []string{tool}
 }
 
+// loginUsage is `coop login`'s syntax, shared by its missing- and extra-argument refusals.
+const loginUsage = "coop login <agent>[@<account>]"
+
 func (a *app) cmdLogin(args []string) (int, error) {
 	// The account rides the target (coop login claude@work).
 	// The agent is required — bare `coop login` must not silently default to one (it would open a
 	// browser and block); name it explicitly, like the help shows. A stray extra arg is a typo,
 	// not a second target, so reject it rather than silently ignore.
 	if len(args) == 0 {
-		return 2, fmt.Errorf("usage: coop login <%s>[@<account>]", strings.Join(agents.Names(), "|"))
+		return 2, ui.MissingArgument("agent", "coop login", loginUsage)
+	}
+	// An option-shaped token stays an OPTION error — login accepts none, so point at its help
+	// rather than calling a flag a stray positional.
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			return 2, unknownOptionErr(arg, "coop login", nil)
+		}
 	}
 	if len(args) > 1 {
-		return 2, fmt.Errorf("unexpected argument %q (usage: coop login <%s>[@<account>])", args[1], strings.Join(agents.Names(), "|"))
+		return 2, ui.UnexpectedArgument(args[1], "coop login", loginUsage)
 	}
 	t, err := agents.ParseTarget(args[0])
 	if err != nil {
@@ -648,7 +658,7 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	if profile != config.DefaultProfile {
 		where = fmt.Sprintf(" (credential %s)", profile)
 	}
-	ui.Info("logging in to %s%s — credentials persist in %s/", tool, where, a.cfg.AgentDir(tool))
+	ui.Note("logging in to %s%s — credentials persist in %s/", tool, where, a.cfg.AgentDir(tool))
 	return a.runInBox(ag.Login(a.cfg), tool, nil) // mounts only the agent being logged in to
 }
 
@@ -696,10 +706,10 @@ func (a *app) recycleBoxes(repo string) error {
 		return fmt.Errorf("remove supervised Coop boxes (%d removed before failure): %w", n, err)
 	}
 	if n > 0 {
-		ui.Info("restarted %s onto the new image", ui.Count(n, "supervised session"))
+		ui.Note("restarted %s onto the new image", ui.Count(n, "supervised session"))
 	}
 	if others := len(running) - len(supervised); others > 0 {
-		ui.Info("%s still on the old image until restarted", ui.Count(others, "other running container"))
+		ui.Note("%s still on the old image until restarted", ui.Count(others, "other running container"))
 	}
 	return nil
 }
@@ -728,7 +738,7 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 			case selfOnly:
 				return -1, err
 			case errors.As(err, &ce):
-				ui.Info("coop self-update: couldn't check for a newer release (%v) — continuing with the box", err)
+				ui.Note("coop self-update: couldn't check for a newer release (%v) — continuing with the box", err)
 			default:
 				ui.Error("coop self-update failed: %v", err)
 				selfFailed = true
@@ -748,7 +758,7 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 	if err := a.ensureRuntime(); err != nil {
 		return -1, err
 	}
-	ui.Info("updating the box: newer base image + latest agent CLIs and ACP adapters")
+	ui.Note("updating the box: newer base image + latest agent CLIs and ACP adapters")
 	if err := box.Build(a.rt, a.cfg, repo, true, resolveVersion()); err != nil {
 		return -1, err
 	}
@@ -756,7 +766,7 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 		return -1, fmt.Errorf("box image updated, but old supervised boxes could not be recycled: %w — fix the container runtime and run 'coop update --box-only' again", err)
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
-	ui.Info("installed versions:")
+	ui.Note("installed versions:")
 	_, _ = box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Batch: true, Quiet: true,
 		Cmd:       []string{"sh", "-c", "npm ls -g --depth=0 2>/dev/null | grep -iE '" + strings.Join(append(agents.Names(), "acp"), "|") + "' || true"},
@@ -768,9 +778,14 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 	return 0, nil
 }
 
+// updateOptions are `coop update`'s mutually exclusive modes — the whole grammar, and the list its
+// refusals read: one of them, or none (update both).
+var updateOptions = []string{"--self-only", "--box-only", "--check"}
+
 // parseUpdateFlags parses `coop update`'s own flags: --self-only (just the binary),
 // --box-only (just the image), and --check (report, change nothing) — mutually exclusive.
 func parseUpdateFlags(args []string) (selfOnly, boxOnly, check bool, err error) {
+	var picked []string
 	for _, x := range args {
 		switch x {
 		case "--self-only":
@@ -780,17 +795,16 @@ func parseUpdateFlags(args []string) (selfOnly, boxOnly, check bool, err error) 
 		case "--check":
 			check = true
 		default:
-			return false, false, false, fmt.Errorf("update: unknown flag %q (usage: coop update [--self-only|--box-only|--check])", x)
+			return false, false, false, unknownOptionErr(x, "coop update", updateOptions)
+		}
+		if !slices.Contains(picked, x) {
+			picked = append(picked, x)
 		}
 	}
-	picked := 0
-	for _, on := range []bool{selfOnly, boxOnly, check} {
-		if on {
-			picked++
-		}
-	}
-	if picked > 1 {
-		return false, false, false, errors.New("update: --self-only, --box-only, and --check are mutually exclusive")
+	// Name only the two modes actually supplied — the rest of the exclusion group is not the
+	// user's problem.
+	if len(picked) > 1 {
+		return false, false, false, ui.ConflictingOptions(picked[0], picked[1], "coop update")
 	}
 	return selfOnly, boxOnly, check, nil
 }
@@ -899,15 +913,15 @@ func (a *app) cmdUp(args []string) (int, error) {
 			if err := review.Approve(); err != nil {
 				return -1, fmt.Errorf("record the approval: %w", err)
 			}
-			ui.Info("approved — services read them until %s changes", rel)
+			ui.Note("approved — services read them until %s changes", rel)
 		}
 	}
-	ui.Info("starting services from %s (waiting until healthy)", rel)
+	ui.Note("starting services from %s (waiting until healthy)", rel)
 	services, err := box.EnsureServicesFile(a.rt, repo, file, os.Stdout, os.Stderr, box.ConfigExposureRoots(a.cfg)...)
 	if err != nil {
 		return -1, fmt.Errorf("could not start services from %s: %w — fix the Compose file or runtime, then retry: coop up", rel, err)
 	}
-	ui.Info("up on network %s_default — the box reaches %s by name", proj, strings.Join(services, ", "))
+	ui.Note("up on network %s_default — the box reaches %s by name", proj, strings.Join(services, ", "))
 	return 0, nil
 }
 
@@ -942,27 +956,45 @@ func (a *app) cmdDown(args []string) (int, error) {
 // root AGENTS.md, no dir of its own).
 var scaffoldableAgents = []string{"claude", "codex", "gemini"}
 
-// parseExplicitList normalizes and de-duplicates a comma/space-separated closed list. The optional
-// sentinel must stand alone and maps to sentinelValues ("none" → nil; "all" → every agent).
-func parseExplicitList(flag, value string, valid []string, sentinel string, sentinelValues []string) ([]string, error) {
+// listOption describes a closed-list option completely enough both to VALIDATE a value and to
+// EXPLAIN a rejection — the accepted tokens, the sentinel that must stand alone, the owning command
+// and one representative example. The refusals below are that data handed to the shared renderer,
+// not per-option sentences.
+type listOption struct {
+	flag     string   // "--agents"
+	command  string   // the full owning command path, "coop init"
+	example  string   // a valid invocation to show when the value was missing or wrong
+	valid    []string // the tokens the parser really accepts
+	sentinel string   // a value that must be used alone ("all", "none")
+	expand   []string // what the sentinel selects
+}
+
+// parse normalizes and de-duplicates a comma/space-separated value against the option's closed
+// list. The sentinel must stand alone and maps to expand ("none" → nil; "all" → every agent).
+func (o listOption) parse(value string) ([]string, error) {
 	tokens := strings.FieldsFunc(strings.ToLower(value), func(r rune) bool { return r == ',' || r == ' ' })
-	choices := strings.Join(append(slices.Clone(valid), sentinel), ", ")
-	if slices.Contains(tokens, sentinel) {
+	if slices.Contains(tokens, o.sentinel) {
 		if len(tokens) != 1 {
-			return nil, fmt.Errorf("%s: %q must be used alone — choose from %s", flag, sentinel, choices)
+			return nil, ui.StandaloneValue(o.sentinel, o.flag, o.command)
 		}
-		return slices.Clone(sentinelValues), nil
+		return slices.Clone(o.expand), nil
 	}
 	var out []string
 	for _, token := range tokens {
-		if !slices.Contains(valid, token) {
-			return nil, fmt.Errorf("%s: unknown value %q — choose from %s", flag, token, choices)
+		if !slices.Contains(o.valid, token) {
+			return nil, ui.InvalidOptionValue(token, o.flag, o.command, o.choices(), o.example)
 		}
 		if !slices.Contains(out, token) {
 			out = append(out, token)
 		}
 	}
 	return out, nil
+}
+
+// choices is the cause line for a rejected value: the tokens the parser really accepts, read as a
+// sentence, so the reader does not have to guess the spelling of the one they wanted.
+func (o listOption) choices() string {
+	return "Choose " + ui.List(append(slices.Clone(o.valid), o.sentinel), "or") + "."
 }
 
 // scaffoldAgentSet resolves the implicit per-agent dirs from signed-in agents. Empty means
@@ -976,6 +1008,20 @@ func scaffoldAgentSet(cfg *config.Config) []string {
 	}
 	return out
 }
+
+// initServices and initAgents are `coop init`'s closed-list options, and initOptions the full set a
+// correction may suggest — one description each, read by both the parser and its refusals.
+var (
+	initServices = listOption{
+		flag: "--services", command: "coop init", example: "coop init --services postgres,redis",
+		valid: scaffold.ComposeServices, sentinel: "none",
+	}
+	initAgents = listOption{
+		flag: "--agents", command: "coop init", example: "coop init --agents claude,codex",
+		valid: scaffoldableAgents, sentinel: "all", expand: scaffoldableAgents,
+	}
+	initOptions = []string{"--stack", "--services", "--agents"}
+)
 
 func (a *app) cmdInit(args []string) (int, error) {
 	stack := ""
@@ -996,7 +1042,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 			if e != nil {
 				return 2, e
 			}
-			services, e = parseExplicitList("--services", v, scaffold.ComposeServices, "none", nil)
+			services, e = initServices.parse(v)
 			if e != nil {
 				return 2, e
 			}
@@ -1005,10 +1051,10 @@ func (a *app) cmdInit(args []string) (int, error) {
 			continue
 		}
 		if v, n, ok, e := flagValue(args, i, "--agents"); ok {
-			if e != nil {
-				return 2, e
+			if e != nil { // the list is required: say so with a valid example, not a bare "needs a value"
+				return 2, ui.MissingOptionValue(initAgents.flag, initAgents.command, initAgents.example)
 			}
-			agentDirs, e = parseExplicitList("--agents", v, scaffoldableAgents, "all", scaffoldableAgents)
+			agentDirs, e = initAgents.parse(v)
 			if e != nil {
 				return 2, e
 			}
@@ -1018,7 +1064,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 		}
 		// An unknown token is a typo — error before doing any scaffold work, rather than
 		// silently ignoring it and acting as if a flag were never passed.
-		return 2, unknownErr("init flag", args[i], []string{"--stack", "--services", "--agents"})
+		return 2, unknownOptionErr(args[i], "coop init", initOptions)
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {

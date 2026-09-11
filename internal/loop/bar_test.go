@@ -45,7 +45,7 @@ func TestLoopBarReceivesUILines(t *testing.T) {
 	ui.SetLiveSink(bar.history)
 	defer ui.SetLiveSink(nil)
 
-	ui.Info("starting sibling services (compose.yml)")
+	ui.Note("starting sibling services (compose.yml)")
 	if !strings.Contains(buf.String(), "starting sibling services") {
 		t.Errorf("ui.Info should funnel into the loop bar's region, got:\n%q", buf.String())
 	}

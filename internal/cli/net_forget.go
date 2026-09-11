@@ -21,7 +21,7 @@ func parseNetForgetArgs(args []string) (string, error) {
 			if !strings.HasPrefix(args[i], "-") {
 				return "", errors.New("coop net forget takes the path as '--project <path>', or no path at all for this project")
 			}
-			return "", unknownErr("net forget flag", args[i], []string{"--project"})
+			return "", unknownOptionErr(args[i], "coop net forget", []string{"--project"})
 		}
 		if project != "" {
 			return "", errors.New("coop net forget takes --project once")

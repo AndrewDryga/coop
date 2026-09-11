@@ -100,8 +100,8 @@ func TestPresetDetailIsOneRendererBehindBothDoors(t *testing.T) {
 		}
 	})
 	help := captureStdout(t, func() {
-		if code := helpForCommand("frontier", cfg); code != 0 {
-			t.Errorf("helpForCommand(frontier) = %d, want 0", code)
+		if code, err := helpForPath([]string{"frontier"}, cfg, true); code != 0 || err != nil {
+			t.Errorf("helpForPath(frontier) = (%d, %v), want (0, nil)", code, err)
 		}
 	})
 	if show != help {
@@ -222,7 +222,7 @@ func TestHelpTopicResolutionOrder(t *testing.T) {
 	run := func(topic string) (string, int) {
 		t.Helper()
 		var code int
-		out := captureStdout(t, func() { code = helpForCommand(topic, cfg) })
+		out := captureStdout(t, func() { code, _ = helpForPath([]string{topic}, cfg, true) })
 		return out, code
 	}
 
@@ -242,7 +242,7 @@ func TestHelpTopicResolutionOrder(t *testing.T) {
 		t.Errorf("unknown topic = %d, want 2", code)
 	}
 	broken := captureStderr(t, func() {
-		if code := helpForCommand("wrecked", cfg); code != 2 {
+		if code, _ := helpForPath([]string{"wrecked"}, cfg, true); code != 2 {
 			t.Errorf("a broken preset = %d, want 2", code)
 		}
 	})

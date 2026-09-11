@@ -101,52 +101,56 @@ func Main(argv []string) int {
 	}
 	switch argv[0] {
 	case "help", "-h", "--help":
-		// `coop help <cmd>` shows that command's help — same as `coop <cmd> --help`. Bare `coop
-		// help` (or -h/--help) is the top-level reference.
+		// `coop help <cmd> [<sub>]` shows that command's help — the same page as
+		// `coop <cmd> [<sub>] --help`. Bare `coop help` (or -h/--help) is the top-level menu.
 		if argv[0] == "help" && len(argv) > 1 {
 			if argv[1] == "--all" { // the whole manual, same bytes as docs/cli.md (see RenderManual)
 				fmt.Print(RenderManual(cfg))
 				return 0
 			}
-			return helpForCommand(argv[1], cfg)
+			return reportExit(helpForPath(helpPath(argv[1:]), cfg, true))
 		}
 		printHelp(cfg)
 		return 0
 	case "version", "-v", "--version":
 		if helpRequested(argv[1:]) { // `coop version --help` prints its help, not a self-referential error
-			return helpForCommand("version", cfg)
+			return reportExit(helpForPath([]string{"version"}, cfg, false))
 		}
 		if err := rejectArgs("version", argv[1:]); err != nil { // reject extras like every no-arg command
-			ui.Error("%v", err)
-			return 2
+			return reportExit(2, err)
 		}
 		fmt.Println("coop " + resolveVersion())
 		return 0
 	}
 
-	// `-h`/`--help` (or a bare `help` arg) on coop's own subcommands prints that command's
-	// help without needing a runtime — fork gets its own family help. Agent and raw
-	// commands (registered agents and run/…) aren't in the map, so they fall through and
-	// forward `--help`/`help` to the underlying CLI / box.
+	// `-h`/`--help` (or a bare `help` arg) before any `--` asks for COOP's page for the command
+	// path that was typed — including a registered agent, whose own CLI is reached explicitly with
+	// `coop <agent> -- --help`. It resolves without a runtime, a login, or the command's own
+	// required arguments, because nothing is being run.
 	if helpRequested(argv[1:]) || (len(argv) > 1 && argv[1] == "help") {
-		if argv[0] == "fork" {
-			code, _ := forkHelp()
-			return code
-		}
-		if h, ok := commandHelp[argv[0]]; ok {
-			printTopicHelp(argv[0], h)
-			return 0
-		}
+		return reportExit(helpForPath(helpPath(argv), cfg, false))
 	}
 
 	// The runtime is detected lazily (a.ensureRuntime), only by box-running commands — so pure-local
 	// families work with no container runtime installed. See dispatch and resolveImage.
 	a := &app{cfg: cfg, argv: argv}
-	code, err := a.dispatch(argv)
+	return reportExit(a.dispatch(argv))
+}
+
+// reportExit renders a command's error the way its kind deserves and returns the process exit code:
+// rejected input gets the shared usage block (see ui.UsageError) and exit 2, a launch section that
+// already rendered its own failure (ui.Fail) is not repeated, and everything else gets one ✗ line.
+func reportExit(code int, err error) int {
 	if err != nil {
-		// A launch section renders its own failure where it happened (ui.Fail); the fallback
-		// line is for everything else.
-		if !errors.Is(err, ui.ErrReported) {
+		var usage *ui.UsageError
+		switch {
+		case errors.As(err, &usage):
+			ui.PrintUsageError(usage)
+			if code <= 0 {
+				code = 2
+			}
+		case errors.Is(err, ui.ErrReported):
+		default:
 			ui.Error("%v", err)
 		}
 		if code == 0 {
@@ -157,6 +161,20 @@ func Main(argv []string) int {
 		code = 1
 	}
 	return code
+}
+
+// helpPath is the command path a help request is ABOUT: the leading plain words of argv, stopping
+// at the first option, at `--` (everything after it belongs to the agent), and at two words deep —
+// past a family and its subcommand, the rest is arguments, not a deeper page.
+func helpPath(argv []string) []string {
+	var path []string
+	for _, arg := range argv {
+		if len(path) == 2 || arg == "--" || arg == "help" || strings.HasPrefix(arg, "-") {
+			break
+		}
+		path = append(path, arg)
+	}
+	return path
 }
 
 // detachedWorkerReexec identifies the private child form before ordinary process housekeeping.
@@ -187,7 +205,7 @@ func (a *app) dispatch(argv []string) (int, error) {
 	case "run", "shell", "login", "acp", "up", "down", "build":
 		// A bare launch has no project: it must work outside any repository, so the eager
 		// project load is skipped for it (the command still refuses everything else by name).
-		if mode, _, err := extractExposureFlags(rest); err != nil || mode != agents.ModeBare {
+		if mode, _, err := extractExposureFlags("coop "+sub, rest); err != nil || mode != agents.ModeBare {
 			if _, _, err := loadProject(a.cfg.RepoOverride); err != nil {
 				return -1, err
 			}
@@ -208,7 +226,7 @@ func (a *app) dispatch(argv []string) (int, error) {
 		if err != nil {
 			return 2, err
 		}
-		if rest, err = a.takeExposureFlags(rest); err != nil {
+		if rest, err = a.takeExposureFlags("coop shell", rest); err != nil {
 			return 2, err
 		}
 		if err := rejectArgs("shell", rest); err != nil {
@@ -279,7 +297,7 @@ func (a *app) dispatch(argv []string) (int, error) {
 		// Don't ship an unrecognized command to the box to exec and fail with a cryptic
 		// "not found" after a slow toolchain spin-up — a typo'd subcommand should fail
 		// fast here. Raw box commands are explicit (`coop run -- <cmd>`).
-		return 2, unknownCommandErr(argv)
+		return 2, unknownCommandErr(argv[:1], false)
 	}
 }
 
@@ -304,76 +322,90 @@ func (a *app) cmdBacklog(args []string) (int, error) {
 	return tasks.CmdBacklog(a.cfg, args)
 }
 
-// topLevelCommands is coop's own subcommands, used only to suggest a correction on a
-// mistyped one. Keep in sync with the dispatch switch above.
+// topLevelCommands is coop's own subcommands: the correction candidates for a mistyped one, the
+// completion menu, and the manual's coverage list. Keep in sync with the dispatch switch above.
 var topLevelCommands = []string{
 	"run", "shell", "login", "credentials", "presets", "models", "acp", "fork", "tasks", "context", "backlog",
-	"loop", "up", "down", "init", "doctor", "net", "check-secrets", "build", "update", "completion", "prompt", "sessions", "worker", "help", "version",
+	"loop", "up", "down", "init", "doctor", "net", "check-secrets", "sign", "build", "update", "completion", "prompt", "sessions", "worker", "help", "version",
 }
 
-// helpForCommand prints one command's help for `coop help <cmd>`, matching `coop <cmd> --help`:
-// fork's family help, a static commandHelp entry, the named agent's own page, a pointer for the
-// raw commands whose --help forwards to the underlying CLI, a preset's recipe, or an
-// unknown-command error (exit 2) for anything else. Resolution order is built-in command, then
-// registered agent, then preset — so a preset can never shadow a command someone typed.
-func helpForCommand(cmd string, cfg *config.Config) int {
+// helpForPath prints the page for one command PATH, so `coop help tasks add` and
+// `coop tasks add --help` reach the SAME page: fork's family help, run's page, a static
+// commandHelp entry, a registered agent's page (its own CLI stays behind `coop <agent> -- --help`),
+// a preset's recipe, or the approved unknown-command refusal. Resolution order is built-in command,
+// then registered agent, then preset — so a preset can never shadow a command someone typed.
+// asHelp marks a `coop help …` spelling, whose correction must stay a help command.
+func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
+	if len(path) == 0 {
+		printHelp(cfg)
+		return 0, nil
+	}
+	cmd := path[0]
+	// A subcommand is checked against its family's OWN verb list first: a typo'd leaf is an error,
+	// never a silent fallback to the family page it isn't part of.
+	if len(path) > 1 {
+		if verbs, closed := familyVerbs(cmd); closed && !slices.Contains(verbs, path[1]) {
+			guess, _ := nearestCommand(path[1], verbs)
+			return 2, ui.UnknownCommandPath(path[:2], guess, asHelp)
+		}
+	}
 	switch {
 	case cmd == "fork":
 		code, _ := forkHelp()
-		return code
+		return code, nil
 	case cmd == "run":
 		printCommandHelp(runHelp)
-		return 0
+		return 0, nil
 	case cmd == "help":
 		// `coop help help` — help IS the top-level reference, so print it (not a broken pointer
 		// to `coop help --help`, which these have no underlying CLI for).
 		printHelp(cfg)
-		return 0
+		return 0, nil
 	case commandHelp[cmd] != "":
 		printTopicHelp(cmd, commandHelp[cmd])
-		return 0
-	case agents.Valid(cmd): // `coop help claude` documents coop's wrapper flags; the agent's own --help forwards
-		printHelpPage(agentHelp(cmd))
-		return 0
-	case isKnownCommand(cmd):
-		// Registered agents forward --help to their own CLI, so coop keeps no
-		// static page — point there instead of inventing one.
-		fmt.Printf("coop %s forwards --help to the underlying CLI — run 'coop %s --help'.\n", cmd, cmd)
-		return 0
+		return 0, nil
+	}
+	// `coop help claude`, `coop claude:opus/high@work --help` — coop's OWN page for that provider:
+	// the flags it reads before `--`, and where its models and accounts live.
+	if isTargetHead(cmd) {
+		if t, err := agents.ParseTarget(cmd); err == nil {
+			printHelpPage(agentHelp(t.Provider))
+			return 0, nil
+		}
 	}
 	// Anything runnable as `coop <preset>` is explainable as `coop help <preset>`: same roots and
 	// repo-over-global precedence as execution, files only — no runtime, no box.
 	if code, ok := helpForPreset(cmd, cfg); ok {
-		return code
+		return code, nil
 	}
-	candidates := append(append([]string{}, topLevelCommands...), agents.Names()...)
-	msg := fmt.Sprintf("unknown command %q", cmd)
-	if guess, ok := nearestCommand(cmd, candidates); ok {
-		msg += fmt.Sprintf("; did you mean %q?", guess)
-	}
-	ui.Error("%s — run 'coop help' for the list", msg)
-	return 2
+	return 2, unknownCommandErr(path[:1], asHelp)
 }
 
-// isKnownCommand reports whether cmd is one of coop's own subcommands or a coding agent.
-func isKnownCommand(cmd string) bool {
-	for _, c := range topLevelCommands {
-		if c == cmd {
-			return true
-		}
+// familyVerbs returns a command family's real subcommand list — from the family's OWN registry,
+// never a second copy — and whether that family is closed. An OPEN family (fork takes a fork name,
+// credentials an account, presets a preset name) reports false: its second word is a value, and
+// rejecting it as a mistyped verb would refuse a legitimate name.
+func familyVerbs(cmd string) ([]string, bool) {
+	switch cmd {
+	case "tasks":
+		return tasks.TasksVerbs, true
+	case "backlog":
+		return tasks.BacklogVerbs, true
+	case "net":
+		return netCommands, true
+	case "sessions":
+		return sessionCommands, true
+	case "worker":
+		return workerCommands, true
 	}
-	return agents.Valid(cmd)
+	return nil, false
 }
 
-// unknownCommandErr explains an unrecognized command: a "did you mean" for a likely typo,
-// and how to run an actual command in the box (which is no longer implicit).
-func unknownCommandErr(argv []string) error {
-	sub := argv[0]
-	msg := fmt.Sprintf("unknown command %q", sub)
+// unknownCommandErr refuses a top-level command coop doesn't have, naming the FULL rejected
+// command (a bare token would read like a rejected shell command) and correcting a likely typo
+// against coop's commands and registered agents.
+func unknownCommandErr(path []string, asHelp bool) error {
 	candidates := append(append([]string{}, topLevelCommands...), agents.Names()...)
-	if guess, ok := nearestCommand(sub, candidates); ok {
-		msg += fmt.Sprintf("; did you mean %q?", guess)
-	}
-	return fmt.Errorf("%s\n  run it in the box:  coop run -- %s\n  see all commands:   coop help",
-		msg, strings.Join(argv, " "))
+	guess, _ := nearestCommand(path[len(path)-1], candidates)
+	return ui.UnknownCommandPath(path, guess, asHelp)
 }

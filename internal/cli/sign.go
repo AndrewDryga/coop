@@ -180,7 +180,7 @@ func (a *app) signOnBoxExit(repo, preHead string, isFork bool) {
 	if n, err := a.signUnpushed(repo, preHead); err != nil {
 		ui.Warn("could not sign this session's commits: %v — run `coop sign`", err)
 	} else if n > 0 {
-		ui.Info("signed %s with your host key", ui.Count(n, "commit"))
+		ui.Note("signed %s with your host key", ui.Count(n, "commit"))
 	}
 }
 
@@ -209,7 +209,7 @@ func (a *app) cmdSign(args []string) (int, error) {
 			}
 			from, i = args[i+1], i+1
 		case "-h", "--help":
-			return helpForCommand("sign", a.cfg), nil
+			return helpForPath([]string{"sign"}, a.cfg, false)
 		default:
 			return 2, fmt.Errorf("coop sign: unexpected argument %q", args[i])
 		}

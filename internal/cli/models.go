@@ -22,6 +22,12 @@ const (
 	modelIndent = "  "
 )
 
+// modelsOptions and modelsUsage are this command's own grammar: the options a correction may
+// suggest, and the syntax a rejected argument is measured against.
+var modelsOptions = []string{"--refresh"}
+
+const modelsUsage = "coop models [<agent>] [--refresh]"
+
 // cmdModels is the model MENU: one title-cased block per agent listing the ids you can put in a
 // target, then how to start that agent with a model and where models are configured to stay. coop
 // never validates a model id against this list — any id the agent's CLI accepts works — so the
@@ -35,11 +41,16 @@ func (a *app) cmdModels(args []string) (int, error) {
 	refresh := false
 	var rest []string
 	for _, arg := range args {
-		if arg == "--refresh" {
+		switch {
+		case arg == "--refresh":
 			refresh = true
-			continue
+		case strings.HasPrefix(arg, "-"):
+			// A dash-led token is an OPTION this command doesn't have, not an agent name —
+			// classifying it here is what makes the correction point at --refresh.
+			return 2, unknownOptionErr(arg, "coop models", modelsOptions)
+		default:
+			rest = append(rest, arg)
 		}
-		rest = append(rest, arg)
 	}
 	names := agents.Names()
 	if len(rest) > 0 {
@@ -48,7 +59,7 @@ func (a *app) cmdModels(args []string) (int, error) {
 		}
 		names = []string{rest[0]}
 		if len(rest) > 1 {
-			return 2, fmt.Errorf("unexpected argument %q (usage: coop models [<agent>] [--refresh]; pick a model inline like claude:opus, or in a preset)", rest[1])
+			return 2, ui.UnexpectedArgument(rest[1], "coop models", modelsUsage)
 		}
 	}
 	causes := a.refreshDueCatalogs(names, refresh)

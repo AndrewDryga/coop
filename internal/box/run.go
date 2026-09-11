@@ -434,7 +434,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if n := ShadowCount(mounts); sections.on {
 		sections.secrets(n)
 	} else if n > 0 && !spec.Quiet {
-		ui.Info("shadowed %d secret path(s)", n)
+		ui.Note("shadowed %d secret path(s)", n)
 	}
 	// The sibling-services compose file is NOT shadowed: an in-box agent may author it, but coop
 	// validates it host-side before auto-running it (box.ValidateComposeFile in EnsureServices), so
@@ -442,7 +442,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// removes the read-only decoy that used to strand an empty .agent/compose.yml in the repo.
 	if !sections.on {
 		for _, nudge := range nudges {
-			ui.Info("%s", nudge)
+			ui.Note("%s", nudge)
 		}
 	}
 
@@ -894,21 +894,21 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			if spec.Review {
 				return finish(-1, fmt.Errorf("start review services: %w", err))
 			}
-			ui.Info("services: %v — not starting them (run 'coop up' to retry)", err)
+			ui.Note("services: %v — not starting them (run 'coop up' to retry)", err)
 			startServices = false
 		} else if len(live) > 0 {
 			if spec.Review {
 				return finish(-1, fmt.Errorf("start review services: an agent box is running in this project (%s) — sidecars start only when none is", DescribeLiveBoxes(live)))
 			}
 			if !spec.Quiet {
-				ui.Info("sidecars not started: an agent box is running in this project (%s) — they start when none is; services already up are still reachable", DescribeLiveBoxes(live))
+				ui.Note("sidecars not started: an agent box is running in this project (%s) — they start when none is; services already up are still reachable", DescribeLiveBoxes(live))
 			}
 			startServices = false
 		}
 		if cf := composeFile; cf != "" && startServices {
 			reviewServicesAttempted = spec.Review
 			if !spec.Quiet {
-				ui.Info("starting sibling services (%s)", filepath.Base(cf))
+				ui.Note("starting sibling services (%s)", filepath.Base(cf))
 			}
 			// Discard compose's own progress UI — it repaints with carriage returns and would overprint
 			// the loop's live bar. coop's status line says what happened; `coop up` shows the live
@@ -926,7 +926,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 					}
 					return finish(-1, fmt.Errorf("start review services: %w", err))
 				}
-				ui.Info("services: %v — continuing without them (run 'coop up' to retry)", err)
+				ui.Note("services: %v — continuing without them (run 'coop up' to retry)", err)
 				servicesErr = err
 			} else {
 				servicePorts = started.ports
@@ -1045,7 +1045,7 @@ func prepareBoxEnvFile(cfg *config.Config, spec RunSpec, artifacts compositionAr
 		if err != nil {
 			// Fail closed: if the peer keys can't be stripped, omit the env file
 			// entirely rather than leak them into a scoped box.
-			ui.Info("env: omitted (could not filter peer API keys): %v", err)
+			ui.Note("env: omitted (could not filter peer API keys): %v", err)
 			return "", "", nil
 		}
 		return p, p, nil
@@ -2021,7 +2021,7 @@ func appendPublish(args []string, cfg *config.Config, spec RunSpec, free func(in
 		return args
 	}
 	if cfg.Egress != "open" {
-		fmt.Fprintf(os.Stderr, "coop: serve ports need network egress (COOP_EGRESS=open) — not publishing\n")
+		fmt.Fprintf(os.Stderr, "Serve ports need network egress (COOP_EGRESS=open) — not publishing\n")
 		return args
 	}
 	// Run decides publication once (the agent's note reads the same plan); a caller that assembled
@@ -2037,11 +2037,11 @@ func appendPublish(args []string, cfg *config.Config, spec RunSpec, free func(in
 		// this workspace already owns the port. Only the current box's publish mapping is conditional.
 		args = append(args, "-e", fmt.Sprintf("COOP_SERVE_URL_%d=http://localhost:%d", s.Port, s.Host))
 		if !s.Published {
-			fmt.Fprintf(os.Stderr, "coop: host port %d (for :%d) is in use — not publishing this box\n", s.Host, s.Port)
+			fmt.Fprintf(os.Stderr, "Host port %d (for :%d) is in use — not publishing this box\n", s.Host, s.Port)
 			continue
 		}
 		args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d", s.Host, s.Port))
-		fmt.Fprintf(os.Stderr, "coop: serving box :%d at http://localhost:%d\n", s.Port, s.Host)
+		fmt.Fprintf(os.Stderr, "Serving box :%d at http://localhost:%d\n", s.Port, s.Host)
 	}
 	return args
 }

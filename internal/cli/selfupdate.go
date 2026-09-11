@@ -106,7 +106,7 @@ func latestReleaseTag() (string, error) {
 func selfUpdate(out io.Writer) (bool, error) {
 	cur := resolveVersion()
 	if !releaseVersion(cur) {
-		fmt.Fprintln(out, "coop: self-update skipped — this is a dev/source build (install a release first)")
+		fmt.Fprintln(out, "Self-update skipped — this is a dev/source build (install a release first)")
 		return false, nil
 	}
 
@@ -126,10 +126,10 @@ func selfUpdate(out io.Writer) (bool, error) {
 	case releaseInvalid:
 		return false, checkError{fmt.Errorf("GitHub returned an invalid latest release tag %q", latest)}
 	case releaseEqual:
-		fmt.Fprintf(out, "coop: already up to date (%s)\n", normalizeVersion(cur))
+		fmt.Fprintf(out, "Already up to date (%s)\n", normalizeVersion(cur))
 		return false, nil
 	case releaseAhead:
-		fmt.Fprintf(out, "coop: %s is newer than GitHub's latest release %s; leaving it unchanged\n", normalizeVersion(cur), normalizeVersion(latest))
+		fmt.Fprintf(out, "%s is newer than GitHub's latest release %s; leaving it unchanged\n", normalizeVersion(cur), normalizeVersion(latest))
 		return false, nil
 	case releaseBehind:
 		// Continue to the verified install below.
@@ -140,7 +140,7 @@ func selfUpdate(out io.Writer) (bool, error) {
 		return false, fmt.Errorf("coop at %s is not writable (%v) — update it with the tool that installed it (your package manager, or reinstall from https://coop.dryga.com)", exe, err)
 	}
 
-	fmt.Fprintf(out, "coop: updating %s → %s\n", normalizeVersion(cur), normalizeVersion(latest))
+	fmt.Fprintf(out, "Updating %s → %s\n", normalizeVersion(cur), normalizeVersion(latest))
 	if err := installRelease(exe, latest); err != nil {
 		return false, fmt.Errorf("install %s: %w", latest, err)
 	}

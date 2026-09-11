@@ -14,21 +14,27 @@ import (
 )
 
 func TestExtractExposureFlags(t *testing.T) {
-	mode, rest, err := extractExposureFlags([]string{"--peer", "codex", "--readonly", "-p", "hi", "--", "--bare"})
+	mode, rest, err := extractExposureFlags("coop claude", []string{"--peer", "codex", "--readonly", "-p", "hi", "--", "--bare"})
 	if err != nil || mode != agents.ModeReadOnly || !slices.Equal(rest, []string{"--peer", "codex", "-p", "hi", "--", "--bare"}) {
 		t.Fatalf("readonly parse = %q, %q, %v", mode, rest, err)
 	}
-	mode, rest, err = extractExposureFlags([]string{"--bare"})
+	mode, rest, err = extractExposureFlags("coop claude", []string{"--bare"})
 	if err != nil || mode != agents.ModeBare || len(rest) != 0 {
 		t.Fatalf("bare parse = %q, %q, %v", mode, rest, err)
 	}
-	mode, rest, err = extractExposureFlags([]string{"-p", "hi"})
+	mode, rest, err = extractExposureFlags("coop claude", []string{"-p", "hi"})
 	if err != nil || mode != agents.ModeNormal || !slices.Equal(rest, []string{"-p", "hi"}) {
 		t.Fatalf("normal parse = %q, %q, %v", mode, rest, err)
 	}
+	// Both modes at once, and the same mode twice, are refused — naming the command that was run.
 	for _, args := range [][]string{{"--readonly", "--bare"}, {"--bare", "--readonly"}, {"--bare", "--bare"}, {"--readonly", "-p", "x", "--readonly"}} {
-		if _, _, err := extractExposureFlags(args); err == nil {
+		_, _, err := extractExposureFlags("coop claude", args)
+		if err == nil {
 			t.Errorf("accepted %q", args)
+			continue
+		}
+		if !strings.Contains(err.Error(), `in "coop claude"`) {
+			t.Errorf("refusal for %q should name the command: %v", args, err)
 		}
 	}
 }
@@ -126,7 +132,7 @@ func TestRestrictedLaunchUsageErrors(t *testing.T) {
 		run  func(a *app) (int, error)
 		want string
 	}{
-		{"both flags", func(a *app) (int, error) { return a.launchAgent("claude", []string{"--readonly", "--bare"}) }, "exclusive"},
+		{"both flags", func(a *app) (int, error) { return a.launchAgent("claude", []string{"--readonly", "--bare"}) }, `Cannot combine`},
 		{"login", func(a *app) (int, error) { return a.launchAgent("claude", []string{"--bare", "login"}) }, "login"},
 		{"peers", func(a *app) (int, error) {
 			a.mode = agents.ModeReadOnly
@@ -142,7 +148,7 @@ func TestRestrictedLaunchUsageErrors(t *testing.T) {
 		{"bare filtered", func(a *app) (int, error) {
 			return a.launchAgent("claude", []string{"--bare", "--egress", "filtered"})
 		}, "--egress open or none"},
-		{"run with both", func(a *app) (int, error) { return a.cmdRun([]string{"--bare", "--readonly", "--", "ls"}) }, "exclusive"},
+		{"run with both", func(a *app) (int, error) { return a.cmdRun([]string{"--bare", "--readonly", "--", "ls"}) }, `Cannot combine`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -199,7 +205,7 @@ func TestACPExposureUsageErrors(t *testing.T) {
 		{"acp bare preset", func(a *app) (int, error) { return a.cmdACP([]string{"frontier", "--bare"}) }, "name its lead directly"},
 		{"acp bare peer", func(a *app) (int, error) { return a.cmdACP([]string{"claude", "--bare", "--peer", "codex"}) }, "no peers"},
 		{"acp bare no target", func(a *app) (int, error) { return a.cmdACP([]string{"--bare"}) }, "name the target"},
-		{"acp both", func(a *app) (int, error) { return a.cmdACP([]string{"claude", "--bare", "--readonly"}) }, "exclusive"},
+		{"acp both", func(a *app) (int, error) { return a.cmdACP([]string{"claude", "--bare", "--readonly"}) }, `Cannot combine`},
 		{"fork acp bare", func(a *app) (int, error) { return a.forkACP("myfork", []string{"claude", "--bare"}) }, "names no fork"},
 		{"fork acp readonly peer", func(a *app) (int, error) {
 			return a.forkACP("myfork", []string{"claude", "--readonly", "--peer", "codex"})

@@ -1,0 +1,5 @@
+
+✗ Missing value for "--agents" in "coop init"
+
+  Example: coop init --agents claude,codex
+  Help:    coop help init

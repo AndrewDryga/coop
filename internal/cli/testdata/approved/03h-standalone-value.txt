@@ -1,0 +1,4 @@
+
+✗ Value "all" must be used alone for "--agents" in "coop init"
+
+  Help: coop help init

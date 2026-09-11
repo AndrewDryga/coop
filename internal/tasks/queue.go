@@ -412,7 +412,7 @@ func tasksAddInQueue(repo, rel string, args []string, projectName string) (int, 
 func tasksListAll(repo string, rels []string, args []string) (int, error) {
 	// Validate ls flags here too — the umbrella roll-up doesn't route through cmdTasksFolder, so
 	// without this an unknown flag (or a typo like --blockd) would be silently ignored.
-	if err := validateArgs("tasks ls", args, lsFlags, 0); err != nil {
+	if err := validateArgs("tasks ls", args, taskArgSpecs["ls"]); err != nil {
 		return 2, err
 	}
 	all := slices.Contains(args, "--all")

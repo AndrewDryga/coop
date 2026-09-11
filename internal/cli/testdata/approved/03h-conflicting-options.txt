@@ -1,0 +1,4 @@
+
+✗ Cannot combine "--readonly" and "--bare" in "coop claude"
+
+  Help: coop help claude

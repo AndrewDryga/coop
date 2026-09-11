@@ -2,121 +2,71 @@ coop — run a coding agent all night long in a box it can't escape.
 
 Usage: coop <command> [<args>...]
 
-AGENTS
-  coop <target>                     agent target in a box
-  coop <preset>                     run a preset interactively (its lead leads)
-  coop acp <target|preset>          serve as an editor agent (ACP; e.g. Zed)
+THE BOX — an isolated environment for running commands in this project
+  coop run -- <command>             run a command in the box
+  coop shell                        open a shell in the box
+
+RUN AGENTS — work with a coding agent or a team of agents
+  coop <agent>                      start Claude, Codex, Gemini, or Grok
+  coop <preset>                     run agents together using a preset
   coop <target> --peer <target>...  start with read-only peer agents
-  coop <target> --readonly          read the repo, write only to scratch
-  coop <target> --bare              Q&A only: no repo, no context, no tools
 
-CREDENTIALS, MODELS & PRESETS
-  coop login <agent>                sign in an agent (a subscription)
-  coop credentials [<agent>]        the accounts Coop can use
-  coop models [<agent>]             the models available to each agent
-  coop presets [<preset>]           orchestration recipes (lead + roles)
+ACCOUNTS, MODELS & PRESETS — choose the accounts and models your agents use
+  coop login <agent>                sign in to an agent
+  coop credentials [<agent>]        show your signed in accounts
+  coop models [<agent>]             show available models
+  coop presets [<name>]             show your presets
 
-THE BOX
-  coop run -- <cmd...>              run a raw command in the box
-  coop shell                        an interactive shell in the box
+TASKS — each task is a folder in .agent/tasks/
+  coop tasks ls                     show tasks grouped by status
+  coop tasks watch [--json]         follow task progress
+  coop tasks add "<title>"          add a task
+  coop tasks decisions              show tasks waiting for your decision
+  coop backlog                      save ideas for later
+  coop context [<path>...]          show which instructions and docs apply to selected files
 
-FORKS — review and land work like a PR
-  coop fork <name>                  open/re-enter; run a target or preset
-  coop fork ls                      list this repo's forks
-  coop fork review <name>           show a fork's review dossier + diff
-  coop fork merge <name>            rebase the fork onto your branch and land it
-  coop fork merge --all             rebase and land every fork
-  coop fork logs [<name>]           tail a fork's loop log (no name: every fork)
-  coop fork rm <name>               discard a fork
-  coop fork stop <name>             stop a detached loop
-  coop fork open <name>             open the fork in your editor
-  coop fork path <name>             print the fork's filesystem path
+LOOPS — work through tasks automatically; configure the steps in .agent/loop.yaml
+  coop loop [<agent|preset>]        work through the project's task queue
 
-UNATTENDED
-  coop loop [<target|preset>]       work the queue(s) until done, then sign off
+FORKS — work in separate project copies, then review and merge the changes
+  coop fork <name> <agent|preset>   work in a separate copy of this project
+  coop fork ls                      show this project's forks
+  coop fork review <name>           review a fork's changes
+  coop fork merge <name>            merge a fork's changes into this branch
+  coop fork merge --all             merge all forks into this branch
+  coop fork logs [<name>]           show loop logs for one or all forks
+  coop fork rm <name>               delete a fork
+  coop fork stop <name>             stop a fork's background loop
+  coop fork open <name>             open a fork in your editor
+  coop fork path <name>             print a fork's directory path
 
-TASKS — a folder-per-task queue in .agent/tasks/
-  coop tasks ls                     show the queue, grouped by state
-  coop tasks watch [--json]         canonical tasks + every sandbox, live
-  coop tasks add "<title>"          add a task (then claim/block/unblock/done)
-  coop tasks decisions              what's blocked on a decision (-i to answer)
-  coop tasks flags                  tasks that changed what runs on your machine
-  coop context                      compile the docs relevant to touched paths
-  coop backlog                      park unscheduled ideas; promote when ready
+SERVICES — databases and other services defined in .agent/compose.yml
+  coop init --services              choose services to add
+  coop up                           start services from .agent/compose.yml
+  coop down                         stop services from .agent/compose.yml
 
-SESSIONS — LOCAL REMOTE-SESSION CONTROLLER
-  coop sessions serve               run the session controller on Unix
-  coop sessions doctor              check the session controller Unix socket
-  coop sessions policies            print trusted policy digests for workers
-  coop sessions compact             back up and compact turn retry receipts
-  coop worker connect               outbound worker: join a fleet controller
+SECURITY & ISOLATION — control access, check isolation, and protect secrets
+  coop doctor                       check that the box's isolation works
+  coop net                          show and manage this project's network access
+  coop check-secrets                check project files for exposed secrets
+  coop sign                         sign unpushed commits with your host key
 
-SERVICES — the box's .agent/compose.yml sidecars
-  coop up                           start the .agent/compose.yml services
-  coop down                         stop the .agent/compose.yml services
+SETUP & MAINTENANCE — set up projects and manage Coop on this machine
+  coop init                         set up Coop in this project
+  coop build                        rebuild the box
+  coop update                       update Coop and the box
+  coop version                      show the installed Coop version
 
-SAFETY — prove the box holds, catch committed secrets
-  coop doctor                       attack the box, prove isolation holds
-  coop check-secrets                scan the working tree for committed secrets
-  coop net                          control network access, see what runs reach
+INTEGRATIONS — use Coop with other tools and your shell
+  coop help acp                     connect Coop to your editor
+  coop help sessions                let other applications start and manage agents
+  coop help prompt                  add Coop status to your shell prompt or tmux
+  coop help completion              enable tab completion in Bash or Zsh
 
-SETUP & MAINTENANCE
-  coop init [--stack asdf]          scaffold queue, hooks, skills, agent dirs
-  coop build                        build the box image (stable, pinned)
-  coop update                       self-update coop, then rebuild the box
-  coop completion <shell>           shell tab-completion (bash, zsh)
-  coop sign                         re-sign unpushed commits with your host key
-  coop prompt                       a one-line status for a shell prompt / tmux
-  coop help                         this help
-  coop version                      print the version
-
-Run 'coop help <command>' or 'coop <command> --help' for a command's details —
-for an agent (claude/codex/gemini/grok), --help is the agent's own.
-
-Config  coop.conf (COOP_CONF), or COOP_* env vars
-Auth    the config dir (COOP_CONFIG_DIR)
-Docs    https://coop.dryga.com
+Help and examples: coop help <command>
+Documentation: https://coop.dryga.com
 
 ==============================================================================
-
-coop fork — a throwaway clone handed to an agent; review and land it like a PR.
-
-  Usage: coop fork <name> [<target|preset>] | ls | review | merge | logs | rm | stop | open | path
-
-  coop fork <name> <target>         open or re-enter a fork with an agent target
-  coop fork <name> <preset>         open or re-enter a fork with an orchestration preset
-  coop fork ls [--json]             list fork workers, sandboxes, task progress, and problems
-  coop fork logs [<name>]           tail a fork's loop log (no name: all forks)
-  coop fork review <name>           dossier + diff (--stat, --tool, --open, --gate)
-  coop fork <name> acp <target>     front the fork as an ACP agent (for editors)
-  coop fork merge <name>            rebase onto your branch and land one fork
-  coop fork merge --all             rebase and land every fork
-  coop fork rm <name>               discard a fork (confirms; --force may stop it and return/discard task authority)
-  coop fork open <name>             open the fork in your editor
-  coop fork path <name>             print the fork's filesystem path
-  coop fork stop <name>             stop a detached loop
-
-FLAGS (every short flag has a long form):
-  -c, --continue            resume the prior session (the default on re-entry)
-      --new                 start a fresh agent session on re-entry
-      --fresh               recreate the fork (confirms; --force may stop it and discard Git/task work)
-      --loop                work the fork's task queue until done instead of opening an interactive session
-  -d, --detach              with --loop, run it in the background
-  -t, --tasks               with --loop, select one canonical task queue (default: every project queue)
-      --peer <target>       with --loop, a peer iterations may consult read-only (repeatable)
-  -f, --force (merge)       bypass the risky-file policy; the rebase gate still must pass
-  -f, --force (rm/fresh)    stop the worker; discard Git work, assignments, candidates, and pending proposals
-  -y, --yes                 merge/rm/--fresh: skip the delete confirm (required without a TTY)
-  -f, --follow              logs: keep streaming new output
-      --readonly            acp: front the fork read-only under the restricted profile (writes to scratch only; no project hooks or MCP)
-
-REVIEW  --open opens $COOP_EDITOR (else your global git core.editor); --tool uses your global git diff.tool.
-        --gate rebases in an isolated scratch clone and runs the parent's gate; source mutations fail review.
-NAMES   new fork actions are verb-first (coop fork <verb> <name>); a fork can't be named a reserved verb.
-TASKS   fork loops share the project's canonical queue; the host assigns one task at a time.
-        Stop keeps its assignment; merge alone completes that canonical task. Copied queues are retired.
-
-Run 'coop help' for all commands.
 
 coop run — run a raw command in the box.
 
@@ -130,6 +80,8 @@ coop run — run a raw command in the box.
   agent runs ('coop help claude'): a read-only root, the repo read-only or absent, scratch
   in memory only. The deterministic way to prove what such a run can and cannot write.
 
+==============================================================================
+
 coop shell — open an interactive shell in the box.
 
   Usage: coop shell [--readonly|--bare]
@@ -137,6 +89,112 @@ coop shell — open an interactive shell in the box.
   A shell in the sandbox at your repo — same mounts, secret-shadowing, and
   network as an agent run. Exit to return. --readonly and --bare open it under
   the restricted profile of the same-named agent runs ('coop help claude').
+
+==============================================================================
+
+coop claude — run Claude in a sandboxed box
+
+Usage:
+  coop claude[:<model>][/<effort>][@<account>] [options] [-- <claude-args>...]
+
+Examples
+  coop claude
+  coop claude:opus
+  coop claude:opus/high@work
+  coop claude -- --help
+
+Options
+  --peer <target>  start with a read-only peer agent; repeat to add more
+  --readonly       mount the repository read-only
+  --bare           run without the repository, project context, or tools
+  --               pass all remaining arguments directly to Claude
+
+  --readonly and --bare cannot be combined or used with peers.
+
+Models and accounts
+  coop models claude        list Claude models
+  coop credentials claude   list Claude accounts
+  coop login claude         sign in to Claude
+
+For a guide to using multiple models and providers together:
+  coop help presets
+
+==============================================================================
+
+coop codex — run Codex in a sandboxed box
+
+Usage:
+  coop codex[:<model>][/<effort>][@<account>] [options] [-- <codex-args>...]
+
+Examples
+  coop codex
+  coop codex:gpt-5.6-sol
+  coop codex:gpt-5.6-sol/high@work
+  coop codex -- --help
+
+Options
+  --peer <target>  start with a read-only peer agent; repeat to add more
+  --               pass all remaining arguments directly to Codex
+
+Models and accounts
+  coop models codex        list Codex models
+  coop credentials codex   list Codex accounts
+  coop login codex         sign in to Codex
+
+For a guide to using multiple models and providers together:
+  coop help presets
+
+==============================================================================
+
+coop gemini — run Gemini in a sandboxed box
+
+Usage:
+  coop gemini[:<model>][@<account>] [options] [-- <gemini-args>...]
+
+Examples
+  coop gemini
+  coop gemini:gemini-3.5-flash
+  coop gemini:gemini-3.5-flash@work
+  coop gemini -- --help
+
+Options
+  --peer <target>  start with a read-only peer agent; repeat to add more
+  --               pass all remaining arguments directly to Gemini
+
+Models and accounts
+  coop models gemini        list Gemini models
+  coop credentials gemini   list Gemini accounts
+  coop login gemini         sign in to Gemini
+
+For a guide to using multiple models and providers together:
+  coop help presets
+
+==============================================================================
+
+coop grok — run Grok in a sandboxed box
+
+Usage:
+  coop grok[:<model>][/<effort>][@<account>] [options] [-- <grok-args>...]
+
+Examples
+  coop grok
+  coop grok:grok-4.5
+  coop grok:grok-4.5/high@work
+  coop grok -- --help
+
+Options
+  --peer <target>  start with a read-only peer agent; repeat to add more
+  --               pass all remaining arguments directly to Grok
+
+Models and accounts
+  coop models grok        list Grok models
+  coop credentials grok   list Grok accounts
+  coop login grok         sign in to Grok
+
+For a guide to using multiple models and providers together:
+  coop help presets
+
+==============================================================================
 
 coop login <agent> — sign in to an agent (token persists in the config dir).
 
@@ -149,6 +207,8 @@ coop login <agent> — sign in to an agent (token persists in the config dir).
   hold several subscriptions: coop login claude@work. An unattended loop rotates
   across all of them when one is rate limited (a bare model in a preset's lead agent:
   ladder fans out over every account). Without @account the sign-in targets the default.
+
+==============================================================================
 
 coop credentials — list stored credentials; a path grammar edits one.
 
@@ -175,6 +235,62 @@ coop credentials — list stored credentials; a path grammar edits one.
   Run on a specific account without changing the default — put it in the target on
   any agent launch: 'coop claude@work', 'coop claude@work --peer codex', and
   'coop acp claude@work' (so an editor entry can pin an account).
+
+==============================================================================
+
+coop models — list models available to each agent
+
+Usage:
+  coop models [<claude|codex|gemini|grok>] [--refresh]
+
+List models
+  coop models                    all agents
+  coop models claude             Claude only
+  coop models claude --refresh   refresh Claude models list now
+
+Use a model
+  Put :model after the agent name. This works anywhere Coop accepts an agent.
+
+  coop claude:opus
+  coop loop claude:haiku
+  coop fork risky claude:opus --loop
+
+  You can use any model accepted by the agent, even if it is not listed.
+
+Set reasoning effort
+  Add /effort after the model, or directly after the agent to use its default model.
+
+  coop codex:gpt-6-astra/high
+  coop codex/high
+
+  Claude, Codex, and Grok support reasoning effort. Gemini does not.
+
+Choose an account
+  Add @account after the model.
+
+  coop claude:opus@work
+  coop credentials
+
+Full syntax
+  coop <provider>:<model>/<effort>@<account>
+  coop codex:gpt-6-astra/high@personal
+
+Set a default model
+  export COOP_CLAUDE_MODEL=opus
+
+Automatic rotation
+  Loops and presets can try models in order when one is rate-limited.
+  Leave off @account to let Coop also try another signed-in account.
+  Add @account when you want to use only that account.
+
+  coop loop claude:opus
+  coop loop claude:opus@work
+
+  For more details:
+    coop help presets
+    coop help loop
+
+==============================================================================
 
 coop presets — configure multiple models and providers to work together
 
@@ -229,124 +345,7 @@ How to define a preset
 
   A project preset overrides a global preset with the same name.
 
-coop models — list models available to each agent
-
-Usage:
-  coop models [<claude|codex|gemini|grok>] [--refresh]
-
-List models
-  coop models                    all agents
-  coop models claude             Claude only
-  coop models claude --refresh   refresh Claude models list now
-
-Use a model
-  Put :model after the agent name. This works anywhere Coop accepts an agent.
-
-  coop claude:opus
-  coop loop claude:haiku
-  coop fork risky claude:opus --loop
-
-  You can use any model accepted by the agent, even if it is not listed.
-
-Set reasoning effort
-  Add /effort after the model, or directly after the agent to use its default model.
-
-  coop codex:gpt-6-astra/high
-  coop codex/high
-
-  Claude, Codex, and Grok support reasoning effort. Gemini does not.
-
-Choose an account
-  Add @account after the model.
-
-  coop claude:opus@work
-  coop credentials
-
-Full syntax
-  coop <provider>:<model>/<effort>@<account>
-  coop codex:gpt-6-astra/high@personal
-
-Set a default model
-  export COOP_CLAUDE_MODEL=opus
-
-Automatic rotation
-  Loops and presets can try models in order when one is rate-limited.
-  Leave off @account to let Coop also try another signed-in account.
-  Add @account when you want to use only that account.
-
-  coop loop claude:opus
-  coop loop claude:opus@work
-
-  For more details:
-    coop help presets
-    coop help loop
-
-coop acp <target|preset> — serve as an ACP agent over stdio (for editors).
-
-  Usage: coop acp <target|preset> [--peer <target>...]
-
-  Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
-  command at e.g. ["acp","claude"] — one entry per target or preset.
-  The initial target is required; credential order is never launch intent. The
-  PROVIDER dropdown can still switch a plain session live. coop always proxies
-  the session, so the editor stays connected across a box restart (a rebuild/OOM)
-  — it reconnects and replays the handshake, no lost session.
-
-  coop owns the editor's toolbar: it runs the agent in yolo mode (the box is the
-  sandbox, so no permission prompts), defaults the model dropdown to coop's model,
-  drops the permission-mode and subagent pickers, and gives a normal session three
-  dropdowns — PRESET (the recipe), PROVIDER (who runs), and ACCOUNT (the lead's login).
-  An active preset is different: only PRESET renders because its ladder owns the provider,
-  model, effort, account, and roles. Persisted Provider/Account sets while those controls
-  are hidden are acknowledged and ignored. Selecting None returns the normal Provider and
-  Account controls with the effective provider and Account set to Auto; select None first
-  whenever you want to choose a Provider or Account manually.
-  In a plain session, an account or same-provider switch is transparent — the conversation is
-  preserved (a shared, credential-independent session store). A PROVIDER switch (picking another
-  signed-in agent, or a cross-provider preset rung rotating in on a rate limit)
-  re-creates the session on the new agent and carries the conversation BEST-EFFORT:
-  coop prepends the thread so far — message text plus one-line tool narration, no tool
-  payloads, labeled approximate — budgeted by COOP_ACP_CARRY_TOKENS (default 200000;
-  trim it below the smallest window you switch into). A switch made MID-TURN re-sends
-  the in-flight prompt once the new box is up, so the turn completes on the new target
-  instead of erroring. On a rate limit it auto-rotates across the ladder's rungs —
-  accounts, models, providers.
-
-  The target pins the session's agent, model, and account — an editor can run two
-  entries on different ones, e.g. ["acp","claude:opus@work"].
-
-  A bare preset name in the who-runs slot runs the session under that orchestration
-  preset (its lead is the agent; see 'coop help presets').
-
-  --peer <target>... lets the session ask NAMED peers for a read-only second opinion
-  (repeatable; only those peers' credentials are mounted) — the orchestrator pattern,
-  from your editor. Preset consult roles use the same read-only wrapper and keep their
-  role names, target ladders, and personas.
-
-  --bare serves a Q&A agent with no repository, no project context and no tools: the
-  shared base image under the restricted profile of 'coop <target> --bare', a target only
-  (no preset, no --peer), and no supervisor or toolbar — there is nothing to switch. Its
-  no-tools switch rides the ACP session/new the client sends, so it is what 'coop sessions
-  serve' launches for a bare policy; an editor entry gets the same box. --readonly is not
-  offered here: a fork fronts read-only with 'coop fork <name> acp <target> --readonly'.
-
-  To make plain provider switching near-instant, coop keeps a box warm per OTHER signed-in
-  provider (spawned in the background at session start), so a switch pays only the ACP
-  replay, not a container + adapter cold-boot. Set COOP_ACP_WARM=0 to disable
-  prewarming (one fewer idle box per signed-in provider) on a low-RAM machine.
-
-  Picking up a rebuilt coop WITHOUT restarting your editor: send the running server
-  SIGHUP — 'pkill -HUP -f "coop acp"'. It re-execs the freshly-installed binary in
-  place (same process, same stdio), tears down its box, and re-establishes your open
-  threads against a fresh box on the new binary — the editor never sees a disconnect.
-  (SIGTERM/SIGINT still STOP it; only SIGHUP reloads. A box restart already picks up
-  box-side changes, so SIGHUP is for supervisor-side changes to coop itself.)
-
-  Debugging a misbehaving session: set COOP_ACP_TRACE=1 in the editor's server env, or
-  create ~/.config/coop/acp-debug, and coop appends the editor<->box ACP wire to
-  ~/.config/coop/acp-trace-<pid>.log (the sentinel works on an already-running server).
-  The log is size-capped and auto-rotated so it can't grow unbounded; it holds prompts
-  and file contents, so treat it as sensitive.
+==============================================================================
 
 coop tasks — drive the task queue (a folder per task under .agent/tasks/).
 
@@ -408,6 +407,28 @@ coop tasks — drive the task queue (a folder per task under .agent/tasks/).
   creates into one queue. Copied queue slicing is retired: parallel fork loops schedule distinct
   tasks directly from the same canonical queue.
 
+==============================================================================
+
+coop backlog — park the genuinely LARGE as task folders (.agent/tasks/xx_backlog/).
+
+  Usage: coop backlog [--tasks <path>]... [ls | add "<title>" | rm <id> | promote <id>]
+
+  (bare)           list the backlog drawer
+  add "<title>"    capture an idea (--context/--acceptance/--approach/--subtask fill it inline)
+  promote <id>     move it into 00_todo/ when it's ready to work (then coop tasks claim)
+  rm <id>          drop an idea (--yes skips the confirm)
+
+  The backlog is the SAME task-folder format as the queue, in an xx_backlog/ drawer that lives
+  OUTSIDE the lifecycle — the loop, the Stop hook, and 'coop tasks' all ignore it, so an idea
+  sits here with no nagging until you promote it (a folder move, not a rewrite). This drawer is
+  for work one iteration couldn't finish, or that needs a spec or a decision before anyone can
+  start; everything else goes straight to the queue ('coop tasks add'), and a close call belongs
+  in the queue too. Defaults to .agent/tasks/ — or, in a monorepo, every subproject's queue (see
+  coop tasks): ls rolls up across them and rm/promote find the item in whichever queue holds it,
+  while add needs a single --tasks.
+
+==============================================================================
+
 coop context — compile the committed docs relevant to a scope (instructions + rules + KB).
 
   Usage: coop context [--changed] [--task <id> [--tasks <path>...]] [--json | --rendered] [<path>...]
@@ -438,23 +459,7 @@ coop context — compile the committed docs relevant to a scope (instructions + 
         - paths: ["portal/**", "**/*.ex"]
           include: [.agent/kb/portal.md]
 
-coop backlog — park the genuinely LARGE as task folders (.agent/tasks/xx_backlog/).
-
-  Usage: coop backlog [--tasks <path>]... [ls | add "<title>" | rm <id> | promote <id>]
-
-  (bare)           list the backlog drawer
-  add "<title>"    capture an idea (--context/--acceptance/--approach/--subtask fill it inline)
-  promote <id>     move it into 00_todo/ when it's ready to work (then coop tasks claim)
-  rm <id>          drop an idea (--yes skips the confirm)
-
-  The backlog is the SAME task-folder format as the queue, in an xx_backlog/ drawer that lives
-  OUTSIDE the lifecycle — the loop, the Stop hook, and 'coop tasks' all ignore it, so an idea
-  sits here with no nagging until you promote it (a folder move, not a rewrite). This drawer is
-  for work one iteration couldn't finish, or that needs a spec or a decision before anyone can
-  start; everything else goes straight to the queue ('coop tasks add'), and a close call belongs
-  in the queue too. Defaults to .agent/tasks/ — or, in a monorepo, every subproject's queue (see
-  coop tasks): ls rolls up across them and rm/promote find the item in whichever queue holds it,
-  while add needs a single --tasks.
+==============================================================================
 
 coop loop [<target|preset>] — work the task queue until done, then sign off.
 
@@ -597,6 +602,49 @@ coop loop [<target|preset>] — work the task queue until done, then sign off.
 
   loop.yaml work.command overrides the per-iteration command.
 
+==============================================================================
+
+coop fork — a throwaway clone handed to an agent; review and land it like a PR.
+
+  Usage: coop fork <name> [<target|preset>] | ls | review | merge | logs | rm | stop | open | path
+
+  coop fork <name> <target>         open or re-enter a fork with an agent target
+  coop fork <name> <preset>         open or re-enter a fork with an orchestration preset
+  coop fork ls [--json]             list fork workers, sandboxes, task progress, and problems
+  coop fork logs [<name>]           tail a fork's loop log (no name: all forks)
+  coop fork review <name>           dossier + diff (--stat, --tool, --open, --gate)
+  coop fork <name> acp <target>     front the fork as an ACP agent (for editors)
+  coop fork merge <name>            rebase onto your branch and land one fork
+  coop fork merge --all             rebase and land every fork
+  coop fork rm <name>               discard a fork (confirms; --force may stop it and return/discard task authority)
+  coop fork open <name>             open the fork in your editor
+  coop fork path <name>             print the fork's filesystem path
+  coop fork stop <name>             stop a detached loop
+
+FLAGS (every short flag has a long form):
+  -c, --continue            resume the prior session (the default on re-entry)
+      --new                 start a fresh agent session on re-entry
+      --fresh               recreate the fork (confirms; --force may stop it and discard Git/task work)
+      --loop                work the fork's task queue until done instead of opening an interactive session
+  -d, --detach              with --loop, run it in the background
+  -t, --tasks               with --loop, select one canonical task queue (default: every project queue)
+      --peer <target>       with --loop, a peer iterations may consult read-only (repeatable)
+  -f, --force (merge)       bypass the risky-file policy; the rebase gate still must pass
+  -f, --force (rm/fresh)    stop the worker; discard Git work, assignments, candidates, and pending proposals
+  -y, --yes                 merge/rm/--fresh: skip the delete confirm (required without a TTY)
+  -f, --follow              logs: keep streaming new output
+      --readonly            acp: front the fork read-only under the restricted profile (writes to scratch only; no project hooks or MCP)
+
+REVIEW  --open opens $COOP_EDITOR (else your global git core.editor); --tool uses your global git diff.tool.
+        --gate rebases in an isolated scratch clone and runs the parent's gate; source mutations fail review.
+NAMES   new fork actions are verb-first (coop fork <verb> <name>); a fork can't be named a reserved verb.
+TASKS   fork loops share the project's canonical queue; the host assigns one task at a time.
+        Stop keeps its assignment; merge alone completes that canonical task. Copied queues are retired.
+
+Run 'coop help' for all commands.
+
+==============================================================================
+
 coop up — start the repo's sibling services so the box can reach them by name.
 
   Usage: coop up
@@ -605,46 +653,15 @@ coop up — start the repo's sibling services so the box can reach them by name.
   status names the exact resolved Compose services, in Compose order; an agent
   in the box reaches each one by that hostname. Stop them with: coop down
 
+==============================================================================
+
 coop down [-v] — stop the repo's sibling services.
 
   Usage: coop down [-v | --volumes]
 
   -v, --volumes   also remove the services' volumes (their data)
 
-coop init — set up Coop in this project
-
-Usage:
-  coop init
-  coop init [--stack asdf] [--services <service,...>] [--agents <agent,...>|all]
-
-Coop sets up
-
-- Shared instructions and skills for all your AI agents.
-
-- A file-based task system — agents can pick up work, save progress, and hand
-  it to another agent or session.
-
-- Commit checks — Coop verifies formatting for the languages it detects or
-  you choose.
-
-- Project settings for sandboxed runs, including filtered internet access.
-
-- An optional starter Docker Compose file for supporting services; you can
-  extend it with anything else your project needs.
-
-Without options, Coop detects what it can and asks before initializing Git,
-adding formatting checks, or adding Postgres or Redis.
-
-Options
-  --agents <list>    set up Claude, Codex, Gemini, or all
-                     default: agents you are signed in to
-
-  --services <list>  add Postgres, Redis, or both
-
-  --stack asdf       install tools from .tool-versions in the Coop box
-
-You can run coop init again at any time.
-Coop keeps your existing project files and adds anything missing.
+==============================================================================
 
 coop doctor — prove the box's isolation: attack it, inside and from the host.
 
@@ -655,6 +672,8 @@ coop doctor — prove the box's isolation: attack it, inside and from the host.
   repo's boxes run: its per-project image when built, else the shared base
   image, else a stock alpine stand-in (which skips the USER/toolchain checks
   and says so). Honors COOP_RUNTIME.
+
+==============================================================================
 
 coop net — control network access and see what happened.
 
@@ -712,6 +731,8 @@ coop net — control network access and see what happened.
   the REPAIR verbs are for doing it now. Protocols, ports and what is refused
   by design are in docs/networking.md.
 
+==============================================================================
+
 coop check-secrets — scan the working tree for committed secrets, by content.
 
   Usage: coop check-secrets [--include-ignored]
@@ -728,6 +749,66 @@ coop check-secrets — scan the working tree for committed secrets, by content.
   the full visible tree too (deps/build dirs and shadowed files git would not
   commit are still skipped). A .coopignore entry silences a file in both modes.
 
+==============================================================================
+
+coop sign — re-sign this branch's unpushed commits with your host key.
+
+  Usage: coop sign [--from <ref>]
+
+  Box commits are made UNSIGNED — no signing key ever enters a box — so a remote
+  that requires signed commits (a protected main, like many projects) rejects
+  work a loop or an interactive box produced. 'coop sign' re-signs them on the
+  HOST, where your signing key lives, using your GLOBAL git signing config (so a
+  poisoned repo can't point gpg.program at a planted binary).
+
+  The range is the UNPUSHED one — @{upstream}..HEAD — git's own rule for what is
+  safe to rewrite: it never touches pushed history and never pushes. With no
+  upstream, pass --from <ref> (e.g. the commit you last pushed). It refuses a
+  range containing a merge commit. Signing runs in an isolated linked worktree,
+  verifies that commit trees are unchanged, then compare-and-swaps the branch ref;
+  staged, unstaged, and untracked files in your active checkout remain untouched.
+  'coop loop' signs each cycle automatically when you sign by default
+  (commit.gpgsign=true).
+
+==============================================================================
+
+coop init — set up Coop in this project
+
+Usage:
+  coop init
+  coop init [--stack asdf] [--services <service,...>] [--agents <agent,...>|all]
+
+Coop sets up
+
+- Shared instructions and skills for all your AI agents.
+
+- A file-based task system — agents can pick up work, save progress, and hand
+  it to another agent or session.
+
+- Commit checks — Coop verifies formatting for the languages it detects or
+  you choose.
+
+- Project settings for sandboxed runs, including filtered internet access.
+
+- An optional starter Docker Compose file for supporting services; you can
+  extend it with anything else your project needs.
+
+Without options, Coop detects what it can and asks before initializing Git,
+adding formatting checks, or adding Postgres or Redis.
+
+Options
+  --agents <list>    set up Claude, Codex, Gemini, or all
+                     default: agents you are signed in to
+
+  --services <list>  add Postgres, Redis, or both
+
+  --stack asdf       install tools from .tool-versions in the Coop box
+
+You can run coop init again at any time.
+Coop keeps your existing project files and adds anything missing.
+
+==============================================================================
+
 coop build — build the box image (stable, pinned).
 
   Usage: coop build
@@ -740,6 +821,8 @@ coop build — build the box image (stable, pinned).
   restarted onto it transparently — they reconnect, so you don't lose the session.
   Other running boxes (a loop or an interactive agent session) keep the old image
   until they next start.
+
+==============================================================================
 
 coop update — self-update coop, then rebuild the box image fresh.
 
@@ -764,31 +847,85 @@ coop update — self-update coop, then rebuild the box image fresh.
   and mentions it after the command's output; COOP_NO_UPDATE_CHECK=1 turns that
   notice off.
 
-coop completion <bash|zsh> — print a shell completion script.
+==============================================================================
 
-  Usage: coop completion <bash|zsh>
+coop version — print coop's version and exit.
 
-  bash: coop completion bash > ~/.local/share/bash-completion/completions/coop
-  zsh:  coop completion zsh > "${fpath[1]}/_coop"
-        then add 'source "${fpath[1]}/_coop"' AFTER compinit in ~/.zshrc. Existing
-        file-only installs must add this source line; it enables command-local nocorrect
-        for coop arguments without changing Zsh correction for other commands.
+  Usage: coop version
 
-  Completes commands and verbs, and — via a hidden 'coop __complete' — live values
-  (fork names, task ids, credentials), all from local reads.
+  Prints coop's build version (git tag or commit). Takes no arguments; -v and
+  --version are aliases.
 
-coop prompt — one compact status line for a shell prompt, tmux, or menubar.
+==============================================================================
 
-  Usage: coop prompt
+coop acp <target|preset> — serve as an ACP agent over stdio (for editors).
 
-  Prints this repo's state on ONE line — task counts and fork/loop activity, with a
-  compact separator between non-zero segments. Nothing prints when the queue is empty
-  and no forks exist, so an embedding prompt stays clean.
+  Usage: coop acp <target|preset> [--peer <target>...]
 
-  Read-only and cheap: it reads the task dirs + fork pidfiles (plus one git-root
-  lookup) — never a per-fork git call and never docker — so it's safe to run on
-  every prompt redraw. Wire it into your shell prompt (a starship custom command)
-  or tmux, e.g. set -g status-right '#(cd #{pane_current_path}; coop prompt)'.
+  Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
+  command at e.g. ["acp","claude"] — one entry per target or preset.
+  The initial target is required; credential order is never launch intent. The
+  PROVIDER dropdown can still switch a plain session live. coop always proxies
+  the session, so the editor stays connected across a box restart (a rebuild/OOM)
+  — it reconnects and replays the handshake, no lost session.
+
+  coop owns the editor's toolbar: it runs the agent in yolo mode (the box is the
+  sandbox, so no permission prompts), defaults the model dropdown to coop's model,
+  drops the permission-mode and subagent pickers, and gives a normal session three
+  dropdowns — PRESET (the recipe), PROVIDER (who runs), and ACCOUNT (the lead's login).
+  An active preset is different: only PRESET renders because its ladder owns the provider,
+  model, effort, account, and roles. Persisted Provider/Account sets while those controls
+  are hidden are acknowledged and ignored. Selecting None returns the normal Provider and
+  Account controls with the effective provider and Account set to Auto; select None first
+  whenever you want to choose a Provider or Account manually.
+  In a plain session, an account or same-provider switch is transparent — the conversation is
+  preserved (a shared, credential-independent session store). A PROVIDER switch (picking another
+  signed-in agent, or a cross-provider preset rung rotating in on a rate limit)
+  re-creates the session on the new agent and carries the conversation BEST-EFFORT:
+  coop prepends the thread so far — message text plus one-line tool narration, no tool
+  payloads, labeled approximate — budgeted by COOP_ACP_CARRY_TOKENS (default 200000;
+  trim it below the smallest window you switch into). A switch made MID-TURN re-sends
+  the in-flight prompt once the new box is up, so the turn completes on the new target
+  instead of erroring. On a rate limit it auto-rotates across the ladder's rungs —
+  accounts, models, providers.
+
+  The target pins the session's agent, model, and account — an editor can run two
+  entries on different ones, e.g. ["acp","claude:opus@work"].
+
+  A bare preset name in the who-runs slot runs the session under that orchestration
+  preset (its lead is the agent; see 'coop help presets').
+
+  --peer <target>... lets the session ask NAMED peers for a read-only second opinion
+  (repeatable; only those peers' credentials are mounted) — the orchestrator pattern,
+  from your editor. Preset consult roles use the same read-only wrapper and keep their
+  role names, target ladders, and personas.
+
+  --bare serves a Q&A agent with no repository, no project context and no tools: the
+  shared base image under the restricted profile of 'coop <target> --bare', a target only
+  (no preset, no --peer), and no supervisor or toolbar — there is nothing to switch. Its
+  no-tools switch rides the ACP session/new the client sends, so it is what 'coop sessions
+  serve' launches for a bare policy; an editor entry gets the same box. --readonly is not
+  offered here: a fork fronts read-only with 'coop fork <name> acp <target> --readonly'.
+
+  To make plain provider switching near-instant, coop keeps a box warm per OTHER signed-in
+  provider (spawned in the background at session start), so a switch pays only the ACP
+  replay, not a container + adapter cold-boot. Set COOP_ACP_WARM=0 to disable
+  prewarming (one fewer idle box per signed-in provider) on a low-RAM machine.
+
+  Picking up a rebuilt coop WITHOUT restarting your editor: send the running server
+  SIGHUP — 'pkill -HUP -f "coop acp"'. It re-execs the freshly-installed binary in
+  place (same process, same stdio), tears down its box, and re-establishes your open
+  threads against a fresh box on the new binary — the editor never sees a disconnect.
+  (SIGTERM/SIGINT still STOP it; only SIGHUP reloads. A box restart already picks up
+  box-side changes, so SIGHUP is for supervisor-side changes to coop itself.)
+
+  Debugging a misbehaving session: set COOP_ACP_TRACE=1 in the editor's server env, or
+  create ~/.config/coop/acp-debug, and coop appends the editor<->box ACP wire to
+  ~/.config/coop/acp-trace-<pid>.log (the sentinel works on an already-running server).
+  The log is size-capped and auto-rotated so it can't grow unbounded; it holds prompts
+  and file contents, so treat it as sensitive.
+
+==============================================================================
 
 coop sessions — serve and inspect local remote sessions.
 
@@ -817,6 +954,8 @@ coop sessions — serve and inspect local remote sessions.
     policies ~/.config/coop/session-policies.yaml
     socket   <state>/control.sock
 
+==============================================================================
+
 coop worker — connect one private Coop daemon to Responder.
 
   Usage: coop worker connect --config <absolute-path>
@@ -828,22 +967,32 @@ coop worker — connect one private Coop daemon to Responder.
   generic shell command. Populate policy_digests and policy_authority_digests
   from the exact output of 'coop sessions policies --json'.
 
-coop version — print coop's version and exit.
+==============================================================================
 
-  Usage: coop version
+coop prompt — one compact status line for a shell prompt, tmux, or menubar.
 
-  Prints coop's build version (git tag or commit). Takes no arguments; -v and
-  --version are aliases.
+  Usage: coop prompt
 
-SOURCE-TREE CONFORMANCE
+  Prints this repo's state on ONE line — task counts and fork/loop activity, with a
+  compact separator between non-zero segments. Nothing prints when the queue is empty
+  and no forks exist, so an embedding prompt stays clean.
 
-  From a source checkout, 'make check' is the blocking no-credential gate. Focused
-  deterministic targets are 'make provider-scripted-e2e', 'make acp-scripted-e2e',
-  and 'make live-process-control'. Real isolation checks are 'make doctor' and
-  'make review-writes-e2e'.
+  Read-only and cheap: it reads the task dirs + fork pidfiles (plus one git-root
+  lookup) — never a per-fork git call and never docker — so it's safe to run on
+  every prompt redraw. Wire it into your shell prompt (a starship custom command)
+  or tmux, e.g. set -g status-right '#(cd #{pane_current_path}; coop prompt)'.
 
-  'make provider-live-e2e', 'make provider-resume-live-e2e',
-  'make provider-loop-live-e2e', 'make provider-consult-live-e2e', and
-  'make acp-e2e' are opt-in because they use installed CLIs, configured credentials,
-  and real quota. Strict '-all' forms, request counts, summaries, and triage are in
-  README.md under Layout & development.
+==============================================================================
+
+coop completion <bash|zsh> — print a shell completion script.
+
+  Usage: coop completion <bash|zsh>
+
+  bash: coop completion bash > ~/.local/share/bash-completion/completions/coop
+  zsh:  coop completion zsh > "${fpath[1]}/_coop"
+        then add 'source "${fpath[1]}/_coop"' AFTER compinit in ~/.zshrc. Existing
+        file-only installs must add this source line; it enables command-local nocorrect
+        for coop arguments without changing Zsh correction for other commands.
+
+  Completes commands and verbs, and — via a hidden 'coop __complete' — live values
+  (fork names, task ids, credentials), all from local reads.

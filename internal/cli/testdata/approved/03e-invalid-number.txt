@@ -1,0 +1,7 @@
+
+✗ Invalid value "0" for "--max-tasks" in "coop loop"
+
+      Use a whole number greater than 0.
+
+  Example: coop loop --max-tasks 5
+  Help:    coop help loop

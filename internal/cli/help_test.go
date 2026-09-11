@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -11,10 +12,11 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// `coop up`/`down` in the top-level help are compose-aware: they name the repo's real service keys
-// when a .agent/compose.yml is present, and fall back to a "none" wording (dimmed on a tty) when it
-// isn't — so the help never advertises generic services that aren't actually defined.
-func TestHelpUpDownComposeAware(t *testing.T) {
+// The SERVICES section is project-aware: it names this project's real services and Compose file
+// when there is one, and with nothing to act on it dims the up/down pair (on a terminal) while the
+// setup row stays bright — so the menu never advertises services that aren't defined, and never
+// hides the command that adds them. The exact copy is pinned by TestApprovedMainMenu.
+func TestHelpServicesSectionIsProjectAware(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
@@ -23,12 +25,31 @@ func TestHelpUpDownComposeAware(t *testing.T) {
 		[]byte("services:\n  db:\n    image: postgres\n  redis:\n    image: redis\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := helpText(&config.Config{RepoOverride: repo, BoxHome: "/b", ConfigDir: "/c"})
-	if !strings.Contains(got, ".agent/compose.yml services (db, redis)") {
-		t.Errorf("up should name the real services from the compose file:\n%s", got)
+	cfg := &config.Config{RepoOverride: repo, BoxHome: "/b", ConfigDir: "/c"}
+	if got := helpText(cfg); !strings.Contains(got, "SERVICES — db and redis, defined in .agent/compose.yml") {
+		t.Errorf("the section should name the real services from the compose file:\n%s", got)
 	}
-	if got := helpText(&config.Config{RepoOverride: t.TempDir(), BoxHome: "/b", ConfigDir: "/c"}); !strings.Contains(got, "none in .agent/compose.yml") {
-		t.Errorf("up should say none when there is no compose file:\n%s", got)
+	// Configured services: all three rows read normally, even though nothing is running.
+	if got := renderMenu(ui.Colored(), cfg, false); strings.Contains(got, "\x1b[2mcoop up") {
+		t.Errorf("configured services must not dim the up row:\n%q", got)
+	}
+	empty := &config.Config{RepoOverride: t.TempDir(), BoxHome: "/b", ConfigDir: "/c"}
+	if got := helpText(empty); !strings.Contains(got, "SERVICES — databases and other services defined in .agent/compose.yml") {
+		t.Errorf("with no services the section keeps the generic explanation:\n%s", got)
+	}
+	// No services: the whole up/down rows recede on a terminal, the setup row does not.
+	got := renderMenu(ui.Colored(), empty, false)
+	for _, want := range []string{"\x1b[2mcoop up", "\x1b[2mcoop down"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("an unavailable row should be dimmed whole (%q):\n%q", want, got)
+		}
+	}
+	if strings.Contains(got, "\x1b[2mcoop init --services") {
+		t.Errorf("the setup row stays at normal brightness:\n%q", got)
+	}
+	// And a pipe gets the same text with no escapes at all.
+	if plain := helpText(empty); strings.ContainsRune(plain, '\x1b') {
+		t.Errorf("piped help must carry no escape sequences:\n%q", plain)
 	}
 }
 
@@ -48,8 +69,7 @@ func TestHelpTextAligned(t *testing.T) {
 	for _, want := range []string{
 		"coop fork review <name>", "coop fork merge <name>", "coop fork stop <name>",
 		"coop doctor", "coop check-secrets", "coop tasks ls", "coop tasks decisions",
-		"coop sessions serve", "coop sessions doctor", "coop sessions policies",
-		"coop sessions compact",
+		"coop help sessions", "coop help acp", "coop help prompt", "coop help completion",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("help missing %q", want)
@@ -62,7 +82,7 @@ func TestHelpTextAligned(t *testing.T) {
 	if strings.Contains(out, "·") {
 		t.Errorf("help should not use · separators:\n%s", out)
 	}
-	for _, want := range []string{"AGENTS", "FORKS", "UNATTENDED", "TASKS", "SERVICES", "SAFETY", "SETUP & MAINTENANCE"} {
+	for _, want := range []string{"THE BOX", "RUN AGENTS", "FORKS", "LOOPS", "TASKS", "SERVICES", "SECURITY & ISOLATION", "SETUP & MAINTENANCE", "INTEGRATIONS"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("help missing capitalized section header %q", want)
 		}
@@ -94,18 +114,18 @@ func TestAllHelpAvoidsMiddleDots(t *testing.T) {
 	}
 }
 
-// Every top-level help line fits a stock 80-column terminal, so the two-column layout doesn't wrap.
-// Uses a no-compose repo (dim up/down rows) and no signed-in agent (FIRST RUN shown) — the widest
-// static shape. Short fixed config paths keep it deterministic: the footer's Config/Auth lines echo
-// the user's own (arbitrarily long) paths and aren't part of the two-column layout, so skip them.
+// menuWidth is the widest line the APPROVED menu contains (the coop context row, and the title
+// with a long version). It is the budget, not a target: a new row that pushes past it changes the
+// approved layout and needs the same decision the copy did.
+const menuWidth = 92
+
+// No menu line may exceed the approved width, or the two-column layout wraps on a stock terminal.
+// Uses a no-services project and no signed-in agent — the widest static shape.
 func TestHelpTextWidth(t *testing.T) {
 	out := helpText(&config.Config{RepoOverride: t.TempDir(), ConfigDir: "/c", BoxHome: "/b"})
 	for _, line := range strings.Split(out, "\n") {
-		if strings.HasPrefix(line, "Config ") || strings.HasPrefix(line, "Auth ") {
-			continue // user config paths, not layout rows
-		}
-		if n := len([]rune(line)); n > 80 {
-			t.Errorf("help line exceeds 80 cols (%d): %q", n, line)
+		if n := len([]rune(line)); n > menuWidth {
+			t.Errorf("menu line exceeds %d cols (%d): %q", menuWidth, n, line)
 		}
 	}
 }
@@ -151,8 +171,8 @@ func TestRenderManual(t *testing.T) {
 	if strings.Contains(m, "\x1b[") {
 		t.Error("RenderManual must be plain — no ANSI escapes")
 	}
-	if strings.Contains(m, "FIRST RUN") {
-		t.Error("RenderManual must omit the state-aware FIRST RUN hint")
+	if strings.Contains(m, "GET STARTED") {
+		t.Error("RenderManual must omit the state-aware GET STARTED block")
 	}
 	if strings.Contains(m, "/host-boxhome") || strings.Contains(m, "/host-configdir") {
 		t.Error("RenderManual must not leak host config paths")
@@ -160,17 +180,98 @@ func TestRenderManual(t *testing.T) {
 	if RenderManual(&config.Config{}) != m {
 		t.Error("RenderManual must be cfg-independent (deterministic across machines)")
 	}
-	providerSlash := strings.Join(agents.Names(), "/")
-	providerPipe := strings.Join(agents.Names(), "|")
+	// Contributor build/test guidance belongs in README.md, where a contributor looks — not
+	// appended to the user's command reference.
+	if strings.Contains(m, "SOURCE-TREE CONFORMANCE") || strings.Contains(m, "make provider-scripted-e2e") {
+		t.Error("the user manual must not carry contributor build/test guidance")
+	}
 	for _, want := range []string{
-		"AGENTS", "coop fork", "coop tasks", "coop run", "SOURCE-TREE CONFORMANCE",
-		"for an agent (" + providerSlash + ")", "coop models [<" + providerPipe + ">] [--refresh]",
-		"make provider-scripted-e2e", "make acp-scripted-e2e", "make live-process-control",
-		"make provider-resume-live-e2e", "make provider-loop-live-e2e",
-		"make provider-consult-live-e2e", "make acp-e2e",
+		"THE BOX", "coop fork", "coop tasks", "coop run",
+		"coop models [<" + strings.Join(agents.Names(), "|") + ">] [--refresh]",
 	} {
 		if !strings.Contains(m, want) {
 			t.Errorf("RenderManual missing %q", want)
+		}
+	}
+}
+
+// The manual opens with the reference form of the approved menu: the same copy, with the machine's
+// version, service names and dimming left out so every machine renders the same bytes.
+func TestManualOpensWithTheApprovedMenu(t *testing.T) {
+	manual := RenderManual(&config.Config{})
+	menu, rest, ok := strings.Cut(manual, "\n"+manualSeparator+"\n")
+	if !ok || rest == "" {
+		t.Fatal("the manual should be the menu, then one separated page per command")
+	}
+	data, err := os.ReadFile(filepath.Join("testdata", "approved", "01-main-help.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The reference form drops the build version from the title; nothing else differs.
+	want := strings.Replace(string(data), "coop "+fixtureVersion+" —", "coop —", 1)
+	if menu != want {
+		t.Errorf("the manual's menu drifted from the approved menu\n--- got ---\n%s\n--- want ---\n%s\n%s",
+			menu, want, firstDifference(menu, want))
+	}
+}
+
+// wantManualOrder is the page order of the approved full reference, restricted to the pages that
+// exist today: the box, the agents, accounts and models, the work queues, loops and forks, this
+// project's services, the checks, setup, and the integrations last. `worker` has no page in the
+// approved reference (its content is proposed to move under sessions, which is its own review), so
+// it keeps its current page here, beside the family it belongs to. Leaf pages arrive with the
+// slices that write them.
+var wantManualOrder = []string{
+	"run", "shell", "claude", "codex", "gemini", "grok",
+	"login", "credentials", "models", "presets",
+	"tasks", "backlog", "context", "loop", "fork",
+	"up", "down",
+	"doctor", "net", "check-secrets", "sign",
+	"init", "build", "update", "version",
+	"acp", "sessions", "worker", "prompt", "completion",
+}
+
+// The manual presents every page in the approved order, each behind the same separator.
+func TestManualPageOrder(t *testing.T) {
+	if !slices.Equal(manualOrder, wantManualOrder) {
+		t.Errorf("manualOrder drifted from the approved reference order:\n got: %v\nwant: %v", manualOrder, wantManualOrder)
+	}
+	manual := RenderManual(&config.Config{})
+	_, pages, _ := strings.Cut(manual, "\n"+manualSeparator+"\n")
+	at := 0
+	for _, name := range wantManualOrder {
+		first := strings.SplitN(strings.TrimRight(manualPage(name), "\n"), "\n", 2)[0]
+		if first == "" {
+			t.Errorf("%s has no page in the manual", name)
+			continue
+		}
+		i := strings.Index(pages[at:], "\n"+first+"\n")
+		if i < 0 {
+			t.Errorf("%s's page is missing or out of order (expected after byte %d)", name, at)
+			continue
+		}
+		at += i + len(first)
+	}
+}
+
+// Every public command coop dispatches has a page in the manual — a command added to the dispatch
+// without one is drift, not a deliberate omission.
+func TestManualCoversEveryCommand(t *testing.T) {
+	for _, name := range topLevelCommands {
+		if name == "help" { // `coop help` IS the menu the manual opens with
+			continue
+		}
+		if !slices.Contains(manualOrder, name) {
+			t.Errorf("%q is dispatched but has no page in the manual", name)
+			continue
+		}
+		if manualPage(name) == "" {
+			t.Errorf("%q is in the manual's order but renders no page", name)
+		}
+	}
+	for _, name := range agents.Names() {
+		if !slices.Contains(manualOrder, name) {
+			t.Errorf("registered agent %q has no page in the manual", name)
 		}
 	}
 }
@@ -212,9 +313,9 @@ func TestCurrentDocsDoNotAdvertiseRetiredContracts(t *testing.T) {
 	if strings.Contains(manual, "--mode") {
 		t.Errorf("the CLI manual offers a --mode flag; access comes from .agent/project.yaml:\n%s", manual)
 	}
-	if !strings.Contains(manual, "scaffold queue, hooks, skills, agent dirs") ||
-		strings.Contains(manual, "scaffold the queue, hooks, skills, subagents") {
-		t.Errorf("top-level init summary does not match the current scaffold:\n%s", manual)
+	if strings.Contains(manual, "scaffold the queue, hooks, skills, subagents") ||
+		!strings.Contains(manual, "Shared instructions and skills for all your AI agents.") {
+		t.Errorf("the init page does not match the current scaffold:\n%s", manual)
 	}
 	if site := surfaces["site docs"]; !strings.Contains(site, "commits no starter subagents") ||
 		strings.Contains(site, "scaffolds two starter subagents") {
@@ -237,13 +338,17 @@ func TestHelpRequestedStopsAtDashDash(t *testing.T) {
 	}
 }
 
-// A newcomer with no agent signed in gets the day-one FIRST RUN hint; once signed in, it's gone.
+// A newcomer with no usable account gets the GET STARTED block; once signed in, it's gone.
+// Its exact copy is pinned by TestApprovedMainMenu.
 func TestHelpFirstRunHint(t *testing.T) {
 	fresh := &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir(), BoxHome: t.TempDir()}
 	if anyAgentSignedIn(fresh) {
 		t.Fatal("a fresh temp config must report no signed-in agent")
 	}
-	if !strings.Contains(helpText(fresh), "FIRST RUN") {
-		t.Error("help with no signed-in agent should show the FIRST RUN hint")
+	if !strings.Contains(helpText(fresh), "GET STARTED") {
+		t.Error("help with no signed-in agent should show the GET STARTED block")
+	}
+	if strings.Contains(helpText(signedInConfig(t)), "GET STARTED") {
+		t.Error("a signed-in user should not be told to get started")
 	}
 }

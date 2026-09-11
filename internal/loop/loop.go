@@ -52,7 +52,7 @@ func loopInterruptInfo(msg string) {
 	if !ui.LiveActive() {
 		fmt.Fprintln(os.Stderr)
 	}
-	ui.Info("%s", msg)
+	ui.Note("%s", msg)
 }
 
 type loopTaskLimit struct {
@@ -178,7 +178,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	ui.Info("loop config: %s", cfgSnap.State())
+	ui.Note("loop config: %s", cfgSnap.State())
 	// loop.yaml `mcp: false` runs EVERY stage's box without the shared MCP config — the schemas
 	// ride at the front of each model request, so a drain that doesn't need those tools shouldn't
 	// pay for them each iteration. Sitting here (not cmdLoop) it covers fork loops too. Blanking
@@ -239,7 +239,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// Iterations run Batch (box.Run stays quiet), so surface image staleness once here —
 	// an overnight drain on a month-old box is exactly where a stale nudge earns its line.
 	for _, nudge := range box.StalenessNudges(c.cfg, repo, img) {
-		ui.Info("%s", nudge)
+		ui.Note("%s", nudge)
 	}
 	// Hold a sleep inhibitor for the whole run so an unattended overnight drain isn't stalled by
 	// the machine idle-sleeping (caffeinate on macOS; see armKeepAwake). Released when loop returns.
@@ -400,11 +400,11 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 			prev := rot.Active()
 			if wait, until, limited := rememberPreflightLimit(rot, pfClassification, time.Now()); limited {
 				if wait > 0 {
-					ui.Info("all %d targets are rate limited after pre-flight — waiting for the soonest reset", rot.Len())
+					ui.Note("all %d targets are rate limited after pre-flight — waiting for the soonest reset", rot.Len())
 					sleepForLimit(wait, until, wake)
 					rot.ClearExpired(time.Now())
 				} else {
-					ui.Info("pre-flight target %q rate limited — starting work on %q", prev, rot.Active())
+					ui.Note("pre-flight target %q rate limited — starting work on %q", prev, rot.Active())
 				}
 			}
 		}
@@ -421,12 +421,12 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		stopHint = "Ctrl-C to stop after this task, again to stop now"
 	}
 	if len(custom) == 0 {
-		ui.Info("starting unattended loop on %s with %s — %d/%d done (%s)", label, agent, c0.Done, c0.Total(), stopHint)
+		ui.Note("starting unattended loop on %s with %s — %d/%d done (%s)", label, agent, c0.Done, c0.Total(), stopHint)
 	} else {
-		ui.Info("starting unattended loop on %s — %d/%d done (%s)", label, c0.Done, c0.Total(), stopHint)
+		ui.Note("starting unattended loop on %s — %d/%d done (%s)", label, c0.Done, c0.Total(), stopHint)
 	}
 	if rot.Rotates() {
-		ui.Info("rotating %d targets on rate limit: %s", rot.Len(), strings.Join(rot.Members(), ", "))
+		ui.Note("rotating %d targets on rate limit: %s", rot.Len(), strings.Join(rot.Members(), ", "))
 	}
 	// An in_progress task whose commit is already in history means a previous run died between the
 	// commit and the folder move. Say so before working it: the resume recipe only stays safe while
@@ -458,7 +458,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	}
 	reviewBaseline := reviewBaselineAfterVerdict(doneBaseline, nil, nil, recoveredReviewCompletions)
 	if len(recoveredReviewCompletions) > 0 {
-		ui.Info("recovered concurrent host completion during an interrupted review: %s — carrying it into signoff", strings.Join(recoveredReviewCompletions, ", "))
+		ui.Note("recovered concurrent host completion during an interrupted review: %s — carrying it into signoff", strings.Join(recoveredReviewCompletions, ", "))
 	}
 	// Loop-until-accepted: drain the work queue, run the signoff pass, and if it reopened
 	// anything, drain and sign off AGAIN — repeating until a signoff reopens nothing (accepted) or
@@ -502,7 +502,7 @@ reviewAgain:
 			if assignment.Outcome == tasks.AssignmentUnavailable {
 				// Foreign-held work is not a drained queue. Do not sign off a batch another live
 				// controller still owns; its kernel lock will make the task adoptable on death.
-				ui.Info("no task lease available — %s; stopping without signoff", assignment.Busy)
+				ui.Note("no task lease available — %s; stopping without signoff", assignment.Busy)
 				return 0, nil
 			}
 			if assignment.Outcome == tasks.AssignmentDrained {
@@ -520,7 +520,7 @@ reviewAgain:
 			if ui.IsTerminal(os.Stderr) {
 				banner = progressBannerWidth(n, counts, active, ui.TermWidth(os.Stderr)-1-len([]rune("coop: "+owner)))
 			}
-			ui.Info("%s%s", banner, owner)
+			ui.Note("%s%s", banner, owner)
 			// Informed resume: a lease carrying host audit-reopen authority gets the audit-rework
 			// preamble (verify the finding; zero-commit re-close or a real tree change — never a
 			// Coop-Recovery receipt); otherwise a landed Coop-Task commit (a crash after commit before
@@ -838,7 +838,7 @@ reviewAgain:
 				if signed, serr := c.host.signUnpushed(repo, iterHead); serr != nil {
 					ui.Warn("could not sign this cycle's commits: %v — left unsigned", serr)
 				} else if signed > 0 {
-					ui.Info("signed %s with your host key", ui.Count(signed, "commit"))
+					ui.Note("signed %s with your host key", ui.Count(signed, "commit"))
 				}
 				headAfter = gitOut(repo, "rev-parse", "HEAD")
 			}
@@ -858,9 +858,9 @@ reviewAgain:
 					runAudit := shouldRunBetweenAudit(action == actContinue, auditAvailable, protectedAudit)
 					if runAudit {
 						if protectedAudit && !betweenEnabled {
-							ui.Info("protected-change audit — reviewing %s", strings.Join(finishedIDs, ", "))
+							ui.Note("protected-change audit — reviewing %s", strings.Join(finishedIDs, ", "))
 						} else {
-							ui.Info("between-tasks audit — reviewing %s", strings.Join(finishedIDs, ", "))
+							ui.Note("between-tasks audit — reviewing %s", strings.Join(finishedIDs, ", "))
 						}
 						prompt := loopBetweenPrompt(repo, queues, substituteLoopVars(setPrompt, stepChanges, health), finishedDirs, auditGateFiles) + stepChanges.reviewBlock(health)
 						// An ordinary configured audit preserves its historical warn-and-continue behavior.
@@ -908,7 +908,7 @@ reviewAgain:
 			// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
 			// (same repo/image) to inspect, then retry — instead of the auto-retry/stop.
 			if (action == actRetry || action == actStop) && debugOnFail && ui.IsTerminal(os.Stdin) {
-				ui.Info("iteration failed — opening a debug shell in the box (exit it to retry; Ctrl-C to stop)")
+				ui.Note("iteration failed — opening a debug shell in the box (exit it to retry; Ctrl-C to stop)")
 				c.debugShell(repo, img, agent, spec.ForkName)
 				fails = 0 // the developer intervened; don't count this toward the stop cap
 				continue
@@ -938,13 +938,13 @@ reviewAgain:
 				}
 			case actRetryNow:
 				if wait > 0 {
-					ui.Info("iteration reached model output limit (%d/%d) — resuming in %s", retries, maxOutputRetries, wait)
+					ui.Note("iteration reached model output limit (%d/%d) — resuming in %s", retries, maxOutputRetries, wait)
 					ladder.SleepOrWake(wait, wake)
 				} else {
-					ui.Info("iteration reached model output limit — resuming immediately")
+					ui.Note("iteration reached model output limit — resuming immediately")
 				}
 			case actRetry:
-				ui.Info("iteration failed (%d/%d) — retrying in 10s", fails, maxLoopFailures)
+				ui.Note("iteration failed (%d/%d) — retrying in 10s", fails, maxLoopFailures)
 				ladder.SleepOrWake(10*time.Second, wake)
 			case actStop:
 				if waits > maxLimitWaits {
@@ -1003,10 +1003,10 @@ reviewAgain:
 		}
 		subjects := newlyFinished(reviewBaseline, doneNow)
 		if len(subjects) == 0 {
-			ui.Info("signoff — nothing newly completed to review, skipping")
+			ui.Note("signoff — nothing newly completed to review, skipping")
 			break
 		}
-		ui.Info("queue empty — running signoff (round %d/%d)", signoffRound, maxSignoffRounds)
+		ui.Note("queue empty — running signoff (round %d/%d)", signoffRound, maxSignoffRounds)
 		// The signoff runs on signoff.agent's OWN target — a stronger, usually different-vendor model
 		// reviews the work loop's output — and fails CLOSED: if it can't run after retries, stop loudly
 		// rather than let "nothing reopened" read as an accepting signoff.
@@ -1066,7 +1066,7 @@ reviewAgain:
 		reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, subjects, reopenedIDs, soRun.concurrent)
 		switch signoffRoundOutcome(signoffRound, maxSignoffRounds, len(reopenedIDs) > 0) {
 		case signoffContinue:
-			ui.Info("signoff reopened %s — draining again", ui.Count(len(reopenedIDs), "task"))
+			ui.Note("signoff reopened %s — draining again", ui.Count(len(reopenedIDs), "task"))
 			continue
 		case signoffAccepted:
 			doneNow, err := doneTaskDirs(hosts)
@@ -1074,14 +1074,14 @@ reviewAgain:
 				return 1, err
 			}
 			if pending := taskIDsOf(newlyFinished(reviewBaseline, doneNow)); len(pending) > 0 {
-				ui.Info("signoff passed, but a parallel session completed %s during the round — running another signoff round to review it", ui.Count(len(pending), "task"))
+				ui.Note("signoff passed, but a parallel session completed %s during the round — running another signoff round to review it", ui.Count(len(pending), "task"))
 				signoffRound = 0
 				continue
 			}
 		case signoffCapReached:
 			// The work loop couldn't get these tasks to a state the signoff accepts within the cap —
 			// park them for a human rather than spin or claim a false "done" (exit 3 via loopExitCode).
-			ui.Info("signoff still reopening after %d rounds — blocking %s for a human", maxSignoffRounds, ui.Count(len(reopenedIDs), "task"))
+			ui.Note("signoff still reopening after %d rounds — blocking %s for a human", maxSignoffRounds, ui.Count(len(reopenedIDs), "task"))
 			if err := blockReopenedTasks(hosts, reopenedIDs, maxSignoffRounds); err != nil {
 				return 3, err
 			}
@@ -1090,7 +1090,7 @@ reviewAgain:
 				return 1, err
 			}
 			if pending := taskIDsOf(newlyFinished(reviewBaseline, doneNow)); len(pending) > 0 {
-				ui.Info("blocked the repeatedly reopened work; a parallel session also completed %s — running a fresh signoff round for it", ui.Count(len(pending), "task"))
+				ui.Note("blocked the repeatedly reopened work; a parallel session also completed %s — running a fresh signoff round for it", ui.Count(len(pending), "task"))
 				signoffRound = 0
 				continue
 			}
@@ -1107,9 +1107,9 @@ reviewAgain:
 	if verifyEnabled && !softStop.Load() && iterCtx.Err() == nil {
 		cs := loopChanges(repo, loopStartHead, gitOut(repo, "rev-parse", "HEAD"))
 		if cs.empty() {
-			ui.Info("verify pass — nothing changed this run, skipping")
+			ui.Note("verify pass — nothing changed this run, skipping")
 		} else {
-			ui.Info("verify pass — e2e the affected features (%s)", strings.Join(cs.subsystems, ", "))
+			ui.Note("verify pass — e2e the affected features (%s)", strings.Join(cs.subsystems, ", "))
 			vPrompt := substituteLoopVars(lc.Verify.Prompt, cs, health) + cs.reviewBlock(health) +
 				"\n\n" + auditEvidencePrompt + "\n\n" + reviewContextFooter(repo, queues)
 			verifyIDs, err := completedReviewSubjects(hosts, completedThisRun)
@@ -1148,7 +1148,7 @@ reviewAgain:
 				return 1, err
 			}
 			if pending := taskIDsOf(newlyFinished(reviewBaseline, doneNow)); len(pending) > 0 {
-				ui.Info("verify observed concurrent host completion of %s — returning to signoff before exit", strings.Join(pending, ", "))
+				ui.Note("verify observed concurrent host completion of %s — returning to signoff before exit", strings.Join(pending, ", "))
 				goto reviewAgain
 			}
 		}
@@ -1160,7 +1160,7 @@ reviewAgain:
 		if signed, serr := c.host.signUnpushed(repo, loopStartHead); serr != nil {
 			ui.Warn("end-of-run signing sweep failed: %v — some commits may be unsigned (run `coop sign`)", serr)
 		} else if signed > 0 {
-			ui.Info("signed %s with your host key", ui.Count(signed, "commit"))
+			ui.Note("signed %s with your host key", ui.Count(signed, "commit"))
 		}
 	}
 	cf, _, err := tasks.QueueProgress(hosts)
@@ -1267,20 +1267,20 @@ func (c *Control) advanceStall(repo string, hosts []string, prevHead string, set
 // process is gone — both make work actionable again, so both run before the loop decides whether
 // there is anything to do.
 func builtinPreflight(hosts []string) error {
-	ui.Info("pre-flight: resolving answered blockers")
+	ui.Note("pre-flight: resolving answered blockers")
 	ids, err := tasks.UnblockResolved(hosts)
 	if err != nil {
 		return err
 	}
 	if len(ids) > 0 {
-		ui.Info("pre-flight: unblocked %s — resolution filled in", strings.Join(ids, ", "))
+		ui.Note("pre-flight: unblocked %s — resolution filled in", strings.Join(ids, ", "))
 	}
 	released, err := tasks.ReleaseGoneOwners(hosts)
 	if err != nil {
 		return err
 	}
 	if len(released) > 0 {
-		ui.Info("pre-flight: released %s — the claiming process is gone", strings.Join(released, ", "))
+		ui.Note("pre-flight: released %s — the claiming process is gone", strings.Join(released, ", "))
 	}
 	return nil
 }

@@ -1,0 +1,4 @@
+
+✗ Unknown command "coop tasks watxh"
+
+  Did you mean: coop help tasks watch

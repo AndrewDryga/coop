@@ -90,12 +90,12 @@ func filteredPublish(cfg *config.Config, spec RunSpec, free func(int) bool) (opt
 		host := project.HostPort(spec.Repo, port)
 		env = append(env, "-e", fmt.Sprintf("COOP_SERVE_URL_%d=http://localhost:%d", port, host))
 		if !free(host) {
-			fmt.Fprintf(os.Stderr, "coop: host port %d (for :%d) is in use — not publishing this box\n", host, port)
+			fmt.Fprintf(os.Stderr, "Host port %d (for :%d) is in use — not publishing this box\n", host, port)
 			continue
 		}
 		options = append(options, "-p", fmt.Sprintf("127.0.0.1:%d:%d", host, port))
 		published = append(published, port)
-		fmt.Fprintf(os.Stderr, "coop: serving box :%d at http://localhost:%d\n", port, host)
+		fmt.Fprintf(os.Stderr, "Serving box :%d at http://localhost:%d\n", port, host)
 	}
 	return options, published, env
 }

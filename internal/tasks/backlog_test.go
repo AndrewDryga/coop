@@ -274,7 +274,7 @@ func TestBacklogBareLeadingFlagRoutesToLs(t *testing.T) {
 	}
 
 	_, err := CmdBacklog(&config.Config{RepoOverride: repo, TasksFiles: []string{TasksRoot}}, []string{"-x"})
-	if err == nil || !strings.Contains(err.Error(), "backlog ls") || !strings.Contains(err.Error(), "unknown flag") {
+	if err == nil || !strings.Contains(err.Error(), `Unknown option "-x" for "coop backlog ls"`) {
 		t.Fatalf("coop backlog -x = %v, want ls's own unknown-flag error (routed to ls, not the unknown-subcommand path)", err)
 	}
 

@@ -3067,9 +3067,9 @@ func skipOwnedCandidate(root, id string, noted map[string]bool) (bool, error) {
 	if !noted[id] {
 		noted[id] = true
 		if rec.Kind == TaskOwnerFork {
-			ui.Info("%s is %s — the local loop will not adopt it", id, TaskOwnerLabel(rec))
+			ui.Note("%s is %s — the local loop will not adopt it", id, TaskOwnerLabel(rec))
 		} else {
-			ui.Info("%s is %s — the loop will not adopt it; release it first: coop tasks release %s",
+			ui.Note("%s is %s — the loop will not adopt it; release it first: coop tasks release %s",
 				id, TaskOwnerLabel(rec), id)
 		}
 	}

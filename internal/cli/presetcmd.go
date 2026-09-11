@@ -27,7 +27,7 @@ func (a *app) cmdPresets(args []string) (int, error) {
 		return a.presetsInit(repo, args[1:])
 	}
 	if len(args) > 1 {
-		return 2, fmt.Errorf("unexpected argument %q (usage: coop presets [init] [<preset>])", args[1])
+		return 2, ui.UnexpectedArgument(args[1], "coop presets", "coop presets [init] [<preset>]")
 	}
 	if len(args) == 1 {
 		if args[0] == "ls" { // rule: `ls` must lead somewhere useful, not read as a preset name
@@ -81,7 +81,7 @@ func (a *app) presetsInit(repo string, args []string) (int, error) {
 	name := "frontier"
 	switch {
 	case len(args) > 1:
-		return 2, fmt.Errorf("unexpected argument %q (usage: coop presets init [<preset>])", args[1])
+		return 2, ui.UnexpectedArgument(args[1], "coop presets init", "coop presets init [<preset>]")
 	case len(args) == 1:
 		name = args[0]
 	}

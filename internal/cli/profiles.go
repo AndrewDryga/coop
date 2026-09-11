@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -213,13 +212,13 @@ func (a *app) profilePath(agent, profile string, rest []string) (int, error) {
 	switch rest[0] {
 	case "default":
 		if len(rest) > 1 {
-			return 2, fmt.Errorf("unexpected argument %q (usage: coop credentials %s %s default)", rest[1], agent, profile)
+			return 2, ui.UnexpectedArgument(rest[1], "coop credentials", fmt.Sprintf("coop credentials %s %s default", agent, profile))
 		}
 		return a.setProfileDefault([]string{agent, profile})
 	case "rm":
 		for _, x := range rest[1:] { // only --yes may follow rm here; anything else is a mistake
 			if x != "-y" && x != "--yes" {
-				return 2, fmt.Errorf("unexpected argument %q (usage: coop credentials %s %s rm [--yes])", x, agent, profile)
+				return 2, ui.UnexpectedArgument(x, "coop credentials", fmt.Sprintf("coop credentials %s %s rm [--yes]", agent, profile))
 			}
 		}
 		return a.removeProfile(append([]string{agent, profile}, rest[1:]...))
@@ -280,7 +279,7 @@ func (a *app) showProfile(agent, profile string) (int, error) {
 // no profile given uses it. It rejects an unknown agent or a profile that doesn't exist.
 func (a *app) setProfileDefault(args []string) (int, error) {
 	if len(args) != 2 {
-		return 2, errors.New("usage: coop credentials <agent> <credential> default")
+		return 2, ui.MissingArgument("agent and credential", "coop credentials", "coop credentials <agent> <credential> default")
 	}
 	agent, name := args[0], args[1]
 	if _, ok := agents.Get(agent); !ok {
@@ -312,7 +311,7 @@ func (a *app) removeProfile(args []string) (int, error) {
 		}
 	}
 	if len(pos) != 2 {
-		return 2, errors.New("usage: coop credentials <agent> <credential> rm [--yes]")
+		return 2, ui.MissingArgument("agent and credential", "coop credentials", "coop credentials <agent> <credential> rm [--yes]")
 	}
 	agent, name := pos[0], pos[1]
 	if _, ok := agents.Get(agent); !ok {

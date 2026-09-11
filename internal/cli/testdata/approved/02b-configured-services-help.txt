@@ -1,0 +1,67 @@
+coop v9.0.0-187-g1176bf4-dirty — run a coding agent all night long in a box it can't escape.
+
+Usage: coop <command> [<args>...]
+
+THE BOX — an isolated environment for running commands in this project
+  coop run -- <command>             run a command in the box
+  coop shell                        open a shell in the box
+
+RUN AGENTS — work with a coding agent or a team of agents
+  coop <agent>                      start Claude, Codex, Gemini, or Grok
+  coop <preset>                     run agents together using a preset
+  coop <target> --peer <target>...  start with read-only peer agents
+
+ACCOUNTS, MODELS & PRESETS — choose the accounts and models your agents use
+  coop login <agent>                sign in to an agent
+  coop credentials [<agent>]        show your signed in accounts
+  coop models [<agent>]             show available models
+  coop presets [<name>]             show your presets
+
+TASKS — each task is a folder in .agent/tasks/
+  coop tasks ls                     show tasks grouped by status
+  coop tasks watch [--json]         follow task progress
+  coop tasks add "<title>"          add a task
+  coop tasks decisions              show tasks waiting for your decision
+  coop backlog                      save ideas for later
+  coop context [<path>...]          show which instructions and docs apply to selected files
+
+LOOPS — work through tasks automatically; configure the steps in .agent/loop.yaml
+  coop loop [<agent|preset>]        work through the project's task queue
+
+FORKS — work in separate project copies, then review and merge the changes
+  coop fork <name> <agent|preset>   work in a separate copy of this project
+  coop fork ls                      show this project's forks
+  coop fork review <name>           review a fork's changes
+  coop fork merge <name>            merge a fork's changes into this branch
+  coop fork merge --all             merge all forks into this branch
+  coop fork logs [<name>]           show loop logs for one or all forks
+  coop fork rm <name>               delete a fork
+  coop fork stop <name>             stop a fork's background loop
+  coop fork open <name>             open a fork in your editor
+  coop fork path <name>             print a fork's directory path
+
+SERVICES — postgres and redis, defined in .agent/compose.yml
+  coop init --services              choose services to add
+  coop up                           start services from .agent/compose.yml
+  coop down                         stop services from .agent/compose.yml
+
+SECURITY & ISOLATION — control access, check isolation, and protect secrets
+  coop doctor                       check that the box's isolation works
+  coop net                          show and manage this project's network access
+  coop check-secrets                check project files for exposed secrets
+  coop sign                         sign unpushed commits with your host key
+
+SETUP & MAINTENANCE — set up projects and manage Coop on this machine
+  coop init                         set up Coop in this project
+  coop build                        rebuild the box
+  coop update                       update Coop and the box
+  coop version                      show the installed Coop version
+
+INTEGRATIONS — use Coop with other tools and your shell
+  coop help acp                     connect Coop to your editor
+  coop help sessions                let other applications start and manage agents
+  coop help prompt                  add Coop status to your shell prompt or tmux
+  coop help completion              enable tab completion in Bash or Zsh
+
+Help and examples: coop help <command>
+Documentation: https://coop.dryga.com

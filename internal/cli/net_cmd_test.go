@@ -424,10 +424,11 @@ func TestInspectRefusalsCoalesceAndKeepTheExplainAction(t *testing.T) {
 
 // Acceptance: the interactive box's inline result and standalone inspect are
 // ONE projection — the same traffic and exception body from the same
-// snapshot, differing only by coop's anchor on the heading. Allowed traffic
-// leads, the refusal rows follow with the hostname-based explain action, and
-// the footer is the same exact line.
-func TestInlineRunViewIsTheStandaloneBodyUnderCoopsAnchor(t *testing.T) {
+// snapshot, byte for byte: human output carries no tool prefix after agent
+// output any more than anywhere else. Allowed traffic leads, the refusal rows
+// follow with the hostname-based explain action, and the footer is the same
+// exact line.
+func TestInlineRunViewIsTheStandaloneBody(t *testing.T) {
 	port := 443
 	inspection := netTestClean()
 	inspection.Observed.Denials = []networkview.Denial{
@@ -435,15 +436,15 @@ func TestInlineRunViewIsTheStandaloneBodyUnderCoopsAnchor(t *testing.T) {
 		{ID: "d2", Source: "guard", Kind: "tls_denied", Reason: "unapproved_name", Name: "unapproved.example.org", Port: &port},
 	}
 	standalone := renderNetRun(networkreport.View{ID: netTestRun}, inspection)
-	inline := renderNetRun(networkreport.View{ID: netTestRun, Prefix: "coop: "}, inspection)
-	if inline != "coop: "+standalone {
-		t.Fatalf("inline view:\n%s\nis not the standalone body under coop's anchor:\n%s", inline, standalone)
+	inline := renderNetRun(networkreport.View{ID: netTestRun}, inspection)
+	if inline != standalone {
+		t.Fatalf("inline view:\n%s\nis not the standalone body:\n%s", inline, standalone)
 	}
 	allowed, blocked := strings.Index(inline, "  Allowed   1 connection"), strings.Index(inline, "\n⚠ 1 destination was blocked\n")
 	if allowed < 0 || blocked < allowed {
 		t.Fatalf("allowed traffic must lead and the refusal follow:\n%s", inline)
 	}
-	for _, want := range []string{"coop: Network run " + netTestRun + "\n", "    example.com:443 · TLS\n",
+	for _, want := range []string{"Network run " + netTestRun + "\n", "    example.com:443 · TLS\n",
 		"  unapproved.example.org:443 · TLS ×2\n", "  coop net explain unapproved.example.org --run e644f07a   # why\n",
 		"\nFull details: coop net inspect " + netTestRun + " --json\n"} {
 		if !strings.Contains(inline, want) {

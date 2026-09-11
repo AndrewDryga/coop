@@ -1,0 +1,5 @@
+
+✗ Missing title for "coop tasks add"
+
+  Usage: coop tasks add "<title>"
+  Help:  coop help tasks add

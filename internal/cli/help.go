@@ -10,6 +10,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -46,143 +47,162 @@ func groupHelp(cmd string) (int, error) {
 // and the README, so this stays a clean, scannable overview.
 func helpText(cfg *config.Config) string { return renderHelp(cfg, false) }
 
-// renderHelp renders the top-level command reference. ref=true is the DETERMINISTIC reference form
-// for docs/`coop help --all`: forced no-color, no state-aware FIRST RUN hint, and the canonical
-// (compose-less) up/down rows — so the output is identical on every machine (gendocs -check depends
-// on it). ref=false is the live, state-aware terminal view.
+// renderHelp renders the top-level command menu. ref=true is the DETERMINISTIC reference form for
+// docs/`coop help --all`: forced no-color, no state-aware GET STARTED block, and the generic
+// service rows with no per-project names or dimming — so the output is identical on every machine
+// (gendocs -check depends on it). ref=false is the live, state-aware terminal view.
 func renderHelp(cfg *config.Config, ref bool) string {
-	var b strings.Builder
 	p := ui.For(os.Stdout) // help is a stdout view — gate color on stdout so a pipe stays clean
 	if ref {
 		p = ui.Palette{} // forced plain: the reference must be byte-identical regardless of the terminal
 	}
-	group := func(label string) { fmt.Fprintf(&b, "\n%s\n", p.Bold(label)) }
+	return renderMenu(p, cfg, ref)
+}
+
+// renderMenu is renderHelp with its palette supplied, so a test can prove both what a terminal
+// shows (the dimmed rows) and what a pipe does (the same columns, no escapes).
+func renderMenu(p ui.Palette, cfg *config.Config, ref bool) string {
+	var b strings.Builder
+	// A group heading is an UPPERCASE name plus one short explanation after an em dash; only the
+	// name is bold, so the explanation reads as ordinary prose. Where it helps a newcomer find the
+	// feature, the explanation NAMES the file or directory the commands act on.
+	group := func(name, about string) { fmt.Fprintf(&b, "\n%s — %s\n", p.Bold(name), about) }
 	// row keeps a column gap even when a command is long, so a description never glues to it.
 	// Width is counted in runes, not bytes, so a command with a "…" doesn't shift its column.
-	row := func(cmd, desc string) {
+	pad := func(cmd string) string {
 		gap := 34 - utf8.RuneCountInString(cmd)
 		if gap < 2 {
 			gap = 2
 		}
-		fmt.Fprintf(&b, "  %s%s%s\n", cmd, strings.Repeat(" ", gap), desc)
+		return cmd + strings.Repeat(" ", gap)
 	}
-	// dimRow is row for a command not available in this repo right now (e.g. `coop up` with no
-	// .agent/compose.yml) — the whole line recedes (gap computed on plain text, then dimmed, so the
-	// command column still aligns). Dim is a no-op when color is off, so a pipe keeps the text.
-	dimRow := func(cmd, desc string) {
-		gap := 34 - utf8.RuneCountInString(cmd)
-		if gap < 2 {
-			gap = 2
-		}
-		fmt.Fprintf(&b, "  %s\n", p.Dim(cmd+strings.Repeat(" ", gap)+desc))
-	}
+	row := func(cmd, desc string) { fmt.Fprintf(&b, "  %s%s\n", pad(cmd), desc) }
+	// dimRow is row for a command with nothing to act on in this project yet (`coop up` with no
+	// services): the WHOLE line recedes, so the available next action beside it stands out. The gap
+	// is computed on plain text and dimmed after, so the column still aligns — and Dim is a no-op
+	// when color is off, so a pipe keeps the same text.
+	dimRow := func(cmd, desc string) { fmt.Fprintf(&b, "  %s\n", p.Dim(pad(cmd)+desc)) }
 
+	providers := make([]string, 0, len(agents.Names()))
+	for _, name := range agents.Names() {
+		providers = append(providers, titleName(name))
+	}
 	if ref { // the reference omits the build version — its bytes must not depend on the tag/commit
 		fmt.Fprintf(&b, "%s — run a coding agent all night long in a box it can't escape.\n", p.Bold("coop"))
 	} else {
 		fmt.Fprintf(&b, "%s %s — run a coding agent all night long in a box it can't escape.\n", p.Bold("coop"), resolveVersion())
 	}
-	// One blank line separates who this is from the usage contract; the FIRST RUN
-	// line and every group below keep their own spacing.
+	// One blank line separates who this is from the usage contract; the GET STARTED
+	// block and every group below keep their own spacing.
 	fmt.Fprint(&b, "\nUsage: coop <command> [<args>...]\n")
-	// A newcomer (no agent signed in) gets the day-one order up front. Pure-local check (no runtime),
-	// so `coop help` still works before Docker exists — same state-aware style as the up/down rows below.
+	// A newcomer with no usable account gets the two commands that start the day, in order. Pure-local
+	// check (no runtime), so `coop help` still works before Docker exists — same state-aware style as
+	// the service rows below.
 	if !ref && !anyAgentSignedIn(cfg) {
-		fmt.Fprintf(&b, "\n%s  set up in order:  coop build → coop login <agent> → coop doctor\n", p.Bold("FIRST RUN"))
+		group("GET STARTED", "sign in, then start an agent")
+		row("coop login <agent>", "sign in to "+ui.List(providers, "or"))
+		row("coop <"+strings.Join(agents.Names(), "|")+">", "start your agent")
 	}
 
-	group("AGENTS")
-	row("coop <target>", "agent target in a box")
-	row("coop <preset>", "run a preset interactively (its lead leads)")
-	row("coop acp <target|preset>", "serve as an editor agent (ACP; e.g. Zed)")
+	group("THE BOX", "an isolated environment for running commands in this project")
+	row("coop run -- <command>", "run a command in the box")
+	row("coop shell", "open a shell in the box")
+
+	group("RUN AGENTS", "work with a coding agent or a team of agents")
+	row("coop <agent>", "start "+ui.List(providers, "or"))
+	row("coop <preset>", "run agents together using a preset")
 	row("coop <target> --peer <target>...", "start with read-only peer agents")
-	row("coop <target> --readonly", "read the repo, write only to scratch")
-	row("coop <target> --bare", "Q&A only: no repo, no context, no tools")
 
-	group("CREDENTIALS, MODELS & PRESETS")
-	row("coop login <agent>", "sign in an agent (a subscription)")
-	row("coop credentials [<agent>]", "the accounts Coop can use")
-	row("coop models [<agent>]", "the models available to each agent")
-	row("coop presets [<preset>]", "orchestration recipes (lead + roles)")
+	group("ACCOUNTS, MODELS & PRESETS", "choose the accounts and models your agents use")
+	row("coop login <agent>", "sign in to an agent")
+	row("coop credentials [<agent>]", "show your signed in accounts")
+	row("coop models [<agent>]", "show available models")
+	row("coop presets [<name>]", "show your presets")
 
-	group("THE BOX")
-	row("coop run -- <cmd...>", "run a raw command in the box")
-	row("coop shell", "an interactive shell in the box")
+	group("TASKS", "each task is a folder in .agent/tasks/")
+	row("coop tasks ls", "show tasks grouped by status")
+	row("coop tasks watch [--json]", "follow task progress")
+	row("coop tasks add \"<title>\"", "add a task")
+	row("coop tasks decisions", "show tasks waiting for your decision")
+	row("coop backlog", "save ideas for later")
+	row("coop context [<path>...]", "show which instructions and docs apply to selected files")
 
-	group("FORKS — review and land work like a PR")
-	row("coop fork <name>", "open/re-enter; run a target or preset")
-	row("coop fork ls", "list this repo's forks")
-	row("coop fork review <name>", "show a fork's review dossier + diff")
-	row("coop fork merge <name>", "rebase the fork onto your branch and land it")
-	row("coop fork merge --all", "rebase and land every fork")
-	row("coop fork logs [<name>]", "tail a fork's loop log (no name: every fork)")
-	row("coop fork rm <name>", "discard a fork")
-	row("coop fork stop <name>", "stop a detached loop")
-	row("coop fork open <name>", "open the fork in your editor")
-	row("coop fork path <name>", "print the fork's filesystem path")
+	group("LOOPS", "work through tasks automatically; configure the steps in .agent/loop.yaml")
+	row("coop loop [<agent|preset>]", "work through the project's task queue")
 
-	group("UNATTENDED")
-	row("coop loop [<target|preset>]", "work the queue(s) until done, then sign off")
+	group("FORKS", "work in separate project copies, then review and merge the changes")
+	row("coop fork <name> <agent|preset>", "work in a separate copy of this project")
+	row("coop fork ls", "show this project's forks")
+	row("coop fork review <name>", "review a fork's changes")
+	row("coop fork merge <name>", "merge a fork's changes into this branch")
+	row("coop fork merge --all", "merge all forks into this branch")
+	row("coop fork logs [<name>]", "show loop logs for one or all forks")
+	row("coop fork rm <name>", "delete a fork")
+	row("coop fork stop <name>", "stop a fork's background loop")
+	row("coop fork open <name>", "open a fork in your editor")
+	row("coop fork path <name>", "print a fork's directory path")
 
-	group("TASKS — a folder-per-task queue in .agent/tasks/")
-	row("coop tasks ls", "show the queue, grouped by state")
-	row("coop tasks watch [--json]", "canonical tasks + every sandbox, live")
-	row("coop tasks add \"<title>\"", "add a task (then claim/block/unblock/done)")
-	row("coop tasks decisions", "what's blocked on a decision (-i to answer)")
-	row("coop tasks flags", "tasks that changed what runs on your machine")
-	row("coop context", "compile the docs relevant to touched paths")
-	row("coop backlog", "park unscheduled ideas; promote when ready")
-
-	group("SESSIONS — LOCAL REMOTE-SESSION CONTROLLER")
-	row("coop sessions serve", "run the session controller on Unix")
-	row("coop sessions doctor", "check the session controller Unix socket")
-	row("coop sessions policies", "print trusted policy digests for workers")
-	row("coop sessions compact", "back up and compact turn retry receipts")
-	row("coop worker connect", "outbound worker: join a fleet controller")
-
-	group("SERVICES — the box's .agent/compose.yml sidecars")
-	// `coop up`/`down` act on this repo's .agent/compose.yml — always NAME the file (it's what makes
-	// the rows obvious), listing its real services when present, and dim the pair when there's none to
-	// act on. Repo resolution is best-effort (help runs anywhere; outside a repo, or with no compose).
-	repo, _ := box.ResolveRepo(cfg.RepoOverride)
-	switch {
-	case ref: // the reference form is machine-independent: no per-repo service list
-		row("coop up", "start the .agent/compose.yml services")
-		row("coop down", "stop the .agent/compose.yml services")
-	case len(scaffold.ComposeServiceNames(box.ComposeFile(repo, repo))) > 0:
-		services := scaffold.ComposeServiceNames(box.ComposeFile(repo, repo))
-		row("coop up", "start the .agent/compose.yml services ("+strings.Join(services, ", ")+")")
-		row("coop down", "stop the .agent/compose.yml services")
-	default:
-		dimRow("coop up", "none in .agent/compose.yml yet")
-		dimRow("coop down", "stop the .agent/compose.yml services")
-	}
-
-	group("SAFETY — prove the box holds, catch committed secrets")
-	row("coop doctor", "attack the box, prove isolation holds")
-	row("coop check-secrets", "scan the working tree for committed secrets")
-	row("coop net", "control network access, see what runs reach")
-
-	group("SETUP & MAINTENANCE")
-	row("coop init [--stack asdf]", "scaffold queue, hooks, skills, agent dirs")
-	row("coop build", "build the box image (stable, pinned)")
-	row("coop update", "self-update coop, then rebuild the box")
-	row("coop completion <shell>", "shell tab-completion (bash, zsh)")
-	row("coop sign", "re-sign unpushed commits with your host key")
-	row("coop prompt", "a one-line status for a shell prompt / tmux")
-	row("coop help", "this help")
-	row("coop version", "print the version")
-
-	fmt.Fprint(&b, "\nRun 'coop help <command>' or 'coop <command> --help' for a command's details —\n"+
-		"for an agent (claude/codex/gemini/grok), --help is the agent's own.\n")
-	if ref { // machine-independent footer for the reference/manual (no host-specific paths)
-		fmt.Fprint(&b, "\nConfig  coop.conf (COOP_CONF), or COOP_* env vars\nAuth    the config dir (COOP_CONFIG_DIR)\nDocs    https://coop.dryga.com\n")
+	// The section NAMES this project's services and Compose file, so a newcomer knows what `coop up`
+	// would start and where to add more. With no services to act on, the up/down pair is dimmed and
+	// only the setup row stays bright. Repo resolution is best-effort: help runs anywhere, and an
+	// unreadable configuration keeps the generic explanation rather than claiming there are none.
+	compose, services, known := projectServices(cfg, ref)
+	if len(services) > 0 {
+		group("SERVICES", ui.List(services, "and")+", defined in "+compose)
 	} else {
-		fmt.Fprintf(&b, "\nConfig  %s, or COOP_* env vars\nAuth    %s\nDocs    https://coop.dryga.com\n",
-			tildeify(filepath.Join(cfg.BoxHome, "coop.conf")), tildeify(cfg.ConfigDir))
+		group("SERVICES", "databases and other services defined in "+compose)
 	}
+	row("coop init --services", "choose services to add")
+	serviceRow := row
+	if !ref && known && len(services) == 0 {
+		serviceRow = dimRow
+	}
+	serviceRow("coop up", "start services from "+compose)
+	serviceRow("coop down", "stop services from "+compose)
 
+	group("SECURITY & ISOLATION", "control access, check isolation, and protect secrets")
+	row("coop doctor", "check that the box's isolation works")
+	row("coop net", "show and manage this project's network access")
+	row("coop check-secrets", "check project files for exposed secrets")
+	row("coop sign", "sign unpushed commits with your host key")
+
+	group("SETUP & MAINTENANCE", "set up projects and manage Coop on this machine")
+	row("coop init", "set up Coop in this project")
+	row("coop build", "rebuild the box")
+	row("coop update", "update Coop and the box")
+	row("coop version", "show the installed Coop version")
+
+	group("INTEGRATIONS", "use Coop with other tools and your shell")
+	row("coop help acp", "connect Coop to your editor")
+	row("coop help sessions", "let other applications start and manage agents")
+	row("coop help prompt", "add Coop status to your shell prompt or tmux")
+	row("coop help completion", "enable tab completion in Bash or Zsh")
+
+	// The closing actions belong to no section, so they start at column zero.
+	fmt.Fprint(&b, "\nHelp and examples: coop help <command>\nDocumentation: https://coop.dryga.com\n")
 	return b.String()
+}
+
+// projectServices reads what the SERVICES section may state as fact: this project's Compose path
+// (the configured one, else the default) and the service names declared in it. known=false means
+// coop could not read a service list — no project, or a file it cannot parse — and the section must
+// then keep its generic explanation and undimmed rows rather than treat unknown as "none". The
+// reference form ignores the machine entirely, so its bytes are the same everywhere.
+func projectServices(cfg *config.Config, ref bool) (compose string, services []string, known bool) {
+	if ref {
+		return project.DefaultCompose, nil, false
+	}
+	repo, err := box.ResolveRepo(cfg.RepoOverride)
+	if err != nil {
+		return project.DefaultCompose, nil, false
+	}
+	compose = project.ComposePath(repo)
+	file := box.ComposeFileAt(repo, compose)
+	if file == "" { // no Compose file at all: a project with no services yet
+		return compose, nil, true
+	}
+	names := scaffold.ComposeServiceNames(file)
+	return compose, names, len(names) > 0
 }
 
 // anyAgentSignedIn reports whether any agent has a signed-in default or named credential.
@@ -199,23 +219,55 @@ func anyAgentSignedIn(cfg *config.Config) bool {
 	return false
 }
 
-// RenderManual is the entire CLI reference as ONE deterministic, plain-text document: the reference-
-// form top-level overview, then every command's page in a stable order. It's the single source shared
-// by `coop help --all`, docs/cli.md, and site/llms.txt — so terminal, docs, and the offline reference
-// are provably identical (tools/gendocs -check enforces it). Plain (ui.Palette{}) and state-free, so
-// its bytes never depend on the terminal, the repo's compose file, the config paths, or logins.
+// manualOrder is the order the complete reference presents its pages — the menu's own order, so a
+// reader who scanned the menu finds each page where they expect it: the box, the agents it runs,
+// the accounts and models they use, the work queues, loops and forks, this project's services, the
+// security checks, setup, and the integrations last. Every public command is here; one that isn't
+// is drift TestManualCoversEveryCommand catches. Presets are resolved BY NAME (`coop help
+// frontier`), never added here: the manual's bytes must not depend on the host.
+var manualOrder = append(append([]string{"run", "shell"}, agents.Names()...),
+	"login", "credentials", "models", "presets",
+	"tasks", "backlog", "context", "loop", "fork",
+	"up", "down",
+	"doctor", "net", "check-secrets", "sign",
+	"init", "build", "update", "version",
+	"acp", "sessions", "worker", "prompt", "completion")
+
+// manualPage is one command's page for the manual, in plain text: run and fork have their own
+// renderers, a registered agent's page is generated from its adapter, and everything else is its
+// commandHelp entry. It returns "" for a command with no page, which the manual refuses.
+func manualPage(name string) string {
+	switch {
+	case name == "run":
+		return runHelp
+	case name == "fork":
+		return forkHelpText(ui.Palette{})
+	case agents.Valid(name):
+		return agentHelp(name)
+	}
+	return commandHelp[name]
+}
+
+// manualSeparator rules off one page from the next in the complete reference.
+var manualSeparator = strings.Repeat("=", 78)
+
+// RenderManual is the entire CLI reference as ONE deterministic, plain-text document: the
+// reference-form menu, then every command's page in manualOrder, each behind the same separator.
+// It's the single source shared by `coop help --all`, docs/cli.md, and site/llms.txt — so terminal,
+// docs, and the offline reference are provably identical (tools/gendocs -check enforces it). Plain
+// (ui.Palette{}) and state-free, so its bytes never depend on the terminal, this project's Compose
+// file, the config paths, or which accounts are signed in. Contributor build/test guidance is NOT
+// here: it lives in README.md, where a contributor looks, not in the user's command reference.
 func RenderManual(cfg *config.Config) string {
 	var b strings.Builder
 	b.WriteString(renderHelp(cfg, true))
-	b.WriteString("\n" + strings.Repeat("=", 78) + "\n\n")
-	b.WriteString(forkHelpText(ui.Palette{}) + "\n")
-	b.WriteString(runHelp + "\n")
-	for _, name := range topLevelCommands { // stable order; fork/run have their own pages above
-		if h := commandHelp[name]; h != "" {
-			b.WriteString("\n" + h + "\n")
+	for _, name := range manualOrder {
+		page := strings.TrimRight(manualPage(name), "\n")
+		if page == "" {
+			continue // covered by TestManualCoversEveryCommand; never a silent hole at runtime
 		}
+		b.WriteString("\n" + manualSeparator + "\n\n" + page + "\n")
 	}
-	b.WriteString("\n" + sourceTreeConformance + "\n")
 	return b.String()
 }
 
@@ -233,19 +285,6 @@ const runHelp = `coop run — run a raw command in the box.
   --readonly and --bare run the command under the restricted profile of the same-named
   agent runs ('coop help claude'): a read-only root, the repo read-only or absent, scratch
   in memory only. The deterministic way to prove what such a run can and cannot write.`
-
-const sourceTreeConformance = `SOURCE-TREE CONFORMANCE
-
-  From a source checkout, 'make check' is the blocking no-credential gate. Focused
-  deterministic targets are 'make provider-scripted-e2e', 'make acp-scripted-e2e',
-  and 'make live-process-control'. Real isolation checks are 'make doctor' and
-  'make review-writes-e2e'.
-
-  'make provider-live-e2e', 'make provider-resume-live-e2e',
-  'make provider-loop-live-e2e', 'make provider-consult-live-e2e', and
-  'make acp-e2e' are opt-in because they use installed CLIs, configured credentials,
-  and real quota. Strict '-all' forms, request counts, summaries, and triage are in
-  README.md under Layout & development.`
 
 // agentHelp is `coop help <agent>` — how to run THAT agent, in its own words: the command a
 // person types, four examples, the coop flags read before a `--`, and where its models and

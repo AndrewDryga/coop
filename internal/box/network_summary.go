@@ -231,7 +231,7 @@ func (f *filteredExecution) printRun() {
 		return
 	}
 	p := ui.For(os.Stderr)
-	view := networkreport.View{ID: f.record.ID, Prefix: p.Bold(p.Cyan("coop:")) + " "}
+	view := networkreport.View{ID: f.record.ID}
 	networkreport.WriteRun(os.Stderr, p, view, inspection)
 }
 

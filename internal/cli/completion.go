@@ -10,6 +10,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // coop completion bash|zsh prints a static script that defers every dynamic value to `coop __complete`
@@ -41,7 +42,7 @@ alias coop='nocorrect coop'
 // cmdCompletion prints the static completion script for a shell.
 func cmdCompletion(args []string) (int, error) {
 	if len(args) != 1 {
-		return 2, fmt.Errorf("usage: coop completion <bash|zsh>")
+		return 2, ui.MissingArgument("shell", "coop completion", "coop completion <bash|zsh>")
 	}
 	switch args[0] {
 	case "bash":
@@ -194,7 +195,7 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		}
 	case "sessions":
 		if len(prev) == 1 {
-			return []string{"serve", "doctor", "policies", "compact"}
+			return sessionCommands
 		}
 		if len(prev) > 1 && prev[1] == "serve" {
 			return []string{"--state", "--policies", "--socket"}

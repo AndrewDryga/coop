@@ -478,7 +478,7 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 		if n := ShadowCount(mounts); sections.on {
 			sections.secrets(n)
 		} else if n > 0 && !spec.Quiet {
-			ui.Info("shadowed %d secret path(s)", n)
+			ui.Note("shadowed %d secret path(s)", n)
 		}
 		// One empty read-only file shadows every secret file, one empty read-only dir every
 		// secret directory — the same decoys the normal launch uses.

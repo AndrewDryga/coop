@@ -1,0 +1,4 @@
+
+✗ Option "--readonly" can only be used once in "coop claude"
+
+  Help: coop help claude

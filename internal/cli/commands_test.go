@@ -22,7 +22,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/liveprocess"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
-	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
@@ -71,10 +70,11 @@ func TestLoopTargetResolution(t *testing.T) {
 		t.Errorf("parseLoopArgs(frontier) = (%+v, has=%v, preset=%q, %v), want a preset name and no target", tg, has, ps, err)
 	}
 	// The model/account ride the target and a preset is the positional, so --model/--credential/
-	// --preset are all unexpected args now.
+	// --preset are options loop does not have — rejected as options, not as stray positionals.
 	for _, bad := range [][]string{{"claude", "--model", "opus"}, {"claude", "--credential", "work"}, {"claude", "--preset", "frontier"}} {
-		if _, _, _, _, _, _, _, err := parseLoopArgs(bad, false); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
-			t.Errorf("parseLoopArgs(%v) should be an unexpected argument, got %v", bad, err)
+		_, _, _, _, _, _, _, err := parseLoopArgs(bad, false)
+		if err == nil || !strings.Contains(err.Error(), `for "coop loop"`) || !strings.Contains(err.Error(), "Unknown option") {
+			t.Errorf("parseLoopArgs(%v) should be an unknown option for coop loop, got %v", bad, err)
 		}
 	}
 }
@@ -675,8 +675,8 @@ func TestCmdLoginTarget(t *testing.T) {
 	if code, err := a.cmdLogin([]string{"claude@work"}); code != 2 || err == nil || !strings.Contains(err.Error(), "interactive terminal") {
 		t.Errorf("cmdLogin(claude@work) = (%d, %v), want it to parse and hit the TTY check", code, err)
 	}
-	if _, err := a.cmdLogin([]string{"claude", "--credential", "work"}); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
-		t.Errorf("cmdLogin --credential must be an unexpected argument, got %v", err)
+	if _, err := a.cmdLogin([]string{"claude", "--credential", "work"}); err == nil || !strings.Contains(err.Error(), `Unknown option "--credential" for "coop login"`) {
+		t.Errorf("cmdLogin --credential must be an unknown option, got %v", err)
 	}
 	if _, err := a.cmdLogin([]string{"claude:opus"}); err == nil || !strings.Contains(err.Error(), "no model") {
 		t.Errorf("cmdLogin claude:opus must reject the model, got %v", err)
@@ -763,35 +763,37 @@ func TestACPRequiresAnExplicitInitialTarget(t *testing.T) {
 
 func TestParseExplicitList(t *testing.T) {
 	cases := []struct {
-		name           string
-		flag           string
-		in             string
-		valid          []string
-		sentinel       string
-		sentinelValues []string
-		want           []string
-		wantErr        string
+		name    string
+		option  listOption
+		in      string
+		want    []string
+		wantErr string
 	}{
-		{name: "services none", flag: "--services", in: "none", valid: scaffold.ComposeServices, sentinel: "none"},
-		{name: "services normalized and de-duplicated", flag: "--services", in: "Redis, POSTGRES redis", valid: scaffold.ComposeServices, sentinel: "none", want: []string{"redis", "postgres"}},
-		{name: "unknown service", flag: "--services", in: "postgres,mongo", valid: scaffold.ComposeServices, sentinel: "none", wantErr: `unknown value "mongo"`},
-		{name: "none is standalone", flag: "--services", in: "postgres,none", valid: scaffold.ComposeServices, sentinel: "none", wantErr: `"none" must be used alone`},
-		{name: "agents all", flag: "--agents", in: "ALL", valid: scaffoldableAgents, sentinel: "all", sentinelValues: scaffoldableAgents, want: scaffoldableAgents},
-		{name: "agents normalized and de-duplicated", flag: "--agents", in: "Codex claude,codex", valid: scaffoldableAgents, sentinel: "all", sentinelValues: scaffoldableAgents, want: []string{"codex", "claude"}},
-		{name: "unknown agent", flag: "--agents", in: "claude,grok", valid: scaffoldableAgents, sentinel: "all", sentinelValues: scaffoldableAgents, wantErr: `unknown value "grok"`},
-		{name: "all is standalone", flag: "--agents", in: "all,codex", valid: scaffoldableAgents, sentinel: "all", sentinelValues: scaffoldableAgents, wantErr: `"all" must be used alone`},
+		{name: "services none", option: initServices, in: "none"},
+		{name: "services normalized and de-duplicated", option: initServices, in: "Redis, POSTGRES redis", want: []string{"redis", "postgres"}},
+		{name: "unknown service", option: initServices, in: "postgres,mongo", wantErr: `Invalid value "mongo" for "--services" in "coop init"`},
+		{name: "none is standalone", option: initServices, in: "postgres,none", wantErr: `Value "none" must be used alone for "--services" in "coop init"`},
+		{name: "agents all", option: initAgents, in: "ALL", want: scaffoldableAgents},
+		{name: "agents normalized and de-duplicated", option: initAgents, in: "Codex claude,codex", want: []string{"codex", "claude"}},
+		{name: "unknown agent", option: initAgents, in: "claude,grok", wantErr: `Invalid value "grok" for "--agents" in "coop init"`},
+		{name: "all is standalone", option: initAgents, in: "all,codex", wantErr: `Value "all" must be used alone for "--agents" in "coop init"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := parseExplicitList(tc.flag, tc.in, tc.valid, tc.sentinel, tc.sentinelValues)
+			got, err := tc.option.parse(tc.in)
 			if tc.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) || !strings.Contains(err.Error(), strings.Join(append(slices.Clone(tc.valid), tc.sentinel), ", ")) {
-					t.Fatalf("parseExplicitList() = (%v, %v), want error containing %q and valid choices", got, err, tc.wantErr)
+				// A rejected value names the value, its option and the owning command; an unknown
+				// one also states the tokens the parser really accepts.
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("parse() = (%v, %v), want error containing %q", got, err, tc.wantErr)
+				}
+				if strings.Contains(tc.wantErr, "Invalid value") && !strings.Contains(err.Error(), tc.option.choices()) {
+					t.Errorf("an invalid value must list the accepted choices %q, got: %v", tc.option.choices(), err)
 				}
 				return
 			}
 			if err != nil || !slices.Equal(got, tc.want) {
-				t.Fatalf("parseExplicitList() = (%v, %v), want (%v, nil)", got, err, tc.want)
+				t.Fatalf("parse() = (%v, %v), want (%v, nil)", got, err, tc.want)
 			}
 		})
 	}
@@ -998,8 +1000,8 @@ func TestLoginRequiresAgentAndTTY(t *testing.T) {
 	defer func() { os.Stdin = saved }()
 
 	a := &app{cfg: &config.Config{}}
-	if code, err := a.cmdLogin(nil); code != 2 || err == nil || !strings.Contains(err.Error(), "usage") {
-		t.Errorf("cmdLogin(nil) = (%d, %v), want (2, usage error)", code, err)
+	if code, err := a.cmdLogin(nil); code != 2 || err == nil || !strings.Contains(err.Error(), `Missing agent for "coop login"`) {
+		t.Errorf("cmdLogin(nil) = (%d, %v), want (2, missing-agent error)", code, err)
 	}
 	if code, err := a.loginTo("claude", ""); code != 2 || err == nil || !strings.Contains(err.Error(), "interactive terminal") {
 		t.Errorf("loginTo(claude) non-tty = (%d, %v), want (2, interactive-terminal error)", code, err)
@@ -1052,15 +1054,19 @@ func TestStrictFlagParsing(t *testing.T) {
 	}
 }
 
-// The top-level help documents coop's --peer wrapper flag and stops claiming `coop <target>
-// --help` shows coop's flags (it forwards to the agent).
+// The menu documents coop's --peer wrapper flag and closes with the two pointers a reader
+// continues from. `coop <agent> --help` is COOP's page now (the agent's own is behind `--`), so
+// the menu must not claim otherwise.
 func TestHelpDocumentsPeerAndAgentHelp(t *testing.T) {
 	h := helpText(&config.Config{})
 	if !strings.Contains(h, "--peer") {
-		t.Error("top-level help should document the --peer wrapper flag")
+		t.Error("the menu should document the --peer wrapper flag")
 	}
-	if !strings.Contains(h, "--help is the agent's own") {
-		t.Error("footer should note that for an agent, --help is the agent's own")
+	if !strings.Contains(h, "Help and examples: coop help <command>") {
+		t.Error("the menu should close with the help pointer")
+	}
+	if strings.Contains(h, "--help is the agent's own") {
+		t.Error("`coop <agent> --help` is coop's own page now; the menu must not say otherwise")
 	}
 }
 
@@ -1120,8 +1126,8 @@ func TestInitRejectsUnknownExplicitNamesBeforeWrites(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "service", args: []string{"--services", "postgres,mongo"}, want: "postgres, redis, none"},
-		{name: "agent", args: []string{"--agents", "claude,grok"}, want: "claude, codex, gemini, all"},
+		{name: "service", args: []string{"--services", "postgres,mongo"}, want: "Choose postgres, redis, or none."},
+		{name: "agent", args: []string{"--agents", "claude,grok"}, want: "Choose claude, codex, gemini, or all."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := t.TempDir()
@@ -1306,8 +1312,8 @@ func TestLoopReportsUsageBeforeRuntimeDiscovery(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"loop", "--max-tasks", "x"}, "--max-tasks must be a positive integer"},
-		{[]string{"loop", "--max-tasks", "0"}, "--max-tasks must be a positive integer"},
+		{[]string{"loop", "--max-tasks", "x"}, "Use a whole number greater than 0."},
+		{[]string{"loop", "--max-tasks", "0"}, "Use a whole number greater than 0."},
 		{[]string{"loop", "nope:target"}, `unknown provider "nope"`},
 	} {
 		code, err := a().dispatch(c.args)

@@ -1,0 +1,4 @@
+
+✗ Unknown command "coop something"
+
+  See available commands: coop help

@@ -15,12 +15,16 @@ import (
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
+// workerCommands are the `coop worker` subcommands — the list the dispatch below, the
+// unknown-subcommand correction and the help router share.
+var workerCommands = []string{"connect"}
+
 func (a *app) cmdWorker(args []string) (int, error) {
 	if len(args) == 0 {
 		return groupHelp("worker")
 	}
 	if args[0] != "connect" {
-		return 2, fmt.Errorf("worker: unknown command %q", args[0])
+		return 2, unknownSubcommandErr("worker", args[0], workerCommands)
 	}
 	configurationPath, err := parseWorkerConnectFlags(args[1:])
 	if err != nil {

@@ -1,0 +1,5 @@
+
+✗ Missing task ID for "coop tasks claim"
+
+  Usage: coop tasks claim <task-id>
+  Help:  coop help tasks claim

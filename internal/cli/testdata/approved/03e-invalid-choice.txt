@@ -1,0 +1,7 @@
+
+✗ Invalid value "cursor" for "--agents" in "coop init"
+
+      Choose claude, codex, gemini, or all.
+
+  Example: coop init --agents claude,codex
+  Help:    coop help init

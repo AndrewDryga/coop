@@ -26,9 +26,9 @@ var BacklogVerbs = []string{"ls", "add", "rm", "promote"}
 // backlogArgSpecs validates the structured backlog subcommands (like taskArgSpecs for tasks); add takes
 // a free-form title, so it's intentionally absent and validates its own args in tasksFolderAdd.
 var backlogArgSpecs = map[string]taskArgSpec{
-	"ls":      {nil, 0},
-	"rm":      {[]string{"--yes", "-y"}, 1},
-	"promote": {nil, 1},
+	"ls":      {nil, 0, "coop backlog ls"},
+	"rm":      {[]string{"--yes", "-y"}, 1, "coop backlog rm <task-id> [--yes]"},
+	"promote": {nil, 1, "coop backlog promote <task-id>"},
 }
 
 // CmdBacklog drives `coop backlog` — the staging drawer for unscheduled ideas.
@@ -68,7 +68,7 @@ func CmdBacklog(cfg *config.Config, args []string) (int, error) {
 		case "add":
 			return 2, fmt.Errorf("coop backlog add works one queue at a time — pass a single --tasks <path> (ls, rm, and promote span all %d configured queues)", len(rels))
 		default:
-			return 2, unknownErr("backlog command", sub, BacklogVerbs)
+			return 2, unknownSubcommandErr("backlog", sub, BacklogVerbs)
 		}
 	}
 	if len(rels) == 0 {
@@ -95,7 +95,7 @@ func cmdBacklogFolder(root string, rest []string) (int, error) {
 		args = rest[1:]
 	}
 	if spec, ok := backlogArgSpecs[sub]; ok {
-		if err := validateArgs("backlog "+sub, args, spec.flags, spec.maxPos); err != nil {
+		if err := validateArgs("backlog "+sub, args, spec); err != nil {
 			return 2, err
 		}
 	}
@@ -109,7 +109,7 @@ func cmdBacklogFolder(root string, rest []string) (int, error) {
 	case "promote":
 		return backlogFolderPromote(root, args)
 	default:
-		return 2, unknownErr("backlog command", sub, BacklogVerbs)
+		return 2, unknownSubcommandErr("backlog", sub, BacklogVerbs)
 	}
 }
 

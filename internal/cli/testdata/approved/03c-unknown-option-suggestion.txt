@@ -1,0 +1,4 @@
+
+✗ Unknown option "--refesh" for "coop models"
+
+  Did you mean: coop models --refresh

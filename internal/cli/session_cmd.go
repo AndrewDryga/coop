@@ -157,6 +157,10 @@ func parseSessionCompactFlags(args []string) (state, backup string, err error) {
 	return state, backup, nil
 }
 
+// sessionCommands are the `coop sessions` subcommands — the one list the dispatch below, the
+// unknown-subcommand correction, the help router and shell completion all read.
+var sessionCommands = []string{"serve", "doctor", "policies", "compact"}
+
 func (a *app) cmdSessions(args []string) (int, error) {
 	if len(args) == 0 {
 		return groupHelp("sessions")
@@ -187,7 +191,7 @@ func (a *app) cmdSessions(args []string) (int, error) {
 		}
 		return runSessionCompact(state, backup)
 	default:
-		return 2, fmt.Errorf("sessions: unknown command %q", args[0])
+		return 2, unknownSubcommandErr("sessions", args[0], sessionCommands)
 	}
 }
 

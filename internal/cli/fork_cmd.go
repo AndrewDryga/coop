@@ -404,7 +404,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if !fa.agentSet {
 		if remembered := forkctl.ReadForkAgent(ws); remembered != "" {
 			if existed && !fa.worker && remembered != fa.agent {
-				ui.Info("using this fork's agent: %s (pass an agent to switch)", remembered)
+				ui.Note("using this fork's agent: %s (pass an agent to switch)", remembered)
 			}
 			fa.agent = remembered
 		}
@@ -599,7 +599,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 				}
 			}
 		}
-		ui.Info("forking %s → %s (secrets are gitignored, so they don't come along)", filepath.Base(repo), ws)
+		ui.Note("forking %s → %s (secrets are gitignored, so they don't come along)", filepath.Base(repo), ws)
 		if _, err := forkspace.Setup(repo, fa.name); err != nil {
 			unlock()
 			return -1, err
@@ -626,13 +626,13 @@ func (a *app) forkCreate(args []string) (int, error) {
 				unlock()
 				return 1, fmt.Errorf("recover missing fork %q before creation: %w", fa.name, recoverErr)
 			}
-			ui.Info("forking %s → %s (secrets are gitignored, so they don't come along)", filepath.Base(repo), ws)
+			ui.Note("forking %s → %s (secrets are gitignored, so they don't come along)", filepath.Base(repo), ws)
 			if _, err := forkspace.Setup(repo, fa.name); err != nil {
 				unlock()
 				return -1, err
 			}
 		} else {
-			ui.Info("resuming fork %s (%s)", fa.name, ws)
+			ui.Note("resuming fork %s (%s)", fa.name, ws)
 		}
 		forkIdentity, err = forkspace.EnsureGenerationLocked(repo, fa.name)
 		if err == nil {
@@ -775,7 +775,7 @@ func (a *app) forkLaunchCmd(fa forkArgs, ws string, existed bool) ([]string, err
 	}
 	if (existed && !fa.fresh && !fa.newSession) || fa.cont {
 		if rc, resumed := ag.Resume(a.cfg, sessionCWD, id); resumed {
-			ui.Info("continuing your last %s session in this fork", fa.agent)
+			ui.Note("continuing your last %s session in this fork", fa.agent)
 			return rc, nil
 		}
 	}
@@ -843,7 +843,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	// read-only, the box writes only to run-private scratch, and the adapter is started under the
 	// mode's switches by the ACP client (the session daemon). It is a different contract from the
 	// legacy read-only session above, which keeps a writable output root. --bare names no fork.
-	if rest, err = a.takeExposureFlags(rest); err != nil {
+	if rest, err = a.takeExposureFlags("coop fork", rest); err != nil {
 		return 2, err
 	}
 	if a.mode == agents.ModeBare {
@@ -1094,7 +1094,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 		}
 		switch assignment.Outcome {
 		case tasks.ForkAssignmentUnavailable:
-			ui.Info("no canonical task lease available — %s; stopping this executor", assignment.Busy)
+			ui.Note("no canonical task lease available — %s; stopping this executor", assignment.Busy)
 			return 0, nil
 		case tasks.ForkAssignmentExecutorDrained:
 			imported, importErr := tasks.ImportForkProposals(repo, identity)

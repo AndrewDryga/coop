@@ -166,7 +166,7 @@ func startUpdateCheck(cfg *config.Config, argv []string) func() {
 			latest = cachedLatest(path) // fall back to a previous run's answer
 		}
 		if msg := updateNotice(cur, latest); msg != "" {
-			ui.Info("%s", msg)
+			ui.Note("%s", msg)
 		}
 	}
 }

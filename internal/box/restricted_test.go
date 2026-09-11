@@ -599,7 +599,7 @@ func TestRunRestrictedNarratesLikeAnInteractiveLaunch(t *testing.T) {
 	want := "\nProtecting secrets\n  ✓ No secret paths to hide\n" +
 		"\nInternet access\n  ⚠ Unrestricted — nothing is blocked\n" +
 		"\nStarting sh\n" +
-		"coop: stopping the box — main process exited with status 4\n"
+		"stopping the box — main process exited with status 4\n"
 	if got != want {
 		t.Fatalf("interactive bare run narrated:\n%q\nwant:\n%q", got, want)
 	}
@@ -607,7 +607,7 @@ func TestRunRestrictedNarratesLikeAnInteractiveLaunch(t *testing.T) {
 	readonly := RunSpec{Image: "coop-box", Repo: t.TempDir(), Workdir: "/workspace", Cmd: []string{"sh", "-c", "exit 4"}, Mode: agents.ModeReadOnly}
 	got = captureStderr(t, func() { _, _ = Run(cfg, runtime.Runtime{Name: shim}, readonly) })
 	if !strings.Contains(got, "\nProtecting secrets\n  ✓ ") || !strings.Contains(got, "\nInternet access\n  ⚠ Offline — nothing outside the box can be reached\n") ||
-		!strings.HasSuffix(got, "coop: stopping the box — main process exited with status 4\n") {
+		!strings.HasSuffix(got, "stopping the box — main process exited with status 4\n") {
 		t.Fatalf("interactive readonly run narrated:\n%q", got)
 	}
 	readonly.Batch = true

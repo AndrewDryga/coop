@@ -1848,6 +1848,13 @@ install.sh            the curl one-liner: download the prebuilt binary onto PATH
 | Runtime boundary | `make doctor` · `make box-runtime-e2e` · `make review-writes-e2e` | real box isolation, process reaping/signal forwarding, and report-only review mounts; requires Docker/Podman (or Apple `container` for doctor) |
 | Upstream compatibility | `make provider-live-e2e[-all]` · `make provider-resume-live-e2e[-all]` · `make provider-loop-live-e2e[-all]` · `make provider-consult-live-e2e[-all]` · `make acp-e2e` | installed CLIs plus isolated credentials; opt-in and quota-consuming |
 
+This table is the source-checkout reference: `make check` is the blocking no-credential gate, the
+focused deterministic targets are `make provider-scripted-e2e`, `make acp-scripted-e2e` and
+`make live-process-control`, the real isolation checks are `make doctor` and
+`make review-writes-e2e`, and the live upstream targets are opt-in because they use installed
+CLIs, configured credentials and real quota. (It used to be appended to `coop help --all`; the
+user manual is commands only.)
+
 `make check` IS the CI gate: the workflow's check job installs the pinned tools and runs this
 target, so the two can't drift (the doctor and review-writes jobs stay CI-only — they need a
 container runtime). It needs `staticcheck` (pinned by `STATICCHECK_VERSION` in the Makefile,

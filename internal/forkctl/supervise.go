@@ -288,8 +288,8 @@ func (c *Control) DetachForkLoop(repo, name, agent, tasks, credential, model, ef
 	if err := recordStartedFork(repo, name, cmd, generation); err != nil {
 		return -1, fmt.Errorf("record fork %s worker state: %w — the worker was stopped; fix %s, then retry the original coop fork command", name, err, forkspace.StateDir(repo))
 	}
-	ui.Info("started fork %s (%s) in the background", name, agent)
-	ui.Info("  coop fork logs %s -f   ·   coop fork stop %s", name, name)
+	ui.Note("started fork %s (%s) in the background", name, agent)
+	ui.Note("  coop fork logs %s -f   ·   coop fork stop %s", name, name)
 	return 0, nil
 }
 

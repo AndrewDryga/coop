@@ -158,7 +158,7 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 		}
 		observed, completionErr := windows.FinishReview()
 		if len(observed) > 0 {
-			ui.Info("concurrent host completion during review: %s — a parallel host session's change, not this review's", strings.Join(observed, ", "))
+			ui.Note("concurrent host completion during review: %s — a parallel host session's change, not this review's", strings.Join(observed, ", "))
 			concurrent = slices.Compact(slices.Sorted(slices.Values(append(concurrent, observed...))))
 			last.concurrent = concurrent
 		}

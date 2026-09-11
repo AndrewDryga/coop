@@ -1,9 +1,9 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
@@ -11,7 +11,21 @@ import (
 	"github.com/AndrewDryga/coop/internal/loopcfg"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
+
+// `coop loop`'s own grammar, read by its refusals: the command a rejection names, its syntax, the
+// options a correction may suggest, and one valid --max-tasks invocation.
+const (
+	loopCommand     = "coop loop"
+	loopUsage       = "coop loop [<target|preset>] [<options>]"
+	maxTasksExample = "coop loop --max-tasks 5"
+)
+
+var loopOptions = []string{
+	"--tasks", "--peer", "--max-tasks", "--preflight", "--no-preflight", "--no-mcp", "--debug-on-fail",
+	"--egress", "--allow-domain", "--egress-rules",
+}
 
 // parseLoopArgs resolves `coop loop`'s leading who-runs positional — a TARGET
 // (provider[:model][/effort][@account,…]) OR a PRESET NAME (validated by cmdLoop's loadRunPreset) —
@@ -37,19 +51,23 @@ func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget bool, pr
 			noMCP = true
 		case "--max-tasks":
 			if maxTasks > 0 {
-				return t, hasTarget, presetName, debugOnFail, preflight, noMCP, maxTasks, errors.New("coop loop: --max-tasks may be specified only once")
+				return t, hasTarget, presetName, debugOnFail, preflight, noMCP, maxTasks, ui.RepeatedOption(x, loopCommand)
 			}
 			if i+1 >= len(rest) {
-				return t, hasTarget, presetName, debugOnFail, preflight, noMCP, 0, errors.New("coop loop: --max-tasks requires a positive integer")
+				return t, hasTarget, presetName, debugOnFail, preflight, noMCP, 0, ui.MissingOptionValue(x, loopCommand, maxTasksExample)
 			}
 			i++
 			n, convErr := strconv.Atoi(rest[i])
 			if convErr != nil || n <= 0 {
-				return t, hasTarget, presetName, debugOnFail, preflight, noMCP, 0, fmt.Errorf("coop loop: --max-tasks must be a positive integer, got %q", rest[i])
+				return t, hasTarget, presetName, debugOnFail, preflight, noMCP, 0,
+					ui.InvalidOptionValue(rest[i], x, loopCommand, "Use a whole number greater than 0.", maxTasksExample)
 			}
 			maxTasks = n
 		default:
-			return t, hasTarget, presetName, debugOnFail, preflight, noMCP, maxTasks, fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [<target|preset>] [--tasks <path>] [--peer <target>]... [--max-tasks <n>] [--preflight|--no-preflight] [--no-mcp] [--debug-on-fail] [--egress <mode>] [--allow-domain <domain>]... [--egress-rules <file>])", x)
+			if strings.HasPrefix(x, "-") {
+				return t, hasTarget, presetName, debugOnFail, preflight, noMCP, maxTasks, unknownOptionErr(x, loopCommand, loopOptions)
+			}
+			return t, hasTarget, presetName, debugOnFail, preflight, noMCP, maxTasks, ui.UnexpectedArgument(x, loopCommand, loopUsage)
 		}
 	}
 	return t, hasTarget, presetName, debugOnFail, preflight, noMCP, maxTasks, nil

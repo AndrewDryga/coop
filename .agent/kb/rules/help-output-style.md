@@ -1,8 +1,8 @@
 ---
 name: help-output-style
-description: "UPPERCASE headers, one command per line, no `·`, command cell under 32 runes"
+description: "UPPERCASE headings with one em-dash explanation, one command per line, no `·`, command cell under 32 runes"
 scope: cli-output
-sources: [internal/cli/help.go, internal/cli/fork_cmd.go, internal/cli/presetcmd.go, internal/cli/help_test.go, internal/cli/conformance_test.go]
+sources: [internal/cli/help.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/cli/presetcmd.go, internal/cli/help_test.go, internal/cli/approved_output_test.go, internal/cli/conformance_test.go]
 check: "none"
 updated: 2026-09-11
 ---
@@ -11,15 +11,28 @@ updated: 2026-09-11
 
 `coop help` and every `coop <cmd> --help` are a scannable command reference, not prose:
 
-- Section headers are UPPERCASE (`AGENTS`, `FORKS`, `UNATTENDED`, `SETUP & MAINTENANCE`);
+- Section headings are UPPERCASE (`THE BOX`, `RUN AGENTS`, `FORKS`, `SETUP & MAINTENANCE`);
   sub-labels are capitalized too (`Usage:`, `FLAGS`, `REVIEW`).
+- Each menu heading carries ONE short explanation after an em dash, in normal text (only the
+  UPPERCASE name is bold): `TASKS — each task is a folder in .agent/tasks/`. Name the actual file
+  or directory when it helps a newcomer find the feature — `.agent/tasks/`, `.agent/loop.yaml`,
+  this project's Compose file — rather than describing the category abstractly.
+- The menu is STATE-AWARE where that helps and nowhere else: a `GET STARTED` block appears only
+  with no usable account, the SERVICES heading names this project's real services, and with none
+  configured the whole `coop up`/`coop down` rows are dimmed while the row that ADDS one stays
+  bright. Base it on project configuration, never a runtime probe; an unreadable configuration is
+  not proof of absence. The deterministic reference form (`coop help --all`, docs) drops all of it.
 - One command per line. Never collapse distinct commands into a `coop fork <verb>`
   placeholder, and never pile several commands' descriptions behind a `·`.
 - No `·` (middle dot) anywhere in help text — split into labeled lines or list rows.
 - Pad the command column on PLAIN text so a description never glues to a long command
   (`row()` keeps a minimum gap) — see [[no-color-in-width-fields]].
 - Flags, examples, and sub-verbs live in the command's own `coop <cmd> --help`, not
-  crammed into the top-level index.
+  crammed into the top-level index. `coop help <cmd> [<sub>]` and `coop <cmd> [<sub>] --help`
+  resolve to the SAME page — one renderer, two spellings — including for a registered agent, whose
+  own CLI is reached explicitly with `coop <agent> -- --help`. A help request runs nothing: no
+  runtime, no login, and none of the command's own required arguments.
+- The closing footer belongs to no section, so it starts at column zero.
 - Name the concrete file/artifact a command acts on, not a vague category. `coop up`/`down`
   say **`.agent/compose.yml`** (its real services when present), never "sibling services" — a
   glanceable row has no body to explain an abstraction, so the concrete name IS the
@@ -55,6 +68,14 @@ services" hides the one thing that makes the row make sense.
 - Never put `·` in a help string. Runtime status/stat lines may still use it as a separator.
 
 ## Changelog
+- 2026-09-11 — implemented the approved main menu: ten UPPERCASE groups each with one em-dash
+  explanation, the state-aware `GET STARTED` and SERVICES variants, and a column-zero footer. The
+  exact bytes of all four approved menu states are pinned in `internal/cli/testdata/approved`
+  (`TestApprovedMainMenu`), which supersedes prose review for that surface. Swept the rest of the
+  rule's claims: the old 80-column budget became the approved menu's own 92 (the `coop context`
+  row sets it), and `coop help <cmd> <sub>` / `coop <cmd> <sub> --help` now share one resolver.
+  NOT changed here: the topic pages' Title-case headings, which the review supersedes with
+  UPPERCASE — they are rewritten with their own command's approved page, not by this slice.
 - 2026-09-11 — added the topic-page tier from the approved per-agent/preset transcripts: Title-case
   headings and a closing pointer instead of UPPERCASE headers and the all-commands footer. Swept
   every page rendered through `printCommandHelp`: only the agent pages, `presets`, and the preset

@@ -1,0 +1,4 @@
+
+✗ Unknown option "--something" for "coop models"
+
+  See available options: coop help models

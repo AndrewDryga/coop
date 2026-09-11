@@ -1,0 +1,5 @@
+
+✗ Unexpected argument "extra" for "coop version"
+
+  Usage: coop version
+  Help:  coop help version

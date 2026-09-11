@@ -92,7 +92,7 @@ func parseNetDiagnosticArgs(verb string, args []string) (netDiagnosticOptions, e
 			if verb == "explain" {
 				valid = valid[:2]
 			}
-			return opts, unknownErr("net "+verb+" flag", args[i], valid)
+			return opts, unknownOptionErr(args[i], "coop net "+verb, valid)
 		case opts.query != "":
 			return opts, fmt.Errorf("coop net %s takes one destination at a time", verb)
 		default:

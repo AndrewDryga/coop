@@ -86,7 +86,7 @@ func sleepForLimitAt(wait time.Duration, resetAt time.Time, wake <-chan struct{}
 	if !resetAt.IsZero() {
 		until = ", until " + resetAt.Local().Format("Mon 15:04 MST")
 	}
-	ui.Info("model rate limited — waiting %s%s, then continuing", wait, until)
+	ui.Note("model rate limited — waiting %s%s, then continuing", wait, until)
 	// ~20 progress ticks regardless of total, so a multi-day wait doesn't spam
 	// the log (and a short one still reports more than once).
 	narrate := wait / 20
@@ -104,7 +104,7 @@ func sleepForLimitAt(wait time.Duration, resetAt time.Time, wake <-chan struct{}
 	ladder.WaitUntilWall(start.Add(wait), ladder.LimitTickCap, nowFn, wake, func(remaining time.Duration) {
 		if t := nowFn(); t.Sub(last) >= narrate {
 			last = t
-			ui.Info("  …%s remaining", remaining.Round(time.Minute))
+			ui.Note("  …%s remaining", remaining.Round(time.Minute))
 		}
 	})
 }

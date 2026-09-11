@@ -161,7 +161,7 @@ func (c *Control) runGateMode(gateRepo, treeDir, img string, review bool) (bool,
 	if err != nil {
 		return false, err
 	}
-	ui.Info("revalidating: %s", strings.Join(gate, " "))
+	ui.Note("revalidating: %s", strings.Join(gate, " "))
 	reviewBase := strings.TrimSpace(gitOut(treeDir, "rev-parse", "--verify", "refs/coop/session-parent^{commit}"))
 	if reviewBase == "" {
 		reviewBase = strings.TrimSpace(gitOut(gateRepo, "rev-parse", "--verify", "HEAD^{commit}"))
@@ -539,7 +539,7 @@ func (c *Control) mergeOne(repo, img, name string, force bool) (outcome mergeOut
 	if target == "" || target == "HEAD" {
 		target = "the current commit (detached HEAD)"
 	}
-	ui.Info("landing %s onto %s", name, target)
+	ui.Note("landing %s onto %s", name, target)
 	if hasGeneration {
 		candidate, hasCandidate, err := tasks.ReadForkCandidate(repo, identity)
 		if err != nil {
@@ -821,9 +821,9 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	ref := "review/" + name
 	ahead := gitOut(repo, "rev-list", "--count", "HEAD.."+ref)
 	ins, del := parseShortstat(gitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
-	ui.Info("rebase %s onto %s — %s commit(s), +%d -%d", ref, gitBranch(repo), ahead, ins, del)
+	ui.Note("rebase %s onto %s — %s commit(s), +%d -%d", ref, gitBranch(repo), ahead, ins, del)
 	if _, s := c.host.forkCost(ws); s != "" {
-		ui.Info("fork cost: %s", s)
+		ui.Note("fork cost: %s", s)
 	}
 	if !approve("rebase and land?", yes) {
 		return 0, nil
@@ -868,20 +868,20 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 // conflict or gate failure, leaving the remaining forks untouched.
 func (c *Control) forkMergeAll(repo string, names []string, img string, force, yes bool) (int, error) {
 	if len(names) == 0 {
-		ui.Info("no forks to merge")
+		ui.Note("no forks to merge")
 		return 0, nil
 	}
 	// Never touch a fork whose loop is still running — rebasing/deleting its live worktree corrupts
 	// in-flight work and orphans the worker. Skip those with a notice and land the rest.
 	skip := map[string]bool{}
 	if live := runningForkNames(repo, names); len(live) > 0 {
-		ui.Info("skipping %s: %s — stop each with 'coop fork stop <name>' to land", ui.Count(len(live), "running/cleanup-pending fork"), strings.Join(live, ", "))
+		ui.Note("skipping %s: %s — stop each with 'coop fork stop <name>' to land", ui.Count(len(live), "running/cleanup-pending fork"), strings.Join(live, ", "))
 		for _, n := range live {
 			skip[n] = true
 		}
 	}
 	if len(skip) == len(names) {
-		ui.Info("no forks to merge — every fork is running or awaiting cleanup")
+		ui.Note("no forks to merge — every fork is running or awaiting cleanup")
 		return 0, nil
 	}
 	// Landing every fork also DELETES each one — and unlike the single-fork path (which prompts per
@@ -920,7 +920,7 @@ func (c *Control) forkMergeAll(repo string, names []string, img string, force, y
 		result.approval.close()
 		if err != nil {
 			ui.Error("%v", err)
-			ui.Info("rebase queue stopped at %s — %d landed, the rest left untouched", n, len(landed))
+			ui.Note("rebase queue stopped at %s — %d landed, the rest left untouched", n, len(landed))
 			return 1, nil
 		}
 	}

@@ -106,7 +106,12 @@ func TestTaskRemovalRejectsMalformedArgsBeforeTouchingState(t *testing.T) {
 						} else {
 							code, err = tasksFolderRemove(filepath.Join(repo, rels[0]), args)
 						}
-						if code != 2 || err == nil || (!strings.Contains(err.Error(), "usage:") && !strings.Contains(err.Error(), "unknown flag") && !strings.Contains(err.Error(), "too many arguments")) {
+						// Any of the shared syntax refusals is fine; what matters is that one of
+						// them fires BEFORE discovery, confirmation or deletion.
+						refusal := err != nil && (strings.Contains(err.Error(), "usage:") ||
+							strings.Contains(err.Error(), "Unknown option") ||
+							strings.Contains(err.Error(), "Unexpected argument"))
+						if code != 2 || !refusal {
 							t.Errorf("malformed removal = %d, %v; want syntax refusal before discovery/confirmation", code, err)
 						}
 						assertRemovalSnapshot(t, repo, before)
@@ -194,7 +199,7 @@ func TestTaskRemovalSyntaxPrecedesProjectAndQueueDiscovery(t *testing.T) {
 			}
 			before := removalSnapshot(t, repo)
 			code, err := CmdTasks(Host{}, cfg, []string{"rm", "--all-done", "--dry-run", "--yes"})
-			if code != 2 || err == nil || !strings.Contains(err.Error(), "unknown flag") {
+			if code != 2 || err == nil || !strings.Contains(err.Error(), `Unknown option "--dry-run" for "coop tasks rm"`) {
 				t.Fatalf("invalid args reached broken %s: %d, %v", broken, code, err)
 			}
 			assertRemovalSnapshot(t, repo, before)

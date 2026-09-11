@@ -1,0 +1,4 @@
+
+✗ Unknown command "coop doctro"
+
+  Did you mean: coop doctor

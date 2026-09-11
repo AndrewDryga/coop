@@ -1,4 +1,4 @@
-// Package ui owns the terminal: the dimmed "coop:" progress lines, red errors, the colored
+// Package ui owns the terminal: the plain progress lines, red errors, the colored
 // check/cross marks doctor prints, the live region and alt screen, and — the one thing that reads
 // back — the y/N confirmation a destructive verb has to ask (see confirm.go). Colors auto-disable
 // when stderr is not a terminal, so logs and pipes stay clean.
@@ -129,22 +129,15 @@ func emit(s string) {
 	fmt.Fprint(os.Stderr, s)
 }
 
-// Info prints a "coop:" progress line to stderr, the prefix bold cyan so coop's own voice
-// stands out from the agent's output in a busy live view.
-func Info(format string, a ...any) {
-	emit(fmt.Sprintf("%s%scoop:%s %s\n", cBold, cCyan, cReset, fmt.Sprintf(format, a...)))
-}
-
-// Note prints a plain status line to stderr — like Info but WITHOUT the "coop:" prefix. Use it for
-// a direct command's own result (e.g. the `coop tasks` family), where the user already knows coop
-// is speaking; the prefix earns its place only when coop's voice must stand out from OTHER output —
-// an agent's in a run/loop, or the block of dim Detail progress it anchors (see command-output-tiers).
+// Note prints one plain status line to stderr: coop's own voice, with no "coop:" anchor in front
+// of it. Human output carries no tool prefix — including where it follows a provider's output —
+// so a line reads as the sentence it is. Machine streams and protocol payloads are untouched.
 func Note(format string, a ...any) {
 	emit(fmt.Sprintf("%s\n", fmt.Sprintf(format, a...)))
 }
 
-// OK prints a success result to stderr, led by a green ✓ — for a command's positive outcome. No
-// "coop:" prefix (the user invoked it); the message states the result, not the command name.
+// OK prints a success result to stderr, led by a green ✓ — for a command's positive outcome. The
+// message states the result, not the command name (the user invoked it).
 func OK(format string, a ...any) {
 	emit(fmt.Sprintf("%s✓%s %s\n", cGreen, cReset, fmt.Sprintf(format, a...)))
 }
@@ -166,6 +159,22 @@ func Count(n int, singular string, plural ...string) string {
 		noun = plural[0]
 	}
 	return fmt.Sprintf("%d %s", n, noun)
+}
+
+// List joins items the way a sentence does — "claude", "claude or codex", "claude, codex, or all"
+// — with conj the closing conjunction ("and" / "or"). Use it wherever output names a set a person
+// reads aloud (the accepted values of an option, a project's services), so every such list is
+// punctuated the same way.
+func List(items []string, conj string) string {
+	switch len(items) {
+	case 0:
+		return ""
+	case 1:
+		return items[0]
+	case 2:
+		return items[0] + " " + conj + " " + items[1]
+	}
+	return strings.Join(items[:len(items)-1], ", ") + ", " + conj + " " + items[len(items)-1]
 }
 
 // Bytes renders a byte count the way a human reads a transfer: exact below a kilobyte, then one
@@ -190,9 +199,9 @@ func Error(format string, a ...any) {
 	emit(fmt.Sprintf("%s✗ %s%s\n", cRed, fmt.Sprintf(format, a...), cReset))
 }
 
-// Detail prints an indented, faint sub-step (no "coop:" prefix) — the routine per-file progress
-// under a command like `coop init`, so a long run reads as one quiet block instead of repeating
-// the prefix on every line. The faint log recedes behind the Info anchors and Steps that matter.
+// Detail prints an indented, faint sub-step — the routine per-file progress under a command like
+// `coop init`, so a long run reads as one quiet block. The faint log recedes behind the Note
+// anchors and Steps that matter.
 func Detail(format string, a ...any) {
 	emit(fmt.Sprintf("  %s%s%s\n", cDim, fmt.Sprintf(format, a...), cReset))
 }

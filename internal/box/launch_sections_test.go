@@ -284,7 +284,7 @@ func TestFilteredStartedFollowsDaemonEvidence(t *testing.T) {
 // `coop net inspect` prints — fed from the record it already holds — under the `coop:` anchor.
 // Off a terminal the bytes are plain, and they differ from the standalone view only by that
 // prefix.
-func TestInlineRunResultIsTheStandaloneProjectionUnderCoopsAnchor(t *testing.T) {
+func TestInlineRunResultIsTheStandaloneProjection(t *testing.T) {
 	f, _ := filteredFixture(t)
 	if _, err := f.launch(context.Background(), RunSpec{Cmd: []string{"fixture"}}, nil, nil, io.Discard, io.Discard); err != nil {
 		t.Fatal(err)
@@ -299,10 +299,10 @@ func TestInlineRunResultIsTheStandaloneProjectionUnderCoopsAnchor(t *testing.T) 
 	}
 	var standalone bytes.Buffer
 	networkreport.WriteRun(&standalone, ui.Palette{}, networkreport.View{ID: f.record.ID}, inspection)
-	if got != "coop: "+standalone.String() {
+	if got != standalone.String() {
 		t.Fatalf("inline result:\n%s\nis not the standalone projection under coop's anchor:\n%s", got, standalone.String())
 	}
-	for _, want := range []string{"coop: Network run " + f.record.ID + "\n", "\n  Allowed  ", "Full details: coop net inspect " + f.record.ID + " --json\n"} {
+	for _, want := range []string{"Network run " + f.record.ID + "\n", "\n  Allowed  ", "Full details: coop net inspect " + f.record.ID + " --json\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("inline result is missing %q:\n%s", want, got)
 		}
@@ -334,7 +334,7 @@ func TestRunNarratesAnInteractiveOpenLaunchAndItsStop(t *testing.T) {
 	want := "\nProtecting secrets\n  ✓ No secret paths to hide\n" +
 		"\nInternet access\n  ⚠ Unrestricted — nothing is blocked\n" +
 		"\nStarting sh\n" +
-		"coop: stopping the box — main process exited with status 3\n"
+		"stopping the box — main process exited with status 3\n"
 	if got != want {
 		t.Fatalf("interactive open run narrated:\n%q\nwant:\n%q", got, want)
 	}
@@ -360,7 +360,7 @@ func TestRunNarratesAnInteractiveOpenLaunchAndItsStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	got = captureStderr(t, func() { _, _ = Run(cfg, runtime.Runtime{Name: shim}, spec) })
-	if !strings.HasPrefix(got, "\nChecking the Coop box\n  ⚠ box image is 40 days old — 'coop update' refreshes the agent CLIs baked into it\n\nProtecting secrets\n") || strings.Contains(got, "coop: box image") {
+	if !strings.HasPrefix(got, "\nChecking the Coop box\n  ⚠ box image is 40 days old — 'coop update' refreshes the agent CLIs baked into it\n\nProtecting secrets\n") {
 		t.Fatalf("an old image narrated:\n%q", got)
 	}
 }

@@ -905,7 +905,7 @@ func TestCmdTasksFolderDispatch(t *testing.T) {
 		t.Errorf("unknown sub should return code 2, got %d", code)
 	}
 	if code, err := CmdTasksFolder(root, root, []string{"split", "2"}); code != 2 || err == nil ||
-		!strings.Contains(err.Error(), "unknown tasks command") {
+		!strings.Contains(err.Error(), `Unknown command "coop tasks split"`) {
 		t.Fatalf("retired split command = (%d, %v), want unknown command", code, err)
 	}
 }
@@ -1183,7 +1183,8 @@ func TestValidateArgs(t *testing.T) {
 		{"nothing", nil, []string{"--all"}, 0, false},
 	}
 	for _, tc := range cases {
-		if err := validateArgs("tasks x", tc.args, tc.flags, tc.maxPos); (err != nil) != tc.wantErr {
+		spec := taskArgSpec{tc.flags, tc.maxPos, "coop tasks x"}
+		if err := validateArgs("tasks x", tc.args, spec); (err != nil) != tc.wantErr {
 			t.Errorf("%s: validateArgs err=%v, wantErr=%v", tc.name, err, tc.wantErr)
 		}
 	}
@@ -1442,7 +1443,7 @@ func TestTasksFolderUnblockRejectsUnknownFlagBeforeMutation(t *testing.T) {
 			decision := filepath.Join(root, StateBlocked, id, "decision.md")
 			before := readFileString(decision)
 			code, err := tasksFolderUnblock(root, append([]string{id}, tc.args...))
-			if code != 2 || err == nil || !strings.Contains(err.Error(), fmt.Sprintf("unknown flag %q", tc.flag)) {
+			if code != 2 || err == nil || !strings.Contains(err.Error(), fmt.Sprintf("Unknown option %q for \"coop tasks unblock\"", tc.flag)) {
 				t.Fatalf("unknown flag = code %d err=%v", code, err)
 			}
 			if current, ok := mustCurrentTask(t, root, id); !ok || current.State != StateBlocked {

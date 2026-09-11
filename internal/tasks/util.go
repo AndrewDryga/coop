@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // newSupervisorID mints a fresh random id to embed in a completion window's lock name, so nothing
@@ -207,9 +209,30 @@ func nearestCommand(input string, candidates []string) (string, bool) {
 	return "", false
 }
 
-// unknownErr is the one shape for a rejected subcommand / value: `unknown <noun> "<token>" — use: a,
-// b, c`, with a "did you mean X?" when the token is a near-miss. internal/cli/util.go keeps its own
-// copy (shared by its own non-task sub-command groups) for the same reason gitOut does; see git.go.
+// unknownSubcommandErr refuses a verb a task family does not have, correcting a near miss from that
+// family's own verb list. The BLOCK it renders is assembled once, in internal/ui; only the nearest
+// match is computed here (internal/cli keeps its own copy for the same reason gitOut does; see
+// git.go).
+func unknownSubcommandErr(family, verb string, valid []string) error {
+	guess, _ := nearestCommand(verb, valid)
+	return ui.UnknownCommandPath([]string{family, verb}, guess, false)
+}
+
+// unknownOptionErr refuses an option its command does not accept, suggesting the whole corrected
+// command when the typo has an obvious fix. command is the full owning path ("coop tasks claim");
+// valid is that command's real option list, so a suggestion can never name one it would refuse.
+func unknownOptionErr(option, command string, valid []string) error {
+	guess, _ := nearestCommand(option, valid)
+	suggestion := ""
+	if guess != "" {
+		suggestion = command + " " + guess
+	}
+	return ui.UnknownOption(option, command, suggestion)
+}
+
+// unknownErr is the shape for a rejected VALUE — `unknown <noun> "<token>" — use: a, b, c`, with a
+// "did you mean X?" when the token is a near-miss. Rejected commands and options have their own
+// approved blocks above.
 func unknownErr(noun, token string, valid []string) error {
 	if guess, ok := nearestCommand(token, valid); ok {
 		return fmt.Errorf("unknown %s %q — use: %s (did you mean %q?)", noun, token, strings.Join(valid, ", "), guess)

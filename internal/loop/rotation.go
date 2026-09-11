@@ -33,12 +33,12 @@ func (c *Control) rotateOnLimit(r *ladder.Rotation, resetAt time.Time, waits *in
 	sleep, until := r.OnLimit(resetAt, *waits, time.Now())
 	agent := c.applyTarget(r)
 	if sleep > 0 {
-		ui.Info("all %d targets are rate limited — waiting for the soonest reset", r.Len())
+		ui.Note("all %d targets are rate limited — waiting for the soonest reset", r.Len())
 		sleepForLimit(sleep, until, wake)
 		r.ClearExpired(time.Now())
 		return agent
 	}
-	ui.Info("target %q rate limited — switching to %q", prev, r.Active())
+	ui.Note("target %q rate limited — switching to %q", prev, r.Active())
 	*waits = 0 // only consecutive all-limited waits count toward the stop cap
 	return agent
 }

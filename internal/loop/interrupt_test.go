@@ -85,7 +85,7 @@ func TestLoopInterruptInfoStartsFreshLine(t *testing.T) {
 	if !strings.HasPrefix(out, "\n") {
 		t.Fatalf("interrupt notice must start on a fresh line after the terminal's ^C echo: %q", out)
 	}
-	if !strings.Contains(out, "coop: stopping\n") {
+	if !strings.Contains(out, "stopping\n") {
 		t.Errorf("interrupt notice missing status line: %q", out)
 	}
 }

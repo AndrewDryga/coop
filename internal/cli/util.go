@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 func fileExists(path string) bool {
@@ -97,15 +98,15 @@ func nearestCommand(input string, candidates []string) (string, bool) {
 	return "", false
 }
 
-// rejectArgs returns a usage error when a command that takes no arguments is given some,
-// so a stray token fails clearly instead of being silently ignored. (A `help`/`--help`
-// arg is intercepted earlier, so it never reaches here.) No leading "coop " — ui.Error already
-// prefixes "coop:", so this would otherwise double it ("coop: coop doctor …").
+// rejectArgs returns the shared extra-argument refusal when a command that takes no arguments is
+// given some, so a stray token fails clearly instead of being silently ignored. It names the FIRST
+// extra token, not every one. (A `help`/`--help` arg is intercepted earlier, so it never reaches
+// here.) cmd is the command path without "coop" — "version", "net approve".
 func rejectArgs(cmd string, args []string) error {
 	if len(args) == 0 {
 		return nil
 	}
-	return fmt.Errorf("%s takes no arguments (got %q) — see 'coop %s --help'", cmd, strings.Join(args, " "), cmd)
+	return ui.UnexpectedArgument(args[0], "coop "+cmd, "coop "+cmd)
 }
 
 // colWidth is the width to size a table column to: the widest value (counted in runes), clamped
@@ -132,9 +133,28 @@ func padRight(s string, w int) string {
 	return s
 }
 
-// unknownErr is the one shape for a rejected subcommand / agent / value: `unknown <noun>
-// "<token>" — use: a, b, c`, with a "did you mean X?" when the token is a near-miss. Shared by the
-// subcommand groups so a bad input reads the same everywhere.
+// unknownSubcommandErr refuses a verb a command family does not have, correcting a near miss from
+// that family's OWN verb list and otherwise pointing at the family's help.
+func unknownSubcommandErr(family, verb string, valid []string) error {
+	guess, _ := nearestCommand(verb, valid)
+	return ui.UnknownCommandPath([]string{family, verb}, guess, false)
+}
+
+// unknownOptionErr refuses an option its command does not accept, suggesting the whole corrected
+// command when the typo has an obvious fix. command is the full owning path ("coop models"); valid
+// is that command's real option list, so the suggestion can never name an option it would refuse.
+func unknownOptionErr(option, command string, valid []string) error {
+	guess, _ := nearestCommand(option, valid)
+	suggestion := ""
+	if guess != "" {
+		suggestion = command + " " + guess
+	}
+	return ui.UnknownOption(option, command, suggestion)
+}
+
+// unknownErr is the shape for a rejected VALUE — an agent name, a credential attribute: `unknown
+// <noun> "<token>" — use: a, b, c`, with a "did you mean X?" when the token is a near-miss.
+// Rejected commands and options have their own approved blocks above.
 func unknownErr(noun, token string, valid []string) error {
 	if guess, ok := nearestCommand(token, valid); ok {
 		return fmt.Errorf("unknown %s %q — use: %s (did you mean %q?)", noun, token, strings.Join(valid, ", "), guess)

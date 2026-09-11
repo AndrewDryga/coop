@@ -294,7 +294,7 @@ while :; do
   # would un-complete a finished task for nothing.
   owned=$(owned_jobs "$jobs")
   if [ -n "$owned" ]; then
-    [ -n "$reaped_consult" ] || echo "coop: consult(s) outlived the provider that asked — their reply can no longer be read; reaping: $(job_names "$owned")" >&2
+    [ -n "$reaped_consult" ] || echo "Consult(s) outlived the provider that asked — their reply can no longer be read; reaping: $(job_names "$owned")" >&2
     reaped_consult=1
     reap_jobs "$owned"
     reaped_pids="$reaped_pids $owned"
@@ -303,7 +303,7 @@ while :; do
   if [ -n "$jobs" ]; then
     # Announce the wait ONCE. Without this the box is silent for the whole window, which reads as a
     # hung loop rather than a drain, and the operator cannot tell what is holding it open.
-    [ -n "$saw_live_job" ] || echo "coop: provider exited with background work still live — waiting up to ${handoff_wait}s for: $(job_names "$jobs")" >&2
+    [ -n "$saw_live_job" ] || echo "The provider exited with background work still live — waiting up to ${handoff_wait}s for: $(job_names "$jobs")" >&2
     saw_live_job=1
     IFS=. read -r now _ < /proc/uptime
     [ "$now" -lt "$deadline" ] || break
@@ -322,7 +322,7 @@ while :; do
 done
 [ -n "$saw_live_job" ] || exit 0
 [ -z "$jobs" ] && exit "$coop_drained_exit"
-echo "coop: background work did not exit within ${handoff_wait}s — terminating: $(job_names "$jobs")" >&2
+echo "Background work did not exit within ${handoff_wait}s — terminating: $(job_names "$jobs")" >&2
 terminate_jobs "$jobs"
 exit "$coop_timeout_exit"
 ENTRY
@@ -357,13 +357,14 @@ const baseProvisioningScript = `if command -v asdf >/dev/null 2>&1; then
       done < "$f"
       if [ -n "$need" ]; then
         # COOP_QUIET (set by coop acp) provisions silently: ACP's consumer is an editor over
-        # stdio, not a human. Otherwise narrate with a dimmed coop: prefix (matching ui).
+        # stdio, not a human. Otherwise narrate with one dim line (human output carries no
+        # tool prefix — see internal/ui).
         log=/dev/stderr
         if [ -n "$COOP_QUIET" ]; then
           log=/dev/null
         else
           if [ -t 2 ]; then d=$(printf '\033[2m'); r=$(printf '\033[0m'); else d=; r=; fi
-          echo "${d}coop:${r} provisioning toolchain from $f (first run may compile; cached after)" >&2
+          echo "${d}Provisioning toolchain from $f (first run may compile; cached after)${r}" >&2
         fi
         for t in $(awk 'NF && $1 !~ /^#/ {print $1}' "$f"); do
           asdf plugin list 2>/dev/null | grep -qx "$t" || asdf plugin add "$t" >"$log" 2>&1 || true
@@ -430,7 +431,7 @@ func BuildWith(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, 
 	}
 	dfRel := proj.DockerfileRel() // box.dockerfile, else .agent/Dockerfile
 	if !fileExists(filepath.Join(repo, dfRel)) {
-		ui.Info("building %s (shared base)", cfg.BaseImage)
+		ui.Note("building %s (shared base)", cfg.BaseImage)
 		err := buildErr(rt.Run(strings.NewReader(BaseDockerfile()), stdout, os.Stderr, baseBuildArgs(cfg, fresh)...))
 		if err == nil {
 			StampImageMeta(cfg, cfg.BaseImage, version) // record builder + definition so a later run can flag skew/age
@@ -443,9 +444,9 @@ func BuildWith(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, 
 	// untracked box definition is exactly the agent-authored case — surface it so a moved/planted
 	// file isn't built silently. Cheap visibility, not a gate.
 	if fileUntracked(repo, dfRel) {
-		ui.Info("note: %s is untracked in git — it defines this box, and an agent can author one; review it before building", dfRel)
+		ui.Note("note: %s is untracked in git — it defines this box, and an agent can author one; review it before building", dfRel)
 	}
-	ui.Info("building %s from %s (this project's toolchain)", img, dfRel)
+	ui.Note("building %s from %s (this project's toolchain)", img, dfRel)
 	// A project Dockerfile may inherit coop's trusted base (agent CLIs + ACP adapters, browser
 	// libraries, writable-home + security setup) with `ARG COOP_BASE_IMAGE` / `FROM ${COOP_BASE_IMAGE}`,
 	// adding only its own toolchain. When it does, make sure the base is present (build it if missing,
@@ -453,7 +454,7 @@ func BuildWith(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, 
 	content, _ := os.ReadFile(filepath.Join(repo, dfRel))
 	usesBase := strings.Contains(string(content), "COOP_BASE_IMAGE")
 	if usesBase && (fresh || !ImageExists(rt, cfg.BaseImage)) {
-		ui.Info("building %s (shared base) first — %s inherits it via COOP_BASE_IMAGE", cfg.BaseImage, dfRel)
+		ui.Note("building %s (shared base) first — %s inherits it via COOP_BASE_IMAGE", cfg.BaseImage, dfRel)
 		if err := buildErr(rt.Run(strings.NewReader(BaseDockerfile()), stdout, os.Stderr, baseBuildArgs(cfg, fresh)...)); err != nil {
 			return err
 		}

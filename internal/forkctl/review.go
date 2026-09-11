@@ -206,7 +206,7 @@ func (c *Control) ForkReview(args []string) (int, error) {
 		return -1, err
 	}
 	if _, s := c.host.forkCost(ws); s != "" {
-		ui.Info("cost: %s", s)
+		ui.Note("cost: %s", s)
 	}
 	finish := func(code int, err error) (int, error) {
 		if err != nil || code != 0 {

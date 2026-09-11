@@ -275,7 +275,7 @@ func TestSelfUpdate(t *testing.T) {
 		if got, err := os.ReadFile(exe); err != nil || string(got) != "new" {
 			t.Errorf("verified release was not installed: bytes=%q err=%v", got, err)
 		}
-		if !strings.Contains(out.String(), "updating 2.7.2 → 2.7.3") {
+		if !strings.Contains(out.String(), "Updating 2.7.2 → 2.7.3") {
 			t.Errorf("missing update note, got %q", out.String())
 		}
 	})

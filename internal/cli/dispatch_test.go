@@ -58,20 +58,25 @@ func TestCommandHelpCoversSubcommands(t *testing.T) {
 }
 
 func TestUnknownCommandErr(t *testing.T) {
-	// A typo gets a suggestion plus the box hint carrying the full command line.
-	s := unknownCommandErr([]string{"check-secret", "--all"}).Error()
-	for _, want := range []string{
-		`unknown command "check-secret"`,
-		`did you mean "check-secrets"?`,
-		"coop run -- check-secret --all",
-		"coop help",
-	} {
+	// A typo names the FULL rejected command (including coop, so it doesn't read as a rejected
+	// shell command) and corrects it to a whole command, not a bare token. There is no
+	// run-in-the-box fallback: a mistyped coop command is not a request to run a program.
+	s := unknownCommandErr([]string{"check-secret"}, false).Error()
+	for _, want := range []string{`Unknown command "coop check-secret"`, "Did you mean: coop check-secrets"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("unknownCommandErr missing %q in:\n%s", want, s)
 		}
 	}
-	// A genuine external command gets no noisy suggestion — just the box hint.
-	if s := unknownCommandErr([]string{"python"}).Error(); strings.Contains(s, "did you mean") {
-		t.Errorf("python should get no suggestion:\n%s", s)
+	if strings.Contains(s, "coop run -- ") {
+		t.Errorf("a rejected command must not be re-offered as a box command:\n%s", s)
+	}
+	// A genuine external command gets no noisy suggestion — just the pointer to the command list.
+	s = unknownCommandErr([]string{"python"}, false).Error()
+	if strings.Contains(s, "Did you mean") || !strings.Contains(s, "See available commands: coop help") {
+		t.Errorf("python should get the command-list pointer, no suggestion:\n%s", s)
+	}
+	// A help request keeps its intent: the correction is itself a help command.
+	if s := unknownCommandErr([]string{"doctro"}, true).Error(); !strings.Contains(s, "Did you mean: coop help doctor") {
+		t.Errorf("a help request should be corrected to a help command:\n%s", s)
 	}
 }

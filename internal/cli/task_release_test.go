@@ -83,9 +83,9 @@ func TestIntegrationUmbrellaReleaseRefusals(t *testing.T) {
 		{name: "duplicate exact", secondID: "2026-09-05-shared", args: []string{"2026-09-05-shared"}, code: 1, want: "matches 2 tasks across the queues"},
 		{name: "duplicate fragment", secondID: "2026-09-06-shared", args: []string{"shared"}, code: 1, want: "matches 2 tasks across the queues"},
 		{name: "missing identity", args: []string{"absent"}, code: 1, want: "no task matching"},
-		{name: "missing argument", code: 2, want: "usage: coop tasks release <id>"},
-		{name: "extra argument", args: []string{"shared", "extra"}, code: 2, want: "too many arguments"},
-		{name: "unknown flag", args: []string{"shared", "--force"}, code: 2, want: "unknown flag"},
+		{name: "missing argument", code: 2, want: `Missing task ID for "coop tasks release"`},
+		{name: "extra argument", args: []string{"shared", "extra"}, code: 2, want: `Unexpected argument "extra" for "coop tasks release"`},
+		{name: "unknown flag", args: []string{"shared", "--force"}, code: 2, want: `Unknown option "--force" for "coop tasks release"`},
 		{name: "wrong state", state: stateTodo, args: []string{"shared"}, code: 1, want: "not in progress"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -83,7 +83,7 @@ func (a *app) cmdNet(args []string) (int, error) {
 	case "recover":
 		return a.cmdNetRecover(rest)
 	default:
-		return 2, unknownErr("net command", verb, netCommands)
+		return 2, unknownSubcommandErr("net", verb, netCommands)
 	}
 }
 
@@ -365,7 +365,7 @@ func parseNetRunsFlags(args []string) (netRunsOptions, error) {
 		case "--json":
 			opts.json = true
 		default:
-			return opts, unknownErr("net runs flag", arg, []string{"--all", "--all-projects", "--json"})
+			return opts, unknownOptionErr(arg, "coop net runs", []string{"--all", "--all-projects", "--json"})
 		}
 	}
 	if opts.all && opts.allProjects {
@@ -721,7 +721,7 @@ func parseNetRunArgs(verb string, args []string) (netRunOptions, error) {
 		case arg == "--json":
 			opts.json = true
 		case strings.HasPrefix(arg, "-"):
-			return opts, unknownErr("net "+verb+" flag", arg, []string{"--json"})
+			return opts, unknownOptionErr(arg, "coop net "+verb, []string{"--json"})
 		case opts.id != "":
 			return opts, fmt.Errorf("coop net %s reads one run, but got %q and %q", verb, opts.id, arg)
 		default:
@@ -839,7 +839,7 @@ func (a *app) cmdNetExport(args []string) (int, error) {
 		case arg == "--include-destinations":
 			include = true
 		case strings.HasPrefix(arg, "-"):
-			return 2, unknownErr("net export flag", arg, []string{"--include-destinations"})
+			return 2, unknownOptionErr(arg, "coop net export", []string{"--include-destinations"})
 		case ref != "":
 			return 2, fmt.Errorf("coop net export writes one run, but got %q and %q", ref, arg)
 		default:

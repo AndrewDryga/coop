@@ -27,8 +27,9 @@ import (
 // (absolute path to .agent/tasks). No sub-command lists the tree.
 // taskArgSpec declares a structured subcommand's allowed flags and max positional count.
 type taskArgSpec struct {
-	flags  []string
-	maxPos int
+	flags  []string // the options this subcommand accepts, and the ones a correction may suggest
+	maxPos int      // how many positionals it takes
+	usage  string   // its syntax line, shown when an argument is missing or extra
 }
 
 // taskArgSpecs validates the structured `coop tasks` subcommands so an unsupported flag or a stray
@@ -36,10 +37,10 @@ type taskArgSpec struct {
 // free-form title that may start with "-"; claim, rm, unblock and decisions validate their own
 // grammar, so those commands are intentionally absent.
 var taskArgSpecs = map[string]taskArgSpec{
-	"ls":      {lsFlags, 0},
-	"lint":    {nil, 0},
-	"release": {nil, 1}, "path": {nil, 1},
-	"block": {nil, 1}, "done": {nil, 1},
+	"ls":      {lsFlags, 0, "coop tasks ls [<options>...]"},
+	"lint":    {nil, 0, "coop tasks lint"},
+	"release": {nil, 1, "coop tasks release <task-id>"}, "path": {nil, 1, "coop tasks path <task-id>"},
+	"block": {nil, 1, "coop tasks block <task-id>"}, "done": {nil, 1, "coop tasks done <task-id>"},
 }
 
 // lsFlags are the flags `coop tasks ls` accepts: --all (uncap the done archive) plus a per-state
@@ -83,26 +84,23 @@ func filterLabel(only []string) string {
 	return strings.Join(labels, "/")
 }
 
-// validateArgs enforces a subcommand's flags + positional count: any token starting with "-" must be
-// in allowedFlags, and at most maxPos positionals are allowed. So `coop tasks ls --done` or `coop
-// tasks claim a b` fails with a clear message rather than quietly doing the wrong thing.
-func validateArgs(cmd string, args, allowedFlags []string, maxPos int) error {
+// validateArgs enforces a subcommand's grammar from its spec: any token starting with "-" must be
+// one of its options, and at most spec.maxPos positionals are allowed. So `coop tasks ls --done` or
+// `coop tasks release a b` is refused — naming the FIRST extra argument — rather than quietly doing
+// the wrong thing. cmd is the command path without "coop".
+func validateArgs(cmd string, args []string, spec taskArgSpec) error {
 	pos := 0
 	for _, a := range args {
 		if strings.HasPrefix(a, "-") && a != "-" {
-			if !slices.Contains(allowedFlags, a) {
-				hint := ""
-				if len(allowedFlags) > 0 {
-					hint = " (supported: " + strings.Join(allowedFlags, ", ") + ")"
-				}
-				return fmt.Errorf("coop %s: unknown flag %q%s", cmd, a, hint)
+			if !slices.Contains(spec.flags, a) {
+				return unknownOptionErr(a, "coop "+cmd, spec.flags)
 			}
 			continue
 		}
 		pos++
-	}
-	if pos > maxPos {
-		return fmt.Errorf("coop %s: too many arguments (got %d, expected at most %d)", cmd, pos, maxPos)
+		if pos > spec.maxPos {
+			return ui.UnexpectedArgument(a, "coop "+cmd, spec.usage)
+		}
 	}
 	return nil
 }
@@ -117,7 +115,7 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 	// Reject unsupported flags / stray arguments up front for the structured subcommands (see
 	// taskArgSpecs); add/rm/unblock/decisions own their argument parsing.
 	if spec, ok := taskArgSpecs[sub]; ok {
-		if err := validateArgs("tasks "+sub, args, spec.flags, spec.maxPos); err != nil {
+		if err := validateArgs("tasks "+sub, args, spec); err != nil {
 			return 2, err
 		}
 	}
@@ -153,7 +151,7 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 	case "flags":
 		return tasksFolderFlags(root, args)
 	default:
-		return 2, unknownErr("tasks command", sub, TasksVerbs)
+		return 2, unknownSubcommandErr("tasks", sub, TasksVerbs)
 	}
 }
 
@@ -267,6 +265,19 @@ var taskSections = []taskSection{
 
 const defaultSubtask = "<first small, end-to-end, testable step — check off once the gate is green>"
 
+// addOptions are the options `coop tasks add` / `coop backlog add` accept, derived from the section
+// flags that ARE the task shape — so a correction can never suggest a flag the parser would refuse.
+var addOptions = func() []string {
+	out := make([]string, 0, len(taskSections)+1)
+	for _, s := range taskSections {
+		out = append(out, "--"+s.flag)
+	}
+	return append(out, "--subtask")
+}()
+
+// claimOptionNames are `coop tasks claim`'s options, for the same reason.
+var claimOptionNames = []string{"--as", "--pid", "--force"}
+
 // taskBody renders the task.md body after the `# title` line: each section as `**Heading:** value`
 // (a blank/absent value falls back to the section's `<…>` placeholder — that's the scaffold), then
 // the `## Subtasks` checklist (the default placeholder when none are given).
@@ -370,7 +381,7 @@ func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, proj
 		}
 		heading, isSection := sectionByFlag[flag]
 		if !isSection && flag != "subtask" {
-			return 2, fmt.Errorf("coop %s: unknown flag %q (known: --context, --acceptance, --approach, --subtask)", cmdLabel, a)
+			return 2, unknownOptionErr(a, "coop "+cmdLabel, addOptions)
 		}
 		if !hasEq {
 			if i+1 >= len(args) {
@@ -393,7 +404,7 @@ func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, proj
 	}
 	title := strings.TrimSpace(strings.Join(titleWords, " "))
 	if title == "" {
-		return 2, fmt.Errorf(`usage: coop %s "<title>" [--context <context> --acceptance <acceptance> --approach <approach> --subtask <subtask>...]`, cmdLabel)
+		return 2, ui.MissingArgument("title", "coop "+cmdLabel, "coop "+cmdLabel+` "<title>"`)
 	}
 	slug := slugify(title)
 	if slug == "" {
@@ -615,16 +626,16 @@ func parseClaimArgs(args []string) (string, claimOptions, error) {
 			opts.force = true
 		default:
 			if strings.HasPrefix(args[i], "-") && args[i] != "-" {
-				return "", opts, fmt.Errorf("coop tasks claim: unknown flag %q (supported: --as, --pid, --force)", args[i])
+				return "", opts, unknownOptionErr(args[i], "coop tasks claim", claimOptionNames)
 			}
 			if id != "" {
-				return "", opts, errors.New("coop tasks claim: too many arguments (expected one task id)")
+				return "", opts, ui.UnexpectedArgument(args[i], "coop tasks claim", "coop tasks claim <task-id>")
 			}
 			id = args[i]
 		}
 	}
 	if id == "" {
-		return "", opts, errors.New("usage: coop tasks claim <id> [--as <label>] [--pid <n>] [--force]")
+		return "", opts, ui.MissingArgument("task ID", "coop tasks claim", "coop tasks claim <task-id>")
 	}
 	return id, opts, nil
 }
@@ -656,7 +667,7 @@ func tasksFolderMove(root string, args []string, newState, verb, pastVerb string
 // non-CLI claim pass an empty claimOptions, which binds the claim to nothing.
 func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb string, opts claimOptions) (int, error) {
 	if len(args) < 1 {
-		return 2, fmt.Errorf("usage: coop tasks %s <id>", verb)
+		return 2, ui.MissingArgument("task ID", "coop tasks "+verb, "coop tasks "+verb+" <task-id>")
 	}
 	t, err := FindTask(root, args[0])
 	if err != nil {
@@ -737,7 +748,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 // the task stays exactly where it is in 10_in_progress/ and the loop can adopt it on its next scan.
 func tasksFolderRelease(root string, args []string) (int, error) {
 	if len(args) < 1 {
-		return 2, errors.New("usage: coop tasks release <id>")
+		return 2, ui.MissingArgument("task ID", "coop tasks release", "coop tasks release <task-id>")
 	}
 	t, err := FindTask(root, args[0])
 	if err != nil {
@@ -774,7 +785,7 @@ func trustedCompletionError(err error, id string) error {
 // fragment resolves and an absent/ambiguous id errors exactly like claim/done.
 func tasksFolderPath(root string, args []string) (int, error) {
 	if len(args) < 1 {
-		return 2, errors.New("usage: coop tasks path <id>")
+		return 2, ui.MissingArgument("task ID", "coop tasks path", "coop tasks path <task-id>")
 	}
 	t, err := FindTask(root, args[0])
 	if err != nil {
@@ -786,11 +797,11 @@ func tasksFolderPath(root string, args []string) (int, error) {
 
 func parseTaskUnblockArgs(args []string) (id, answer string, err error) {
 	if len(args) < 1 {
-		return "", "", errors.New(`usage: coop tasks unblock <id> ["<answer>"]`)
+		return "", "", ui.MissingArgument("task ID", "coop tasks unblock", `coop tasks unblock <task-id> ["<answer>"]`)
 	}
 	for _, arg := range args[1:] {
 		if arg != "-" && strings.HasPrefix(arg, "-") {
-			return "", "", fmt.Errorf("coop tasks unblock: unknown flag %q", arg)
+			return "", "", unknownOptionErr(arg, "coop tasks unblock", nil)
 		}
 	}
 	return args[0], strings.TrimSpace(strings.Join(args[1:], " ")), nil
@@ -1488,6 +1499,9 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 	return 0, nil
 }
 
+// taskRemoveSpec is `coop tasks rm`'s grammar: one id OR --all-done, both optionally unattended.
+var taskRemoveSpec = taskArgSpec{[]string{"--all-done", "--yes", "-y"}, 1, "coop tasks rm <task-id> [--yes]"}
+
 type taskRemoveArgs struct {
 	id      string
 	allDone bool
@@ -1498,7 +1512,7 @@ type taskRemoveArgs struct {
 // confirmation or deletion, even when the archive is empty or spans many queues.
 func parseTaskRemoveArgs(args []string) (taskRemoveArgs, error) {
 	const usage = "usage: coop tasks rm <id> [--yes]  |  coop tasks rm --all-done [--yes]"
-	if err := validateArgs("tasks rm", args, []string{"--all-done", "--yes", "-y"}, 1); err != nil {
+	if err := validateArgs("tasks rm", args, taskRemoveSpec); err != nil {
 		return taskRemoveArgs{}, err
 	}
 	var request taskRemoveArgs

@@ -183,7 +183,7 @@ func (s *launchSections) stopping(reason string) {
 	if !s.on {
 		return
 	}
-	ui.Info("stopping the box — %s", reason)
+	ui.Note("stopping the box — %s", reason)
 }
 
 // failed renders a launch that stopped before its main process as the nested failure of the
