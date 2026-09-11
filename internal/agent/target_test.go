@@ -37,20 +37,20 @@ func TestParseTarget(t *testing.T) {
 	}
 
 	bad := map[string]string{
-		"":                      "empty target",
-		"gpt":                   "unknown provider", // not registered
-		"nope:opus":             "unknown provider",
-		"claude:":               "empty model",
-		"claude@":               "empty account",
-		"claude@work,":          "empty account",
-		"claude@a@b":            "more than one @",
-		"claude:a:b":            "no ':'", // model can't contain ':'
-		"claude:opus@a:b":       "no ':'", // account can't contain ':'
-		"claude:op us":          "no ':' '@' '/'",
-		"claude:opus/":          "empty effort",                // '/' with nothing after
-		"claude:opus/HIGH":      "invalid effort",              // effort is lowercase letters
-		"claude:opus@work/high": "invalid account",             // effort must precede the account
-		"gemini:pro/high":       "no reasoning-effort control", // gemini exposes none
+		"":                      "Missing agent target",
+		"gpt":                   "Unknown agent", // not registered
+		"nope:opus":             "Unknown agent",
+		"claude:":               "Add a model after",
+		"claude@":               "Add an account after",
+		"claude@work,":          "Add an account after",
+		"claude@a@b":            `Use one "@" before the account name`,
+		"claude:a:b":            "A model name cannot contain", // model can't contain ':'
+		"claude:opus@a:b":       "Invalid account name",        // account can't contain ':'
+		"claude:op us":          "A model name cannot contain",
+		"claude:opus/":          "Add a reasoning effort after",                // '/' with nothing after
+		"claude:opus/HIGH":      "lowercase letters",                           // effort is lowercase letters
+		"claude:opus@work/high": "Invalid account name",                        // effort must precede the account
+		"gemini:pro/high":       "does not support a reasoning-effort setting", // gemini exposes none
 	}
 	for in, want := range bad {
 		_, err := ParseTarget(in)

@@ -1,0 +1,5 @@
+
+✗ No Codex account named "work"
+
+  Accounts: coop credentials codex
+  Sign in:  coop login codex@work

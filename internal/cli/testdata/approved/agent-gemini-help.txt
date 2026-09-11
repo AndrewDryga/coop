@@ -1,0 +1,22 @@
+coop gemini — run Gemini in a sandboxed box
+
+Usage:
+  coop gemini[:<model>][@<account>] [options] [-- <gemini-args>...]
+
+EXAMPLES
+  coop gemini
+  coop gemini:gemini-3.5-flash
+  coop gemini:gemini-3.5-flash@work
+  coop gemini -- --help
+
+OPTIONS
+  --peer <target>  start with a read-only peer agent; repeat to add more
+  --               pass all remaining arguments directly to Gemini
+
+MODELS AND ACCOUNTS
+  coop models gemini       list Gemini models
+  coop credentials gemini  list Gemini accounts
+  coop login gemini        sign in to Gemini
+
+For a guide to using multiple models and providers together:
+  coop help presets

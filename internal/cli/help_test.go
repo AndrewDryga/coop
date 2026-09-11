@@ -189,7 +189,7 @@ func TestRenderManual(t *testing.T) {
 	}
 	for _, want := range []string{
 		"THE BOX", "coop fork", "coop tasks", "coop run",
-		"coop models [<" + strings.Join(agents.Names(), "|") + ">] [--refresh]",
+		"coop models [" + strings.Join(agents.Names(), "|") + "] [--refresh]",
 	} {
 		if !strings.Contains(m, want) {
 			t.Errorf("RenderManual missing %q", want)
@@ -225,7 +225,8 @@ func TestManualOpensWithTheApprovedMenu(t *testing.T) {
 // slices that write them.
 var wantManualOrder = []string{
 	"run", "shell", "claude", "codex", "gemini", "grok",
-	"login", "credentials", "models", "presets",
+	"login", "credentials", "credentials default", "credentials rm", "credentials account",
+	"models", "presets init", "presets",
 	"tasks", "backlog", "context", "loop", "fork",
 	"up", "down",
 	"doctor", "net", "net runs", "net inspect", "net check", "net blocked", "net approve",

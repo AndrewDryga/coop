@@ -226,7 +226,8 @@ func anyAgentSignedIn(cfg *config.Config) bool {
 // is drift TestManualCoversEveryCommand catches. Presets are resolved BY NAME (`coop help
 // frontier`), never added here: the manual's bytes must not depend on the host.
 var manualOrder = append(append([]string{"run", "shell"}, agents.Names()...),
-	"login", "credentials", "models", "presets",
+	"login", "credentials", "credentials default", "credentials rm", "credentials account",
+	"models", "presets init", "presets",
 	"tasks", "backlog", "context", "loop", "fork",
 	"up", "down",
 	"doctor", "net", "net runs", "net inspect", "net check", "net blocked", "net approve",
@@ -312,7 +313,7 @@ func agentHelp(name string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "coop %s — run %s in a sandboxed box\n\n", name, title)
 	fmt.Fprintf(&b, "Usage:\n  coop %s[@<account>] [options] [-- <%s-args>...]\n\n", target, name)
-	fmt.Fprintf(&b, "Examples\n  coop %s\n  coop %s\n  coop %s\n  coop %s -- --help\n\n", name, example, account, name)
+	fmt.Fprintf(&b, "EXAMPLES\n  coop %s\n  coop %s\n  coop %s\n  coop %s -- --help\n\n", name, example, account, name)
 
 	options := [][2]string{{"--peer <target>", "start with a read-only peer agent; repeat to add more"}}
 	if restricted {
@@ -321,26 +322,26 @@ func agentHelp(name string) string {
 			[2]string{"--bare", "run without the repository, project context, or tools"})
 	}
 	options = append(options, [2]string{"--", "pass all remaining arguments directly to " + title})
-	b.WriteString("Options\n")
+	b.WriteString("OPTIONS\n")
 	b.WriteString(helpRows(options, 2))
 	if restricted {
 		b.WriteString("\n  --readonly and --bare cannot be combined or used with peers.\n")
 	}
 
-	b.WriteString("\nModels and accounts\n")
+	b.WriteString("\nMODELS AND ACCOUNTS\n")
 	b.WriteString(helpRows([][2]string{
 		{"coop models " + name, "list " + title + " models"},
 		{"coop credentials " + name, "list " + title + " accounts"},
 		{"coop login " + name, "sign in to " + title},
-	}, 3))
+	}, 2))
 	b.WriteString("\nFor a guide to using multiple models and providers together:\n  coop help presets")
 	return b.String()
 }
 
 // helpRows renders a two-column block: every description starts past the widest command cell,
 // measured on plain text (see .agent/kb/rules/no-color-in-width-fields.md). gap is that block's
-// own column gap — the approved page sets the flags tight (2) and the commands airier (3),
-// because a flag column is read down and a command column is read across.
+// own column gap, two spaces wherever the approved pages align a column of commands or flags
+// against their descriptions.
 func helpRows(rows [][2]string, gap int) string {
 	w := 0
 	for _, r := range rows {
@@ -442,55 +443,86 @@ var commandHelp = map[string]string{
   network as an agent run. Exit to return. --readonly and --bare open it under
   the restricted profile of the same-named agent runs ('coop help claude').`,
 
-	"login": `coop login <agent> — sign in to an agent (token persists in the config dir).
+	"login": `coop login — sign in to an agent
 
-  Usage: coop login <agent>[@<account>]
+Usage: coop login <agent>[@<account>]
 
-  Runs the agent's sign-in (paste a code, no browser). Re-run any time to
-  refresh or switch accounts — e.g. after a usage limit.
+AGENTS
+  claude  codex  gemini  grok
 
-  @account signs in a second (or third) account under a name, so one agent can
-  hold several subscriptions: coop login claude@work. An unattended loop rotates
-  across all of them when one is rate limited (a bare model in a preset's lead agent:
-  ladder fans out over every account). Without @account the sign-in targets the default.`,
+EXAMPLES
+  coop login claude
+  coop login codex@work
 
-	"credentials": `coop credentials — list stored credentials; a path grammar edits one.
+ACCOUNTS
+  Without @account, signs in to the agent's default account.
+  Use a name such as @work to keep a separate login.
 
-  Usage: coop credentials [<agent> [<credential>]]
-         coop credentials <agent> <credential> default
-         coop credentials <agent> <credential> rm
+  Show accounts: coop credentials
+  Start an agent: coop claude`,
 
-  A CREDENTIAL is one stored account/login — a rate-limit slot. Orchestration
-  recipes are PRESETS; see coop help presets.
-  Each token narrows: no args lists every agent, an agent lists its credentials
-  (which one runs by default, when each was last refreshed), a credential shows
-  its detail, and a trailing attribute reads or writes one property of it. A credential is one subscription; add more
-  with 'coop login <agent>@<name>', then an unattended loop rotates across them on
-  a rate limit (a bare model in a preset's lead agent: ladder). The model is a separate
-  axis — set it inline (claude:opus) or in a preset, never on a credential.
+	"credentials": `coop credentials — show and manage your agent accounts
 
-  default                mark this credential as what a plain 'coop <agent>' runs,
-                         and the account a loop's rotation starts on. A mark you
-                         set — the listing shows it first, tagged (default).
-  rm                     delete the credential (its login token and session
-                         history). Set a different default first if you're
-                         removing the marked one.
+Usage:
+  coop credentials                            show all accounts
+  coop credentials <agent>                    show one agent's accounts
+  coop credentials <agent> <account>          show an account
+  coop credentials <agent> <account> default  use it by default
+  coop credentials <agent> <account> rm       remove it
 
-  Run on a specific account without changing the default — put it in the target on
-  any agent launch: 'coop claude@work', 'coop claude@work --peer codex', and
-  'coop acp claude@work' (so an editor entry can pin an account).`,
+USE AN ACCOUNT
+  coop claude@work
+  coop login claude@work
+
+  The default account is marked with *.
+  Account removal options: coop help credentials rm
+  Models and automatic rotation: coop help models`,
+
+	"credentials default": `coop credentials <agent> <account> default — choose the default account
+
+Usage: coop credentials <agent> <account> default
+
+  New runs try this account first. Add @account to use only one account.
+
+EXAMPLE
+  coop credentials codex work default
+
+  Accounts: coop credentials codex`,
+
+	"credentials rm": `coop credentials <agent> <account> rm — remove a saved account
+
+Usage: coop credentials <agent> <account> rm [--yes]
+
+OPTIONS
+  -y, --yes  skip confirmation
+
+  Removes the saved login and its local session history.
+  Choose another default before removing the current default account.
+
+EXAMPLE
+  coop credentials codex old-work rm`,
+
+	"credentials account": `coop credentials <agent> <account> — show an account
+
+Usage: coop credentials <agent> <account>
+
+EXAMPLE
+  coop credentials codex personal
+
+  Use by default: coop help credentials default
+  Remove account: coop help credentials rm`,
 
 	"models": `coop models — list models available to each agent
 
 Usage:
-  coop models [<claude|codex|gemini|grok>] [--refresh]
+  coop models [claude|codex|gemini|grok] [--refresh]
 
-List models
-  coop models                    all agents
-  coop models claude             Claude only
-  coop models claude --refresh   refresh Claude models list now
+LIST MODELS
+  coop models                   all agents
+  coop models claude            Claude only
+  coop models claude --refresh  refresh Claude models list now
 
-Use a model
+USE A MODEL
   Put :model after the agent name. This works anywhere Coop accepts an agent.
 
   coop claude:opus
@@ -499,7 +531,7 @@ Use a model
 
   You can use any model accepted by the agent, even if it is not listed.
 
-Set reasoning effort
+SET REASONING EFFORT
   Add /effort after the model, or directly after the agent to use its default model.
 
   coop codex:gpt-6-astra/high
@@ -507,20 +539,20 @@ Set reasoning effort
 
   Claude, Codex, and Grok support reasoning effort. Gemini does not.
 
-Choose an account
+CHOOSE AN ACCOUNT
   Add @account after the model.
 
   coop claude:opus@work
   coop credentials
 
-Full syntax
+FULL SYNTAX
   coop <provider>:<model>/<effort>@<account>
   coop codex:gpt-6-astra/high@personal
 
-Set a default model
+SET A DEFAULT MODEL
   export COOP_CLAUDE_MODEL=opus
 
-Automatic rotation
+AUTOMATIC ROTATION
   Loops and presets can try models in order when one is rate-limited.
   Leave off @account to let Coop also try another signed-in account.
   Add @account when you want to use only that account.
@@ -599,25 +631,38 @@ Automatic rotation
   The log is size-capped and auto-rotated so it can't grow unbounded; it holds prompts
   and file contents, so treat it as sensitive.`,
 
-	"presets": `coop presets — configure multiple models and providers to work together
+	"presets init": `coop presets init — create a preset you can edit
 
-Usage:
-  coop presets                 list presets
-  coop presets <name>          show a preset
-  coop presets init [<name>]   create a preset (default: frontier)
-  coop help <name>             explain a preset
+Usage: coop presets init [<name>]
 
-Create a preset
+  Creates the frontier template in .agent/presets/.
+  The default name is frontier. Existing presets are left unchanged.
+
+EXAMPLES
   coop presets init
   coop presets init review
 
-Run a preset
-  coop frontier
-  coop loop frontier
-  coop acp frontier
+  Learn how presets work: coop help presets`,
+
+	"presets": `coop presets — configure multiple models and providers to work together
+
+Usage:
+  coop presets                list presets
+  coop presets <name>         show a preset
+  coop presets init [<name>]  create a preset (default: frontier)
+  coop help <name>            explain a preset
+
+CREATE A PRESET
+  coop presets init
+  coop presets init review
+
+RUN A PRESET
+  coop frontier               start an interactive session with the lead agent
+  coop loop frontier          work through tasks with this preset
+  coop acp frontier           use this preset in your editor
   coop fork risky frontier --loop
 
-How to define a preset
+HOW TO DEFINE A PRESET
 
   A preset is a YAML file that defines:
   - One lead agent.
@@ -630,25 +675,25 @@ How to define a preset
 
   Syntax:
 
-    agent:   presets use Coop's standard model, effort, account, and
+    agent:   presets use Coop’s standard model, effort, account, and
              automatic-rotation syntax. For details, see:
                coop help models
 
     mode:    controls how a role works
-               native    runs inside the lead agent's session
+               native    runs inside the lead agent’s session
                consult   provides read-only advice from another agent
                delegate  edits files for the lead; never commits; runs one at a time
 
     when:    tells the lead when to use a role
 
-    prompt:  adds custom instructions to Coop's generated instructions for the
+    prompt:  adds custom instructions to Coop’s generated instructions for the
              lead or role
 
     If the lead does not support native roles, they run as consult roles.
 
   Where presets live:
-    Project   .agent/presets/<name>/preset.yaml
-    Global    ~/.config/coop/presets/<name>/preset.yaml
+    Project  .agent/presets/<name>/preset.yaml
+    Global   ~/.config/coop/presets/<name>/preset.yaml
 
   A project preset overrides a global preset with the same name.`,
 
@@ -1500,7 +1545,10 @@ func printHelpPage(text string) {
 // without the all-commands footer. Membership travels with the page's last line. Every task page
 // ends with its own next step (the family page points at its per-command pages; each command page
 // ends with its examples or the command that follows it), so the family is listed as a prefix.
-var selfContainedHelp = map[string]bool{"presets": true, "models": true, "init": true, "tasks": true, "net": true}
+var selfContainedHelp = map[string]bool{
+	"presets": true, "models": true, "init": true, "tasks": true, "net": true,
+	"login": true, "credentials": true,
+}
 
 // selfContained reports whether cmd's page ends itself. A `<family> <command>` page inherits its
 // family's answer, so a new task page needs no second registration.

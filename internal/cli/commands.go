@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
@@ -346,7 +348,7 @@ func (a *app) launchAgent(target string, args []string) (int, error) {
 	// The head is a target: provider[:model][/effort][@account]. Model, effort, and account ride it.
 	t, err := agents.ParseTarget(target)
 	if err != nil {
-		return 2, err
+		return 2, targetUsage(err, "coop", "coop <agent>[:<model>][/<effort>][@<account>]")
 	}
 	tool := t.Provider
 	args, err = a.takeNetworkFlags(args)
@@ -366,20 +368,20 @@ func (a *app) launchAgent(target string, args []string) (int, error) {
 		if a.mode.Restricted() {
 			return 2, fmt.Errorf("'coop %s login' signs in on the host; it takes no --%s", tool, a.mode)
 		}
-		acct, aerr := singleAccount(t)
+		acct, aerr := singleAccount(t, "coop "+tool+" login")
 		if aerr != nil {
 			return 2, aerr
 		}
 		if len(args) > 1 {
-			return 2, fmt.Errorf("unexpected argument %q after 'coop %s login'", args[1], tool)
+			return 2, ui.UnexpectedArgument(args[1], "coop "+tool+" login", "coop "+tool+"[@<account>] login")
 		}
 		return a.loginTo(tool, acct)
 	}
-	if err := a.applyRunTarget(t); err != nil {
+	if err := a.applyRunTarget(t, "coop "+tool); err != nil {
 		return 2, err
 	}
 	a.nudgeIfUnauthed(tool)
-	peers, err := a.resolvePeers("--peer", peerVals)
+	peers, err := a.resolvePeers("coop "+tool, peerVals)
 	if err != nil {
 		return 2, err
 	}
@@ -414,7 +416,7 @@ func (a *app) launchPreset(p *preset.Preset, args []string) (int, error) {
 		return 2, err
 	}
 	a.nudgeIfUnauthed(tool)
-	peers, err := a.resolvePeers("--peer", peerVals)
+	peers, err := a.resolvePeers("coop "+p.Name, peerVals)
 	if err != nil {
 		return 2, err
 	}
@@ -422,14 +424,16 @@ func (a *app) launchPreset(p *preset.Preset, args []string) (int, error) {
 	return a.runAgentCommandInBox(append(append([]string{}, a.defaultCmd(tool)...), providerArgs...), tool, peers, providerArgs)
 }
 
-// nudgeIfUnauthed prints one heads-up (TTY only, never blocks) when the credential this run will use
-// isn't signed in — so a first `coop claude` names the fix instead of failing opaquely inside the box.
+// nudgeIfUnauthed prints one heads-up (TTY only, never blocks) when the account this run will use
+// isn't signed in — so a first `coop claude` names the fix instead of failing opaquely inside the
+// box. It stays a WARNING: the launch continues, because an agent CLI may still find its own
+// credentials, and only a run that truly requires one refuses (needsAccountErr).
 func (a *app) nudgeIfUnauthed(tool string) {
 	if !ui.IsTerminal(os.Stdin) {
 		return
 	}
 	if !box.ProfileAuthed(a.cfg, tool, a.cfg.ActiveProfile(tool)) {
-		ui.Note("%s isn't signed in — run 'coop login %s' (first run: coop build → coop login → coop doctor)", tool, tool)
+		warnRows(titleName(tool)+" is not signed in", [2]string{"Sign in:", "coop login " + tool})
 	}
 }
 
@@ -444,10 +448,11 @@ func (a *app) selectRunProfile(tool, profile string) error {
 		return nil
 	}
 	if !slices.Contains(box.EffectiveProfiles(a.cfg, tool), profile) {
-		return fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", tool, profile, tool, profile)
+		return noAccountErr(tool, profile)
 	}
 	if !box.ProfileAuthed(a.cfg, tool, profile) {
-		ui.Note("note: %s account %q isn't signed in — run: coop login %s@%s", tool, profile, tool, profile)
+		warnRows(fmt.Sprintf("%s is not signed in", profile),
+			[2]string{"Sign in:", agents.LoginCommand(tool + "@" + profile)})
 	}
 	a.cfg.SetActiveProfile(tool, profile)
 	return nil
@@ -571,13 +576,16 @@ func (a *app) cmdLogin(args []string) (int, error) {
 	}
 	t, err := agents.ParseTarget(args[0])
 	if err != nil {
-		return 2, err
+		return 2, targetUsage(err, "coop login", loginUsage)
 	}
 	// login authenticates an account; a :model in the target has no meaning here.
 	if t.Model != "" {
-		return 2, fmt.Errorf("coop login takes no model — run: coop login %s@<account>", t.Provider)
+		return 2, &ui.UsageError{
+			Headline: `"coop login" does not take a model`,
+			Rows:     [][2]string{{"Usage:", loginUsage}, {"Help:", "coop help login"}},
+		}
 	}
-	acct, err := singleAccount(t)
+	acct, err := singleAccount(t, "coop login")
 	if err != nil {
 		return 2, err
 	}
@@ -623,7 +631,7 @@ func validProfileName(name string) bool {
 func (a *app) loginTo(tool, profile string) (int, error) {
 	ag, ok := agents.Get(tool)
 	if !ok {
-		return 2, unknownErr("agent", tool, agents.Names())
+		return 2, unknownAgentErr(tool, "coop login")
 	}
 	if profile == "" {
 		// A bare `coop login claude` refreshes the profile your runs actually USE — the marked
@@ -635,12 +643,20 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	// Validate the profile name (a static arg) before the environment checks below, so a traversal
 	// name like "../../x" can't escape the vault and fails the same way piped or at a tty.
 	if !validProfileName(profile) {
-		return 2, fmt.Errorf("invalid credential name %q — use a single segment (no '/', '..', or leading '-')", profile)
+		return 2, &ui.UsageError{
+			Headline: fmt.Sprintf("Invalid account name %q", agents.DisplayTarget(profile)),
+			Cause:    "Use one name, without \":\", \"@\", \"/\", or \"\\\\\".\nThe name cannot be \".\", \"..\", or start with \"-\".",
+			Rows:     [][2]string{{"Help:", "coop help login"}},
+		}
 	}
 	// Login is interactive — it prompts for a paste code (reading the tty directly). Refuse a
 	// non-terminal stdin up front rather than blocking forever on a piped/redirected run.
 	if !ui.IsTerminal(os.Stdin) {
-		return 2, errors.New("login needs an interactive terminal (it prompts for a paste code) — run it directly")
+		return 2, &ui.UsageError{
+			Headline: `"coop login" needs an interactive terminal`,
+			Cause:    "Run it directly in your terminal to complete sign-in.",
+			Rows:     [][2]string{{"Help:", "coop help login"}},
+		}
 	}
 	// Named credentials live under profiles/, so create that storage before activation.
 	if profile != config.DefaultProfile {
@@ -649,12 +665,61 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 		}
 	}
 	a.cfg.SetActiveProfile(tool, profile)
-	where := ""
-	if profile != config.DefaultProfile {
-		where = fmt.Sprintf(" (credential %s)", profile)
+	loginHandoff(tool, profile)
+	code, err := a.runInBox(ag.Login(a.cfg), tool, nil) // mounts only the agent being logged in to
+	switch {
+	case errors.Is(err, context.Canceled):
+		// The human stopped the provider's flow. Say only that: whether a token was written is
+		// the provider's business, and claiming either way would be a guess.
+		loginStopped()
+		return code, err
+	case err != nil || code != 0:
+		return code, err // the box already reported how the command ended
 	}
-	ui.Note("logging in to %s%s — credentials persist in %s/", tool, where, a.cfg.AgentDir(tool))
-	return a.runInBox(ag.Login(a.cfg), tool, nil) // mounts only the agent being logged in to
+	// Exiting zero is not proof: the provider may have been dismissed without writing a usable
+	// credential, and a green ✓ over that would send the user into a failing run.
+	loginResult(tool, profile, box.ProfileCredentialReady(a.cfg, tool, profile, time.Now()))
+	return 0, nil
+}
+
+// loginHandoff says whose sign-in is starting and whose instructions follow, then the provider
+// owns the screen. Where the credential is stored is coop's business, not the user's.
+func loginHandoff(tool, profile string) {
+	ui.Note("Signing in to %s\n\nFollow %s's sign-in instructions below.", loginTargetName(tool, profile), titleName(tool))
+}
+
+// loginResult reports the sign-in only when a usable credential was actually persisted; ready=false
+// says exactly that much — the provider exited, and coop could not confirm it.
+func loginResult(tool, profile string, ready bool) {
+	title := titleName(tool)
+	if !ready {
+		warnRows(fmt.Sprintf("%s exited, but Coop could not confirm sign-in", title),
+			[2]string{"Accounts:", "coop credentials " + tool})
+		return
+	}
+	ui.OK("Signed in to %s%s", title, loginAccountSuffix(tool, profile))
+	ui.Note("\nStart %s:\n  %s", title, "coop "+loginTargetName(tool, profile))
+}
+
+// loginStopped is coop's whole say after an interrupted provider flow.
+func loginStopped() { ui.Note("\nSign-in stopped.") }
+
+// loginTargetName is the target a person would type for this account: the bare agent for its
+// built-in default slot, agent@account for a named one.
+func loginTargetName(tool, profile string) string {
+	if profile == config.DefaultProfile {
+		return tool
+	}
+	return tool + "@" + profile
+}
+
+// loginAccountSuffix names the account only when it is a named one — "Signed in to Claude" for the
+// default slot, "Signed in to Claude as work" for a second subscription.
+func loginAccountSuffix(tool, profile string) string {
+	if profile == config.DefaultProfile {
+		return ""
+	}
+	return " as " + profile
 }
 
 // cmdPrompt prints a compact, single-line status of this repo for embedding in a shell prompt, a

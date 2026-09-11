@@ -614,20 +614,20 @@ func TestResolvePeers(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "claude", "profiles", "default", ".credentials.json"), []byte("{}"), 0o644)
 	a := &app{cfg: &config.Config{ConfigDir: dir}}
 
-	peers, err := a.resolvePeers("--peer", []string{"claude:opus-4.8"})
+	peers, err := a.resolvePeers("coop claude", []string{"claude:opus-4.8"})
 	if err != nil || len(peers) != 1 || peers[0].Provider != "claude" || peers[0].Model != "opus-4.8" {
 		t.Fatalf("resolvePeers(claude:opus-4.8) = (%+v, %v)", peers, err)
 	}
-	if _, err := a.resolvePeers("--peer", []string{"claude@work"}); err == nil {
+	if _, err := a.resolvePeers("coop claude", []string{"claude@work"}); err == nil {
 		t.Error("a peer with an @account must be rejected (a peer runs on its default account)")
 	}
-	if _, err := a.resolvePeers("--peer", []string{"codex"}); err == nil {
+	if _, err := a.resolvePeers("coop claude", []string{"codex"}); err == nil {
 		t.Error("an unauthed peer must be rejected")
 	}
-	if _, err := a.resolvePeers("--peer", []string{"borg"}); err == nil {
+	if _, err := a.resolvePeers("coop claude", []string{"borg"}); err == nil {
 		t.Error("an unknown provider must be rejected")
 	}
-	if peers, err := a.resolvePeers("--peer", nil); err != nil || peers != nil {
+	if peers, err := a.resolvePeers("coop claude", nil); err != nil || peers != nil {
 		t.Errorf("resolvePeers(nil) = (%v, %v), want (nil, nil)", peers, err)
 	}
 }
@@ -642,20 +642,20 @@ func TestResolvePeersNamesTheFullPeerAndScansOnce(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "claude", "profiles", "default", ".credentials.json"), []byte("{}"), 0o644)
 	a := &app{cfg: &config.Config{ConfigDir: dir}}
 
-	_, err := a.resolvePeers("--peer", []string{"codex:gpt-5.6-sol"})
-	if err == nil || !strings.Contains(err.Error(), `"codex:gpt-5.6-sol"`) {
-		t.Fatalf("unauthed peer error = %v, want it to name the peer as typed", err)
+	_, err := a.resolvePeers("coop claude", []string{"codex:gpt-5.6-sol"})
+	if err == nil || !strings.Contains(err.Error(), "Codex needs a usable account") {
+		t.Fatalf("unauthed peer error = %v, want the shared account refusal", err)
 	}
 	if !strings.Contains(err.Error(), "coop login codex") {
 		t.Errorf("the remedy must still name the provider to log into, got %v", err)
 	}
 	// The list handed in is the only authority: claude IS signed in on disk, so a refusal here can
 	// only come from the passed slice — the scan is an input, never re-derived inside the loop.
-	if _, err := resolvePeerTargets("--peer", []string{"claude:opus-4.8"}, nil); err == nil ||
-		!strings.Contains(err.Error(), `"claude:opus-4.8"`) {
+	if _, err := resolvePeerTargets("coop claude", []string{"claude:opus-4.8"}, nil); err == nil ||
+		!strings.Contains(err.Error(), "Claude needs a usable account") {
 		t.Errorf("resolvePeerTargets ignored the signed-in list it was given: %v", err)
 	}
-	peers, err := resolvePeerTargets("--peer", []string{"claude:opus-4.8", "codex"}, []string{"claude", "codex"})
+	peers, err := resolvePeerTargets("coop claude", []string{"claude:opus-4.8", "codex"}, []string{"claude", "codex"})
 	if err != nil || len(peers) != 2 {
 		t.Fatalf("every peer in the given list = (%+v, %v), want both accepted", peers, err)
 	}
@@ -673,7 +673,7 @@ func TestCmdLoginTarget(t *testing.T) {
 	if _, err := a.cmdLogin([]string{"claude", "--credential", "work"}); err == nil || !strings.Contains(err.Error(), `Unknown option "--credential" for "coop login"`) {
 		t.Errorf("cmdLogin --credential must be an unknown option, got %v", err)
 	}
-	if _, err := a.cmdLogin([]string{"claude:opus"}); err == nil || !strings.Contains(err.Error(), "no model") {
+	if _, err := a.cmdLogin([]string{"claude:opus"}); err == nil || !strings.Contains(err.Error(), "does not take a model") {
 		t.Errorf("cmdLogin claude:opus must reject the model, got %v", err)
 	}
 	if _, err := a.cmdLogin([]string{"claude@work,personal"}); err == nil {
@@ -1006,7 +1006,7 @@ func TestLoginRequiresAgentAndTTY(t *testing.T) {
 	if code, err := a.loginTo("claude", ""); code != 2 || err == nil || !strings.Contains(err.Error(), "interactive terminal") {
 		t.Errorf("loginTo(claude) non-tty = (%d, %v), want (2, interactive-terminal error)", code, err)
 	}
-	if code, err := a.loginTo("bogus", ""); code != 2 || err == nil || !strings.Contains(err.Error(), "unknown agent") {
+	if code, err := a.loginTo("bogus", ""); code != 2 || err == nil || !strings.Contains(err.Error(), "Unknown agent") {
 		t.Errorf("loginTo(bogus) = (%d, %v), want (2, unknown agent — before the tty check)", code, err)
 	}
 }
@@ -1028,8 +1028,8 @@ func TestLoginRejectsBadProfileName(t *testing.T) {
 	// A traversal name must be rejected before any vault/dir work — and before the tty check, so it
 	// fails the same way piped or at a terminal.
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	if code, err := a.loginTo("claude", "../../escape"); code != 2 || err == nil || !strings.Contains(err.Error(), "invalid credential name") {
-		t.Errorf("loginTo bad credential = (%d, %v), want (2, invalid credential name)", code, err)
+	if code, err := a.loginTo("claude", "../../escape"); code != 2 || err == nil || !strings.Contains(err.Error(), "Invalid account name") {
+		t.Errorf("loginTo bad credential = (%d, %v), want (2, invalid account name)", code, err)
 	}
 }
 
@@ -1314,7 +1314,7 @@ func TestLoopReportsUsageBeforeRuntimeDiscovery(t *testing.T) {
 	}{
 		{[]string{"loop", "--max-tasks", "x"}, "Use a whole number greater than 0."},
 		{[]string{"loop", "--max-tasks", "0"}, "Use a whole number greater than 0."},
-		{[]string{"loop", "nope:target"}, `unknown provider "nope"`},
+		{[]string{"loop", "nope:target"}, `Unknown agent "nope:target"`},
 	} {
 		code, err := a().dispatch(c.args)
 		if code != 2 || err == nil || !strings.Contains(err.Error(), c.want) || strings.Contains(err.Error(), "runtime") {

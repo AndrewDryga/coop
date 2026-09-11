@@ -1706,8 +1706,8 @@ func TestRunDecisionBrowserDelete(t *testing.T) {
 			t.Errorf(":d should remove %s from disk (stat err=%v)", d.Dir, err)
 		}
 	}
-	if !strings.Contains(out.String(), "this can't be undone") {
-		t.Errorf("delete confirm should warn it can't be undone:\n%s", out.String())
+	if !strings.Contains(out.String(), "delete task 2026-09-11-alpha? [y/N]") {
+		t.Errorf("delete confirm should name the task it removes and default to No:\n%s", out.String())
 	}
 	index, err = ReadCompletionWindowIndex(root)
 	if err != nil {

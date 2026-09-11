@@ -1,0 +1,5 @@
+
+✗ Codex needs a usable account
+
+  Sign in: coop login codex
+  Help:    coop help credentials

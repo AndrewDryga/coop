@@ -1,0 +1,6 @@
+
+✗ A peer uses its default account
+
+      Remove "@work" from "--peer codex@work".
+
+  Help: coop help claude

@@ -1,0 +1,6 @@
+
+✗ "coop login" needs an interactive terminal
+
+      Run it directly in your terminal to complete sign-in.
+
+  Help: coop help login

@@ -1,0 +1,51 @@
+coop models — list models available to each agent
+
+Usage:
+  coop models [claude|codex|gemini|grok] [--refresh]
+
+LIST MODELS
+  coop models                   all agents
+  coop models claude            Claude only
+  coop models claude --refresh  refresh Claude models list now
+
+USE A MODEL
+  Put :model after the agent name. This works anywhere Coop accepts an agent.
+
+  coop claude:opus
+  coop loop claude:haiku
+  coop fork risky claude:opus --loop
+
+  You can use any model accepted by the agent, even if it is not listed.
+
+SET REASONING EFFORT
+  Add /effort after the model, or directly after the agent to use its default model.
+
+  coop codex:gpt-6-astra/high
+  coop codex/high
+
+  Claude, Codex, and Grok support reasoning effort. Gemini does not.
+
+CHOOSE AN ACCOUNT
+  Add @account after the model.
+
+  coop claude:opus@work
+  coop credentials
+
+FULL SYNTAX
+  coop <provider>:<model>/<effort>@<account>
+  coop codex:gpt-6-astra/high@personal
+
+SET A DEFAULT MODEL
+  export COOP_CLAUDE_MODEL=opus
+
+AUTOMATIC ROTATION
+  Loops and presets can try models in order when one is rate-limited.
+  Leave off @account to let Coop also try another signed-in account.
+  Add @account when you want to use only that account.
+
+  coop loop claude:opus
+  coop loop claude:opus@work
+
+  For more details:
+    coop help presets
+    coop help loop

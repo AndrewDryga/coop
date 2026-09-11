@@ -1,0 +1,6 @@
+
+✗ Invalid agent target "claude:"
+
+      Add a model after ":" or remove the colon.
+
+  Help: coop help models

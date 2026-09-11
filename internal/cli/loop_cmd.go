@@ -89,7 +89,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	peers, err := a.resolvePeers("--peer", peerVals)
+	peers, err := a.resolvePeers("coop loop", peerVals)
 	if err != nil {
 		return 2, err
 	}

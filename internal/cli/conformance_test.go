@@ -165,7 +165,7 @@ func TestCLIConformance(t *testing.T) {
 		}
 		for name, surface := range surfaces {
 			for _, bare := range []string{
-				" [args]", " [agent", " [credential", " [name]", "[paths...]", "[@account]",
+				" [args]", " [agent]", " [credential", " [name]", "[paths...]", "[@account]",
 				"[coop flags]", "<agent args>",
 			} {
 				if strings.Contains(surface, bare) {
@@ -176,15 +176,17 @@ func TestCLIConformance(t *testing.T) {
 		for name, want := range map[string]string{
 			"top-level help":   "Usage: coop <command> [<args>...]",
 			"agent help":       "[options] [-- <claude-args>...]",
-			"credentials help": "coop credentials [<agent> [<credential>]]",
+			"credentials help": "coop credentials <agent> <account> rm       remove it",
 			"login help":       "coop login <agent>[@<account>]",
-			"models help":      "coop models [<" + strings.Join(agents.Names(), "|") + ">]",
+			// The agents are a CLOSED set of literal tokens, so the models page lists them as
+			// themselves; angle brackets are for a value the user supplies.
+			"models help": "coop models [" + strings.Join(agents.Names(), "|") + "]",
 			// The presets page names its one slot <name>: inside a page where every value is a
 			// preset, the resource-name placeholder is the plain one (usage-placeholder-style).
 			"presets help":      "coop presets init [<name>]",
 			"context help":      "[<path>...]",
 			"preset error":      "coop presets [init] [<preset>]",
-			"preset init error": "coop presets init [<preset>]",
+			"preset init error": "coop presets init [<name>]",
 			// The approved missing-argument transcript says <agent>: the error is about the slot,
 			// not the closed provider list, which the login page still spells out.
 			"login error": "coop login <agent>[@<account>]",

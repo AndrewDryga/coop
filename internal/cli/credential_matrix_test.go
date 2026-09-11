@@ -84,7 +84,13 @@ func TestCredentialSourcesDriveProviderWorkflows(t *testing.T) {
 						break
 					}
 				}
-				if !strings.Contains(profileLine, "refreshed") || strings.Contains(profileLine, "signed in") {
+				// A recognized account states a fact — when its token changed, or that an env file
+				// carries it — never an issue.
+				fact := "refreshed"
+				if source != "file" {
+					fact = "environment file"
+				}
+				if !strings.Contains(profileLine, fact) || strings.Contains(profileLine, "⚠") {
 					t.Errorf("credentials listing does not recognize %s via %s:\n%s", name, source, out)
 				}
 				detail := captureStdout(t, func() {
@@ -92,14 +98,20 @@ func TestCredentialSourcesDriveProviderWorkflows(t *testing.T) {
 						t.Errorf("credential detail = (%d, %v)", code, err)
 					}
 				})
-				if !strings.Contains(detail, "refreshed") || strings.Contains(detail, "signed in") {
+				want := "uses " + profile + " by default."
+				if source != "file" {
+					want = "uses this account's configured environment key."
+				}
+				if !strings.Contains(detail, want) || strings.Contains(detail, "⚠") {
 					t.Errorf("credential detail does not recognize %s via %s:\n%s", name, source, detail)
 				}
-				if source != "file" && strings.Contains(detail, "  dir") {
-					t.Errorf("env-only credential detail claims a profile directory:\n%s", detail)
+				// Detail answers which account runs and how to act on it — never where its token
+				// is stored, for either source.
+				if strings.Contains(detail, cfg.ConfigDir) {
+					t.Errorf("credential detail leaks its storage path:\n%s", detail)
 				}
 
-				peers, err := a.resolvePeers("--peer", []string{name})
+				peers, err := a.resolvePeers("coop claude", []string{name})
 				if err != nil || len(peers) != 1 || peers[0].Provider != name {
 					t.Errorf("peer resolution = (%+v, %v), want %s", peers, err, name)
 				}

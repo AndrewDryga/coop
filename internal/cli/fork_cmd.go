@@ -229,7 +229,7 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			if terr != nil {
 				return fa, terr
 			}
-			acct, aerr := singleAccount(t)
+			acct, aerr := singleAccount(t, "coop fork")
 			if aerr != nil {
 				return fa, aerr
 			}
@@ -654,7 +654,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 		// The worker/foreground paths run the loop here, so resolve --peer to peer targets
 		// (validate authed, reject an @account). The detach path re-execs `coop fork … --peer
 		// <t>` and the worker re-resolves, so it forwards the raw values instead.
-		peers, err := a.resolvePeers("--peer", fa.peers)
+		peers, err := a.resolvePeers("coop fork "+fa.name, fa.peers)
 		if err != nil {
 			return 2, err
 		}
@@ -872,7 +872,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	agent, model, profile, effort := t.Provider, "", "", t.Effort
 	// provider[:model][/effort][@account]: model + single account fold into the session's one-off
 	// selection, applied before acpCommand so gemini's own-binary adapter takes the flag.
-	if err := foldTarget(t, &model, &profile); err != nil {
+	if err := foldTarget(t, "coop fork "+name+" acp", &model, &profile); err != nil {
 		return 2, err
 	}
 	if err := a.applyOneOff(agent, model, profile, effort); err != nil {
@@ -912,7 +912,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if identityErr != nil {
 		return 1, fmt.Errorf("bind fork %s generation: %w", name, identityErr)
 	}
-	peers, err := a.resolvePeers("--peer", peerVals)
+	peers, err := a.resolvePeers("coop fork "+name, peerVals)
 	if err != nil {
 		return 2, err
 	}

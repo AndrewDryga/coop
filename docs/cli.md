@@ -102,13 +102,13 @@ coop claude — run Claude in a sandboxed box
 Usage:
   coop claude[:<model>][/<effort>][@<account>] [options] [-- <claude-args>...]
 
-Examples
+EXAMPLES
   coop claude
   coop claude:opus
   coop claude:opus/high@work
   coop claude -- --help
 
-Options
+OPTIONS
   --peer <target>  start with a read-only peer agent; repeat to add more
   --readonly       mount the repository read-only
   --bare           run without the repository, project context, or tools
@@ -116,10 +116,10 @@ Options
 
   --readonly and --bare cannot be combined or used with peers.
 
-Models and accounts
-  coop models claude        list Claude models
-  coop credentials claude   list Claude accounts
-  coop login claude         sign in to Claude
+MODELS AND ACCOUNTS
+  coop models claude       list Claude models
+  coop credentials claude  list Claude accounts
+  coop login claude        sign in to Claude
 
 For a guide to using multiple models and providers together:
   coop help presets
@@ -131,20 +131,20 @@ coop codex — run Codex in a sandboxed box
 Usage:
   coop codex[:<model>][/<effort>][@<account>] [options] [-- <codex-args>...]
 
-Examples
+EXAMPLES
   coop codex
   coop codex:gpt-5.6-sol
   coop codex:gpt-5.6-sol/high@work
   coop codex -- --help
 
-Options
+OPTIONS
   --peer <target>  start with a read-only peer agent; repeat to add more
   --               pass all remaining arguments directly to Codex
 
-Models and accounts
-  coop models codex        list Codex models
-  coop credentials codex   list Codex accounts
-  coop login codex         sign in to Codex
+MODELS AND ACCOUNTS
+  coop models codex       list Codex models
+  coop credentials codex  list Codex accounts
+  coop login codex        sign in to Codex
 
 For a guide to using multiple models and providers together:
   coop help presets
@@ -156,20 +156,20 @@ coop gemini — run Gemini in a sandboxed box
 Usage:
   coop gemini[:<model>][@<account>] [options] [-- <gemini-args>...]
 
-Examples
+EXAMPLES
   coop gemini
   coop gemini:gemini-3.5-flash
   coop gemini:gemini-3.5-flash@work
   coop gemini -- --help
 
-Options
+OPTIONS
   --peer <target>  start with a read-only peer agent; repeat to add more
   --               pass all remaining arguments directly to Gemini
 
-Models and accounts
-  coop models gemini        list Gemini models
-  coop credentials gemini   list Gemini accounts
-  coop login gemini         sign in to Gemini
+MODELS AND ACCOUNTS
+  coop models gemini       list Gemini models
+  coop credentials gemini  list Gemini accounts
+  coop login gemini        sign in to Gemini
 
 For a guide to using multiple models and providers together:
   coop help presets
@@ -181,79 +181,116 @@ coop grok — run Grok in a sandboxed box
 Usage:
   coop grok[:<model>][/<effort>][@<account>] [options] [-- <grok-args>...]
 
-Examples
+EXAMPLES
   coop grok
   coop grok:grok-4.5
   coop grok:grok-4.5/high@work
   coop grok -- --help
 
-Options
+OPTIONS
   --peer <target>  start with a read-only peer agent; repeat to add more
   --               pass all remaining arguments directly to Grok
 
-Models and accounts
-  coop models grok        list Grok models
-  coop credentials grok   list Grok accounts
-  coop login grok         sign in to Grok
+MODELS AND ACCOUNTS
+  coop models grok       list Grok models
+  coop credentials grok  list Grok accounts
+  coop login grok        sign in to Grok
 
 For a guide to using multiple models and providers together:
   coop help presets
 
 ==============================================================================
 
-coop login <agent> — sign in to an agent (token persists in the config dir).
+coop login — sign in to an agent
 
-  Usage: coop login <agent>[@<account>]
+Usage: coop login <agent>[@<account>]
 
-  Runs the agent's sign-in (paste a code, no browser). Re-run any time to
-  refresh or switch accounts — e.g. after a usage limit.
+AGENTS
+  claude  codex  gemini  grok
 
-  @account signs in a second (or third) account under a name, so one agent can
-  hold several subscriptions: coop login claude@work. An unattended loop rotates
-  across all of them when one is rate limited (a bare model in a preset's lead agent:
-  ladder fans out over every account). Without @account the sign-in targets the default.
+EXAMPLES
+  coop login claude
+  coop login codex@work
+
+ACCOUNTS
+  Without @account, signs in to the agent's default account.
+  Use a name such as @work to keep a separate login.
+
+  Show accounts: coop credentials
+  Start an agent: coop claude
 
 ==============================================================================
 
-coop credentials — list stored credentials; a path grammar edits one.
+coop credentials — show and manage your agent accounts
 
-  Usage: coop credentials [<agent> [<credential>]]
-         coop credentials <agent> <credential> default
-         coop credentials <agent> <credential> rm
+Usage:
+  coop credentials                            show all accounts
+  coop credentials <agent>                    show one agent's accounts
+  coop credentials <agent> <account>          show an account
+  coop credentials <agent> <account> default  use it by default
+  coop credentials <agent> <account> rm       remove it
 
-  A CREDENTIAL is one stored account/login — a rate-limit slot. Orchestration
-  recipes are PRESETS; see coop help presets.
-  Each token narrows: no args lists every agent, an agent lists its credentials
-  (which one runs by default, when each was last refreshed), a credential shows
-  its detail, and a trailing attribute reads or writes one property of it. A credential is one subscription; add more
-  with 'coop login <agent>@<name>', then an unattended loop rotates across them on
-  a rate limit (a bare model in a preset's lead agent: ladder). The model is a separate
-  axis — set it inline (claude:opus) or in a preset, never on a credential.
+USE AN ACCOUNT
+  coop claude@work
+  coop login claude@work
 
-  default                mark this credential as what a plain 'coop <agent>' runs,
-                         and the account a loop's rotation starts on. A mark you
-                         set — the listing shows it first, tagged (default).
-  rm                     delete the credential (its login token and session
-                         history). Set a different default first if you're
-                         removing the marked one.
+  The default account is marked with *.
+  Account removal options: coop help credentials rm
+  Models and automatic rotation: coop help models
 
-  Run on a specific account without changing the default — put it in the target on
-  any agent launch: 'coop claude@work', 'coop claude@work --peer codex', and
-  'coop acp claude@work' (so an editor entry can pin an account).
+==============================================================================
+
+coop credentials <agent> <account> default — choose the default account
+
+Usage: coop credentials <agent> <account> default
+
+  New runs try this account first. Add @account to use only one account.
+
+EXAMPLE
+  coop credentials codex work default
+
+  Accounts: coop credentials codex
+
+==============================================================================
+
+coop credentials <agent> <account> rm — remove a saved account
+
+Usage: coop credentials <agent> <account> rm [--yes]
+
+OPTIONS
+  -y, --yes  skip confirmation
+
+  Removes the saved login and its local session history.
+  Choose another default before removing the current default account.
+
+EXAMPLE
+  coop credentials codex old-work rm
+
+==============================================================================
+
+coop credentials <agent> <account> — show an account
+
+Usage: coop credentials <agent> <account>
+
+EXAMPLE
+  coop credentials codex personal
+
+  Use by default: coop help credentials default
+  Remove account: coop help credentials rm
 
 ==============================================================================
 
 coop models — list models available to each agent
 
 Usage:
-  coop models [<claude|codex|gemini|grok>] [--refresh]
+  coop models [claude|codex|gemini|grok] [--refresh]
 
-List models
-  coop models                    all agents
-  coop models claude             Claude only
-  coop models claude --refresh   refresh Claude models list now
+LIST MODELS
+  coop models                   all agents
+  coop models claude            Claude only
+  coop models claude --refresh  refresh Claude models list now
 
-Use a model
+USE A MODEL
   Put :model after the agent name. This works anywhere Coop accepts an agent.
 
   coop claude:opus
@@ -262,7 +299,7 @@ Use a model
 
   You can use any model accepted by the agent, even if it is not listed.
 
-Set reasoning effort
+SET REASONING EFFORT
   Add /effort after the model, or directly after the agent to use its default model.
 
   coop codex:gpt-6-astra/high
@@ -270,20 +307,20 @@ Set reasoning effort
 
   Claude, Codex, and Grok support reasoning effort. Gemini does not.
 
-Choose an account
+CHOOSE AN ACCOUNT
   Add @account after the model.
 
   coop claude:opus@work
   coop credentials
 
-Full syntax
+FULL SYNTAX
   coop <provider>:<model>/<effort>@<account>
   coop codex:gpt-6-astra/high@personal
 
-Set a default model
+SET A DEFAULT MODEL
   export COOP_CLAUDE_MODEL=opus
 
-Automatic rotation
+AUTOMATIC ROTATION
   Loops and presets can try models in order when one is rate-limited.
   Leave off @account to let Coop also try another signed-in account.
   Add @account when you want to use only that account.
@@ -297,25 +334,40 @@ Automatic rotation
 
 ==============================================================================
 
-coop presets — configure multiple models and providers to work together
+coop presets init — create a preset you can edit
 
-Usage:
-  coop presets                 list presets
-  coop presets <name>          show a preset
-  coop presets init [<name>]   create a preset (default: frontier)
-  coop help <name>             explain a preset
+Usage: coop presets init [<name>]
 
-Create a preset
+  Creates the frontier template in .agent/presets/.
+  The default name is frontier. Existing presets are left unchanged.
+
+EXAMPLES
   coop presets init
   coop presets init review
 
-Run a preset
-  coop frontier
-  coop loop frontier
-  coop acp frontier
+  Learn how presets work: coop help presets
+
+==============================================================================
+
+coop presets — configure multiple models and providers to work together
+
+Usage:
+  coop presets                list presets
+  coop presets <name>         show a preset
+  coop presets init [<name>]  create a preset (default: frontier)
+  coop help <name>            explain a preset
+
+CREATE A PRESET
+  coop presets init
+  coop presets init review
+
+RUN A PRESET
+  coop frontier               start an interactive session with the lead agent
+  coop loop frontier          work through tasks with this preset
+  coop acp frontier           use this preset in your editor
   coop fork risky frontier --loop
 
-How to define a preset
+HOW TO DEFINE A PRESET
 
   A preset is a YAML file that defines:
   - One lead agent.
@@ -328,25 +380,25 @@ How to define a preset
 
   Syntax:
 
-    agent:   presets use Coop's standard model, effort, account, and
+    agent:   presets use Coop’s standard model, effort, account, and
              automatic-rotation syntax. For details, see:
                coop help models
 
     mode:    controls how a role works
-               native    runs inside the lead agent's session
+               native    runs inside the lead agent’s session
                consult   provides read-only advice from another agent
                delegate  edits files for the lead; never commits; runs one at a time
 
     when:    tells the lead when to use a role
 
-    prompt:  adds custom instructions to Coop's generated instructions for the
+    prompt:  adds custom instructions to Coop’s generated instructions for the
              lead or role
 
     If the lead does not support native roles, they run as consult roles.
 
   Where presets live:
-    Project   .agent/presets/<name>/preset.yaml
-    Global    ~/.config/coop/presets/<name>/preset.yaml
+    Project  .agent/presets/<name>/preset.yaml
+    Global   ~/.config/coop/presets/<name>/preset.yaml
 
   A project preset overrides a global preset with the same name.
 

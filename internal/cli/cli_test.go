@@ -301,45 +301,16 @@ func TestV3RetiredForms(t *testing.T) {
 	}
 }
 
-// `coop help claude` is the approved page, to the byte: how to run Claude, the coop flags read
-// before a --, where its models and accounts live, and one pointer to presets. Pinned whole
-// because every line of it was chosen — a "contains" test would let the essay grow back.
+// `coop help claude` is the approved page, to the byte — the same fixture the generated page is
+// pinned against, reached through the help ROUTE, so neither the page nor its routing can drift
+// without the other being noticed.
 func TestHelpForAgentIsTheApprovedPage(t *testing.T) {
-	const want = `coop claude — run Claude in a sandboxed box
-
-Usage:
-  coop claude[:<model>][/<effort>][@<account>] [options] [-- <claude-args>...]
-
-Examples
-  coop claude
-  coop claude:opus
-  coop claude:opus/high@work
-  coop claude -- --help
-
-Options
-  --peer <target>  start with a read-only peer agent; repeat to add more
-  --readonly       mount the repository read-only
-  --bare           run without the repository, project context, or tools
-  --               pass all remaining arguments directly to Claude
-
-  --readonly and --bare cannot be combined or used with peers.
-
-Models and accounts
-  coop models claude        list Claude models
-  coop credentials claude   list Claude accounts
-  coop login claude         sign in to Claude
-
-For a guide to using multiple models and providers together:
-  coop help presets
-`
 	var code int
 	out := captureStdout(t, func() { code, _ = helpForPath([]string{"claude"}, &config.Config{}, true) })
 	if code != 0 {
 		t.Fatalf("helpForPath(claude) = %d, want 0", code)
 	}
-	if out != want {
-		t.Errorf("coop help claude drifted from the approved page:\n--- got ---\n%s\n--- want ---\n%s", out, want)
-	}
+	assertApprovedPage(t, "agent-claude-help", out)
 	// No generic all-commands footer: the page ends with its own pointer.
 	if strings.Contains(out, "Run 'coop help' for all commands") {
 		t.Errorf("agent help should not append the all-commands footer:\n%s", out)
@@ -357,7 +328,7 @@ func TestHelpForAgentIsGeneratedPerAdapter(t *testing.T) {
 		"coop codex[:<model>][/<effort>][@<account>] [options] [-- <codex-args>...]",
 		"coop codex:gpt-5.6-sol",
 		"pass all remaining arguments directly to Codex",
-		"coop models codex        list Codex models",
+		"coop models codex       list Codex models",
 	} {
 		if !strings.Contains(codex, want) {
 			t.Errorf("codex page missing %q:\n%s", want, codex)

@@ -1,0 +1,17 @@
+coop login — sign in to an agent
+
+Usage: coop login <agent>[@<account>]
+
+AGENTS
+  claude  codex  gemini  grok
+
+EXAMPLES
+  coop login claude
+  coop login codex@work
+
+ACCOUNTS
+  Without @account, signs in to the agent's default account.
+  Use a name such as @work to keep a separate login.
+
+  Show accounts: coop credentials
+  Start an agent: coop claude

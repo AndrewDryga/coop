@@ -1,0 +1,4 @@
+
+⚠ Claude exited, but Coop could not confirm sign-in
+
+  Accounts: coop credentials claude

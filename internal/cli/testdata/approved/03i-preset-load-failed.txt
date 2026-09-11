@@ -1,0 +1,8 @@
+
+✗ Could not load preset "review"
+
+      .agent/presets/review/preset.yaml
+      Role "critic" has an unknown mode "readonly".
+      Choose native, consult, or delegate.
+
+  Help: coop help presets

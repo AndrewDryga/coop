@@ -1,0 +1,11 @@
+Gemini
+  gemini-3.5-flash · gemini-2.5-pro · gemini-2.5-flash
+  ⚠ Could not refresh — showing example models
+
+      Docker is unavailable.
+
+Start Gemini with a model
+  → coop gemini:gemini-3.5-flash
+
+Set models for presets and loops
+  → coop help models

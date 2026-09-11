@@ -1,0 +1,15 @@
+review — a preset for Codex
+
+RUN IT
+  coop review       start an interactive session with the lead agent
+  coop loop review  work through tasks with this preset
+  coop acp review   use this preset in your editor
+
+LEAD MODEL
+  Agent:  codex:gpt-5.6-sol/high
+
+EDIT THIS PRESET
+  .agent/presets/review/preset.yaml
+
+For a guide to creating and using presets:
+  coop help presets

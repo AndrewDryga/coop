@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -21,6 +22,11 @@ const (
 	modelSep    = " · "
 	modelIndent = "  "
 )
+
+// modelMenuWidth is the terminal width the menu wraps ids to. Where a row breaks is terminal DATA,
+// not approved copy, so it is a seam: a fixture test pins the width it was captured at and reads
+// the same bytes on any terminal.
+var modelMenuWidth = func() int { return ui.TermWidth(os.Stdout) }
 
 // modelsOptions and modelsUsage are this command's own grammar: the options a correction may
 // suggest, and the syntax a rejected argument is measured against.
@@ -55,7 +61,7 @@ func (a *app) cmdModels(args []string) (int, error) {
 	names := agents.Names()
 	if len(rest) > 0 {
 		if _, ok := agents.Get(rest[0]); !ok {
-			return 2, unknownErr("agent", rest[0], agents.Names())
+			return 2, unknownAgentErr(rest[0], "coop models")
 		}
 		names = []string{rest[0]}
 		if len(rest) > 1 {
@@ -64,43 +70,60 @@ func (a *app) cmdModels(args []string) (int, error) {
 	}
 	causes := a.refreshDueCatalogs(names, refresh)
 	p := ui.For(os.Stdout) // stdout view — gate color on stdout so a pipe stays clean
-	width := ui.TermWidth(os.Stdout) - utf8.RuneCountInString(modelIndent)
+	width := modelMenuWidth() - utf8.RuneCountInString(modelIndent)
+	example := ""
 	for _, agent := range names {
 		ag, _ := agents.Get(agent)
 		cause, failed := causes[agent]
 		ids, issue, why := a.modelMenuEntry(agent, ag, cause, failed)
-		fmt.Println(p.Bold(displayAgentName(agent)))
+		fmt.Println(p.Bold(titleName(agent)))
 		// Wrap the PLAIN ids, then style the separator — ANSI must never count toward a width.
 		for _, row := range wrapModelIDs(ids, width) {
 			fmt.Println(modelIndent + strings.Join(row, p.Dim(modelSep)))
 		}
-		if issue != "" {
-			fmt.Println(modelIndent + p.Yellow("⚠ "+issue))
-			if why != "" { // the reason, aligned under the warning's text, not under its glyph
-				fmt.Println(modelIndent + "  " + p.Dim(why))
+		def := a.cfg.AgentModelDefault(agent)
+		if agent == names[0] {
+			// The example is a model the reader can SEE on this screen: the standing default when
+			// there is one, else the first id of the list actually shown.
+			example = def
+			if example == "" && len(ids) > 0 {
+				example = ids[0]
 			}
 		}
 		// A standing COOP_<AGENT>_MODEL is configuration, not a catalog entry — say it as a fact.
-		if def := a.cfg.AgentModelDefault(agent); def != "" {
-			fmt.Printf("%sDefault for %s runs: %s\n", modelIndent, displayAgentName(agent), def)
+		if def != "" {
+			fmt.Printf("%sDefault for %s runs: %s\n", modelIndent, titleName(agent), def)
+		}
+		if issue != "" {
+			fmt.Println(modelIndent + p.Yellow("⚠ "+issue))
+			if why != "" { // the reason in the shared cause block, six spaces in, on its own
+				fmt.Printf("\n      %s\n", why)
+			}
 		}
 		fmt.Println()
 	}
-	// The example agent is the one that was asked for, else the first block rendered; its first
-	// static id is a stable alias, so the line stays copyable whatever the live catalog holds.
-	ex, _ := agents.Get(names[0])
-	fmt.Printf("Start %s with a model\n", displayAgentName(names[0]))
-	fmt.Printf("%s%s coop %s:%s\n\n", modelIndent, p.Cyan("→"), names[0], ex.Models()[0])
+	// The example agent is the one that was asked for, else the first block rendered.
+	if example == "" { // a provider with no catalog at all still gets a copyable line
+		ex, _ := agents.Get(names[0])
+		example = ex.Models()[0]
+	}
+	fmt.Printf("Start %s with a model\n", titleName(names[0]))
+	fmt.Printf("%s%s coop %s:%s\n\n", modelIndent, p.Cyan("→"), names[0], example)
 	fmt.Println("Set models for presets and loops")
 	fmt.Printf("%s%s coop help models\n", modelIndent, p.Cyan("→"))
 	return 0, nil
 }
 
-// wrapModelIDs packs ids into rows at most width visible columns wide, joined by modelSep, never
-// splitting an id (a model id you cannot copy whole is worse than a short row). It measures plain
-// text and returns the rows unjoined, so the caller can style the separator afterwards.
+// wrapModelIDs packs model ids into rows at most width visible columns wide, joined by modelSep.
 func wrapModelIDs(ids []string, width int) [][]string {
-	sep := utf8.RuneCountInString(modelSep)
+	return wrapValues(ids, width, utf8.RuneCountInString(modelSep))
+}
+
+// wrapValues packs values into rows at most width visible columns wide, allowing sep columns
+// between two of them, never splitting one (an id or a target you cannot copy whole is worse than
+// a short row). It measures plain text and returns the rows unjoined, so the caller can style the
+// separator afterwards.
+func wrapValues(ids []string, width, sep int) [][]string {
 	var rows [][]string
 	var row []string
 	used := 0
@@ -160,9 +183,9 @@ func (a *app) modelMenuEntry(agent string, ag agents.Agent, cause string, failed
 	if !failed && mc.current(now) {
 		return ids, "", ""
 	}
-	issue = "could not refresh — showing bundled examples"
+	issue = "Could not refresh — showing example models"
 	if cached {
-		issue = "could not refresh — showing the list saved " + humanAge(mc.FetchedAt)
+		issue = "Could not refresh — showing the list saved " + humanAge(mc.FetchedAt)
 	}
 	if cause == "" {
 		cause = mc.AttemptError // an earlier failure, still inside its retry window
@@ -230,12 +253,12 @@ func (a *app) refreshCatalog(agent string, blocked error) (string, bool) {
 	if err == nil {
 		models, err = a.fetchModelCatalog(agent)
 		if err == nil && len(models) == 0 {
-			err = modelFetchError{cause: agent + " returned no models"}
+			err = modelFetchError{cause: titleName(agent) + " returned no models."}
 		}
 	}
 	if err == nil {
 		if writeErr := writeModelsCache(a.cfg, agent, models); writeErr != nil {
-			err = modelFetchError{cause: "the cache could not be written", err: writeErr}
+			err = modelFetchError{cause: "The saved model list could not be written.", err: writeErr}
 		} else {
 			return "", false
 		}
@@ -255,10 +278,10 @@ func (a *app) fetchNeedsBox(agent string) bool {
 // missing so the menu can say it in one line instead of surfacing a paragraph of remedy.
 func (a *app) probeBoxRuntime() error {
 	if err := a.ensureRuntime(); err != nil {
-		return modelFetchError{cause: "no container runtime is installed", err: err}
+		return modelFetchError{cause: "No container runtime is installed.", err: err}
 	}
 	if err := a.rt.EnsureDaemon(); err != nil {
-		return modelFetchError{cause: "Docker is not running", err: err}
+		return modelFetchError{cause: titleName(a.rt.Name) + " is unavailable.", err: err}
 	}
 	return nil
 }
@@ -288,9 +311,11 @@ func modelFetchCause(agent string, err error) string {
 	case errors.As(err, &named):
 		return named.cause
 	case errors.Is(err, exec.ErrNotFound):
-		return "the " + agent + " CLI is not installed"
+		return titleName(agent) + " is unavailable on this host."
 	case errors.Is(err, context.DeadlineExceeded):
-		return displayAgentName(agent) + " did not answer in time"
+		return "The model request timed out."
+	case errors.As(err, new(*json.SyntaxError)), errors.As(err, new(*json.UnmarshalTypeError)):
+		return "The agent returned a model list Coop could not read."
 	}
 	return ""
 }
