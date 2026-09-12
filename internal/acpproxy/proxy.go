@@ -342,6 +342,7 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 	for {
 		start := time.Now()
 		p.pumpChild(child, reader) // returns when this child's Out closes
+		p.traceExit(child, time.Since(start), clientGone)
 		p.retireChild(child)
 		child.Stop() // retire pipes, process resources and factory context before a replacement wait
 		p.resetForceState()
@@ -1659,6 +1660,36 @@ func (p *proxy) triggerRestart() {
 	if candidate != nil && candidate != c {
 		candidate.Stop()
 	}
+}
+
+// traceExit records why a box's stdout closed. Without it a box dying every few seconds left a trace
+// of nothing but "spawn box" lines, and the reason lived only in the editor's agent log, where the
+// supervisor passes the box's stderr. A coop-driven switch sets intentional before stopping the child;
+// a reload, the editor leaving and a shutdown are the proxy's own doing; anything else is the box.
+func (p *proxy) traceExit(child *Child, lived time.Duration, clientGone <-chan struct{}) {
+	p.mu.Lock()
+	down := p.shuttingDown
+	p.mu.Unlock()
+	reason := "unexpected — its stderr is in the editor's agent log; respawning"
+	switch {
+	case p.intentional.Load():
+		reason = "coop switch/rotate"
+	case p.reloading.Load():
+		reason = "reload"
+	case down:
+		reason = "shutdown"
+	default:
+		select {
+		case <-clientGone:
+			reason = "editor disconnected"
+		default:
+		}
+	}
+	target := child.Provider
+	if child.Account != "" {
+		target += "@" + child.Account
+	}
+	Trace("box %s exited after %s: %s", target, lived.Round(100*time.Millisecond), reason)
 }
 
 func (p *proxy) currentRestartEpoch() uint64 {

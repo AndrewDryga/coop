@@ -17,6 +17,10 @@
   execution for `coop net why`) and stops only when that update is refused or the envelope would
   pass 256 ranges.
 
+- The ACP trace (`COOP_ACP_TRACE`, `~/.config/coop/acp-debug`) records why a box exited before coop
+  respawns it — how long it lived, its provider and account, and whether coop switched it or it died
+  on its own — instead of a bare `spawn box` line after the fact.
+
 - Task completion refuses empty or unfinished checklists with actionable progress counts.
   The check applies to task tools, host completion, loop finalization, and fork acceptance and
   landing; interrupted unfinished fork work can still resume. Agent guidance keeps failed,

@@ -211,3 +211,32 @@ func TestTracePrunesOldFiles(t *testing.T) {
 		}
 	}
 }
+
+// TestTraceRecordsChildExit: a box whose stdout closes leaves a line saying so — how long it lived,
+// which target, and that the exit was the box's own — before the proxy respawns it.
+func TestTraceRecordsChildExit(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("COOP_ACP_TRACE", "1")
+	resetTrace(t)
+
+	h := newProxyHarness(t, 2, nil, "claude", "codex")
+	h.initialize(0)
+	h.children[0].outW.Close() // the box dies on its own
+	init := parse(readLine(t, h.childIn[1]))
+	if init.Method != "initialize" {
+		t.Fatalf("replacement's first frame = %q, want the replayed initialize", init.Method)
+	}
+	writeLine(t, h.children[1].outW, `{"jsonrpc":"2.0","id":`+string(init.ID)+`,"result":{}}`)
+
+	b, err := os.ReadFile(filepath.Join(dir, "coop", fmt.Sprintf("acp-trace-%d.log", os.Getpid())))
+	if err != nil {
+		t.Fatalf("trace file not written: %v", err)
+	}
+	for _, want := range []string{"box claude exited after", "unexpected", "editor's agent log"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("trace missing %q:\n%s", want, b)
+		}
+	}
+	h.shutdown()
+}
