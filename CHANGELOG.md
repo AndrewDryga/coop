@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Task watch rows show compact queue names such as `portal`, omitting `queue` and `/.agent/tasks`.
+  Root tasks have no queue label, leaving more room for their titles.
+
 - Task watch shows completed/total subtasks after each title, such as `(1/12)`, before ownership.
   Counts stay visible when titles are shortened; tasks without a checklist omit the count.
 

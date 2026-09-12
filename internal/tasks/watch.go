@@ -338,8 +338,8 @@ func mergedQueue(p ui.Palette, merged []mergedTask, spin, width int) []string {
 		} else if m.State != StateTodo && m.owner != "" {
 			suffix += "  ← " + m.owner
 		}
-		if m.queue != "" {
-			suffix += " · queue " + m.queue
+		if queue := strings.TrimSuffix(m.queue, "/"+TasksRoot); queue != "" && queue != TasksRoot {
+			suffix += " · " + queue
 		}
 		// A claimed task nobody is actively holding a lock on would otherwise read "unleased" — a
 		// word that, beside "claimed by", wrongly suggests the loop may take it (see inProgressMarker).

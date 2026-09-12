@@ -166,11 +166,12 @@ func TestTaskWatchTitleUsesAvailableTerminalWidth(t *testing.T) {
 	}
 
 	const narrowWidth = 52
+	merged[0].queue = "api/.agent/tasks"
 	narrow := rowAt(narrowWidth)
 	if strings.Contains(narrow, title) || !strings.Contains(narrow, "…") {
 		t.Errorf("narrow task row should elide its title: %q", narrow)
 	}
-	if want := " (1/12)  ← worker · busy claude"; !strings.HasSuffix(narrow, want) {
+	if want := " (1/12)  ← worker · busy claude · api"; !strings.HasSuffix(narrow, want) {
 		t.Errorf("narrow task row should preserve suffix %q: %q", want, narrow)
 	}
 	if got, max := len([]rune(narrow)), narrowWidth-1; got > max {
@@ -379,7 +380,7 @@ func TestTaskWatchHidesTodoClaims(t *testing.T) {
 		task.Item = Item{Title: "Queued work", State: StateTodo}
 		task.queue = "api/.agent/tasks"
 		line := mergedQueue(ui.Palette{}, []mergedTask{task}, 0, 80)[0]
-		if want := "  ○ Queued work · queue api/.agent/tasks"; line != want {
+		if want := "  ○ Queued work · api"; line != want {
 			t.Errorf("TODO row = %q, want %q", line, want)
 		}
 	}
@@ -455,12 +456,46 @@ func TestTaskWatchOmitsClaimProcessIDs(t *testing.T) {
 	}
 }
 
+func TestTaskWatchCompactQueueLabels(t *testing.T) {
+	for _, tt := range []struct {
+		queue, suffix string
+	}{
+		{"", ""},
+		{".agent/tasks", ""},
+		{"portal/.agent/tasks", " · portal"},
+		{"packs/.agent/tasks", " · packs"},
+		{"apps/api/.agent/tasks", " · apps/api"},
+		{"custom/tasks", " · custom/tasks"},
+		{"portal/.agent/tasks-extra", " · portal/.agent/tasks-extra"},
+		{"portal/.agent/tasks/archive", " · portal/.agent/tasks/archive"},
+		{"/shared/project/.agent/tasks", " · /shared/project"},
+	} {
+		t.Run(tt.queue, func(t *testing.T) {
+			for _, state := range []string{StateTodo, StateBlocked, StateInProgress} {
+				m := mergedTask{
+					Item:  Item{Title: "Apply schema", State: state, Subtasks: []bool{true, false}},
+					queue: tt.queue,
+					lease: TaskLeaseObservation{State: leaseBusy, Provider: "claude"},
+				}
+				line := mergedQueue(ui.Palette{}, []mergedTask{m}, 0, 100)[0]
+				want := "Apply schema (1/2)" + tt.suffix
+				if state == StateInProgress {
+					want += " · busy claude"
+				}
+				if !strings.HasSuffix(line, " "+want) {
+					t.Errorf("%s row = %q, want title and suffix %q", state, line, want)
+				}
+			}
+		})
+	}
+}
+
 func TestTaskWatchNamesHumanOwnerAndCanonicalQueue(t *testing.T) {
 	line := mergedQueue(ui.Palette{}, []mergedTask{{
 		Item:  Item{Title: "Apply schema", State: StateInProgress, Subtasks: []bool{true, false}},
 		owner: "claimed by alice", queue: "api/.agent/tasks",
 	}}, 0, 100)[0]
-	for _, want := range []string{"Apply schema (1/2)  ← claimed by alice", "queue api/.agent/tasks"} {
+	for _, want := range []string{"Apply schema (1/2)  ← claimed by alice", " · api"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("human-owned multi-queue row lost %q: %q", want, line)
 		}
