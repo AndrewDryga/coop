@@ -18,11 +18,12 @@ import (
 )
 
 type scriptedACP struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	client *acpClient
-	stderr *lockedBuffer
-	done   chan error
+	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	client  *acpClient
+	stderr  *lockedBuffer
+	done    chan error
+	stopped bool
 }
 
 func TestScriptedACPDriver(t *testing.T) {
@@ -797,6 +798,10 @@ func signInScriptedProfile(t *testing.T, tmp, provider, profile string) {
 
 func (p *scriptedACP) stop(t *testing.T) {
 	t.Helper()
+	if p.stopped {
+		return // a test that stopped its first process explicitly; the cleanup finds nothing to do
+	}
+	p.stopped = true
 	_ = p.stdin.Close()
 	select {
 	case err := <-p.done:
@@ -853,4 +858,103 @@ func testEnv(base []string, values map[string]string) []string {
 		}
 	}
 	return out
+}
+
+// TestScriptedACPColdReopenLoadsBoundProviderSession is the editor's own sequence across a coop acp
+// restart: a thread created on claude and continued on codex (the switch re-creates it there under a
+// native id), the process exits, and a fresh process gets session/load for the editor's id. The new
+// process must bring codex up by itself and load the native id there — the transcript stub the editor
+// id still names on claude is exactly the wrong conversation.
+func TestScriptedACPColdReopenLoadsBoundProviderSession(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	coopBin := filepath.Join(tmp, "coop")
+	fixtureBin := filepath.Join(tmp, "acpfixture")
+	buildTestBinary(t, root, coopBin, ".")
+	buildTestBinary(t, root, fixtureBin, "./internal/acpproxy/testdata/acpfixture")
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	planPath := filepath.Join(tmp, "plan.json")
+	plan := `{
+  "providers": {
+    "claude": [
+      [
+        {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"load":{},"close":{},"delete":{}}},"authMethods":[]}},
+        {"method":"session/new","result":{"sessionId":"A1","configOptions":[]}},
+        {"method":"session/set_config_option","result":{"configOptions":[]}},
+        {"method":"session/prompt","result":{"stopReason":"end_turn"}}
+      ],
+      [
+        {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"load":{},"close":{},"delete":{}}},"authMethods":[]}}
+      ]
+    ],
+    "codex": [
+      [
+        {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"load":{},"close":{},"delete":{}}},"authMethods":[]}},
+        {"method":"session/new","result":{"sessionId":"C1","configOptions":[]}}
+      ],
+      [
+        {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"load":{},"close":{},"delete":{}}},"authMethods":[]}},
+        {"method":"session/load","params":{"cwd":"` + repo + `","mcpServers":[],"sessionId":"C1"},"result":{"configOptions":[{"id":"fixture","name":"Fixture","type":"select","currentValue":"reopened","options":[]}]}}
+      ]
+    ]
+  }
+}`
+	if err := os.WriteFile(planPath, []byte(plan), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// First life: the thread starts on claude and continues on codex.
+	first := startScriptedACP(t, coopBin, fixtureBin, repo, tmp, planPath, "claude", "claude", "codex")
+	if _, err := first.client.req(ctx, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}}); err != nil {
+		t.Fatalf("initialize: %v\nstderr:\n%s", err, first.stderr.String())
+	}
+	response, err := first.client.req(ctx, "session/new", map[string]any{"cwd": repo, "mcpServers": []any{}})
+	if err != nil {
+		t.Fatalf("session/new: %v\nstderr:\n%s", err, first.stderr.String())
+	}
+	editorID := responseSessionID(response)
+	if editorID != "A1" {
+		t.Fatalf("editor session id = %q, want the claude fixture's A1", editorID)
+	}
+	if _, err := first.client.req(ctx, "session/prompt", map[string]any{"sessionId": editorID, "prompt": []any{}}); err != nil {
+		t.Fatalf("first turn: %v\nstderr:\n%s", err, first.stderr.String())
+	}
+	switchScriptedProvider(t, ctx, first, editorID, "codex")
+	first.stop(t)
+
+	// Second life: a fresh process knows nothing in memory; the editor reopens the thread.
+	second := startScriptedACP(t, coopBin, fixtureBin, repo, tmp, planPath, "claude", "claude", "codex")
+	if _, err := second.client.req(ctx, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}}); err != nil {
+		t.Fatalf("initialize after restart: %v\nstderr:\n%s", err, second.stderr.String())
+	}
+	response, err = second.client.req(ctx, "session/load", map[string]any{"cwd": repo, "mcpServers": []any{}, "sessionId": editorID})
+	if err != nil {
+		t.Fatalf("session/load after restart: %v\nstderr:\n%s\nwire:\n%s", err, second.stderr.String(), wireDump(second.client.transcript()))
+	}
+	if response["error"] != nil {
+		t.Fatalf("session/load after restart failed: %v", response["error"])
+	}
+	codexWire, err := os.ReadFile(filepath.Join(tmp, "fixture-state", "codex-1", "wire.jsonl"))
+	if err != nil {
+		t.Fatalf("the reopened thread never reached a codex box: %v", err)
+	}
+	codexText := string(codexWire)
+	if strings.Count(codexText, `"method":"session/load"`) != 1 || !strings.Contains(codexText, `"sessionId":"C1"`) || strings.Contains(codexText, `"sessionId":"A1"`) {
+		t.Fatalf("codex box did not receive one session/load for its native C1:\n%s", codexWire)
+	}
+	claudeWire, err := os.ReadFile(filepath.Join(tmp, "fixture-state", "claude-1", "wire.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(claudeWire), `"method":"session/load"`) {
+		t.Fatalf("the reopened thread was loaded on claude, whose transcript stub predates the switch:\n%s", claudeWire)
+	}
 }
