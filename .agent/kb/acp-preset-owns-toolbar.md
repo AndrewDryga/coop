@@ -3,7 +3,7 @@ name: acp-preset-owns-toolbar
 description: Active ACP presets own the whole lead target and refuse stale Provider/Account editor replays; the box's own wire messages are the only truth the controller may cache
 subsystem: acp
 sources: [internal/agent/agent.go, internal/acpctl/control.go, internal/acpproxy/proxy.go, internal/acpproxy/scripted_e2e_test.go, internal/acpproxy/e2e_test.go, internal/cli/help.go]
-updated: 2026-08-10
+updated: 2026-09-12
 ---
 
 ACP selection is tagged: `Preset != ""` means Provider and Account are empty. A preset's ladder
@@ -16,6 +16,11 @@ it replays Preset=frontier and then hidden Provider or Account, those writes are
 no-ops and do not restart. Selecting Preset=None keeps the current effective `c.lead` as the plain
 Provider, clears Account to Auto, and never restores hidden pre-preset values.
 Manual Provider or Account selection therefore starts by selecting Preset=None.
+
+Editor-facing select options with one already-selected value are omitted, including a sole
+Preset=None. This is output projection only (`visibleConfigOptions`): native and rebuilt caches
+retain every value for target validation, model acknowledgements, and replay. Booleans, unknown
+shapes, empty selects, and a sole value different from the current value are preserved.
 
 The active target is not toolbar metadata. `Control` retains provider, model, and effort, and
 each agent declares the ordered ACP session settings that realize it after `session/new`,
@@ -50,6 +55,7 @@ new call site. This is a semantic property a `check:` can't verify reliably (whe
 "routed through" the resync path is a design read, not a grep), so review is what catches a violation.
 
 ## Changelog
+- 2026-09-12 — reverified toolbar projection and documented output-only singleton hiding without losing native model truth.
 - 2026-08-10 — extended with the box-wire-is-the-one-truth invariant and the closed set of resync
   entry points (the repeat-fix theme named by the acpctl extraction's seam map, ~15 fix-shaped commits
   on the pre-extraction file); sources/prose updated for the internal/cli → internal/acpctl move

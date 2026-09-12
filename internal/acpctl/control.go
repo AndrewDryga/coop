@@ -223,6 +223,7 @@ func (c *Control) Hooks() *acpproxy.Hooks {
 		ChildReset:            c.childReset,
 		FromEditor:            c.fromEditor,
 		PromptForwarded:       c.promptForwarded,
+		PromptHeld:            c.promptHeld,
 		PromptCancelled:       c.promptCancelled,
 		AutoReply:             c.autoReply,
 		ResumePrompt:          c.resumePrompt,
@@ -935,7 +936,7 @@ func (c *Control) rewriteToEditor(line []byte) []byte {
 			changed = true
 		}
 		if _, hasCO := inner["configOptions"]; hasCO {
-			inner["configOptions"] = c.rewriteConfigOptions(inner["configOptions"], inner["models"], sid, false)
+			inner["configOptions"] = visibleConfigOptions(c.rewriteConfigOptions(inner["configOptions"], inner["models"], sid, false))
 			changed = true
 		} else if key == "result" && sid != "" {
 			// A session/new|load|resume result with no configOptions. Coop still owns the toolbar, so
@@ -943,7 +944,7 @@ func (c *Control) rewriteToEditor(line []byte) []byte {
 			// (rewriteConfigOptions prepends coop's selectors, plus a model select when the result carries a
 			// `models` field); without this the credential/preset switcher never appears for those agents
 			// (the original missing-toolbar failure).
-			inner["configOptions"] = c.rewriteConfigOptions(json.RawMessage("[]"), inner["models"], sid, false)
+			inner["configOptions"] = visibleConfigOptions(c.rewriteConfigOptions(json.RawMessage("[]"), inner["models"], sid, false))
 			changed = true
 		} else if rewrote := c.rewriteUpdateConfigOptions(inner["update"], sid); rewrote != nil {
 			inner["update"] = rewrote
@@ -983,7 +984,7 @@ func (c *Control) rewriteUpdateConfigOptions(update json.RawMessage, sid string)
 	models := u["models"]
 	delete(u, "coopReplay") // proxy-private replay metadata must not cross the editor boundary
 	delete(u, "models")
-	u["configOptions"] = c.rewriteConfigOptions(u["configOptions"], models, sid, replay)
+	u["configOptions"] = visibleConfigOptions(c.rewriteConfigOptions(u["configOptions"], models, sid, replay))
 	nb, err := json.Marshal(u)
 	if err != nil {
 		return nil
@@ -1064,12 +1065,12 @@ func (c *Control) maybeRotate(line []byte) (out []byte, rotated bool) {
 		c.mu.Unlock()
 		if canResend {
 			acpproxy.Trace("rate limit on %s@%s: rotating to %s + auto-resending", provider, currentAccount, next)
-			// Swallow the error, move the toolbar dropdown to the new credential, restart on it, and
-			// re-send after replay — the config_option_update is the only thing the editor sees.
-			return c.configOptionUpdate(session), true
+			return append(c.configOptionUpdate(session), c.statusMessage(session, fmt.Sprintf(
+				"%s account %q reached its usage limit. Trying %s account %q. Your message will send automatically.",
+				displayName(provider), currentAccount, displayName(provider), next))...), true
 		}
 		// Couldn't identify the prompt — fall back to switching + asking the user to resend.
-		return rewriteErrorMessage(line, fmt.Sprintf("Account %q reached its usage limit. Switched to %q. Send your last message again.", currentAccount, next)), true
+		return rewriteErrorMessage(line, fmt.Sprintf("%s account %q reached its usage limit. Switched to %s account %q. Send your last message again.", displayName(provider), currentAccount, displayName(provider), next)), true
 	}
 
 	// Nothing free right now: wait for the nearest reset, then re-send on that account. Needs a known
@@ -1094,7 +1095,7 @@ func (c *Control) maybeRotate(line []byte) (out []byte, rotated bool) {
 	c.mu.Unlock()
 	acpproxy.Trace("all accounts rate limited: waiting for %s until %s + auto-resending", acct, at.Format(time.RFC3339))
 	// Move the dropdown to the account we'll resume on, then the "waiting…" status line.
-	return append(c.configOptionUpdate(session), c.waitStatus(session, acct, at, now)...), true
+	return append(c.configOptionUpdate(session), c.waitStatus(session, provider, acct, at, now)...), true
 }
 
 // rotatePreset advances the active preset's model ladder on a rate limit: mark the current rung
@@ -1120,7 +1121,9 @@ func (c *Control) rotatePreset(session string, canResend bool, until, now time.T
 		c.resend[session] = true
 		c.mu.Unlock()
 		acpproxy.Trace("preset rate limit on %s: rotating to %s + auto-resending", prev, next)
-		return c.configOptionUpdate(session), true
+		return append(c.configOptionUpdate(session), c.statusMessage(session, fmt.Sprintf(
+			"%s reached its usage limit. Trying %s. Your message will send automatically.",
+			agents.DisplayTarget(prev.String()), agents.DisplayTarget(next.String())))...), true
 	}
 	if c.bumpWait(session) > maxACPLimitWaits {
 		c.clearWait(session)
@@ -1131,7 +1134,7 @@ func (c *Control) rotatePreset(session string, canResend bool, until, now time.T
 	c.resend[session] = true
 	c.mu.Unlock()
 	acpproxy.Trace("preset: all rungs rate limited — waiting for %s until %s + auto-resending", next, resetAt.Format(time.RFC3339))
-	return append(c.configOptionUpdate(session), c.waitStatus(session, next.Account(), resetAt, now)...), true
+	return append(c.configOptionUpdate(session), c.waitStatus(session, next.Provider, next.Account(), resetAt, now)...), true
 }
 
 // configOptionUpdate builds an ACP config_option_update notification (session/update carrying the full
@@ -1146,7 +1149,7 @@ func (c *Control) configOptionUpdate(session string) []byte {
 			"sessionId": session,
 			"update": map[string]any{
 				"sessionUpdate": "config_option_update",
-				"configOptions": json.RawMessage(c.refreshSetup(session)),
+				"configOptions": visibleConfigOptions(c.refreshSetup(session)),
 			},
 		},
 	}
@@ -1174,14 +1177,45 @@ func (c *Control) nearestReset(provider string) (account string, at time.Time) {
 // waitStatus builds the one status line the editor shows while coop waits for a reset (no live
 // countdown — the absolute time says when it resumes). It carries the editor's session id so the
 // message lands in the right thread, and a coop messageId so the editor renders it.
-func (c *Control) waitStatus(session, account string, at, now time.Time) []byte {
+func (c *Control) waitStatus(session, provider, account string, at, now time.Time) []byte {
+	// A wait that resends by itself must not also tell the user to resend.
+	text := fmt.Sprintf("Waiting for account %q on %s to reset its usage limit at %s (in %s). Your message will send automatically.",
+		account, displayName(provider), at.Local().Format("Mon 15:04 MST"), formatWait(at.Sub(now)))
+	return c.statusMessage(session, text)
+}
+
+// promptHeld is presentation only: the proxy still owns this unadmitted prompt.
+func (c *Control) promptHeld(session string) []byte {
+	provider, account, at := c.selectedCooldown()
+	now := time.Now()
+	if at.After(now) {
+		return c.waitStatus(session, provider, account, at, now)
+	}
+	return nil
+}
+
+func (c *Control) selectedCooldown() (provider, account string, at time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sel.Preset != "" && c.rot != nil {
+		t := c.rot.Active()
+		return t.Provider, t.Account(), c.rot.LimitedUntil(t.String())
+	}
+	account = c.sel.Account
+	if account == "" {
+		account = c.autoAccount
+		if account == "" && len(c.accounts) > 0 {
+			account = c.accounts[0]
+		}
+	}
+	return c.lead, account, c.limited[accountLimitKey(c.lead, account)]
+}
+
+func (c *Control) statusMessage(session, text string) []byte {
 	c.mu.Lock()
 	c.nextID++
 	n := c.nextID
 	c.mu.Unlock()
-	// A wait that resends by itself must not also tell the user to resend.
-	text := fmt.Sprintf("Waiting for account %q to reset its usage limit at %s (in %s). Your message will send automatically.",
-		account, at.Local().Format("Mon 15:04 MST"), formatWait(at.Sub(now)))
 	upd := map[string]any{
 		"jsonrpc": "2.0",
 		"method":  "session/update",
@@ -1489,6 +1523,11 @@ func (c *Control) filterPreambleEcho(line []byte) ([]byte, bool) {
 		}
 		filtered := make([]json.RawMessage, 0, len(entries))
 		matched := false
+		var running string
+		if json.Unmarshal(params["runningText"], &running) == nil && strings.Contains(running, preamble) {
+			matched = true
+			params["runningText"], _ = json.Marshal(strings.Replace(running, preamble, "", 1))
+		}
 		for _, raw := range entries {
 			var entry map[string]json.RawMessage
 			var kind, text string
@@ -1514,9 +1553,7 @@ func (c *Control) filterPreambleEcho(line []byte) ([]byte, bool) {
 		if !matched {
 			return line, false
 		}
-		if len(filtered) == 0 {
-			return nil, true
-		}
+		// An empty queue still clears prior UI state and carries running/version metadata.
 		params["entries"], _ = json.Marshal(filtered)
 		message["params"], _ = json.Marshal(params)
 		encoded, err := json.Marshal(message)
@@ -2774,7 +2811,16 @@ func (c *Control) fromEditor(line []byte) (handled bool, resp []byte, toAdapter 
 	// Ack with the full option set, the coop dropdowns showing the CURRENT value. The cache was
 	// captured at session/new with the old currentValue, so echoing it verbatim would revert the
 	// editor's dropdown; rebuild them fresh.
-	return true, c.ackOptions(h.ID, h.Params.SessionID), nil, changed
+	response := c.ackOptions(h.ID, h.Params.SessionID)
+	if changed {
+		provider, account, at := c.selectedCooldown()
+		if at.After(time.Now()) {
+			response = append(response, c.statusMessage(h.Params.SessionID, fmt.Sprintf(
+				"Selected account %q on %s is usage limited until %s. Messages sent before then will wait for its reset.",
+				account, displayName(provider), at.Local().Format("Mon 15:04 MST")))...)
+		}
+	}
+	return true, response, nil, changed
 }
 
 func (c *Control) authenticationTarget() (provider, account string) {
@@ -2814,7 +2860,7 @@ func rpcErrorResponse(id json.RawMessage, code int, message string) []byte {
 // refreshed option set (fresh coop dropdowns, natives per the current selection), re-cached so
 // the next refresh starts from what the editor now shows.
 func (c *Control) ackOptions(id json.RawMessage, sid string) []byte {
-	refreshed := c.refreshSetup(sid)
+	refreshed := visibleConfigOptions(c.refreshSetup(sid))
 	result := map[string]json.RawMessage{}
 	if len(refreshed) > 0 {
 		result["configOptions"] = refreshed
@@ -2853,7 +2899,7 @@ func (c *Control) translatedModelResponse(line []byte, target nativeTargetResult
 	if target.success {
 		result := map[string]json.RawMessage{}
 		if refreshed := c.refreshModelAck(target.change.session, target.accepted); len(refreshed) > 0 {
-			result["configOptions"] = refreshed
+			result["configOptions"] = visibleConfigOptions(refreshed)
 		}
 		encoded, _ := json.Marshal(result)
 		response["result"] = encoded

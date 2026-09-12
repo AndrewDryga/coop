@@ -89,12 +89,16 @@ func TestScriptedACPCancelQuotaWaitThenSwitch(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	claude := matrixGeneration("claude", "CL1", repo, "unused")
-	claude[len(claude)-1] = matrixStep{Method: "session/prompt", Error: map[string]any{
-		"code": -32603, "message": "quota exhausted", "data": map[string]any{"errorKind": "rate_limit"},
-	}}
+	signInScriptedProfile(t, tmp, "claude", "work")
+	limit := func(after string) map[string]any {
+		return map[string]any{
+			"code": -32603, "message": "quota exhausted; retry after " + after, "data": map[string]any{"errorKind": "rate_limit"},
+		}
+	}
+	claude := rateLimitGenerations("claude", "CL1", "CL2", repo, limit("3600 seconds"))
+	claude[1][len(claude[1])-1] = matrixStep{Method: "session/prompt", Error: limit("10800 seconds")}
 	plan := writeMatrixPlan(t, tmp, matrixPlan{Providers: map[string][][]matrixStep{
-		"claude": {claude}, "codex": {matrixGeneration("codex", "CO1", repo, "after quota cancellation")},
+		"claude": claude, "codex": {matrixGeneration("codex", "CO1", repo, "after quota cancellation")},
 	}})
 	proc := startScriptedACP(t, coopBin, fixtureBin, repo, tmp, plan, "", "claude", "codex")
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -120,6 +124,7 @@ func TestScriptedACPCancelQuotaWaitThenSwitch(t *testing.T) {
 		done <- result{response, err}
 	}()
 	awaitScriptedEventContains(t, ctx, proc, mark, "Waiting for account")
+	awaitScriptedEventContains(t, ctx, proc, mark, "on Claude Code to reset its usage limit")
 	if err := proc.client.send(map[string]any{"jsonrpc": "2.0", "method": "session/cancel", "params": map[string]any{"sessionId": sessionID}}); err != nil {
 		t.Fatal(err)
 	}
@@ -132,9 +137,34 @@ func TestScriptedACPCancelQuotaWaitThenSwitch(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatalf("quota-wait cancellation hung: %v\nstderr:\n%s", ctx.Err(), proc.stderr.String())
 	}
+	mark = proc.client.mark()
+	if _, err := proc.client.req(ctx, "session/set_config_option", map[string]any{"sessionId": sessionID, "configId": "coop_account", "value": "work"}); err != nil {
+		t.Fatal(err)
+	}
+	awaitScriptedEventContains(t, ctx, proc, mark, "Messages sent before then will wait")
+	mark = proc.client.mark()
+	go func() {
+		response, err := proc.client.req(ctx, "session/prompt", map[string]any{
+			"sessionId": sessionID, "prompt": []any{map[string]any{"type": "text", "text": "hi on selected account"}},
+		})
+		done <- result{response, err}
+	}()
+	awaitScriptedEventContains(t, ctx, proc, mark, `Waiting for account \"work\"`)
+	if err := proc.client.send(map[string]any{"jsonrpc": "2.0", "method": "session/cancel", "params": map[string]any{"sessionId": sessionID}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-done:
+		body, _ := got.response["result"].(map[string]any)
+		if got.err != nil || body["stopReason"] != "cancelled" {
+			t.Fatalf("new held prompt cancellation = %v, %v", body, got.err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("selected-account prompt cancellation hung: %v", ctx.Err())
+	}
 	switchScriptedProvider(t, ctx, proc, sessionID, "codex")
 	promptMatrix(t, ctx, proc, filepath.Join(tmp, "fixture-state", "codex-0", "wire.jsonl"), sessionID, "new prompt", "after quota cancellation")
-	if _, err := os.Stat(filepath.Join(tmp, "fixture-state", "claude-1")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(tmp, "fixture-state", "claude-2")); !os.IsNotExist(err) {
 		t.Fatalf("obsolete quota wait launched another Claude generation: %v", err)
 	}
 }

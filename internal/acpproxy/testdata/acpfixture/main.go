@@ -190,7 +190,7 @@ func serveProvider(provider string) error {
 			return fmt.Errorf("step %d %s params = %s, want %s", i+1, req.Method, req.Params, expected.Params)
 		}
 		if expected.EchoPrompt {
-			echo, err := promptEcho(req.Params)
+			echo, err := promptEcho(req.Params, provider)
 			if err != nil {
 				return fmt.Errorf("step %d echo prompt: %w", i+1, err)
 			}
@@ -244,7 +244,7 @@ func serveProvider(provider string) error {
 	return scanner.Err()
 }
 
-func promptEcho(raw json.RawMessage) ([]byte, error) {
+func promptEcho(raw json.RawMessage, provider string) ([]byte, error) {
 	var params struct {
 		SessionID string `json:"sessionId"`
 		Prompt    []struct {
@@ -260,6 +260,12 @@ func promptEcho(raw json.RawMessage) ([]byte, error) {
 		if block.Type == "text" {
 			text.WriteString(block.Text)
 		}
+	}
+	if provider == "grok" {
+		return json.Marshal(map[string]any{
+			"jsonrpc": "2.0", "method": "_x.ai/queue/changed",
+			"params": map[string]any{"sessionId": params.SessionID, "entries": []any{}, "runningText": text.String(), "version": 1},
+		})
 	}
 	return json.Marshal(map[string]any{
 		"jsonrpc": "2.0", "method": "session/update",

@@ -113,7 +113,7 @@ func TestScriptedACPDirectedProviderSwitchMatrix(t *testing.T) {
 					t.Fatalf("destination target = %q, want %q", got, want)
 				}
 				for _, frame := range proc.client.transcript() {
-					if frame.Msg["method"] == "session/update" && strings.Contains(string(frame.Raw), "[coop] This thread continues") {
+					if strings.Contains(string(frame.Raw), "[coop] This thread continues") {
 						t.Fatalf("synthetic carry leaked to editor: %s", frame.Raw)
 					}
 				}
@@ -171,6 +171,7 @@ func TestScriptedACPProviderRateLimitAutoRecovery(t *testing.T) {
 				t.Fatalf("automatic rate-limit retry: %v\nstderr:\n%s\nwire:\n%s", err, proc.stderr.String(), wireDump(proc.client.transcript()))
 			}
 			awaitScriptedEventContains(t, ctx, proc, mark, "recovered on work")
+			awaitScriptedEventContains(t, ctx, proc, mark, "Trying ")
 
 			state := filepath.Join(tmp, "fixture-state")
 			for _, generation := range []string{provider.name + "-0", provider.name + "-1"} {

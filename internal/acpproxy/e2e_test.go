@@ -9,6 +9,7 @@
 package acpproxy_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -850,10 +851,13 @@ func TestLiveProviderConformance(t *testing.T) {
 				live.fail(t, "session_new_result", nil)
 			}
 			options := liveConfigOptions(t, live, response)
-			for _, id := range []string{"coop_preset", "coop_provider", "coop_account"} {
+			for _, id := range []string{"coop_preset", "coop_account"} {
 				if _, ok := options[id]; !ok {
 					live.fail(t, "toolbar", nil)
 				}
+			}
+			if _, shown := options["coop_provider"]; shown {
+				live.fail(t, "singleton_provider_toolbar", nil)
 			}
 			firstMark := live.client.mark()
 			if _, err := live.client.promptWithoutLimitWait(ctx, map[string]any{
@@ -1004,9 +1008,35 @@ func TestLiveCrossProviderCarry(t *testing.T) {
 					live.fail(t, "carry_marker", nil)
 				}
 				if liveMessageContains(live.client.transcript()[mark:], "[coop] This thread continues") {
+					logLiveCarryEchoKinds(t, live.client.transcript()[mark:])
 					live.fail(t, "carry_visibility", nil)
 				}
 			})
+		}
+	}
+}
+
+// Diagnose protocol shape only: never print provider text, credentials, or arbitrary fields.
+func logLiveCarryEchoKinds(t *testing.T, frames []wireFrame) {
+	t.Helper()
+	for _, frame := range frames {
+		if !liveMessageContains([]wireFrame{frame}, "[coop] This thread continues") {
+			continue
+		}
+		params, _ := frame.Msg["params"].(map[string]any)
+		t.Logf("carry echo queue_changed=%t", frame.Msg["method"] == "_x.ai/queue/changed")
+		update, _ := params["update"].(map[string]any)
+		kind, _ := update["sessionUpdate"].(string)
+		switch kind {
+		case "user_message_chunk", "agent_message_chunk", "agent_thought_chunk", "session_info_update", "tool_call", "tool_call_update":
+		default:
+			kind = "other"
+		}
+		for _, field := range []string{"content", "title", "rawInput", "rawOutput", "entries", "runningText", "_meta"} {
+			encoded, _ := json.Marshal([]any{update[field], params[field]})
+			if bytes.Contains(encoded, []byte("[coop] This thread continues")) {
+				t.Logf("carry echo: event=%s field=%s bytes=%d", kind, field, len(encoded))
+			}
 		}
 	}
 }

@@ -198,7 +198,7 @@ func TestACPCredentialSourcesFollowProviderSelection(t *testing.T) {
 					t.Fatalf("ACP provider options omitted %s via %s: %v", name, source, got)
 				}
 				handled, restart, ids := selectorSet(t, c, acpctl.CoopProviderID, name)
-				if !handled || !restart || !slices.Equal(ids, []string{acpctl.CoopPresetID, acpctl.CoopProviderID, acpctl.CoopAccountID}) {
+				if !handled || !restart || !slices.Equal(ids, []string{acpctl.CoopProviderID, acpctl.CoopAccountID}) {
 					t.Fatalf("ACP provider selection %s via %s = handled %v restart %v options %v", name, source, handled, restart, ids)
 				}
 				target, presetName, ok := c.SpawnTarget()

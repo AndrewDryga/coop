@@ -92,6 +92,9 @@ type Hooks struct {
 	// reload admission and entered pending bookkeeping. synthetic distinguishes a replay resume from
 	// a real editor prompt. It is the safe point for request correlation and assistant-turn ownership.
 	PromptForwarded func(line []byte, synthetic bool)
+	// PromptHeld may publish status for a newly accepted prompt waiting for replacement.
+	// It runs outside mu, under controlMu, without admitting or claiming the prompt.
+	PromptHeld func(sessionID string) []byte
 	// PromptCancelled clears the owner's retry intent without closing the session.
 	// Return the raw JSON request ID of a suppressed terminal response whose retry
 	// the owner still holds; the proxy must complete that editor request locally.
@@ -791,6 +794,11 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 				p.restartHeldLen += len(line)
 				p.mu.Unlock()
 				Trace("holding editor prompt for session %s while replacement replays", sid)
+				if p.hooks != nil && p.hooks.PromptHeld != nil {
+					if status := p.hooks.PromptHeld(sid); len(status) > 0 {
+						_, _ = p.out.Write(status)
+					}
+				}
 				return
 			}
 			if known {

@@ -32,6 +32,12 @@ quota resend intent while retaining session/model caches and visible conversatio
 a held prompt must not remove its target-setting gate, and releasing a force queue must not race
 cancellation. `scripted_cancel_e2e_test.go` also covers cancel during quota wait followed by switching.
 
+`Hooks.PromptHeld` publishes status only after a new prompt is accepted into the replacement
+queue, outside the proxy state mutex but under the admission mutex. It does not run controller
+prompt admission or change retry/history ownership. A quota notice uses the selected account's
+reset, not the nearest other account's reset. A selector acknowledgement can disclose a cooldown
+before a prompt exists, but must not promise an automatic send until a prompt is actually held.
+
 A replacement factory may be waiting for quota with no child to stop. Each factory attempt owns a
 context cancelled by a newer selection, reload, or disconnect. A successful child's context remains
 alive until its retirement; cancelling it immediately on factory return would kill live resources.
@@ -39,6 +45,7 @@ Natural EOF retires those resources before entering the replacement factory, not
 quota wait. The launcher checks cancellation after quota waits and before launching a replacement process.
 
 ## Changelog
+- 2026-09-12 - documented presentation-only held-prompt notification; verified two-account quota, manual selection, cancellation, and provider-switch process regression
 - 2026-09-12 - documented cancellation ownership and interruptible factory waits; verified held/active cancellation, quota-switch scripts, and replacement-context barriers
 - 2026-09-03 - collapsed SIGHUP setup state to one initialize frame, made restored adapter/provider
   identity mandatory, removed providerless loading, and reverified replay plus process-control tests

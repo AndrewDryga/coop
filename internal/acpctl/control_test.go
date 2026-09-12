@@ -75,6 +75,7 @@ func fromEditorPrompt(c *Control, line []byte) (handled bool, resp, toAdapter []
 // keep model/effort/fast (with the model defaulted to coop's), prepend coop's dropdowns, keep sessionId.
 func TestACPControlRewrite(t *testing.T) {
 	c := newTestControl(t)
+	signInCred(t, c.cfg, "codex", "personal")
 	in := `{"jsonrpc":"2.0","id":1,"result":{"sessionId":"s1","modes":{"currentModeId":"default"},"configOptions":[` +
 		`{"id":"mode","type":"select","currentValue":"default","options":[]},` +
 		`{"id":"model","type":"select","currentValue":"default","options":[{"value":"opus[1m]","name":"Opus"},{"value":"sonnet","name":"Sonnet"}]},` +
@@ -149,7 +150,7 @@ func TestACPControlRewriteConfigUpdateNotification(t *testing.T) {
 		json.Unmarshal(o["id"], &id)
 		ids = append(ids, id)
 	}
-	if len(ids) < 3 || ids[0] != "coop_preset" {
+	if !slices.Equal(ids, []string{CoopPresetID, CoopAccountID, "model", "effort"}) {
 		t.Errorf("coop's dropdowns must lead in a config_option_update too, got %v", ids)
 	}
 	for _, bad := range []string{"mode", "agent"} {
@@ -179,7 +180,7 @@ func TestACPControlInjectsSetupWhenAdapterHasNoConfigOptions(t *testing.T) {
 	if string(res["sessionId"]) != `"g1"` {
 		t.Errorf("sessionId lost: %s", res["sessionId"])
 	}
-	if len(ids) < 3 || ids[0] != "coop_preset" {
+	if !slices.Equal(ids, []string{CoopPresetID, CoopAccountID}) {
 		t.Errorf("coop's dropdowns must be injected even when the adapter sends no configOptions, got %v", ids)
 	}
 	if _, ok := res["models"]; !ok {
@@ -249,7 +250,7 @@ func TestACPControlSynthesizesGeminiModelDropdown(t *testing.T) {
 	c := newGeminiControl(t, "") // no coop launch-model → currentValue tracks the box's currentModelId
 	out := toEd(c, []byte(geminiSessionNew))
 	ids, res := configOptionIDs(t, out)
-	if len(ids) < 4 || ids[0] != "coop_preset" || !slices.Contains(ids, "model") {
+	if !slices.Equal(ids, []string{CoopPresetID, "model"}) {
 		t.Fatalf("want coop dropdowns first + a synthesized model option, got %v", ids)
 	}
 	model := findModelOption(t, res)
@@ -509,7 +510,7 @@ func TestACPControlGeminiPresetHidesModel(t *testing.T) {
 // native option flows through and a model set stays a native set_config_option (leadUsesSetModel off).
 func TestACPControlCodexNativeModelNotSynthesized(t *testing.T) {
 	c := newGeminiControl(t, "")
-	codexNew := `{"jsonrpc":"2.0","id":"3","result":{"sessionId":"c1","models":{"currentModelId":"gpt-5.5","availableModels":[{"modelId":"gpt-5.5","name":"GPT-5.5"}]},"configOptions":[{"id":"model","type":"select","currentValue":"gpt-5.5","options":[{"value":"gpt-5.5","name":"GPT-5.5"}]}]}}`
+	codexNew := `{"jsonrpc":"2.0","id":"3","result":{"sessionId":"c1","models":{"currentModelId":"gpt-5.5","availableModels":[{"modelId":"gpt-5.5","name":"GPT-5.5"}]},"configOptions":[{"id":"model","type":"select","currentValue":"gpt-5.5","options":[{"value":"gpt-5.5","name":"GPT-5.5"},{"value":"gpt-5","name":"GPT-5"}]}]}}`
 	out := toEd(c, []byte(codexNew+"\n"))
 	ids, _ := configOptionIDs(t, out)
 	// Exactly one model option — the adapter's native one, not a coop duplicate.
@@ -888,7 +889,7 @@ func TestACPControlAutoRotate(t *testing.T) {
 	if sel := c.selection(); sel.Account != "work" {
 		t.Errorf("expected rotation to work, selection = %+v", sel)
 	}
-	if !strings.Contains(string(out), `Switched to \"work\". Send your last message again.`) {
+	if !strings.Contains(string(out), `Claude Code account \"personal\" reached its usage limit. Switched to Claude Code account \"work\". Send your last message again.`) {
 		t.Errorf("editor should get coop's switched-to note, got: %s", out)
 	}
 
@@ -996,6 +997,9 @@ func TestACPControlAutomaticAccountRateLimitKeepsPolicy(t *testing.T) {
 	}
 	if c.autoAccount != "work" {
 		t.Fatalf("concrete automatic account = %q, want work", c.autoAccount)
+	}
+	if !bytes.Contains(out, []byte("Trying Claude Code account")) || !bytes.Contains(out, []byte(`\"work\"`)) {
+		t.Fatalf("physical rotation must be announced: %s", out)
 	}
 	if !bytes.Contains(out, []byte(`"id":"coop_account"`)) || !bytes.Contains(out, []byte(`"currentValue":"auto"`)) {
 		t.Fatalf("toolbar must remain on Auto after physical rotation: %s", out)
@@ -1373,7 +1377,7 @@ func TestACPControlWaitsForReset(t *testing.T) {
 	if !restart {
 		t.Fatal("must restart to wait on the reset")
 	}
-	if !strings.Contains(string(out), `Waiting for account \"personal\" to reset its usage limit at `) {
+	if !strings.Contains(string(out), `Waiting for account \"personal\" on Claude Code to reset its usage limit at `) {
 		t.Errorf("editor should get the waiting status, got: %s", out)
 	}
 	if !strings.Contains(string(out), "config_option_update") {
@@ -2003,7 +2007,7 @@ func TestACPPlainSelectorSwitches(t *testing.T) {
 
 	c = newTestControl(t)
 	signInCred(t, c.cfg, "claude", "work")
-	if handled, restart, ids := selectorSet(t, c, CoopAccountID, "work"); !handled || !restart || !slices.Equal(ids, []string{CoopPresetID, CoopProviderID, CoopAccountID}) {
+	if handled, restart, ids := selectorSet(t, c, CoopAccountID, "work"); !handled || !restart || !slices.Equal(ids, []string{CoopPresetID, CoopAccountID}) {
 		t.Fatalf("plain account switch = handled %v restart %v options %v", handled, restart, ids)
 	}
 	if got := c.selection(); got != (Selection{Account: "work"}) {
@@ -2639,7 +2643,7 @@ func TestACPControlProviderSwitchAckShowsNewProvider(t *testing.T) {
 		t.Errorf("spawnTarget after the switch = %+v ok=%v, want provider codex", tgt, ok)
 	}
 	// The respawned box's session/new truth restores the native menu (the new lead's).
-	toEd(c, []byte(`{"jsonrpc":"2.0","id":2,"result":{"sessionId":"s","configOptions":[{"id":"model","type":"select","currentValue":"gpt-5.5","options":[{"value":"gpt-5.5","name":"gpt-5.5"}]}]}}`))
+	toEd(c, []byte(`{"jsonrpc":"2.0","id":2,"result":{"sessionId":"s","configOptions":[{"id":"model","type":"select","currentValue":"gpt-5.5","options":[{"value":"gpt-5.5","name":"gpt-5.5"},{"value":"gpt-5","name":"GPT-5"}]}]}}`))
 	if ids2, _ := configOptionIDs(t, c.ackOptions(json.RawMessage("13"), "s")); !slices.Contains(ids2, "model") {
 		t.Errorf("after the new box's truth the model dropdown must be back: %v", ids2)
 	}
