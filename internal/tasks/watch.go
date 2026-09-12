@@ -55,7 +55,10 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 		merged := make([]mergedTask, 0, len(snapshot.Tasks))
 		showQueues := len(snapshot.Queues) > 1
 		for _, task := range snapshot.Tasks {
-			m := mergedTask{Item: task.Item, owner: task.Owner, phase: task.Phase, executions: task.Executions}
+			m := mergedTask{Item: task.Item, phase: task.Phase, executions: task.Executions}
+			if task.State != StateTodo && task.ownerRecord != nil {
+				m.owner = taskOwnerLabel(*task.ownerRecord, false)
+			}
 			if showQueues {
 				m.queue = task.QueueLabel
 			}
@@ -322,14 +325,14 @@ func mergedQueue(p ui.Palette, merged []mergedTask, spin, width int) []string {
 	var out []string
 	emit := func(m mergedTask) {
 		suffix := ""
-		if m.fork != "" {
+		if m.State != StateTodo && m.fork != "" {
 			suffix += "  ← " + m.fork
 			if m.phase != "" {
 				suffix += " (" + string(m.phase) + ")"
 			} else if m.State == StateInProgress {
 				suffix += " · " + m.lease.label()
 			}
-		} else if m.owner != "" {
+		} else if m.State != StateTodo && m.owner != "" {
 			suffix += "  ← " + m.owner
 		}
 		if m.queue != "" {

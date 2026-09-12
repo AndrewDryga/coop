@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Task watch hides claims on TODO rows and omits process IDs, leaving more room for task titles.
+  Active tasks still name their owner and show when the owner's process has stopped.
+
 - **Loops repair ordinary no-commit completions without stopping the night.** The task tool now
   refuses an invalid binding before moving the task, so the agent can fix it in the same session.
   If a successful no-change attempt still exits without a commit, Coop retries once; a second

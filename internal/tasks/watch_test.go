@@ -2,8 +2,10 @@ package tasks
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -346,6 +348,90 @@ func TestForkAttributionRemainsVisibleOutsideInProgress(t *testing.T) {
 	}
 }
 
+func TestTaskWatchHidesTodoClaims(t *testing.T) {
+	for _, task := range []mergedTask{
+		{owner: "claimed by alice"},
+		{fork: "worker", phase: ForkAssignmentBlocked},
+	} {
+		task.Item = Item{Title: "Queued work", State: StateTodo}
+		task.queue = "api/.agent/tasks"
+		line := mergedQueue(ui.Palette{}, []mergedTask{task}, 0, 80)[0]
+		if want := "  ○ Queued work · queue api/.agent/tasks"; line != want {
+			t.Errorf("TODO row = %q, want %q", line, want)
+		}
+	}
+}
+
+func TestTaskWatchOmitsClaimProcessIDs(t *testing.T) {
+	for _, state := range []string{StateTodo, StateInProgress} {
+		for _, process := range []string{"live", "stopped", "unbound"} {
+			t.Run(state+"/"+process, func(t *testing.T) {
+				repo := t.TempDir()
+				root := filepath.Join(repo, TasksRoot)
+				const id = "claimed-task"
+				writeTaskFile(t, filepath.Join(root, state, id, "task.md"), "# Queued work\n")
+				record := humanOwnerRecordForTest(id)
+				item, _ := mustCurrentTask(t, root, id)
+				instance, err := EnsureTaskInstance(root, item)
+				if err != nil {
+					t.Fatal(err)
+				}
+				record.Task = &instance
+				if process != "unbound" {
+					actor := selfActor(t, "codex")
+					if process == "stopped" {
+						var stop func()
+						actor, stop = sleeperActor(t, "codex")
+						stop()
+					}
+					record.Actor, record.ActorPID, record.ActorStart = actor.Label, actor.PID, actor.StartToken
+				}
+				if err := writeTaskOwnerRecord(root, record); err != nil {
+					t.Fatal(err)
+				}
+				before, _ := taskOwned(t, root, id)
+				watch := func(jsonOutput bool) string {
+					return captureStdout(t, func() {
+						if code, err := TasksWatch(Host{}, repo, []string{root}, jsonOutput); code != 0 || err != nil {
+							t.Errorf("watch = (%d, %v)", code, err)
+						}
+					})
+				}
+				out := watch(false)
+				if strings.Contains(out, "PID") || (record.ActorPID != 0 && strings.Contains(out, fmt.Sprint(record.ActorPID))) {
+					t.Errorf("watch exposed a process ID:\n%s", out)
+				}
+				if state == StateTodo {
+					if strings.Contains(out, "claimed by") || strings.Contains(out, "owner process") {
+						t.Errorf("TODO claim appeared in watch:\n%s", out)
+					}
+				} else {
+					who := record.Actor
+					if who == "" {
+						who = record.User
+					}
+					if !strings.Contains(out, "claimed by "+who) {
+						t.Errorf("watch lost owner identity:\n%s", out)
+					}
+					if strings.Contains(out, "owner process has stopped") != (process == "stopped") {
+						t.Errorf("watch lost process liveness truth:\n%s", out)
+					}
+				}
+				var snapshot ProjectSnapshot
+				if err := json.Unmarshal([]byte(watch(true)), &snapshot); err != nil {
+					t.Fatal(err)
+				}
+				if len(snapshot.Tasks) != 1 || snapshot.Tasks[0].Owner != TaskOwnerLabel(record) {
+					t.Errorf("watch changed diagnostic ownership: %+v", snapshot.Tasks)
+				}
+				if got, owned := taskOwned(t, root, id); !owned || !reflect.DeepEqual(got, before) {
+					t.Errorf("watch changed stored ownership: %+v, owned=%t", got, owned)
+				}
+			})
+		}
+	}
+}
+
 func TestTaskWatchNamesHumanOwnerAndCanonicalQueue(t *testing.T) {
 	line := mergedQueue(ui.Palette{}, []mergedTask{{
 		Item:  Item{Title: "Apply schema", State: StateInProgress},
@@ -362,9 +448,9 @@ func TestTaskWatchNamesHumanOwnerAndCanonicalQueue(t *testing.T) {
 	}
 	held := mergedQueue(ui.Palette{}, []mergedTask{{
 		Item:  Item{Title: "Apply schema", State: StateInProgress},
-		owner: "claimed by codex (pid 812)", lease: TaskLeaseObservation{State: leaseBusy, Provider: "codex"},
+		owner: "claimed by codex", lease: TaskLeaseObservation{State: leaseBusy, Provider: "codex"},
 	}}, 0, 100)[0]
-	if !strings.Contains(held, "claimed by codex (pid 812)") || !strings.Contains(held, "busy codex") {
+	if !strings.Contains(held, "claimed by codex") || !strings.Contains(held, "busy codex") {
 		t.Fatalf("a claimed task with a held lease must show both: %q", held)
 	}
 	unclaimed := mergedQueue(ui.Palette{}, []mergedTask{{Item: Item{Title: "Apply schema", State: StateInProgress}}}, 0, 100)[0]

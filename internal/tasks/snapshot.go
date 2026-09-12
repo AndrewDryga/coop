@@ -51,6 +51,7 @@ type ProjectTaskSnapshot struct {
 	Phase        ForkAssignmentPhase              `json:"phase,omitempty"`
 	Executions   []forkspace.ExecutionObservation `json:"executions,omitempty"`
 	Item         Item                             `json:"-"`
+	ownerRecord  *TaskOwnerRecord
 }
 
 type ProjectForkSnapshot struct {
@@ -210,6 +211,7 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 				appendSnapshotProblem(&snapshot, "task "+item.ID+" owner", ownerErr)
 			} else if owned {
 				view.Owner = TaskOwnerLabel(owner)
+				view.ownerRecord = &owner
 				if owner.Fork != nil {
 					index, indexed := indexByID[owner.Fork.AssignmentID]
 					exact := indexed && index.Fork == owner.Fork.Fork && index.CanonicalRoot == root &&

@@ -400,6 +400,10 @@ func UpdateForkTaskAssignment(root, id string, expected ForkTaskOwner, update fu
 // process, or the user when the claim was made at a terminal — and, when the claim is bound to a
 // process, whether that process still exists. Liveness is read here, at render time, never stored.
 func TaskOwnerLabel(record TaskOwnerRecord) string {
+	return taskOwnerLabel(record, true)
+}
+
+func taskOwnerLabel(record TaskOwnerRecord, includePID bool) string {
 	if record.Kind == TaskOwnerFork && record.Fork != nil {
 		return "assigned to fork " + record.Fork.Fork.Name + " (" + string(record.Fork.Phase) + ")"
 	}
@@ -410,7 +414,10 @@ func TaskOwnerLabel(record TaskOwnerRecord) string {
 	if record.ActorPID == 0 {
 		return "claimed by " + who
 	}
-	label := fmt.Sprintf("claimed by %s (PID %d)", who, record.ActorPID)
+	label := "claimed by " + who
+	if includePID {
+		label += fmt.Sprintf(" (PID %d)", record.ActorPID)
+	}
 	if !ownerProcessLive(record) {
 		label += " · owner process has stopped"
 	}
