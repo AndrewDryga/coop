@@ -122,7 +122,7 @@ type filteredDocker interface {
 
 // All policy and exposure checks precede runtime mutation. A returned execution
 // on error still owns any published intent; the caller must run its cleanup.
-func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtime.Runtime, spec RunSpec, capture *CapturedEgress, composeFile string, smoke *networkSmokeLaunch) (*filteredExecution, error) {
+func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtime.Runtime, spec RunSpec, capture *CapturedEgress, composeFile string, smoke *networkSmokeLaunch, sections *launchSections) (*filteredExecution, error) {
 	var servePorts []int
 	if capture == nil || capture.Store == nil || ctx == nil {
 		return nil, errors.New("a filtered launch needs the rules admission froze for it")
@@ -239,7 +239,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 		if err != nil {
 			return f, err
 		}
-		f.servicesNet, f.services, err = resolveServiceBindings(ctx, docker, rt, spec, composeFile, approval, approvedServices, privateRoots)
+		f.servicesNet, f.services, err = resolveServiceBindings(ctx, docker, rt, spec, composeFile, approval, approvedServices, sections, privateRoots)
 		if err != nil {
 			return f, err
 		}

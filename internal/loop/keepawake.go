@@ -7,7 +7,6 @@ import (
 	"strconv"
 
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // sleepInhibitorCmd returns the argv for a system sleep inhibitor that holds its assertion until
@@ -31,28 +30,27 @@ func sleepInhibitorCmd(goos string, pid int, lookPath func(string) bool) []strin
 }
 
 // armKeepAwake starts a sleep inhibitor for a loop's duration when COOP_CAFFEINATE is on and one
-// is available, returning a stop func to release it (a no-op otherwise, so callers can always
-// `defer armKeepAwake(cfg)()`). A `coop loop` runs unattended for hours; an overnight drain is
+// is available, returning a stop func to release it and whether it really started (a no-op/false
+// otherwise). A `coop loop` runs unattended for hours; an overnight drain is
 // pointless if the laptop idle-sleeps midway through it. Best-effort: a missing tool or a failed
 // start leaves the loop running unchanged.
-func armKeepAwake(cfg *config.Config) func() {
+func armKeepAwake(cfg *config.Config) (func(), bool) {
 	if !cfg.Caffeinate {
-		return func() {}
+		return func() {}, false
 	}
 	argv := sleepInhibitorCmd(runtime.GOOS, os.Getpid(), func(name string) bool {
 		_, err := exec.LookPath(name)
 		return err == nil
 	})
 	if argv == nil {
-		return func() {}
+		return func() {}, false
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	if err := cmd.Start(); err != nil {
-		return func() {} // best-effort — the loop doesn't depend on it
+		return func() {}, false // best-effort — the loop doesn't depend on it
 	}
-	ui.Note("  Keeping this Mac awake while the loop runs")
 	return func() {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait() // reap; -w already releases the assertion if this never runs
-	}
+	}, true
 }

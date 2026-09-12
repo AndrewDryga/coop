@@ -23,8 +23,8 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
-// The package's API is New, Host, Control, RunSpec, Run, and WorkspaceCost. Six more names are
-// exported for ONE reason — StageRecord, PeerRecord, ReadPeerRecords, IterationCommand,
+// The package's API is New, Host, Preparation, Control, RunSpec, Run, and WorkspaceCost. Six more
+// names are exported for ONE reason — StageRecord, PeerRecord, ReadPeerRecords, IterationCommand,
 // LoopWorkPrompt, LoopInterruptedExitCode: internal/cli's scripted process e2e suite asserts the
 // loop's observable contract (the argv it builds, the prompt it sends, the telemetry rows it
 // writes, the exit status it returns), and those tests are welded to the shared process harness
@@ -42,7 +42,7 @@ type Host struct {
 	// SweepOrphanBoxes reaps this repo's boxes whose supervising coop is dead. internal/cli owns
 	// the once-per-process cache that fork starts and `coop build` share, so the loop
 	// asks rather than sweeping the same repo again.
-	SweepOrphanBoxes func(repo string)
+	SweepOrphanBoxes func(repo string) Preparation
 
 	// SignUnpushed re-signs base..HEAD with the host key, returning how many commits it signed. It
 	// needs cli's ref-update test seam, and is also `coop sign` and the interactive box-exit path.
@@ -54,11 +54,17 @@ type Host struct {
 	BuildRotation func(agent string, rungs []agents.Target) (*ladder.Rotation, error)
 }
 
-func (h Host) sweepOrphanBoxes(repo string) {
+// Preparation is verified cleanup performed before a loop begins. Counts are successful
+// removals/recoveries only; failures remain best-effort diagnostics on their owning commands.
+type Preparation struct {
+	RemovedBoxes, RemovedNetworks, RecoveredFilteredRuns int
+}
+
+func (h Host) sweepOrphanBoxes(repo string) Preparation {
 	if h.SweepOrphanBoxes == nil {
-		return
+		return Preparation{}
 	}
-	h.SweepOrphanBoxes(repo)
+	return h.SweepOrphanBoxes(repo)
 }
 
 func (h Host) signUnpushed(repo, base string) (int, error) {

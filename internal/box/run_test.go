@@ -89,6 +89,38 @@ func TestRunRepoReadOnly(t *testing.T) {
 	}
 }
 
+func TestLoopRefusesUnsafeComposeBeforeAgentLaunch(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"),
+		[]byte("services:\n  unsafe:\n    image: example/unsafe\n    privileged: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "open", AutoUp: true}
+	spec := RunSpec{
+		Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"claude"}, Agent: "claude",
+		AgentCommand: true, Network: true, Batch: true, LoopPresentation: true,
+	}
+	var code int
+	var runErr error
+	output := captureStderr(t, func() { code, runErr = Run(cfg, recorderRuntime(t, recorder), spec) })
+	var refused *ComposeRefused
+	if code != -1 || !errors.As(runErr, &refused) {
+		t.Fatalf("loop launch = (%d, %v), want a Compose refusal", code, runErr)
+	}
+	if !strings.Contains(output, "Starting services") || !strings.Contains(output, "Services were not started") ||
+		strings.Contains(output, "Starting claude") {
+		t.Fatalf("refused service launch narration = %q", output)
+	}
+	if _, err := os.Stat(recorder); !errors.Is(err, os.ErrNotExist) {
+		data, _ := os.ReadFile(recorder)
+		t.Fatalf("runtime was invoked after a fatal Compose refusal: %q", data)
+	}
+}
+
 func TestRunRepoWritable(t *testing.T) {
 	repo := t.TempDir()
 	recorder := filepath.Join(t.TempDir(), "runtime-args")

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -24,31 +25,41 @@ const orphanSweepTimeout = 10 * time.Second
 // (Apple's container) must not print a line on every single start. `coop doctor` is where the state
 // of the sweep is reported on demand.
 func (a *app) sweepOrphanBoxes(repo string) {
+	result := a.collectOrphanBoxes(repo)
+	if result.RemovedBoxes > 0 {
+		ui.Note("Removed %s whose Coop processes had stopped", ui.Count(result.RemovedBoxes, "box", "boxes"))
+	}
+	if result.RemovedNetworks > 0 {
+		ui.Note("Removed %s", ui.Count(result.RemovedNetworks, "unused Coop network"))
+	}
+	if result.RecoveredFilteredRuns > 0 {
+		ui.Detail("recovered %s whose coop process is gone (coop net runs)",
+			ui.Count(result.RecoveredFilteredRuns, "interrupted filtered run"))
+	}
+}
+
+func (a *app) collectOrphanBoxes(repo string) loop.Preparation {
+	var result loop.Preparation
 	if repo == "" || a.sweptRepos[repo] {
-		return // one sweep per repo per process
+		return result // one sweep per repo per process
 	}
 	if a.sweptRepos == nil {
 		a.sweptRepos = map[string]bool{}
 	}
 	a.sweptRepos[repo] = true
 	if err := a.ensureRuntime(); err != nil {
-		return
+		return result
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), orphanSweepTimeout)
 	defer cancel()
-	if n, _ := box.ReapOrphanBoxes(ctx, a.rt, repo); n > 0 {
-		// The count is the runtime's own verified removals, never the number attempted.
-		ui.Note("Removed %s whose Coop processes had stopped", ui.Count(n, "box", "boxes"))
-	}
+	result.RemovedBoxes, _ = box.ReapOrphanBoxes(ctx, a.rt, repo)
 	// Networks are not scoped to a repo — a coop project's leftover network from ANY workspace
 	// eats one of Docker's ~31 subnets — so one pass per process covers them all.
 	if a.sweptNetworks {
-		return
+		return result
 	}
 	a.sweptNetworks = true
-	if n, _ := box.ReapOrphanNetworks(ctx, a.rt); n > 0 {
-		ui.Note("Removed %s", ui.Count(n, "unused Coop network"))
-	}
+	result.RemovedNetworks, _ = box.ReapOrphanNetworks(ctx, a.rt)
 	// A filtered run's gateway is exact-owned by the process that launched it,
 	// and the ordinary sweep above cannot see it: those containers carry
 	// coop.network.* labels, not coop=box. Settling them here means a crashed
@@ -61,9 +72,7 @@ func (a *app) sweepOrphanBoxes(repo string) {
 				recovered++
 			}
 		}
-		if recovered > 0 {
-			ui.Detail("recovered %s whose coop process is gone (coop net runs)",
-				ui.Count(recovered, "interrupted filtered run"))
-		}
+		result.RecoveredFilteredRuns = recovered
 	}
+	return result
 }

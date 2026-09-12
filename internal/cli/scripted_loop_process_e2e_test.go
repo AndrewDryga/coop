@@ -46,6 +46,15 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 			t.Run(provider, func(t *testing.T) {
 				resetLoopProcessRepo(t, suite)
 				t.Cleanup(func() { logLoopProcessFailure(t, suite) })
+				if err := os.MkdirAll(filepath.Join(suite.layout.Repo, ".agent"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(suite.layout.Repo, ".agent", "project.yaml"), []byte("serve:\n  ports: [4000, 9091]\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				loopProcessGit(t, suite, "add", ".agent/project.yaml")
+				loopProcessGit(t, suite, "commit", "-q", "-m", "configure fixture serve ports")
+				iterationHead := loopProcessGit(t, suite, "rev-parse", "HEAD")
 				taskID := "loop-task-" + provider
 				seedLoopProcessTask(t, suite.layout.Repo, taskID)
 				model := "loop-model-" + provider
@@ -72,6 +81,28 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 				if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stdout, "fixture-loop-complete-"+provider) || !strings.Contains(result.Stderr, "Paused after 1 of 1 requested task") {
 					t.Fatalf("coop loop %s = exit %d err %v\nstdout:\n%s\nstderr:\n%s\ntrace:\n%s", target, result.ExitCode, result.Err, result.Stdout, result.Stderr, readProcessFile(t, suite.layout.Trace))
 				}
+				assertLoopOutputOrder(t, result.Stderr,
+					"Using built-in defaults",
+					"Preparing loop",
+					"Task 1 - Attempt 1",
+					"Scripted loop lifecycle",
+					"Agent  "+target,
+					"Queue  0 completed · 1 active",
+					"Preparing task environment",
+					"Protecting secrets",
+					"Configuring network access",
+					"Starting "+target,
+					"Task completed: Scripted loop lifecycle",
+					"Paused after 1 of 1 requested task",
+				)
+				assertLoopOutputOnce(t, result.Stderr,
+					"Using built-in defaults", "Preparing loop", "Task 1 - Attempt 1",
+					"Preparing task environment", "  Protecting secrets", "  Configuring network access",
+					"Starting "+target, "Task completed: Scripted loop lifecycle",
+				)
+				if strings.Contains(result.Stderr, "\x1b") || strings.Contains(result.Stderr, "Publishing ports") || strings.Contains(result.Stderr, "Available on this host") || strings.Contains(result.Stderr, "· using ") {
+					t.Fatalf("loop output retained superseded setup narration:\n%s", result.Stderr)
+				}
 
 				prompt := loop.LoopWorkPrompt(suite.layout.Repo, tasksRoot, taskID, provider, nil, nil, false)
 				argv, streaming := loop.IterationCommand(provider, loopProcessArgv(provider, model, effort, prompt), nil)
@@ -80,7 +111,8 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 				}
 				// A loop start reaps boxes an earlier, killed coop left behind before adding its own.
 				assertDirectRunContract(t, suite, trace, provider, "work", loopWorkArgv(provider, argv), model, effort, loopWorkBox)
-				assertLoopProcessResult(t, suite, provider, taskID, model, effort, "work", suite.repoHead, 1, false)
+				assertNoLoopServePublication(t, trace)
+				assertLoopProcessResult(t, suite, provider, taskID, model, effort, "work", iterationHead, 1, false)
 				for _, event := range trace {
 					awaitProcessGone(t, event.PID)
 				}
@@ -246,6 +278,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 				}
 				if outcome == "unbound-state-symlink" {
 					unboundHead := loopProcessGit(t, suite, "rev-parse", "HEAD")
+					unboundParent := loopProcessGit(t, suite, "rev-parse", unboundHead+"^")
 					statePath := filepath.Join(inProgress, "state.md")
 					if err := os.Remove(statePath); err != nil {
 						t.Fatal(err)
@@ -267,7 +300,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 					if retry.Err != nil || retry.ExitCode != 0 {
 						t.Fatalf("repaired loop = exit %d err %v\nstdout:\n%s\nstderr:\n%s", retry.ExitCode, retry.Err, retry.Stdout, retry.Stderr)
 					}
-					assertLoopProcessResult(t, suite, provider, taskID, "loop-model", "high", "work", unboundHead, 1, false)
+					assertLoopProcessResult(t, suite, provider, taskID, "loop-model", "high", "work", unboundParent, 1, false, unboundHead)
 					if data, err := os.ReadFile(sentinel); err != nil || string(data) != wantSentinel {
 						t.Fatalf("repaired loop touched outside sentinel = %q, %v", data, err)
 					}
@@ -434,6 +467,44 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 	})
 }
 
+func assertLoopOutputOrder(t *testing.T, output string, parts ...string) {
+	t.Helper()
+	offset := 0
+	for _, part := range parts {
+		i := strings.Index(output[offset:], part)
+		if i < 0 {
+			t.Fatalf("loop output missing %q after byte %d:\n%s", part, offset, output)
+		}
+		offset += i + len(part)
+	}
+}
+
+func assertLoopOutputOnce(t *testing.T, output string, parts ...string) {
+	t.Helper()
+	for _, part := range parts {
+		if count := strings.Count(output, part); count != 1 {
+			t.Fatalf("loop output contains %q %d times, want once:\n%s", part, count, output)
+		}
+	}
+}
+
+func assertNoLoopServePublication(t *testing.T, trace []*processTrace) {
+	t.Helper()
+	for _, event := range trace {
+		var env []processEnv
+		if event.Run != nil {
+			env = event.Run.Environment
+		} else if event.Source == "provider" && event.Event == "start" {
+			env = event.Environment
+		}
+		for _, item := range env {
+			if strings.HasPrefix(item.Name, "COOP_SERVE_URL_") {
+				t.Fatalf("loop with configured project ports published %s in %#v", item.Name, event)
+			}
+		}
+	}
+}
+
 func resetLoopProcessRepo(t *testing.T, suite *directProcessSuite) {
 	t.Helper()
 	loopProcessGit(t, suite, "reset", "--hard", suite.repoHead)
@@ -500,7 +571,7 @@ func loopProcessArgv(provider, model, effort, prompt string) []string {
 	return append(base, "-p", prompt)
 }
 
-func assertLoopProcessResult(t *testing.T, suite *directProcessSuite, provider, taskID, model, effort, account, headBefore string, wantRecords int, wantRecovery bool) {
+func assertLoopProcessResult(t *testing.T, suite *directProcessSuite, provider, taskID, model, effort, account, commitParent string, wantRecords int, wantRecovery bool, stageHeads ...string) {
 	t.Helper()
 	done := filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)
 	if _, err := os.Stat(filepath.Join(done, "task.md")); err != nil {
@@ -532,8 +603,8 @@ func assertLoopProcessResult(t *testing.T, suite *directProcessSuite, provider, 
 		t.Fatalf("task commit message = %q", message)
 	}
 	parent := loopProcessGit(t, suite, "rev-parse", "HEAD^")
-	if parent != suite.repoHead {
-		t.Fatalf("loop commit parent = %s, want %s", parent, suite.repoHead)
+	if parent != commitParent {
+		t.Fatalf("loop commit parent = %s, want %s", parent, commitParent)
 	}
 	paths := loopProcessGit(t, suite, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD")
 	if paths != "loop-"+provider+".txt" {
@@ -575,7 +646,11 @@ func assertLoopProcessResult(t *testing.T, suite *directProcessSuite, provider, 
 	}
 	record := records[len(records)-1]
 	head := loopProcessGit(t, suite, "rev-parse", "HEAD")
-	if record.Stage != "work" || record.Outcome != "success" || record.Provider != provider || record.Model != model || record.Effort != effort || record.Account != account || record.Exit != 0 || record.Retries != 0 || record.Reopened != 0 || record.HeadBefore != headBefore || record.HeadAfter != head || !slices.Equal(record.Finished, []string{taskID}) || len(record.GateFiles) != 0 || record.QueueTodo != 0 || record.QueueDoing != 0 || record.QueueDone != 1 {
+	stageHead := commitParent
+	if len(stageHeads) > 0 {
+		stageHead = stageHeads[0]
+	}
+	if record.Stage != "work" || record.Outcome != "success" || record.Provider != provider || record.Model != model || record.Effort != effort || record.Account != account || record.Exit != 0 || record.Retries != 0 || record.Reopened != 0 || record.HeadBefore != stageHead || record.HeadAfter != head || !slices.Equal(record.Finished, []string{taskID}) || len(record.GateFiles) != 0 || record.QueueTodo != 0 || record.QueueDoing != 0 || record.QueueDone != 1 {
 		t.Fatalf("loop telemetry = %#v", record)
 	}
 }

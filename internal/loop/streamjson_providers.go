@@ -7,8 +7,6 @@ import (
 	"io"
 	"strings"
 	"time"
-
-	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 const (
@@ -323,7 +321,7 @@ func (d *codexStreamDecoder) event(raw json.RawMessage) {
 			InTok:  ev.Usage.InputTokens,
 			OutTok: ev.Usage.OutputTokens + ev.Usage.ReasoningOutputTokens,
 		}
-		d.emit(ui.Dim("· " + tokenUsage(d.last.InTok, d.last.OutTok)))
+		d.emit(d.palette.Dim("· " + tokenUsage(d.last.InTok, d.last.OutTok)))
 	case "turn.failed":
 		d.noteTerminal()
 		d.failed = true
@@ -343,7 +341,7 @@ func (d *codexStreamDecoder) event(raw json.RawMessage) {
 }
 
 func (d *codexStreamDecoder) showModel() {
-	d.emit(streamModelLine(d.agent, streamDisplayModel(d.model), d.profile))
+	d.announceIdentity(d.agent, d.model, d.profile)
 }
 
 // codexRecognizedItem lists the item types the Codex stream is known to emit; only these prove
@@ -410,7 +408,7 @@ func (d *codexStreamDecoder) itemCompleted(item codexStreamItem) {
 	switch item.Type {
 	case "agent_message":
 		if text := strings.TrimSpace(item.Text); text != "" {
-			d.emit(ui.Magenta(llmIcon) + " " + text)
+			d.emitAssistant(text)
 			d.toTail(text)
 		}
 	case "command_execution":
@@ -486,7 +484,7 @@ func (d *codexStreamDecoder) emitUnknown(kind string) {
 	if kind == "" {
 		kind = "unknown"
 	}
-	d.emit(ui.Dim("· " + kind))
+	d.emit(d.palette.Dim("· " + cleanDiagnosticLine(kind)))
 }
 
 func (d *codexStreamDecoder) lastIterResult() *iterResult { return d.last }
@@ -574,7 +572,7 @@ func (d *geminiStreamDecoder) event(raw json.RawMessage) {
 	switch ev.Type {
 	case "init":
 		d.noteBootstrap()
-		d.emit(streamModelLine(d.agent, streamDisplayModel(d.model), d.profile))
+		d.announceIdentity(d.agent, d.model, d.profile)
 	case "message":
 		switch ev.Role {
 		case "assistant":
@@ -589,7 +587,7 @@ func (d *geminiStreamDecoder) event(raw json.RawMessage) {
 			// and being the host's own prompt, it proves nothing about model progress either.
 		default:
 			role := strings.TrimSpace("message " + ev.Role)
-			d.emit(ui.Dim("· " + role))
+			d.emit(d.palette.Dim("· " + cleanDiagnosticLine(role)))
 		}
 	case "tool_use":
 		// tool_id is the handle the matching tool_result arrives under; without it the pair cannot
@@ -634,7 +632,7 @@ func (d *geminiStreamDecoder) flushAssistant() {
 	if text == "" {
 		return
 	}
-	d.emit(ui.Magenta(llmIcon) + " " + text)
+	d.emitAssistant(text)
 	d.toTail(text)
 }
 
@@ -652,7 +650,7 @@ func (d *geminiStreamDecoder) toolUse(ev *geminiStreamEvent) {
 		line = d.streamToolLine("⚙", label, false)
 	default:
 		label = ev.Parameters.Description
-		line = ui.Dim("· " + strings.TrimSpace(name+" "+label))
+		line = d.palette.Dim("· " + cleanDiagnosticLine(strings.TrimSpace(name+" "+label)))
 	}
 	d.emit(line)
 	d.tool.set(ev.ToolID, strings.TrimSpace(name+" "+label))
@@ -682,7 +680,7 @@ func (d *geminiStreamDecoder) result(ev *geminiStreamEvent) {
 		OutTok:     ev.Stats.OutputTokens,
 	}
 	dur := (time.Duration(ev.Stats.DurationMS) * time.Millisecond).Round(time.Second)
-	d.emit(ui.Dim(fmt.Sprintf("· %s · %s", dur, tokenUsage(d.last.InTok, d.last.OutTok))))
+	d.emit(d.palette.Dim(fmt.Sprintf("· %s · %s", dur, tokenUsage(d.last.InTok, d.last.OutTok))))
 	if ev.Status == "success" {
 		return
 	}
@@ -703,7 +701,7 @@ func (d *geminiStreamDecoder) emitUnknown(kind string) {
 	if kind == "" {
 		kind = "unknown"
 	}
-	d.emit(ui.Dim("· " + kind))
+	d.emit(d.palette.Dim("· " + cleanDiagnosticLine(kind)))
 }
 
 func (d *geminiStreamDecoder) lastIterResult() *iterResult { return d.last }
@@ -791,7 +789,7 @@ func (d *grokStreamDecoder) event(raw json.RawMessage) {
 			InTok:  ev.Usage.InputTokens + ev.Usage.CacheReadInputTokens,
 			OutTok: ev.Usage.OutputTokens + ev.Usage.ReasoningTokens,
 		}
-		d.emit(ui.Dim(fmt.Sprintf("· %d turns · %s", d.last.Turns, tokenUsage(d.last.InTok, d.last.OutTok))))
+		d.emit(d.palette.Dim(fmt.Sprintf("· %d turns · %s", d.last.Turns, tokenUsage(d.last.InTok, d.last.OutTok))))
 	default:
 		if strings.Contains(strings.ToLower(ev.Type), "error") {
 			d.failed = true
@@ -802,7 +800,7 @@ func (d *grokStreamDecoder) event(raw json.RawMessage) {
 		if kind == "" {
 			kind = "unknown"
 		}
-		d.emit(ui.Dim("· " + kind))
+		d.emit(d.palette.Dim("· " + cleanDiagnosticLine(kind)))
 	}
 }
 
@@ -816,7 +814,7 @@ func (d *grokStreamDecoder) showModel() {
 		return
 	}
 	d.modelShown = true
-	d.emit(streamModelLine(d.agent, streamDisplayModel(d.model), d.profile))
+	d.announceIdentity(d.agent, d.model, d.profile)
 }
 
 func (d *grokStreamDecoder) flushText() {
@@ -824,7 +822,7 @@ func (d *grokStreamDecoder) flushText() {
 	if text == "" {
 		return
 	}
-	d.emit(ui.Magenta(llmIcon) + " " + text)
+	d.emitAssistant(text)
 	d.toTail(text)
 }
 

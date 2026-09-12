@@ -55,8 +55,9 @@ func UpServices(rt runtime.Runtime, workspace, file string, stdout, stderr io.Wr
 }
 
 type startedServices struct {
-	names []string
-	ports []ServicePort
+	names  []string
+	ports  []ServicePort
+	hidden []string
 }
 
 func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer, repoReadOnly, noticeHidden bool, exposedRoots ...string) (startedServices, error) {
@@ -72,6 +73,7 @@ func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stder
 		return startedServices{}, &ComposeRefused{Verb: "run", File: filepath.Base(file), Err: err}
 	}
 	defer cleanup()
+	started := startedServices{hidden: hidden}
 	if len(hidden) > 0 && noticeHidden {
 		// coop's own channel, NOT the compose writer the caller passed: a box start hands that one a
 		// buffer it reads only when compose FAILS, so this notice would be discarded on the very path
@@ -87,20 +89,21 @@ func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stder
 	if sp := ports; len(sp) > 0 {
 		override, cleanup, err := writeServiceOverride(sp, workspace, exposedRoots...)
 		if err != nil {
-			return startedServices{}, err
+			return started, err
 		}
 		defer cleanup()
 		args = append(args, "-f", override)
 	}
 	services, err := resolvedComposeServices(rt, args, stderr)
 	if err != nil {
-		return startedServices{}, err
+		return started, err
 	}
 	upArgs := append(append([]string(nil), args...), "up", "-d", "--wait", "--remove-orphans")
 	if err := runCompose(rt, stdout, stderr, "up", upArgs); err != nil {
-		return startedServices{}, err
+		return started, err
 	}
-	return startedServices{names: services, ports: ports}, nil
+	started.names, started.ports = services, ports
+	return started, nil
 }
 
 // Snapshot approved bytes outside the writable workspace. All commands in one operation use

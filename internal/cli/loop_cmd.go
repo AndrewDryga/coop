@@ -173,23 +173,40 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		Repo: repo, Image: img, Agent: agent,
 		Rotation: rot, Queues: queues, Preset: a.preset, Peers: peers,
 		DebugOnFail: debugOnFail, Preflight: preflight, MaxTasks: maxTasks,
-		Continue: loopContinueCommand(t, hasTarget, presetName),
+		Continue: loopContinueCommand(t, hasTarget, presetName, flags),
 		Network:  a.network.admission(),
 	})
 }
 
 // loopContinueCommand is the command that resumes this run, for the reports that tell the reader
-// how to carry on. It repeats only the who-runs positional the user typed: options like
-// --max-tasks describe THIS invocation, and repeating them would suggest continuing means pausing
-// again.
-func loopContinueCommand(t agents.Target, hasTarget bool, presetName string) string {
+// how to carry on. It repeats the who-runs positional and explicit queue scope the user typed;
+// options like --max-tasks describe THIS invocation, and repeating them would suggest continuing
+// means pausing again.
+func loopContinueCommand(t agents.Target, hasTarget bool, presetName string, taskFlags []string) string {
+	command := "coop loop"
 	switch {
 	case hasTarget:
-		return "coop loop " + t.String()
+		command += " " + t.String()
 	case presetName != "":
-		return "coop loop " + presetName
+		command += " " + presetName
 	}
-	return "coop loop"
+	for _, queue := range taskFlags {
+		command += " --tasks " + shellWord(queue)
+	}
+	return command
+}
+
+// shellWord quotes one user-supplied queue path for the POSIX shells Coop supports. Continuation
+// text is a command a person pastes, so a metacharacter must stay data rather than become a second
+// argument or shell program.
+func shellWord(s string) string {
+	if s != "" && strings.IndexFunc(s, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
+			strings.ContainsRune("_+,-./:@", r))
+	}) < 0 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
 // loopctl builds the loop engine for one run: the config and runtime it works with, the version
@@ -197,7 +214,7 @@ func loopContinueCommand(t agents.Target, hasTarget bool, presetName string) str
 // owns the process (see internal/loop's Host doc). One Control per invocation, like forkctl().
 func (a *app) loopctl() *loop.Control {
 	return loop.New(a.cfg, a.rt, resolveVersion(), loop.Host{
-		SweepOrphanBoxes: a.sweepOrphanBoxes,
+		SweepOrphanBoxes: a.collectOrphanBoxes,
 		SignUnpushed:     a.signUnpushed,
 		BuildRotation:    a.buildRotation,
 	})

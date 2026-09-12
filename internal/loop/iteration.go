@@ -157,25 +157,39 @@ func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName s
 
 	outWs := []io.Writer{termOut}
 	errWs := []io.Writer{termErr, tail, diagnostic}
+	var identityCopies []io.Writer
 	if sink != nil { // fork loops also capture to ../<repo>-forks/.coop/<name>.log
 		outWs = append(outWs, sink)
 		errWs = append(errWs, sink)
+		identityCopies = append(identityCopies, sink)
 	}
 	// A built-in loop command on a TTY emits its provider's streaming JSON. Decode it into human
 	// activity lines, keeping narration out of the terminal diagnostics used for recovery policy.
 	rawTrace, renderedTrace, closeTrace := c.iterationStreamTrace(repo, agent, streaming)
 	defer closeTrace()
 	if renderedTrace != nil {
-		outWs = append(outWs, renderedTrace)
+		identityCopies = append(identityCopies, renderedTrace)
 	}
 	var stdoutW io.Writer
 	var dec iterationStreamDecoder
 	var plainClaudeLimit *claudePlainLimitProbe
 	if streaming {
-		dec = newIterationStreamDecoder(agent, io.MultiWriter(outWs...), tail, diagnostic, c.cfg.ActiveProfile(agent), box.Workdir(c.cfg, repo), c.cfg.ModelFor(agent))
+		profile := c.cfg.ActiveProfile(agent)
+		selectedModel := c.cfg.ModelFor(agent)
+		var identityCapture io.Writer
+		if len(identityCopies) > 0 {
+			identityCapture = io.MultiWriter(identityCopies...)
+		}
+		identity := providerIdentityAnnouncer(agent, selectedModel, c.cfg.EffortFor(agent), profile, identityCapture, liveWidth)
+		dec = newIterationStreamDecoder(agent, termOut, tail, diagnostic, profile, box.Workdir(c.cfg, repo), selectedModel, identity)
 	}
 	if dec != nil {
 		dec.setDisplayWidth(liveWidth)
+		var plainCopy io.Writer
+		if len(identityCopies) > 0 {
+			plainCopy = io.MultiWriter(identityCopies...)
+		}
+		dec.setRender(ui.For(os.Stdout), plainCopy)
 		stdoutW = dec
 		if rawTrace != nil {
 			stdoutW = io.MultiWriter(rawTrace, dec)
@@ -244,14 +258,14 @@ func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName s
 		boxCtx = childCtx
 	}
 	code, err = c.runBox(box.RunSpec{
-		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName, ForkOwner: c.forkOwner, ForkGeneration: c.forkGeneration, ConsultLead: lead, Peers: peers, Preset: c.preset, RunID: c.runID, AssignedTask: assignedTask, TaskTools: taskTools,
+		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, LoopPresentation: true, ForkName: forkName, ForkOwner: c.forkOwner, ForkGeneration: c.forkGeneration, ConsultLead: lead, Peers: peers, Preset: c.preset, RunID: c.runID, AssignedTask: assignedTask, TaskTools: taskTools,
 		ForkWorker: c.forkWorker, ActivityRepo: c.activityRepo, ActivityKind: c.activityKind,
 		ActivityTask: c.iterationActivityTask(assignedTask), ActivitySource: c.runID,
 		AgentCommand:         agentCommand,
 		SuperviseDescendants: true,
 		RepoReadOnly:         repoReadOnly,
 		RepoReadOnlyPaths:    reviewReadOnlyPaths(windowMode, repoReadOnly, hosts),
-		Homes:                c.cfg.Homes, Network: c.cfg.Network, Cache: c.cfg.Cache, Serve: true,
+		Homes:                c.cfg.Homes, Network: c.cfg.Network, Cache: c.cfg.Cache,
 		Stdout:          stdoutW,
 		Stderr:          stderrW,
 		Ctx:             boxCtx,
@@ -308,6 +322,44 @@ func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName s
 		}
 	}
 	return code, output, res, classification, windows, err
+}
+
+func providerIdentityAnnouncer(provider, selectedModel, effort, profile string, capture io.Writer, width func() int) func(string) {
+	lastIdentity := ""
+	return func(model string) {
+		model = cleanDiagnosticLine(model)
+		if model == "" {
+			model = cleanDiagnosticLine(selectedModel)
+		}
+		target := agents.Target{Provider: provider, Model: model, Effort: effort}
+		if profile != "" {
+			target.Accounts = []string{profile}
+		}
+		name := cleanDiagnosticLine(agents.DisplayTarget(target.String()))
+		if name == lastIdentity {
+			return
+		}
+		lastIdentity = name
+		lines := ui.PrefixedLines("Starting ", name, loopOutputWidth(width))
+		ui.Section(lines[0])
+		for _, line := range lines[1:] {
+			ui.Note("%s", ui.Bold(line))
+		}
+		if capture != nil {
+			_, _ = fmt.Fprintf(capture, "\n%s\n", strings.Join(lines, "\n"))
+		}
+	}
+}
+
+func loopOutputWidth(width func() int) int {
+	w := ui.TermWidth(os.Stderr)
+	if width != nil && width() > 0 {
+		w = width()
+	}
+	if w < 2 {
+		return 1
+	}
+	return w - 1
 }
 
 func (c *Control) iterationActivityTask(id string) *forkspace.ExecutionTaskRef {

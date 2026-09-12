@@ -27,11 +27,14 @@ func TestSleepInhibitorCmd(t *testing.T) {
 }
 
 // TestArmKeepAwakeDisabled: with COOP_CAFFEINATE off, arming is a no-op that spawns nothing and
-// returns a callable stop func (so `defer armKeepAwake(cfg)()` is always safe).
+// returns a callable stop func.
 func TestArmKeepAwakeDisabled(t *testing.T) {
-	stop := armKeepAwake(&config.Config{Caffeinate: false})
+	stop, started := armKeepAwake(&config.Config{Caffeinate: false})
 	if stop == nil {
 		t.Fatal("armKeepAwake returned a nil stop func")
+	}
+	if started {
+		t.Fatal("disabled caffeinate reported that it started")
 	}
 	stop() // must not panic
 }

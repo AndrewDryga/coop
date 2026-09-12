@@ -319,7 +319,7 @@ func TestCommitFilesPreservesUnicodeProtectedPath(t *testing.T) {
 }
 
 func TestRunSummary(t *testing.T) {
-	completed := []taskLine{{id: "2026-09-11-task-json", title: "Add a --json flag", scope: "internal/cli"}}
+	completed := []taskLine{{id: "2026-09-11-task-json", title: "Add a --json flag", scope: "internal/cli", doneSubtasks: 3, subtasks: 4}}
 	h := newLoopHealth()
 	h.noteReopen([]string{"2026-09-11-task-json"})
 	cost := runCost{
@@ -329,7 +329,7 @@ func TestRunSummary(t *testing.T) {
 	}
 	got := captureStderr(t, func() { printRunSummary(completed, cost, h) })
 	for _, want := range []string{
-		"Completed this run", "  Add a --json flag", "    2026-09-11-task-json · internal/cli",
+		"Completed this run", "  Add a --json flag · 3/4 subtasks", "    2026-09-11-task-json · internal/cli",
 		"Usage", "claude:fable-5", "$2.50 · 100,000 in · 4,000 out", "codex:gpt-5.6-terra",
 		"Worth a look", "Add a --json flag was reopened 1 times by the review.",
 	} {
@@ -359,5 +359,32 @@ func TestRunSummary(t *testing.T) {
 	got = captureStderr(t, func() { printRunSummary(nil, free, newLoopHealth()) })
 	if !strings.Contains(got, "Reported cost: not reported") || strings.Contains(got, "$0.00") {
 		t.Errorf("unreported cost = %q", got)
+	}
+}
+
+func TestCompletionProgressRefreshesWithoutDuplicates(t *testing.T) {
+	lines := rememberCompletion(nil, taskLine{id: "task-a", title: "Fix login", doneSubtasks: 1, subtasks: 3})
+	lines = rememberCompletion(lines, taskLine{id: "task-a", title: "Fix login", doneSubtasks: 3, subtasks: 3})
+	lines = rememberCompletion(lines, taskLine{id: "task-b", title: "Document deploys"})
+	if len(lines) != 2 || taskTitleWithProgress(lines[0]) != "Fix login · 3/3 subtasks" || taskTitleWithProgress(lines[1]) != "Document deploys" {
+		t.Fatalf("completion rows = %#v", lines)
+	}
+}
+
+func TestTaskReportLineUsesParsedSubtaskState(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		item tasks.Item
+		want string
+	}{
+		{name: "partial", item: tasks.Item{Title: "Fix login", Subtasks: []bool{true, false, true}}, want: "Fix login · 2/3 subtasks"},
+		{name: "complete", item: tasks.Item{Title: "Fix login", Subtasks: []bool{true, true}}, want: "Fix login · 2/2 subtasks"},
+		{name: "no checklist", item: tasks.Item{Title: "Fix login"}, want: "Fix login"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := taskTitleWithProgress(taskReportLine(test.item, "")); got != test.want {
+				t.Fatalf("task report title = %q, want %q", got, test.want)
+			}
+		})
 	}
 }

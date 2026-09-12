@@ -2,6 +2,7 @@ package loop
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -23,7 +24,43 @@ import (
 // what is LEFT to do — the queue state it is actually in. Completions are recorded as they are
 // accepted, so the closing report describes work that landed rather than what a commit range
 // happens to contain.
-type taskLine struct{ id, title, scope, state string }
+type taskLine struct {
+	id, title, scope, state string
+	doneSubtasks, subtasks  int
+}
+
+func taskReportLine(item tasks.Item, scope string) taskLine {
+	done := 0
+	for _, checked := range item.Subtasks {
+		if checked {
+			done++
+		}
+	}
+	return taskLine{
+		id: item.ID, title: item.Title, scope: scope,
+		doneSubtasks: done, subtasks: len(item.Subtasks),
+	}
+}
+
+func taskTitleWithProgress(t taskLine) string {
+	title := cleanDiagnosticLine(t.title)
+	if t.subtasks == 0 {
+		return title
+	}
+	return fmt.Sprintf("%s · %d/%d subtasks", title, t.doneSubtasks, t.subtasks)
+}
+
+// rememberCompletion keeps the closing digest to one current row per task. A review may reopen and
+// re-complete the same task; its latest authoritative checklist replaces the earlier snapshot.
+func rememberCompletion(lines []taskLine, completed taskLine) []taskLine {
+	for i := range lines {
+		if lines[i].id == completed.id {
+			lines[i] = completed
+			return lines
+		}
+	}
+	return append(lines, completed)
+}
 
 // queueScope is the subproject a task queue belongs to — "internal/auth" for
 // internal/auth/.agent/tasks, "" for the repository's own queue. It is the scope shown beside a
@@ -40,69 +77,202 @@ func queueScope(rel string) string {
 // taskIdentity is the "<id> · <scope>" line under a task's title. Scope is omitted when the task
 // belongs to the repository's own queue: there is nothing to distinguish it from.
 func taskIdentity(id, scope string) string {
+	id, scope = cleanDiagnosticLine(id), cleanDiagnosticLine(scope)
 	if scope == "" {
 		return id
 	}
 	return id + " · " + scope
 }
 
-// introLine opens the run: how much work it starts with and which configuration it derives from.
-// n is the startup snapshot of actionable tasks — not a promise that every one finishes here.
-func introLine(n int, configured bool) string {
-	source := "built-in defaults"
-	if configured {
-		source = "configuration " + loopConfigName
+func loopConfigLine(configured bool) string {
+	if !configured {
+		return "Using built-in defaults"
 	}
-	return fmt.Sprintf("Working through %s using %s", ui.Count(n, "task"), source)
+	return "Using " + loopConfigName
 }
 
 // loopConfigName is the committed loop configuration's repo-relative path, as the intro names it.
 const loopConfigName = ".agent/loop.yaml"
 
+func printLoopPreparation(prep Preparation, nudges []string, awake bool) {
+	ui.Section("Preparing loop")
+	if prep.RemovedBoxes > 0 {
+		ui.Pass("Removed %s whose Coop processes had stopped", ui.Count(prep.RemovedBoxes, "box", "boxes"))
+	}
+	if prep.RemovedNetworks > 0 {
+		ui.Pass("Removed %s", ui.Count(prep.RemovedNetworks, "unused Coop network"))
+	}
+	if prep.RecoveredFilteredRuns > 0 {
+		ui.Caution("Recovered %s", ui.Count(prep.RecoveredFilteredRuns, "interrupted filtered network run"))
+		ui.Note("    Their Coop processes are no longer running.")
+		ui.Note("    Details: coop net runs")
+	}
+	for _, nudge := range nudges {
+		printLoopStaleness(nudge)
+	}
+	if awake {
+		if prep.RemovedBoxes+prep.RemovedNetworks+prep.RecoveredFilteredRuns > 0 || len(nudges) > 0 {
+			ui.Note("")
+		}
+		ui.Pass("Keeping this Mac awake using caffeinate")
+	}
+}
+
+func printLoopStaleness(nudge string) {
+	ui.Note("")
+	switch {
+	case strings.HasPrefix(nudge, "box image is stale —"):
+		ui.Caution("Box image is out of date")
+		ui.Note("    The box Dockerfile or .tool-versions changed since it was built.")
+		ui.Note("    To rebuild: coop build")
+	case strings.HasPrefix(nudge, "box image was built by coop "):
+		ui.Caution("Box image does not match this Coop version")
+		ui.Note("    %s", nudge)
+		ui.Note("    To rebuild: coop build")
+	case strings.HasPrefix(nudge, "box image is ") && strings.Contains(nudge, " days old"):
+		ui.Caution("Box image is old")
+		ui.Note("    %s", nudge)
+		ui.Note("    To refresh: coop update")
+	default:
+		ui.Caution("%s", nudge)
+	}
+}
+
 // printTaskHeader announces the attempt about to start: its ordinal in this run, the task's title,
-// its id and scope, and the agent (or custom command) that will work it. Ordinals are stable per
-// task for the whole run, so a retry keeps the number a reader already saw.
-func printTaskHeader(ordinal int, task taskLine, runner string, custom bool) {
-	label := "Agent:  "
-	if custom {
-		label = "Command: "
+// its scope when needed, and the agent (or custom command) that will work it. Ordinals are stable
+// per task for the whole run, so a retry keeps the number a reader already saw.
+func printTaskHeader(ordinal, attempt int, task taskLine, runner string, custom bool, counts tasks.TaskCounts) {
+	width := ui.TermWidth(os.Stderr)
+	if width > 64 {
+		width = 64
+	}
+	if width < 24 {
+		width = 24
 	}
 	ui.Note("")
-	ui.Note("Task %d · %s", ordinal, task.title)
-	ui.Note("  %s", taskIdentity(task.id, task.scope))
-	if runner != "" {
-		ui.Note("  %s%s", label, runner)
+	for _, line := range taskBannerLines(ui.For(os.Stderr), width, ordinal, attempt, task, runner, custom, counts) {
+		ui.Note("%s", line)
 	}
+	ui.Note("")
+}
+
+func taskBannerLines(p ui.Palette, width, ordinal, attempt int, task taskLine, runner string, custom bool, counts tasks.TaskCounts) []string {
+	label := "Agent  "
+	if custom {
+		label = "Command  "
+	}
+	rule := p.Dim(strings.Repeat("━", width))
+	lines := []string{rule, p.Dim(fmt.Sprintf(" Task %d - Attempt %d", ordinal, attempt)), ""}
+	for _, line := range wrapDisplay(cleanDiagnosticLine(task.title), width-1) {
+		lines = append(lines, " "+line)
+	}
+	lines = append(lines, "")
+	if task.scope != "" {
+		for _, line := range prefixedDisplayLines("Project  ", cleanDiagnosticLine(task.scope), width-1) {
+			lines = append(lines, p.Dim(" "+line))
+		}
+	}
+	if runner != "" {
+		for _, line := range prefixedDisplayLines(label, cleanDiagnosticLine(runner), width-1) {
+			lines = append(lines, p.Dim(" "+line))
+		}
+	}
+	queue := fmt.Sprintf("%d completed · %d active · %d pending · %d blocked", counts.Done, counts.Doing, counts.Todo, counts.Blocked)
+	for _, line := range prefixedDisplayLines("Queue  ", queue, width-1) {
+		lines = append(lines, p.Dim(" "+line))
+	}
+	return append(lines, rule)
+}
+
+func prefixedDisplayLines(prefix, value string, width int) []string {
+	return ui.PrefixedLines(prefix, value, width)
+}
+
+func wrapDisplay(text string, width int) []string {
+	return ui.WrapLines(text, width)
+}
+
+func wrappedLoopText(text string, indent int) string {
+	return strings.Join(ui.WrapLines(cleanDiagnosticLine(text), loopOutputWidth(nil)-indent), "\n")
+}
+
+func alreadyCommittedCause(title, commit string) string {
+	return wrappedLoopText(fmt.Sprintf("%s is linked to %s in this branch. Check its work before marking it done.", title, commit), 6)
 }
 
 // printTaskCompleted marks an accepted completion. It says the task finished, not that it passed
 // the final review — that verdict is the run's, at the end.
-func printTaskCompleted(title string) {
+func printTaskCompleted(task taskLine) {
 	ui.Note("")
-	ui.OK("Task completed: %s", title)
+	lines := prefixedDisplayLines("Task completed: ", taskTitleWithProgress(task), loopOutputWidth(nil)-2)
+	ui.OK("%s", lines[0])
+	for _, line := range lines[1:] {
+		ui.Note("  %s", line)
+	}
 }
 
-// reviewHeader opens a review stage with the agent that was actually selected for it. Review
-// rotations are independent of the work rotation, so the target is read at the stage, never
-// assumed to be the worker's.
-func reviewHeader(text string, target string) {
-	ui.Note("")
-	if target == "" {
-		ui.Note("%s", text)
-		return
+type reviewField struct {
+	label  string
+	values []string
+}
+
+// printReviewBanner opens a review stage with the agent that was actually selected for it.
+// Review rotations are independent of the work rotation, so the target is read at the stage.
+func printReviewBanner(title, target string, fields ...reviewField) {
+	width := ui.TermWidth(os.Stderr)
+	if width > 64 {
+		width = 64
 	}
-	ui.Note("%s · %s", text, target)
+	if width < 24 {
+		width = 24
+	}
+	p := ui.For(os.Stderr)
+	rule := p.Dim(strings.Repeat("─", width))
+	ui.Note("")
+	ui.Note("%s", rule)
+	for _, line := range wrapDisplay(cleanDiagnosticLine(title), width-1) {
+		ui.Note(" %s", line)
+	}
+	if target != "" || len(fields) > 0 {
+		ui.Note("")
+	}
+	if target != "" {
+		for _, line := range prefixedDisplayLines("Agent  ", cleanDiagnosticLine(target), width-1) {
+			ui.Note("%s", p.Dim(" "+line))
+		}
+	}
+	for _, field := range fields {
+		prefix := field.label + "  "
+		for _, value := range field.values {
+			for _, line := range prefixedDisplayLines(prefix, cleanDiagnosticLine(value), width-1) {
+				ui.Note("%s", p.Dim(" "+line))
+			}
+			prefix = strings.Repeat(" ", len([]rune(prefix)))
+		}
+	}
+	ui.Note("%s", rule)
+	ui.Note("")
+}
+
+func reviewHeader(text string, target string) {
+	printReviewBanner(text, target)
 }
 
 // printProtectedReview names the gate-defining files a completed task changed and what the review
 // is for. It is mandatory, so it is never described as optional.
 func printProtectedReview(target string, files []string) {
-	reviewHeader("Reviewing changes to project checks", target)
-	for _, f := range files {
-		ui.Note("  %s", f)
-	}
-	ui.Note("")
-	ui.Note("  Checking that these changes did not weaken the checks.")
+	printReviewBanner("Reviewing project checks", target, reviewField{label: "Files", values: files})
+	ui.Note("Checking that these changes did not weaken the checks.")
+}
+
+func printFinalReview(round, rounds int, target string, tasks int) {
+	printReviewBanner(fmt.Sprintf("Final review · Round %d of %d", round, rounds), target,
+		reviewField{label: "Tasks", values: []string{fmt.Sprintf("%d completed", tasks)}})
+}
+
+func printVerification(target string, tasks int) {
+	printReviewBanner("Verification", target,
+		reviewField{label: "Tasks", values: []string{fmt.Sprintf("%d completed", tasks)}})
 }
 
 // humanTokenCount renders a token total the way the closing report quotes it: grouped in
@@ -124,44 +294,12 @@ func humanTokenCount(n int) string {
 	return b.String()
 }
 
-// rungPhrase names one rotation rung the way a person says it — "Claude … personal" — splitting
-// the provider from its account so a sentence can put its own verb between them. A rung that pins
-// a model, an effort, or several accounts is quoted EXACTLY and gets no account clause: two rungs
-// of one provider must never read as the same thing.
-func rungPhrase(t agents.Target) (subject, account string) {
-	if t.Model != "" || t.Effort != "" || len(t.Accounts) != 1 {
-		return t.String(), ""
-	}
-	return titleCase(t.Provider), t.Accounts[0]
-}
-
-// limitSentence is the routine rotation notice's first line: this rung is out of usage for now.
-// It is not an error — the run continues on the next rung, or waits for the reset.
-func limitSentence(t agents.Target) string {
-	subject, account := rungPhrase(t)
-	if account == "" {
-		return subject + " reached its usage limit."
-	}
-	return subject + " reached its usage limit for " + account + "."
-}
-
-// authHeadline is the headline of a failed sign-in, with no trailing period: a headline is a
-// label, and the concrete consequence follows it as the block's cause.
+// authHeadline names the exact failed target, keeps legacy profile names terminal-safe, and wraps
+// before Alert adds its two-column mark. The continuation indent is part of the returned headline
+// because Alert colors the headline as one value.
 func authHeadline(t agents.Target) string {
-	subject, account := rungPhrase(t)
-	if account == "" {
-		return subject + " could not sign in"
-	}
-	return subject + " could not sign in with " + account
-}
-
-// titleCase capitalizes a provider id for prose ("claude" -> "Claude"). Providers are ASCII ids,
-// so this is the whole rule.
-func titleCase(s string) string {
-	if s == "" {
-		return s
-	}
-	return strings.ToUpper(s[:1]) + s[1:]
+	message := cleanDiagnosticLine(agents.DisplayTarget(t.String())) + " could not sign in"
+	return strings.Join(ui.WrapLines(message, loopOutputWidth(nil)-2), "\n  ")
 }
 
 // taskOrdinals numbers the tasks a run works, in the order it first selected them. A retry keeps
@@ -249,18 +387,71 @@ func titlesOf(hosts []string, ids []string) []string {
 }
 
 // printReopened says what the final review sent back, by title, and that the queue continues.
-func printReopened(ids []string, titles []string) {
+func printReopened(stage string, ids []string, titles []string) {
+	width := ui.TermWidth(os.Stderr)
+	if width > 64 {
+		width = 64
+	}
+	if width < 24 {
+		width = 24
+	}
+	p := ui.For(os.Stderr)
+	rule := p.Dim(strings.Repeat("─", width))
 	ui.Note("")
-	ui.Note("Final review found more work in %s.", ui.Count(len(ids), "task"))
+	ui.Note("%s", rule)
+	verb := "need"
+	if len(ids) == 1 {
+		verb = "needs"
+	}
+	ui.Note(" %s · %s", stage, ui.Yellow(ui.Count(len(ids), "task")+" "+verb+" more work"))
+	ui.Note("")
 	for i, title := range titles {
 		if i == maxReportedTasks {
 			ui.Note("  … and %d more", len(titles)-maxReportedTasks)
 			break
 		}
-		ui.Note("  %s", title)
+		for _, line := range wrapDisplay(cleanDiagnosticLine(title), width-2) {
+			ui.Note("  %s", line)
+		}
 	}
 	ui.Note("")
-	ui.Note("Continuing the task queue.")
+	ui.Note("%s", p.Dim(" Continuing the task queue"))
+	ui.Note("%s", rule)
+	ui.Note("")
+}
+
+func printReviewLimit(titles []string, rounds int) {
+	width := ui.TermWidth(os.Stderr)
+	if width > 64 {
+		width = 64
+	}
+	if width < 24 {
+		width = 24
+	}
+	p := ui.For(os.Stderr)
+	rule := p.Dim(strings.Repeat("─", width))
+	ui.Note("")
+	ui.Note("%s", rule)
+	ui.Note(" Final review · %s", ui.Yellow("Review limit reached"))
+	ui.Note("")
+	for i, title := range titles {
+		if i == maxReportedTasks {
+			ui.Note("  … and %d more", len(titles)-maxReportedTasks)
+			break
+		}
+		for _, line := range wrapDisplay(cleanDiagnosticLine(title), width-1) {
+			ui.Note(" %s", line)
+		}
+	}
+	ui.Note("")
+	work := "this work"
+	if len(titles) == 1 {
+		work = "this task"
+	}
+	ui.Note("%s", p.Dim(fmt.Sprintf(" Could not resolve %s after %d rounds.", work, rounds)))
+	ui.Note("%s", p.Dim(" Blocked for your decision."))
+	ui.Note("%s", rule)
+	ui.Note("")
 }
 
 // printSigningFailure reports commits the host key could not sign. It never implies the commits
@@ -270,7 +461,7 @@ func printSigningFailure(commits int, err error) {
 	if commits > 0 {
 		what = ui.Count(commits, "commit")
 	}
-	ui.Alert("Could not sign "+what, fmt.Sprintf("%v", err), [2]string{"Sign them:", "coop sign"})
+	ui.Alert("Could not sign "+what, cleanDiagnosticLine(fmt.Sprintf("%v", err)), [2]string{"Sign them:", "coop sign"})
 }
 
 // printRunSummary closes the run with what it completed and what that cost. Both sections are
@@ -280,7 +471,7 @@ func printRunSummary(completed []taskLine, cost runCost, h *loopHealth) {
 		ui.Note("")
 		ui.Note("Completed this run")
 		for _, t := range completed {
-			ui.Note("  %s", t.title)
+			ui.Note("  %s", taskTitleWithProgress(t))
 			ui.Note("    %s", taskIdentity(t.id, t.scope))
 		}
 	}
@@ -299,12 +490,13 @@ func printUsage(cost runCost) {
 	if len(cost.byModel) > 1 {
 		w := 0
 		for _, m := range cost.byModel {
-			if n := len([]rune(m.model)); n > w {
+			if n := len([]rune(cleanDiagnosticLine(m.model))); n > w {
 				w = n
 			}
 		}
 		for _, m := range cost.byModel {
-			ui.Note("  %s%s  %s · %s", m.model, strings.Repeat(" ", w-len([]rune(m.model))), reportedCost(m.cost.usd), tokenText(m.cost.inTok, m.cost.outTok))
+			model := cleanDiagnosticLine(m.model)
+			ui.Note("  %s%s  %s · %s", model, strings.Repeat(" ", w-len([]rune(model))), reportedCost(m.cost.usd), tokenText(m.cost.inTok, m.cost.outTok))
 		}
 		return
 	}
@@ -339,9 +531,9 @@ func printFlagged(completed []taskLine, h *loopHealth) {
 		}
 		switch {
 		case th.reopens > 0:
-			lines = append(lines, fmt.Sprintf("%s was reopened %d times by the review.", t.title, th.reopens))
+			lines = append(lines, fmt.Sprintf("%s was reopened %d times by the review.", cleanDiagnosticLine(t.title), th.reopens))
 		default:
-			lines = append(lines, fmt.Sprintf("%s changed the project checks that judge it.", t.title))
+			lines = append(lines, fmt.Sprintf("%s changed the project checks that judge it.", cleanDiagnosticLine(t.title)))
 		}
 	}
 	if len(lines) == 0 {

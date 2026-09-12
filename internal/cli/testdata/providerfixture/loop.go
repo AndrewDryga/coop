@@ -990,6 +990,7 @@ func emitLoopReplyWithWrapper(provider string, argv []string, reply, wrapper str
 	encoder := json.NewEncoder(os.Stdout)
 	switch provider {
 	case "claude":
+		_ = encoder.Encode(map[string]any{"type": "system", "subtype": "init", "model": loopModelArg(argv)})
 		_ = encoder.Encode(map[string]any{"type": "assistant", "message": map[string]any{"content": []map[string]any{{"type": "text", "text": reply}}}})
 		_ = encoder.Encode(map[string]any{"type": "result", "subtype": "success", "num_turns": 1, "duration_ms": 100, "total_cost_usd": 0.25, "usage": map[string]int{"input_tokens": 101, "output_tokens": 11}})
 	case "codex":
@@ -1015,12 +1016,22 @@ func emitLoopReplyWithWrapper(provider string, argv []string, reply, wrapper str
 		}
 		_ = encoder.Encode(map[string]any{"type": "turn.completed", "usage": map[string]int{"input_tokens": 202, "output_tokens": 22}})
 	case "gemini":
+		_ = encoder.Encode(map[string]any{"type": "init"})
 		_ = encoder.Encode(map[string]any{"type": "message", "role": "assistant", "content": reply})
 		_ = encoder.Encode(map[string]any{"type": "result", "status": "success", "stats": map[string]int{"input_tokens": 303, "output_tokens": 33, "duration_ms": 100}})
 	case "grok":
 		_ = encoder.Encode(map[string]any{"type": "text", "data": reply})
 		_ = encoder.Encode(map[string]any{"type": "end", "num_turns": 1, "usage": map[string]int{"input_tokens": 404, "cache_read_input_tokens": 4, "output_tokens": 44, "reasoning_tokens": 4}})
 	}
+}
+
+func loopModelArg(argv []string) string {
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] == "--model" {
+			return argv[i+1]
+		}
+	}
+	return ""
 }
 
 const codexReviewFixtureFooter = "tokens used"

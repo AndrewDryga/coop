@@ -21,30 +21,54 @@ import (
 
 // An interactive launch is narrated for the person watching the terminal: bold, unprefixed
 // sections for the host-side work before the agent's output begins, one unprefixed sentence when
-// the box has stopped, and the sealed network run after it. Every other embedding keeps its log —
-// a loop iteration owns a live bar, a doctor probe captures its output, an ACP child's stderr is
-// an editor's log — so for those every method here is a no-op.
+// the box has stopped, and the sealed network run after it. Loop attempts opt into a nested setup
+// form that flows through their live bar. Other embeddings keep their own bounded log, so for
+// those every method here is a no-op.
 
 // interactive reports whether coop narrates this run for a person: not a batch iteration, not a
 // quiet probe, not an ACP child.
 func (spec RunSpec) interactive() bool { return !spec.Batch && !spec.Quiet && !spec.ForceNoTTY }
 
-// launchSections is the narration of one interactive launch. subject is what the last section
-// starts — the agent's product name, or the command a raw run was given.
+// launchSections is the narration of one interactive launch or batch loop attempt. subject is what
+// the last section starts — the agent's product name, or the command a raw run was given.
 type launchSections struct {
-	on      bool
-	subject string
-	notice  string
-	opened  bool // a section heading has been printed, so a failure nests under it
+	on          bool
+	interactive bool
+	loop        bool
+	agent       bool
+	subject     string
+	notice      string
+	opened      bool // a section heading has been printed, so a failure nests under it
+	nested      bool // a nested loop setup section has been printed
+	current     string
 }
 
 func newLaunchSections(spec RunSpec) *launchSections {
-	return &launchSections{on: spec.interactive(), subject: launchSubject(spec), notice: spec.StartingNotice}
+	interactive := spec.interactive()
+	return &launchSections{
+		on: interactive || spec.LoopPresentation, interactive: interactive,
+		loop: spec.LoopPresentation, agent: spec.AgentCommand,
+		subject: launchSubject(spec), notice: spec.StartingNotice,
+	}
 }
 
 // section opens one narration section. The first one leads the command's output, so it carries no
 // blank line in front of it; every later one is separated from what came before.
 func (s *launchSections) section(title string) {
+	if s.loop {
+		if !s.opened {
+			ui.Heading("Preparing task environment")
+			s.opened = true
+		} else if s.current == title {
+			return
+		} else if s.nested {
+			ui.Note("")
+		}
+		ui.Note("  %s", ui.Bold(title))
+		s.nested = true
+		s.current = title
+		return
+	}
 	if s.opened {
 		ui.Section(title)
 		return
@@ -54,6 +78,9 @@ func (s *launchSections) section(title string) {
 }
 
 func launchSubject(spec RunSpec) string {
+	if spec.LoopPresentation && !spec.AgentCommand && len(spec.Cmd) > 0 {
+		return cleanLaunchText(strings.Join(spec.Cmd, " "))
+	}
 	if ag, ok := agents.Get(spec.Agent); ok {
 		return ag.DisplayName()
 	}
@@ -61,6 +88,39 @@ func launchSubject(spec RunSpec) string {
 		return path.Base(spec.Cmd[0])
 	}
 	return "the box"
+}
+
+func cleanLaunchText(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] == '\033' {
+			j := i + 1
+			if j < len(s) && s[j] == '[' {
+				j++
+				for j < len(s) && s[j] >= 0x20 && s[j] <= 0x3f {
+					j++
+				}
+				if j < len(s) {
+					j++
+				}
+				i = j
+				continue
+			}
+			if j < len(s) {
+				i = j + 1
+				continue
+			}
+			break
+		}
+		if s[i] < 0x20 || s[i] == 0x7f {
+			b.WriteByte(' ')
+			i++
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
 }
 
 // box is the optional first section: what a person should hear about the image this run is
@@ -110,7 +170,11 @@ func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egre
 	case cfg.Egress == "open":
 		ui.Caution("Unrestricted — nothing is blocked")
 	default:
-		ui.Caution("Offline — %s", offlineText(spec))
+		if s.loop && spec.AgentCommand {
+			ui.Note("%s", ui.Red("  ⚠ Offline — "+offlineText(spec)))
+		} else {
+			ui.Caution("Offline — %s", offlineText(spec))
+		}
 	}
 }
 
@@ -174,8 +238,16 @@ func networkAllowances(policy egress.Snapshot) []string {
 }
 
 func offlineText(spec RunSpec) string {
+	if spec.LoopPresentation && !spec.AgentCommand {
+		return "nothing outside the box can be reached"
+	}
 	if ag, ok := agents.Get(spec.Agent); ok {
-		return ag.DisplayName() + " cannot reach " + ag.Vendor()
+		name := ag.DisplayName()
+		if spec.LoopPresentation {
+			name = spec.Agent
+			name = strings.ToUpper(name[:1]) + name[1:]
+		}
+		return name + " cannot reach " + ag.Vendor()
 	}
 	return "nothing outside the box can be reached"
 }
@@ -186,10 +258,35 @@ func (s *launchSections) starting() {
 	if !s.on {
 		return
 	}
+	if s.loop {
+		// Registered loop providers announce their resolved identity at the decoder's init
+		// boundary. A custom command has no such event, so the runtime boundary names it here.
+		if s.agent {
+			return
+		}
+		lines := loopStartingLines(s.subject, loopLaunchWidth())
+		ui.Section(lines[0])
+		for _, line := range lines[1:] {
+			ui.Note("%s", ui.Bold(line))
+		}
+		return
+	}
 	s.section("Starting " + s.subject)
 	if s.notice != "" {
 		ui.Note("%s", s.notice)
 	}
+}
+
+func loopStartingLines(subject string, width int) []string {
+	return ui.PrefixedLines("Starting ", cleanLaunchText(subject), width)
+}
+
+func loopLaunchWidth() int {
+	w := ui.TermWidth(os.Stderr)
+	if w < 2 {
+		return 1
+	}
+	return w - 1
 }
 
 // stopped is the one lifecycle sentence an interactive box prints, and it is a CLAIM: the box has
@@ -198,7 +295,7 @@ func (s *launchSections) starting() {
 // The reason is the truthful one stopReason derived; a blank line sets the sentence off from
 // whatever arbitrary output the agent or shell left above it.
 func (s *launchSections) stopped(reason string) {
-	if !s.on {
+	if !s.interactive {
 		return
 	}
 	ui.Note("\nThe Coop box has stopped — %s.", reason)
@@ -212,7 +309,7 @@ var stopSlow = 2 * time.Second
 // needs no narration, and the completed sentence follows either way. It returns the stop for the
 // timer, which the caller defers so the notice can never print after the box is already gone.
 func (s *launchSections) stopping() func() {
-	if !s.on {
+	if !s.interactive {
 		return func() {}
 	}
 	timer := time.AfterFunc(stopSlow, func() { ui.Note("\nStopping the Coop box…") })
@@ -237,7 +334,7 @@ func (s *launchSections) failed(err error) error {
 // printed. The error itself is untouched: the exit status and errors.Is still see a cancellation.
 // Any other failure of a started box keeps its full message, which the stop line only led with.
 func (s *launchSections) explained(err error, interrupt *hostInterrupt) error {
-	if !s.on || err == nil || interrupt.reason() == "" || !errors.Is(err, context.Canceled) {
+	if !s.interactive || err == nil || interrupt.reason() == "" || !errors.Is(err, context.Canceled) {
 		return err
 	}
 	return ui.Reported(err)
@@ -316,11 +413,55 @@ func (s *launchSections) services(names []string) {
 	if !s.on {
 		return
 	}
-	s.section("Starting project services")
+	title := "Starting project services"
+	if s.loop {
+		title = "Starting services"
+	}
+	s.section(title)
 	for _, name := range names {
-		ui.Note("  %s", name)
+		ui.Note("  %s", cleanLaunchText(name))
+	}
+	if s.loop {
+		ui.Pass("Services are running")
+		return
 	}
 	ui.Pass("Services started")
+}
+
+func (s *launchSections) servicesPreparing() {
+	if s.loop {
+		s.section("Starting services")
+	}
+}
+
+func (s *launchSections) serviceSecrets(hidden []string, composeFile string) {
+	if !s.loop || len(hidden) == 0 {
+		return
+	}
+	s.section("Starting services")
+	pathNoun := "a secret path"
+	if len(hidden) > 1 {
+		pathNoun = fmt.Sprintf("%d secret paths", len(hidden))
+	}
+	ui.Note("  %s Services received an empty file for %s", ui.Yellow("⚠"), pathNoun)
+	for _, name := range hidden {
+		loopLaunchDetail(name, 4)
+	}
+	file := cleanLaunchText(path.Base(composeFile))
+	loopLaunchDetail("To allow the real file, run coop up and approve "+file+".", 4)
+	loopLaunchDetail("Approval lasts until "+file+" changes.", 4)
+}
+
+func (s *launchSections) servicesRefused(cause string) {
+	if !s.loop {
+		return
+	}
+	s.section("Starting services")
+	ui.Note("  %s", ui.Red("✗ Services were not started"))
+	ui.Note("")
+	loopLaunchDetail(cause, 8)
+	ui.Note("")
+	loopLaunchDetail("Review the service approval or Compose file, then start the loop again.", 4)
 }
 
 // servicesFailed is a launch that CONTINUES without the services it could not start. It is a
@@ -330,7 +471,19 @@ func (s *launchSections) servicesFailed(cause string) {
 	if !s.on {
 		return
 	}
-	ui.Warning("Project services could not start", cause, "Run coop up to retry.")
+	if !s.loop {
+		ui.Warning("Project services could not start", cause, "Run coop up to retry.")
+		return
+	}
+	s.section("Starting services")
+	ui.Note("  %s Services failed to start%s", ui.Yellow("⚠"), serviceExitSummary(cause))
+	for _, line := range serviceCauseDetails(cause) {
+		if line != "" {
+			loopLaunchDetail(line, 4)
+		}
+	}
+	ui.Note("    Continuing without sibling services.")
+	ui.Note("    To retry: coop up")
 }
 
 // servicesSkipped is a launch that did not even attempt them, with the reason it did not. It never
@@ -339,7 +492,76 @@ func (s *launchSections) servicesSkipped(cause string) {
 	if !s.on {
 		return
 	}
-	ui.Warning("Project services were not started", cause, "Stop that box, then run coop up.")
+	if !s.loop {
+		ui.Warning("Project services were not started", cause, "Stop that box, then run coop up.")
+		return
+	}
+	s.section("Starting services")
+	ui.Note("  %s Services were not started", ui.Yellow("⚠"))
+	loopLaunchDetail(cause, 4)
+	ui.Note("    To retry: coop up")
+}
+
+// servicesHeldByLiveBox is the deliberate no-start path: another box owns the project lifecycle.
+// It does not claim the services are healthy, unavailable, or safe to restart under that owner.
+func (s *launchSections) servicesHeldByLiveBox(cause string) {
+	if !s.on {
+		return
+	}
+	if !s.loop {
+		ui.Warning("Project service startup was skipped", cause, "Stop that box, then run coop up.")
+		return
+	}
+	s.section("Starting services")
+	ui.Note("  %s Service startup skipped", ui.Yellow("⚠"))
+	loopLaunchDetail(cause, 4)
+	loopLaunchDetail("Service availability was not checked; Coop will not restart services while that box is active.", 4)
+}
+
+func loopLaunchDetail(text string, indent int) {
+	width := loopLaunchWidth() - indent
+	for _, line := range ui.WrapLines(cleanLaunchText(text), width) {
+		ui.Note("%s%s", strings.Repeat(" ", indent), line)
+	}
+}
+
+func serviceExitSummary(cause string) string {
+	lower := strings.ToLower(cause)
+	for _, marker := range []string{"exit status ", "exited with status "} {
+		i := strings.Index(lower, marker)
+		if i < 0 {
+			continue
+		}
+		rest := cause[i+len(marker):]
+		end := 0
+		for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
+			end++
+		}
+		if end > 0 {
+			return " · exit " + rest[:end]
+		}
+	}
+	return ""
+}
+
+func serviceCauseDetails(cause string) []string {
+	trimmed := strings.TrimSpace(cause)
+	lower := strings.ToLower(trimmed)
+	for _, prefix := range []string{"compose up exited with status ", "exit status "} {
+		if rest, ok := strings.CutPrefix(lower, prefix); ok && rest != "" {
+			onlyDigits := true
+			for _, r := range rest {
+				if r < '0' || r > '9' {
+					onlyDigits = false
+					break
+				}
+			}
+			if onlyDigits {
+				return nil
+			}
+		}
+	}
+	return strings.Split(trimmed, "\n")
 }
 
 // boundedCause is the bounded reason a warning or failure carries: what the tool itself printed,

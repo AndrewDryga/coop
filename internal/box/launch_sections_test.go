@@ -158,8 +158,8 @@ func TestExplainedMarksOnlyANamedInterruption(t *testing.T) {
 	}
 }
 
-// Loops, quiet probes and ACP children keep their bounded output: every narration call is a
-// no-op and a failure comes back exactly as it was, for the caller's own reporting.
+// Ordinary batch runs, quiet probes and ACP children keep their bounded output: every narration
+// call is a no-op and a failure comes back exactly as it was, for the caller's own reporting.
 func TestLaunchSectionsAreSilentOutsideInteractiveRuns(t *testing.T) {
 	for _, spec := range []RunSpec{{Batch: true}, {Quiet: true}, {ForceNoTTY: true}} {
 		spec.StartingNotice = "must remain silent"
@@ -178,6 +178,112 @@ func TestLaunchSectionsAreSilentOutsideInteractiveRuns(t *testing.T) {
 		if got != "" {
 			t.Errorf("%+v printed %q", spec, got)
 		}
+	}
+}
+
+func TestLoopLaunchSectionsNestSetupWithoutChangingBatchSilence(t *testing.T) {
+	spec := RunSpec{Agent: "claude", AgentCommand: true, Batch: true, LoopPresentation: true}
+	got := captureStderr(t, func() {
+		s := newLaunchSections(spec)
+		s.secrets(8)
+		s.internet(&config.Config{Egress: "none"}, spec, nil)
+		s.servicesFailed("compose up exited with status 1")
+		s.starting()
+	})
+	want := "Preparing task environment\n" +
+		"  Protecting secrets\n" +
+		"  ✓ 8 secret paths hidden from the box\n" +
+		"\n  Configuring network access\n" +
+		"  ⚠ Offline — Claude cannot reach Anthropic\n" +
+		"\n  Starting services\n" +
+		"  ⚠ Services failed to start · exit 1\n" +
+		"    Continuing without sibling services.\n" +
+		"    To retry: coop up\n"
+	if got != want {
+		t.Fatalf("loop setup = %q, want %q", got, want)
+	}
+	custom := RunSpec{Agent: "claude", Cmd: []string{"make", "update-reference\x1b[31m"}, Batch: true, LoopPresentation: true}
+	got = captureStderr(t, func() { newLaunchSections(custom).starting() })
+	if got != "\nStarting make update-reference\n" {
+		t.Fatalf("custom loop start = %q", got)
+	}
+	lines := loopStartingLines("make "+strings.Repeat("long-target", 5)+"\x1b[31m", 28)
+	for _, line := range lines {
+		if strings.Contains(line, "\x1b") || len([]rune(line)) > 28 {
+			t.Fatalf("wrapped custom loop start retained controls or exceeded width: %q", lines)
+		}
+	}
+	raw := RunSpec{Agent: "claude", Batch: true, LoopPresentation: true}
+	got = captureStderr(t, func() {
+		newLaunchSections(raw).internet(&config.Config{Egress: "none"}, raw, nil)
+	})
+	if got != "Preparing task environment\n  Configuring network access\n  ⚠ Offline — nothing outside the box can be reached\n" {
+		t.Fatalf("offline custom command must remain a caution, got %q", got)
+	}
+}
+
+func TestLoopServiceWarningsStayNestedAndSanitized(t *testing.T) {
+	got := captureStderr(t, func() {
+		s := newLaunchSections(RunSpec{Agent: "claude", AgentCommand: true, Batch: true, LoopPresentation: true})
+		s.servicesPreparing()
+		s.serviceSecrets([]string{"dev/keycloak/certs/generated/tls.key\x1b[31m"}, "/repo/compose.yml")
+		s.servicesFailed("compose detail: \x1b[31mred\x1b[0m\nexit status 1")
+	})
+	for _, want := range []string{
+		"Preparing task environment\n  Starting services",
+		"Services received an empty file for a secret path",
+		"    dev/keycloak/certs/generated/tls.key",
+		"    To allow the real file, run coop up and approve compose.yml.",
+		"Services failed to start · exit 1",
+		"    compose detail: red",
+		"    Continuing without sibling services.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nested service output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Count(got, "Starting services") != 1 || strings.Contains(got, "\x1b") {
+		t.Fatalf("service output repeated its section or retained controls: %q", got)
+	}
+}
+
+func TestLoopServiceStartupHeldByLiveBoxHasNoUnsafeRetry(t *testing.T) {
+	got := captureStderr(t, func() {
+		newLaunchSections(RunSpec{Batch: true, LoopPresentation: true}).servicesHeldByLiveBox(
+			"Another box is running in this project (agent\x1b[31m).")
+	})
+	for _, want := range []string{
+		"Preparing task environment\n  Starting services",
+		"  ⚠ Service startup skipped",
+		"    Another box is running in this project (agent).",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("live-box service narration missing %q:\n%s", want, got)
+		}
+	}
+	visible := strings.Join(strings.Fields(got), " ")
+	if !strings.Contains(visible, "Service availability was not checked; Coop will not restart services while that box is active.") {
+		t.Errorf("live-box service narration lost its wrapped availability caveat:\n%s", got)
+	}
+	if strings.Contains(got, "To retry: coop up") || strings.Contains(got, "\x1b") {
+		t.Fatalf("live-box service narration offered an unsafe retry or retained controls: %q", got)
+	}
+}
+
+func TestLoopServiceDetailsWrapBeforeStyling(t *testing.T) {
+	long := "dev/" + strings.Repeat("generated-secret-path/", 6) + "tls.key"
+	got := captureStderr(t, func() {
+		s := newLaunchSections(RunSpec{Batch: true, LoopPresentation: true})
+		s.serviceSecrets([]string{long}, "/repo/compose.yml")
+		s.servicesSkipped("inspection failed for " + long)
+	})
+	for _, line := range strings.Split(got, "\n") {
+		if len([]rune(line)) > 79 {
+			t.Fatalf("service detail exceeded the static terminal width: %q", line)
+		}
+	}
+	if !strings.Contains(strings.ReplaceAll(got, "\n    ", ""), long) || !strings.Contains(got, "To retry: coop up") {
+		t.Fatalf("wrapped service detail lost its path or remedy: %q", got)
 	}
 }
 

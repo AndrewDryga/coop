@@ -89,18 +89,23 @@ func interruptedReviewResult(last reviewRunResult, retries int) reviewRunResult 
 }
 
 func iterationAuthenticationError(target agents.Target) error {
+	provider := cleanDiagnosticLine(agents.DisplayTarget(target.Provider))
 	if account := target.Account(); account != "" {
-		return fmt.Errorf("%s authentication failed for account %q — run `%s`", target.Provider, account, loginCommand(target))
+		message := fmt.Sprintf("%s authentication failed for account %q — run `%s`",
+			provider, account, loginCommand(target))
+		return errors.New(wrappedLoopText(message, 6))
 	}
-	return fmt.Errorf("%s authentication failed — run `%s`", target.Provider, loginCommand(target))
+	return errors.New(wrappedLoopText(fmt.Sprintf("%s authentication failed — run `%s`",
+		provider, loginCommand(target)), 6))
 }
 
 // loginCommand renders the `coop login` invocation that restores one target's credential.
 func loginCommand(t agents.Target) string {
+	target := t.Provider
 	if account := t.Account(); account != "" {
-		return "coop login " + t.Provider + "@" + account
+		target += "@" + account
 	}
-	return "coop login " + t.Provider
+	return agents.LoginCommand(target)
 }
 
 // rotationAuthenticationError reports a run that has no usable credential left. Once a rotation has
@@ -113,10 +118,11 @@ func rotationAuthenticationError(r *ladder.Rotation, target agents.Target) error
 	}
 	names := make([]string, 0, len(failed))
 	for _, t := range failed {
-		names = append(names, t.String())
+		names = append(names, cleanDiagnosticLine(agents.DisplayTarget(t.String())))
 	}
-	return fmt.Errorf("authentication failed for every target (%s) — restore one with `%s`",
+	message := fmt.Sprintf("authentication failed for every target (%s) — restore one with `%s`",
 		strings.Join(names, ", "), loginCommand(failed[0]))
+	return errors.New(wrappedLoopText(message, 6))
 }
 
 func reviewRepoReadOnly(writes loopcfg.ReviewWrites) bool { return !writes.RepositoryWritable() }
@@ -248,7 +254,7 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 			if rev.Rotates() && rev.OnAuthFailure() {
 				totalRetries++
 				ui.Alert(authHeadline(target),
-					fmt.Sprintf("Continuing the review with %s.", rev.Active()),
+					wrappedLoopText(fmt.Sprintf("Continuing the review with %s.", cleanDiagnosticLine(agents.DisplayTarget(rev.Active().String()))), 6),
 					[2]string{"Sign in again:", loginCommand(target)})
 				break
 			}

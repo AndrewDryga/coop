@@ -17,6 +17,21 @@ type servePublication struct {
 	Published  bool
 }
 
+type serviceLaunchState int
+
+const (
+	servicesNotConfigured serviceLaunchState = iota
+	servicesRunning
+	servicesSkipped
+	servicesFailed
+	servicesUnknown
+)
+
+type serviceLaunchOutcome struct {
+	state serviceLaunchState
+	err   error
+}
+
 // servePublicationPlan decides each serve port once. The host port is stable workspace discovery
 // (project.HostPort hashes the workspace path), so its URL is announced even when another process
 // from this workspace already holds it; only this box's publish mapping is conditional.
@@ -32,20 +47,41 @@ func servePublicationPlan(cfg *config.Config, spec RunSpec, free func(int) bool)
 	return plan
 }
 
+// requestedServePublicationPlan is the Run boundary: callers may use servePublicationPlan to
+// assemble an explicitly requested publication, but a launch that did not opt into Serve must not
+// probe host ports or write host-facing URLs into the agent's instructions.
+func requestedServePublicationPlan(cfg *config.Config, spec RunSpec, free func(int) bool) []servePublication {
+	if !spec.Serve {
+		return nil
+	}
+	return servePublicationPlan(cfg, spec, free)
+}
+
 // servicesNote is the few lines an agent reads once so it never burns a turn diagnosing a host
-// condition it cannot see: which sidecars are up and where each answers from INSIDE the box, which
+// condition it cannot see: whether sidecar startup was proved, where each proved service answers
+// from INSIDE the box, which
 // serve ports reached the host, and — the case that matters most — that the run continued without
 // its services, and why. Everything here is known before the box starts. It is empty when there is
-// nothing to say (no compose file and nothing to publish), so a plain project pays nothing.
-func servicesNote(composeFile string, ports []ServicePort, servicesErr error, joined bool, serve []servePublication) string {
+// nothing to say (no configured services and nothing to publish), so a plain project pays nothing.
+func servicesNote(services serviceLaunchOutcome, ports []ServicePort, joined bool, serve []servePublication) string {
 	var lines []string
 	switch {
-	case composeFile == "":
-	case servicesErr != nil:
+	case services.state == servicesNotConfigured:
+	case services.state == servicesFailed:
+		detail := "service startup failed"
+		if services.err != nil {
+			detail = strings.TrimSpace(services.err.Error())
+		}
 		lines = append(lines,
-			"- Sibling services did NOT start: "+strings.TrimSpace(servicesErr.Error())+".",
+			"- Sibling services did NOT start: "+detail+".",
 			"  This box runs without them: a connection to a sidecar fails because it is not there,",
 			"  not because of your work. A human retries them with `coop up`.")
+	case services.state == servicesSkipped || services.state == servicesUnknown:
+		detail := "startup was not requested"
+		if services.err != nil {
+			detail = strings.TrimSpace(services.err.Error())
+		}
+		lines = append(lines, "- Sibling service availability was not checked: "+detail+".")
 	case len(ports) == 0:
 		lines = append(lines, "- Sibling services started, but none exposes a port, so there is nothing to connect to.")
 	case !joined:

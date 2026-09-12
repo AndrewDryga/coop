@@ -165,10 +165,14 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: signoff, Stage: "signoff", Result: "pass-corrected"},
 			{Target: verify, Stage: "verify", Result: "malformed-review"},
 			{Target: verify, Stage: "verify", Result: "reopen-corrected"},
+			{Target: work, Stage: "work", Result: "repair-review-binding"},
+			{Target: between, Stage: "between", Result: "pass"},
+			{Target: signoff, Stage: "signoff", Result: "pass"},
+			{Target: verify, Stage: "verify", Result: "pass"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReviewPTY(t, suite, work)
-		if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stdout+result.Stderr, "Final review left 1 task to finish") {
+		if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stdout+result.Stderr, "All tasks passed final review") {
 			t.Fatalf("review verdict correction matrix = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		// The retry rescues this, so without the cause in the warning a fault that costs a whole
@@ -176,9 +180,9 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if !strings.Contains(result.Stdout+result.Stderr, "output tail was") {
 			t.Errorf("the malformed-verdict warning did not carry what it rejected:\n%s", result.Stdout+result.Stderr)
 		}
-		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID)) ||
-			pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
-			t.Fatal("valid corrected FAIL verdict was not applied exactly once")
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) ||
+			pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID)) {
+			t.Fatal("corrected verification reopen did not finish its automatic repair lifecycle")
 		}
 		records := readLoopStageRecords(t, suite)
 		if len(records) != len(attempts) {
@@ -197,6 +201,10 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{"signoff", 303, 33, 0, 1, 0},
 			{"verify", 408, 48, 0, 1, 0},
 			{"verify", 408, 48, 1, 0, 1},
+			{"work", 101, 11, 0, 1, 0},
+			{"between", 202, 22, 0, 1, 0},
+			{"signoff", 303, 33, 0, 1, 0},
+			{"verify", 408, 48, 0, 1, 0},
 		}
 		for i, record := range records {
 			if record.Stage != want[i].stage || record.Outcome != "success" || record.Exit != 0 ||
@@ -261,6 +269,20 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		result := runLoopReviewPTY(t, suite, work)
 		if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stdout+result.Stderr, "All tasks passed final review") {
 			t.Fatalf("review stage matrix = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		output := result.Stdout + result.Stderr
+		for _, want := range []string{
+			"Starting claude:work-model/high@personal",
+			"Starting codex:between-model/high@work",
+			"Starting gemini:signoff-model@work",
+			"Starting grok:verify-model/high@work",
+		} {
+			if !strings.Contains(output, want) {
+				t.Errorf("review stage output missing %q:\n%s", want, output)
+			}
+		}
+		if strings.Contains(output, "· using ") {
+			t.Errorf("review stage output retained duplicate provider metadata:\n%s", output)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
 		assertLoopReviewContracts(t, suite, trace, taskID, attempts)
@@ -338,7 +360,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		}
 		// The run names the configuration it derives from in its opening line; the exact digest
 		// stays in the diagnostic metadata, not in the sentence a person reads.
-		if want := "using configuration " + loopcfg.File; !strings.Contains(combined, want) {
+		if want := "Using " + loopcfg.File; !strings.Contains(combined, want) {
 			t.Fatalf("missing startup configuration announcement %q\nstdout:\n%s\nstderr:\n%s", want, result.Stdout, result.Stderr)
 		}
 		_ = startupConfig
@@ -496,7 +518,8 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReview(t, suite, work, 20*time.Second)
-		if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stderr, "Continuing with") {
+		visible := visibleProcessText(result.Stderr)
+		if result.Err != nil || result.ExitCode != 0 || !strings.Contains(visible, limited+" reached its usage limit, continuing with "+fallback) {
 			t.Fatalf("between rotation = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
@@ -1063,7 +1086,8 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		seedLoopProcessTask(t, suite.layout.Repo, taskID)
 		work := loopRecoveryTarget("claude", "work-model", "personal")
 		signoff := loopRecoveryTarget("codex", "signoff-model", "work")
-		writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{signoff}, nil, 3)
+		verify := loopRecoveryTarget("grok", "verify-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{signoff}, []string{verify}, 3)
 		attempts := []loopProcessAttempt{
 			{Target: work, Stage: "work", Result: "complete"},
 			{Target: signoff, Stage: "signoff", Result: "reopen"},
@@ -1074,7 +1098,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReview(t, suite, work, 20*time.Second)
-		if result.Err != nil || result.ExitCode != 3 || !strings.Contains(result.Stderr, "Final review could not resolve 1 task after 3 rounds") {
+		if result.Err != nil || result.ExitCode != 3 || !strings.Contains(result.Stderr, "Review limit reached") || !strings.Contains(result.Stderr, "after 3 rounds") {
 			t.Fatalf("signoff cap = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		blocked := filepath.Join(suite.layout.Repo, tasksRoot, stateBlocked, taskID)
@@ -1094,7 +1118,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 	})
 
-	t.Run("verify reopen exits unverified", func(t *testing.T) {
+	t.Run("verify reopen returns to work signoff and verification", func(t *testing.T) {
 		resetLoopProcessRepo(t, suite)
 		taskID := "verify-reopen"
 		seedLoopProcessTask(t, suite.layout.Repo, taskID)
@@ -1106,18 +1130,58 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: work, Stage: "work", Result: "complete"},
 			{Target: signoff, Stage: "signoff", Result: "pass"},
 			{Target: verify, Stage: "verify", Result: "reopen"},
+			{Target: work, Stage: "work", Result: "repair-review-binding"},
+			{Target: signoff, Stage: "signoff", Result: "pass"},
+			{Target: verify, Stage: "verify", Result: "pass"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReview(t, suite, work, 20*time.Second)
-		if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stderr, "Final review left 1 task to finish") {
+		if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stderr, "Verification · 1 task needs more work") ||
+			!strings.Contains(result.Stderr, "Continuing the task queue") || !strings.Contains(result.Stderr, "All tasks passed final review") {
 			t.Fatalf("verify reopen = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
-		if _, err := os.Stat(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID, "task.md")); err != nil {
-			t.Fatalf("verify reopen did not leave task actionable: %v", err)
+		if _, err := os.Stat(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID, "task.md")); err != nil {
+			t.Fatalf("verify reopen did not finish the repaired task: %v", err)
 		}
 		records := readLoopStageRecords(t, suite)
-		if len(records) != 3 || records[2].Stage != "verify" || records[2].Reopened != 1 || records[2].QueueDoing != 1 || records[2].QueueDone != 0 {
+		if len(records) != 6 || records[2].Stage != "verify" || records[2].Reopened != 1 ||
+			records[3].Stage != "work" || records[4].Stage != "signoff" || records[5].Stage != "verify" || records[5].Reopened != 0 {
 			t.Fatalf("verify reopen telemetry = %#v", records)
+		}
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
+	})
+
+	t.Run("repeated verify reopens consume the shared review cap", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		taskID := "verify-reopen-cap"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		signoff := loopRecoveryTarget("gemini", "signoff-model", "work")
+		verify := loopRecoveryTarget("grok", "verify-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{signoff}, []string{verify}, 3)
+		attempts := []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "complete"},
+			{Target: signoff, Stage: "signoff", Result: "pass"},
+			{Target: verify, Stage: "verify", Result: "reopen"},
+			{Target: work, Stage: "work", Result: "repair-review-binding"},
+			{Target: signoff, Stage: "signoff", Result: "pass"},
+			{Target: verify, Stage: "verify", Result: "reopen"},
+			{Target: work, Stage: "work", Result: "repair-review-binding"},
+			{Target: signoff, Stage: "signoff", Result: "pass"},
+			{Target: verify, Stage: "verify", Result: "reopen"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopReview(t, suite, work, 20*time.Second)
+		if result.Err != nil || result.ExitCode != 3 || !strings.Contains(result.Stderr, "Review limit reached") ||
+			!strings.Contains(result.Stderr, "Answer it: coop tasks decisions -i") {
+			t.Fatalf("verify reopen cap = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		blocked := filepath.Join(suite.layout.Repo, tasksRoot, stateBlocked, taskID)
+		if decision, err := os.ReadFile(filepath.Join(blocked, "decision.md")); err != nil || !strings.Contains(string(decision), "after 3 rounds") {
+			t.Fatalf("verify cap decision = %q, %v", decision, err)
+		}
+		if records := readLoopStageRecords(t, suite); len(records) != len(attempts) || records[8].Stage != "verify" || records[8].Reopened != 1 {
+			t.Fatalf("verify cap telemetry = %#v", records)
 		}
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 	})
@@ -1277,7 +1341,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-release-"+taskID), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		awaitLoopProcessOutput(t, process, "finishing this iteration, then stopping", 5*time.Second)
+		awaitLoopProcessOutput(t, process, "Finishing this attempt and its review, then stopping", 5*time.Second)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		result := process.Wait(ctx)
 		cancel()

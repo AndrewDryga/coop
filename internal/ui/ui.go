@@ -282,14 +282,15 @@ func (p Palette) paint(code, s string) string {
 	return code + s + codeReset
 }
 
-func (p Palette) Bold(s string) string   { return p.paint(codeBold, s) }
-func (p Palette) Dim(s string) string    { return p.paint(codeDim, s) }
-func (p Palette) Gray(s string) string   { return p.paint(codeGray, s) }
-func (p Palette) Faint(s string) string  { return p.paint(codeDim+codeGray, s) } // dim + gray — the most recessive text (e.g. a task id)
-func (p Palette) Green(s string) string  { return p.paint(codeGreen, s) }
-func (p Palette) Red(s string) string    { return p.paint(codeRed, s) }
-func (p Palette) Yellow(s string) string { return p.paint(codeYellow, s) }
-func (p Palette) Cyan(s string) string   { return p.paint(codeCyan, s) }
+func (p Palette) Bold(s string) string    { return p.paint(codeBold, s) }
+func (p Palette) Dim(s string) string     { return p.paint(codeDim, s) }
+func (p Palette) Gray(s string) string    { return p.paint(codeGray, s) }
+func (p Palette) Faint(s string) string   { return p.paint(codeDim+codeGray, s) } // dim + gray — the most recessive text (e.g. a task id)
+func (p Palette) Green(s string) string   { return p.paint(codeGreen, s) }
+func (p Palette) Red(s string) string     { return p.paint(codeRed, s) }
+func (p Palette) Yellow(s string) string  { return p.paint(codeYellow, s) }
+func (p Palette) Cyan(s string) string    { return p.paint(codeCyan, s) }
+func (p Palette) Magenta(s string) string { return p.paint(codeMagenta, s) }
 
 // Link wraps text in an OSC 8 terminal hyperlink to uri, so a supporting terminal makes it
 // clickable — but only when this palette is enabled (a real terminal) and uri is non-empty, so a

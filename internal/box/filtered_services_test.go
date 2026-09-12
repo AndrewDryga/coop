@@ -109,6 +109,12 @@ func TestFilteredPublishTargetsTheGatewayAndKeepsTheURL(t *testing.T) {
 	if options, published, env := filteredPublish(&config.Config{}, RunSpec{Repo: t.TempDir()}, func(int) bool { return true }); options != nil || published != nil || env != nil {
 		t.Fatal("a run without serve ports published something")
 	}
+	if options, published, env := filteredPublish(&config.Config{}, RunSpec{Repo: t.TempDir(), servePorts: []int{3000}}, func(int) bool {
+		t.Fatal("a run that did not request Serve must not inspect host ports")
+		return true
+	}); options != nil || published != nil || env != nil {
+		t.Fatal("a run without Serve published a configured project port")
+	}
 }
 
 // A service grant needs this project's Compose file; without one the launch
@@ -119,7 +125,7 @@ func TestServiceGrantsWithoutAComposeFileRefuseTheLaunch(t *testing.T) {
 	if len(grants) != 2 {
 		t.Fatalf("expected both service grants, got %d", len(grants))
 	}
-	_, _, err := resolveServiceBindings(context.Background(), nil, runtime.Runtime{Name: "docker"}, RunSpec{Repo: t.TempDir()}, "", nil, grants, nil)
+	_, _, err := resolveServiceBindings(context.Background(), nil, runtime.Runtime{Name: "docker"}, RunSpec{Repo: t.TempDir()}, "", nil, grants, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "cache") || !strings.Contains(err.Error(), "web") {
 		t.Fatalf("missing Compose file did not name the unresolved services: %v", err)
 	}
@@ -174,7 +180,7 @@ func TestApprovedServiceDefinitionChangeRefusesTheLaunch(t *testing.T) {
 		t.Fatalf("a rewritten service kept its grant: %v", err)
 	}
 	// The same refusal is what a launch gets, before anything is started.
-	_, _, launchErr := resolveServiceBindings(context.Background(), nil, runtime.Runtime{Name: "docker"}, RunSpec{Repo: repo}, compose, approval, serviceGrants(servicePolicy(t, "db")), nil)
+	_, _, launchErr := resolveServiceBindings(context.Background(), nil, runtime.Runtime{Name: "docker"}, RunSpec{Repo: repo}, compose, approval, serviceGrants(servicePolicy(t, "db")), nil, nil)
 	if launchErr == nil || !strings.Contains(launchErr.Error(), "changed since it was approved") {
 		t.Fatalf("the launch ran a rewritten service: %v", launchErr)
 	}

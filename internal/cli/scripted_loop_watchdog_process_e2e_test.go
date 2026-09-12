@@ -83,7 +83,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		// nothing else stops an attempt that waits for a signal nobody sends, so a watchdog that
 		// failed to fire would end this run as a harness kill instead of a finished drain.
 		result := runLoopRecovery(t, suite, target)
-		output := result.Stdout + result.Stderr
+		output := visibleProcessText(result.Stdout + result.Stderr)
 		if result.Err != nil || result.ExitCode != 0 ||
 			!strings.Contains(output, "Stopped an unresponsive task attempt") ||
 			!strings.Contains(output, "Starting a fresh attempt") {
@@ -125,7 +125,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopRecovery(t, suite, target)
-		output := result.Stdout + result.Stderr
+		output := visibleProcessText(result.Stdout + result.Stderr)
 		if result.Err != nil || result.ExitCode != 0 ||
 			!strings.Contains(output, "Stopped an unresponsive task attempt") ||
 			!strings.Contains(output, "Starting a fresh attempt") {
@@ -145,7 +145,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		// untrustworthy — so the retry starts from it and amends it under the recovery contract:
 		// the task ends done with exactly one binding whose parent is still the run's baseline.
 		parsed, _ := agents.ParseTarget(target)
-		assertLoopProcessResult(t, suite, "codex", taskID, parsed.Model, parsed.Effort, parsed.Account(), records[0].HeadAfter, 2, true)
+		assertLoopProcessResult(t, suite, "codex", taskID, parsed.Model, parsed.Effort, parsed.Account(), suite.repoHead, 2, true, records[0].HeadAfter)
 		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
@@ -165,7 +165,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopRecovery(t, suite, "watchdog-start")
-		output := result.Stdout + result.Stderr
+		output := visibleProcessText(result.Stdout + result.Stderr)
 		if result.Err != nil || result.ExitCode != 0 ||
 			!strings.Contains(output, "Stopped an unresponsive task attempt") ||
 			!strings.Contains(output, "Starting a fresh attempt with ") ||
@@ -214,7 +214,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		result := process.Wait(ctx)
 		cancel()
-		output := result.Stdout + result.Stderr
+		output := visibleProcessText(result.Stdout + result.Stderr)
 		if result.Err != nil || result.ExitCode != 0 ||
 			!strings.Contains(output, "Stopped an unresponsive task attempt") ||
 			!strings.Contains(output, "Starting a fresh attempt with ") {
@@ -249,7 +249,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopRecovery(t, suite, target)
-		output := result.Stdout + result.Stderr
+		output := visibleProcessText(result.Stdout + result.Stderr)
 		if result.Err != nil || result.ExitCode != 0 ||
 			!strings.Contains(output, "Stopped an unresponsive task attempt") ||
 			!strings.Contains(output, "Starting a fresh attempt") ||
@@ -336,7 +336,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		result := process.Wait(ctx)
 		cancel()
-		output := result.Stdout + result.Stderr
+		output := visibleProcessText(result.Stdout + result.Stderr)
 		if result.Err != nil || result.ExitCode != 0 || strings.Contains(output, "timed out (") {
 			t.Fatalf("gated tool = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
@@ -374,7 +374,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		result := process.Wait(ctx)
 		cancel()
-		output := result.Stdout + result.Stderr
+		output := visibleProcessText(result.Stdout + result.Stderr)
 		if result.Err != nil || result.ExitCode != 0 || strings.Contains(output, "timed out (") {
 			t.Fatalf("no-lifecycle gate = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
@@ -408,7 +408,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		result := process.Wait(ctx)
 		cancel()
-		output := result.Stdout + result.Stderr
+		output := visibleProcessText(result.Stdout + result.Stderr)
 		if result.Err != nil || result.ExitCode != 0 ||
 			!strings.Contains(output, "Stopped an unresponsive task attempt") ||
 			!strings.Contains(output, "Starting a fresh attempt") {
@@ -439,7 +439,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopRecovery(t, suite, target)
-		output := result.Stdout + result.Stderr
+		output := visibleProcessText(result.Stdout + result.Stderr)
 		// The tool-cap outcome doubles as the suspension proof: with idle at 2s, an
 		// unsuspended idle deadline would have fired first and named the wrong timeout.
 		if result.Err != nil || result.ExitCode != 0 ||
@@ -466,7 +466,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopRecovery(t, suite, target)
-		output := result.Stdout + result.Stderr
+		output := visibleProcessText(result.Stdout + result.Stderr)
 		// The provider opens one real tool, then a CHILD process — not the provider CLI — floods
 		// the same stdout with hundreds of forged, unique-ID tool starts. Every one of them is
 		// schema-valid and content-bearing, so the host does accept them as activity; what it must
@@ -536,7 +536,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		if err := syscall.Kill(coopPID, syscall.SIGINT); err != nil {
 			t.Fatal(err)
 		}
-		awaitLoopProcessOutput(t, process, "finishing this iteration, then stopping", 5*time.Second)
+		awaitLoopProcessOutput(t, process, "Finishing this attempt and its review, then stopping", 5*time.Second)
 		if err := syscall.Kill(coopPID, syscall.SIGINT); err != nil {
 			t.Fatal(err)
 		}
@@ -610,7 +610,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReview(t, suite, work, 20*time.Second)
-		output := result.Stdout + result.Stderr
+		output := visibleProcessText(result.Stdout + result.Stderr)
 		if result.Err != nil || result.ExitCode != 0 ||
 			!strings.Contains(output, "Stopped an unresponsive review attempt") {
 			t.Fatalf("signoff timeout = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)

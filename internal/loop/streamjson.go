@@ -58,6 +58,7 @@ type iterationStreamDecoder interface {
 	streamOutcome() providerStreamOutcome
 	setActivity(streamActivity)
 	setDisplayWidth(func() int)
+	setRender(ui.Palette, io.Writer)
 }
 
 // streamActivity receives the semantic activity one provider attempt proves. Only valid
@@ -108,7 +109,7 @@ func validateProviderStream(code int, runErr error, outcome providerStreamOutcom
 
 // newIterationStreamDecoder dispatches on the schema declared by the provider adapter. Several
 // CLIs use overlapping flag names, so the flags themselves cannot identify the event schema.
-func newIterationStreamDecoder(agent string, out, tail, diagnostic io.Writer, profile, root, model string) iterationStreamDecoder {
+func newIterationStreamDecoder(agent string, out, tail, diagnostic io.Writer, profile, root, model string, identity func(string)) iterationStreamDecoder {
 	adapter, ok := agents.Get(agent)
 	if !ok {
 		return nil
@@ -117,18 +118,22 @@ func newIterationStreamDecoder(agent string, out, tail, diagnostic io.Writer, pr
 	case agents.StreamClaudeJSON:
 		d := newStreamDecoder(out, tail, agent, profile, root)
 		d.diagnostic = diagnostic
+		d.identity = identity
 		return d
 	case agents.StreamCodexJSON:
 		d := newCodexStreamDecoder(out, tail, agent, profile, root, model)
 		d.diagnostic = diagnostic
+		d.identity = identity
 		return d
 	case agents.StreamGeminiJSON:
 		d := newGeminiStreamDecoder(out, tail, agent, profile, root, model)
 		d.diagnostic = diagnostic
+		d.identity = identity
 		return d
 	case agents.StreamGrokJSON:
 		d := newGrokStreamDecoder(out, tail, agent, profile, root, model)
 		d.diagnostic = diagnostic
+		d.identity = identity
 		return d
 	default:
 		return nil
@@ -149,6 +154,9 @@ type ndjsonDecoder struct {
 	beforeRaw    func()
 	activity     streamActivity
 	displayWidth func() int
+	identity     func(model string)
+	palette      ui.Palette
+	plainCopy    io.Writer
 }
 
 const (
@@ -265,6 +273,33 @@ func (d *ndjsonDecoder) setActivity(a streamActivity) { d.activity = a }
 // the fixed, deterministic caps used by redirected output and direct decoder consumers.
 func (d *ndjsonDecoder) setDisplayWidth(width func() int) { d.displayWidth = width }
 
+// setRender binds presentation to the stream that receives it. Captured fork/rendered traces get
+// the same human narration through plainCopy, without inheriting terminal-only ANSI styling.
+func (d *ndjsonDecoder) setRender(p ui.Palette, plainCopy io.Writer) {
+	d.palette = p
+	d.plainCopy = plainCopy
+}
+
+func (d *ndjsonDecoder) emitAssistant(text string) {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	for _, raw := range strings.Split(text, "\n") {
+		clean := cleanDiagnosticLine(raw)
+		if clean == "" {
+			continue
+		}
+		width := 80
+		if d.displayWidth != nil && d.displayWidth() > 1 {
+			width = d.displayWidth() - 1
+		}
+		for i, line := range ui.PrefixedLines(llmIcon+" ", clean, width) {
+			if i == 0 {
+				line = d.palette.Magenta(llmIcon) + strings.TrimPrefix(line, llmIcon)
+			}
+			d.emit(line)
+		}
+	}
+}
+
 func (d *ndjsonDecoder) noteBootstrap() {
 	if d.activity != nil {
 		d.activity.bootstrap()
@@ -295,11 +330,25 @@ func (d *ndjsonDecoder) noteTerminal() {
 	}
 }
 
-func (d *ndjsonDecoder) emit(s string) { fmt.Fprintln(d.out, s) }
+func (d *ndjsonDecoder) emit(s string) {
+	fmt.Fprintln(d.out, s)
+	if d.plainCopy != nil {
+		fmt.Fprintln(d.plainCopy, stripANSISequences(s))
+	}
+}
+
+func (d *ndjsonDecoder) announceIdentity(agent, model, profile string) {
+	if d.identity != nil {
+		d.identity(model)
+		return
+	}
+	d.emit(streamModelLineWithPalette(d.palette, agent, streamDisplayModel(model), profile))
+}
 
 // fitDisplayText trims one plain-text segment to the current live row, reserving fixed cells and
 // the final no-wrap safety column. Redirected output uses the caller's established fixed cap.
 func (d *ndjsonDecoder) fitDisplayText(text string, fallback, fixed int) string {
+	text = cleanDiagnosticLine(text)
 	limit := fallback
 	if d.displayWidth != nil {
 		limit = d.displayWidth() - 1 - fixed
@@ -310,7 +359,7 @@ func (d *ndjsonDecoder) fitDisplayText(text string, fallback, fixed int) string 
 func (d *ndjsonDecoder) streamErrorLine(message string) string {
 	const prefix = "✗ "
 	shown := d.fitDisplayText(firstLine(message), streamErrorTextWidth, len([]rune(prefix)))
-	return ui.Red(prefix + shown)
+	return d.palette.Red(prefix + shown)
 }
 
 func (d *ndjsonDecoder) streamToolLine(glyph, label string, outside bool) string {
@@ -321,16 +370,18 @@ func (d *ndjsonDecoder) streamToolLine(glyph, label string, outside bool) string
 	if outside {
 		const warning = "⚠ "
 		shown := d.fitDisplayText(label, streamToolTextWidth, len([]rune(prefix+warning)))
-		return prefix + ui.Yellow(warning+shown)
+		return prefix + d.palette.Yellow(warning+shown)
 	}
 	shown := d.fitDisplayText(label, streamToolTextWidth, len([]rune(prefix)))
 	if shown == "" {
 		return glyph
 	}
-	return prefix + ui.Dim(shown)
+	return prefix + d.palette.Dim(shown)
 }
 
 func (d *ndjsonDecoder) streamNamedToolLine(glyph, name, label string, outside bool) string {
+	name = cleanDiagnosticLine(name)
+	label = cleanDiagnosticLine(label)
 	line := glyph
 	if name != "" {
 		shown := name
@@ -351,19 +402,21 @@ func (d *ndjsonDecoder) streamNamedToolLine(glyph, name, label string, outside b
 	if outside {
 		const warning = "⚠ "
 		shown := d.fitDisplayText(label, streamToolTextWidth, len([]rune(prefix+warning)))
-		return prefix + ui.Yellow(warning+shown)
+		return prefix + d.palette.Yellow(warning+shown)
 	}
 	shown := d.fitDisplayText(label, streamToolTextWidth, len([]rune(prefix)))
 	if shown == "" {
 		return line
 	}
-	return prefix + ui.Dim(shown)
+	return prefix + d.palette.Dim(shown)
 }
 
 // streamFailureLine preserves the failure marker and caller-supplied structural suffix. In live
 // output the label yields to that suffix, then the diagnostic uses any remaining row; redirected
 // output preserves the old per-field caps (labelFallback=0 means the label was uncapped).
 func (d *ndjsonDecoder) streamFailureLine(label, suffix, diagnostic string, labelFallback int) string {
+	label = cleanDiagnosticLine(label)
+	diagnostic = cleanDiagnosticLine(diagnostic)
 	if d.displayWidth == nil {
 		if labelFallback > 0 {
 			label = truncate(label, labelFallback)
@@ -376,12 +429,12 @@ func (d *ndjsonDecoder) streamFailureLine(label, suffix, diagnostic string, labe
 		if diagnostic != "" {
 			rest += ": " + diagnostic
 		}
-		return "  " + ui.Red("✗") + rest
+		return "  " + d.palette.Red("✗") + rest
 	}
 
 	available := d.displayWidth() - 1 - len([]rune("  ✗"))
 	if available <= 0 {
-		return "  " + ui.Red("✗")
+		return "  " + d.palette.Red("✗")
 	}
 	rest := ""
 	if suffix != "" {
@@ -397,7 +450,7 @@ func (d *ndjsonDecoder) streamFailureLine(label, suffix, diagnostic string, labe
 	if remaining := available - len([]rune(rest)); diagnostic != "" && remaining > 0 {
 		rest += truncate(": "+diagnostic, remaining)
 	}
-	return "  " + ui.Red("✗") + rest
+	return "  " + d.palette.Red("✗") + rest
 }
 
 func (d *ndjsonDecoder) toTail(s string) {
@@ -444,7 +497,9 @@ func (d *ndjsonDecoder) reportStreamProblem(message string) {
 
 func (d *ndjsonDecoder) rawLine(raw []byte) {
 	s := string(bytes.TrimSpace(raw))
-	d.emit(s)
+	if shown := cleanDiagnosticLine(s); shown != "" {
+		d.emit(shown)
+	}
 	d.toTail(s)
 	d.toDiagnostic(s)
 }
@@ -547,7 +602,7 @@ func (d *streamDecoder) assistant(msg json.RawMessage) {
 			if t := strings.TrimSpace(b.Text); t != "" {
 				d.terminalLimitNotice = ""
 				if !d.limitShown || !ladder.LimitNotice(t) {
-					d.emit(ui.Magenta(llmIcon) + " " + t) // mark the agent's own voice
+					d.emitAssistant(t) // mark the agent's own voice
 				}
 				d.toTail(t) // the tail (limit detection) always gets the plain text
 				if claudeCreditLimitNotice(t) {
@@ -652,21 +707,21 @@ func (d *streamDecoder) toolResult(msg json.RawMessage) {
 func (d *streamDecoder) system(ev *streamEvent) {
 	if ev.Subtype == "init" {
 		d.noteBootstrap()
-		if ev.Model != "" {
-			d.emit(streamModelLine(d.agent, ev.Model, d.profile))
+		if ev.Model != "" || d.identity != nil {
+			d.announceIdentity(d.agent, ev.Model, d.profile)
 		}
 	}
 }
 
-func streamModelLine(agent, model, profile string) string {
+func streamModelLineWithPalette(p ui.Palette, agent, model, profile string) string {
 	if agent == "" {
-		return ui.Dim("· model " + model)
+		return p.Dim("· model ") + cleanDiagnosticLine(model)
 	}
 	// Dim the labels (· using / model / credential) but leave the values — agent, model, credential —
 	// at normal brightness, so they stand out a touch against the otherwise-faint line.
-	line := ui.Dim("· using ") + agent + ui.Dim(" model ") + model
+	line := p.Dim("· using ") + cleanDiagnosticLine(agent) + p.Dim(" model ") + cleanDiagnosticLine(model)
 	if profile != "" {
-		line += ui.Dim(" credential ") + profile
+		line += p.Dim(" credential ") + cleanDiagnosticLine(profile)
 	}
 	return line
 }
@@ -682,7 +737,7 @@ func (d *streamDecoder) rateLimit(rl *rateLimitInfo) {
 	if rl.ResetsAt > 0 {
 		when = " — resets " + time.Unix(rl.ResetsAt, 0).Format("Jan 2, 3:04pm")
 	}
-	d.emit(ui.Yellow("⚠ rate limited") + " (" + rl.RateLimitType + ")" + when)
+	d.emit(d.palette.Yellow("⚠ rate limited") + " (" + cleanDiagnosticLine(rl.RateLimitType) + ")" + when)
 	d.limitShown = true
 	message := fmt.Sprintf("Claude AI usage limit reached|%d", rl.ResetsAt)
 	d.toTail(message)
@@ -713,7 +768,7 @@ func (d *streamDecoder) result(ev *streamEvent) {
 		line += " · " + tokenUsage(res.InTok, res.OutTok)
 	}
 	d.last = res
-	d.emit(ui.Dim(line))
+	d.emit(d.palette.Dim(cleanDiagnosticLine(line)))
 	if t := strings.TrimSpace(ev.Result); t != "" {
 		d.toTail(t) // the final message, in case it carries a limit notice
 	}

@@ -3,6 +3,7 @@ package loop
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,52 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/ladder"
 )
+
+func TestQuotaFallbackIsSanitizedAndWidthBounded(t *testing.T) {
+	got := captureStderr(t, func() {
+		printLoopCaution(strings.Repeat("claude:very-long-model@personal", 4) + "\x1b[31m reached its usage limit")
+	})
+	for _, line := range strings.Split(strings.TrimSpace(got), "\n") {
+		if strings.Contains(line, "\x1b") || len([]rune(line)) > 79 {
+			t.Fatalf("quota fallback retained controls or exceeded the static width: %q", got)
+		}
+	}
+}
+
+func TestAuthenticationDiagnosticsAreSanitizedAndWidthBounded(t *testing.T) {
+	target := agents.Target{
+		Provider: "claude",
+		Model:    strings.Repeat("very-long-model-", 8),
+		Accounts: []string{"legacy\x1b[31m\nprofile"},
+	}
+	headline := authHeadline(target)
+	for i, line := range strings.Split(headline, "\n") {
+		visibleWidth := len([]rune(line))
+		if i == 0 {
+			visibleWidth += 2 // Alert's warning mark and following space.
+		}
+		if strings.Contains(line, "\x1b") || visibleWidth > 80 {
+			t.Fatalf("authentication headline retained controls or exceeded the static width: %q", headline)
+		}
+	}
+
+	r := ladder.NewRotation([]agents.Target{
+		target,
+		{Provider: "codex", Model: strings.Repeat("another-long-model-", 8), Accounts: []string{"backup"}},
+	})
+	if !r.OnAuthFailure() || r.OnAuthFailure() {
+		t.Fatal("test rotation did not retire both authentication targets")
+	}
+	errText := rotationAuthenticationError(r, r.Active()).Error()
+	for _, line := range strings.Split(errText, "\n") {
+		if strings.Contains(line, "\x1b") || len([]rune(line)) > 74 {
+			t.Fatalf("authentication error retained controls or exceeded its indented width: %q", errText)
+		}
+	}
+	if command := loginCommand(target); strings.Contains(command, "\x1b") || !strings.HasPrefix(command, "coop login $'") {
+		t.Fatalf("unsafe profile login command was not shell-quoted safely: %q", command)
+	}
+}
 
 func TestRememberPreflightLimitAdvancesWorkRotation(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)

@@ -2125,7 +2125,7 @@ func tasksFolderList(root string, all bool, only ...string) (int, error) {
 	}
 	// The one action the listing can offer: a blocked task is waiting on a human.
 	if len(byState[StateBlocked]) > 0 && (len(show) == 0 || show[StateBlocked]) {
-		fmt.Printf("\nAnswer blocked tasks: coop tasks decisions\n")
+		fmt.Printf("\nAnswer blocked tasks: coop tasks decisions -i\n")
 	}
 	return 0, nil
 }

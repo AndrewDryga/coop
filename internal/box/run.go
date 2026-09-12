@@ -122,6 +122,9 @@ type RunSpec struct {
 	activityID               string
 	RunID                    string // the loop run's id; when set, injected as COOP_RUN_ID so a consult peer can append its usage to .agent/runs/<id>.peers.jsonl
 	Batch                    bool   // loop/doctor: no tty, stdin from /dev/null
+	// LoopPresentation opts a batch loop attempt into the loop-owned grouped setup narration.
+	// Batch keeps its execution meaning; other batch/quiet/ACP callers remain silent.
+	LoopPresentation bool `json:"-"`
 	// SuperviseDescendants keeps coop-entry alive after a successful provider exit long enough to
 	// drain agent-owned background jobs. It is intentionally opt-in: an interactive box retains
 	// the ordinary exec contract and never waits for a shell job the user started.
@@ -426,8 +429,8 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			"-e", "COOP_COMPANION_REPOSITORIES_JSON="+string(data),
 		)
 	}
-	// An interactive launch is narrated in sections (launch_sections.go); every other embedding
-	// keeps its one-line log. A filtered run launches the qualified client image, not this
+	// Interactive launches and loop attempts are narrated in sections (launch_sections.go); other
+	// embeddings keep their one-line log. A filtered run launches the qualified client image, not this
 	// repo's — so a stale-image nudge would point at a rebuild that changes nothing about it.
 	sections := newLaunchSections(spec)
 	var nudges []string
@@ -502,7 +505,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			// signal it was (hostInterrupt).
 			spec.Ctx, interrupt = newHostInterrupt()
 		}
-		filtered, err = prepareFilteredExecution(spec.Ctx, cfg, rt, spec, spec.CapturedEgress, composeFile, spec.networkSmoke)
+		filtered, err = prepareFilteredExecution(spec.Ctx, cfg, rt, spec, spec.CapturedEgress, composeFile, spec.networkSmoke, sections)
 		if filtered != nil {
 			defer func() {
 				workload := filtered.workloadOutcome(exitCode, result, spec.Ctx.Err() != nil)
@@ -530,7 +533,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 				if report.RunID != "" && spec.OnNetworkReport != nil {
 					spec.OnNetworkReport(report)
 				}
-				if sections.on && filtered.started() {
+				if sections.interactive && filtered.started() {
 					// Only a confirmed removal earns the completed sentence; a cleanup that
 					// could not finish leaves the box's fate to the error it just returned.
 					if gone && cleanupErr == nil {
@@ -903,9 +906,12 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// runtime) plus COOP_AUTO_UP. Idempotent; progress goes to stderr (never stdout, which may
 	// carry ACP/JSON) and only when not Quiet; a failure warns but never blocks the session.
 	var servicePorts []ServicePort
-	var servicesErr error // set when the run continued without its services
+	services := serviceLaunchOutcome{state: servicesNotConfigured}
+	if composeFile != "" {
+		services.state = servicesUnknown
+	}
 	servicesInspected := false
-	if autoUpServices(cfg, spec, rt.Name) {
+	if composeFile != "" && autoUpServices(cfg, spec, rt.Name) {
 		// Only when no other box is running in this project: a running agent could swap a validated
 		// bind source for a link to a host path between coop's check and Docker opening it, and a
 		// launch that happens while it runs (a peer or consult box mid-iteration) is the only one
@@ -920,6 +926,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 				return finish(-1, fmt.Errorf("start review services: %w", err))
 			}
 			sections.servicesSkipped(err.Error())
+			services = serviceLaunchOutcome{state: servicesSkipped, err: err}
 			if !sections.on {
 				ui.Note("services: %v — not starting them (run 'coop up' to retry)", err)
 			}
@@ -928,27 +935,37 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			if spec.Review {
 				return finish(-1, fmt.Errorf("start review services: an agent box is running in this project (%s) — sidecars start only when none is", DescribeLiveBoxes(live)))
 			}
-			// Services already UP stay reachable; only the start was skipped.
-			sections.servicesSkipped("Another box is running in this project (" + DescribeLiveBoxes(live) + ").")
+			// Do not race a running agent's filesystem access by starting services. Service discovery
+			// still configures the new box's forwarders, but it does not prove those services are live.
+			sections.servicesHeldByLiveBox("Another box is running in this project (" + DescribeLiveBoxes(live) + ").")
+			services = serviceLaunchOutcome{state: servicesSkipped, err: fmt.Errorf("another box is running in this project (%s)", DescribeLiveBoxes(live))}
 			if !sections.on && !spec.Quiet {
-				ui.Note("sidecars not started: an agent box is running in this project (%s) — they start when none is; services already up are still reachable", DescribeLiveBoxes(live))
+				ui.Note("sidecars not started: an agent box is running in this project (%s) — they start when none is; service availability was not checked", DescribeLiveBoxes(live))
 			}
 			startServices = false
 		}
-		if cf := composeFile; cf != "" && startServices {
+		if cf := composeFile; startServices {
 			reviewServicesAttempted = spec.Review
+			sections.servicesPreparing()
 			if !sections.on && !spec.Quiet {
 				ui.Note("starting sibling services (%s)", filepath.Base(cf))
 			}
 			// Discard compose's own progress UI — it repaints with carriage returns and would overprint
 			// the loop's live bar. coop's status line says what happened; `coop up` shows the live
 			// output (and the real error) when you need to diagnose a failure. EnsureServices validates
-			// the file first, so a refusal (an unsafe compose an agent wrote) surfaces here and the
-			// session continues WITHOUT services rather than running anything host-dangerous.
+			// the file first, so a refusal (an unsafe compose an agent wrote) surfaces here without
+			// running anything host-dangerous. Loop launches stop; direct launches keep their existing
+			// continue-without-services behavior.
 			var composeStderr bytes.Buffer
 			servicesInspected = true
-			started, err := startServicesFile(rt, spec.Repo, cf, io.Discard, &composeStderr, spec.RepoReadOnly, true, privateRoots...)
+			started, err := startServicesFile(rt, spec.Repo, cf, io.Discard, &composeStderr, spec.RepoReadOnly, !sections.loop, privateRoots...)
+			sections.serviceSecrets(started.hidden, cf)
 			if err != nil {
+				var refused *ComposeRefused
+				if sections.loop && errors.As(err, &refused) {
+					sections.servicesRefused(err.Error())
+					return finish(-1, ui.Reported(err))
+				}
 				if spec.Review {
 					detail := strings.TrimSpace(composeStderr.String())
 					if detail != "" {
@@ -960,10 +977,11 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 				if !sections.on {
 					ui.Note("services: %v — continuing without them (run 'coop up' to retry)", err)
 				}
-				servicesErr = err
+				services = serviceLaunchOutcome{state: servicesFailed, err: err}
 			} else {
 				sections.services(started.names)
 				servicePorts = started.ports
+				services = serviceLaunchOutcome{state: servicesRunning}
 			}
 		}
 	}
@@ -996,8 +1014,8 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// agent what this box actually got. The instruction files exist but are not mounted yet; the
 	// sidecars simply start after they are assembled, so their facts are appended here.
 	joined := cfg.Egress == "open" && spec.Network && rt.Name != "container"
-	spec.servePlan = servePublicationPlan(cfg, spec, hostPortFree)
-	if err := appendInstructionNote(instructionMounts, servicesNote(composeFile, servicePorts, servicesErr, joined, spec.servePlan)); err != nil {
+	spec.servePlan = requestedServePublicationPlan(cfg, spec, hostPortFree)
+	if err := appendInstructionNote(instructionMounts, servicesNote(services, servicePorts, joined, spec.servePlan)); err != nil {
 		return finish(-1, err)
 	}
 

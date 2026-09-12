@@ -106,7 +106,7 @@ func signoffRounds(lc *loopcfg.Config) int {
 	return defaultSignoffRounds
 }
 
-// blockReopenedTasks parks the exact tasks reopened by the capped signoff round into 50_blocked/
+// blockReopenedTasks parks the exact tasks reopened by the capped review round into 50_blocked/
 // with a decision.md; unrelated actionable work is left untouched, and the capped loop exits 3
 // (blocked on a human) instead of spinning or claiming a false "done".
 // The loop runs on the host, where coop's own task helpers are available, so it moves the folders
@@ -117,7 +117,7 @@ func blockReopenedTasks(hosts, reopened []string, rounds int) error {
 	for _, id := range reopened {
 		task, err := lifecycleTaskSubject(hosts, id)
 		if err != nil {
-			return fmt.Errorf("capped signoff task %s %w", id, err)
+			return fmt.Errorf("capped review task %s %w", id, err)
 		}
 		title := task.Item.Title
 		moves = append(moves, tasks.TrustedTaskMove{
@@ -130,7 +130,7 @@ func blockReopenedTasks(hosts, reopened []string, rounds int) error {
 		})
 	}
 	if err := tasks.MoveTrustedTasksFromDoneWith(moves); err != nil {
-		return fmt.Errorf("authoritatively block capped signoff tasks: %w", err)
+		return fmt.Errorf("authoritatively block capped review tasks: %w", err)
 	}
 	return nil
 }
@@ -144,7 +144,7 @@ func writeReviewBlockDecision(path, id, title string, rounds int) error {
 	}
 	body := fmt.Sprintf("# Decision: the review keeps reopening %q after %d rounds\n\n"+
 		"**Blocks:** this task (`%s`).\n\n"+
-		"**The decision:** The unattended loop drained the queue and the signoff pass reopened this "+
+		"**The decision:** The unattended loop drained the queue and review reopened this "+
 		"task %d times without it converging — the work loop can't get it to a state the review "+
 		"accepts. A human needs to look at why (a gate it can't make green, a spec gap, a flaky test) "+
 		"before it goes back in the queue.\n\n"+

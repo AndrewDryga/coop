@@ -1065,7 +1065,7 @@ Usage: coop tasks unblock <id> ["<answer>"] [--tasks <path>]...
 EXAMPLE
   coop tasks unblock login-retries "Return to sign-in after the first failure."
 
-  Questions waiting for you: coop tasks decisions`,
+  Questions waiting for you: coop tasks decisions -i`,
 
 	"tasks done": `coop tasks done — move completed work to the archive
 

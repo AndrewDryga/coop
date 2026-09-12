@@ -104,7 +104,7 @@ func TestProviderAssistantNarrationNeverBecomesTerminalDiagnostic(t *testing.T) 
 	for _, tc := range cases {
 		t.Run(tc.agent, func(t *testing.T) {
 			var out, tail, diagnostic bytes.Buffer
-			decoder := newIterationStreamDecoder(tc.agent, &out, &tail, &diagnostic, "", "", "")
+			decoder := newIterationStreamDecoder(tc.agent, &out, &tail, &diagnostic, "", "", "", nil)
 			_, _ = decoder.Write([]byte(tc.event + "\n"))
 			decoder.flush()
 			if !strings.Contains(tail.String(), tc.text) {
@@ -152,7 +152,7 @@ func TestProviderStreamLiveDisplayResamplesTerminalWidth(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.agent, func(t *testing.T) {
 			var out, tail bytes.Buffer
-			decoder := newIterationStreamDecoder(tc.agent, &out, &tail, nil, "", "", "model")
+			decoder := newIterationStreamDecoder(tc.agent, &out, &tail, nil, "", "", "model", nil)
 			width, samples := 180, 0
 			decoder.setDisplayWidth(func() int {
 				samples++
@@ -213,7 +213,7 @@ func TestProviderStreamRedirectedDisplayKeepsFallbackCaps(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.agent, func(t *testing.T) {
 			var out, tail bytes.Buffer
-			decoder := newIterationStreamDecoder(tc.agent, &out, &tail, nil, "", "", "model")
+			decoder := newIterationStreamDecoder(tc.agent, &out, &tail, nil, "", "", "model", nil)
 			_, _ = decoder.Write([]byte(tc.toolEvent + "\n"))
 			if got := out.String(); strings.Contains(got, "tail-past-the-old-cap") || !strings.Contains(got, "…") {
 				t.Fatalf("redirected tool line did not keep its fixed fallback cap: %q", got)
@@ -256,11 +256,12 @@ func TestGrokLiveNarrationRemainsFull(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, tail bytes.Buffer
-	decoder := newIterationStreamDecoder("grok", &out, &tail, nil, "", "", "model")
+	decoder := newIterationStreamDecoder("grok", &out, &tail, nil, "", "", "model", nil)
 	decoder.setDisplayWidth(func() int { return 32 })
 	_, _ = decoder.Write([]byte(`{"type":"text","data":` + quoted + `}` + "\n" + `{"type":"end","usage":{},"num_turns":1}` + "\n"))
 	decoder.flush()
-	if !strings.Contains(out.String(), text) || !strings.Contains(tail.String(), text) {
+	visible := strings.ReplaceAll(out.String(), "\n  ", "")
+	if !strings.Contains(visible, text) || !strings.Contains(tail.String(), text) {
 		t.Fatalf("Grok narration was presentation-truncated: out=%q tail=%q", out.String(), tail.String())
 	}
 }
@@ -947,13 +948,13 @@ func TestIterationStreamDecoderDispatch(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.agent, func(t *testing.T) {
-			d := newIterationStreamDecoder(c.agent, &out, &tail, nil, "", "", "model")
+			d := newIterationStreamDecoder(c.agent, &out, &tail, nil, "", "", "model", nil)
 			if !c.check(d) {
 				t.Errorf("dispatch for %s returned %T", c.agent, d)
 			}
 		})
 	}
-	if d := newIterationStreamDecoder("other", &out, &tail, nil, "", "", "model"); d != nil {
+	if d := newIterationStreamDecoder("other", &out, &tail, nil, "", "", "model", nil); d != nil {
 		t.Errorf("unknown provider dispatch returned %T, want nil", d)
 	}
 }
@@ -962,7 +963,7 @@ func TestProviderStreamDecoderRejectsTruncatedTerminalEvent(t *testing.T) {
 	for _, provider := range []string{"claude", "codex", "gemini", "grok"} {
 		t.Run(provider, func(t *testing.T) {
 			var out, tail bytes.Buffer
-			decoder := newIterationStreamDecoder(provider, &out, &tail, nil, "work", "/workspace", "model")
+			decoder := newIterationStreamDecoder(provider, &out, &tail, nil, "work", "/workspace", "model", nil)
 			if decoder == nil {
 				t.Fatal("registered provider has no stream decoder")
 			}

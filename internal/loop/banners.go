@@ -2,6 +2,7 @@ package loop
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/tasks"
@@ -39,7 +40,7 @@ func printFinalVerdict(cf tasks.TaskCounts, actionable, blocked []taskLine, cont
 		ui.Note("Stopped for your decision · %d/%d tasks done", cf.Done, cf.Total())
 		printTaskList(blocked)
 		ui.Note("")
-		ui.Note("  %s %s", decisionsLabel(len(blocked)), "coop tasks decisions")
+		ui.Note("  %s %s", decisionsLabel(len(blocked)), "coop tasks decisions -i")
 	default:
 		ui.Note("")
 		ui.OK("All tasks passed final review · %d/%d done", cf.Done, cf.Total())
@@ -50,12 +51,17 @@ func printFinalVerdict(cf tasks.TaskCounts, actionable, blocked []taskLine, cont
 // task is actually in, never forcing every reopen to read as "todo".
 func actionableCause(actionable []taskLine) string {
 	var lines []string
+	width := ui.TermWidth(os.Stderr) - 6
 	for i, t := range actionable {
 		if i == maxReportedTasks {
 			lines = append(lines, fmt.Sprintf("… and %d more.", len(actionable)-maxReportedTasks))
 			break
 		}
-		lines = append(lines, fmt.Sprintf("%s is back in %s.", t.title, t.state))
+		where := "in " + t.state
+		if strings.HasPrefix(t.state, "in ") {
+			where = t.state
+		}
+		lines = append(lines, wrapDisplay(fmt.Sprintf("%s is back %s.", cleanDiagnosticLine(t.title), cleanDiagnosticLine(where)), width)...)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -63,13 +69,16 @@ func actionableCause(actionable []taskLine) string {
 // printTaskList is the closing report's task block: a title a person recognizes, with its full id
 // (and scope) under it, so the task can be found in the queue without guessing.
 func printTaskList(items []taskLine) {
+	width := ui.TermWidth(os.Stderr) - 2
 	for i, t := range items {
 		if i == maxReportedTasks {
 			ui.Note("  … and %d more", len(items)-maxReportedTasks)
 			return
 		}
 		ui.Note("")
-		ui.Note("  %s", t.title)
+		for _, line := range wrapDisplay(cleanDiagnosticLine(t.title), width) {
+			ui.Note("  %s", line)
+		}
 		ui.Note("    %s", taskIdentity(t.id, t.scope))
 	}
 }
@@ -107,7 +116,7 @@ func printNoActionableTasks(cf tasks.TaskCounts) {
 	}
 	ui.Note("No tasks ready to work on. %s need your decision.", ui.Count(cf.Blocked, "task"))
 	ui.Note("")
-	ui.Note("  %s coop tasks decisions", decisionsLabel(cf.Blocked))
+	ui.Note("  %s coop tasks decisions -i", decisionsLabel(cf.Blocked))
 }
 
 // printTaskLimitReached closes an intentional --max-tasks pause. It is a success, not a
@@ -120,13 +129,13 @@ func printTaskLimitReached(limit loopTaskLimit, continueCmd string) {
 		ui.Note("Paused after %s — no more tasks are ready", ui.Count(limit.settled, "task"))
 	}
 	if limit.lastState == tasks.StateBlocked {
-		ui.Note("  Blocked: %s", limit.lastTitle)
+		ui.Note("  Blocked: %s", cleanDiagnosticLine(limit.lastTitle))
 		ui.Note("")
 		ui.Note("  Final review has not run.")
-		ui.Note("  Answer it: coop tasks decisions")
+		ui.Note("  Answer it: coop tasks decisions -i")
 		return
 	}
-	ui.Note("  Completed: %s", limit.lastTitle)
+	ui.Note("  Completed: %s", cleanDiagnosticLine(limit.lastTitle))
 	ui.Note("")
 	ui.Note("  Final review has not run.")
 	ui.Note("  Continue: %s", continueCmd)
@@ -140,30 +149,9 @@ func taskNoun(n int) string {
 }
 
 // printBusyQueue reports work another live controller owns. A queue somebody else is draining is
-// not a verified-done queue, so this says what it is and names the holders it actually observed.
-func printBusyQueue(busy tasks.TaskLeaseSummary) {
-	ui.Note("No task is available to this loop.")
-	if detail := busyDetail(busy); detail != "" {
-		ui.Note("  The remaining work is reserved by another agent (%s).", detail)
-		return
-	}
-	ui.Note("  The remaining work is reserved by another agent.")
-}
-
-// busyDetail renders the observed holders as prose ("1 owned, 2 busy"), or "" when the summary
-// carries no count to report.
-func busyDetail(busy tasks.TaskLeaseSummary) string {
-	var parts []string
-	if busy.Owned > 0 {
-		parts = append(parts, fmt.Sprintf("%d owned", busy.Owned))
-	}
-	if busy.Busy > 0 {
-		parts = append(parts, fmt.Sprintf("%d busy", busy.Busy))
-	}
-	if busy.Stalled > 0 {
-		parts = append(parts, fmt.Sprintf("%d stalled", busy.Stalled))
-	}
-	return strings.Join(parts, ", ")
+// not a verified-done queue, so this remains a compact availability statement rather than a result.
+func printBusyQueue(_ tasks.TaskLeaseSummary) {
+	ui.Note("No task is available to this loop. The remaining work is reserved by another agent.")
 }
 
 const progressActivityWidth = 48
@@ -189,6 +177,7 @@ func progressStateWidth(c tasks.TaskCounts) int {
 // state is never abbreviated; the title is what gives way on a narrow row.
 func progressLine(c tasks.TaskCounts, activity string) string {
 	s := progressState(c)
+	activity = cleanDiagnosticLine(activity)
 	if activity != "" {
 		s += " · " + truncate(activity, progressActivityWidth)
 	}
@@ -199,6 +188,7 @@ func progressLine(c tasks.TaskCounts, activity string) string {
 // narrow row Region remains the final clip guard.
 func progressLineWidth(c tasks.TaskCounts, activity string, width int) string {
 	s := progressState(c)
+	activity = cleanDiagnosticLine(activity)
 	const separator = " · "
 	activityW := width - progressStateWidth(c) - len([]rune(separator))
 	if activity == "" || activityW <= 0 {

@@ -37,25 +37,50 @@ func serviceGrants(policy egress.Snapshot) []egress.Grant {
 // reach ONE container, and every other member stays behind the same default
 // deny as the public internet.
 func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runtime.Runtime, spec RunSpec, composeFile string,
-	approval *networkstate.Approval, grants []egress.Grant, exposedRoots []string) (string, []networkgateway.ServiceBinding, error) {
+	approval *networkstate.Approval, grants []egress.Grant, sections *launchSections, exposedRoots []string) (string, []networkgateway.ServiceBinding, error) {
+	if sections != nil {
+		sections.servicesPreparing()
+	}
 	if composeFile == "" {
 		names := make([]string, 0, len(grants))
 		for _, grant := range grants {
 			names = append(names, grant.Rule.To.Service)
 		}
 		slices.Sort(names)
-		return "", nil, fmt.Errorf("the approved rules name the Compose service(s) %v, but this project has no %s",
+		err := fmt.Errorf("the approved rules name the Compose service(s) %v, but this project has no %s",
 			names, project.DefaultCompose)
+		if sections != nil && sections.loop {
+			sections.servicesRefused(err.Error())
+			return "", nil, ui.Reported(err)
+		}
+		return "", nil, err
 	}
 	// The approval named a DEFINITION, not just a name: this is the file that is
 	// about to run, so it is the one the digest has to match. Check it before
 	// anything is started.
 	if err := checkApprovedServices(approval, composeFile, spec.Repo, spec.RepoReadOnly); err != nil {
+		if sections != nil && sections.loop {
+			sections.servicesRefused(err.Error())
+			return "", nil, ui.Reported(err)
+		}
 		return "", nil, err
 	}
 	var composeErr bytes.Buffer
-	if _, err := startServicesFile(rt, spec.Repo, composeFile, io.Discard, &composeErr, spec.RepoReadOnly, true, exposedRoots...); err != nil {
+	noticeHidden := sections == nil || !sections.loop
+	started, err := startServicesFile(rt, spec.Repo, composeFile, io.Discard, &composeErr, spec.RepoReadOnly, noticeHidden, exposedRoots...)
+	if sections != nil {
+		sections.serviceSecrets(started.hidden, composeFile)
+	}
+	if err != nil {
+		var refused *ComposeRefused
+		if sections != nil && sections.loop && errors.As(err, &refused) {
+			sections.servicesRefused(err.Error())
+			return "", nil, ui.Reported(fmt.Errorf("a filtered box needs this project's approved sidecars running: %w", err))
+		}
 		return "", nil, fmt.Errorf("a filtered box needs this project's approved sidecars running, and starting them failed: %w", err)
+	}
+	if sections != nil && sections.loop {
+		sections.services(started.names)
 	}
 	network := ComposeProject(spec.Repo) + "_default"
 	members, err := docker.NetworkMembers(ctx, network)

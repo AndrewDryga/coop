@@ -19,10 +19,10 @@ func TestServicesNoteStatesWhatTheBoxGot(t *testing.T) {
 	published := []servePublication{{Port: 3000, Host: 42076, Published: true}}
 	skipped := []servePublication{{Port: 5173, Host: 56119, Published: false}}
 
-	if got := servicesNote("", nil, nil, true, nil); got != "" {
+	if got := servicesNote(serviceLaunchOutcome{state: servicesNotConfigured}, nil, true, nil); got != "" {
 		t.Fatalf("a repo with no compose file and nothing to publish must say nothing, got %q", got)
 	}
-	got := servicesNote("compose.yml", []ServicePort{web, db}, nil, true, published)
+	got := servicesNote(serviceLaunchOutcome{state: servicesRunning}, []ServicePort{web, db}, true, published)
 	for _, want := range []string{
 		"# Services and ports (coop)",
 		"sidecar db: tcp://localhost:41234 from this box (its own port 5432; also db:5432 by name on the services network)",
@@ -40,7 +40,7 @@ func TestServicesNoteStatesWhatTheBoxGot(t *testing.T) {
 		t.Errorf("the note restates plumbing instead of addresses:\n%s", got)
 	}
 
-	failed := servicesNote("compose.yml", nil, errors.New("compose refused: unsafe bind"), true, nil)
+	failed := servicesNote(serviceLaunchOutcome{state: servicesFailed, err: errors.New("compose refused: unsafe bind")}, nil, true, nil)
 	for _, want := range []string{"did NOT start: compose refused: unsafe bind", "runs without them", "coop up"} {
 		if !strings.Contains(failed, want) {
 			t.Errorf("degraded note lacks %q:\n%s", want, failed)
@@ -50,15 +50,24 @@ func TestServicesNoteStatesWhatTheBoxGot(t *testing.T) {
 		t.Errorf("a failed start must not list an address as reachable:\n%s", failed)
 	}
 
-	unjoined := servicesNote("compose.yml", []ServicePort{web}, nil, false, nil)
+	unjoined := servicesNote(serviceLaunchOutcome{state: servicesRunning}, []ServicePort{web}, false, nil)
 	if !strings.Contains(unjoined, "not on their network") || strings.Contains(unjoined, "localhost:48732") {
 		t.Errorf("a box off the services network must not be told an address it cannot reach:\n%s", unjoined)
 	}
 
-	if got := servicesNote("compose.yml", nil, nil, true, nil); !strings.Contains(got, "none exposes a port") {
+	if got := servicesNote(serviceLaunchOutcome{state: servicesRunning}, nil, true, nil); !strings.Contains(got, "none exposes a port") {
 		t.Errorf("services with no exposed port need saying:\n%s", got)
 	}
-	if got := servicesNote("", nil, nil, true, skipped); !strings.Contains(got, "port 5173 is NOT published: host port 56119 is already in use") {
+	for name, outcome := range map[string]serviceLaunchOutcome{
+		"disabled": {state: servicesUnknown},
+		"live box": {state: servicesSkipped, err: errors.New("another box is running")},
+	} {
+		got := servicesNote(outcome, []ServicePort{web}, true, nil)
+		if !strings.Contains(got, "availability was not checked") || strings.Contains(got, "services are running") || strings.Contains(got, "sidecar web:") {
+			t.Errorf("%s service note overclaimed availability:\n%s", name, got)
+		}
+	}
+	if got := servicesNote(serviceLaunchOutcome{state: servicesNotConfigured}, nil, true, skipped); !strings.Contains(got, "port 5173 is NOT published: host port 56119 is already in use") {
 		t.Errorf("a skipped publish must be stated as such:\n%s", got)
 	}
 }
@@ -67,7 +76,7 @@ func TestServicesNoteStatesWhatTheBoxGot(t *testing.T) {
 // disagree about a port; the stable URL is announced even when this box could not bind it.
 func TestServePublicationIsDecidedOnce(t *testing.T) {
 	cfg := &config.Config{Egress: "open"}
-	spec := RunSpec{Repo: "/tmp/serve-plan", servePorts: []int{3000, 5173}}
+	spec := RunSpec{Repo: "/tmp/serve-plan", Serve: true, servePorts: []int{3000, 5173}}
 	calls := 0
 	plan := servePublicationPlan(cfg, spec, func(host int) bool { calls++; return calls == 1 })
 	if len(plan) != 2 || !plan[0].Published || plan[1].Published || calls != 2 {
@@ -85,6 +94,13 @@ func TestServePublicationIsDecidedOnce(t *testing.T) {
 	if got := servePublicationPlan(&config.Config{Egress: "none"}, spec, func(int) bool { return true }); got != nil {
 		t.Fatalf("an offline box publishes nothing, got %+v", got)
 	}
+	spec.Serve = false
+	if got := requestedServePublicationPlan(cfg, spec, func(int) bool {
+		t.Fatal("a run that did not request host publication must not inspect host ports")
+		return true
+	}); got != nil {
+		t.Fatalf("a run without Serve publishes nothing or claims a host URL, got %+v", got)
+	}
 }
 
 // The note reaches every agent's instruction file, appended after the files were assembled,
@@ -99,7 +115,7 @@ func TestAppendInstructionNoteReachesEveryAgent(t *testing.T) {
 		}
 		mounts = append(mounts, extraMount{p, "/home/node/." + agent + "/INSTRUCTIONS.md"})
 	}
-	note := servicesNote("compose.yml", nil, errors.New("daemon down"), true, nil)
+	note := servicesNote(serviceLaunchOutcome{state: servicesFailed, err: errors.New("daemon down")}, nil, true, nil)
 	if err := appendInstructionNote(mounts, note); err != nil {
 		t.Fatal(err)
 	}

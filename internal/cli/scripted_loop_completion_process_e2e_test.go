@@ -99,7 +99,7 @@ func TestProviderScriptedLoopCompletionRepair(t *testing.T) {
 				if !strings.Contains(output, "usage limit reached") || !strings.Contains(output, "Continuing in less than a minute") {
 					t.Fatalf("static quota wait was silent: %s", output)
 				}
-			} else if !strings.Contains(output, "Task completion needs a commit") || !strings.Contains(output, "Starting one automatic repair attempt") {
+			} else if !strings.Contains(output, "Completion was not accepted") || !strings.Contains(output, "No task-bound commit was found, starting one repair attempt") {
 				t.Fatalf("repair was silent: %s", output)
 			}
 			records := readLoopStageRecords(t, suite)
@@ -107,7 +107,7 @@ func TestProviderScriptedLoopCompletionRepair(t *testing.T) {
 				t.Fatalf("repair telemetry = %#v", records)
 			}
 			if scenario == "parks and continues" {
-				if records[1].Outcome != "completion_blocked" || !strings.Contains(output, "Task needs attention") || !strings.Contains(output, "Continuing with the remaining tasks") || !strings.Contains(output, "coop tasks decisions") {
+				if records[1].Outcome != "completion_blocked" || !strings.Contains(output, "still cannot be completed") || !strings.Contains(output, "Continuing the task queue") || !strings.Contains(output, "coop tasks decisions -i") {
 					t.Fatalf("park output/telemetry = %s\n%#v", output, records)
 				}
 				if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateBlocked, id, "decision.md")) || !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, nextID)) || pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, id)) {
@@ -128,7 +128,7 @@ func TestProviderScriptedLoopCompletionRepair(t *testing.T) {
 				}
 			}
 			if strings.HasPrefix(scenario, "static") {
-				for _, want := range []string{id, "Agent:", target, "Task completed:", "Paused after 1 of 1 requested task", "Final review has not run.", "Continue:"} {
+				for _, want := range []string{"Task 1 - Attempt 1", "Scripted loop lifecycle", "Agent  " + target, "Task completed:", "Paused after 1 of 1 requested task", "Final review has not run.", "Continue:"} {
 					if !strings.Contains(output, want) {
 						t.Fatalf("static terminal omitted %q: %s", want, output)
 					}

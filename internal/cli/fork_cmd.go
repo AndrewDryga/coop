@@ -1155,7 +1155,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 			if forkAssignmentsBlocked(assignments) {
 				ui.Note("Fork %s is waiting for your decision.", name)
 				ui.Note("")
-				ui.Note("  Answer it: coop tasks decisions")
+				ui.Note("  Answer it: coop tasks decisions -i")
 				ui.Note("  Continue:  coop fork %s %s --loop", name, agent)
 				return 0, nil
 			}

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -47,8 +48,9 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 					}
 					suite.reset(t, loopRecoveryScenario(taskID, attempts))
 					result := runLoopRecovery(t, suite, "rotation")
-					if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stderr, sourceTarget+" reached its usage limit.") ||
-						!strings.Contains(result.Stderr, "Continuing with "+destinationTarget) {
+					visible := visibleProcessText(result.Stderr)
+					if result.Err != nil || result.ExitCode != 0 ||
+						!strings.Contains(visible, sourceTarget+" reached its usage limit, continuing with "+destinationTarget) {
 						t.Fatalf("directed rotation = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 					}
 					trace := readProcessTrace(t, suite.layout.Trace)
@@ -89,13 +91,12 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopRecoveryPTY(t, suite, "claude-credit-limit")
 		output := result.Stdout + result.Stderr
+		visible := visibleProcessText(output)
 		notice := "You have reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model."
 		if result.Err != nil || result.ExitCode != 0 ||
-			!strings.Contains(output, targets[0]+" reached its usage limit.") ||
-			!strings.Contains(output, "Continuing with "+targets[1]) ||
-			!strings.Contains(output, targets[1]+" reached its usage limit.") ||
-			!strings.Contains(output, "Continuing with "+targets[2]) ||
-			strings.Contains(output, "Stopped after") || !strings.Contains(output, notice) {
+			!strings.Contains(visible, targets[0]+" reached its usage limit, continuing with "+targets[1]) ||
+			!strings.Contains(visible, targets[1]+" reached its usage limit, continuing with "+targets[2]) ||
+			strings.Contains(visible, "Stopped after") || !strings.Contains(visible, notice) {
 			t.Fatalf("Claude credit-limit rotation = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
@@ -448,7 +449,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		if err := syscall.Kill(coopPID, syscall.SIGINT); err != nil {
 			t.Fatal(err)
 		}
-		awaitLoopProcessOutput(t, process, "finishing this iteration, then stopping", 5*time.Second)
+		awaitLoopProcessOutput(t, process, "Finishing this attempt and its review, then stopping", 5*time.Second)
 		if err := syscall.Kill(coopPID, syscall.SIGINT); err != nil {
 			t.Fatal(err)
 		}
@@ -588,6 +589,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 					t.Fatal("interrupted done task did not retain host lease metadata")
 				}
 				crashHead := loopProcessGit(t, suite, "rev-parse", "HEAD")
+				crashParent := loopProcessGit(t, suite, "rev-parse", crashHead+"^")
 
 				suite.reset(t, loopRecoveryScenario(taskID, []loopProcessAttempt{{Target: target, Stage: "work", Result: "repair-binding"}}))
 				restart := runLoopRecovery(t, suite, target)
@@ -602,11 +604,17 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 					t.Fatal("resumed interrupted completion retained host lease metadata")
 				}
 				parsed, _ := agents.ParseTarget(target)
-				assertLoopProcessResult(t, suite, "codex", taskID, parsed.Model, parsed.Effort, parsed.Account(), crashHead, 1, tc.name == "bound")
+				assertLoopProcessResult(t, suite, "codex", taskID, parsed.Model, parsed.Effort, parsed.Account(), crashParent, 1, tc.name == "bound", crashHead)
 				assertLoopTraceProcessesGone(t, trace)
 			})
 		}
 	})
+}
+
+var processANSI = regexp.MustCompile(`\x1b\[[0-9;]*[[:alpha:]]`)
+
+func visibleProcessText(output string) string {
+	return strings.Join(strings.Fields(processANSI.ReplaceAllString(output, "")), " ")
 }
 
 func loopRecoveryScenario(taskID string, attempts []loopProcessAttempt) loopProcessScenario {

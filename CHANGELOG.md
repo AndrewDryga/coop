@@ -4,6 +4,20 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop loop` now reads as a task queue, not a stream of setup internals.** Startup groups
+  recovery, stale-image and sleep-inhibitor results under `Preparing loop`, followed by answered
+  blocker recovery and a dim task banner with a stable `Task N - Attempt M`, the selected agent,
+  project scope and authoritative completed/active/pending/blocked counts. Each box groups secret,
+  network and service setup under `Preparing task environment`; an unusable offline provider is
+  red, while provider initialization is one canonical `Starting provider:model/effort@account`
+  line. Quota fallbacks, missing-commit repair, busy queues, reviews, interrupts and terminal
+  results use compact task-centered wording, completed rows carry real checklist progress, and
+  answer prompts open `coop tasks decisions -i`. Loop work and review boxes no longer publish the
+  project's development ports or receive false host URLs; interactive and ACP boxes still do.
+  Verification reopens now return automatically through repair, task review, final review and
+  verification within the existing shared round cap, and continuation commands preserve every
+  explicitly selected task queue with shell-safe quoting.
+
 - Task watch rows show compact queue names such as `portal`, omitting `queue` and `/.agent/tasks`.
   Root tasks have no queue label, leaving more room for their titles.
 

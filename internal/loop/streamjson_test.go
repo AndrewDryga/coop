@@ -3,12 +3,35 @@ package loop
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/ladder"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
+
+func TestRenderedProviderTextIsSanitizedAndCopiesStayPlain(t *testing.T) {
+	var terminal, copied, tail bytes.Buffer
+	d := newStreamDecoder(&terminal, &tail, "claude", "personal", "/workspace")
+	d.setRender(ui.Colored(), &copied)
+	_, _ = d.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"safe \u001b[31mred\u001b[0m\nINJECT"}]}}` + "\n"))
+
+	plainTerminal := strings.Join(diagnosticLines(terminal.String()), "\n") + "\n"
+	if copied.String() != plainTerminal || strings.Contains(copied.String(), "\x1b") {
+		t.Fatalf("plain rendered copy = %q, colored terminal = %q", copied.String(), terminal.String())
+	}
+	if strings.Contains(plainTerminal, "\nINJECT") || !strings.Contains(plainTerminal, "✦ safe red") || !strings.Contains(plainTerminal, "✦ INJECT") {
+		t.Fatalf("provider controls reached rendered output unsafely: %q", plainTerminal)
+	}
+	if !strings.Contains(terminal.String(), "\x1b[35m✦") {
+		t.Fatalf("terminal rendering lost destination-aware agent color: %q", terminal.String())
+	}
+	if !strings.Contains(tail.String(), "\x1b[31mred") {
+		t.Fatalf("classification/review tail was unexpectedly rewritten: %q", tail.String())
+	}
+}
 
 func TestStreamDecoder(t *testing.T) {
 	// Representative events from a real `claude -p --output-format stream-json --verbose` run.
@@ -180,6 +203,62 @@ func TestStreamDecoderModelLine(t *testing.T) {
 	}
 }
 
+func TestLoopProviderIdentityUsesReportedModelAndDeduplicates(t *testing.T) {
+	var out, tail, forkLog, renderedTrace bytes.Buffer
+	announce := providerIdentityAnnouncer("claude", "opus", "", "personal", io.MultiWriter(&forkLog, &renderedTrace), nil)
+	d := newIterationStreamDecoder("claude", &out, &tail, nil, "personal", "", "opus", announce)
+	got := captureStderr(t, func() {
+		_, _ = d.Write([]byte(`{"type":"system","subtype":"init","model":"claude-\u001b[31mopus-5"}` + "\n"))
+		_, _ = d.Write([]byte(`{"type":"system","subtype":"init","model":"claude-\u001b[31mopus-5"}` + "\n"))
+	})
+	if got != "\nStarting claude:claude-opus-5@personal\n" {
+		t.Fatalf("loop identity = %q", got)
+	}
+	if strings.Contains(out.String(), "· using") {
+		t.Fatalf("loop decoder retained duplicate model narration: %q", out.String())
+	}
+	for label, captured := range map[string]string{"fork log": forkLog.String(), "rendered trace": renderedTrace.String()} {
+		if captured != "\nStarting claude:claude-opus-5@personal\n" || strings.Contains(captured, "\x1b") {
+			t.Fatalf("%s identity = %q, want one plain captured heading", label, captured)
+		}
+	}
+}
+
+func TestLoopProviderIdentityUsesSelectedTargetUntilAReportedModelArrives(t *testing.T) {
+	var out, tail bytes.Buffer
+	d := newIterationStreamDecoder("claude", &out, &tail, nil, "personal", "", "opus",
+		providerIdentityAnnouncer("claude", "opus", "high", "personal", nil, nil))
+	got := captureStderr(t, func() {
+		_, _ = d.Write([]byte(`{"type":"system","subtype":"init"}` + "\n"))
+		_, _ = d.Write([]byte(`{"type":"system","subtype":"init","model":"claude-opus-5"}` + "\n"))
+	})
+	if got != "\nStarting claude:opus/high@personal\n\nStarting claude:claude-opus-5/high@personal\n" {
+		t.Fatalf("missing-model identity = %q", got)
+	}
+	if strings.Contains(out.String(), "· using") {
+		t.Fatalf("a missing reported model retained duplicate narration: %q", out.String())
+	}
+}
+
+func TestLoopProviderIdentityWrapsBeforeWritingLiveHistory(t *testing.T) {
+	const width = 28
+	model := "claude-" + strings.Repeat("very-long-model", 3) + "[1m]"
+	var captured bytes.Buffer
+	announce := providerIdentityAnnouncer("claude", "", "high", "personal", &captured, func() int { return width })
+	got := captureStderr(t, func() { announce(model + "\x1b[31m") })
+	for _, output := range []string{got, captured.String()} {
+		for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+			if strings.Contains(line, "\x1b") || len([]rune(line)) > width-1 {
+				t.Fatalf("wrapped identity retained controls or exceeded the live width: %q", output)
+			}
+		}
+		joined := strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(output), "\n", ""), "  ", "")
+		if !strings.Contains(joined, model) {
+			t.Fatalf("wrapped identity corrupted the canonical model: %q", output)
+		}
+	}
+}
+
 func TestStreamDecoderRateLimit(t *testing.T) {
 	now := time.Now()
 	// A blocking rate_limit_event is translated into the text ladder.DetectLimit understands, with the
@@ -293,7 +372,8 @@ func TestClaudeTerminalCreditLimitPromotion(t *testing.T) {
 	if classification.outcome != "rate_limit" || !classification.limit.Limited {
 		t.Fatalf("terminal credit-limit classification = %+v, diagnostic %q", classification, diagnostic.String())
 	}
-	if !strings.Contains(tail.String(), notice) || !strings.Contains(out.String(), notice) {
+	visible := strings.Join(strings.Fields(out.String()), " ")
+	if !strings.Contains(tail.String(), notice) || !strings.Contains(visible, notice) {
 		t.Fatalf("terminal credit-limit notice was not preserved for display/response: out=%q tail=%q", out.String(), tail.String())
 	}
 

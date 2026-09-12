@@ -167,6 +167,28 @@ func TestParseLoopArgs(t *testing.T) {
 	}
 }
 
+func TestLoopContinueCommandPreservesExplicitQueues(t *testing.T) {
+	target, err := agents.ParseTarget("claude:opus@personal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := loopContinueCommand(target, true, "", []string{
+		".agent/tasks",
+		"apps/customer portal/.agent/tasks",
+		"queue'; touch nope; '",
+	})
+	want := "coop loop claude:opus@personal --tasks .agent/tasks --tasks 'apps/customer portal/.agent/tasks' --tasks 'queue'\"'\"'; touch nope; '\"'\"''"
+	if got != want {
+		t.Fatalf("continue command = %q, want %q", got, want)
+	}
+	if got := loopContinueCommand(agents.Target{}, false, "frontier", []string{"api/.agent/tasks"}); got != "coop loop frontier --tasks api/.agent/tasks" {
+		t.Fatalf("preset continuation = %q", got)
+	}
+	if got := loopContinueCommand(agents.Target{}, false, "", nil); got != "coop loop" {
+		t.Fatalf("default continuation = %q", got)
+	}
+}
+
 func TestLaunchPresetPinsFirstRungAndWiresConsultRole(t *testing.T) {
 	repo := t.TempDir()
 	presetDir := filepath.Join(repo, ".agent", "presets", "duo")

@@ -1,8 +1,10 @@
 package loop
 
 import (
+	"fmt"
 	"time"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -38,8 +40,17 @@ func (c *Control) rotateOnLimit(r *ladder.Rotation, resetAt time.Time, waits *in
 		r.ClearExpired(time.Now())
 		return agent
 	}
-	ui.Note("%s", limitSentence(prev))
-	ui.Note("  Continuing with %s", r.Active())
+	printLoopCaution(fmt.Sprintf("%s reached its usage limit, continuing with %s",
+		cleanDiagnosticLine(agents.DisplayTarget(prev.String())),
+		cleanDiagnosticLine(agents.DisplayTarget(r.Active().String()))))
 	*waits = 0 // only consecutive all-limited waits count toward the stop cap
 	return agent
+}
+
+func printLoopCaution(message string) {
+	lines := ui.WrapLines(cleanDiagnosticLine(message), loopOutputWidth(nil)-4)
+	ui.Caution("%s", lines[0])
+	for _, line := range lines[1:] {
+		ui.Note("    %s", line)
+	}
 }
