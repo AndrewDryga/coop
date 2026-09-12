@@ -2,8 +2,8 @@
 name: test-fixture-guards-vs-timing-bounds
 description: a test wait that guards a broken fixture is generous (testutil/wait, 60 s); a tight wall-clock bound is reserved for timing that IS the behavior under test, and then attributes its phases
 subsystem: testing
-sources: [internal/testutil/wait/wait.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/consult/instructions_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/service_test.go]
-updated: 2026-09-10
+sources: [internal/testutil/wait/wait.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/consult/instructions_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go]
+updated: 2026-09-13
 ---
 
 Two kinds of waits look alike in a test and fail alike on a loaded host, but mean opposite things.
@@ -49,7 +49,19 @@ is monotonic arithmetic that holds under any load), keep the real Git transfer f
 (the object arrived), and model slow startup with a PATH shim (`sleep 0.3; exec git`) to show the
 old test fails and the new one does not (`internal/sessionsvc/source_test.go`).
 
+**A terminal result is not a pending fixture.** Session tests use `sessionOperationReached` to
+report an unexpected failed/uncertain operation with its id, error code and detail immediately.
+The generous wait still guards reserved/running operations; extending it cannot repair a recorded
+storage refusal. Ordinary workspace fixtures explicitly configure `Config.StorageLimits` through
+`newSessionServiceWithTestStorage`: test-volume watermarks and a small reserve, but normal grace
+and measurement intervals. The focused storage helper's nanosecond interval is not an ordinary
+fixture default. Production limits and dedicated reserve/adoption tests stay independent.
+
 ## Changelog
+- 2026-09-13 — reproduced an ordinary session fixture refusing allocation under the host's 24.7 GB
+  production reserve. Added explicit test storage configuration and terminal-operation diagnostics;
+  preserved production-default and reserve/refusal/recovery coverage instead of changing host policy
+  or waiting for impossible success.
 - 2026-09-10 — added the injected-deadline shape after the fetch-may-outlive-lookup regression blew
   its 250 ms budget in a loaded gate; now observed on the seam, fails instantly against a shared
   deadline and two near-misses, 20 focused runs and 3 package runs green (task

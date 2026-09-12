@@ -746,8 +746,13 @@ func TestSessionHTTPAsyncCreateReturnsOperationAndCoalescesReplay(t *testing.T) 
 		if got.Code != http.StatusOK {
 			return false
 		}
-		return json.Unmarshal(got.Body.Bytes(), &operation) == nil &&
-			operation.State == session.OperationSucceeded
+		if err := json.Unmarshal(got.Body.Bytes(), &operation); err != nil {
+			t.Fatal(err)
+		}
+		return sessionOperationReached(t, session.Operation{
+			ID: operation.ID, State: operation.State,
+			ErrorCode: operation.ErrorCode, ErrorDetail: operation.ErrorDetail,
+		}, session.OperationSucceeded)
 	})
 	if operation.ResourceType != "session" || operation.ResourceID == "" {
 		t.Fatalf("completed async operation = %+v", operation)
@@ -1232,7 +1237,7 @@ func TestSessionHTTPPreparesPolicyOptedWarmExecution(t *testing.T) {
 	policy.WarmIdleTimeout = 15 * time.Minute
 	policies["responder"] = policy
 	runner := &preparingHTTPRunner{}
-	service, err := NewService(Config{
+	service, err := newSessionServiceWithTestStorage(t, Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: policies, Runner: runner,
 	})
 	if err != nil {
@@ -1274,7 +1279,7 @@ func newHTTPTestSessionService(t *testing.T, ladder ...string) (*Service, string
 		policy.Targets = mustTargets(ladder...)
 		policies["responder"] = policy
 	}
-	service, err := NewService(Config{
+	service, err := newSessionServiceWithTestStorage(t, Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: policies,
 		Runner: &httpTestSessionRunner{},
 		ReviewGate: ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {

@@ -193,7 +193,7 @@ func TestSessionServiceRunReviewUsesConfiguredRemoteParent(t *testing.T) {
 	policy := policies["responder"]
 	policy.Remote, policy.Branch = "origin", "main"
 	policies["responder"] = policy
-	service, err := NewService(Config{
+	service, err := newSessionServiceWithTestStorage(t, Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"),
 		Policies:  policies,
 		ReviewGate: ReviewGateFunc(func(_ context.Context, _, _ string) (ReviewGateResult, error) {
@@ -876,7 +876,7 @@ func newReviewTestService(t *testing.T, repo string, maxPatchBytes int, gate Rev
 		Name: "responder", Repository: repo, Targets: mustTargets("codex@work"), MaxTurns: 10,
 		MaxQueuedTurns: 5, MaxQueuedBytes: 1 << 20, MaxPatchBytes: maxPatchBytes, TurnTimeout: time.Second,
 	}
-	service, err := NewService(Config{
+	service, err := newSessionServiceWithTestStorage(t, Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: policies, ReviewGate: gate,
 		Runner: RunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) { return turn, nil }),
 	})

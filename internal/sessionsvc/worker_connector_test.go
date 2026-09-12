@@ -32,7 +32,7 @@ func TestWorkerActivitySurvivesAsyncCreateAcknowledgementAndRestart(t *testing.T
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	policy := testSessionPolicies(repo)["responder"]
-	service, err := NewService(Config{
+	service, err := newSessionServiceWithTestStorage(t, Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"), SourceConfig: &config.Config{},
 		Policies: map[string]Policy{"responder": policy},
 		Runner: RunnerFunc(func(context.Context, session.Session, session.Turn) (session.Turn, error) {
@@ -291,7 +291,7 @@ func TestWorkerActivitySurvivesAsyncCreateAcknowledgementAndRestart(t *testing.T
 	var completed session.Operation
 	waitForSessionTest(t, func() bool {
 		completed, err = service.GetOperation(ctx, command.IdempotencyKey)
-		return err == nil && completed.State == session.OperationSucceeded
+		return err == nil && sessionOperationReached(t, completed, session.OperationSucceeded)
 	})
 	if completed.ID != accepted.Operation.ID || completed.IdempotencyKey != command.IdempotencyKey ||
 		completed.ResourceType != "session" || completed.ResourceID == "" {

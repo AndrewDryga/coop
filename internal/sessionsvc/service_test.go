@@ -1573,7 +1573,7 @@ func TestSessionServiceAsyncCreateReturnsBeforeSlowPinAndCompletes(t *testing.T)
 	close(release)
 	waitForSessionTest(t, func() bool {
 		current, err = service.Store().GetOperationByID(context.Background(), op.ID)
-		return err == nil && current.State == session.OperationSucceeded
+		return err == nil && sessionOperationReached(t, current, session.OperationSucceeded)
 	})
 	created, err := service.Store().GetSession(context.Background(), current.ResourceID)
 	if err != nil || created.ExternalRef != "slow pin" {
@@ -1624,9 +1624,9 @@ func TestSessionServiceStartupRecoversAsyncCreateAndMakesOtherOperationsUncertai
 		recovered, _ = after.Store().GetOperationByID(context.Background(), create.ID)
 		uncertain, _ = after.Store().GetOperationByID(context.Background(), other.ID)
 		reservedAfter, _ = after.Store().GetOperationByID(context.Background(), reserved.ID)
-		return recovered.State == session.OperationSucceeded &&
-			uncertain.State == session.OperationUncertain &&
-			reservedAfter.State == session.OperationFailed
+		return sessionOperationReached(t, recovered, session.OperationSucceeded) &&
+			sessionOperationReached(t, uncertain, session.OperationUncertain) &&
+			sessionOperationReached(t, reservedAfter, session.OperationFailed)
 	})
 	if recovered.ResourceType != "session" || recovered.ResourceID == "" ||
 		uncertain.ErrorCode != session.CodeOperationUncertain ||
@@ -1680,7 +1680,7 @@ func TestSessionServiceShutdownLeavesActiveCreateRecoverable(t *testing.T) {
 	var recovered session.Operation
 	waitForSessionTest(t, func() bool {
 		recovered, _ = after.Store().GetOperationByID(context.Background(), op.ID)
-		return recovered.State == session.OperationSucceeded
+		return sessionOperationReached(t, recovered, session.OperationSucceeded)
 	})
 	if recovered.ResourceType != "session" || recovered.ResourceID == "" {
 		t.Fatalf("recovered create = %+v", recovered)
@@ -1729,7 +1729,7 @@ func TestSessionServiceCancelledSynchronousDuplicateCannotFailAsyncCreate(t *tes
 	close(release)
 	waitForSessionTest(t, func() bool {
 		current, _ = service.Store().GetOperationByID(context.Background(), op.ID)
-		return current.State == session.OperationSucceeded
+		return sessionOperationReached(t, current, session.OperationSucceeded)
 	})
 }
 
@@ -1811,7 +1811,7 @@ func TestSessionServiceWatchdogPreservesPendingCancelUntilWorkerRegisters(t *tes
 	close(release)
 	waitForSessionTest(t, func() bool {
 		op, _ = service.Store().GetOperation(context.Background(), "cancel-delayed-worker")
-		return op.State == session.OperationSucceeded
+		return sessionOperationReached(t, op, session.OperationSucceeded)
 	})
 	stored, err := service.GetTurn(context.Background(), sess.ID, turn.ID)
 	if err != nil || stored.State != session.TurnCancelled {
@@ -1879,7 +1879,7 @@ func TestSessionServiceLogsSanitizedOperationFailureWithCorrelationID(t *testing
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	var logs bytes.Buffer
-	service, err := NewService(Config{
+	service, err := newSessionServiceWithTestStorage(t, Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: testSessionPolicies(repo),
 		Runner: RunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
 			return turn, nil
@@ -4043,7 +4043,7 @@ func TestSessionServiceStopWaitsForWorkerBeforeClosingStore(t *testing.T) {
 		<-release
 		return turn, ctx.Err()
 	})
-	service, err := NewService(Config{
+	service, err := newSessionServiceWithTestStorage(t, Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: testSessionPolicies(repo),
 		Runner: runner, StopTimeout: time.Millisecond,
 	})
@@ -4130,11 +4130,8 @@ func TestSessionServiceStopCancelsInFlightCreateGitAndRestartRecovers(t *testing
 	var current session.Operation
 	waitForSessionTest(t, func() bool {
 		current, _ = after.Store().GetOperationByID(context.Background(), op.ID)
-		return current.State == session.OperationSucceeded || current.State == session.OperationFailed
+		return sessionOperationReached(t, current, session.OperationSucceeded)
 	})
-	if current.State != session.OperationSucceeded {
-		t.Fatalf("recovered create = %+v", current)
-	}
 }
 
 type startupCleaningRunner struct {
@@ -4403,7 +4400,7 @@ func TestSessionServiceCloseUsesKnownRuntimeCleanupWithoutStartupScan(t *testing
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	runner := &closedCleaningRunner{}
-	service, err := NewService(Config{
+	service, err := newSessionServiceWithTestStorage(t, Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"),
 		Policies:  testSessionPolicies(repo),
 		Runner:    runner,
@@ -4473,7 +4470,7 @@ func TestPreparingWarmRuntimeInvalidatesEarlierCleanupProof(t *testing.T) {
 	policy := policies["responder"]
 	policy.WarmIdleTimeout = time.Minute
 	policies["responder"] = policy
-	service, err := NewService(Config{
+	service, err := newSessionServiceWithTestStorage(t, Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"),
 		Policies:  policies,
 		Runner:    runner,
@@ -4516,7 +4513,7 @@ func TestPreparingWarmRuntimeCannotRaceSuccessfulCleanupStamp(t *testing.T) {
 	policy := policies["responder"]
 	policy.WarmIdleTimeout = time.Minute
 	policies["responder"] = policy
-	service, err := NewService(Config{
+	service, err := newSessionServiceWithTestStorage(t, Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: policies, Runner: runner,
 	})
 	if err != nil {
@@ -4574,7 +4571,7 @@ func TestSessionMaintenanceRechecksWarmRuntimeAfterItsLeaseExpires(t *testing.T)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	runner := &periodicCleanupRunner{started: make(chan struct{}), release: make(chan struct{})}
 	runner.warm.Store(true)
-	service, err := NewService(Config{
+	service, err := newSessionServiceWithTestStorage(t, Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"),
 		Policies:  testSessionPolicies(repo),
 		Runner:    runner,
@@ -4610,7 +4607,7 @@ func TestSessionMaintenanceBoundsAndRemembersParkedRuntimeCleanup(t *testing.T) 
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	runner := &periodicCleanupRunner{started: make(chan struct{}), release: make(chan struct{})}
-	service, err := NewService(Config{
+	service, err := newSessionServiceWithTestStorage(t, Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"),
 		Policies:  testSessionPolicies(repo),
 		Runner:    runner,
@@ -4650,7 +4647,7 @@ func TestSessionMaintenanceAdvancesPastParkedCleanupFailures(t *testing.T) {
 	runner := &periodicCleanupRunner{
 		started: make(chan struct{}), release: make(chan struct{}), fail: true,
 	}
-	service, err := NewService(Config{
+	service, err := newSessionServiceWithTestStorage(t, Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"),
 		Policies:  testSessionPolicies(repo),
 		Runner:    runner,
@@ -4680,7 +4677,7 @@ func TestSessionServiceRetriesParkedCleanupWithoutRacingActiveTurn(t *testing.T)
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	runner := &periodicCleanupRunner{started: make(chan struct{}), release: make(chan struct{})}
-	service, err := NewService(Config{
+	service, err := newSessionServiceWithTestStorage(t, Config{
 		StateRoot:       filepath.Join(t.TempDir(), "state"),
 		Policies:        testSessionPolicies(repo),
 		Runner:          runner,
@@ -5360,7 +5357,7 @@ func newTestSessionService(t *testing.T, stateRoot string, policies map[string]P
 			return turn, nil
 		})
 	}
-	service, err := NewService(cfg)
+	service, err := newSessionServiceWithTestStorage(t, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -5560,7 +5557,7 @@ func TestSessionServiceHandsTheLadderToTurnsAcrossPolicyEdits(t *testing.T) {
 		})
 	}
 
-	first, err := NewService(Config{
+	first, err := newSessionServiceWithTestStorage(t, Config{
 		StateRoot:     stateRoot,
 		Policies:      withLadder(testSessionPolicies(repo), "codex@work", "codex:fallback-model@work"),
 		RunnerFactory: factory,
@@ -5587,7 +5584,7 @@ func TestSessionServiceHandsTheLadderToTurnsAcrossPolicyEdits(t *testing.T) {
 	policy := drifted["responder"]
 	policy.MaxTurns = policy.MaxTurns + 1
 	drifted["responder"] = policy
-	second, err := NewService(Config{StateRoot: stateRoot, Policies: drifted, RunnerFactory: factory})
+	second, err := newSessionServiceWithTestStorage(t, Config{StateRoot: stateRoot, Policies: drifted, RunnerFactory: factory})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -5604,7 +5601,7 @@ func TestSessionServiceHandsTheLadderToTurnsAcrossPolicyEdits(t *testing.T) {
 	// The operator replaces the ladder entirely: the session's target is on no
 	// current rung, so rotation has nowhere legitimate to move it.
 	replaced := withLadder(testSessionPolicies(repo), "codex:new-primary@work", "codex:new-fallback@work")
-	third, err := NewService(Config{StateRoot: stateRoot, Policies: replaced, RunnerFactory: factory})
+	third, err := newSessionServiceWithTestStorage(t, Config{StateRoot: stateRoot, Policies: replaced, RunnerFactory: factory})
 	if err != nil {
 		t.Fatal(err)
 	}

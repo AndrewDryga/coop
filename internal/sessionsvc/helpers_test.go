@@ -2,16 +2,123 @@ package sessionsvc
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
+
+// Ordinary fixtures need room for small temporary workspaces, not the production worker's
+// share of the developer's disk. Storage-policy tests still set their own explicit limits.
+func newSessionServiceWithTestStorage(t *testing.T, cfg Config) (*Service, error) {
+	t.Helper()
+	if cfg.StorageLimits == nil {
+		limits := storageTestLimits(t)
+		limits.GraceWindow = DefaultStorageGraceWindow
+		limits.MeasureInterval = DefaultStorageMeasureInterval
+		cfg.StorageLimits = &limits
+	}
+	return NewService(cfg)
+}
+
+// A recorded failure cannot become success by polling longer. Keep the real terminal
+// diagnostic at the call site instead of waiting for the generic fixture deadline.
+func sessionOperationReached(t interface {
+	Helper()
+	Fatalf(string, ...any)
+}, op session.Operation, want session.OperationState) bool {
+	t.Helper()
+	if op.State == want {
+		return true
+	}
+	switch op.State {
+	case "", session.OperationReserved, session.OperationRunning:
+		return false
+	default:
+		t.Fatalf("operation %s ended %s, want %s: %s: %s", op.ID, op.State, want, op.ErrorCode, op.ErrorDetail)
+		return false
+	}
+}
+
+type operationTestFailure struct{ message string }
+
+func (*operationTestFailure) Helper() {}
+func (f *operationTestFailure) Fatalf(format string, args ...any) {
+	f.message = fmt.Sprintf(format, args...)
+}
+
+func TestSessionOperationWaitReportsTerminalFailures(t *testing.T) {
+	for _, state := range []session.OperationState{
+		"", session.OperationReserved, session.OperationRunning, session.OperationSucceeded,
+		session.OperationFailed, session.OperationUncertain,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			failure := &operationTestFailure{}
+			op := session.Operation{ID: "fixture-create", State: state,
+				ErrorCode: session.CodeStorageUnavailable, ErrorDetail: "fixture reserve exhausted"}
+			if got := sessionOperationReached(failure, op, session.OperationSucceeded); got != (state == session.OperationSucceeded) {
+				t.Fatalf("operation readiness = %v for %s", got, state)
+			}
+			if state == session.OperationFailed || state == session.OperationUncertain {
+				for _, want := range []string{op.ID, string(state), string(op.ErrorCode), op.ErrorDetail} {
+					if !strings.Contains(failure.message, want) {
+						t.Fatalf("terminal diagnostic %q lacks %q", failure.message, want)
+					}
+				}
+				failure.message = ""
+				if !sessionOperationReached(failure, op, state) || failure.message != "" {
+					t.Fatal("an explicitly expected failure did not satisfy the wait")
+				}
+			} else if failure.message != "" {
+				t.Fatalf("non-failure diagnostic = %q", failure.message)
+			}
+		})
+	}
+}
+
+func TestSessionFixturesConfigureStorageWithoutChangingProductionDefaults(t *testing.T) {
+	cfg := Config{StateRoot: filepath.Join(t.TempDir(), "state"), Policies: bareTestPolicies()}
+	ordinary, err := newSessionServiceWithTestStorage(t, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ordinary.Stop() })
+	limits := ordinary.storageLimitsFor(500 << 30)
+	if limits.ReserveBytes != 1<<20 || limits.GraceWindow != DefaultStorageGraceWindow ||
+		limits.MeasureInterval != DefaultStorageMeasureInterval {
+		t.Fatalf("ordinary fixture storage = %+v", limits)
+	}
+	// Bypass the fixture helper: omitting Config.StorageLimits must still select production policy.
+	cfg.StateRoot = filepath.Join(t.TempDir(), "state")
+	production, err := NewService(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = production.Stop() })
+	defaults := production.storageLimitsFor(500 << 30)
+	if defaults != DefaultStorageLimits(500<<30) || defaults.ReserveBytes != 25<<30 ||
+		defaults.LowWatermarkBytes != 450<<30 || defaults.HighWatermarkBytes != 475<<30 {
+		t.Fatalf("production defaults = %+v", defaults)
+	}
+	cfg.StateRoot = filepath.Join(t.TempDir(), "state")
+	cfg.StorageLimits = &defaults
+	configured, err := newSessionServiceWithTestStorage(t, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = configured.Stop() })
+	if got := configured.storageLimitsFor(500 << 30); got != defaults {
+		t.Fatalf("fixture replaced explicit storage policy: %+v", got)
+	}
+}
 
 // The three-line git/path readers every git-touching package's tests grow. They are per-package
 // on purpose: internal/cli has its own, and a shared leaf for `git rev-parse` plus os.Lstat would
