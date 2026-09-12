@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -375,6 +376,45 @@ func TestCompleteTheAssignedTaskMovesAndNormalizes(t *testing.T) {
 	}
 	if text := sess.mustCall("tasks_complete", map[string]any{"id": "t1"}); !strings.Contains(text, "already done") {
 		t.Fatalf("second complete = %s", text)
+	}
+}
+
+func TestAssignedCompletionRefusalCanBeRepairedInTheSameSession(t *testing.T) {
+	root := queue(t, map[string]string{"t1": tasks.StateInProgress})
+	s := newServer(t, root, "t1")
+	var ready atomic.Bool
+	var checks atomic.Int32
+	s.authority.ValidateAssignedCompletion = func() error {
+		checks.Add(1)
+		if !ready.Load() {
+			return fmt.Errorf("missing Coop-Task binding")
+		}
+		return nil
+	}
+	sess := newSession(t, s)
+	before, err := os.ReadFile(filepath.Join(root, tasks.StateInProgress, "t1", "state.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := sess.mustRefuse("tasks_complete", map[string]any{"id": "t1"})
+	if !strings.Contains(text, "missing Coop-Task binding") || !strings.Contains(text, "retry tasks_complete in this turn") {
+		t.Fatalf("completion refusal lacks repair guidance: %s", text)
+	}
+	after, err := os.ReadFile(filepath.Join(root, tasks.StateInProgress, "t1", "state.md"))
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("refused completion changed state: %q, %v", after, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, tasks.StateDone, "t1")); !os.IsNotExist(err) {
+		t.Fatalf("refused task moved to done: %v", err)
+	}
+	ready.Store(true)
+	sess.mustCall("tasks_complete", map[string]any{"id": "t1"})
+	if checks.Load() != 2 {
+		t.Fatalf("completion checks = %d, want a fresh check on both calls", checks.Load())
+	}
+	sess.mustCall("tasks_complete", map[string]any{"id": "t1"})
+	if checks.Load() != 2 {
+		t.Fatal("idempotent completion revalidated an already-moved task")
 	}
 }
 

@@ -5,8 +5,9 @@
 // network route to change task state.
 //
 // The server is built host-side from an explicit Authority — never ambient config — and every
-// tool works on every task in those queues. The one refusal is the lease coop already has: a
-// mutation on a task another live process holds is refused at the call, before any work is lost.
+// tool works on every task in those queues. Lease refusals protect tasks another live process
+// holds. Assigned completion also has a pre-move commit check for repairable feedback; the
+// post-exit audit remains authoritative.
 package taskmcp
 
 import (
@@ -49,6 +50,11 @@ type Authority struct {
 	// AssignLoopTaskOnly). Mutations on it run under that lease; the server never takes a second
 	// one on the same id. Empty when nothing is assigned: then every mutation leases for itself.
 	Assigned string
+	// ValidateAssignedCompletion checks the launching iteration's immutable commit boundary
+	// before the assigned folder moves. It gives the live agent a chance to repair a missing
+	// commit; the host's complete post-exit audit still decides whether completion is accepted.
+	// Nil for standalone task-channel probes with no Git completion contract.
+	ValidateAssignedCompletion func() error
 	// ProposalOutbox, when set, is where tasks_propose writes validated proposals instead of
 	// creating queue folders: a fork's one-task projection has no canonical todo/backlog, so the
 	// host imports the outbox when the fork lands (tasks.ImportForkProposals).

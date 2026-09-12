@@ -446,6 +446,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 			[2]string{"Task:", "coop tasks path " + t.ID})
 	}
 	fails, waits, retries, handoffs, timeouts, completed, stalls := 0, 0, 0, 0, 0, 0, 0
+	completionRepairs := map[string]int{}
 	completedThisRun := map[string]bool{}
 	settledBaseline := c0.Done + c0.Blocked // "settled" = tasks out of the actionable set (done OR blocked)
 	// A commit between iterations is progress too (see below), and every completion is validated
@@ -558,9 +559,18 @@ reviewAgain:
 			// The box's task tools: every queue this loop works, the leased task, and — in a fork —
 			// the proposal outbox the host imports at merge. Built here, where the lease lives; the
 			// box only carries the server.
+			// A successful precheck is not a completed folder move; retain any earlier refusal.
+			var completionRefused atomic.Bool
 			taskTools, toolsErr := taskmcp.New(taskmcp.Authority{
 				QueueRoots: hosts, Assigned: assigned.Item.ID, ProposalOutbox: c.proposalOutboxPath(repo),
 				Owner: tasks.TaskLeaseOwner{RunID: c.runID, PID: os.Getpid(), Provider: agent, Target: target.String()},
+				ValidateAssignedCompletion: func() error {
+					err := checkAssignedCompletion(repo, iterHead, assigned.Item.ID, lease.Reopen, snapshot)
+					if errors.Is(err, errCompletionBinding) {
+						completionRefused.Store(true)
+					}
+					return err
+				},
 			})
 			if toolsErr != nil {
 				return 1, errors.Join(toolsErr, lease.Release())
@@ -756,6 +766,37 @@ reviewAgain:
 				touched[id] = true
 			}
 			var missing, tolerated []string
+			completionCandidate := assignedCompletion
+			// A tool refusal leaves the task in progress. If the worker exits successfully instead
+			// of repairing it in-session, give the same bounded recovery as a rejected folder move.
+			if completionCandidate == nil && completionRefused.Load() && classification.outcome == "success" && lease.Reopen == nil {
+				current, ok, scanErr := tasks.CurrentTask(assigned.Root, assigned.Item.ID)
+				if scanErr != nil {
+					refRelease()
+					return 1, errors.Join(scanErr, lease.Release(), windows.Abandon())
+				}
+				if ok && current.State == tasks.StateInProgress {
+					checkErr := checkAssignedCompletion(repo, iterHead, assigned.Item.ID, nil, snapshot)
+					if !errors.Is(checkErr, errCompletionBinding) {
+						// A repaired commit without a successful final tool call is not completion.
+						// Do not advance the iteration base and lose its gate/signoff attribution.
+						releaseErr := errors.Join(lease.Release(), windows.Close())
+						refRelease()
+						stopErr := errors.Join(fmt.Errorf("task %s exited before confirming completion; its work is preserved in progress — inspect its task notes before retrying", assigned.Item.ID), checkErr, releaseErr)
+						if checkErr == nil && releaseErr == nil {
+							ui.Failure("Task completion was not confirmed",
+								fmt.Sprintf("%s has a commit, but its completion was not confirmed.\nIts work is preserved in progress; Coop cannot safely advance to another task.", active),
+								[2]string{"Inspect:", "coop tasks path " + assigned.Item.ID},
+								[2]string{"Then continue:", continueCmd})
+							return 1, ui.Reported(stopErr)
+						}
+						return 1, stopErr
+					}
+					candidate := tasks.QueuedTask{Root: assigned.Root, Item: current}
+					completionCandidate = &candidate
+					missing = []string{assigned.Item.ID}
+				}
+			}
 			if assignedCompletion != nil {
 				missing, tolerated = tasks.CompletionUnbindableTasks(repo, iterHead, headAfter, finished, lease.Reopen, touched)
 			}
@@ -768,7 +809,13 @@ reviewAgain:
 				return 1, errors.Join(reportErr, restoreErr, releaseErr)
 			}
 			if len(missing) > 0 {
-				restoreErr = errors.Join(restoreErr, tasks.RestoreQueuedCompletion(*assignedCompletion, lease.Reopen != nil))
+				restoreErr = errors.Join(restoreErr, tasks.RestoreQueuedCompletion(*completionCandidate, lease.Reopen != nil))
+				canRepair := restoreErr == nil && len(unowned) == 0 && lease.Reopen == nil && classification.outcome == "success" && iterCtx.Err() == nil &&
+					tasks.UncommittedCompletionCanRetry(repo, iterHead, headAfter, assigned.Item.ID)
+				parked := canRepair && completionRepairs[assigned.Item.ID] > 0
+				if parked {
+					restoreErr = tasks.ParkUncommittedCompletion(assigned)
+				}
 				var windowErr error
 				if restoreErr != nil {
 					windowErr = windows.Abandon()
@@ -777,6 +824,21 @@ reviewAgain:
 				}
 				releaseErr := errors.Join(lease.Release(), windowErr)
 				refRelease()
+				if canRepair && restoreErr == nil && releaseErr == nil {
+					completionRepairs[assigned.Item.ID]++
+					outcome := "completion_rejected"
+					if parked {
+						outcome = "completion_blocked"
+						ui.Alert("Task needs attention",
+							fmt.Sprintf("%s is blocked, not complete: both attempts ended without a commit.\nContinuing with the remaining tasks.", active),
+							[2]string{"Review:", "coop tasks decisions"})
+					} else {
+						ui.Alert("Task completion needs a commit",
+							fmt.Sprintf("%s is still in progress; its notes are preserved.\nStarting one automatic repair attempt.", active))
+					}
+					c.recordStage(repo, runid, "work", outcome, rot.Active(), iterStart, code, retries, 0, iterHead, hosts, nil, nil, res)
+					continue
+				}
 				var unownedErr error
 				if len(unowned) > 0 {
 					unownedErr = tasks.UnownedCompletionError(unowned, nil)
@@ -786,6 +848,13 @@ reviewAgain:
 					// With audit authority, missing is exactly the assigned reopened task and the
 					// failure was the semantic replay validation, not trailer counting.
 					bindErr = tasks.AuditCompletionError(missing[0], restoreErr)
+				}
+				if lease.Reopen == nil && restoreErr == nil && unownedErr == nil && releaseErr == nil {
+					ui.Failure("Task completion rejected",
+						fmt.Sprintf("The new commit range does not verify one unique task binding.\n%s is still in progress; its work and recovery notes are preserved.\nCoop cannot safely advance to another task.", active),
+						[2]string{"Inspect:", "coop tasks path " + assigned.Item.ID},
+						[2]string{"Then continue:", continueCmd})
+					return 1, ui.Reported(bindErr)
 				}
 				return 1, errors.Join(bindErr, unownedErr, releaseErr)
 			}

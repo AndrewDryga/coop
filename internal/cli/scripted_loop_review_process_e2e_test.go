@@ -1040,7 +1040,8 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReview(t, suite, work, 20*time.Second)
 		if result.Err != nil || result.ExitCode != 1 ||
-			!strings.Contains(result.Stderr, "reachable HEAD each need exactly one commit") {
+			!strings.Contains(result.Stderr, "Task completion rejected") ||
+			!strings.Contains(result.Stderr, "Coop cannot safely advance to another task") {
 			t.Fatalf("forged review authority = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
 				result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}

@@ -28,6 +28,7 @@ import (
 // the prompt never asks the agent to move a folder or write outbox JSON by hand.
 func LoopWorkPrompt(repo, assignedRoot, assignedID, agent string, peers []agents.Target, p *preset.Preset, auditReopen bool) string {
 	commitPolicy := "Do the work, run the gate, then commit your work — END the commit message with a trailer line `Coop-Task: <task-id>` (the task id is its folder name), so the harness can bind the commit to the task, resume correctly if interrupted, and reconcile the queue after a fork merge."
+	commitPolicy += " If the task's acceptance permits a decision, decline, or verification with NO source change and it has no existing Coop-Task binding, record that real outcome using `git commit --allow-empty --only`: put the conclusion, acceptance evidence, and actual verification in the message, ending with the same trailer. This is a decision record, not fabricated implementation; do not invent source edits or include unrelated staged files. Never use it to claim unfinished work or an unrun required gate is complete."
 	citationPolicy := "When you cite that commit in state.md or log.md, name it by its `Coop-Task: <task-id>` trailer (or the task id), NOT its SHA — coop re-signs your commit on the host after this run, which rewrites its SHA, so a written-down SHA goes stale."
 	completionPolicy := "AFTER the commit, refresh state.md one last time with tasks_update_state while the task is still in 10_in_progress/ (preserve the useful Done so far and Traps), then call tasks_complete on your task as the final action: it sets Status to complete and Next action to none and moves the folder into 99_done/; write nothing more inside that task folder after it."
 	if auditReopen {
@@ -46,6 +47,8 @@ func LoopWorkPrompt(repo, assignedRoot, assignedID, agent string, peers []agents
 		"Put disposable but resumable scratch work (temporary worktrees, patches, generated files) under the assigned task's tmp/ directory; it survives interruption and blocked transitions but Coop removes it on completion. Before finishing, promote anything a reviewer or future maintainer needs to the task's durable artifacts/ directory.",
 		"Read a file before you edit it — an edit to a file you haven't read is rejected and wastes a turn (don't survey with `cat` then edit).",
 		"Do not end your turn while any gate, consult, delegate, or other background job you started remains live; wait for and inspect its result, and rerun an ambiguous gate in the foreground.",
+		"Keep the real exit status of every required check: capture its full output, then inspect a bounded tail; never treat the exit status of tail/grep as the gate's result. A required check that fails because of the environment is still not green — fix the in-scope cause or record the actual missing authority; do not complete on a claimed exception.",
+		"Keep the human-facing narration concise: announce the current work, meaningful discoveries, and any blocker. Put detailed reasoning, evidence tables, and command output in the task log/artifacts. End with a short outcome, actual verification, and any remaining limitation; do not repeat the full investigation in the terminal.",
 		commitPolicy,
 		citationPolicy,
 		completionPolicy,

@@ -116,6 +116,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [isolate-state-dont-serialize](isolate-state-dont-serialize.md) — when shared state breaks concurrency, isolate the state; never lock the users of it
 
 **The loop**
+- [loop-completion-refusals-keep-work-moving](loop-completion-refusals-keep-work-moving.md) — immediate completion feedback and bounded safe repair keep unattended work moving without weakening acceptance
 - [provider-reset-timezones-preserve-iana](provider-reset-timezones-preserve-iana.md) — preserve exact provider reset zones; parse safe IANA names and reject ambiguous abbreviations
 
 **Scaffolding**

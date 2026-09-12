@@ -26,6 +26,7 @@ type loopProcessPlan struct {
 }
 
 type loopProcessAttempt struct {
+	TaskID string `json:"task_id,omitempty"`
 	Target string `json:"target"`
 	Stage  string `json:"stage"`
 	Result string `json:"result"`

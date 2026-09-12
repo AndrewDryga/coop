@@ -3,7 +3,7 @@ name: in-box-task-channel
 description: the loop box reaches its task queue through a coop-owned MCP server over a helper-container unix socket, never a host-created one and never HTTP
 subsystem: box
 sources: [internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/box/taskchannel.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go]
-updated: 2026-09-10
+updated: 2026-09-12
 ---
 
 A loop work box changes task state through the `coop-tasks` MCP server (eight tools:
@@ -47,9 +47,9 @@ projections carry it unchanged (see [[mcp-authority-projection]]). No bearer tok
 mounted only into this run's box, so the mount is the authority, not a secret.
 
 **Authority is explicit, never ambient.** `taskmcp.Authority{QueueRoots, Assigned, ProposalOutbox,
-Owner}` is built host-side by the loop (`internal/loop/loop.go`, where the lease lives). Every tool
+Owner, ValidateAssignedCompletion}` is built host-side by the loop (`internal/loop/loop.go`, where the lease lives). Every tool
 works on every task in those queues — there is no per-run scope; the assigned task is what the prompt
-says to work, not a permission. The ONE refusal is the lease coop already holds: a mutation on a task
+says to work, not a permission. A mutation on a task
 another live process leases is refused at the call (`tasks.TryTaskLease` / `ErrTaskLeased`), with a
 legible "held by another live process" message — the assigned task runs under the launching
 iteration's own lease and never leases twice. `tasks_complete`/`tasks_block` on another task use the
@@ -58,7 +58,16 @@ validated proposal into `Authority.ProposalOutbox` (the same file `tasks.ImportF
 merge); in a plain loop it creates the `00_todo/`/`xx_backlog/` folder directly. Forks reach this same
 `box.Run` plumbing — `internal/loop/iteration.go` builds one RunSpec for plain and fork iterations.
 
+Assigned completion also gets early host feedback: the loop supplies an immutable callback tied
+to that iteration's base and audit authority. `tasks_complete` invokes it before the done move;
+a refused binding leaves the task untouched and the agent can repair it in the same session.
+The complete post-exit ref/lease/raw-history audit remains authoritative. Standalone diagnostic
+servers have no iteration to bind and omit the callback. This does not expose a new tool or let
+provider input choose a validation policy.
+
 ## Changelog
+- 2026-09-12 — traced assigned completion from loop authority through tasks_complete and its
+  post-exit audit; added pre-move feedback without changing the transport or trusted final audit.
 - 2026-09-10 — created with the feature (task 2026-09-08-give-an-in-box-agent-a-coop-owned-task-mcp-serve).
   Records the transport spike outcome (host-mounted socket refused on OrbStack; helper-container named
   volume works), the multiplexer + allowHalfOpen, the lease-only refusal, and the fork path.

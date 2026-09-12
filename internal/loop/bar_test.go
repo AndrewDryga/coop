@@ -16,19 +16,20 @@ func loopWidth(n int) func() int { return func() int { return n } }
 func TestLoopBarSupported(t *testing.T) {
 	for _, c := range []struct {
 		name                 string
-		termProgram          string
+		term                 string
 		stdoutTTY, stderrTTY bool
 		want                 bool
 	}{
-		{"regular terminal", "Apple_Terminal", true, true, true},
+		{"regular terminal", "xterm-256color", true, true, true},
 		{"terminal without identifier", "", true, true, true},
-		{"Warp terminal", "WarpTerminal", true, true, true},
-		{"stdout pipe", "Apple_Terminal", false, true, false},
-		{"stderr pipe", "Apple_Terminal", true, false, false},
+		{"ANSI terminal", "xterm", true, true, true},
+		{"supervised dumb terminal", "dumb", true, true, false},
+		{"stdout pipe", "xterm-256color", false, true, false},
+		{"stderr pipe", "xterm-256color", true, false, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			if got := loopBarSupported(c.termProgram, c.stdoutTTY, c.stderrTTY); got != c.want {
-				t.Errorf("loopBarSupported(%q, %t, %t) = %t, want %t", c.termProgram, c.stdoutTTY, c.stderrTTY, got, c.want)
+			if got := loopBarSupported(c.term, c.stdoutTTY, c.stderrTTY); got != c.want {
+				t.Errorf("loopBarSupported(%q, %t, %t) = %t, want %t", c.term, c.stdoutTTY, c.stderrTTY, got, c.want)
 			}
 		})
 	}

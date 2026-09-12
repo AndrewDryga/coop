@@ -14,9 +14,10 @@ const spinInterval = 120 * time.Millisecond // live-bar spinner cadence
 
 // loopBarSupported reports whether both output streams can host the bottom-pinned main-screen
 // Region. Terminal identity is deliberately irrelevant: the live bar is an interactive feature
-// everywhere, including Warp.
-func loopBarSupported(_ string, stdoutTTY, stderrTTY bool) bool {
-	return stdoutTTY && stderrTTY
+// everywhere, including Warp. TERM=dumb explicitly disables cursor control, including in a PTY
+// used to supervise a real interactive invocation without recording progress-region repaints.
+func loopBarSupported(term string, stdoutTTY, stderrTTY bool) bool {
+	return term != "dumb" && stdoutTTY && stderrTTY
 }
 
 // loopBar is the loop's sticky bottom status while an iteration runs: a spinner, a progress

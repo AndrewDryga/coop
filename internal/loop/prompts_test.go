@@ -166,9 +166,24 @@ func TestLoopWorkPromptAuditFinalization(t *testing.T) {
 			t.Errorf("audit work prompt missing %q:\n%s", want, work)
 		}
 	}
-	for _, forbidden := range []string{"then commit your work", "AFTER the commit"} {
+	for _, forbidden := range []string{"then commit your work", "AFTER the commit", "git commit --allow-empty --only"} {
 		if strings.Contains(work, forbidden) {
 			t.Errorf("audit work prompt retained unconditional commit guidance %q:\n%s", forbidden, work)
+		}
+	}
+}
+
+func TestLoopWorkPromptDecisionOnlyCompletion(t *testing.T) {
+	work := LoopWorkPrompt("/repo", ".agent/tasks", "decision", "claude", nil, nil, false)
+	for _, want := range []string{
+		"acceptance permits a decision", "no existing Coop-Task binding",
+		"git commit --allow-empty --only", "conclusion, acceptance evidence, and actual verification",
+		"do not invent source edits or include unrelated staged files",
+		"Never use it to claim unfinished work or an unrun required gate is complete",
+		"never treat the exit status of tail/grep as the gate's result",
+	} {
+		if !strings.Contains(work, want) {
+			t.Errorf("decision workflow lacks %q", want)
 		}
 	}
 }

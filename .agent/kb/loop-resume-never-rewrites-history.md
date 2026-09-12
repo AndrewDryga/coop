@@ -2,8 +2,8 @@
 name: loop-resume-never-rewrites-history
 description: a leaked box descendant un-completes committed work; resuming it later must never amend a non-HEAD commit, because that reparents the whole branch and cannot pass validation
 subsystem: loop
-sources: [internal/tasks/audit.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/box/image.go, internal/box/run.go]
-updated: 2026-09-05
+sources: [internal/tasks/audit.go, internal/tasks/completion_recovery.go, internal/loop/completion.go, internal/loop/prompts.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/box/image.go, internal/box/run.go]
+updated: 2026-09-12
 ---
 A completed, committed task can land back in the queue with its work already in history. The chain,
 observed twice in emisar on 2026-08-01:
@@ -60,7 +60,26 @@ can hold another task's work at the same time).
 It is gated on the resumed state on purpose: a FRESH claim in a dirty tree is somebody else's work,
 and pointing a new task at it invites cross-task edits.
 
+## No-code decisions and refused completion
+
+A task can legitimately permit a decision without a source change. If it has no existing binding,
+the normal work prompt prescribes a meaningful `git commit --allow-empty --only` carrying the
+conclusion, acceptance evidence, actual verification and one `Coop-Task` trailer. This preserves
+unrelated staged work and the one-commit contract; it never substitutes for unfinished acceptance.
+Host-authorized verification-only audit rework still creates no commit.
+
+Assigned `tasks_complete` validates the binding before moving the folder so the same agent can
+repair it. A successful exit after an ordinary no-commit refusal gets one fresh attempt only when
+HEAD did not move, the entire source checkout is clean, and raw history has no binding to recover.
+A second clean refusal is parked with its evidence and an unanswered decision; other tasks continue.
+Changed history or dirty source stops instead: resetting the iteration base there could omit the
+original diff from protected-gate review and signoff. The final report distinguishes blocked from
+completed work. See [[loop-completion-refusals-keep-work-moving]].
+
 ## Changelog
+- 2026-09-12 — rechecked normal completion versus audit authority; documented meaningful no-code
+  decisions, pre-move tool feedback, and clean no-commit recovery. Committed interruption remains
+  distinct and cannot use the no-change retry path to hide its original diff.
 - 2026-09-03 — re-verified the interrupted-completion path after deleting the retired audit-history
   algorithm and refreshed the shifted `RestoreBackgroundHandoffCompletion` citation; behavior is
   unchanged.

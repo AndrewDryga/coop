@@ -132,7 +132,7 @@ func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName s
 	}
 	tail := &tailWriter{max: 64 << 10}
 	diagnostic := &tailWriter{max: 64 << 10}
-	live := loopBarSupported(os.Getenv("TERM_PROGRAM"), ui.IsTerminal(os.Stdout), ui.IsTerminal(os.Stderr))
+	live := loopBarSupported(os.Getenv("TERM"), ui.IsTerminal(os.Stdout), ui.IsTerminal(os.Stderr))
 
 	termOut, termErr := io.Writer(os.Stdout), io.Writer(os.Stderr)
 	var bar *loopBar

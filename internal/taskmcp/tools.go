@@ -66,7 +66,7 @@ var toolTable = []tool{
 	},
 	{
 		name:        "tasks_complete",
-		description: "Move the task into 99_done/ — the final action after its commit landed — normalizing state.md's Status to complete and Next action to none. Refused when another live process holds the task.",
+		description: "Move the task into 99_done/ — the final action after its commit landed — normalizing state.md's Status to complete and Next action to none. The loop checks the assigned commit before moving: fix any refusal and retry this tool in the same turn. Refused when another live process holds the task.",
 		schema:      object(map[string]any{"id": prop("string", "The task id.")}, "id"),
 		run:         (*Server).complete,
 	},
@@ -401,6 +401,11 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 	// The assigned task moves under the launching iteration's lease; the host finalizes it after
 	// the box exits (commit binding, receipt, tmp/ removal). Normalizing here keeps state.md's
 	// lifecycle fields truthful the moment the folder lands in done.
+	if check := s.authority.ValidateAssignedCompletion; check != nil {
+		if err := check(); err != nil {
+			return refusal(fmt.Sprintf("complete %s: %v; the task has not moved — repair the problem and retry tasks_complete in this turn", loc.item.ID, err))
+		}
+	}
 	if err := tasks.MoveTaskDir(loc.root, loc.item, tasks.StateDone); err != nil {
 		return refusal(fmt.Sprintf("complete %s: %v", loc.item.ID, err))
 	}

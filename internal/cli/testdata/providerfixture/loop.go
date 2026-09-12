@@ -24,6 +24,7 @@ type loopScenario struct {
 }
 
 type loopAttempt struct {
+	TaskID string `json:"task_id,omitempty"`
 	Target string `json:"target"`
 	Stage  string `json:"stage"`
 	Result string `json:"result"`
@@ -48,6 +49,9 @@ func validateLoopScenario(provider string, homes map[string]bool, plan loopScena
 		return fmt.Errorf("loop scenario provider %q does not match first attempt %q", provider, first.Provider)
 	}
 	for i, attempt := range plan.Attempts {
+		if attempt.TaskID != "" && !safeLoopTaskID(attempt.TaskID) {
+			return fmt.Errorf("unsafe loop attempt %d task id %q", i, attempt.TaskID)
+		}
 		target, err := loopAttemptTarget(i, attempt)
 		if err != nil {
 			return err
@@ -92,7 +96,7 @@ func validateLoopResult(index int, stage, result string) error {
 			result == "background-drained" || result == "background-timeout" ||
 			result == "background-drained-complete" || result == "background-timeout-after-restored-completion" ||
 			result == "tool-wait" || result == "tool-gated-complete" || result == "forged-flood-wait" ||
-			result == "progress-gated-complete" {
+			result == "progress-gated-complete" || result == "uncommitted-complete" || result == "decision-complete" {
 			return nil
 		}
 	case "between", "signoff", "verify":
@@ -150,7 +154,11 @@ func consumeLoopAttempt(root, provider string, providerArgv []string, plan loopS
 	if target.Provider != provider {
 		return loopAttempt{}, fmt.Errorf("loop attempt %d expected provider %q, got %q", index, target.Provider, provider)
 	}
-	if err := verifyLoopPrompt(attempt.Stage, plan.TaskID, provider, providerArgv); err != nil {
+	taskID := plan.TaskID
+	if attempt.TaskID != "" {
+		taskID = attempt.TaskID
+	}
+	if err := verifyLoopPrompt(attempt.Stage, taskID, provider, providerArgv); err != nil {
 		return loopAttempt{}, err
 	}
 	cursor.Index++
@@ -174,13 +182,16 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 	if err != nil {
 		return 1, "", err
 	}
+	if attempt.TaskID != "" {
+		plan.TaskID = attempt.TaskID
+	}
 	switch attempt.Result {
 	case "reopen-archive-wait":
 		if err := reopenLoopTask(root, plan.TaskID+"-archive", attempt.Stage); err != nil {
 			return 1, "", err
 		}
 		return waitLoopSignal(root, trace)
-	case "complete", "complete-delay", "complete-gated", "complete-reopen-archive", "complete-host-reopen-archive", "complete-forged-archive-binding", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-changed-descendant", "verify-only", "verify-only-after-block", "second-binding", "background-drained-complete":
+	case "complete", "complete-delay", "complete-gated", "complete-reopen-archive", "complete-host-reopen-archive", "complete-forged-archive-binding", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-changed-descendant", "verify-only", "verify-only-after-block", "second-binding", "background-drained-complete", "uncommitted-complete", "decision-complete":
 		outcome := attempt.Result
 		if outcome == "complete" || outcome == "complete-delay" || outcome == "complete-gated" || outcome == "complete-reopen-archive" || outcome == "complete-host-reopen-archive" || outcome == "complete-forged-archive-binding" || outcome == "complete-extra-unbound" || outcome == "complete-extra-bound" || outcome == "complete-extra-finalized" || outcome == "complete-wait" || outcome == "background-drained-complete" {
 			outcome = ""
@@ -1094,7 +1105,13 @@ func serveLoopWorker(root, provider, taskID, target, outcome string) error {
 		return fmt.Errorf("loop task: %w", err)
 	}
 	change := "loop-" + provider + ".txt"
-	if outcome == "repair-binding" || outcome == "repair-review-binding" || outcome == "repair-older-binding" ||
+	if outcome == "uncommitted-complete" {
+		// Deliberately claims completion with no source or history change.
+	} else if outcome == "decision-complete" {
+		if err := runLoopGit(repo, "commit", "--allow-empty", "--only", "-m", "Keep the existing contract\n\nVerified the fixture acceptance; no source change is needed.\n\nCoop-Task: "+taskID); err != nil {
+			return err
+		}
+	} else if outcome == "repair-binding" || outcome == "repair-review-binding" || outcome == "repair-older-binding" ||
 		outcome == "repair-older-binding-blocked" || outcome == "repair-older-binding-changed-descendant" ||
 		outcome == "verify-only" || outcome == "verify-only-after-block" || outcome == "second-binding" {
 		if outcome == "repair-review-binding" || outcome == "repair-older-binding" ||

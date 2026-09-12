@@ -2712,7 +2712,8 @@ func UnbindableCompletionError(ids []string, restoreErr error) error {
 // rewrite to count.
 func taskBindingRecovery(id string) string {
 	return fmt.Sprintf(
-		"if the implementation commit is HEAD and only lacks the trailer, amend its message without touching the index "+
+		"if no commit exists and acceptance permits a no-code decision, verify the required checks and record the conclusion and evidence in one `git commit --allow-empty --only` with a Coop-Task trailer; "+
+			"if the implementation commit is HEAD and only lacks the trailer, amend its message without touching the index "+
 			"(`git commit --amend --only --no-edit --trailer %q`); if a commit carrying that trailer is already "+
 			"reachable but is NOT HEAD, do not rewrite it — that reparents every commit after it — and never add a "+
 			"second task-bound commit: verify the work and park the task in 50_blocked/, its decision.md naming "+

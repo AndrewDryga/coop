@@ -3,7 +3,7 @@ name: loop-live-bar
 description: the loop's sticky bottom bar; every paint parks the cursor at column 0 so a kernel ^C echo can't wrap the line and desync the region's erase math — the subsystem once deleted instead of debugged
 subsystem: loop
 sources: [internal/loop/bar.go, internal/loop/iteration.go, internal/loop/loop.go, internal/ui/live.go, internal/ui/ui.go, internal/loop/bar_test.go, internal/loop/interrupt_test.go, internal/ui/live_test.go, internal/ui/region_skip_test.go]
-updated: 2026-08-10
+updated: 2026-09-12
 ---
 
 `coop loop` renders a Docker-build-style live view: the agent's output scrolls in the region
@@ -12,10 +12,11 @@ of the MAIN screen — not the alternate buffer, so the whole run stays in scrol
 That choice is the reason everything below is cursor arithmetic.
 
 **What paints, and when.** `runIteration` builds the live stack only when BOTH stdout and stderr
-are terminals (`internal/loop/iteration.go:123`, `internal/loop/bar.go:18-20`) — the agent's stdout
+are terminals and `TERM` is not `dumb` — the agent's stdout
 is funneled into stderr's region, so a redirected stdout would lose its bytes into the bar.
-Terminal IDENTITY is deliberately irrelevant: Warp gets the bar like everything else
-(`bar.go:15-17`; an earlier Warp exclusion was reverted). The region writes to `os.Stderr` and
+Terminal brand is deliberately irrelevant: Warp gets the bar like everything else
+(an earlier Warp exclusion was reverted). `TERM=dumb` is the explicit capability opt-out for
+supervising a real PTY with static output; `COOP_SPINNER=0` alone only stops the ticker. The region writes to `os.Stderr` and
 re-samples `ui.TermWidth(os.Stderr)` on every paint, so a resize is picked up
 (`iteration.go:130-135`). Three writers cause a repaint, and all of them funnel through
 `loopBar.render` → `Region.Update(history, []string{line})` (`bar.go:57-62`):
@@ -85,6 +86,9 @@ loudly. A glitch here is cursor arithmetic to root-cause, never a reason to remo
 [[nonzero-progress-segments-stay-visible]] for the segment-visibility contract of the bar it paints.
 
 ## Changelog
+- 2026-09-12 — rechecked bar selection and iteration wiring; documented TERM=dumb's capability
+  opt-out, distinct from spinner control. Scripted subprocess tests cover real static and normal
+  PTYs, including retained human identity/results and absent supervised erase sequences.
 - 2026-08-10 — created from `9310911`/`17cee39` and re-verified line by line against the CURRENT
   code after the loop-engine extraction (`internal/cli/live_loop.go` → `internal/loop/bar.go`). The
   VT-replay harness described in 17cee39 is NOT in the tree; recorded as a technique, not a test.

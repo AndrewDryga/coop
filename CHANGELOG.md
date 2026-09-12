@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Loops repair ordinary no-commit completions without stopping the night.** The task tool now
+  refuses an invalid binding before moving the task, so the agent can fix it in the same session.
+  If a successful no-change attempt still exits without a commit, Coop retries once; a second
+  clean refusal parks that task with a decision and continues the queue. Dirty work, advanced
+  history, and integrity failures still stop safely. Permitted no-code decisions get a meaningful
+  decision commit, not fabricated source edits or a gate exemption. Recovery messages name what
+  happened and what comes next; blocked work never counts as completed. `TERM=dumb` disables the
+  progress region even in a PTY for static supervision; normal human terminals retain the live UI.
+
 - **ACP automatic startup and live selection are restored.** Editors can use `["acp"]` again:
   Coop starts the first signed-in provider with its default account without pinning the choice.
   Explicit targets and presets retain precedence, and `--bare` still requires a target. Under
