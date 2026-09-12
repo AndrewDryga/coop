@@ -861,9 +861,12 @@ func validateForkProjectionOpened(canonicalRoot, id string, owner ForkTaskOwner,
 		return ProjectionResult{}, err
 	}
 	item := Item{ID: id, State: foundState, Dir: filepath.Join(owner.Projection, foundState, id)}
-	if _, err := ReadTaskMetadataFile(taskRoot, "task.md"); err != nil {
+	data, err := ReadTaskMetadataFile(taskRoot, "task.md")
+	if err != nil {
 		return ProjectionResult{}, fmt.Errorf("read projected task.md: %w", err)
 	}
+	_, body := SplitFrontmatter(string(data))
+	item.Subtasks = scanSubtasks(body)
 	return ProjectionResult{Item: item, State: foundState, Digest: digest}, nil
 }
 
@@ -1353,6 +1356,14 @@ func snapshotForkProjection(authorityRepo, root, id string, expected ForkTaskOwn
 	}
 	if before.State != after.State || before.Digest != after.Digest || digest != before.Digest {
 		return ProjectionResult{}, "", errors.New("task projection changed while the host captured it")
+	}
+	// Check the exact captured bytes acceptance will consume, not metadata
+	// read separately from the mutable projection's digest. Recovery only
+	// validates identity, so an unfinished done projection can still resume.
+	if before.State == StateDone {
+		if err := requireCurrentCompletedChecklist(snapshot); err != nil {
+			return ProjectionResult{}, "", err
+		}
 	}
 	before.Item.Dir = snapshot
 	before.Digest = digest

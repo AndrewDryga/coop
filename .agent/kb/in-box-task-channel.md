@@ -65,7 +65,16 @@ The complete post-exit ref/lease/raw-history audit remains authoritative. Standa
 servers have no iteration to bind and omit the callback. This does not expose a new tool or let
 provider input choose a validation policy.
 
+Every official completion path also requires a nonempty, fully checked current checklist.
+Assigned MCP rereads it after binding validation; the host finalizer checks again after exit.
+An empty/open checklist refuses without clearing existing completion authority or scratch.
+Fork identity validation still permits an unfinished done projection so crash recovery can
+reopen it; captured completion acceptance, publication, and landing enforce the prerequisite.
+This checks task structure, not whether the agent actually ran a claimed verification.
+
 ## Changelog
+- 2026-09-12 — traced checklist feedback and freshness through MCP, host finalization and fork
+  acceptance; documented the deliberate separation from recovery and independent test proof.
 - 2026-09-12 — traced assigned completion from loop authority through tasks_complete and its
   post-exit audit; added pre-move feedback without changing the transport or trusted final audit.
 - 2026-09-10 — created with the feature (task 2026-09-08-give-an-in-box-agent-a-coop-owned-task-mcp-serve).

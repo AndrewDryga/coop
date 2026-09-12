@@ -283,9 +283,24 @@ func TestDoneStopsTheCallersOwnLeaseHolderOnly(t *testing.T) {
 	}
 
 	mine := inProgressTask(t, root, "mine")
+	if err := RewriteSubtasks(mine.Dir, []Subtask{{Text: "required checks passed", Done: true}}); err != nil {
+		t.Fatal(err)
+	}
 	holder := startHolder("mine", me)
 	if observed := waitLease(t, mine, leaseBusy); observed.State != leaseBusy {
 		t.Fatalf("own holder never took the lease: %+v", observed)
+	}
+	if err := RewriteSubtasks(mine.Dir, []Subtask{{Text: "required check still pending"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasksFolderMoveWith(root, []string{"mine"}, StateDone, "done", "done", claimOptions{actor: me}); !errors.Is(err, ErrIncompleteChecklist) {
+		t.Fatalf("unfinished own task = %v", err)
+	}
+	if observed := observeTaskLease(mine, time.Now()); observed.State != leaseBusy {
+		t.Fatal("unfinished completion stopped its own lease holder")
+	}
+	if err := RewriteSubtasks(mine.Dir, []Subtask{{Text: "required checks passed", Done: true}}); err != nil {
+		t.Fatal(err)
 	}
 	if code, err := tasksFolderMoveWith(root, []string{"mine"}, StateDone, "done", "done", claimOptions{actor: me}); code != 0 || err != nil {
 		t.Fatalf("done beside my own holder = %d, %v; want the holder stopped and the task completed", code, err)
@@ -299,6 +314,9 @@ func TestDoneStopsTheCallersOwnLeaseHolderOnly(t *testing.T) {
 
 	other, _ := sleeperActor(t, "claude")
 	theirs := inProgressTask(t, root, "theirs")
+	if err := RewriteSubtasks(theirs.Dir, []Subtask{{Text: "required checks passed", Done: true}}); err != nil {
+		t.Fatal(err)
+	}
 	startHolder("theirs", other)
 	waitLease(t, theirs, leaseBusy)
 	if code, err := tasksFolderMoveWith(root, []string{"theirs"}, StateDone, "done", "done", claimOptions{actor: me}); code == 0 || err == nil || !strings.Contains(err.Error(), "leased by another controller") {
@@ -309,6 +327,9 @@ func TestDoneStopsTheCallersOwnLeaseHolderOnly(t *testing.T) {
 	}
 
 	loop := inProgressTask(t, root, "loop")
+	if err := RewriteSubtasks(loop.Dir, []Subtask{{Text: "required checks passed", Done: true}}); err != nil {
+		t.Fatal(err)
+	}
 	lease, _, err := TryTaskLease(root, loop, TaskLeaseOwner{RunID: "run-1", PID: os.Getpid(), Provider: "codex", Target: "codex", ActorPID: me.PID, ActorStart: me.StartToken})
 	if err != nil || lease == nil {
 		t.Fatalf("loop lease: %v", err)

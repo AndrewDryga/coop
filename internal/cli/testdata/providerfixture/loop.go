@@ -962,7 +962,7 @@ func completeExtraLoopTask(root, taskID, stage string) error {
 	}
 	defer taskRoot.Close()
 	state := fmt.Sprintf("# State - %s\n\n**Status:** complete\n**Done so far:** fixture %s review moved an unowned task\n**Next action:** none\n**Traps:** none\n", taskID, stage)
-	for name, body := range map[string]string{"task.md": "# " + taskID + "\n", "log.md": "# Log\n", "state.md": state} {
+	for name, body := range map[string]string{"task.md": "# " + taskID + "\n\n## Subtasks\n- [x] Verify the unowned fixture\n", "log.md": "# Log\n", "state.md": state} {
 		file, err := taskRoot.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if err != nil {
 			return err

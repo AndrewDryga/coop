@@ -453,8 +453,16 @@ func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, 
 	prompt := "Respond with exactly " + marker + " and no other text."
 	repoReadOnly := true
 	var command []string
+	var taskTools box.TaskToolServer
+	var taskServer *providerLoopLiveTaskServer
 	switch workflow {
 	case liveWorkflowLoop:
+		taskServer, err = newProviderLoopLiveTaskServer(cfg.RepoOverride, target.Provider)
+		if err != nil {
+			cancelPrompt()
+			return harnessFail(true, "task_channel")
+		}
+		taskTools = taskServer
 		prompt = providerLoopLivePrompt(cfg.RepoOverride, target.Provider)
 		repoReadOnly = false
 		command = ag.Headless(cfg, prompt)
@@ -480,6 +488,7 @@ func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, 
 		Homes: true, Network: false, Cache: false, SupervisorID: supervisor,
 		Stdout: stdout, Stderr: stderr, Ctx: promptCtx,
 		ExtraArgs: liveCIDArgs(rt, cidDir, "prompt"),
+		TaskTools: taskTools,
 	})
 	promptTimedOut := errors.Is(runErr, context.DeadlineExceeded)
 	cancelPrompt()
@@ -496,6 +505,9 @@ func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, 
 	}
 	if workflow == liveWorkflowPrompt && strings.TrimSpace(stdout.String()) != marker {
 		return fail(true, liveprovider.ReasonMarkerMismatch, "prompt", code, false, false, "marker")
+	}
+	if workflow == liveWorkflowLoop && !taskServer.verified() {
+		return harnessFail(true, "task_channel")
 	}
 	if workflow == liveWorkflowResume {
 		resolvedID, reply, err := providerResumeLiveOutput(ag, sessionID, stdout.String())

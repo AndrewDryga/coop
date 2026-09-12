@@ -24,7 +24,7 @@ import (
 func TestLoopCompletionMCPRepair(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
-	for _, scenario := range []string{"same session", "next attempt", "unconfirmed commit", "failed move"} {
+	for _, scenario := range []string{"same session", "next attempt", "unconfirmed commit", "failed move", "unfinished checklist"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Setenv("XDG_STATE_HOME", t.TempDir())
 			repo, git := gitrepo.New(t)
@@ -32,12 +32,18 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 			git("add", ".gitignore")
 			git("commit", "-m", "base")
 			id := "decision"
-			writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, id, "task.md"), "# Decision\n")
+			writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, id, "task.md"), "# Decision\n- [x] verified no source change is required\n")
+			if scenario == "unfinished checklist" {
+				writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, id, "task.md"), "# Decision\n- [ ] required verification is still pending\n")
+			}
 			cfg := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true}
 			c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
 			attempts := 0
 			c.boxRun = func(s box.RunSpec) (int, error) {
 				attempts++
+				if scenario == "unfinished checklist" && attempts > 1 {
+					t.Fatal("unfinished committed task was retried with an advanced completion base")
+				}
 				if attempts > 2 || s.TaskTools == nil {
 					t.Fatalf("unexpected attempt %d without usable task tools", attempts)
 				}
@@ -78,7 +84,7 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 				complete := func() map[string]any {
 					return request("tools/call", map[string]any{"name": "tasks_complete", "arguments": map[string]any{"id": id}})
 				}
-				if attempts == 1 {
+				if attempts == 1 && scenario != "unfinished checklist" {
 					if reply := complete(); reply["isError"] != true {
 						t.Fatalf("no-commit completion accepted: %v", reply)
 					}
@@ -92,7 +98,7 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 						writeTaskFile(t, filepath.Join(repo, tasksRoot, tasks.StateDone, id), "obstruct the folder move\n")
 					}
 					if scenario != "unconfirmed commit" {
-						if reply := complete(); (reply["isError"] == true) != (scenario == "failed move") {
+						if reply := complete(); (reply["isError"] == true) != (scenario == "failed move" || scenario == "unfinished checklist") {
 							t.Fatalf("repaired completion = %v in %s", reply, scenario)
 						}
 					}
@@ -105,7 +111,7 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 			output := captureStderr(t, func() {
 				code, err = c.Run(RunSpec{Repo: repo, Image: "fixture", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard, MaxTasks: 1, Rotation: ladder.NewRotation([]agents.Target{target("claude", "test")})})
 			})
-			if scenario == "unconfirmed commit" || scenario == "failed move" {
+			if scenario == "unconfirmed commit" || scenario == "failed move" || scenario == "unfinished checklist" {
 				if code != 1 || err == nil || attempts != 1 || !strings.Contains(err.Error(), "before confirming completion") {
 					t.Fatalf("unconfirmed commit was retried or accepted: %d, %v, %d attempts", code, err, attempts)
 				}
@@ -116,6 +122,15 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 					if !strings.Contains(output, want) {
 						t.Fatalf("unconfirmed stop omitted %q: %s", want, output)
 					}
+				}
+				if scenario == "unfinished checklist" {
+					for _, want := range []string{"0/1 subtasks done", "finish the remaining work and required checks", "pending verification is not complete"} {
+						if !strings.Contains(output, want) {
+							t.Fatalf("unfinished checklist stop omitted %q: %s", want, output)
+						}
+					}
+				} else if strings.Contains(output, "task checklist is unfinished") {
+					t.Fatalf("completed checklist received the wrong repair: %s", output)
 				}
 				if strings.Contains(output, "Task completed:") || strings.Contains(output, "All tasks passed") {
 					t.Fatalf("unconfirmed task claimed success: %s", output)

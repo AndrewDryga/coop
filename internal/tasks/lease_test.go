@@ -142,7 +142,7 @@ func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 		for _, version := range []int{1, 2, 5} {
 			t.Run(fmt.Sprintf("version=%d", version), func(t *testing.T) {
 				root := t.TempDir()
-				task := taskForLease(t, root, StateInProgress, fmt.Sprintf("unsupported-%d", version))
+				task := taskWithCompletedChecklist(t, root, StateInProgress, fmt.Sprintf("unsupported-%d", version))
 				var body []byte
 				if version <= 2 {
 					pending := ""
@@ -197,7 +197,7 @@ func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 	})
 	t.Run("removed fields fail closed", func(t *testing.T) {
 		root := t.TempDir()
-		task := taskForLease(t, root, StateInProgress, "unknown-field")
+		task := taskWithCompletedChecklist(t, root, StateInProgress, "unknown-field")
 		record := testAuditReopenRecord(task.ID, "unknown-field-generation")
 		body, err := json.Marshal(record)
 		if err != nil {
@@ -216,7 +216,7 @@ func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 	})
 	t.Run("unsupported blocked authority cannot unblock", func(t *testing.T) {
 		root := t.TempDir()
-		task := taskForLease(t, root, StateBlocked, "unsupported-blocked")
+		task := taskWithCompletedChecklist(t, root, StateBlocked, "unsupported-blocked")
 		decision := filepath.Join(task.Dir, "decision.md")
 		writeTaskFile(t, decision, "# Decision\n\n**Resolution:** <!-- unresolved -->\n")
 		beforeDecision := readFileString(decision)
@@ -254,7 +254,7 @@ func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 		git("commit", "-q", "--allow-empty", "-m", "base")
 		git("commit", "-q", "--allow-empty", "-m", "pending implementation\n\nCoop-Task: pending")
 		root := filepath.Join(repo, TasksRoot)
-		task := taskForLease(t, root, StateTodo, "pending")
+		task := taskWithCompletedChecklist(t, root, StateTodo, "pending")
 		record, err := CaptureAuditReopen(repo, task.ID)
 		if err != nil {
 			t.Fatal(err)
@@ -292,8 +292,8 @@ func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 
 func TestTaskLeaseAuditReopenAuthorityIsScopedConsumedAndNotReusable(t *testing.T) {
 	root := t.TempDir()
-	first := taskForLease(t, root, StateInProgress, "first")
-	second := taskForLease(t, root, StateInProgress, "second")
+	first := taskWithCompletedChecklist(t, root, StateInProgress, "first")
+	second := taskWithCompletedChecklist(t, root, StateInProgress, "second")
 	record := testAuditReopenRecord(first.ID, "generation-one")
 	if err := WriteAuditReopenRecord(root, record); err != nil {
 		t.Fatal(err)
@@ -377,7 +377,7 @@ func TestAuditReopenRecordReplacementPreservesHostGeneration(t *testing.T) {
 
 func TestInterruptedAcceptedCompletionConsumesAuditReopenGeneration(t *testing.T) {
 	root := t.TempDir()
-	task := taskForLease(t, root, StateInProgress, "interrupted")
+	task := taskWithCompletedChecklist(t, root, StateInProgress, "interrupted")
 	record := testAuditReopenRecord(task.ID, "generation-crash")
 	if err := WriteAuditReopenRecord(root, record); err != nil {
 		t.Fatal(err)
@@ -420,7 +420,7 @@ func TestTrustedManualCompletionConsumesAuditReopenGeneration(t *testing.T) {
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	git("commit", "-q", "--allow-empty", "-m", "manual implementation\n\nCoop-Task: manual")
 	root := filepath.Join(repo, TasksRoot)
-	task := taskForLease(t, root, StateInProgress, "manual")
+	task := taskWithCompletedChecklist(t, root, StateInProgress, "manual")
 	record, err := CaptureAuditReopen(repo, task.ID)
 	if err != nil {
 		t.Fatal(err)

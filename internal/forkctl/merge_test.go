@@ -329,7 +329,7 @@ func prepareForkTaskCandidate(t *testing.T, name string) (string, string, string
 	if err := os.MkdirAll(taskDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(taskDir, "task.md"), []byte("# Canonical task\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(taskDir, "task.md"), []byte("# Canonical task\n- [x] required checks passed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ws, err := forkspace.Setup(repo, name)

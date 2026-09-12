@@ -35,8 +35,8 @@ func testAssignmentFork(t *testing.T, repo, name string) (string, forkspace.Iden
 
 func TestForkAssignmentProjectsOneCanonicalTaskAndDefersCompletion(t *testing.T) {
 	root := filepath.Join(t.TempDir(), ".agent", "tasks")
-	first := taskForLease(t, root, StateTodo, "first")
-	taskForLease(t, root, StateTodo, "second")
+	first := taskWithCompletedChecklist(t, root, StateTodo, "first")
+	taskWithCompletedChecklist(t, root, StateTodo, "second")
 	authorityRepo := filepath.Join(t.TempDir(), "project")
 	workspace, identity := testAssignmentFork(t, authorityRepo, "a")
 	assignment, err := AssignForkTask([]string{root}, ForkAssignmentRequest{
@@ -264,7 +264,7 @@ func TestConcurrentDifferentAssignmentsShareOneQueueIdentity(t *testing.T) {
 
 func TestForkCandidateFinalizesExactCanonicalTask(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "tasks")
-	item := taskForLease(t, root, StateTodo, "land-me")
+	item := taskWithCompletedChecklist(t, root, StateTodo, "land-me")
 	writeTaskFile(t, filepath.Join(item.Dir, "artifacts", "proof.txt"), "old\n")
 	repo := filepath.Join(t.TempDir(), "project")
 	workspace, identity := testAssignmentFork(t, repo, "candidate")
@@ -319,8 +319,8 @@ func TestForkCandidateFinalizesExactCanonicalTask(t *testing.T) {
 
 func TestPublishedForkCandidateFreezesGenerationBeforeAnotherAssignment(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "tasks")
-	taskForLease(t, root, StateTodo, "a-first")
-	taskForLease(t, root, StateTodo, "z-next")
+	taskWithCompletedChecklist(t, root, StateTodo, "a-first")
+	taskWithCompletedChecklist(t, root, StateTodo, "z-next")
 	repo := filepath.Join(t.TempDir(), "project")
 	workspace, identity := testAssignmentFork(t, repo, "frozen")
 	request := ForkAssignmentRequest{
@@ -473,7 +473,7 @@ func TestForkProjectionAcceptanceReplacesExistingNestedArtifactsIdempotently(t *
 
 func TestFailedForkRunCannotPublishProjectedDoneForReview(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "tasks")
-	taskForLease(t, root, StateTodo, "failed-signoff")
+	taskWithCompletedChecklist(t, root, StateTodo, "failed-signoff")
 	repo := filepath.Join(t.TempDir(), "project")
 	workspace, identity := testAssignmentFork(t, repo, "failed-signoff-worker")
 	assignment, err := AssignForkTask([]string{root}, ForkAssignmentRequest{

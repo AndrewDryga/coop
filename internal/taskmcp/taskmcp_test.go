@@ -363,6 +363,7 @@ func TestSubtasksSectionIsAppendedWhenAbsentAndKeepsTrailingSections(t *testing.
 
 func TestCompleteTheAssignedTaskMovesAndNormalizes(t *testing.T) {
 	root := queue(t, map[string]string{"t1": tasks.StateInProgress})
+	finishChecklist(t, root, "t1")
 	sess := newSession(t, newServer(t, root, "t1"))
 	sess.mustCall("tasks_complete", map[string]any{"id": "t1"})
 	done := filepath.Join(root, tasks.StateDone, "t1")
@@ -381,6 +382,7 @@ func TestCompleteTheAssignedTaskMovesAndNormalizes(t *testing.T) {
 
 func TestAssignedCompletionRefusalCanBeRepairedInTheSameSession(t *testing.T) {
 	root := queue(t, map[string]string{"t1": tasks.StateInProgress})
+	finishChecklist(t, root, "t1")
 	s := newServer(t, root, "t1")
 	var ready atomic.Bool
 	var checks atomic.Int32
@@ -498,6 +500,7 @@ func TestMutationOnATaskAnotherLiveProcessHoldsIsRefused(t *testing.T) {
 // on one that is held.
 func TestCompleteWithoutAnAssignedLeaseUsesTheTrustedPath(t *testing.T) {
 	root := queue(t, map[string]string{"free": tasks.StateInProgress, "held": tasks.StateInProgress})
+	finishChecklist(t, root, "free")
 	held, _, err := tasks.CurrentTask(root, "held")
 	if err != nil {
 		t.Fatal(err)

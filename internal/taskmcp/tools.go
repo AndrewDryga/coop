@@ -66,7 +66,7 @@ var toolTable = []tool{
 	},
 	{
 		name:        "tasks_complete",
-		description: "Move the task into 99_done/ — the final action after its commit landed — normalizing state.md's Status to complete and Next action to none. The loop checks the assigned commit before moving: fix any refusal and retry this tool in the same turn. Refused when another live process holds the task.",
+		description: "Move the task into 99_done/ — the final action after its commit landed and required verification passed — normalizing state.md's Status to complete and Next action to none. Requires a nonempty, fully checked checklist. Failed, unavailable, and never-attempted required checks stay open. The loop checks the assigned commit before moving: fix any refusal and retry this tool in the same turn. Refused when another live process holds the task.",
 		schema:      object(map[string]any{"id": prop("string", "The task id.")}, "id"),
 		run:         (*Server).complete,
 	},
@@ -83,7 +83,7 @@ var toolTable = []tool{
 	},
 	{
 		name:        "tasks_set_subtasks",
-		description: "Rewrite the task's whole `## Subtasks` checklist — add, refine, reorder, or check items off. Send the complete list every time; it replaces the section.",
+		description: "Rewrite the task's whole `## Subtasks` checklist — add, refine, reorder, or check items off. Send the complete list every time; it replaces the section. Check off only finished work: recording a required check as pending does not complete it. Do not drop required verification to allow completion.",
 		schema: object(map[string]any{
 			"id": prop("string", "The task id."),
 			"subtasks": map[string]any{
@@ -109,7 +109,7 @@ var toolTable = []tool{
 			"kind":       prop("string", "task (ready work) or backlog (genuinely large, needs human scoping)."),
 			"title":      prop("string", "One line."),
 			"context":    prop("string", "The problem, why it matters, and where in the code it lives."),
-			"acceptance": prop("string", "What proves it is done, including a green gate."),
+			"acceptance": prop("string", "What proves it is done, including the project's required green gates. Do not offer recording required verification as pending as an alternative to passing it."),
 			"approach":   prop("string", "The boring plan."),
 			"subtasks":   array("string", "Small, end-to-end, testable steps (1 to 64)."),
 			"queue":      prop("string", "Optional queue root (as tasks_list reports it) in a monorepo; defaults to the assigned task's queue."),
@@ -385,6 +385,9 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 		return r
 	}
 	if loc.item.State == tasks.StateDone {
+		if err := tasks.RequireCompletedChecklist(loc.item); err != nil {
+			return refusal(err.Error())
+		}
 		return textResult(fmt.Sprintf("%s is already done", loc.item.ID))
 	}
 	if loc.item.ID != s.authority.Assigned {
@@ -405,6 +408,15 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 		if err := check(); err != nil {
 			return refusal(fmt.Sprintf("complete %s: %v; the task has not moved — repair the problem and retry tasks_complete in this turn", loc.item.ID, err))
 		}
+	}
+	// Binding validation may take time. Re-read the checklist immediately
+	// before moving; the host finalizer checks it again after provider exit.
+	loc, r = s.locate(in.ID)
+	if r != nil {
+		return r
+	}
+	if err := tasks.RequireCompletedChecklist(loc.item); err != nil {
+		return refusal(err.Error())
 	}
 	if err := tasks.MoveTaskDir(loc.root, loc.item, tasks.StateDone); err != nil {
 		return refusal(fmt.Sprintf("complete %s: %v", loc.item.ID, err))

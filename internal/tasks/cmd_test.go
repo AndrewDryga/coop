@@ -194,6 +194,9 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	}
 
 	// done → done/ and removes only tmp; durable artifacts survive for review/archive.
+	if err := RewriteSubtasks(filepath.Join(root, StateInProgress, id), []Subtask{{Text: "required checks passed", Done: true}}); err != nil {
+		t.Fatal(err)
+	}
 	if code, err := tasksFolderMove(root, []string{id}, StateDone, "done", "done"); code != 0 || err != nil {
 		t.Fatalf("done: code=%d err=%v", code, err)
 	}
@@ -531,7 +534,7 @@ func TestTaskTmpCleanupIsContained(t *testing.T) {
 func TestTasksDoneSurfacesTmpCleanupFailure(t *testing.T) {
 	root := t.TempDir()
 	id := "2026-01-01-cleanup-fails"
-	writeTaskFile(t, filepath.Join(root, StateInProgress, id, "task.md"), "# cleanup fails\n")
+	writeTaskFile(t, filepath.Join(root, StateInProgress, id, "task.md"), "# cleanup fails\n- [x] required checks passed\n")
 	writeTaskFile(t, filepath.Join(root, StateInProgress, id, "tmp", "scratch"), "keep until cleaned\n")
 
 	oldCleaner := taskTmpCleaner
@@ -652,7 +655,7 @@ func TestTasksDoneRetriesStateFinalizationFailure(t *testing.T) {
 	root := t.TempDir()
 	id := "2026-01-01-state-fails"
 	taskDir := filepath.Join(root, StateInProgress, id)
-	writeTaskFile(t, filepath.Join(taskDir, "task.md"), "# state fails\n")
+	writeTaskFile(t, filepath.Join(taskDir, "task.md"), "# state fails\n- [x] required checks passed\n")
 	writeTaskFile(t, filepath.Join(taskDir, "tmp", "scratch"), "retain until state is safe\n")
 	if err := os.MkdirAll(filepath.Join(taskDir, "state.md"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1804,6 +1807,9 @@ func TestTasksFolderAddRejectsCrossStateCollision(t *testing.T) {
 		t.Fatalf("add: code=%d err=%v", code, err)
 	}
 	id := mustReadTaskTree(t, root)[0].ID
+	if err := RewriteSubtasks(filepath.Join(root, StateTodo, id), []Subtask{{Text: "required checks passed", Done: true}}); err != nil {
+		t.Fatal(err)
+	}
 	if code, err := tasksFolderMove(root, []string{id}, StateDone, "done", "done"); code != 0 || err != nil {
 		t.Fatalf("done: code=%d err=%v", code, err)
 	}

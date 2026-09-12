@@ -72,6 +72,7 @@ func TestBlockReopenedTasksLeavesUnrelatedActionableWork(t *testing.T) {
 func TestBlockReopenedTasksUsesCompletionAuthority(t *testing.T) {
 	q := filepath.Join(t.TempDir(), ".agent", "tasks")
 	task := taskForLease(t, q, stateDone, "review-reopen")
+	writeTaskFile(t, filepath.Join(task.Dir, "task.md"), "# Task\n- [x] required checks passed\n")
 	if err := completeTrustedTask(q, task); err != nil {
 		t.Fatal(err)
 	}

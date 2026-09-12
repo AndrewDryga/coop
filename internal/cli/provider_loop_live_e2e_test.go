@@ -21,6 +21,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/loop"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/liveprovider"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
@@ -44,7 +45,7 @@ func providerLoopLiveFile(provider string) string { return "live-loop-" + provid
 func providerLoopLiveTaskBody(provider, marker string) string {
 	taskID := providerLoopLiveTaskID(provider)
 	file := providerLoopLiveFile(provider)
-	return fmt.Sprintf("# Live %s loop task\n\n**Context:** Exercise one real provider against Coop's task-completion contract.\n\n**Acceptance criteria:** Create `%s` containing exactly `%s` followed by one newline. Make no other repository change. Run `git diff --check`, commit the file with subject `test: complete live loop task` and an exact `Coop-Task: %s` trailer, update state.md and log.md, then move this task folder to 99_done/ as the final action.\n\n**Approach:** Perform only the mechanical steps above.\n", provider, file, marker, taskID)
+	return fmt.Sprintf("# Live %s loop task\n\n**Context:** Exercise one real provider against Coop's task-completion contract.\n\n**Acceptance criteria:** Create `%s` containing exactly `%s` followed by one newline. Make no other repository change. Run `git diff --check`, commit the file with subject `test: complete live loop task` and an exact `Coop-Task: %s` trailer, update state.md and log.md, check off the subtask without changing its text, then complete this task through tasks_complete as the final action.\n\n**Approach:** Perform only the mechanical steps above.\n\n## Subtasks\n- [ ] Create the marker, pass git diff --check, and commit the exact task-bound change\n", provider, file, marker, taskID)
 }
 
 func prepareProviderLoopLiveRepository(layout procharness.Layout, target agents.Target, marker string) error {
@@ -85,7 +86,7 @@ func prepareProviderLoopLiveRepository(layout procharness.Layout, target agents.
 }
 
 func providerLoopLivePrompt(repo, provider string) string {
-	return loop.LoopWorkPrompt(repo, tasksRoot, providerLoopLiveTaskID(provider), provider, nil, nil, false)
+	return "This disposable task-channel test deliberately exercises one refusal: BEFORE creating the marker, running its check, or checking off the subtask, call tasks_complete once while the required verification is still unrun. Confirm the unfinished-checklist refusal, then do the work normally and complete successfully in this same session. Do not fabricate verification or alter the task's acceptance or checklist text.\n\n" + loop.LoopWorkPrompt(repo, tasksRoot, providerLoopLiveTaskID(provider), provider, nil, nil, false)
 }
 
 func snapshotProviderLoopLiveBaseline(layout procharness.Layout, repository liveprovider.RepositorySnapshot) (providerLoopLiveBaseline, error) {
@@ -139,8 +140,13 @@ func verifyProviderLoopLiveRepository(layout procharness.Layout, before provider
 		return fmt.Errorf("live loop task log mismatch")
 	}
 	taskBody, err := readProviderLoopLiveFile(layout, filepath.Join(done, "task.md"))
-	if err != nil || string(taskBody) != providerLoopLiveTaskBody(provider, marker) {
+	normalized := strings.ReplaceAll(strings.ReplaceAll(string(taskBody), "- [x]", "- [ ]"), "- [X]", "- [ ]")
+	if err != nil || normalized != providerLoopLiveTaskBody(provider, marker) {
 		return fmt.Errorf("live loop task contract changed")
+	}
+	current, ok, err := tasks.CurrentTask(filepath.Join(layout.Repo, tasksRoot), taskID)
+	if err != nil || !ok || tasks.RequireCompletedChecklist(current) != nil {
+		return fmt.Errorf("live loop task checklist is unfinished")
 	}
 	headOutput, err := runProviderLoopLiveGit(layout, "rev-parse", "HEAD")
 	if err != nil {
@@ -576,6 +582,10 @@ func TestProviderLoopLiveContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		task := filepath.Join(layout.Repo, tasksRoot, stateInProgress, providerLoopLiveTaskID(target.Provider))
+		completedBody := strings.ReplaceAll(providerLoopLiveTaskBody(target.Provider, marker), "- [ ]", "- [x]")
+		if err := os.WriteFile(filepath.Join(task, "task.md"), []byte(completedBody), 0o600); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(filepath.Join(task, "state.md"), []byte("# State\n\n**Status:** complete\n**Done so far:** contract completed\n**Next action:** none\n**Traps:** none\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}

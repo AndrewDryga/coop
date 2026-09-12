@@ -3,7 +3,7 @@ name: provider-live-e2e
 description: Probe installed upstream CLIs with isolated read-only, native-resume, and task-completion workflows
 subsystem: testing
 sources: [Makefile, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/run.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/runtime/process_group_live.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/acpctl/process_live.go, internal/cli/provider_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go]
-updated: 2026-08-10
+updated: 2026-09-12
 ---
 
 `make provider-live-e2e COOP_LIVE_TARGETS='...'` is the permissive prerequisite probe;
@@ -19,8 +19,13 @@ admission and evidence contract for one writable task-completion attempt. The de
 already owns the real external loop controller, lease, reconciliation, and telemetry path. The
 live child therefore makes one direct adapter `Headless` call with the production loop work prompt
 against one pre-claimed mechanical task, avoiding the controller's ordinary paid retries. Success
-requires the exact marker file and sole task-bound commit, unchanged task instructions, clean Git
-state, final state/log, no scratch, no extra ignored files, and the task in done. It emits the same
+requires the exact marker file and sole task-bound commit, unchanged task instructions apart from
+checking the required subtask, clean Git state, final state/log, no scratch, no extra ignored files,
+and the task in done. The child attaches the production task MCP server through the real helper
+channel. Before doing the work, the provider must attempt completion while its required check is
+unrun, receive the unfinished-checklist refusal with the task still in progress, then finish and
+complete in that same session. A bounded observer correlates actual completion requests/replies;
+provider narration or a manually moved folder cannot satisfy this proof. It emits the same
 path/account/token-free `COOP_PROVIDER_LOOP_LIVE_SUMMARY` and remains opt-in because each admitted
 provider starts one headless session. Before any post-provider Git command, the verifier walks the
 entire Git administrative tree without following links; it then requires the exact commit-message
@@ -62,7 +67,8 @@ live suite copies the marked default for bare targets and every account explicit
 target or preset ladder.
 
 The provider command is the adapter's real `Headless` form inside `box.Run`: batch, open egress,
-isolated homes, no MCP/instructions/services/cache, and the generated repo mounted read-only. A
+isolated homes, no ambient MCP/instructions/services/cache, and the generated repo mounted
+read-only except for the loop task fixture and its run-private task MCP channel. A
 version probe makes no model request. The marker prompt makes exactly one. The parent accepts one
 bounded, no-follow child result, compares Git status, HEAD, refs, reflogs, and a content/mode tree,
 checks the source fingerprint, then follows an ordered process/container cleanup contract. A tagged
@@ -127,6 +133,9 @@ isolation failures and take precedence over a provider result. Stable summaries 
 raw output; reproduce behavior in the deterministic fixture.
 
 ## Changelog
+- 2026-09-12 - live loop previously supplied a task-tools prompt without attaching TaskTools;
+  corrected the harness and added native refusal-then-repair evidence plus checklist-aware
+  repository verification. The direct live fixture is still not the external loop controller.
 - 2026-08-10 - source path only: `internal/cli/acp_process_live.go` → `internal/acpctl/process_live.go`
   (the ACP control plane's move to `internal/acpctl`, mechanical rename, no behavior change)
 - 2026-07-16 - preserved ACP editor stdin through the live process-control wrapper

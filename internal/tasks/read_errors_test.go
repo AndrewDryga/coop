@@ -148,7 +148,7 @@ func TestUnreadableQueueStopsAssignmentAndDeletion(t *testing.T) {
 
 func TestPublishForkCandidateStopsWhenCanonicalTaskBecomesUnreadable(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "tasks")
-	item := taskForLease(t, root, StateTodo, "candidate")
+	item := taskWithCompletedChecklist(t, root, StateTodo, "candidate")
 	repo := filepath.Join(t.TempDir(), "repo")
 	workspace, identity := testAssignmentFork(t, repo, "candidate-read-error")
 	assignment, err := AssignForkTask([]string{root}, ForkAssignmentRequest{

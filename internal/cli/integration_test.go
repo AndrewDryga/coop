@@ -238,6 +238,9 @@ func TestIntegrationLifecycleViaDispatcher(t *testing.T) {
 	if !isTaskDir(filepath.Join(root, "10_in_progress", id)) {
 		t.Error("claim did not move the folder to 10_in_progress/")
 	}
+	if err := tasks.RewriteSubtasks(filepath.Join(root, "10_in_progress", id), []tasks.Subtask{{Text: "required checks passed", Done: true}}); err != nil {
+		t.Fatal(err)
+	}
 
 	if code, err := a.cmdTasks([]string{"done", id}); code != 0 || err != nil {
 		t.Fatalf("done: code=%d err=%v", code, err)

@@ -181,6 +181,9 @@ func TestLoopWorkPromptDecisionOnlyCompletion(t *testing.T) {
 		"do not invent source edits or include unrelated staged files",
 		"Never use it to claim unfinished work or an unrun required gate is complete",
 		"never treat the exit status of tail/grep as the gate's result",
+		"Failed, unavailable, and never-attempted required checks stay unchecked",
+		"Proposed tasks must preserve the project's required verification",
+		"checked boxes are not independent proof",
 	} {
 		if !strings.Contains(work, want) {
 			t.Errorf("decision workflow lacks %q", want)

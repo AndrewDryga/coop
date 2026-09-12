@@ -21,9 +21,9 @@ func TestRemovedTaskFlagsRecordsAreInert(t *testing.T) {
 	if err := ScaffoldStateDirs(root); err != nil {
 		t.Fatal(err)
 	}
-	stale := taskForLease(t, root, StateInProgress, "stale")
-	broken := taskForLease(t, root, StateInProgress, "broken")
-	plain := taskForLease(t, root, StateInProgress, "plain")
+	stale := taskWithCompletedChecklist(t, root, StateInProgress, "stale")
+	broken := taskWithCompletedChecklist(t, root, StateInProgress, "broken")
+	plain := taskWithCompletedChecklist(t, root, StateInProgress, "plain")
 	record := func(dir, body string) {
 		t.Helper()
 		if err := os.WriteFile(filepath.Join(dir, "flags.json"), []byte(body), 0o644); err != nil {

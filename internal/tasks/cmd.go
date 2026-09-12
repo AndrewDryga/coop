@@ -720,6 +720,11 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 		return 0, nil
 	}
 	if newState == StateDone {
+		// Refuse known unfinished work before stopping this caller's lease
+		// holder; trusted completion rechecks current metadata under authority.
+		if err := RequireCompletedChecklist(t); err != nil {
+			return -1, trustedCompletionError(err, t.ID)
+		}
 		if _, err := stopOwnLeaseHolder(root, t, opts.actor); err != nil {
 			return -1, err
 		}
@@ -1522,9 +1527,14 @@ func AtomicWriteTaskFile(root *os.Root, name string, body []byte) error {
 	return root.Rename(tmp, name)
 }
 
-// finalizeCompletedTask is the single post-move completion boundary. State comes first so a failed
-// metadata write retains tmp for diagnosis and retry; both operations are idempotent.
+// finalizeCompletedTask is the single post-move completion boundary. Check the current checklist
+// before normalizing state or cleaning tmp; failed validation retains evidence for repair.
 func finalizeCompletedTask(id, taskDir string) error {
+	// The loop also reaches this boundary after a direct folder move. Never
+	// turn that move into a receipt using an earlier, stale checklist.
+	if err := requireCurrentCompletedChecklist(taskDir); err != nil {
+		return err
+	}
 	if err := normalizeCompletedTaskState(id, taskDir); err != nil {
 		return fmt.Errorf("task %s reached done, but its state finalization failed: %w", id, err)
 	}

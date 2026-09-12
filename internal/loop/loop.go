@@ -569,17 +569,15 @@ reviewAgain:
 			// The box's task tools: every queue this loop works, the leased task, and — in a fork —
 			// the proposal outbox the host imports at merge. Built here, where the lease lives; the
 			// box only carries the server.
-			// A successful precheck is not a completed folder move; retain any earlier refusal.
-			var completionRefused atomic.Bool
+			// A successful binding precheck is not completion: a later checklist
+			// refusal or failed move must not advance the next attempt's base.
+			var completionAttempted atomic.Bool
 			taskTools, toolsErr := taskmcp.New(taskmcp.Authority{
 				QueueRoots: hosts, Assigned: assigned.Item.ID, ProposalOutbox: c.proposalOutboxPath(repo),
 				Owner: tasks.TaskLeaseOwner{RunID: c.runID, PID: os.Getpid(), Provider: agent, Target: target.String()},
 				ValidateAssignedCompletion: func() error {
-					err := checkAssignedCompletion(repo, iterHead, assigned.Item.ID, lease.Reopen, snapshot)
-					if errors.Is(err, errCompletionBinding) {
-						completionRefused.Store(true)
-					}
-					return err
+					completionAttempted.Store(true)
+					return checkAssignedCompletion(repo, iterHead, assigned.Item.ID, lease.Reopen, snapshot)
 				},
 			})
 			if toolsErr != nil {
@@ -779,7 +777,7 @@ reviewAgain:
 			completionCandidate := assignedCompletion
 			// A tool refusal leaves the task in progress. If the worker exits successfully instead
 			// of repairing it in-session, give the same bounded recovery as a rejected folder move.
-			if completionCandidate == nil && completionRefused.Load() && classification.outcome == "success" && lease.Reopen == nil {
+			if completionCandidate == nil && completionAttempted.Load() && classification.outcome == "success" && lease.Reopen == nil {
 				current, ok, scanErr := tasks.CurrentTask(assigned.Root, assigned.Item.ID)
 				if scanErr != nil {
 					refRelease()
@@ -794,8 +792,13 @@ reviewAgain:
 						refRelease()
 						stopErr := errors.Join(fmt.Errorf("task %s exited before confirming completion; its work is preserved in progress — inspect its task notes before retrying", assigned.Item.ID), checkErr, releaseErr)
 						if checkErr == nil && releaseErr == nil {
+							message := fmt.Sprintf("%s has a commit, but its completion was not confirmed.\nIts work is preserved in progress; Coop cannot safely advance to another task.", active)
+							if checklistErr := tasks.RequireCompletedChecklist(current); checklistErr != nil {
+								message += "\n" + checklistErr.Error()
+								stopErr = errors.Join(stopErr, checklistErr)
+							}
 							ui.Failure("Task completion was not confirmed",
-								fmt.Sprintf("%s has a commit, but its completion was not confirmed.\nIts work is preserved in progress; Coop cannot safely advance to another task.", active),
+								message,
 								[2]string{"Inspect:", "coop tasks path " + assigned.Item.ID},
 								[2]string{"Then continue:", continueCmd})
 							return 1, ui.Reported(stopErr)

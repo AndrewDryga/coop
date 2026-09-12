@@ -1055,7 +1055,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		taskID := "forged-review-authority"
 		archiveID := taskID + "-archive"
 		seedLoopProcessTask(t, suite.layout.Repo, taskID)
-		writeTaskFile(t, filepath.Join(suite.layout.Repo, tasksRoot, stateDone, archiveID, "task.md"), "# Archive\n")
+		writeTaskFile(t, filepath.Join(suite.layout.Repo, tasksRoot, stateDone, archiveID, "task.md"), "# Archive\n\n## Subtasks\n- [x] Verify the archived fixture\n")
 		work := loopRecoveryTarget("claude", "work-model", "personal")
 		attempts := []loopProcessAttempt{
 			{Target: work, Stage: "work", Result: "complete-forged-archive-binding"},

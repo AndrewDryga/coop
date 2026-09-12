@@ -238,6 +238,9 @@ func TestForkProposalReceiptsDoNotCreateALifetimeCap(t *testing.T) {
 func TestForkCandidateRequiresProposalOutboxDrained(t *testing.T) {
 	repo, root, assignment := proposalAssignment(t, "proposal-candidate")
 	projected, _ := mustCurrentTask(t, assignment.Owner.Projection, "assigned")
+	if err := RewriteSubtasks(projected.Dir, []Subtask{{Text: "required checks passed", Done: true}}); err != nil {
+		t.Fatal(err)
+	}
 	if err := MoveTaskDir(assignment.Owner.Projection, projected, StateDone); err != nil {
 		t.Fatal(err)
 	}

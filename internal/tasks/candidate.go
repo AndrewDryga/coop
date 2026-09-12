@@ -185,6 +185,9 @@ func candidateAssignments(repo string, identity forkspace.Identity) ([]ForkCandi
 		if result.State != StateDone || result.Digest != owner.ProjectionDigest {
 			return nil, fmt.Errorf("task %s projection changed after review", assignment.Item.ID)
 		}
+		if err := RequireCompletedChecklist(result.Item); err != nil {
+			return nil, err
+		}
 		out = append(out, ForkCandidateAssignment{Index: assignment.Index, ProjectionDigest: result.Digest})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Index.AssignmentID < out[j].Index.AssignmentID })

@@ -11,8 +11,53 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
+
+func TestProviderScriptedLoopUnfinishedChecklist(t *testing.T) {
+	suite := newDirectProcessSuite(t)
+	for _, checklist := range []string{"", "\n## Subtasks\n- [x] Implement the fixture\n- [ ] Run required verification\n"} {
+		name := "empty"
+		if checklist != "" {
+			name = "required verification pending"
+		}
+		t.Run(name, func(t *testing.T) {
+			resetLoopProcessRepo(t, suite)
+			t.Cleanup(func() { logLoopProcessFailure(t, suite) })
+			id := "unfinished-checklist"
+			seedLoopProcessTask(t, suite.layout.Repo, id)
+			body := "# Unfinished fixture\n" + checklist
+			dir := filepath.Join(suite.layout.Repo, tasksRoot, stateTodo, id)
+			writeTaskFile(t, filepath.Join(dir, "task.md"), body)
+			writeTaskFile(t, filepath.Join(dir, "tmp", "evidence.txt"), "retain verification evidence\n")
+			target := "claude:loop-model@work"
+			suite.reset(t, loopProcessScenario{
+				Version: 6, Provider: "claude", ProviderHomes: agents.Names(),
+				Loop: loopProcessPlan{TaskID: id, Attempts: []loopProcessAttempt{{Target: target, Stage: "work", Result: "complete"}}},
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			result := procharness.Run(ctx, procharness.Command{
+				Path: suite.coopBin, Args: []string{"loop", target, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
+				Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
+			})
+			if result.ExitCode != 1 || !strings.Contains(result.Stderr, "task checklist is unfinished") {
+				t.Fatalf("unfinished completion = %+v", result)
+			}
+			current := filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, id)
+			if pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, id)) ||
+				readProcessFile(t, filepath.Join(current, "task.md")) != body ||
+				readProcessFile(t, filepath.Join(current, "tmp", "evidence.txt")) != "retain verification evidence\n" {
+				t.Fatal("unfinished task was accepted, rewritten, or lost its resumable evidence")
+			}
+			if commits := tasks.CommitsForTask(suite.layout.Repo, "", id); len(commits) != 1 {
+				t.Fatalf("refusal changed the completed implementation binding: %v", commits)
+			}
+			assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		})
+	}
+}
 
 func TestProviderScriptedLoopCompletionRepair(t *testing.T) {
 	suite := newDirectProcessSuite(t)

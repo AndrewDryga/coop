@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Task completion refuses empty or unfinished checklists with actionable progress counts.
+  The check applies to task tools, host completion, loop finalization, and fork acceptance and
+  landing; interrupted unfinished fork work can still resume. Agent guidance keeps failed,
+  unavailable, and unrun required verification open instead of treating a pending note as success.
+
 - **`coop loop` now reads as a task queue, not a stream of setup internals.** Startup groups
   recovery, stale-image and sleep-inhibitor results under `Preparing loop`, followed by answered
   blocker recovery and a dim task banner with a stable `Task N - Attempt M`, the selected agent,

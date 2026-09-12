@@ -528,8 +528,10 @@ func seedLoopProcessTaskIn(t *testing.T, repo, state, id string) {
 	if err := os.Mkdir(task, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// These scenarios isolate commit/authority recovery after fixture verification;
+	// unfinished-checklist scenarios supply their own open task body.
 	files := map[string]string{
-		"task.md":  "# Scripted loop lifecycle\n\n**Context:** prove the external loop path.\n**Acceptance criteria:** commit and complete this task.\n**Approach:** use the closed fixture action.\n",
+		"task.md":  "# Scripted loop lifecycle\n\n**Context:** prove the external loop path.\n**Acceptance criteria:** commit and complete this task.\n**Approach:** use the closed fixture action.\n\n## Subtasks\n- [x] Verify the closed fixture action\n",
 		"state.md": "# State - Scripted loop lifecycle\n\n**Status:** not started\n**Done so far:** none\n**Next action:** complete the fixture task\n**Traps:** none\n",
 		"log.md":   "# Log - Scripted loop lifecycle\n",
 	}

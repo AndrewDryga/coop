@@ -318,6 +318,9 @@ func CompleteTrustedTask(root string, task Item) (retErr error) {
 	if !ok || current.Dir != task.Dir || current.State != task.State {
 		return errLeaseCandidateGone
 	}
+	if err := RequireCompletedChecklist(current); err != nil {
+		return err
+	}
 	reopen, reopened, err := ReadAuditReopenRecord(root, task.ID)
 	if err != nil {
 		return err
@@ -731,11 +734,15 @@ func FinalizeQueuedCompletion(task QueuedTask) error {
 			return errors.Join(err, fmt.Errorf("restore task %s after finalization failure: %w", task.Item.ID, restoreErr))
 		}
 		restored := filepath.Join(task.Root, StateInProgress, task.Item.ID)
+		next := "fix the task metadata or cleanup obstruction, then re-run `coop loop`"
+		if errors.Is(err, ErrIncompleteChecklist) {
+			next = "finish the remaining checklist and required verification before completing; keep unavailable checks open"
+		}
 		recoveryErr := NormalizeTaskState(
 			task.Item.ID,
 			restored,
 			"in progress — finalization failed",
-			"fix the task metadata or cleanup obstruction, then re-run `coop loop`",
+			next,
 			"completion finalization failed",
 			"the task must finalize safely before completion is accepted",
 		)
