@@ -34,11 +34,12 @@ func (spec RunSpec) interactive() bool { return !spec.Batch && !spec.Quiet && !s
 type launchSections struct {
 	on      bool
 	subject string
+	notice  string
 	opened  bool // a section heading has been printed, so a failure nests under it
 }
 
 func newLaunchSections(spec RunSpec) *launchSections {
-	return &launchSections{on: spec.interactive(), subject: launchSubject(spec)}
+	return &launchSections{on: spec.interactive(), subject: launchSubject(spec), notice: spec.StartingNotice}
 }
 
 // section opens one narration section. The first one leads the command's output, so it carries no
@@ -186,6 +187,9 @@ func (s *launchSections) starting() {
 		return
 	}
 	s.section("Starting " + s.subject)
+	if s.notice != "" {
+		ui.Note("%s", s.notice)
+	}
 }
 
 // stopped is the one lifecycle sentence an interactive box prints, and it is a CLAIM: the box has

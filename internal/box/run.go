@@ -163,6 +163,10 @@ type RunSpec struct {
 	// waits on it. A nil hook is the ordinary run, signaling nothing.
 	OnRuntimeLaunch func()
 
+	// StartingNotice is optional interactive guidance directly below the Starting heading.
+	// It is presentation only, never a runtime callback or serialized launch authority.
+	StartingNotice string `json:"-"`
+
 	// ConsultLead names the lead agent of a consult-capable run: it gets a
 	// light, optional "second opinion" directive merged into its instruction file,
 	// naming the EXPLICIT peers (Peers) it may consult read-only on hard calls. Scoped

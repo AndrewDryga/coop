@@ -188,6 +188,7 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 		AgentCommand: agent != "",
 		Homes:        a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache, Serve: true,
 		CompanionRepositories: companionRepositories,
+		StartingNotice:        a.loginStartingNotice(agent),
 	}
 	if forkIdentity != nil {
 		spec.ActivityKind = forkspace.ExecutionForkInteractive
@@ -257,6 +258,7 @@ func (a *app) runRestrictedInBox(cmd []string, agent string) (int, error) {
 		return code, err
 	}
 	spec := box.RunSpec{Image: img, Cmd: cmd, Agent: agent, AgentCommand: agent != "", Homes: a.cfg.Homes, Mode: mode}
+	spec.StartingNotice = a.loginStartingNotice(agent)
 	switch mode {
 	case agents.ModeBare:
 		if a.network.Mode != nil {
@@ -676,6 +678,9 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	}
 	a.cfg.SetActiveProfile(tool, profile)
 	loginHandoff(tool, profile)
+	previousLogin := a.loginProvider
+	a.loginProvider = tool
+	defer func() { a.loginProvider = previousLogin }()
 	code, err := a.runInBox(ag.Login(a.cfg), tool, nil) // mounts only the agent being logged in to
 	switch {
 	case errors.Is(err, context.Canceled):
@@ -692,10 +697,16 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	return 0, nil
 }
 
-// loginHandoff says whose sign-in is starting and whose instructions follow, then the provider
-// owns the screen. Where the credential is stored is coop's business, not the user's.
+// loginHandoff names the sign-in before host setup. Provider guidance belongs at launch.
 func loginHandoff(tool, profile string) {
-	ui.Note("Signing in to %s\n\nFollow %s's sign-in instructions below.", loginTargetName(tool, profile), titleName(tool))
+	ui.Note("Signing in to %s\n", loginTargetName(tool, profile))
+}
+
+func (a *app) loginStartingNotice(tool string) string {
+	if a.loginProvider != tool || tool == "" {
+		return ""
+	}
+	return fmt.Sprintf("Follow %s's sign-in instructions below", titleName(tool))
 }
 
 // loginResult reports the sign-in only when a usable credential was actually persisted; ready=false
@@ -707,6 +718,7 @@ func loginResult(tool, profile string, ready bool) {
 			[2]string{"Accounts:", "coop credentials " + tool})
 		return
 	}
+	ui.Note("")
 	ui.OK("Signed in to %s%s", title, loginAccountSuffix(tool, profile))
 	ui.Note("\nStart %s:\n  %s", title, "coop "+loginTargetName(tool, profile))
 }

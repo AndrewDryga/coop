@@ -162,6 +162,7 @@ func TestExplainedMarksOnlyANamedInterruption(t *testing.T) {
 // no-op and a failure comes back exactly as it was, for the caller's own reporting.
 func TestLaunchSectionsAreSilentOutsideInteractiveRuns(t *testing.T) {
 	for _, spec := range []RunSpec{{Batch: true}, {Quiet: true}, {ForceNoTTY: true}} {
+		spec.StartingNotice = "must remain silent"
 		s := newLaunchSections(spec)
 		cause := errors.New("no")
 		got := captureStderr(t, func() {
@@ -177,6 +178,25 @@ func TestLaunchSectionsAreSilentOutsideInteractiveRuns(t *testing.T) {
 		if got != "" {
 			t.Errorf("%+v printed %q", spec, got)
 		}
+	}
+}
+
+func TestLoginStartingNoticeRunOrdering(t *testing.T) {
+	shim := filepath.Join(t.TempDir(), "rt")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\ncase \"$1\" in run) printf 'PROVIDER OUTPUT\\n' >&2 ;; esac\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ConfigDir: t.TempDir(), BoxHome: t.TempDir(), HomeInBox: "/home/node", Egress: "open"}
+	spec := RunSpec{Image: "i", Repo: t.TempDir(), Workdir: "/workspace", Agent: "grok", Cmd: []string{"grok", "login", "--device-auth"}, StartingNotice: "Follow Grok's sign-in instructions below"}
+	var code int
+	var err error
+	got := captureStderr(t, func() { code, err = Run(cfg, runtime.Runtime{Name: shim}, spec) })
+	if code != 0 || err != nil {
+		t.Fatalf("Run = %d, %v", code, err)
+	}
+	want := "Protecting secrets\n  ✓ No secret paths to hide\n\nConfiguring network access\n  ⚠ Unrestricted — nothing is blocked\n\nStarting Grok\nFollow Grok's sign-in instructions below\nPROVIDER OUTPUT\n\nThe Coop box has stopped — main process exited with status 0.\n"
+	if got != want {
+		t.Fatalf("login launch = %q, want %q", got, want)
 	}
 }
 

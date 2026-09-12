@@ -47,6 +47,7 @@ type app struct {
 	rt                   runtime.Runtime
 	rtSet                bool                                         // whether rt has been detected yet (ensureRuntime is lazy — see below)
 	argv                 []string                                     // the invocation, so a remedy can name the command to repeat
+	loginProvider        string                                       // presentation context for the shared sign-in flow, including provider-first aliases
 	sweptRepos           map[string]bool                              // repos already swept for orphaned boxes this process (see sweepOrphanBoxes)
 	sweptNetworks        bool                                         // orphaned coop networks already swept this process (they are not per repo)
 	preset               *preset.Preset                               // the run's loaded preset (from the who-runs slot), carried into each RunSpec (see applyPreset)

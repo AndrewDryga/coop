@@ -94,6 +94,7 @@ updated: <YYYY-MM-DD>                # last edit
 **CLI output** — what the terminal shows
 - [selectors-need-a-real-choice](selectors-need-a-real-choice.md) — hide already-selected singleton dropdowns while retaining native state
 - [acp-waits-and-switches-are-visible](acp-waits-and-switches-are-visible.md) — announce automatic quota fallback and every newly queued account wait
+- [login-guidance-at-provider-start](login-guidance-at-provider-start.md) — put sign-in guidance below Starting and separate success from shutdown
 - [help-output-style](help-output-style.md) — UPPERCASE help headings, aligned command rows, practical prose and numbered how-tos
 - [command-output-tiers](command-output-tiers.md) — unprefixed human output, truthful progress, useful results, and readable consequences
 - [task-watch-shows-work-not-workspace-ownership](task-watch-shows-work-not-workspace-ownership.md) — tasks watch renders task-affecting activity, never an idle workspace reservation by itself
