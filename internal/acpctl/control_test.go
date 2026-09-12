@@ -2906,3 +2906,32 @@ func TestACPControlCanonicalizesSessionCwd(t *testing.T) {
 		})
 	}
 }
+
+// TestACPControlSelectProviderForReopenedThread: a reopened thread bound to another provider switches
+// the plain lead the way the dropdown does — once; the same, an unknown or a preset-owned selection
+// is a no-op so the proxy never restarts for nothing.
+func TestACPControlSelectProviderForReopenedThread(t *testing.T) {
+	c := newTestControl(t)
+	signInCred(t, c.cfg, "codex", "personal")
+	if !c.SelectProvider("codex") {
+		t.Fatal("a signed-in other provider must change the selection")
+	}
+	if tgt, _, ok := c.SpawnTarget(); !ok || tgt.Provider != "codex" {
+		t.Fatalf("SpawnTarget after SelectProvider = %+v ok=%v, want codex", tgt, ok)
+	}
+	if c.SelectProvider("codex") {
+		t.Fatal("re-selecting the active provider must not report a change")
+	}
+	if c.SelectProvider("gemini") {
+		t.Fatal("a signed-out provider must not change the selection")
+	}
+	if c.SelectProvider("not-a-provider") {
+		t.Fatal("an unknown provider must not change the selection")
+	}
+	c.mu.Lock()
+	c.sel = Selection{Preset: "frontier"}
+	c.mu.Unlock()
+	if c.SelectProvider("claude") {
+		t.Fatal("a preset owns the selection; SelectProvider must not override it")
+	}
+}

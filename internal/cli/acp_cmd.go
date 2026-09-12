@@ -492,7 +492,10 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	defer pool.Reap() // Stop held warm boxes on any exit path; the label sweep still reaps their containers
-	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, ctrl.Hooks(), acpproxy.RunOpts{Resume: resume, Reload: reload})
+	// Thread bindings outlive this process: a reopened thread's session/load must reach the provider and
+	// native session the conversation actually continued on, not the transcript stub its editor id names.
+	bindings := acpctl.OpenThreadBindings(acpctl.ThreadBindingsDir(a.cfg))
+	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, ctrl.Hooks(), acpproxy.RunOpts{Resume: resume, Reload: reload, Bindings: bindings})
 	// A SIGHUP reload: write the combined state to a 0600 temp file and re-exec THIS binary in place —
 	// same PID + fd 0/1/2, so the editor's transport never breaks. Run's reload path already stopped
 	// the box; reap the warm boxes here (execve replaces the image, so deferred reap won't run) and

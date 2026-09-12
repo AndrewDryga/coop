@@ -116,6 +116,12 @@ type Hooks struct {
 	// session. It is a non-destructive peek used when an adapter explicitly says a target change needs
 	// a fresh session; SessionRecreated consumes the owner's intent only after successful publication.
 	ShouldRecreateSession func(sessionID string) bool
+	// SelectProvider switches the plain lead to provider — what the Provider dropdown does — for a
+	// reopened thread whose durable binding names another provider than the active box (bindings.go).
+	// It returns whether the selection changed; the proxy then restarts the box and forwards the held
+	// session/load once that provider is up. A preset-owned lead, an unknown or signed-out provider,
+	// or the already-active one is a no-op (false).
+	SelectProvider func(provider string) bool
 	// SessionRecreated is called (before ResumePrompt) when an existing editor session is successfully
 	// rebound through session/new — a provider/model switch, or a genuinely lost store. coop uses it to
 	// consume forced-recreation intent and carry any conversation best-effort into the next prompt.
@@ -182,8 +188,9 @@ var (
 // RunOpts carries resume/reload state for a supervisor re-exec (a SIGHUP reload). The zero value is
 // a normal start (both nil), so Run is unchanged for callers that don't reload.
 type RunOpts struct {
-	Resume *Snapshot       // seed + replay this session state on the FIRST child (a resumed start)
-	Reload <-chan struct{} // a receive triggers a graceful reload: snapshot + stop child + return reloadError
+	Resume   *Snapshot       // seed + replay this session state on the FIRST child (a resumed start)
+	Reload   <-chan struct{} // a receive triggers a graceful reload: snapshot + stop child + return reloadError
+	Bindings BindingStore    // durable thread → native-session bindings across processes; nil = memory only (bindings.go)
 }
 
 // reloadError is returned by RunWith when a reload fires; it carries the snapshot to hand the
@@ -217,6 +224,7 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 	p := &proxy{
 		out:            clientOut,
 		hooks:          hooks,
+		bindings:       opts.Bindings,
 		authentication: map[authenticationScope]authenticationState{},
 		setupReqs:      map[string]setupRequest{},
 		authPending:    map[authenticationScope]string{},
@@ -521,7 +529,7 @@ type proxy struct {
 	restartEpoch   uint64                                      // increments for every selection/restart request, even during replay
 	lifecycleSeq   uint64                                      // unique id source for native cleanup requests within/across replay epochs
 	restarting     bool                                        // replacement replay tail is incomplete; editor prompts wait for publication
-	restartHeld    map[string]clientLine                       // at most one post-ack prompt per known editor session
+	restartHeld    map[string]clientLine                       // at most one post-ack prompt (or a reopened thread's load) per editor session
 	restartHeldLen int                                         // total queued bytes, bounded against a stalled replacement
 	shuttingDown   bool                                        // editor gone / ctx cancelled: a concurrent swap must stop the child it publishes
 	initialize     []byte                                      // the editor's initialize request
@@ -543,9 +551,11 @@ type proxy struct {
 	forceBySess    map[string]*forceChain                      // adapter session id -> active setting chain
 	forceFailed    map[string]string                           // adapter session id -> setting failure; prompts fail loudly
 
-	hooks       *Hooks      // coop's control layer (nil → pure pass-through)
-	intentional atomic.Bool // set before a coop-driven restart so the loop doesn't count it as a failure
-	reloading   atomic.Bool // reject requests after the reload boundary instead of losing them to exec
+	hooks        *Hooks          // coop's control layer (nil → pure pass-through)
+	bindings     BindingStore    // durable thread bindings (RunOpts.Bindings); nil = in-memory only
+	bindingQueue []bindingChange // store writes staged under mu, flushed by flushBindings once it is released
+	intentional  atomic.Bool     // set before a coop-driven restart so the loop doesn't count it as a failure
+	reloading    atomic.Bool     // reject requests after the reload boundary instead of losing them to exec
 }
 
 // Snapshot is the proxy's re-establishable session state, carried across a supervisor re-exec (a
@@ -860,6 +870,17 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 	}
 	h := parse(line)
 	sid := sessionID(h.Params) // the editor's session id, "" for non-session methods
+	// A reopened thread this process never saw (coop acp exited and came back): resolve its durable
+	// binding before taking the lock — one small read per reopen — and, when the transcript lives on
+	// another provider, park the load while that provider comes up.
+	var cold SessionBinding
+	hasCold := false
+	if origin == originEditor && h.isRequest() && sid != "" && (h.Method == "session/load" || h.Method == "session/resume") {
+		if cold, hasCold = p.lookupBinding(sid); hasCold && p.holdColdLoad(line, sid, cold) {
+			return
+		}
+	}
+	rewriteTo := "" // the native id a cold load is forwarded under, when it differs from the editor's
 	p.mu.Lock()
 	if p.reloading.Load() && h.isRequest() {
 		p.mu.Unlock()
@@ -881,10 +902,16 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 		}
 		adapterID := sid
 		sessionProvider := ""
+		coldLoad := false
 		s := p.sessions[sid]
 		if s != nil {
 			adapterID = s.adapterID
 			sessionProvider = s.provider
+		} else if hasCold && cold.Provider == provider {
+			// The thread's transcript lives on this provider under a native id this process has never
+			// bound: load THAT id. The reverse map is installed below, before the adapter answers,
+			// because the replayed history streams ahead of the load result that commits the binding.
+			adapterID, sessionProvider, coldLoad = cold.AdapterID, cold.Provider, true
 		}
 		unavailable := sid != "" && p.unavailable[sid]
 		foreign := sid != "" && sessionProvider != "" && provider != "" && sessionProvider != provider
@@ -933,6 +960,7 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 			held = append(held, p.dropRestartHeldLocked(sid)...)
 			pending := p.cancelPendingPromptsLocked(sid)
 			p.mu.Unlock()
+			p.flushBindings()
 			p.failHeldPromptsForLifecycle(held, "deleted")
 			p.failPendingPromptsForLifecycle(pending, "deleted")
 			if ended && p.hooks != nil && p.hooks.SessionEnded != nil {
@@ -1026,6 +1054,12 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 					method: h.Method, editorID: sid, adapterID: adapterID, provider: provider, params: h.Params,
 					generation: p.generation,
 				}
+				if coldLoad && adapterID != sid {
+					rewriteTo = adapterID
+					if p.byAdapter[adapterID] == "" {
+						p.byAdapter[adapterID] = sid // provisional: a failed load removes it (response path)
+					}
+				}
 			}
 		case "session/prompt":
 			if sid != "" {
@@ -1050,6 +1084,8 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 	fwd := line
 	if s := p.sessions[sid]; sid != "" && s != nil && s.adapterID != sid {
 		fwd = withSessionID(line, s.adapterID)
+	} else if rewriteTo != "" {
+		fwd = withSessionID(line, rewriteTo)
 	}
 	var writeChild *Child
 	writeGeneration := p.generation
@@ -1228,7 +1264,12 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 					}
 				}
 			}
+			if wasSession && !success && (op.method == "session/load" || op.method == "session/resume") &&
+				p.sessions[op.editorID] == nil && p.byAdapter[op.adapterID] == op.editorID {
+				delete(p.byAdapter, op.adapterID) // the provisional cold-load remap: nothing was bound
+			}
 			p.mu.Unlock()
+			p.flushBindings()
 			if heldLifecycle != "" {
 				p.failHeldPromptsForLifecycle(held, heldLifecycle)
 			} else {
@@ -1688,6 +1729,7 @@ func (p *proxy) bindSessionLocked(editorID, adapterID, provider string, params j
 	if adapterID != editorID {
 		p.byAdapter[adapterID] = editorID
 	}
+	p.queueBindingLocked(editorID, SessionBinding{Provider: provider, AdapterID: adapterID}, false)
 }
 
 // freshSessionIDCollidesLocked rejects an adapter's attempt to identify a new editor thread with an
@@ -1780,6 +1822,7 @@ func (p *proxy) deleteSessionLocked(editorID, adapterID string, retire bool) boo
 	delete(p.reactivating, s.adapterID)
 	delete(p.sessions, editorID)
 	delete(p.unavailable, editorID)
+	p.queueBindingLocked(editorID, SessionBinding{}, true)
 	return true
 }
 
@@ -2258,8 +2301,12 @@ func (p *proxy) releaseRestartHeld(c *Child, epoch uint64) error {
 	held := make([]clientLine, 0, len(queued))
 	var rejected []clientLine
 	for _, prompt := range queued {
-		sid := sessionID(parse(prompt.line).Params)
-		if s := p.sessions[sid]; sid != "" && s != nil && !s.closed && !p.unavailable[sid] {
+		frame := parse(prompt.line)
+		sid := sessionID(frame.Params)
+		// A reopened thread's held session/load has no session yet by definition: it is re-resolved
+		// against its durable binding on the way back through forwardClientControlled.
+		reopen := frame.Method == "session/load" || frame.Method == "session/resume"
+		if s := p.sessions[sid]; sid != "" && (reopen || s != nil && !s.closed && !p.unavailable[sid]) {
 			held = append(held, prompt)
 		} else {
 			rejected = append(rejected, prompt)
@@ -2438,6 +2485,7 @@ func (p *proxy) swapChildAt(
 	}
 	down := p.shuttingDown
 	p.mu.Unlock()
+	p.flushBindings()
 	// The editor disconnected while replay was in flight: shutdownChild already stopped the OLD child,
 	// so stop the one we just published too — otherwise its Out never closes and Run blocks forever in
 	// pumpChild. Serialized with shutdownChild under p.mu, so exactly one of them stops this child.

@@ -228,6 +228,7 @@ func (c *Control) Hooks() *acpproxy.Hooks {
 		AutoReply:             c.autoReply,
 		ResumePrompt:          c.resumePrompt,
 		ShouldRecreateSession: c.shouldRecreateSession,
+		SelectProvider:        c.SelectProvider,
 		SessionRecreated:      c.sessionRecreated,
 		SessionClosed:         c.sessionClosed,
 		SessionEnded:          c.sessionEnded,
@@ -2230,6 +2231,26 @@ func (c *Control) SelectorSelection(configID, value string) (next Selection, rec
 		return Selection{Preset: value}, true
 	}
 	return next, false
+}
+
+// SelectProvider switches the plain lead to provider the way the Provider dropdown does (fromEditor),
+// for a reopened thread whose durable binding lives there: the proxy restarts the box when this
+// reports a change and forwards the held session/load once it is up. Presets own the selection, and an
+// unknown, signed-out or already-active provider is a no-op — SelectorSelection refuses those.
+func (c *Control) SelectProvider(provider string) bool {
+	next, _ := c.SelectorSelection(CoopProviderID, provider)
+	c.mu.Lock()
+	c.sel = normalizeACPSelection(c.sel)
+	changed := next != c.sel
+	if changed {
+		c.sel = next
+		c.rot, c.rotFor = nil, Selection{}
+	}
+	c.mu.Unlock()
+	if changed {
+		_, _, _ = c.SpawnTarget() // re-derive the per-lead state now, as a dropdown change would
+	}
+	return changed
 }
 
 func (c *Control) presetLead(name, fallback string) string {

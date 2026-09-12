@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Reopening an editor thread after `coop acp` restarted brings back the whole conversation.**
+  Every provider or account switch continues a thread on a fresh native session; coop now remembers
+  which one each thread is on (`~/.config/coop/agents/acp-threads/`, host-only, pruned after 90
+  days) and loads that transcript on reopen — switching to the thread's provider first when another
+  one is active — instead of replaying the stub written before the first switch.
+
 - Task completion refuses empty or unfinished checklists with actionable progress counts.
   The check applies to task tools, host completion, loop finalization, and fork acceptance and
   landing; interrupted unfinished fork work can still resume. Agent guidance keeps failed,

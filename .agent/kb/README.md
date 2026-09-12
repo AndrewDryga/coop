@@ -98,6 +98,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [acp-auth-is-provider-account-scoped](acp-auth-is-provider-account-scoped.md) — initialize capability truth and successful authentication belong to one provider account
 - [acp-scripted-e2e](acp-scripted-e2e.md) — test the real ACP supervisor/control/proxy path with a scripted runtime and isolated state
 - [acp-replay-publication](acp-replay-publication.md) — publish replacement native bindings atomically before releasing held editor work
+- [acp-thread-bindings](acp-thread-bindings.md) — persist each thread's provider + native session id so a fresh coop acp reopens the transcript the conversation continued on, not the pre-switch stub
 - [acp-target-commit](acp-target-commit.md) — commit model/effort truth from the effective provider response, including Grok migrations
 - [acp-carry-echo](acp-carry-echo.md) — inject best-effort context once and hide only its exact provider echo from the editor
 - [acp-generated-output-boundary](acp-generated-output-boundary.md) — generated images bypass transcript bytes but remain bounded, immutable turn artifacts

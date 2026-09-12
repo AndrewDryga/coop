@@ -76,6 +76,12 @@ type proxyHarness struct {
 
 func newProxyHarness(t *testing.T, n int, hooks *Hooks, providers ...string) *proxyHarness {
 	t.Helper()
+	return newProxyHarnessWith(t, n, hooks, RunOpts{}, providers...)
+}
+
+// newProxyHarnessWith is newProxyHarness with RunOpts (a binding store, a resume snapshot).
+func newProxyHarnessWith(t *testing.T, n int, hooks *Hooks, opts RunOpts, providers ...string) *proxyHarness {
+	t.Helper()
 	clientInR, clientInW := io.Pipe()
 	clientOutR, clientOutW := io.Pipe()
 	h := &proxyHarness{clientIn: clientInW, clientOut: bufio.NewReader(clientOutR), done: make(chan error, 1), t: t}
@@ -91,7 +97,7 @@ func newProxyHarness(t *testing.T, n int, hooks *Hooks, providers ...string) *pr
 		queue <- c
 	}
 	factory := func(context.Context) (*Child, error) { return (<-queue).child(), nil }
-	go func() { h.done <- Run(context.Background(), clientInR, clientOutW, factory, hooks) }()
+	go func() { h.done <- RunWith(context.Background(), clientInR, clientOutW, factory, hooks, opts) }()
 	return h
 }
 
