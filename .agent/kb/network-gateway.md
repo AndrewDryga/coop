@@ -3,7 +3,7 @@ name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
 sources: [internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/gatewayimage/image.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go]
-updated: 2026-09-10
+updated: 2026-09-12
 ---
 
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
@@ -63,10 +63,16 @@ Facts the code cannot say twice, all still true:
 - nft 1.0.2 rejects a table argument after `list counters inet`, and its JSON formatter prints
   UINT64_MAX as `-1` (`kernel_events.go:122`, `:224`); only that private parser reinterprets it.
 - On OrbStack every Docker network also gets a HOST address (`192.168.<n>.0` on the Mac), so
-  another project's `compose up` while a filtered box runs adds an address outside that run's
-  envelope and the watch stops it: "host address … appeared after this run's protection envelope
-  was installed" (`box/filtered_launch.go:319`). It is the correct fail-closed answer, and the
-  message names the address so an operator can see which one.
+  another filtered box's start — or another project's `compose up` — adds addresses outside a
+  running box's launch envelope. The watch used to stop the run on that ("host address … appeared
+  after this run's protected addresses were set"), which made two filtered runs kill each other in
+  a loop: each respawn created the network that tripped the other (2026-09-12, ~60 ACP respawns in
+  eight minutes). `reconcileTopology` (`box/filtered_launch.go`) now re-renders `protected4` in
+  place through `ProtectedSetUpdate` — one atomic `flush set; add element` batch, verified on the
+  pinned nftables 1.0.2 (nested prefixes auto-merge; a refused element leaves the set unchanged) —
+  records the grown envelope on the execution, and stops the run only when the update is refused
+  or the 256-range cap is passed. A gone address keeps its denial; an IPv6 address is recorded but
+  never rendered (the gateway drops IPv6 wholesale). The message still names the address.
 
 **Observation** joins three unrelated sources in the collector: Envoy's per-flow access log (the
 only place bytes are metered), sampled `/proc/net/tcp` rows, and nftables counters. TLS flows are
@@ -110,6 +116,9 @@ checkout, so a stale tar is a red gate, and a filtered launch only ever runs the
 [[restricted-networking]] qualification names.
 
 ## Changelog
+- 2026-09-12 — topology growth is reconciled in place instead of ending the run: `ProtectedElements`
+  / `ProtectedSetUpdate` share the set's rendering between launch and the host's re-render; verified
+  the flush+add batch live on the pinned gateway image and against `TestFiltered*Protection*`
 - 2026-09-10 — the retired-maintenance sibling is closed: an owned DoH connection binds its inode
   from the first unambiguous inventory row, the release retains that exact identity like a proxy
   close, and both folds share one bounded retain helper. A connection no sample bound (an in-flight

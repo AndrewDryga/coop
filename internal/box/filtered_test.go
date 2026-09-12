@@ -48,6 +48,9 @@ type filteredDaemonFixture struct {
 	volumeExposure                         runtime.VolumeExposure
 	smoke                                  *networkstate.QualificationSmoke
 	networksErr                            error
+	extraNetworks                          []runtime.DockerNetwork // networks that appeared after launch
+	applied                                []string                // ExecApply argv, joined
+	applyErr                               error
 	networkMembers                         map[string]netip.Addr
 	composeServices                        map[string]string
 	connected                              []string
@@ -73,10 +76,22 @@ func (d *filteredDaemonFixture) Networks(context.Context) ([]runtime.DockerNetwo
 	if d.networksErr != nil {
 		return nil, d.networksErr
 	}
-	return []runtime.DockerNetwork{
+	return append([]runtime.DockerNetwork{
 		{Name: "bridge", Subnets: []netip.Prefix{netip.MustParsePrefix("172.17.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.17.0.1")}},
 		{Name: "coop-fixture_default", Subnets: []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.31.0.1")}},
-	}, nil
+	}, d.extraNetworks...), nil
+}
+
+// ExecApply records the host's one post-launch mutation (the protected-set
+// re-render) and fails it on demand.
+func (d *filteredDaemonFixture) ExecApply(_ context.Context, _ runtime.DockerRef, command ...string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.applyErr != nil {
+		return d.applyErr
+	}
+	d.applied = append(d.applied, strings.Join(command, " "))
+	return nil
 }
 
 func (d *filteredDaemonFixture) NetworkMembers(context.Context, string) (map[string]netip.Addr, error) {
@@ -139,11 +154,15 @@ func filteredFixture(t *testing.T) (*filteredExecution, *filteredDaemonFixture) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.protected = []netip.Prefix{netip.MustParsePrefix("192.0.2.1/32")}
-	f.hostAddresses = func() ([]netip.Prefix, error) { return slices.Clone(f.protected), nil }
+	f.hostAddresses = func() ([]netip.Prefix, error) { return []netip.Prefix{netip.MustParsePrefix("192.0.2.1/32")}, nil }
 	d := &filteredDaemonFixture{f: f, smoke: smoke, containers: map[string]runtime.DockerContainer{}, volumes: map[string]runtime.DockerVolume{},
 		images: map[string]fixtureImage{}, layerReads: map[string]int{}, fileReads: map[string]int{}, attached: make(chan struct{})}
 	f.docker = d
+	// The envelope a real launch inventories: this host plus the daemon's networks.
+	networks, _ := d.Networks(ctx)
+	if f.protected, _, err = filteredProtectedAddresses(networks, f.hostAddresses); err != nil {
+		t.Fatal(err)
+	}
 	return f, d
 }
 

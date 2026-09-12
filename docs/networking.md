@@ -156,10 +156,15 @@ Coop never accepts a rule it cannot enforce and then quietly drops the constrain
 Some destinations can never be granted, inside a `cidr:` grant or anywhere else: the host's own
 interface addresses, every subnet the container runtime allocates and every gateway it holds in one
 (so sibling containers, other sessions' boxes and the daemon's own address are out of reach), and
-the loopback/link-local/metadata ranges. The inventory is taken from the daemon at launch. A
-permitted CIDR does not beat it — those packets are dropped and counted as protected. The single
-exception is an approved `service:` grant: that ONE container address is what a human approved, so
-it is permitted before the protected drop and nothing else in its subnet is.
+the loopback/link-local/metadata ranges. The inventory is taken from the daemon at launch, and it
+follows the host while the box runs: when another filtered box starts and creates its network, or a
+VPN brings an interface up, the new subnets, gateways and host addresses are added to the running
+box's protected set in place — one atomic kernel update — and refused from that moment. A box is
+stopped for topology only when that update is refused or the envelope would pass 256 ranges; an
+address that disappears keeps its denial. A permitted CIDR does not beat the protected set — those
+packets are dropped and counted as protected. The single exception is an approved `service:` grant:
+that ONE container address is what a human approved, so it is permitted before the protected drop
+and nothing else in its subnet is.
 
 A published `serve` port is host ingress, and only host ingress: the rule matches the bridge
 gateway address the host's traffic is NAT'd from, so a sibling container on the same bridge cannot

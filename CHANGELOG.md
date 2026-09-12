@@ -10,6 +10,13 @@
   days) and loads that transcript on reopen — switching to the thread's provider first when another
   one is active — instead of replaying the stub written before the first switch.
 
+- **Two filtered boxes no longer kill each other.** A filtered run used to stop the moment a new host
+  address appeared — and every other filtered box's start creates a Docker network that is one — so
+  concurrent runs respawned each other in a loop. The run now adds the new subnets, gateways and
+  host addresses to its live protected set in place (one atomic kernel update, recorded on the
+  execution for `coop net why`) and stops only when that update is refused or the envelope would
+  pass 256 ranges.
+
 - Task completion refuses empty or unfinished checklists with actionable progress counts.
   The check applies to task tools, host completion, loop finalization, and fork acceptance and
   landing; interrupted unfinished fork work can still resume. Agent guidance keeps failed,

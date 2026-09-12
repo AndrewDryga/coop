@@ -328,6 +328,22 @@ func (d *Docker) ExecRead(ctx context.Context, ref DockerRef, limit int, command
 	return d.output(ctx, limit, append([]string{"container", "exec", ref.ID}, command...)...)
 }
 
+// ExecApply runs one release-owned, fixed-argv command in a running helper
+// container for its effect rather than its output. It is the single host-driven
+// mutation a filtered run makes after launch — re-rendering the controller's
+// protected set when the host's topology grows (box/filtered_launch.go
+// reconcileTopology) — and carries ExecRead's guards: the exact immutable
+// container, running and unpaused, never an argv a request supplied. A non-zero
+// exit is an error the caller treats as fail-closed.
+func (d *Docker) ExecApply(ctx context.Context, ref DockerRef, command ...string) error {
+	value, present, err := d.InspectContainer(ctx, ref)
+	if err != nil || ref.ID == "" || !present || !value.State.Running || value.State.Paused || len(command) == 0 {
+		return errors.Join(errors.New("Docker helper unavailable for a host mutation"), err)
+	}
+	_, err = d.output(ctx, 4096, append([]string{"container", "exec", ref.ID}, command...)...)
+	return err
+}
+
 func (d *Docker) CopyArchive(ctx context.Context, ref DockerRef, source string, limit int) ([]byte, error) {
 	_, present, err := d.InspectContainer(ctx, ref)
 	if err != nil || ref.ID == "" || !present || !strings.HasPrefix(source, "/") || strings.ContainsAny(source, "\x00\r\n") {

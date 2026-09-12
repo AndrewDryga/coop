@@ -8,11 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/networkgateway"
+	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/networkview"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
@@ -237,7 +239,7 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 	if err := f.waitReady(ctx); err != nil {
 		return -1, err
 	}
-	if err := f.checkTopology(); err != nil {
+	if err := f.reconcileTopology(ctx); err != nil {
 		return -1, err
 	}
 	if err := f.checkBindings(); err != nil {
@@ -252,7 +254,7 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 	if err := f.waitReady(ctx); err != nil {
 		return -1, err
 	}
-	if err := f.checkTopology(); err != nil {
+	if err := f.reconcileTopology(ctx); err != nil {
 		return -1, err
 	}
 	if err := f.checkBindings(); err != nil {
@@ -299,9 +301,9 @@ func (f *filteredExecution) watch(ctx context.Context, cancel context.CancelFunc
 			return nil
 		case <-ticker.C:
 		}
-		if err := f.checkTopology(); err != nil {
+		if err := f.reconcileTopology(ctx); err != nil {
 			cancel()
-			return err // topology drift is a changed protection envelope, not a slow probe
+			return err // an envelope that cannot follow the topology is not a slow probe
 		}
 		probe, stop := context.WithTimeout(ctx, 3*time.Second)
 		_, err := f.docker.ExecRead(probe, f.ref("guard"), 4096, "/usr/local/bin/coop-net", "probe")
@@ -329,29 +331,97 @@ func (f *filteredExecution) watch(ctx context.Context, cancel context.CancelFunc
 	}
 }
 
-func (f *filteredExecution) checkTopology() error {
+// filteredTopologyTimeout bounds one reconciliation: the daemon's network
+// inventory plus one kernel set update in the controller.
+const filteredTopologyTimeout = 3 * time.Second
+
+// reconcileTopology keeps the run's protection envelope equal to the host's live
+// topology. The envelope is inventoried at launch — this host's addresses plus
+// every subnet and gateway the runtime holds — and rendered into the
+// controller's protected4 set, which the kernel refuses before any grant. But
+// topology moves while a run lives: every other filtered run creates its own
+// Docker network (a subnet, a gateway, on OrbStack a host address too), a VPN
+// adds an interface. Ending the run on that, as this once did, made two filtered
+// runs kill each other in a loop — each respawn created the network that tripped
+// the other's watch. Instead the grown inventory is re-rendered into the live
+// kernel set — the one host mutation a run makes after launch — then kept in
+// f.protected and the execution record, so the addresses are refused from that
+// moment and a later `why` can say so. Growth is monotone: an address that
+// disappears keeps its denial. What cannot be reconciled still ends the run: an
+// unreadable or empty host inventory, an envelope past the qualified cap, a
+// refused kernel update. The message names the address either way, because
+// "topology changed" alone leaves an operator with nothing to look at.
+func (f *filteredExecution) reconcileTopology(ctx context.Context) error {
 	inventory := f.hostAddresses
 	if inventory == nil {
 		inventory = filteredHostAddresses
 	}
-	protected, err := inventory()
+	host, err := inventory()
 	if err != nil {
 		return err
 	}
 	// Interface GC can remove an address without weakening the original deny
-	// set. Keep that set installed; only newly unprotected addresses require a
-	// replacement execution. Never advance the baseline to a smaller inventory.
-	if len(protected) == 0 {
+	// set. Keep that set installed; only new addresses need work. Never advance
+	// the baseline to a smaller inventory.
+	if len(host) == 0 {
 		return errors.New("protected host topology is empty; start a new network execution")
 	}
+	ctx, cancel := context.WithTimeout(ctx, filteredTopologyTimeout)
+	defer cancel()
+	// A daemon that cannot answer right now is not topology drift: reconcile the
+	// host inventory alone — all this watch ever covered — and let the next tick
+	// see the runtime's networks.
+	networks, _ := f.docker.Networks(ctx)
+	protected, _, err := filteredProtectedAddresses(networks, func() ([]netip.Prefix, error) { return host, nil })
+	if err != nil {
+		return err
+	}
+	var added []netip.Prefix
+	kernel := false
 	for _, prefix := range protected {
-		if !slices.Contains(f.protected, prefix) {
-			// Name the address: "topology changed" alone leaves an operator with
-			// nothing to look at, and a VPN or a new interface is a fact they can.
-			return fmt.Errorf("host address %s appeared after this run's protected addresses were set; start the run again", prefix)
+		if coveredBy(f.protected, prefix) {
+			continue
+		}
+		if !prefix.IsValid() || prefix != prefix.Masked() || prefix.Addr().Is4In6() {
+			return fmt.Errorf("host address %s appeared after this run's protected addresses were set and cannot be protected; start the run again", prefix)
+		}
+		added = append(added, prefix)
+		// The gateway refuses every IPv6 packet outright, so only IPv4 changes the
+		// kernel set; a new IPv6 address is recorded and nothing more.
+		kernel = kernel || prefix.Addr().Is4()
+	}
+	if len(added) == 0 {
+		return nil
+	}
+	if len(f.protected)+len(added) > networkgateway.MaxProtectedRanges {
+		return fmt.Errorf("host address %s appeared after this run's protected addresses were set, and the envelope cannot grow past %d ranges; start the run again", added[0], networkgateway.MaxProtectedRanges)
+	}
+	grown := append(slices.Clone(f.protected), added...)
+	slices.SortFunc(grown, func(a, b netip.Prefix) int { return strings.Compare(a.String(), b.String()) })
+	if kernel {
+		if err := f.docker.ExecApply(ctx, f.ref("controller"), "/usr/sbin/nft", networkgateway.ProtectedSetUpdate(grown)); err != nil {
+			return fmt.Errorf("host address %s appeared after this run's protected addresses were set and could not be protected in place (%v); start the run again", added[0], err)
 		}
 	}
+	f.protected = grown
+	// Evidence, not enforcement: the kernel already refuses the addresses. Like
+	// the periodic snapshot, a failed write leaves the live work alone.
+	_ = f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
+		return f.store.RecordProtected(ctx, r.ID, r.Revision, grown)
+	})
 	return nil
+}
+
+// coveredBy reports whether prefix lies inside one the run already protects; a
+// CIDR either nests in another or is disjoint from it, so containment is the
+// whole question.
+func coveredBy(protected []netip.Prefix, prefix netip.Prefix) bool {
+	for _, installed := range protected {
+		if installed.Bits() <= prefix.Bits() && installed.Contains(prefix.Addr()) {
+			return true
+		}
+	}
+	return false
 }
 
 // interruptedRun reads as one word to a person and is still a cancellation to code: the loop and

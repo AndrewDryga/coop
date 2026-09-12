@@ -166,7 +166,9 @@ func portSet(ports []int) string {
 
 // Initialize runs once before any guard/agent starts. Failure leaves readiness
 // false; callers destroy these exact resources rather than repair under a live
-// workload. Only lease sets, never chains or counters, change after readiness.
+// workload. Only sets change after readiness — leases here, and protected4 when
+// the host re-renders it for a grown topology (ProtectedSetUpdate) — never
+// chains or counters.
 func (c *Controller) Initialize(ctx context.Context, maintenance netip.Addr) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -313,15 +315,33 @@ func leaseRules(leases map[string]Lease, now BootInstant) (string, map[netip.Add
 	return result, installed
 }
 
-func (c *Controller) initialRules(maintenance netip.Addr) string {
-	var protected []string
-	for _, prefix := range egress.ProtectedRanges(c.protected) {
+// ProtectedElements renders the protected4 set's elements — the always-refused
+// ranges plus this run's inventory, IPv4 only — sorted and deduplicated. The
+// controller renders them at launch (initialRules) and the host re-renders them
+// in place when the topology grows (box/filtered_launch.go reconcileTopology),
+// so both sides share one definition of the set.
+func ProtectedElements(protected []netip.Prefix) []string {
+	var out []string
+	for _, prefix := range egress.ProtectedRanges(protected) {
 		if prefix.Addr().Is4() {
-			protected = append(protected, prefix.String())
+			out = append(out, prefix.String())
 		}
 	}
-	slices.Sort(protected)
-	protected = slices.Compact(protected)
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// ProtectedSetUpdate is the one-transaction nft script that re-renders protected4
+// to a grown inventory. Flush and add commit together, so the set never has a
+// gap and a refused element leaves it unchanged (verified on the pinned nftables
+// 1.0.2). nft parses its argument as a script, so nothing but canonical prefixes
+// may reach it — callers validate before rendering.
+func ProtectedSetUpdate(protected []netip.Prefix) string {
+	return "flush set inet coop_net protected4; add element inet coop_net protected4 { " + strings.Join(ProtectedElements(protected), ", ") + " }"
+}
+
+func (c *Controller) initialRules(maintenance netip.Addr) string {
+	protected := ProtectedElements(c.protected)
 	// The set of ports the policy grants TLS on IS the capture chain: the agent's
 	// TCP to one of them is redirected to the guard, which reads the port back
 	// from the kernel. A policy with no tls grant captures no TLS port at all.

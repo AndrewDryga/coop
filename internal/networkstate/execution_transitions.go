@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/netip"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/networkview"
@@ -112,6 +114,39 @@ func (s *Store) BeginResourceStart(ctx context.Context, id string, revision netw
 }
 func (s *Store) RecordResourceStarted(ctx context.Context, id string, revision networkview.Count, role string) (Execution, error) {
 	return s.resourceTransition(ctx, id, revision, role, "starting", "started")
+}
+
+// RecordProtected replaces the run's protection envelope with a grown one. The
+// envelope only ever grows — a host address that disappears keeps its kernel
+// denial — so a candidate that drops a recorded prefix, passes the qualified cap
+// or is not canonical is refused. It is evidence for a later `why`, written
+// after the kernel set already refuses the new ranges.
+func (s *Store) RecordProtected(ctx context.Context, id string, revision networkview.Count, protected []netip.Prefix) (Execution, error) {
+	return s.mutateExecution(ctx, id, revision, func(record *Execution) (bool, error) {
+		if err := s.ownedExecution(record); err != nil {
+			return false, err
+		}
+		if len(protected) > maxProtectedRanges {
+			return false, errors.New("network protection envelope exceeds the qualified cap")
+		}
+		for _, prefix := range protected {
+			if !prefix.IsValid() || prefix != prefix.Masked() || prefix.Addr().Is4In6() {
+				return false, errors.New("network protection envelope is not canonical")
+			}
+		}
+		for _, prior := range record.Protected {
+			if !slices.Contains(protected, prior) {
+				return false, errors.New("network protection envelope never shrinks")
+			}
+		}
+		next := slices.Clone(protected)
+		slices.SortFunc(next, func(a, b netip.Prefix) int { return strings.Compare(a.String(), b.String()) })
+		if slices.Equal(next, record.Protected) {
+			return false, nil
+		}
+		record.Protected = next
+		return true, nil
+	})
 }
 
 func (s *Store) RecordResourceCreated(ctx context.Context, id string, revision networkview.Count, role, objectID string) (Execution, error) {

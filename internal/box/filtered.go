@@ -109,6 +109,7 @@ type filteredDocker interface {
 	StopContainer(context.Context, runtime.DockerRef, int) error
 	RemoveContainer(context.Context, runtime.DockerRef) error
 	ExecRead(context.Context, runtime.DockerRef, int, ...string) ([]byte, error)
+	ExecApply(context.Context, runtime.DockerRef, ...string) error
 	CopyArchive(context.Context, runtime.DockerRef, string, int) ([]byte, error)
 	Image(context.Context, string) (string, map[string]string, error)
 	ImageLayers(context.Context, string) (string, []string, error)
