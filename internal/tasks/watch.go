@@ -325,6 +325,9 @@ func mergedQueue(p ui.Palette, merged []mergedTask, spin, width int) []string {
 	var out []string
 	emit := func(m mergedTask) {
 		suffix := ""
+		if n := len(m.Subtasks); n > 0 {
+			suffix = fmt.Sprintf(" (%d/%d)", m.doneSubtasks(), n)
+		}
 		if m.State != StateTodo && m.fork != "" {
 			suffix += "  ← " + m.fork
 			if m.phase != "" {

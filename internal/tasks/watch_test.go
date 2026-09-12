@@ -49,10 +49,10 @@ func merge(items []Item) []mergedTask {
 // tasks grouped by state. Done tasks are a header count, never a list; nothing is fork-attributed.
 func TestTasksWatchFrame(t *testing.T) {
 	items := []Item{
-		{ID: "a", Title: "Wire auth", State: StateInProgress},
-		{ID: "b", Title: "Add retries", State: StateTodo},
+		{ID: "a", Title: "Wire auth", State: StateInProgress, Subtasks: []bool{true, false, false}},
+		{ID: "b", Title: "Add retries", State: StateTodo, Subtasks: []bool{false, false}},
 		{ID: "c", Title: "Bump deps", State: StateTodo},
-		{ID: "d", Title: "Pick a queue backend", State: StateBlocked},
+		{ID: "d", Title: "Pick a queue backend", State: StateBlocked, Subtasks: []bool{true, true}},
 		{ID: "e", Title: "shipped thing", State: StateDone},
 		{ID: "f", Title: "another done", State: StateDone},
 	}
@@ -68,7 +68,7 @@ func TestTasksWatchFrame(t *testing.T) {
 	if strings.Contains(joined, ".agent/tasks") || strings.Contains(joined, "←") {
 		t.Errorf("a single source should show no label and no attribution:\n%s", joined)
 	}
-	for _, want := range []string{"in_progress", "todo", "blocked", "Wire auth", "Add retries", "Pick a queue backend"} {
+	for _, want := range []string{"Wire auth (1/3) · unleased", "Add retries (0/2)", "Bump deps\n", "Pick a queue backend (2/2)"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("frame missing %q:\n%s", want, joined)
 		}
@@ -76,6 +76,27 @@ func TestTasksWatchFrame(t *testing.T) {
 	for _, gone := range []string{"shipped thing", "another done"} {
 		if strings.Contains(joined, gone) {
 			t.Errorf("done task %q must not be listed:\n%s", gone, joined)
+		}
+	}
+}
+
+func TestTaskWatchReadsUpdatedChecklistCounts(t *testing.T) {
+	repo := t.TempDir()
+	root := filepath.Join(repo, TasksRoot)
+	path := filepath.Join(root, StateTodo, "checklist", "task.md")
+	for _, marker := range []string{" ", "x"} {
+		writeTaskFile(t, path, "# Checklist task\n\n## Subtasks\n- ["+marker+"] implement\n- [ ] verify\n```\n- [x] example only\n```\n")
+		out := captureStdout(t, func() {
+			if code, err := TasksWatch(Host{}, repo, []string{root}); code != 0 || err != nil {
+				t.Errorf("watch = (%d, %v)", code, err)
+			}
+		})
+		want := "Checklist task (0/2)"
+		if marker == "x" {
+			want = "Checklist task (1/2)"
+		}
+		if !strings.Contains(out, want) {
+			t.Errorf("watch did not read the current checklist %q:\n%s", want, out)
 		}
 	}
 }
@@ -127,8 +148,10 @@ func TestTaskWatchMarkersStayCompact(t *testing.T) {
 
 func TestTaskWatchTitleUsesAvailableTerminalWidth(t *testing.T) {
 	title := "Log every cloud error envelope instead of silently swallowing the useful diagnostic details"
+	subtasks := make([]bool, 12)
+	subtasks[0] = true
 	merged := []mergedTask{{
-		Item:  Item{ID: "errors", Title: title, State: StateInProgress},
+		Item:  Item{ID: "errors", Title: title, State: StateInProgress, Subtasks: subtasks},
 		fork:  "worker",
 		lease: TaskLeaseObservation{State: leaseBusy, Provider: "claude"},
 	}}
@@ -137,7 +160,7 @@ func TestTaskWatchTitleUsesAvailableTerminalWidth(t *testing.T) {
 		return frame[len(frame)-1]
 	}
 
-	wide := rowAt(120)
+	wide := rowAt(132)
 	if !strings.Contains(wide, title) {
 		t.Errorf("wide task row should use columns beyond the old fixed title cap: %q", wide)
 	}
@@ -147,7 +170,7 @@ func TestTaskWatchTitleUsesAvailableTerminalWidth(t *testing.T) {
 	if strings.Contains(narrow, title) || !strings.Contains(narrow, "…") {
 		t.Errorf("narrow task row should elide its title: %q", narrow)
 	}
-	if want := "  ← worker · busy claude"; !strings.HasSuffix(narrow, want) {
+	if want := " (1/12)  ← worker · busy claude"; !strings.HasSuffix(narrow, want) {
 		t.Errorf("narrow task row should preserve suffix %q: %q", want, narrow)
 	}
 	if got, max := len([]rune(narrow)), narrowWidth-1; got > max {
@@ -434,10 +457,10 @@ func TestTaskWatchOmitsClaimProcessIDs(t *testing.T) {
 
 func TestTaskWatchNamesHumanOwnerAndCanonicalQueue(t *testing.T) {
 	line := mergedQueue(ui.Palette{}, []mergedTask{{
-		Item:  Item{Title: "Apply schema", State: StateInProgress},
+		Item:  Item{Title: "Apply schema", State: StateInProgress, Subtasks: []bool{true, false}},
 		owner: "claimed by alice", queue: "api/.agent/tasks",
 	}}, 0, 100)[0]
-	for _, want := range []string{"claimed by alice", "queue api/.agent/tasks"} {
+	for _, want := range []string{"Apply schema (1/2)  ← claimed by alice", "queue api/.agent/tasks"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("human-owned multi-queue row lost %q: %q", want, line)
 		}

@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Task watch shows completed/total subtasks after each title, such as `(1/12)`, before ownership.
+  Counts stay visible when titles are shortened; tasks without a checklist omit the count.
+
 - Task watch hides claims on TODO rows and omits process IDs, leaving more room for task titles.
   Active tasks still name their owner and show when the owner's process has stopped.
 
