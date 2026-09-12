@@ -159,7 +159,7 @@ func TestFilteredNewHostAddressGrowsProtectionInPlace(t *testing.T) {
 	if err := f.reconcileTopology(context.Background()); err != nil {
 		t.Fatal("a new host address ended the run instead of growing its protection", err)
 	}
-	want := "/usr/sbin/nft " + networkgateway.ProtectedSetUpdate(append(slices.Clone(seeded), added))
+	want := "/usr/sbin/nft " + protectedSetUpdate(append(slices.Clone(seeded), added))
 	if len(d.applied) != 1 || d.applied[0] != want {
 		t.Fatalf("kernel update = %v, want exactly %q", d.applied, want)
 	}

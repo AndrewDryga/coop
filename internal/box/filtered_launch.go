@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkgateway"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/networkview"
@@ -399,7 +400,7 @@ func (f *filteredExecution) reconcileTopology(ctx context.Context) error {
 	grown := append(slices.Clone(f.protected), added...)
 	slices.SortFunc(grown, func(a, b netip.Prefix) int { return strings.Compare(a.String(), b.String()) })
 	if kernel {
-		if err := f.docker.ExecApply(ctx, f.ref("controller"), "/usr/sbin/nft", networkgateway.ProtectedSetUpdate(grown)); err != nil {
+		if err := f.docker.ExecApply(ctx, f.ref("controller"), "/usr/sbin/nft", protectedSetUpdate(grown)); err != nil {
 			return fmt.Errorf("host address %s appeared after this run's protected addresses were set and could not be protected in place (%v); start the run again", added[0], err)
 		}
 	}
@@ -410,6 +411,27 @@ func (f *filteredExecution) reconcileTopology(ctx context.Context) error {
 		return f.store.RecordProtected(ctx, r.ID, r.Revision, grown)
 	})
 	return nil
+}
+
+// protectedSetUpdate is the one-transaction nft script that re-renders the
+// controller's protected4 set to a grown inventory. Flush and add commit
+// together, so the set never has a gap and a refused element leaves it unchanged
+// (verified on the pinned nftables 1.0.2). The rendering mirrors initialRules in
+// internal/networkgateway/controller.go — the always-refused ranges plus this
+// run's inventory, IPv4 only, sorted and deduplicated — and lives HERE because
+// that package is embedded in the gateway image: sharing the code would change
+// the image every host has qualified, for no change in what runs inside it. nft
+// parses its argument as a script, so only canonical prefixes may reach it.
+func protectedSetUpdate(protected []netip.Prefix) string {
+	var elements []string
+	for _, prefix := range egress.ProtectedRanges(protected) {
+		if prefix.Addr().Is4() {
+			elements = append(elements, prefix.String())
+		}
+	}
+	slices.Sort(elements)
+	elements = slices.Compact(elements)
+	return "flush set inet coop_net protected4; add element inet coop_net protected4 { " + strings.Join(elements, ", ") + " }"
 }
 
 // coveredBy reports whether prefix lies inside one the run already protects; a
