@@ -1,6 +1,6 @@
 module github.com/AndrewDryga/coop
 
-go 1.26
+go 1.26.0
 
 toolchain go1.26.6
 
@@ -8,7 +8,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.1
 	golang.org/x/net v0.58.0
-	golang.org/x/sys v0.47.0
+	golang.org/x/sys v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.54.0
 )
