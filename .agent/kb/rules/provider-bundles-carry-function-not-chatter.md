@@ -4,7 +4,7 @@ description: a provider bundle grants what the client needs to function; the cli
 scope: security
 sources: [internal/agent/network_bundle.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/mcp/mcp.go, internal/cli/provider_network_live_e2e_test.go]
 check: "go test ./internal/agent -run 'TestProviderBundlesCarryFunctionNotChatter|TestManagedClientDefaultsAreBoxOnly'"
-updated: 2026-09-10
+updated: 2026-09-13
 ---
 
 # A provider bundle carries function; a managed client's chatter is switched off, not granted or hidden
@@ -16,7 +16,7 @@ installer or telemetry intake (`raw.githubusercontent.com`, `registry.npmjs.org`
 Datadog, Sentry, `ab.chatgpt.com`). That traffic is stopped at its source with the client's
 documented controls, projected box-only — never written to a host settings file — and a request
 that still arrives is a real refusal: recorded, visible in `coop net inspect`, explainable, and
-eligible for the ordinary `box.egress_rules` + `coop net approve` path. Coop keeps no hostname
+eligible for the ordinary `box.egress_rules` + `coop approve` path. Coop keeps no hostname
 list that suppresses a denial.
 
 **Why:** the first filtered `coop claude` hello-and-exit run (task
@@ -54,6 +54,7 @@ Background: [[restricted-networking]] (bundles are one of five layers),
 [[mcp-authority-projection]] (the overlays are projections of the host profile, never edits).
 
 ## Changelog
+- 2026-09-13 — updated the current approval path to the top-level `coop approve` command.
 - 2026-09-10 — created with the fix. Swept every `NetworkBundle` (claude, codex; gemini/grok
   refuse) against the chatter list: 0 violations after adding the connector proxy under
   `2026-09-10.1`. The `check:` pins bundle membership, the four upstream control names and that the

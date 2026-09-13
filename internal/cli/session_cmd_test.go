@@ -342,7 +342,7 @@ func TestSessionPolicyNetworkReportsWhatItCannotResolve(t *testing.T) {
 			t.Fatalf("unresolved configuration lacks %q:\n%s", want, got)
 		}
 	}
-	for _, forbidden := range []string{"Network access needs approval", "coop net approve", "Network  ", "example.com"} {
+	for _, forbidden := range []string{"Network access needs approval", "coop approve", "Network  ", "example.com"} {
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("setup failure contains %q:\n%s", forbidden, got)
 		}
@@ -370,7 +370,7 @@ func TestSessionPolicyNetworkReportsWhatItCannotResolve(t *testing.T) {
 	renderSessionConfigurations(&out, ui.Palette{}, policyPath,
 		[]sessionConfigurationView{sessionConfigurationViewOf("filtered", silent, pending, pendingSnapshot)})
 	got = out.String()
-	for _, want := range []string{"⚠ Network access needs approval", "Run coop net approve in " + real + ".\n"} {
+	for _, want := range []string{"⚠ Network access needs approval", "Run coop approve in " + real + ".\n"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("pending approval lacks %q:\n%s", want, got)
 		}

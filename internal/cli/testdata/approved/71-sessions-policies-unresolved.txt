@@ -10,6 +10,6 @@ code-review
 
       This project's network rules have not been approved.
 
-  Run coop net approve in /Users/andrewdryga/Projects/os/coop.
+  Run coop approve in /Users/andrewdryga/Projects/os/coop.
 
 Edit configurations: ~/.config/coop/session-policies.yaml

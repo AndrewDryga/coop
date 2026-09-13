@@ -260,7 +260,7 @@ func networkInstructionNote(policy egress.Snapshot) string {
 		fmt.Fprintf(&b, "- … and %d more allowed destination(s)\n", omitted)
 	}
 	b.WriteString("To ask for another one, add it under box.egress_rules in .agent/project.yaml and ask the\n")
-	b.WriteString("human to run \"coop net approve\" on the host — nothing in here can allow it.\n")
+	b.WriteString("human to run \"coop approve\" on the host — nothing in here can allow it.\n")
 	return b.String()
 }
 
@@ -358,7 +358,7 @@ func NetworkRuleText(rule egress.Rule) string {
 
 // NetworkRuleYAML is the copyable `egress_rules` entry for one rule — the shape
 // a human pastes into .agent/project.yaml. It is a draft to review, never a
-// grant: only `coop net approve` turns it into authority.
+// grant: only `coop approve` turns it into authority.
 func NetworkRuleYAML(rule egress.Rule) string {
 	var b strings.Builder
 	b.WriteString("    - to:\n")

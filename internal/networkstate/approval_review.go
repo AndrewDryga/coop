@@ -14,7 +14,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/egress"
 )
 
-var ErrApprovalChanged = errors.New("the request changed while you were reviewing it — run 'coop net approve' again")
+var ErrApprovalChanged = errors.New("the request changed while you were reviewing it — run 'coop approve' again")
 
 // ApprovalReview is the plain before/after diff a host operator reviews. Digest
 // binds that exact view — the project identity, the stored approval it started

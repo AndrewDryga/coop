@@ -119,7 +119,7 @@ func TestAdmitNetworkResolvesThePrecedenceLadder(t *testing.T) {
 			_, err := admitFixture(t, cfg, repo, NetworkAdmission{InvocationMode: test.invocation, Domains: test.domains})
 			switch test.want {
 			case "pending":
-				if err == nil || !strings.Contains(err.Error(), "cannot start because this project asks for") || !strings.Contains(err.Error(), "Review it: coop net approve") {
+				if err == nil || !strings.Contains(err.Error(), "cannot start because this project asks for") || !strings.Contains(err.Error(), "Review it: coop approve") {
 					t.Fatal("an unapproved widening was not refused with the review command", err)
 				}
 				if cfg.Egress != before {
@@ -174,7 +174,7 @@ func TestAdmitNetworkUnapprovedProjectRulesRefuse(t *testing.T) {
 	writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"),
 		"box:\n  egress_rules:\n    - to: {domain: example.com}\n      protocol: tls\n      ports: [443]\n")
 	capture, err := admitFixture(t, cfg, repo, NetworkAdmission{})
-	if capture != nil || err == nil || !strings.Contains(err.Error(), "This box cannot start because this project asks for network access that has not been approved\n\n  Review it: coop net approve") {
+	if capture != nil || err == nil || !strings.Contains(err.Error(), "This box cannot start because this project asks for network access that has not been approved\n\n  Review it: coop approve") {
 		t.Fatal("unapproved project request was admitted, or refused without the review command", err)
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {

@@ -49,6 +49,7 @@ SERVICES — postgres and redis, defined in .agent/compose.yml
 
 SECURITY & ISOLATION — control access, check isolation, and protect secrets
   coop doctor                       check that the box's isolation works
+  coop approve                      review and approve requested project access
   coop net                          show and manage this project's network access
   coop check-secrets                check project files for exposed secrets
   coop sign                         sign unpushed commits with your host key

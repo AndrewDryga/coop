@@ -1,6 +1,6 @@
-coop net approve — review and approve this project's network request
+coop approve — review and approve this project's requested access
 
-Usage: coop net approve
+Usage: coop approve
 
   Shows what .agent/project.yaml asks for, compared with your last approval.
   Confirm the changes to allow new runs to use them.

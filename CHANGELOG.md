@@ -119,7 +119,11 @@
 - `coop net forget` now uses the approved short reset explanation instead of printing the
   saved approval's mode and rule ledger.
 
-- `coop net approve` can replace a remembered offline decision with a reviewed filtered request
+- `coop approve` is now the single host-side command for reviewing requested project access.
+  `coop net approve` only points to the new command and no longer writes approval; network
+  inspection and diagnostics remain under `coop net`.
+
+- `coop approve` can replace a remembered offline decision with a reviewed filtered request
   directly; projects no longer have to erase their approval first.
 
 - Remaining public network help and diagnostics now say network rule, network access, or

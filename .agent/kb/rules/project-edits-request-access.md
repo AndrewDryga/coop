@@ -4,7 +4,7 @@ description: project configuration requests access; one host approval grants it,
 scope: security
 sources: [internal/cli/net_approve.go, internal/box/network_approval.go, internal/networkstate/approval_review.go, internal/networkstate/admission.go, internal/box/filtered_services.go, internal/box/composecheck.go]
 check: none
-updated: 2026-09-12
+updated: 2026-09-13
 ---
 
 # Approve added access, not ordinary development
@@ -32,6 +32,8 @@ denial from agent-controlled services. A command rename or UI warning is not enf
 
 ## Changelog
 
+- 2026-09-13 — moved the existing host approval writer to `coop approve`; the old network
+  subcommand now gives migration guidance and cannot grant access.
 - 2026-09-12 — recorded approved design. Swept the six source files and searched CLI/box/scaffold
   and generated docs for the old command. Existing network review captures requests for host-side
   publication; the command is still net approve, dependency-only approval and actual volume identity

@@ -301,7 +301,7 @@ func TestReviewOfAnUnchangedRequestWritesNothing(t *testing.T) {
 }
 
 // An approval every launch would refuse by name is not a decision worth
-// remembering: `coop net approve` applies the same capability gate, so the
+// remembering: `coop approve` applies the same capability gate, so the
 // operator learns now instead of at the next unattended run.
 func TestReviewRefusesARuleNoLaunchCouldEnforce(t *testing.T) {
 	for _, test := range []struct{ yaml, want string }{

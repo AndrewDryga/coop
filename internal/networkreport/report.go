@@ -639,7 +639,7 @@ func blockedWarning(p ui.Palette, view View, observed networkview.Snapshot) *war
 		out.footer = append(out.footer, p.Dim("To see why: coop net blocked "+named+" --run "+ShortID(view.ID)))
 	}
 	if candidate {
-		out.footer = append(out.footer, p.Dim("To allow it: add the rule shown by `coop net blocked`, then run `coop net approve` on the host"))
+		out.footer = append(out.footer, p.Dim("To allow it: add the rule shown by `coop net blocked`, then run `coop approve` on the host"))
 	}
 	return out
 }

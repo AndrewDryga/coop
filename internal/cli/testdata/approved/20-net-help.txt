@@ -2,7 +2,7 @@ coop net — control network access and see what happened
 
 ACCESS — control what new runs can reach
   coop net                  show this project's current access
-  coop net approve          review and approve requested changes
+  coop approve              review and approve requested access
   coop net check <url>      check access
   coop net forget           withdraw this project's network approval
 
@@ -30,6 +30,6 @@ HOW TO ADD A NETWORK RULE
 
 2. Review and approve the changes:
 
-   coop net approve
+   coop approve
 
 Command options: coop help net <command>

@@ -4,7 +4,7 @@ description: a filtered launch proves its network authority against the owner-pr
 scope: security
 sources: [internal/box/run.go, internal/box/network_session.go, internal/networkstate/authority.go, internal/networkstate/approval_review.go, internal/sessionsvc/network.go, internal/cli/net_approve.go]
 check: "go test ./internal/box -run 'TestFilteredPublicLaunchRequiresCaptureAndRejectsExtraArgs|TestCapturedEgressFromEnvironmentAuthenticatesAgainstTheOwnerStore'"
-updated: 2026-09-12
+updated: 2026-09-13
 ---
 
 # Network authority is proven against the owner store, never accepted from its carrier
@@ -33,9 +33,9 @@ proves it.
   every `COOP_*` from the environment it builds, so no box can set it.
 - Keep the capture off every wire shape. `RunSpec.CapturedEgress` is `json:"-"`; a DTO, a worker
   command or a session request that could carry one is the bug.
-- Approvals have ONE host writer. Today `Store.Approve` is reached through `coop net approve`
-  (`internal/cli/net_approve.go`), which requires a terminal. Its approved replacement is
-  `coop approve`, not a second authority path; see [[project-edits-request-access]]. A launch,
+- Approvals have ONE host writer. `Store.Approve` is reached through `coop approve`
+  (`internal/cli/net_approve.go`), which requires a terminal. `coop net approve` only points to
+  that command; it is not a second authority path. See [[project-edits-request-access]]. A launch,
   an API call or an unattended loop never widens access — see [[destructive-confirm-gate]].
 - Verify after the fact too: the daemon checks every run's recorded fingerprint against the
   immutable session row and fails the turn on a mismatch.
@@ -44,6 +44,8 @@ Background: [[restricted-networking]] (where authority lives), [[network-consume
 reference).
 
 ## Changelog
+- 2026-09-13 — moved the sole CLI writer to `coop approve`; the retired network subcommand now
+  returns migration guidance before it can reach approval state.
 - 2026-09-12 — reread the CLI review/commit path; net approve is still the writer. Recorded its
   approved replacement without claiming implementation. Unified permission/service/data work is
   queued as 2026-09-12-unify-project-access-approval-under-coop-approve; existing capture checks

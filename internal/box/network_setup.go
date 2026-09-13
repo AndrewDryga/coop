@@ -83,7 +83,7 @@ if getent hosts example.org >/dev/null 2>&1; then exit 36; fi
 //
 // It is host-wide, not per project: the smoke runs against a private temporary
 // directory, which leaves no approval behind — approvals are written by
-// `coop net approve`, never by admitting a capture. Setups serialize across
+// `coop approve`, never by admitting a capture. Setups serialize across
 // processes, so two first launches never build and prove the same pair at once.
 //
 // The transcript on out is the whole result: what will happen in two sentences,

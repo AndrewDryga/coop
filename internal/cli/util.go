@@ -101,7 +101,7 @@ func nearestCommand(input string, candidates []string) (string, bool) {
 // rejectArgs returns the shared extra-argument refusal when a command that takes no arguments is
 // given some, so a stray token fails clearly instead of being silently ignored. It names the FIRST
 // extra token, not every one. (A `help`/`--help` arg is intercepted earlier, so it never reaches
-// here.) cmd is the command path without "coop" — "version", "net approve".
+// here.) cmd is the command path without "coop" — "version", "approve".
 func rejectArgs(cmd string, args []string) error {
 	if len(args) == 0 {
 		return nil

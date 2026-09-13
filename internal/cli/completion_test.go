@@ -30,7 +30,7 @@ func TestCompletionCandidates(t *testing.T) {
 	a := &app{cfg: &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir()}}
 
 	top := a.completionCandidates(nil)
-	for _, w := range []string{"fork", "tasks", "loop", "claude", "grok", "completion"} {
+	for _, w := range []string{"fork", "tasks", "loop", "approve", "claude", "grok", "completion"} {
 		if !hasCand(top, w) {
 			t.Errorf("top-level completion missing %q", w)
 		}
@@ -46,6 +46,9 @@ func TestCompletionCandidates(t *testing.T) {
 	// the tombstoned `pool` before this fix, and only the top-level list was ever checked.
 	if hasCand(a.completionCandidates([]string{"loop"}), "pool") {
 		t.Error("`coop loop` must not complete the retired `pool` (it's tombstoned)")
+	}
+	if hasCand(a.completionCandidates([]string{"net"}), "approve") {
+		t.Error("retired `coop net approve` must not be completed")
 	}
 
 	for _, w := range []string{"ls", "rm", "merge"} {

@@ -48,7 +48,7 @@ type AdmissionPreview struct {
 // reports: what .agent/project.yaml asks for is not what a human approved.
 // Reason is a clause that reads after "cannot start because"; Cause is the same
 // fact as a standalone sentence, for a view that states it on its own line.
-// Neither carries the remedy, which is always the same — `coop net approve`.
+// Neither carries the remedy, which is always the same — `coop approve`.
 type PendingApproval struct {
 	Reason string
 	Cause  string
@@ -77,7 +77,7 @@ func (p *PendingApproval) Sentence() string {
 
 // pendingApproval compares the exact request — the mode the project names, its
 // normalized rules and the reviewed identity of each service — with the stored
-// approval. It is the same comparison `coop net approve` asks about, so a view
+// approval. It is the same comparison `coop approve` asks about, so a view
 // that reports nothing pending and an approve that finds nothing to approve can
 // never disagree. Without an approval only a widening needs a human: unrestricted
 // access, or any rule at all. A project asking for filtered or offline access with

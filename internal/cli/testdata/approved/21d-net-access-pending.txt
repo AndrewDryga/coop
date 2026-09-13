@@ -7,4 +7,4 @@
   + registry.npmjs.org:443 · TLS  requested
   - old.example.com:443 · TLS     removed
 
-  Review changes: coop net approve
+  Review changes: coop approve

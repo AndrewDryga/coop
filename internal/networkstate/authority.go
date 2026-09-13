@@ -465,7 +465,7 @@ type Approval struct {
 // checkDirectory refuses an approval whose project directory is no longer the
 // one that was reviewed. An approval that never recorded that identity cannot
 // prove it either, so it is reviewed again rather than trusted. Both are
-// pending reviews, not corruption: the remedy is the same `coop net approve`.
+// pending reviews, not corruption: the remedy is the same `coop approve`.
 func (a *Approval) checkDirectory(canonical string, info os.FileInfo) *PendingApproval {
 	if a == nil {
 		return nil
@@ -571,7 +571,7 @@ func (s *Store) checkRequests(approval *Approval, requests []egress.Rule, bundle
 			}
 		}
 		if !found {
-			return nil, errors.New("the optional provider features changed since they were approved — run 'coop net approve' (network_approval_required)")
+			return nil, errors.New("the optional provider features changed since they were approved — run 'coop approve' (network_approval_required)")
 		}
 	}
 	return approval, nil
@@ -588,7 +588,7 @@ func checkRequestEnvelope(approval *Approval, requests []egress.Rule) ([]egress.
 		return rules, nil
 	} // sticky posture survives YAML deletion.
 	if approval == nil || approval.Posture != egress.Filtered {
-		return nil, errors.New("this project's egress rules were never approved — run 'coop net approve' (network_approval_required)")
+		return nil, errors.New("this project's egress rules were never approved — run 'coop approve' (network_approval_required)")
 	}
 	for _, request := range rules {
 		found := false
@@ -599,7 +599,7 @@ func checkRequestEnvelope(approval *Approval, requests []egress.Rule) ([]egress.
 			}
 		}
 		if !found {
-			return nil, errors.New("this project asks for more than what was approved — run 'coop net approve' (network_approval_required)")
+			return nil, errors.New("this project asks for more than what was approved — run 'coop approve' (network_approval_required)")
 		}
 	}
 	return rules, nil

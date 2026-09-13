@@ -30,7 +30,7 @@ import (
 
 // The `coop net` reads answer from retained host evidence and nothing else: no
 // container, no daemon probe, no DNS lookup, no policy change, and no directory
-// created to report that nothing was found. `setup`, `approve` and `forget`
+// created to report that nothing was found. Top-level `approve`, plus `setup` and `forget`,
 // write, and `recover` — explicit, or coop's own bounded attempt before it
 // reports an interrupted run's cleanup as incomplete — removes exactly what
 // one dead run recorded.
@@ -52,7 +52,7 @@ const (
 
 // netCommands is the family in the order its help groups them: what a new run
 // may reach, what recorded runs did, and the repair coop normally does itself.
-var netCommands = []string{"approve", "check", "forget", "runs", "inspect", "blocked", "watch", "export", "setup", "recover"}
+var netCommands = []string{"check", "forget", "runs", "inspect", "blocked", "watch", "export", "setup", "recover"}
 
 // cmdNet routes the restricted-networking family. Bare `coop net` is this
 // project's access — what a new run may reach and why — not a listing: `runs`
@@ -77,7 +77,7 @@ func (a *app) cmdNet(args []string) (int, error) {
 	case "check", "blocked":
 		return a.netDiagnostic(verb, rest)
 	case "approve":
-		return a.cmdNetApprove(rest)
+		return 2, approveMovedError()
 	case "forget":
 		return a.cmdNetForget(rest)
 	case "recover":
@@ -317,7 +317,7 @@ func (a *app) netPendingNotice(repo string) {
 // thing that stops a new run, and one command settles it.
 const (
 	netPendingHeadline = "New runs need your approval"
-	netPendingReview   = "Review changes: coop net approve"
+	netPendingReview   = "Review changes: coop approve"
 )
 
 // writeNetAccess answers the one question a person arrives with: what can a

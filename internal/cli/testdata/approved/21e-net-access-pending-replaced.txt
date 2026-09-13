@@ -2,4 +2,4 @@
 
       This project folder was replaced after its network access was approved.
 
-  Review changes: coop net approve
+  Review changes: coop approve

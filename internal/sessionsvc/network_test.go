@@ -799,7 +799,7 @@ func TestCreateRemoteSessionFencesTheResolvedNetworkFingerprint(t *testing.T) {
 			if session.CodeOf(err) != tc.code {
 				t.Fatalf("create error = %v; want code %s", err, tc.code)
 			}
-			if tc.code == session.CodeNetworkFingerprintMismatch && !strings.Contains(err.Error(), "coop net approve") {
+			if tc.code == session.CodeNetworkFingerprintMismatch && !strings.Contains(err.Error(), "coop approve") {
 				t.Fatalf("refusal = %v; want it to name what changed on the host", err)
 			}
 			if tc.code == session.CodeInvalidRequest {

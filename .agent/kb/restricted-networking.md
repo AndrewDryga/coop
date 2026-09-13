@@ -25,11 +25,11 @@ between that flag and `docker run`:
 
 Authority never comes from the repository or the box. A repo's `box.egress`, its
 `box.egress_rules`, and a rules file that lives inside an agent mount, are *requests*; a human turns
-them into a grant with `coop net approve`, the only caller of `Store.Approve`
+them into a grant with `coop approve`, the only caller of `Store.Approve`
 (`box/network_approval.go`). The approval is the EXACT snapshot of the file — mode, normalized
 rules, and each named service's reviewed definition — and ONE read-only check decides whether the
 file and the approval differ: `Admission.pendingApproval` (`networkstate/admission.go`), surfaced
-as `AdmissionPreview.Pending` / `*PendingApproval`. `coop init`, bare `coop net`, `coop net approve`
+as `AdmissionPreview.Pending` / `*PendingApproval`. `coop init`, bare `coop net`, `coop approve`
 (which then has nothing to ask and writes nothing) and every launch through `AdmitNetwork` read the
 same answer, so no two of them can disagree. Without an approval only a widening is pending —
 `open`, or any rule; filtered/offline with no rules is what coop grants on its own, which is why a
@@ -55,7 +55,7 @@ state — the preview creates no owner key (`networkstate/admission.go:45`).
 
 A withdrawal marker (`networkstate/approval_withdrawal.go`, written before the grant is cleared)
 outranks the ladder below for an ordinary launch: with no approval it makes the project pending
-rather than letting the built-in default reopen it, and only `coop net approve` removes it.
+rather than letting the built-in default reopen it, and only `coop approve` removes it.
 
 The precedence ladder, one line: invocation `--egress` → remembered approval posture → explicit
 `COOP_EGRESS` → project `box.egress` → any rule present ⇒ filtered → open
@@ -117,7 +117,7 @@ Traps:
   post the staged context anywhere). The staged context omits every shadowed secret and `.git`
   (`box/image.go:stageBuildContext`), and an untracked box definition is called out on the launch
   line (`box/derived_image.go:102`) — but the trade-off is deliberate and unfenced: binding the
-  Dockerfile to `coop net approve` the way a `service:` grant is bound is the open design question.
+  Dockerfile to `coop approve` the way a `service:` grant is bound is the open design question.
 - The host qualification keeps naming the LOCKED image, and so does the execution record's
   `ClientImage` — the derived image is recorded beside it as `ProjectImage`
   (`networkstate/execution.go:75`), evidence of what ran, never authority. The preflight smoke may

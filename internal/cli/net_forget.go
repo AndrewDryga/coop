@@ -142,7 +142,7 @@ func confirmNetForget(ctx context.Context, review netForgetReview, out io.Writer
 	if review.Gone() {
 		fmt.Fprintf(&b, "\n%s\n", netForgetGone)
 	}
-	fmt.Fprintf(&b, "\n%s\n\n%s\n  %s\n", netForgetEffect, netForgetRestore, p.Cyan("coop net approve"))
+	fmt.Fprintf(&b, "\n%s\n\n%s\n  %s\n", netForgetEffect, netForgetRestore, p.Cyan("coop approve"))
 	if _, err := io.WriteString(out, b.String()); err != nil {
 		return err
 	}

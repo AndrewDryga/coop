@@ -249,7 +249,7 @@ var wantManualOrder = []string{
 	"fork", "fork acp", "fork ls", "fork review", "fork merge", "fork rm",
 	"fork stop", "fork logs", "fork path", "fork open",
 	"up", "down",
-	"doctor", "net", "net runs", "net inspect", "net check", "net blocked", "net approve",
+	"doctor", "approve", "net", "net runs", "net inspect", "net check", "net blocked",
 	"net watch", "net export", "net forget", "net setup", "net recover", "check-secrets", "sign",
 	"init", "build", "update", "version",
 	"acp", "sessions", "sessions serve", "sessions doctor", "sessions policies", "sessions compact", "sessions connect",
@@ -333,7 +333,7 @@ func TestCurrentDocsDoNotAdvertiseRetiredContracts(t *testing.T) {
 
 	manual := surfaces["CLI manual"]
 	// The mode a project runs under comes from .agent/project.yaml and nowhere
-	// else: `coop net approve` reviews that file, so no help surface may offer a
+	// else: `coop approve` reviews that file, so no help surface may offer a
 	// flag that would let the caller name a different one.
 	if strings.Contains(manual, "--mode") {
 		t.Errorf("the CLI manual offers a --mode flag; access comes from .agent/project.yaml:\n%s", manual)

@@ -104,7 +104,7 @@ Removing the proxy variables removes connectivity; it does not restore direct in
 belongs to one box execution, a second filtered box using project services is refused until the
 first stops.
 
-The approval captures the *definition* a human reviewed, not just the name: `coop net approve`
+The approval captures the *definition* a human reviewed, not just the name: `coop approve`
 records a digest of that service's Compose stanza, and a launch recomputes it from the file it is
 about to run. Rewriting `db:` into something else — a proxy image with ordinary egress, say — is a
 pending change like any other: a launch refuses with `the Compose service "db" changed since it was
@@ -172,8 +172,8 @@ on your Docker. The two proofs bind what the box RUNS, not what a build may do �
 | a runtime other than Docker | `restricted networking requires a local Docker runtime` |
 | `box.network: true` with no `service:` grant | `a filtered box does not join the shared services network — ask for the one sidecar you need with a to: {service: <name>} rule …` |
 | `-v /var/run:/x` (or any mount of `/run`, `/proc`, `/sys`, `/dev`, `/`, or the Docker socket's directory) | `a filtered box cannot mount …: it is or holds …, which reaches Docker or the kernel` |
-| a project file that asks for access nobody approved (a rule, a change to one, or `open`) | `<Agent> cannot start because this project asks for network access that has not been approved` · `Review it: coop net approve` |
-| an approved project directory replaced by another at the same path | `<Agent> cannot start because the project directory at <path> was replaced since it was approved` · `Review it: coop net approve` |
+| a project file that asks for access nobody approved (a rule, a change to one, or `open`) | `<Agent> cannot start because this project asks for network access that has not been approved` · `Review it: coop approve` |
+| an approved project directory replaced by another at the same path | `<Agent> cannot start because the project directory at <path> was replaced since it was approved` · `Review it: coop approve` |
 
 A refused rule fails the launch itself, before any approval is written or any container is created.
 Coop never accepts a rule it cannot enforce and then quietly drops the constraint.
@@ -253,18 +253,18 @@ claim that partial evidence is complete.
 ## Asking for access
 
 Put the rule in `.agent/project.yaml` under `box.egress_rules` and ask a human to run
-`coop net approve` on the host. The repository file is a *request*: the approval is remembered
+`coop approve` on the host. The repository file is a *request*: the approval is remembered
 outside the repository, so editing or deleting the file cannot widen access, and nothing inside a
 box can approve itself. Approvals apply to new runs; a box already running keeps the policy it
 launched with.
 
 The approval is the exact snapshot of the file — its mode, its rules and the reviewed definition
-of every `service:` it names. `coop net approve` has no flags: to change access, edit the file and
+of every `service:` it names. `coop approve` has no flags: to change access, edit the file and
 review it again. The review is one diff against what is already approved, unchanged rows marked
 `already approved`, additions `new request`, removals `no longer requested`; a mode change is
 explained in plain words, and a request for `open` gets a red warning because nothing would be
 blocked. Confirm with `Approve these changes for new runs? [y/N]`. A file that is already exactly
-what was approved prints `No approval needed — this project's network access has not changed.`
+what was approved prints `No approval needed — this project's requested access has not changed.`
 and writes nothing. Provider endpoints an agent brings with it are not part of this diff: coop
 grants those itself, and they are never shown as project access.
 
@@ -277,7 +277,7 @@ with nothing pending pays no line for any of this.
 
 For a single invocation, the operator can pass `--allow-domain <name>` (exact TLS 443) or
 `--egress-rules <file>` with a full rule document. A file inside an agent mount is a request, not a
-grant — where the file lives decides its authority. `coop net approve` applies the same capability
+grant — where the file lives decides its authority. `coop approve` applies the same capability
 gate a launch does, so a rule this runtime could never enforce (an IPv6 destination, say) is
 refused at review instead of being remembered and refused at every launch.
 

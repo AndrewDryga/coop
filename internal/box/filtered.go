@@ -183,7 +183,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	// is reached through an approved `to: {service: <name>}` grant, one exact
 	// container at a time, never by joining a shared network.
 	if len(approvedServices) == 0 && spec.Network && (composeFile != "" || cfg.ServicesNet != "") {
-		return nil, errors.New("a filtered box does not join the shared services network — ask for the one sidecar you need with a `to: {service: <name>}` rule in .agent/project.yaml, then run 'coop net approve'")
+		return nil, errors.New("a filtered box does not join the shared services network — ask for the one sidecar you need with a `to: {service: <name>}` rule in .agent/project.yaml, then run 'coop approve'")
 	}
 	exposed := []string{spec.Repo, project}
 	exposed = append(exposed, ConfigExposureRoots(cfg)...)

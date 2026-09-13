@@ -397,7 +397,7 @@ func TestInspectRefusalsCoalesceAndKeepTheExplainAction(t *testing.T) {
 	if !strings.Contains(got, want) {
 		t.Fatalf("refusals:\n%s\nwant to contain:\n%s", got, want)
 	}
-	if strings.Contains(got, "coop net approve") {
+	if strings.Contains(got, "coop approve") {
 		t.Errorf("DNS evidence proves no rule, yet approval guidance was offered:\n%s", got)
 	}
 	// A TLS refusal that carries an exact candidate earns the guidance, and the
@@ -409,7 +409,7 @@ func TestInspectRefusalsCoalesceAndKeepTheExplainAction(t *testing.T) {
 	got = renderNetRun(networkreport.View{ID: netTestRun}, inspection)
 	for _, want := range []string{"⚠ Traffic to 3 remote addresses was blocked\n", "  registry.example.com:443 · TLS\n",
 		"To see why: coop net blocked registry.example.com --run e644f07a\n",
-		"  To allow it: add the rule shown by `coop net blocked`, then run `coop net approve` on the host\n"} {
+		"  To allow it: add the rule shown by `coop net blocked`, then run `coop approve` on the host\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}

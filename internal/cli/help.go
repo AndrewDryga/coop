@@ -168,6 +168,7 @@ func renderMenu(p ui.Palette, cfg *config.Config, ref bool) string {
 
 	group("SECURITY & ISOLATION", "control access, check isolation, and protect secrets")
 	row("coop doctor", "check that the box's isolation works")
+	row("coop approve", "review and approve requested project access")
 	row("coop net", "show and manage this project's network access")
 	row("coop check-secrets", "check project files for exposed secrets")
 	row("coop sign", "sign unpushed commits with your host key")
@@ -242,7 +243,7 @@ var manualOrder = append(append([]string{"run", "shell"}, agents.Names()...),
 	"fork", "fork acp", "fork ls", "fork review", "fork merge", "fork rm",
 	"fork stop", "fork logs", "fork path", "fork open",
 	"up", "down",
-	"doctor", "net", "net runs", "net inspect", "net check", "net blocked", "net approve",
+	"doctor", "approve", "net", "net runs", "net inspect", "net check", "net blocked",
 	"net watch", "net export", "net forget", "net setup", "net recover", "check-secrets", "sign",
 	"init", "build", "update", "version",
 	"acp", "sessions", "sessions serve", "sessions doctor", "sessions policies", "sessions compact", "sessions connect",
@@ -1546,7 +1547,7 @@ OPTIONS
 You can run coop init again at any time.
 Coop keeps your existing project files and adds anything missing.`,
 
-	// The net family page and its ten leaf pages are APPROVED transcripts: the exact bytes are
+	// The net family page and its leaf pages are APPROVED transcripts: the exact bytes are
 	// pinned in internal/cli/testdata/approved/20*.txt. The family page groups the verbs by the
 	// job a person came with — what new runs may reach, what recorded runs did, the repair coop
 	// normally does itself — and ends with the one workflow nobody guesses (edit the YAML, then
@@ -1555,7 +1556,7 @@ Coop keeps your existing project files and adds anything missing.`,
 
 ACCESS — control what new runs can reach
   coop net                  show this project's current access
-  coop net approve          review and approve requested changes
+  coop approve              review and approve requested access
   coop net check <url>      check access
   coop net forget           withdraw this project's network approval
 
@@ -1583,7 +1584,7 @@ HOW TO ADD A NETWORK RULE
 
 2. Review and approve the changes:
 
-   coop net approve
+   coop approve
 
 Command options: coop help net <command>`,
 
@@ -1651,9 +1652,9 @@ EXAMPLES
   coop net blocked registry.npmjs.org
   coop net blocked registry.npmjs.org --run e644f07a`,
 
-	"net approve": `coop net approve — review and approve this project's network request
+	"approve": `coop approve — review and approve this project's requested access
 
-Usage: coop net approve
+Usage: coop approve
 
   Shows what .agent/project.yaml asks for, compared with your last approval.
   Confirm the changes to allow new runs to use them.
@@ -1697,7 +1698,7 @@ EXAMPLE
 Usage: coop net forget [--project <path>]
 
 Use this when you no longer trust an approval saved on this machine.
-To change network rules, edit .agent/project.yaml and run coop net approve.
+To change network rules, edit .agent/project.yaml and run coop approve.
 
 OPTIONS
   --project <path>  choose another project, including a folder that was deleted
@@ -1707,7 +1708,7 @@ Existing boxes, recorded runs, and this host's network setup are kept.
 Run this command in your terminal.
 
 Restore approval:
-  coop net approve`,
+  coop approve`,
 
 	"net setup": `coop net setup — prepare this host for filtered networking
 
@@ -1857,7 +1858,7 @@ func printHelpPage(text string) {
 // listed when every one of its pages ends itself — the family page points at its per-command pages,
 // and each command page ends with its examples or the command that follows it.
 var selfContainedHelp = map[string]bool{
-	"presets": true, "models": true, "init": true, "net": true,
+	"presets": true, "models": true, "init": true, "approve": true, "net": true,
 	"login": true, "credentials": true,
 	"tasks": true, "backlog": true, "context": true, "loop": true, "fork": true,
 	"shell": true, "acp": true, "sign": true, "prompt": true, "version": true,

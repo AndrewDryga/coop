@@ -3,4 +3,4 @@ Reset this project's network approvals?
 This only resets the approvals; it does not change the settings in .agent/project.yaml.
 
 To restore approval:
-  coop net approve
+  coop approve

@@ -340,7 +340,7 @@ type netCheckAnswer struct {
 	Verdict, Cause   string
 	Agents           []string
 	// Rule is the draft that would allow this destination, set only when nothing allows it today.
-	// It is a rule to review, never a grant: `coop net approve` is what turns one into authority.
+	// It is a rule to review, never a grant: `coop approve` is what turns one into authority.
 	Rule egress.Rule
 }
 
@@ -349,7 +349,7 @@ func netCurrentCheck(access box.NetworkAccess, host string, port int, bundles ma
 	if access.Pending != nil {
 		// Answering against a policy that cannot launch would be a fiction.
 		return netCheckAnswer{Pending: true, Verdict: netPendingHeadline,
-			Cause: "Review the requested changes: coop net approve"}
+			Cause: "Review the requested changes: coop approve"}
 	}
 	switch access.Mode {
 	case egress.Open:
@@ -408,7 +408,7 @@ func writeNetCheck(w io.Writer, p ui.Palette, answer netCheckAnswer) {
 		fmt.Fprintf(w, "  %s\n", answer.Cause)
 	}
 	if rule := netRuleYAML(answer.Rule); rule != "" {
-		fmt.Fprintf(w, "\nAdd this rule under box.egress_rules in .agent/project.yaml:\n\n%s\nThen run:\n  %s\n", rule, p.Cyan("coop net approve"))
+		fmt.Fprintf(w, "\nAdd this rule under box.egress_rules in .agent/project.yaml:\n\n%s\nThen run:\n  %s\n", rule, p.Cyan("coop approve"))
 	}
 }
 
@@ -689,7 +689,7 @@ func writeNetExplanation(w io.Writer, p ui.Palette, now time.Time, explanation n
 		return
 	}
 	if candidate != nil {
-		fmt.Fprintf(w, "\nAdd this rule under box.egress_rules in .agent/project.yaml:\n\n%s\nThen run:\n  %s\n", netRuleYAML(candidate.Rule), p.Cyan("coop net approve"))
+		fmt.Fprintf(w, "\nAdd this rule under box.egress_rules in .agent/project.yaml:\n\n%s\nThen run:\n  %s\n", netRuleYAML(candidate.Rule), p.Cyan("coop approve"))
 		return
 	}
 	if reason := netNoDraftReason(first); reason != "" {
@@ -773,7 +773,7 @@ func netCauseKind(kind string) string {
 
 // netRuleYAML is the smallest valid `egress_rules` list item for one rule, in
 // the shape a person pastes under the named key. It is a draft to review, never
-// a grant: only `coop net approve` turns it into authority.
+// a grant: only `coop approve` turns it into authority.
 func netRuleYAML(rule egress.Rule) string {
 	var b strings.Builder
 	switch {

@@ -221,7 +221,7 @@ func renderSessionConfigurations(w io.Writer, p ui.Palette, file string, views [
 			}
 			if view.ApprovalRequired {
 				fmt.Fprintln(w)
-				fmt.Fprintln(w, "  Run coop net approve in "+view.Repository+".")
+				fmt.Fprintln(w, "  Run coop approve in "+view.Repository+".")
 			}
 			continue
 		}

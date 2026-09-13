@@ -126,7 +126,7 @@ The parser rejects unknown fields and requires:
   widen access — the project's remembered posture still decides, exactly as it does for a direct
   launch in that repository. When the policy and the remembered posture disagree, creation is
   refused with `network_unavailable`; the API cannot reconcile that, an operator must
-  (`coop net approve`). Filtered creation also requires a completed `coop net setup` on the host
+  (`coop approve`). Filtered creation also requires a completed `coop net setup` on the host
   and the repository's `box.egress_rules` to be inside its approved envelope. Beyond the rules you
   write, admission adds only what the session's own box will have: the selected targets' provider
   endpoints, and the HTTP hosts of the shared MCP configuration unless `project_mcp: false`
@@ -286,7 +286,7 @@ unfenced. Resolving writes nothing: no approval, no published snapshot, no owner
 A create may pin that value as `expected_network_fingerprint`. The daemon resolves the policy again
 — freshly, because an approval edited since it published the value is exactly what this catches —
 and refuses with `network_fingerprint_mismatch` (409) before any intent is journaled or a workspace
-exists. The refusal names the fingerprint the policy resolves to now and `coop net approve` as the
+exists. The refusal names the fingerprint the policy resolves to now and `coop approve` as the
 thing that changed on the host. An open or offline policy publishes its mode and no fingerprint,
 so pinning one for such a policy is itself a mismatch. The published value is resolved when you
 ask for it, so approving a change on the host changes what callers are told without restarting the

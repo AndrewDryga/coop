@@ -342,7 +342,7 @@ func TestInitReportsAPendingNetworkRequestOnlyWhenThereIsOne(t *testing.T) {
 	}
 	out := initOutput()
 	// A fresh project has nothing pending, so init says nothing about approval.
-	for _, absent := range []string{"coop net approve", netPendingHeadline} {
+	for _, absent := range []string{"coop approve", netPendingHeadline} {
 		if strings.Contains(out, absent) {
 			t.Errorf("a fresh init claimed a pending network request (%q):\n%s", absent, out)
 		}

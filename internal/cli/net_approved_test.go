@@ -22,8 +22,8 @@ import (
 // selector that produces it. A mismatch is a renderer that drifted from an
 // approved decision — see the README beside the fixtures.
 
-// TestApprovedNetHelpPages pins the family page and every leaf page, which are
-// reached as `coop net <verb> --help` and `coop help net <verb>` alike.
+// TestApprovedNetHelpPages pins the network family, its leaf pages, and the
+// related top-level approval page.
 func TestApprovedNetHelpPages(t *testing.T) {
 	for fixture, key := range map[string]string{
 		"20-net-help":          "net",
@@ -31,7 +31,7 @@ func TestApprovedNetHelpPages(t *testing.T) {
 		"20b-net-inspect-help": "net inspect",
 		"20c-net-check-help":   "net check",
 		"20d-net-blocked-help": "net blocked",
-		"20e-net-approve-help": "net approve",
+		"20e-net-approve-help": "approve",
 		"20f-net-watch-help":   "net watch",
 		"20g-net-export-help":  "net export",
 		"20h-net-forget-help":  "net forget",
@@ -126,7 +126,7 @@ func TestNetPostureShowsAWideningToOpen(t *testing.T) {
 		"  + Unrestricted — nothing is blocked.\n" +
 		"  " + netOpenWarning + "\n\n" +
 		"  Access:\n  - github.com:443 · TLS  removed\n\n" +
-		"  Review changes: coop net approve\n"
+		"  Review changes: coop approve\n"
 	if b.String() != want {
 		t.Errorf("widening access:\n%s\nwant:\n%s", b.String(), want)
 	}

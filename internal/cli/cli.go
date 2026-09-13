@@ -309,6 +309,8 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return a.cmdInit(rest)
 	case "doctor":
 		return a.cmdDoctor(rest)
+	case "approve": // host-local: the one human-confirmed project access writer
+		return a.cmdApprove(rest)
 	case "net": // host-wide: restricted networking setup (no project needed)
 		return a.cmdNet(rest)
 	case "check-secrets":
@@ -372,7 +374,7 @@ func (a *app) cmdBacklog(args []string) (int, error) {
 // completion menu, and the manual's coverage list. Keep in sync with the dispatch switch above.
 var topLevelCommands = []string{
 	"run", "shell", "login", "credentials", "presets", "models", "acp", "fork", "tasks", "context", "backlog",
-	"loop", "up", "down", "init", "doctor", "net", "check-secrets", "sign", "build", "update", "completion", "prompt", "sessions", "help", "version",
+	"loop", "up", "down", "init", "doctor", "approve", "net", "check-secrets", "sign", "build", "update", "completion", "prompt", "sessions", "help", "version",
 }
 
 // helpForPath prints the page for one command PATH, so `coop help tasks add` and
@@ -387,9 +389,12 @@ func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
 		return 0, nil
 	}
 	cmd := path[0]
+	if len(path) > 1 && cmd == "net" && path[1] == "approve" {
+		return 2, approveMovedError()
+	}
 	// A subcommand is checked against its family's OWN verb list first: a typo'd leaf is an error,
 	// never a silent fallback to the family page it isn't part of. A verb with its own page — the
-	// `net` family's ten — is keyed by the full path, so `coop help net blocked` and
+	// `net` family's leaves — is keyed by the full path, so `coop help net blocked` and
 	// `coop net blocked --help` reach the same one page.
 	if len(path) > 1 {
 		if verbs, closed := familyVerbs(cmd); closed && !slices.Contains(verbs, path[1]) {

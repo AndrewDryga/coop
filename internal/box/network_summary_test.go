@@ -112,7 +112,7 @@ func TestInstructionNoteStatesPolicyAndTheWayToAsk(t *testing.T) {
 	}}
 	note := networkInstructionNote(policy)
 	for _, want := range []string{"# Network (coop restricted egress)", "example.com tls/443", "claude core endpoints",
-		"box.egress_rules", "coop net approve"} {
+		"box.egress_rules", "coop approve"} {
 		if !strings.Contains(note, want) {
 			t.Errorf("instruction note is missing %q:\n%s", want, note)
 		}

@@ -162,8 +162,23 @@ func TestApprovalSurfacesACommitFailure(t *testing.T) {
 func TestApproveTakesNoFlags(t *testing.T) {
 	a := &app{}
 	for _, args := range [][]string{{"--mode", "open"}, {"--mode=none"}, {"--yes"}, {"extra"}} {
-		if code, err := a.cmdNetApprove(args); code != 2 || err == nil {
-			t.Errorf("cmdNetApprove(%q) = (%d, %v), want a usage error", args, code, err)
+		if code, err := a.cmdApprove(args); code != 2 || err == nil {
+			t.Errorf("cmdApprove(%q) = (%d, %v), want a usage error", args, code, err)
 		}
+	}
+	if code, err := a.dispatch([]string{"approve", "extra"}); code != 2 || err == nil {
+		t.Errorf("dispatch coop approve extra = (%d, %v), want a usage error", code, err)
+	}
+}
+
+func TestRetiredNetApprovePointsAtApprove(t *testing.T) {
+	code, err := (&app{}).cmdNet([]string{"approve"})
+	if code != 2 || err == nil || !strings.Contains(err.Error(), `"coop net approve" has moved`) || !strings.Contains(err.Error(), "coop approve") {
+		t.Fatalf("coop net approve = (%d, %v)", code, err)
+	}
+
+	code, err = helpForPath([]string{"net", "approve"}, nil, true)
+	if code != 2 || err == nil || !strings.Contains(err.Error(), `"coop net approve" has moved`) || !strings.Contains(err.Error(), "coop approve") {
+		t.Fatalf("coop help net approve = (%d, %v)", code, err)
 	}
 }

@@ -97,7 +97,7 @@ func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	if err != nil {
 		var pending *networkstate.PendingApproval
 		if errors.As(err, &pending) {
-			return nil, fmt.Errorf("%s cannot start because %s\n\n  Review it: coop net approve", networkLaunchName(spec), pending.Reason)
+			return nil, fmt.Errorf("%s cannot start because %s\n\n  Review it: coop approve", networkLaunchName(spec), pending.Reason)
 		}
 		return nil, err
 	}

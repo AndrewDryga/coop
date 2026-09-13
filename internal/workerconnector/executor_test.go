@@ -1150,7 +1150,7 @@ func TestCreateSessionReportsANetworkFingerprintMismatch(t *testing.T) {
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	api := &fakeAPI{err: &APIError{
 		Status: http.StatusConflict, Code: "network_fingerprint_mismatch",
-		Detail: "policy \"work-read-only\" now resolves to network filtered abc; run 'coop net approve'",
+		Detail: "policy \"work-read-only\" now resolves to network filtered abc; run 'coop approve'",
 	}}
 	executor, err := NewExecutor(ExecutorConfig{
 		API: api, JournalDir: t.TempDir(), Now: func() time.Time { return now }, WorkerID: "worker-a",
@@ -1162,7 +1162,7 @@ func TestCreateSessionReportsANetworkFingerprintMismatch(t *testing.T) {
 	command.Payload = json.RawMessage(`{"external_ref":"episode-1","policy":"work-read-only","policy_digest":"` + repeatedDigest("b") + `","network_fingerprint":"` + repeatedDigest("d") + `"}`)
 	result, err := executor.Execute(context.Background(), command)
 	if err != nil || result.State != "failed" || !strings.Contains(string(result.Error), "network_fingerprint_mismatch") ||
-		!strings.Contains(string(result.Error), "coop net approve") {
+		!strings.Contains(string(result.Error), "coop approve") {
 		t.Fatalf("stale network pin = %+v, %v; want a definite network_fingerprint_mismatch failure", result, err)
 	}
 }

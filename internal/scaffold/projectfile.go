@@ -320,7 +320,7 @@ box:
   # filtered: allow the agent's provider and destinations you approve.
   # offline: block network access.
   # open: allow unrestricted network access.
-  # Review changes with coop net approve before starting a new run.
+  # Review changes with coop approve before starting a new run.
   egress: filtered
 
   # Network rules this project asks you to approve.

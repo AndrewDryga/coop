@@ -4,7 +4,7 @@ description: "every unrecoverable delete routes through the one shared `ui.Destr
 scope: security
 sources: [internal/ui/confirm.go]
 check: "none"
-updated: 2026-09-11
+updated: 2026-09-13
 ---
 
 # Every unrecoverable delete goes through the one shared confirmation gate
@@ -37,7 +37,7 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
   `--force` is never a prompt-skip; `--yes` is never a guard-override.
 - Deletion prompts default to **No**; only a land-then-remove flow may default Yes on the *land* step.
 - Narrow exception: a delete a human can simply redo is not this rule's subject. `coop net forget`
-  removes a remembered network approval, which `coop net approve` recreates in one command, so it
+  removes a remembered network approval, which `coop approve` recreates in one command, so it
   uses approve's own preview-and-confirm instead of the gate: `DestroyGate` would tell the operator
   "this can't be undone", which is false, and its `--yes` would let an unattended run drop a
   decision the networking contract says only a human makes. It is stricter where it counts — no
@@ -52,6 +52,8 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
 See also [[destructive-verb-rm]] (the verb is named `rm`) and [[bare-subcommand-shows-help]].
 
 ## Changelog
+- 2026-09-13 — updated the recoverable approval path to `coop approve`; the confirmation boundary
+  is unchanged.
 - 2026-09-11 — clarified future-tense previews and short confirmations after the user rejected
   a 'Permanently deleted' ledger printed before asking. Swept account and service-volume examples,
   plus task/fork deletion siblings in the design task; preserved the single gate and all authority

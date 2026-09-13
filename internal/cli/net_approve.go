@@ -14,17 +14,17 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// cmdNetApprove is the ONE verb that turns a repository's request into host
+// cmdApprove is the ONE verb that turns a repository's request into host
 // authority. The mode and the rules it approves come from .agent/project.yaml
 // and nowhere else — to change access, edit the file and review it again. It
 // requires a terminal on purpose: an approval is a human's decision, and a pipe
 // that answers "y" is not a human.
-func (a *app) cmdNetApprove(args []string) (int, error) {
-	if err := rejectArgs("net approve", args); err != nil {
+func (a *app) cmdApprove(args []string) (int, error) {
+	if err := rejectArgs("approve", args); err != nil {
 		return 2, err
 	}
 	if !ui.IsTerminal(os.Stdin) || !ui.IsTerminal(os.Stderr) {
-		return 1, netTerminalOnly("coop net approve")
+		return 1, netTerminalOnly("coop approve")
 	}
 	repo, err := netProject(a.cfg.RepoOverride)
 	if err != nil {
@@ -53,11 +53,15 @@ func (a *app) cmdNetApprove(args []string) (int, error) {
 // The question and the answer carry the one limit that matters — an approval
 // applies to NEW runs — so the review above them can be the change and nothing else.
 const (
-	netApproveIntro     = "Review the requested network access changes."
+	netApproveIntro     = "Review the requested project access changes."
 	netApprovePrompt    = "Approve these changes for new runs?"
 	netApproveApproved  = "Approved for new runs"
-	netApproveUnchanged = "No approval needed — this project's network access has not changed."
+	netApproveUnchanged = "No approval needed — this project's requested access has not changed."
 )
+
+func approveMovedError() error {
+	return &ui.UsageError{Headline: `"coop net approve" has moved`, Rows: [][2]string{{"Use:", "coop approve"}}}
+}
 
 // netTerminalOnly refuses a decision a pipe cannot make. An approval and a
 // withdrawal are both a human's: an unattended run answering "y" is not one.

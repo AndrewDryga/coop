@@ -54,6 +54,7 @@ SERVICES — databases and other services defined in .agent/compose.yml
 
 SECURITY & ISOLATION — control access, check isolation, and protect secrets
   coop doctor                       check that the box's isolation works
+  coop approve                      review and approve requested project access
   coop net                          show and manage this project's network access
   coop check-secrets                check project files for exposed secrets
   coop sign                         sign unpushed commits with your host key
@@ -1204,11 +1205,26 @@ Lists abandoned boxes but does not remove them.
 
 ==============================================================================
 
+coop approve — review and approve this project's requested access
+
+Usage: coop approve
+
+  Shows what .agent/project.yaml asks for, compared with your last approval.
+  Confirm the changes to allow new runs to use them.
+  If nothing changed, there is nothing to approve.
+
+  Existing boxes keep the rules they started with.
+  Run this command in your terminal.
+
+See current access: coop net
+
+==============================================================================
+
 coop net — control network access and see what happened
 
 ACCESS — control what new runs can reach
   coop net                  show this project's current access
-  coop net approve          review and approve requested changes
+  coop approve              review and approve requested access
   coop net check <url>      check access
   coop net forget           withdraw this project's network approval
 
@@ -1236,7 +1252,7 @@ HOW TO ADD A NETWORK RULE
 
 2. Review and approve the changes:
 
-   coop net approve
+   coop approve
 
 Command options: coop help net <command>
 
@@ -1314,21 +1330,6 @@ EXAMPLES
 
 ==============================================================================
 
-coop net approve — review and approve this project's network request
-
-Usage: coop net approve
-
-  Shows what .agent/project.yaml asks for, compared with your last approval.
-  Confirm the changes to allow new runs to use them.
-  If nothing changed, there is nothing to approve.
-
-  Existing boxes keep the rules they started with.
-  Run this command in your terminal.
-
-See current access: coop net
-
-==============================================================================
-
 coop net watch — follow a run's network activity
 
 Usage: coop net watch [<run>] [--json]
@@ -1366,7 +1367,7 @@ coop net forget — withdraw this project's network approval
 Usage: coop net forget [--project <path>]
 
 Use this when you no longer trust an approval saved on this machine.
-To change network rules, edit .agent/project.yaml and run coop net approve.
+To change network rules, edit .agent/project.yaml and run coop approve.
 
 OPTIONS
   --project <path>  choose another project, including a folder that was deleted
@@ -1376,7 +1377,7 @@ Existing boxes, recorded runs, and this host's network setup are kept.
 Run this command in your terminal.
 
 Restore approval:
-  coop net approve
+  coop approve
 
 ==============================================================================
 

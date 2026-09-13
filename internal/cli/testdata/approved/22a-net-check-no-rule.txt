@@ -7,4 +7,4 @@ Add this rule under box.egress_rules in .agent/project.yaml:
     ports: [443]
 
 Then run:
-  coop net approve
+  coop approve

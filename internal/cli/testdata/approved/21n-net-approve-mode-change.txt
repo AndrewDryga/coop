@@ -1,4 +1,4 @@
-Review the requested network access changes.
+Review the requested project access changes.
 
 NETWORK ACCESS
   - Offline — internet access is blocked.

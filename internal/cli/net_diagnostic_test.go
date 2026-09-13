@@ -91,13 +91,13 @@ func TestCurrentCheckAnswersForANewRun(t *testing.T) {
 		// the same draft `coop net blocked` prints, because a check knows exactly as much.
 		{"wrong port", filtered, "docs.example.com", 853, "✗ docs.example.com:853 is blocked — no approved rule allows it.\n\n" +
 			"Add this rule under box.egress_rules in .agent/project.yaml:\n\n" +
-			"  - to: {domain: \"docs.example.com\"}\n    protocol: tls\n    ports: [853]\n\nThen run:\n  coop net approve\n"},
+			"  - to: {domain: \"docs.example.com\"}\n    protocol: tls\n    ports: [853]\n\nThen run:\n  coop approve\n"},
 		{"one agent", filtered, "api.anthropic.com", 443, "✓ api.anthropic.com:443 is allowed by Claude's provider access.\n"},
 		{"two agents", filtered, "platform.claude.com", 443, "✓ platform.claude.com:443 is allowed for Claude and Codex.\n  Their provider access is included automatically.\n"},
 		{"open", box.NetworkAccess{Mode: egress.Open}, "anything.example", 443, "✓ anything.example:443 is allowed — internet access is unrestricted.\n"},
 		{"offline", box.NetworkAccess{Mode: egress.None}, "api.anthropic.com", 443, "✗ api.anthropic.com:443 is blocked — internet access is disabled.\n"},
 		{"pending", box.NetworkAccess{Mode: egress.Filtered, Add: []egress.Rule{rule("new.example", 443)}, Pending: &networkstate.PendingApproval{Reason: "this project asks for network access that has not been approved"}}, "api.anthropic.com", 443,
-			"✗ New runs need your approval\n  Review the requested changes: coop net approve\n"},
+			"✗ New runs need your approval\n  Review the requested changes: coop approve\n"},
 	}
 	for _, tc := range cases {
 		got := render(netCurrentCheck(tc.access, tc.host, tc.port, bundles))
@@ -170,7 +170,7 @@ func TestExplainRendersTheExactRuleToPaste(t *testing.T) {
 		"    ports: [443]\n" +
 		"\n" +
 		"Then run:\n" +
-		"  coop net approve\n"
+		"  coop approve\n"
 	if b.String() != want {
 		t.Errorf("explain:\n%s\nwant:\n%s", b.String(), want)
 	}
@@ -212,7 +212,7 @@ func TestExplainNeverFabricatesARuleFromThinEvidence(t *testing.T) {
 		if !strings.Contains(got, tc.want) {
 			t.Errorf("%s:\n%s\nwant to contain:\n%s", tc.reason, got, tc.want)
 		}
-		if strings.Contains(got, "- to:") || strings.Contains(got, "coop net approve") {
+		if strings.Contains(got, "- to:") || strings.Contains(got, "coop approve") {
 			t.Errorf("%s fabricated a rule to paste:\n%s", tc.reason, got)
 		}
 		if thin := strings.Contains(got, tooThin); thin != tc.thin {

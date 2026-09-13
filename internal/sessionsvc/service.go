@@ -1107,7 +1107,7 @@ func (s *Service) fenceExpectedNetworkFingerprint(policy Policy, req CreateRemot
 	}
 	return &session.Error{Code: session.CodeNetworkFingerprintMismatch,
 		Detail: fmt.Sprintf(
-			"policy %q now resolves to network %s, not the fingerprint the caller was authorized against; this host's approval changed — run 'coop net approve' in %s to see it, then place again against the published fingerprint",
+			"policy %q now resolves to network %s, not the fingerprint the caller was authorized against; this host's approval changed — run 'coop approve' in %s to see it, then place again against the published fingerprint",
 			policy.Name, sessionNetworkReach(network), policy.Repository)}
 }
 

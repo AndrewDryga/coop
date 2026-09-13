@@ -33,7 +33,7 @@ type NetworkAccess struct {
 	Source  string
 	// Approval is the remembered host-owned decision, nil when this project was
 	// never approved. Requested and RequestedMode are the repo's current ask —
-	// exactly what `coop net approve` would write; Add and Remove are the rule
+	// exactly what `coop approve` would write; Add and Remove are the rule
 	// difference a human would review.
 	Approval      *networkstate.Approval
 	Requested     []egress.Rule
@@ -301,7 +301,7 @@ func checkApprovedServices(approval *networkstate.Approval, composeFile, repoRoo
 	}
 	for _, name := range names {
 		if digests[name] != approval.Services[name] {
-			return fmt.Errorf("the Compose service %q changed since it was approved — review it with 'coop net approve'", name)
+			return fmt.Errorf("the Compose service %q changed since it was approved — review it with 'coop approve'", name)
 		}
 	}
 	return nil
