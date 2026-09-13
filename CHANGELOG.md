@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Preset-loop cost summaries include Claude, Gemini and Grok consult usage alongside Codex,
+  including provider-reported Claude and Grok cost. Missing usage never fails a consult,
+  and reasoning/cache tokens are counted according to each provider's native result.
+
 - Claude loop shell rows show useful supplied descriptions alongside a compact command
   preview. Narrow/fallback rows and failed-tool identity keep the original command view.
 

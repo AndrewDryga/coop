@@ -326,7 +326,11 @@ func TestProviderScriptedConsultTimeoutAndOverflowMatrix(t *testing.T) {
 					consultDirectStep(peer, "fresh", "diagnostic-overflow", "diagnostic overflow question", ""),
 				}
 				result, trace := suite.run(t, []string{lead, "--peer", peer}, consultProcessScenario(lead, providers, calls, steps))
-				replyOverflow := strings.Contains(result.Stderr, "reply exceeded") || (peer == "codex" && strings.Contains(result.Stderr, "Codex output exceeded"))
+				replyOverflow := strings.Contains(result.Stderr, "reply exceeded") ||
+					(peer == "codex" && strings.Contains(result.Stderr, "Codex output exceeded")) ||
+					(peer == "claude" && strings.Contains(result.Stderr, "Claude output exceeded")) ||
+					(peer == "gemini" && strings.Contains(result.Stderr, "Gemini output exceeded")) ||
+					(peer == "grok" && strings.Contains(result.Stderr, "Grok output exceeded"))
 				if result.Err != nil || result.ExitCode != 1 || len(result.Stdout) > 64<<10 ||
 					!replyOverflow || !strings.Contains(result.Stderr, "diagnostics exceeded") {
 					t.Fatalf("overflow for %s = exit %d err %v stdout-bytes %d\nstdout:\n%s\nstderr:\n%s", peer, result.ExitCode, result.Err, len(result.Stdout), result.Stdout, result.Stderr)
@@ -443,7 +447,7 @@ func TestProviderScriptedConsultLoopTelemetry(t *testing.T) {
 			},
 		},
 		{
-			name: "failed codex and plain provider",
+			name: "failed codex and provider without usage metadata",
 			calls: []consultCallSpec{
 				{Target: "advisor", Mode: "fresh", Prompt: "failed usage question", ExitCode: 23},
 				{Target: "gemini", Mode: "fresh", Prompt: "plain usage question", ExitCode: 0},
@@ -1069,13 +1073,13 @@ func consultFreshTraceArgv(provider, model, effort, prompt, sessionHash string) 
 	value := processTraceValue
 	switch provider {
 	case "claude":
-		return []string{"claude", "-p", "--permission-mode", value("plan"), "--session-id", sessionHash, "--model", value(model), "--effort", value(effort), value(prompt)}
+		return []string{"claude", "-p", "--permission-mode", value("plan"), "--session-id", sessionHash, "--output-format", value("json"), "--model", value(model), "--effort", value(effort), value(prompt)}
 	case "codex":
 		return []string{"codex", value("exec"), "-s", value("read-only"), "--model", value(model), "-c", value("model_reasoning_effort=" + effort), "--json", value(prompt)}
 	case "gemini":
-		return []string{"gemini", "--approval-mode", value("plan"), "--session-id", sessionHash, "--model", value(model), "-p", value(prompt)}
+		return []string{"gemini", "--approval-mode", value("plan"), "--session-id", sessionHash, "-o", value("stream-json"), "--model", value(model), "-p", value(prompt)}
 	case "grok":
-		return []string{"grok", "--tools", value("read_file,grep,list_dir"), "--session-id", sessionHash, "--model", value(model), "--reasoning-effort", value(effort), "-p", value(prompt)}
+		return []string{"grok", "--tools", value("read_file,grep,list_dir"), "--session-id", sessionHash, "--output-format", value("streaming-json"), "--model", value(model), "--reasoning-effort", value(effort), "-p", value(prompt)}
 	default:
 		panic("missing consult argv contract for " + provider)
 	}

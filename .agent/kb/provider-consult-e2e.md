@@ -2,7 +2,7 @@
 name: provider-consult-e2e
 description: Verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring
 subsystem: testing
-sources: [Makefile, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go]
+sources: [Makefile, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/consult_shell.go, internal/loop/telemetry.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go]
 updated: 2026-09-13
 ---
 
@@ -20,6 +20,21 @@ clears its uncertain id but retains the last complete transcript; the next `--co
 same successful rung fresh. Only a proven nonzero rate limit advances a ladder. Reply and diagnostic
 streams are unlimited by default; an explicit COOP_CONSULT_STREAM_LIMIT caps each independently.
 Prompt and transcript state cap independently at 512 KiB.
+
+All built-in consult arms capture native JSON and deliver only decoded answer text. Shared
+capture and guarded best-effort append live in `internal/agent/consult_shell.go`; adapters own
+the JSON filters. A row is published only after the complete attempt (reply and diagnostics)
+is accepted. Claude and Grok may report invocation-local dollars; Gemini and Codex report
+tokens without invented prices. Claude input adds cache writes/reads, Gemini input already
+includes cached input, and current Grok output includes reasoning. Missing or invalid usage
+never invalidates an otherwise usable reply. Delegate diff-report output is unchanged and
+delegate usage is not yet captured.
+All-provider parser and generated-wrapper unit tests cover the added usage/cost paths;
+the scripted process suite's explicit telemetry scenario currently covers Codex only.
+
+Native fresh/resume feasibility captures on 2026-09-13 qualified Claude 2.1.267 JSON,
+Gemini 0.59.0 stream-json, and Grok 1.0.25 streaming-json session flags and field shapes.
+These narrow captures do not replace the final installed wrapper-in-loop qualification.
 Same-target calls serialize on a private lock. The Coop image uses `flock`, so the kernel releases
 ownership after an unclean exit. A custom image without `flock` uses a fail-closed `mkdir` fallback;
 after confirming no consult is active, remove its private `.lock.d` directory.
@@ -35,7 +50,9 @@ tracked/untracked/ignored write attempts. Source credentials, complete repositor
 revocation, CIDs, labels, and per-edge process quiescence are verified. Evidence is one redacted
 `COOP_CONSULT_LIVE_SUMMARY` line.
 
-Triage `skipped` as a prerequisite first: `credential_refresh_required` needs re-login;
+Triage `skipped` as a prerequisite first: `credential_refresh_required` needs trusted-source
+renewal before an access-only projection, not necessarily re-login (see
+[[credentials-expired-is-a-false-alarm]]);
 `credential_not_portable` needs an env-backed key; `ring_prerequisite` means another edge was not
 ready and no paid call ran. `failed` after `attempted=true` is upstream compatibility or provider
 behavior. `repository_changed`, `source_changed`, `cleanup_failed`, and `harness_failed` are local
@@ -49,6 +66,9 @@ in final/state/log. Wrapper fixtures preserve a partial reply at exit0; they do 
 native lead carries its caveats through synthesis. No prose-to-verdict parser is involved.
 
 ## Changelog
+- 2026-09-13 — extended consult usage to all built-in adapters and optional reported cost;
+  documented captured token semantics, best-effort publication and deferred native proof.
+  Rechecked credential preflight advice: a refreshable token is not a lost login.
 - 2026-09-13 — documented review-evidence carry-through and partial-versus-complete wrapper
   fixtures; rechecked configured output bounds and corrected stale fixed1MiB default prose.
 - 2026-08-25 - source path moved from `internal/fusion` to `internal/consult`; wrapper contract unchanged

@@ -389,20 +389,42 @@ func (grokAgent) BoxEnv(string) []string { return nil }
 
 func (grokAgent) HomeFallbacks() []HomeFallback { return nil }
 
+// Native 1.0.25 fresh/resume captures (2026-09-13): text deltas exclude thought,
+// end carries invocation-local usage/cost, and output_tokens includes reasoning.
+const grokConsultText = `grok_text() {
+	jq -ers 'select(all(.[]; type=="object")) | select(.[-1].type=="end")
+		| select([.[] | select(.type=="end")]|length==1)
+		| select(all(.[]; .type!="error"))
+		| [.[] | select(.type=="text") | .data | select(type=="string")]
+		| join("") | select(test("[^[:space:]]"))'
+}
+`
+
+const grokConsultUsage = `select(.[-1].type=="end")
+		| select([.[] | select(.type=="end")]|length==1) | .[-1]
+		| select((.usage|type)=="object")
+		| {input:.usage.input_tokens, output:.usage.output_tokens,
+		   read:(.usage.cache_read_input_tokens // 0), write:(.usage.cache_creation_input_tokens // 0), cost:.total_cost_usd}
+		| select(.input|token) | select(.output|token) | select(.read|token) | select(.write|token)
+		| .input=(.input + .read + .write) | select(.input<=1000000000)
+		| if (.cost|type=="number" and isfinite and .>=0) then . else del(.cost) end`
+
 func (grokAgent) ConsultFresh() string {
 	return "printf '%s' \"$id\" >\"$candidate_idfile\"\n" +
-		`run grok --tools "` + grokReadOnlyTools + `" --session-id "$id" ${model:+--model "$model"} ${effort:+--reasoning-effort "$effort"} -p "$prompt"`
+		`grok_run grok --tools "` + grokReadOnlyTools + `" --session-id "$id" --output-format streaming-json ${model:+--model "$model"} ${effort:+--reasoning-effort "$effort"} -p "$prompt"`
 }
 
 func (grokAgent) ConsultResume() string {
-	return `run grok --tools "` + grokReadOnlyTools + `" --resume "$id" ${model:+--model "$model"} ${effort:+--reasoning-effort "$effort"} -p "$prompt"`
+	return `grok_run grok --tools "` + grokReadOnlyTools + `" --resume "$id" --output-format streaming-json ${model:+--model "$model"} ${effort:+--reasoning-effort "$effort"} -p "$prompt"`
 }
 
 func (grokAgent) DelegateExec() string {
 	return `grok --permission-mode bypassPermissions ${model:+--model "$model"} ${effort:+--reasoning-effort "$effort"} -p "$prompt"`
 }
 
-func (grokAgent) ShellPrelude() string { return "" }
+func (grokAgent) ShellPrelude() string {
+	return grokConsultText + consultPeerRowShell("grok", grokConsultUsage) + consultCaptureShell("grok", "Grok")
+}
 
 // InstallScript bakes grok's CLI into the box image. grok ships a piped installer
 // (`curl … | bash`), not npm and not a checksummed release — so, per the settled supply-chain

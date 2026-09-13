@@ -828,18 +828,36 @@ func (claudeAgent) HomeFallbacks() []HomeFallback {
 
 const claudeNestedMCPArgs = `${COOP_CLAUDE_MCP_CONFIG:+--mcp-config "$COOP_CLAUDE_MCP_CONFIG"}`
 
+// JSON result/usage shape captured from a native Claude consult on 2026-09-08.
+// output_tokens already includes thinking; cache reads/writes are additional input.
+const claudeConsultText = `claude_text() {
+	jq -ers 'select(length==1) | .[0] | select(type=="object" and .type=="result" and .is_error!=true) | .result | select(type=="string" and test("[^[:space:]]"))'
+}
+`
+
+const claudeConsultUsage = `select(length==1) | .[0]
+		| select(type=="object" and .type=="result" and .is_error!=true)
+		| select((.usage|type)=="object")
+		| {input:(.usage.input_tokens // 0), output:(.usage.output_tokens // 0),
+		   write:(.usage.cache_creation_input_tokens // 0), read:(.usage.cache_read_input_tokens // 0), cost:.total_cost_usd}
+		| select(.input|token) | select(.output|token) | select(.write|token) | select(.read|token)
+		| .input=(.input + .write + .read) | select(.input<=1000000000)
+		| if (.cost|type=="number" and isfinite and .>=0) then . else del(.cost) end`
+
 func (claudeAgent) ConsultFresh() string {
 	return "printf '%s' \"$id\" >\"$candidate_idfile\"\n" +
-		`run claude -p --permission-mode plan --session-id "$id" ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` "$prompt"`
+		`claude_run claude -p --permission-mode plan --session-id "$id" --output-format json ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` "$prompt"`
 }
 
 func (claudeAgent) ConsultResume() string {
-	return `run claude -p --permission-mode plan --resume "$id" ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` "$prompt"`
+	return `claude_run claude -p --permission-mode plan --resume "$id" --output-format json ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` "$prompt"`
 }
 
 func (claudeAgent) DelegateExec() string {
 	return `claude -p --dangerously-skip-permissions ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` "$prompt"`
 }
 
-func (claudeAgent) ShellPrelude() string  { return "" }
+func (claudeAgent) ShellPrelude() string {
+	return claudeConsultText + consultPeerRowShell("claude", claudeConsultUsage) + consultCaptureShell("claude", "Claude")
+}
 func (claudeAgent) InstallScript() string { return "" }

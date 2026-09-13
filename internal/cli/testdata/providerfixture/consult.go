@@ -424,14 +424,26 @@ func consumeConsultStep(root, provider string, args []string, steps []consultSte
 func parseConsultInvocation(provider string, args []string) (consultInvocation, error) {
 	switch provider {
 	case "claude":
-		return parsePlainConsultArgs(args, []string{"-p", "--permission-mode", "plan"}, "--session-id", "--resume", "--effort", "")
+		if len(args) < 8 || args[5] != "--output-format" || args[6] != "json" {
+			return consultInvocation{}, errors.New("claude consult requires exact JSON output after its session id")
+		}
+		plainArgs := append(append([]string{}, args[:5]...), args[7:]...)
+		return parsePlainConsultArgs(plainArgs, []string{"-p", "--permission-mode", "plan"}, "--session-id", "--resume", "--effort", "")
 	case "gemini":
-		return parsePlainConsultArgs(args, []string{"--approval-mode", "plan"}, "--session-id", "--resume", "", "-p")
+		if len(args) < 8 || args[4] != "-o" || args[5] != "stream-json" {
+			return consultInvocation{}, errors.New("gemini consult requires exact stream-json output after its session id")
+		}
+		plainArgs := append(append([]string{}, args[:4]...), args[6:]...)
+		return parsePlainConsultArgs(plainArgs, []string{"--approval-mode", "plan"}, "--session-id", "--resume", "", "-p")
 	case "grok":
 		if len(args) < 2 || args[0] != "--tools" || args[1] == "" {
 			return consultInvocation{}, errors.New("grok consult is missing its read-only tool set")
 		}
-		return parsePlainConsultArgs(args[2:], nil, "--session-id", "--resume", "--reasoning-effort", "-p")
+		if len(args) < 8 || args[4] != "--output-format" || args[5] != "streaming-json" {
+			return consultInvocation{}, errors.New("grok consult requires exact streaming-json output after its session id")
+		}
+		plainArgs := append(append([]string{}, args[2:4]...), args[6:]...)
+		return parsePlainConsultArgs(plainArgs, nil, "--session-id", "--resume", "--reasoning-effort", "-p")
 	case "codex":
 		return parseCodexConsultArgs(args)
 	default:
@@ -517,13 +529,30 @@ func renderConsultStep(stepIndex int, step consultStep) (int, string, error) {
 	if step.Provider == "codex" {
 		return renderCodexConsultStep(stepIndex, step)
 	}
+	if step.Result == "usable" || step.Result == "large-reply" {
+		reply := step.Reply
+		if step.Result == "large-reply" {
+			reply = strings.Repeat("r", largeConsultReplyBytes)
+		}
+		encoder := json.NewEncoder(os.Stdout)
+		switch step.Provider {
+		case "claude":
+			return 0, "", encoder.Encode(map[string]any{
+				"type": "result", "subtype": "success", "is_error": false, "result": reply,
+			})
+		case "gemini":
+			if err := encoder.Encode(map[string]any{"type": "message", "role": "assistant", "content": reply, "delta": true}); err != nil {
+				return 1, "", err
+			}
+			return 0, "", encoder.Encode(map[string]any{"type": "result", "status": "success"})
+		case "grok":
+			if err := encoder.Encode(map[string]any{"type": "text", "data": reply}); err != nil {
+				return 1, "", err
+			}
+			return 0, "", encoder.Encode(map[string]any{"type": "end", "num_turns": 1})
+		}
+	}
 	switch step.Result {
-	case "usable":
-		fmt.Fprintln(os.Stdout, step.Reply)
-		return 0, "", nil
-	case "large-reply":
-		_, err := io.WriteString(os.Stdout, strings.Repeat("r", largeConsultReplyBytes))
-		return 0, "", err
 	case "empty", "stderr-only":
 		return 0, "", nil
 	case "ordinary":
@@ -728,7 +757,7 @@ func validateConsultSteps(homes map[string]bool, steps []consultStep) error {
 			return fmt.Errorf("consult step %d contains an out-of-range number", i)
 		}
 		if step.Provider != "codex" && (step.UsageIn != 0 || step.UsageOut != 0) {
-			return fmt.Errorf("consult step %d fabricates usage for plain-output provider %q", i, step.Provider)
+			return fmt.Errorf("consult step %d requests usage outside the fixture's Codex telemetry scenario: %q", i, step.Provider)
 		}
 		if err := validateConsultResult(i, step); err != nil {
 			return err

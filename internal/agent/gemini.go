@@ -410,20 +410,40 @@ func (geminiAgent) BoxEnv(string) []string { return []string{"GEMINI_TELEMETRY_E
 
 func (geminiAgent) HomeFallbacks() []HomeFallback { return nil }
 
+// Native 0.59.0 fresh/resume captures (2026-09-13): assistant message deltas are
+// reply text, and result.stats.input_tokens already includes cached input.
+const geminiConsultText = `gemini_text() {
+	jq -ers 'select(all(.[]; type=="object"))
+		| select(.[-1].type=="result" and .[-1].status=="success")
+		| select([.[] | select(.type=="result")]|length==1)
+		| select(all(.[]; .type!="error"))
+		| [.[] | select(.type=="message" and .role=="assistant") | .content | select(type=="string")]
+		| join("") | select(test("[^[:space:]]"))'
+}
+`
+
+const geminiConsultUsage = `select(.[-1].type=="result" and .[-1].status=="success")
+		| select([.[] | select(.type=="result")]|length==1)
+		| .[-1].stats | select(type=="object")
+		| {input:.input_tokens, output:.output_tokens}
+		| select(.input|token) | select(.output|token)`
+
 func (geminiAgent) ConsultFresh() string {
 	return "printf '%s' \"$id\" >\"$candidate_idfile\"\n" +
-		`run gemini --approval-mode plan --session-id "$id" ${model:+--model "$model"} -p "$prompt"`
+		`gemini_run gemini --approval-mode plan --session-id "$id" -o stream-json ${model:+--model "$model"} -p "$prompt"`
 }
 
 func (geminiAgent) ConsultResume() string {
-	return `run gemini --approval-mode plan --resume "$id" ${model:+--model "$model"} -p "$prompt"`
+	return `gemini_run gemini --approval-mode plan --resume "$id" -o stream-json ${model:+--model "$model"} -p "$prompt"`
 }
 
 func (geminiAgent) DelegateExec() string {
 	return `gemini --yolo ${model:+--model "$model"} -p "$prompt"`
 }
 
-func (geminiAgent) ShellPrelude() string  { return "" }
+func (geminiAgent) ShellPrelude() string {
+	return geminiConsultText + consultPeerRowShell("gemini", geminiConsultUsage) + consultCaptureShell("gemini", "Gemini")
+}
 func (geminiAgent) InstallScript() string { return "" }
 
 // LockedClients is nil: gemini has no qualified locked client build yet, so

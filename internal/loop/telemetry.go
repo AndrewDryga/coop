@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -234,15 +235,16 @@ func readStageRecords(repo, run string) []StageRecord {
 }
 
 // PeerRecord is one in-turn consult/delegate call's usage, appended by the wrapper (best-effort) to
-// .agent/runs/<run>.peers.jsonl. Providers report tokens; cost isn't in every provider's stream
-// (codex gives none), so peers contribute tokens to the by-model roll-up, not dollars.
+// .agent/runs/<run>.peers.jsonl. Cost is optional and always provider-reported, never estimated
+// from tokens. Older token-only rows remain readable.
 type PeerRecord struct {
-	Run      string `json:"run"`
-	Role     string `json:"role"`
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
-	In       int    `json:"in"`
-	Out      int    `json:"out"`
+	Run      string  `json:"run"`
+	Role     string  `json:"role"`
+	Provider string  `json:"provider"`
+	Model    string  `json:"model"`
+	In       int     `json:"in"`
+	Out      int     `json:"out"`
+	Cost     float64 `json:"cost,omitempty"`
 }
 
 // preparePeerRecordFile creates the one append target a consult wrapper may use for this run.
@@ -401,8 +403,7 @@ func readRunFile(repo, name string) ([]byte, error) {
 // costFromRecords aggregates telemetry into a runCost: every stage's cost/tokens sum into the total,
 // and a stage that carries cost is attributed to the task(s) it finished (split evenly on the rare
 // multi-finish; cost with no finished task lands in the total only). In-turn consult/delegate peers
-// add their tokens to the matching model (and the total) — tokens only, since a peer's stream carries
-// no cost. Pure — unit-tested.
+// add reported tokens and cost to the matching model and total. Pure — unit-tested.
 func costFromRecords(recs []StageRecord, peers []PeerRecord) runCost {
 	rc := runCost{byTask: map[string]stageCost{}}
 	models := map[string]stageCost{}
@@ -431,11 +432,14 @@ func costFromRecords(recs []StageRecord, peers []PeerRecord) runCost {
 			rc.byTask[id] = c
 		}
 	}
-	// In-turn peers add their tokens to the matching model and the run total — tokens only, since a
-	// peer's stream carries no cost (codex). A peer-only model shows in the by-model line with cost "—".
+	// Peers carry no task assignment, so their spend belongs only to the model and run totals.
 	for _, p := range peers {
 		k := modelKey(p.Provider, p.Model)
 		mc := models[k]
+		if p.Cost >= 0 && !math.IsInf(p.Cost, 0) && !math.IsNaN(p.Cost) {
+			mc.usd += p.Cost
+			rc.total.usd += p.Cost
+		}
 		mc.inTok += p.In
 		mc.outTok += p.Out
 		models[k] = mc

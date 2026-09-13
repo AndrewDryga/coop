@@ -699,9 +699,12 @@ func TestParseConsultInvocationPinsEveryAdapterGrammar(t *testing.T) {
 		args     []string
 		want     consultInvocation
 	}{
-		{"claude", []string{"-p", "--permission-mode", "plan", "--session-id", "session-1", "--model", "opus", "--effort", "high", "question"}, consultInvocation{Delivery: "fresh", Session: "session-1", Model: "opus", Effort: "high", Prompt: "question"}},
-		{"gemini", []string{"--approval-mode", "plan", "--resume", "session-2", "--model", "flash", "-p", "follow-up"}, consultInvocation{Delivery: "resume", Session: "session-2", Model: "flash", Prompt: "follow-up"}},
-		{"grok", []string{"--tools", "Read,Grep", "--session-id", "session-3", "--model", "grok-model", "--reasoning-effort", "xhigh", "-p", "question"}, consultInvocation{Delivery: "fresh", Session: "session-3", Model: "grok-model", Effort: "xhigh", Prompt: "question"}},
+		{"claude", []string{"-p", "--permission-mode", "plan", "--session-id", "session-1", "--output-format", "json", "--model", "opus", "--effort", "high", "question"}, consultInvocation{Delivery: "fresh", Session: "session-1", Model: "opus", Effort: "high", Prompt: "question"}},
+		{"claude", []string{"-p", "--permission-mode", "plan", "--resume", "session-1", "--output-format", "json", "follow-up"}, consultInvocation{Delivery: "resume", Session: "session-1", Prompt: "follow-up"}},
+		{"gemini", []string{"--approval-mode", "plan", "--resume", "session-2", "-o", "stream-json", "--model", "flash", "-p", "follow-up"}, consultInvocation{Delivery: "resume", Session: "session-2", Model: "flash", Prompt: "follow-up"}},
+		{"gemini", []string{"--approval-mode", "plan", "--session-id", "session-2", "-o", "stream-json", "-p", "question"}, consultInvocation{Delivery: "fresh", Session: "session-2", Prompt: "question"}},
+		{"grok", []string{"--tools", "Read,Grep", "--session-id", "session-3", "--output-format", "streaming-json", "--model", "grok-model", "--reasoning-effort", "xhigh", "-p", "question"}, consultInvocation{Delivery: "fresh", Session: "session-3", Model: "grok-model", Effort: "xhigh", Prompt: "question"}},
+		{"grok", []string{"--tools", "Read,Grep", "--resume", "session-3", "--output-format", "streaming-json", "-p", "follow-up"}, consultInvocation{Delivery: "resume", Session: "session-3", Prompt: "follow-up"}},
 		{"codex", []string{"exec", "resume", "session-4", "-c", "sandbox_mode=read-only", "--model", "codex-model", "-c", "model_reasoning_effort=high", "--json", "follow-up"}, consultInvocation{Delivery: "resume", Session: "session-4", Model: "codex-model", Effort: "high", Prompt: "follow-up"}},
 	}
 	for _, tc := range cases {
@@ -715,8 +718,17 @@ func TestParseConsultInvocationPinsEveryAdapterGrammar(t *testing.T) {
 		args     []string
 	}{
 		{"claude", []string{"-p", "--permission-mode", "plan", "--model", "opus", "--session-id", "session", "question"}},
+		{"claude", []string{"-p", "--permission-mode", "plan", "--session-id", "session", "question"}},
+		{"claude", []string{"-p", "--permission-mode", "plan", "--session-id", "session", "--output-format", "text", "question"}},
+		{"claude", []string{"-p", "--permission-mode", "plan", "--output-format", "json", "--session-id", "session", "question"}},
 		{"gemini", []string{"--approval-mode", "plan", "--session-id", "session", "question", "-p"}},
+		{"gemini", []string{"--approval-mode", "plan", "--session-id", "session", "-p", "question"}},
+		{"gemini", []string{"--approval-mode", "plan", "--session-id", "session", "-o", "text", "-p", "question"}},
+		{"gemini", []string{"--approval-mode", "plan", "-o", "stream-json", "--session-id", "session", "-p", "question"}},
 		{"grok", []string{"--tools", "", "--session-id", "session", "-p", "question"}},
+		{"grok", []string{"--tools", "Read,Grep", "--session-id", "session", "-p", "question"}},
+		{"grok", []string{"--tools", "Read,Grep", "--session-id", "session", "--output-format", "text", "-p", "question"}},
+		{"grok", []string{"--tools", "Read,Grep", "--output-format", "streaming-json", "--session-id", "session", "-p", "question"}},
 		{"codex", []string{"exec", "resume", "session", "--json", "question", "-c", "sandbox_mode=read-only"}},
 	} {
 		if _, err := parseConsultInvocation(tc.provider, tc.args); err == nil {

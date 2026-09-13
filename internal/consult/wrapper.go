@@ -190,7 +190,7 @@ active_run_pid=
 active_run_group=0
 output_pid=
 diagnostics_pid=
-codex_capture_pid=
+provider_capture_pid=
 	lock_owned=0
 	lockdir=
 	candidate_telemetry_raw=
@@ -253,7 +253,7 @@ cleanup() {
 	trap - EXIT INT TERM
 	terminate_pid "$output_pid"
 	terminate_pid "$diagnostics_pid"
-	terminate_pid "$codex_capture_pid"
+	terminate_pid "$provider_capture_pid"
 	terminate_active_run
 	if [ "$lock_owned" -eq 1 ] && [ -n "$lockdir" ]; then rmdir "$lockdir" 2>/dev/null || :; fi
 	rm -rf "$attempt_dir"
@@ -450,8 +450,8 @@ fi
 	b.WriteString(`
 publish_candidate_telemetry() {
 	[ -n "$candidate_telemetry_raw" ] && [ -f "$candidate_telemetry_raw" ] || return 0
-	if command -v codex_peer_row >/dev/null 2>&1; then
-		codex_peer_row "${role:-$name}" "$model" <"$candidate_telemetry_raw"
+	if command -v "${peer}_peer_row" >/dev/null 2>&1; then
+		"${peer}_peer_row" "${role:-$name}" "$model" <"$candidate_telemetry_raw" || true
 	fi
 	candidate_telemetry_raw=
 }
@@ -585,6 +585,7 @@ dispatch_resume() {
 
 run_attempt() {
 	dispatch=$1
+	provider_capture_failed=0
 	out=$attempt_dir/output-$index
 	diagnostics=$attempt_dir/diagnostics-$index
 	reply_overflow=$attempt_dir/reply-overflow-$index
@@ -620,7 +621,7 @@ run_attempt() {
 	rm -f "$output_pipe" "$diagnostics_pipe"
 	case "$attempt_status" in '' | *[!0-9]*) attempt_status=1 ;; esac
 	attempt_capture_status=0
-	if [ "$output_capture_status" -ne 0 ] || [ "$diagnostics_capture_status" -ne 0 ]; then attempt_capture_status=1; fi
+	if [ "$output_capture_status" -ne 0 ] || [ "$diagnostics_capture_status" -ne 0 ] || [ "$provider_capture_failed" -ne 0 ]; then attempt_capture_status=1; fi
 }
 
 build_prompt() {

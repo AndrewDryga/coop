@@ -202,7 +202,12 @@ func TestConsultWrapperInterruptedPublicationKeepsPriorRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, body := range map[string]string{
-		"claude":  "#!/bin/sh\ncase \" $* \" in *\" --resume \"*) echo SECOND_REPLY ;; *) echo FIRST_REPLY ;; esac\n",
+		"claude": `#!/bin/sh
+case " $* " in
+*" --resume "*) echo '{"type":"result","is_error":false,"result":"SECOND_REPLY"}' ;;
+*) echo '{"type":"result","is_error":false,"result":"FIRST_REPLY"}' ;;
+esac
+`,
 		"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
@@ -294,7 +299,7 @@ func TestConsultWrapperLockSerializesAndRecoversAfterOwnerExit(t *testing.T) {
 echo start >>"$CALLS"
 case " $* " in *FIRST*) printf '%s' "$$" >"$READY"; while [ ! -e "$RELEASE" ]; do sleep 0.05; done ;; esac
 case " $* " in *CRASH*) printf '%s' "$$" >"$CRASH_READY"; while :; do sleep 0.05; done ;; esac
-echo REPLY
+echo '{"type":"result","is_error":false,"result":"REPLY"}'
 `
 	for name, body := range map[string]string{"claude": provider, "timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
@@ -391,7 +396,7 @@ func TestConsultWrapperLockBudgetCoversEveryAdmittedRung(t *testing.T) {
 	scripts := map[string]string{
 		"flock":   "#!/bin/sh\nprintf '%s\\n' \"$*\" >\"$FLOCK_ARGS\"\n",
 		"claude":  "#!/bin/sh\necho 'usage limit reached' >&2\nexit 9\n",
-		"gemini":  "#!/bin/sh\necho FALLBACK_REPLY\n",
+		"gemini":  "#!/bin/sh\necho '{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"FALLBACK_REPLY\"}'\necho '{\"type\":\"result\",\"status\":\"success\"}'\n",
 		"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
 	}
 	for name, body := range scripts {
@@ -869,7 +874,7 @@ func TestConsultWrapperEmptyReplyAndTimeout(t *testing.T) {
 			provider:    "exit 0",
 			timeoutBody: "shift 3\nexec \"$@\"",
 			wantCode:    1,
-			wantText:    "provider returned no usable reply",
+			wantText:    "Gemini returned malformed output or no usable reply",
 		},
 		{
 			// The bound is OPT-IN now: unbounded is the default, because a clock cannot tell a long
@@ -887,7 +892,7 @@ func TestConsultWrapperEmptyReplyAndTimeout(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			role := "delivery-" + strings.ReplaceAll(tc.name, " ", "-")
 			t.Setenv("COOP_CONSULT_TIMEOUT_FOR_TEST", tc.timeout)
-			out, code, _, resumable := runConsultWrapperStub(t, role, "claude", tc.provider, tc.timeoutBody, "")
+			out, code, _, resumable := runConsultWrapperStub(t, role, "gemini", tc.provider, tc.timeoutBody, "")
 			if code != tc.wantCode {
 				t.Fatalf("exit = %d, want %d:\n%s", code, tc.wantCode, out)
 			}
@@ -904,7 +909,7 @@ func TestConsultWrapperEmptyReplyAndTimeout(t *testing.T) {
 	}
 }
 
-func TestConsultWrapperPlainProviderFailureStateAndReplyStream(t *testing.T) {
+func TestConsultWrapperProviderFailureStateAndReplyStream(t *testing.T) {
 	const passTimeout = `shift 3
 exec "$@"`
 	for _, peer := range []string{"claude", "gemini", "grok"} {
@@ -921,7 +926,8 @@ exec "$@"`
 		t.Run(peer+" stderr only success", func(t *testing.T) {
 			role := "stderr-only-" + peer
 			out, code, _, resumable := runConsultWrapperStub(t, role, peer, `echo PROVIDER_WARNING >&2`, passTimeout, "")
-			if code != 1 || !strings.Contains(out, "PROVIDER_WARNING") || !strings.Contains(out, "provider returned no usable reply") {
+			wantRejection := map[string]string{"claude": "Claude", "gemini": "Gemini", "grok": "Grok"}[peer] + " returned malformed output or no usable reply"
+			if code != 1 || !strings.Contains(out, "PROVIDER_WARNING") || !strings.Contains(out, wantRejection) {
 				t.Fatalf("stderr-only success = exit %d:\n%s", code, out)
 			}
 			if resumable {
@@ -943,7 +949,12 @@ func TestConsultWrapperFailedResumeRestartsFromTranscriptOnNextContinue(t *testi
 case " $* " in
 *" --resume "*) echo SESSION_GONE >&2; exit 7 ;;
 esac
-if [ -f "$STATE" ]; then echo RECOVERED_REPLY; else : >"$STATE"; echo FIRST_REPLY; fi`
+if [ -f "$STATE" ]; then
+  echo '{"type":"result","is_error":false,"result":"RECOVERED_REPLY"}'
+else
+  : >"$STATE"
+  echo '{"type":"result","is_error":false,"result":"FIRST_REPLY"}'
+fi`
 	for name, body := range map[string]string{
 		"claude":  "#!/bin/sh\n" + provider + "\n",
 		"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
@@ -1055,8 +1066,10 @@ exec "$@"`
 	// plus the narrowed retry that followed, so an unbounded run must hand back every byte.
 	t.Run("a reply past the old cap is delivered whole by default", func(t *testing.T) {
 		const size = 1 << 20 // the cap this used to die on, exactly
-		body := fmt.Sprintf(`dd if=/dev/zero bs=%d count=1 2>/dev/null | tr '\000' X`, size)
-		out, code, _, _ := runConsultWrapperStub(t, "reply-large", "claude", body, passTimeout, "")
+		body := fmt.Sprintf(`printf '{"type":"message","role":"assistant","content":"'
+dd if=/dev/zero bs=%d count=1 2>/dev/null | tr '\000' X
+printf '"}\n{"type":"result","status":"success"}\n'`, size)
+		out, code, _, _ := runConsultWrapperStub(t, "reply-large", "gemini", body, passTimeout, "")
 		if code != 0 {
 			t.Fatalf("large reply = exit %d, want it accepted:\n%s", code, truncateForTest(out))
 		}
@@ -1071,8 +1084,8 @@ exec "$@"`
 	t.Run("an explicitly requested limit is still terminal", func(t *testing.T) {
 		t.Setenv("COOP_CONSULT_STREAM_LIMIT_FOR_TEST", "1048576")
 		body := `dd if=/dev/zero bs=1048577 count=1 2>/dev/null | tr '\000' X`
-		out, code, _, resumable := runConsultWrapperStub(t, "reply-overflow", "claude", body, passTimeout, "")
-		if code != 1 || !strings.Contains(out, "reply exceeded 1048576 bytes") {
+		out, code, _, resumable := runConsultWrapperStub(t, "reply-overflow", "gemini", body, passTimeout, "")
+		if code != 1 || !strings.Contains(out, "Gemini output exceeded 1048576 bytes") {
 			t.Fatalf("reply overflow = exit %d, bytes %d:\n%s", code, len(out), truncateForTest(out))
 		}
 		if resumable {
@@ -1120,38 +1133,40 @@ exec "$@"`
 		{name: "unlimited capture", helper: "cat"},
 		{name: "bounded capture", helper: "dd", limit: "1048576"},
 	} {
-		t.Run("capture helper failure is terminal — "+tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			wrapper := filepath.Join(dir, "coop-consult")
-			for name, body := range map[string]string{
-				"claude":  "#!/bin/sh\necho SHOULD_NOT_BE_ACCEPTED\n",
-				tc.helper: "#!/bin/sh\nexit 70\n",
-				"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
-			} {
-				if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+		for _, peer := range allAgents {
+			t.Run("capture helper failure is terminal — "+tc.name+"/"+peer, func(t *testing.T) {
+				dir := t.TempDir()
+				wrapper := filepath.Join(dir, "coop-consult")
+				for name, body := range map[string]string{
+					peer:      "#!/bin/sh\necho SHOULD_NOT_BE_ACCEPTED\n",
+					tc.helper: "#!/bin/sh\nexit 70\n",
+					"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
+				} {
+					if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
 					t.Fatal(err)
 				}
-			}
-			if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			role := "capture-failure"
-			cmd := exec.Command(wrapper, role, "--fresh", "question")
-			cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir,
-				"COOP_PEERS=claude", "COOP_CONSULT_CAPTURE_FAILURE_TARGETS=claude:test",
-				"COOP_CONSULT_STREAM_LIMIT="+tc.limit)
-			out, err := cmd.CombinedOutput()
-			if err == nil || !strings.Contains(string(out), "failed to capture provider output safely") {
-				t.Fatalf("capture failure was not terminal: %v\n%s", err, truncateForTest(string(out)))
-			}
-			if strings.Contains(string(out), "SHOULD_NOT_BE_ACCEPTED") {
-				t.Error("a failed capture still delivered the provider's output as the reply")
-			}
-			stateDir := filepath.Join(dir, "coop-consult-state")
-			if _, err := os.Stat(filepath.Join(stateDir, "CAPTURE_FAILURE.state")); !os.IsNotExist(err) {
-				t.Errorf("capture failure retained continuation state: %v", err)
-			}
-		})
+				role := "capture-failure"
+				cmd := exec.Command(wrapper, role, "--fresh", "question")
+				cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir,
+					"COOP_PEERS="+peer, "COOP_CONSULT_CAPTURE_FAILURE_TARGETS="+peer+":test",
+					"COOP_CONSULT_STREAM_LIMIT="+tc.limit)
+				out, err := cmd.CombinedOutput()
+				if err == nil || !strings.Contains(string(out), "failed to capture provider output safely") {
+					t.Fatalf("capture failure was not terminal: %v\n%s", err, truncateForTest(string(out)))
+				}
+				if strings.Contains(string(out), "SHOULD_NOT_BE_ACCEPTED") {
+					t.Error("a failed capture still delivered the provider's output as the reply")
+				}
+				stateDir := filepath.Join(dir, "coop-consult-state")
+				if _, err := os.Stat(filepath.Join(stateDir, "CAPTURE_FAILURE.state")); !os.IsNotExist(err) {
+					t.Errorf("capture failure retained continuation state: %v", err)
+				}
+			})
+		}
 	}
 
 	t.Run("transcript overflow delivers reply then clears continuity", func(t *testing.T) {
@@ -1161,7 +1176,11 @@ exec "$@"`
 			t.Fatal(err)
 		}
 		for name, body := range map[string]string{
-			"claude":  "#!/bin/sh\ndd if=/dev/zero bs=270000 count=1 2>/dev/null | tr '\\000' Y\n",
+			"gemini": `#!/bin/sh
+printf '{"type":"message","role":"assistant","content":"'
+dd if=/dev/zero bs=270000 count=1 2>/dev/null | tr '\000' Y
+printf '"}\n{"type":"result","status":"success"}\n'
+`,
 			"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
 		} {
 			if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
@@ -1173,7 +1192,7 @@ exec "$@"`
 		run := func(mode, prompt string) (string, int) {
 			cmd := exec.Command(wrapper, role, mode, prompt)
 			cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir,
-				"COOP_PEERS=claude", "COOP_CONSULT_"+key+"_TARGETS=claude:test")
+				"COOP_PEERS=gemini", "COOP_CONSULT_"+key+"_TARGETS=gemini:test")
 			out, err := cmd.CombinedOutput()
 			if err == nil {
 				return string(out), 0
@@ -1241,8 +1260,10 @@ func TestConsultWrapperBoundsDefaultToUnlimited(t *testing.T) {
 		const passTimeout = `shift 3
 exec "$@"`
 		const size = 1<<20 + 1 // one byte past the retired 1 MiB cap
-		body := fmt.Sprintf(`dd if=/dev/zero bs=%d count=1 2>/dev/null | tr '\000' X`, size)
-		out, code, _, _ := runConsultWrapperStub(t, "defaults-capture", "claude", body, passTimeout, "")
+		body := fmt.Sprintf(`printf '{"type":"message","role":"assistant","content":"'
+dd if=/dev/zero bs=%d count=1 2>/dev/null | tr '\000' X
+printf '"}\n{"type":"result","status":"success"}\n'`, size)
+		out, code, _, _ := runConsultWrapperStub(t, "defaults-capture", "gemini", body, passTimeout, "")
 		if code != 0 || strings.Contains(out, "reply exceeded") {
 			t.Fatalf("a default-env consult capped the reply capture: exit %d:\n%s", code, truncateForTest(out))
 		}
@@ -1255,7 +1276,8 @@ exec "$@"`
 		// A "timeout" stub that fires proves the wrapper routed the run through it; the default
 		// must skip that branch entirely so the peer runs directly, and this stub is never invoked.
 		const timeoutFires = `echo TIMEOUT_WAS_INVOKED >&2; exit 99`
-		out, code, _, _ := runConsultWrapperStub(t, "defaults-stream", "claude", "echo VALID_REPLY", timeoutFires, "")
+		out, code, _, _ := runConsultWrapperStub(t, "defaults-stream", "gemini", `echo '{"type":"message","role":"assistant","content":"VALID_REPLY"}'
+echo '{"type":"result","status":"success"}'`, timeoutFires, "")
 		if code != 0 || strings.Contains(out, "TIMEOUT_WAS_INVOKED") {
 			t.Fatalf("a default-env consult routed the peer's run through the timeout command: exit %d:\n%s", code, out)
 		}
@@ -1352,7 +1374,8 @@ exit 9
 `,
 		"gemini": `#!/bin/sh
 echo "gemini $*" >>"$CALLS"
-echo GEMINI_REPLY
+echo '{"type":"message","role":"assistant","content":"GEMINI_REPLY"}'
+echo '{"type":"result","status":"success"}'
 `,
 		"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
 	} {
@@ -1415,7 +1438,8 @@ func TestConsultWrapperRoleFallsBackAndContinuesSelectedRung(t *testing.T) {
 echo "usage limit reached" >&2
 exit 9`)
 	writeStub("gemini", `echo "gemini $*" >>"$CALLS"
-echo "gemini-answer"`)
+echo '{"type":"message","role":"assistant","content":"gemini-answer"}'
+echo '{"type":"result","status":"success"}'`)
 	writeStub("timeout", `shift 3
 exec "$@"`)
 
@@ -1484,7 +1508,8 @@ echo "gemini $*" >>"$CALLS"
 case " $* " in
 *" --resume "*) echo SESSION_GONE >&2; exit 7 ;;
 esac
-echo GEMINI_REPLY
+echo '{"type":"message","role":"assistant","content":"GEMINI_REPLY"}'
+echo '{"type":"result","status":"success"}'
 `,
 		"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
 	} {
@@ -1542,14 +1567,15 @@ echo "claude $*" >>"$CALLS"
 case " $* " in
 *" --resume "*) echo "usage limit reached" >&2; exit 9 ;;
 esac
-echo CLAUDE_REPLY
+echo '{"type":"result","is_error":false,"result":"CLAUDE_REPLY"}'
 `,
 		"gemini": `#!/bin/sh
 echo "gemini $*" >>"$CALLS"
 case " $* " in
-*" --resume "*) echo GEMINI_CONTINUED ;;
-*) echo GEMINI_FALLBACK ;;
+*" --resume "*) echo '{"type":"message","role":"assistant","content":"GEMINI_CONTINUED"}' ;;
+*) echo '{"type":"message","role":"assistant","content":"GEMINI_FALLBACK"}' ;;
 esac
+echo '{"type":"result","status":"success"}'
 `,
 		"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
 	}
@@ -1605,13 +1631,14 @@ func TestConsultWrapperContinueFallbackReplaysTranscript(t *testing.T) {
 	}
 	write("claude", `if [ ! -f "$STATE" ]; then
   : >"$STATE"
-  echo FIRST_ANSWER
+  echo '{"type":"result","is_error":false,"result":"FIRST_ANSWER"}'
   exit 0
 fi
 echo "rate limit exceeded" >&2
 exit 9`)
 	write("gemini", `printf '%s\n' "$@" >"$GEMINI_ARGS"
-echo FALLBACK_ANSWER`)
+echo '{"type":"message","role":"assistant","content":"FALLBACK_ANSWER"}'
+echo '{"type":"result","status":"success"}'`)
 	write("timeout", "shift 3\nexec \"$@\"")
 
 	env := append(os.Environ(),
@@ -1661,7 +1688,7 @@ func TestConsultWrapperFallbackDecisionMatrix(t *testing.T) {
 	}{
 		{
 			name:       "successful prose mentioning a limit",
-			claudeBody: `echo "claude $*" >>"$CALLS"; echo "rate limit handling documented"`,
+			claudeBody: `echo "claude $*" >>"$CALLS"; echo '{"type":"result","is_error":false,"result":"rate limit handling documented"}'`,
 			geminiBody: `echo "gemini $*" >>"$CALLS"`,
 			wantCode:   0,
 		},
@@ -1769,7 +1796,7 @@ func TestConsultWrapperSkipsRungWithoutMountedCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, body := range map[string]string{
-		"claude":  "#!/bin/sh\necho AVAILABLE_OK\n",
+		"claude":  "#!/bin/sh\necho '{\"type\":\"result\",\"is_error\":false,\"result\":\"AVAILABLE_OK\"}'\n",
 		"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {

@@ -772,100 +772,17 @@ func (codexAgent) BoxEnv(homeInBox string) []string {
 
 func (codexAgent) HomeFallbacks() []HomeFallback { return nil }
 
-// codexConsultPrelude validates the JSON stream, extracts reply text, and prepares bounded
-// best-effort usage; the wrapper publishes it only after accepting the complete attempt.
-const codexConsultPrelude = `codex_text() {
+// Provider-specific decoding stays here; capture and safe append share transport mechanics.
+const codexConsultText = `codex_text() {
 	jq -ers '[.[] | select(.type=="item.completed" and .item.type=="agent_message") | .item.text | select(type=="string" and test("[^[:space:]]"))] | if length==0 then error("no usable agent reply") else .[] end'
 }
-# codex_peer_row logs this consult's token usage (the turn.completed event, read from stdin) to the
-# run's peer-usage file so the loop's closing digest can tally the peer per model. Best-effort: no
-# COOP_RUN_ID (not a loop), no usage event, or any write error → nothing, and it never fails the
-# consult. codex reports tokens but no cost. Args: <role> <model>.
-codex_peer_row() {
-	[ -n "${COOP_RUN_ID:-}" ] || return 0
-	case "$COOP_RUN_ID" in *[!a-zA-Z0-9._-]*) return 0 ;; esac
-	peer_dir=.agent/runs
-	peer_file=$peer_dir/$COOP_RUN_ID.peers.jsonl
-	[ ! -L "$peer_dir" ] && [ -d "$peer_dir" ] || return 0
-	[ ! -L "$peer_file" ] && [ -f "$peer_file" ] || return 0
-	peer_links=$(stat -c %h "$peer_file" 2>/dev/null || stat -f %l "$peer_file" 2>/dev/null || :)
-	peer_permissions=$(stat -c %a "$peer_file" 2>/dev/null || stat -f %Lp "$peer_file" 2>/dev/null || :)
-	[ "$peer_links" = 1 ] && [ "$peer_permissions" = 600 ] || return 0
-	# Open once, then prove the descriptor still names the private regular file just checked. All
-	# later size checks and the append use that descriptor, so a pathname swap cannot redirect usage.
-	eval 'exec 9>>"$peer_file"' 2>/dev/null || return 0
-	[ ! -L "$peer_file" ] && [ -f "$peer_file" ] || { exec 9>&-; return 0; }
-	peer_links=$(stat -c %h "$peer_file" 2>/dev/null || stat -f %l "$peer_file" 2>/dev/null || :)
-	peer_permissions=$(stat -c %a "$peer_file" 2>/dev/null || stat -f %Lp "$peer_file" 2>/dev/null || :)
-	[ "$peer_links" = 1 ] && [ "$peer_permissions" = 600 ] || { exec 9>&-; return 0; }
-	peer_fd=/dev/fd/9
-	[ -e "$peer_fd" ] || peer_fd=/proc/self/fd/9
-	peer_path_identity=$(stat -c 'gnu:%d:%i' "$peer_file" 2>/dev/null || stat -f 'bsd:%i' "$peer_file" 2>/dev/null || :)
-	peer_fd_identity=$(stat -Lc 'gnu:%d:%i' "$peer_fd" 2>/dev/null || stat -Lf 'bsd:%i' "$peer_fd" 2>/dev/null || :)
-	[ -n "$peer_path_identity" ] && [ "$peer_path_identity" = "$peer_fd_identity" ] && [ ! -L "$peer_file" ] || { exec 9>&-; return 0; }
-	peer_bytes=$(stat -Lc %s "$peer_fd" 2>/dev/null || stat -Lf %z "$peer_fd" 2>/dev/null || :)
-	case "$peer_bytes" in '' | *[!0-9]*) exec 9>&-; return 0 ;; esac
-	peer_usage_limit=1048576
-	[ "$peer_bytes" -le $((peer_usage_limit - 4096)) ] || { exec 9>&-; return 0; }
-	row=$(jq -sc --arg run "$COOP_RUN_ID" --arg role "$1" --arg model "$2" '
-		def token: type=="number" and isfinite and floor==. and .>=0 and .<=1000000000;
-		[.[] | select(type=="object" and .type=="turn.completed") | .usage
+`
+
+const codexConsultUsage = `[.[] | select(type=="object" and .type=="turn.completed") | .usage
 		 | select(type=="object")
 		 | {input:(.input_tokens // 0), output:(.output_tokens // 0), reasoning:(.reasoning_output_tokens // 0)}
 		 | select(.input|token) | select(.output|token) | select(.reasoning|token)
-		 | .out=(.output + .reasoning) | select(.out<=1000000000)] | last // empty
-		| {run:$run,role:$role,provider:"codex",model:$model,in:.input,out:.out}' 2>/dev/null) || { exec 9>&-; return 0; }
-	[ -n "$row" ] || { exec 9>&-; return 0; }
-	[ "$(printf '%s' "$row" | wc -c | tr -d '[:space:]')" -le 4096 ] || { exec 9>&-; return 0; }
-	printf '%s\n' "$row" >&9 2>/dev/null || true
-	exec 9>&-
-}
-# codex_finish is the shared fresh/resume result path. Telemetry reads the bounded raw stream before
-# validation, while a real provider failure keeps its status and raw events for fallback
-# classification. Only a successful provider must also prove it returned a usable reply.
-codex_finish() {
-	provider_status=$1
-	raw=$2
-	if [ "$provider_status" -ne 0 ]; then
-		cat "$raw" >&2
-		return "$provider_status"
-	fi
-	reply=$(codex_text <"$raw")
-	reply_status=$?
-	if [ "$reply_status" -ne 0 ]; then
-		echo "[$peer: Codex returned malformed output or no usable reply — retry with: $fresh_retry; if it repeats, check or upgrade Codex]" >&2
-		return 1
-	fi
-	candidate_telemetry_raw=$raw
-	printf '%s\n' "$reply"
-}
-# Codex's native JSON is itself bounded before decoding; otherwise its command substitution could
-# grow without limit even though the generic decoded-reply spool is capped.
-codex_run() {
-	codex_raw=$attempt_dir/codex-raw-$index
-	codex_overflow=$attempt_dir/codex-overflow-$index
-	codex_capture_status_file=$attempt_dir/codex-capture-status-$index
-	codex_pipe=$attempt_dir/codex-pipe-$index
-	rm -f "$codex_overflow" "$codex_capture_status_file"
-	mkfifo "$codex_pipe" || return 1
-	start_capture "$codex_raw" "$codex_overflow" "$attempt_dir/codex-chunk-$index" "$codex_pipe" "$codex_capture_status_file"
-	codex_capture_pid=$capture_pid
-	run "$@" >"$codex_pipe"
-	codex_status=$?
-	await_capture "$codex_capture_pid" "$codex_capture_status_file"
-	codex_capture_status=$capture_status
-	codex_capture_pid=
-	rm -f "$codex_pipe"
-	if [ "$codex_capture_status" -ne 0 ]; then
-		echo "[$peer: failed to capture Codex output safely — retry with: $fresh_retry]" >&2
-		return 1
-	fi
-	if [ -f "$codex_overflow" ]; then
-		echo "[$peer: Codex output exceeded ${consult_stream_limit} bytes — narrow the question and retry with: $fresh_retry]" >&2
-		return 1
-	fi
-	codex_finish "$codex_status" "$codex_raw"
-}`
+		 | .output=(.output + .reasoning) | select(.output<=1000000000)] | last // empty`
 
 func (codexAgent) ConsultFresh() string {
 	return `codex_run codex exec -s read-only ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"; finish_status=$?
@@ -886,5 +803,7 @@ func (codexAgent) DelegateExec() string {
 	return `codex exec --dangerously-bypass-approvals-and-sandbox ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} "$prompt"`
 }
 
-func (codexAgent) ShellPrelude() string  { return codexConsultPrelude }
+func (codexAgent) ShellPrelude() string {
+	return codexConsultText + consultPeerRowShell("codex", codexConsultUsage) + consultCaptureShell("codex", "Codex")
+}
 func (codexAgent) InstallScript() string { return "" }
