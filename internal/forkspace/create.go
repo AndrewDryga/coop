@@ -16,11 +16,30 @@ func Setup(repo, name string) (string, error) {
 }
 
 func SetupContext(ctx context.Context, repo, name string) (ws string, err error) {
+	return setupContext(ctx, repo, name, "")
+}
+
+// SetupPinnedContext creates a session workspace at an already-validated commit without using
+// Git's racy local hardlink clone optimization. Ordinary forks keep SetupContext's faster clone.
+func SetupPinnedContext(ctx context.Context, repo, name, commit string) (ws string, err error) {
+	if !validPinnedCommit(commit) {
+		return "", errors.New("invalid pinned commit")
+	}
+	return setupContext(ctx, repo, name, commit)
+}
+
+func setupContext(ctx context.Context, repo, name, commit string) (ws string, err error) {
 	ws = Workspace(repo, name)
 	if err := os.MkdirAll(Home(repo), 0o755); err != nil {
 		return ws, err
 	}
-	if err := GitCloneContext(ctx, repo, ws); err != nil {
+	clone := GitCloneContext
+	if commit != "" {
+		clone = func(ctx context.Context, src, dst string) error {
+			return gitClonePinnedContext(ctx, src, dst, commit)
+		}
+	}
+	if err := clone(ctx, repo, ws); err != nil {
 		return ws, fmt.Errorf("couldn't clone the repo into the fork workspace: %w", err)
 	}
 	complete := false
@@ -32,7 +51,12 @@ func SetupContext(ctx context.Context, repo, name string) (ws string, err error)
 			err = errors.Join(err, fmt.Errorf("remove incomplete fork workspace %s: %w", ws, cleanupErr))
 		}
 	}()
-	checkoutErr := gitCheckoutNewBranchContext(ctx, ws, name)
+	var checkoutErr error
+	if commit == "" {
+		checkoutErr = gitCheckoutNewBranchContext(ctx, ws, name)
+	} else if checkoutErr = GitRefCommand(ctx, ws, "update-ref", "refs/heads/"+name, commit).Run(); checkoutErr == nil {
+		checkoutErr = GitSwitchBranch(ctx, ws, name)
+	}
 	if ctx.Err() != nil {
 		return ws, errors.Join(ctx.Err(), checkoutErr)
 	}
@@ -54,6 +78,18 @@ func SetupContext(ctx context.Context, repo, name string) (ws string, err error)
 	}
 	complete = true
 	return ws, nil
+}
+
+func validPinnedCommit(commit string) bool {
+	if len(commit) != 40 && len(commit) != 64 {
+		return false
+	}
+	for _, r := range commit {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // propagateGitEnvContext carries the parent's git environment into a fresh fork. A clone

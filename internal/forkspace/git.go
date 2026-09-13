@@ -3,6 +3,8 @@ package forkspace
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -57,6 +59,37 @@ func GitClone(src, dst string) error {
 func GitCloneContext(ctx context.Context, src, dst string) error {
 	args := append(append([]string{}, GitHardening...), "clone", "--quiet", src, dst)
 	err := exec.CommandContext(ctx, "git", args...).Run()
+	if ctx.Err() != nil {
+		return errors.Join(ctx.Err(), err)
+	}
+	return err
+}
+
+func gitClonePinnedContext(ctx context.Context, src, dst, commit string) error {
+	view, err := gitOutputContext(ctx, src, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return fmt.Errorf("open trusted source: %w", err)
+	}
+	args := append(append([]string{}, GitHardening...), "clone", "--quiet", "--no-local", "--no-checkout", "--", view, dst)
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = withoutGitEnv(os.Environ())
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return errors.Join(ctx.Err(), err)
+		}
+		return err
+	}
+	fetch, err := GitCommand(ctx, dst, "fetch", "--quiet", "--no-write-fetch-head", "--no-tags", "--", view, commit)
+	if err != nil {
+		return err
+	}
+	if err := fetch.Run(); err != nil {
+		if ctx.Err() != nil {
+			return errors.Join(ctx.Err(), err)
+		}
+		return err
+	}
+	err = GitRefCommand(ctx, dst, "config", "remote.origin.url", src).Run()
 	if ctx.Err() != nil {
 		return errors.Join(ctx.Err(), err)
 	}

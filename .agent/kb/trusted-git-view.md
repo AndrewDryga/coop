@@ -3,7 +3,7 @@ name: trusted-git-view
 description: host git runs under a coop-owned GIT_DIR view with an allowlisted config, so a repository's filter/textconv/merge drivers never execute on the host; what the view carries, what must run on the real git dir, and the recovery consequences
 subsystem: forkspace
 sources: [internal/forkspace/gitview.go, internal/forkspace/gitview_config.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go]
-updated: 2026-09-06
+updated: 2026-09-13
 ---
 
 Every repository coop touches on the host is agent-writable (the box binds `.git` read-write), and
@@ -45,5 +45,10 @@ re-sign scratch) and drops the previous life's operation state. The regression i
 `TestGitViewNeverExecutesRepositoryDrivers` (clean + textconv, local/included/worktree config,
 status/diff/checkout/rebase, with a raw positive control).
 
+Session workspace clones use the view itself as their local transport source. A non-local,
+no-checkout clone plus an exact fetch of the validated commit avoids racing mutable loose-object
+files without exposing the source repository's executable Git configuration.
+
 ## Changelog
+- 2026-09-13 — documented the trusted view as the source of session pinned clones.
 - 2026-09-06 — created with the trusted view (task close-host-git-driver-execution-paths), after the release audit reproduced host driver execution through includes and the enumerate-then-execute race; design reviewed read-only against git 2.39.5 (HEAD copy, auto-gc, ref-store runner, linked worktrees).

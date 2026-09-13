@@ -391,7 +391,7 @@ func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuar
 		defer release()
 	}
 	if created {
-		createdPath, createErr := forkspace.SetupContext(ctx, repo, generatedName)
+		createdPath, createErr := forkspace.SetupPinnedContext(ctx, repo, generatedName, base)
 		if createErr != nil {
 			return sessionWorkspace{}, removeCreatedSessionWorkspace(ws, fmt.Errorf("create session workspace: %w", createErr))
 		}

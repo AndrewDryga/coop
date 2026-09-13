@@ -2,8 +2,8 @@
 name: session-source-selection
 description: a session picks default/branch/pull_request/commit inside its policy's repository; git fetch by OID short-circuits on a cached object, so commit custody needs a second anchor
 subsystem: sessions
-sources: [internal/sessionsvc/source.go, internal/sessionsvc/service.go, internal/session/records.go, internal/session/schema.go, internal/workerconnector/executor.go, internal/workerconnector/capabilities.go, docs/session-api.md]
-updated: 2026-09-11
+sources: [internal/sessionsvc/source.go, internal/sessionsvc/service.go, internal/sessionsvc/workspace.go, internal/forkspace/create.go, internal/forkspace/git.go, internal/session/records.go, internal/session/schema.go, internal/workerconnector/executor.go, internal/workerconnector/capabilities.go, docs/session-api.md]
+updated: 2026-09-13
 ---
 
 A create may carry one bounded `source` selector — `{"kind":"default"}`, `{"kind":"branch","name":…}`,
@@ -58,6 +58,11 @@ and pull-request freshness receipts must agree with its own columns on remote, r
 base — and skips every other row rather than guessing. A migrated binding has no `admitted_tree`
 because no pre-selector session ever recorded one.
 
+Session workspace creation avoids Git's local hardlink clone optimization because source pinning
+can write objects concurrently. It clones the trusted source view with `--no-local --no-checkout`,
+fetches the already-validated workspace commit explicitly (including an unreferenced pin), then
+creates and populates the session branch. Ordinary interactive forks keep the faster local clone.
+
 The worker connector keeps its own bounded copy of the selector shape (like `responderBinding`)
 because `workerconnector` may not import `session` ([[worker-connector]], and the import DAG), and
 advertises `repository-source-selector:1` only after the live daemon publishes
@@ -67,6 +72,8 @@ upgraded fleet never receives selector-bound work. The public binding and
 ([[session-api-dto-is-a-second-projection]]).
 
 ## Changelog
+- 2026-09-13 — session workspaces use the pinned non-local clone path so concurrent object writes
+  cannot invalidate a local hardlink copy; ordinary forks are unchanged.
 - 2026-09-11 — created with the generic source selector (task
   2026-09-09-let-responder-select-and-pin-any-authorized-repo), after measuring git's fetch-by-OID
   short-circuit, local-transport permissiveness, and the `--depth`/`--filter` cache mutations

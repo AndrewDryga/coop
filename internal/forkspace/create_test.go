@@ -58,6 +58,52 @@ func TestSetupRemovesCloneWhenBranchCannotBeCreated(t *testing.T) {
 	}
 }
 
+func TestSetupPinnedCommitAvoidsLocalHardlinks(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := committedSetupRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("selected\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "add", "README.md")
+	gitIn(t, repo, "commit", "-qm", "selected")
+	pinned, err := gitOutputContext(context.Background(), repo, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "reset", "--hard", "-q", "HEAD^")
+	marker := filepath.Join(t.TempDir(), "upload-pack-ran")
+	gitIn(t, repo, "config", "uploadpack.packObjectsHook", "touch "+marker)
+
+	ws, err := SetupPinnedContext(context.Background(), repo, "session", pinned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if head, err := gitOutputContext(context.Background(), ws, "rev-parse", "HEAD"); err != nil || head != pinned {
+		t.Fatalf("workspace HEAD = %q, %v; want %s", head, err, pinned)
+	}
+	if origin, err := gitOutputContext(context.Background(), ws, "config", "--get", "remote.origin.url"); err != nil || origin != repo {
+		t.Fatalf("origin = %q, %v; want %s", origin, err, repo)
+	}
+	if _, err := os.Lstat(filepath.Join(ws, ".git", "objects", "info", "alternates")); !os.IsNotExist(err) {
+		t.Fatalf("workspace has a persistent object alternate: %v", err)
+	}
+	if _, err := os.Lstat(marker); !os.IsNotExist(err) {
+		t.Fatalf("source upload-pack hook ran: %v", err)
+	}
+	sourceObject := filepath.Join(repo, ".git", "objects", pinned[:2], pinned[2:])
+	workspaceObject := filepath.Join(ws, ".git", "objects", pinned[:2], pinned[2:])
+	sourceInfo, sourceErr := os.Stat(sourceObject)
+	workspaceInfo, workspaceErr := os.Stat(workspaceObject)
+	if sourceErr != nil || workspaceErr != nil {
+		t.Fatalf("inspect selected commit objects: source=%v workspace=%v", sourceErr, workspaceErr)
+	}
+	if os.SameFile(sourceInfo, workspaceInfo) {
+		t.Fatal("session workspace hardlinked the selected object from the mutable source")
+	}
+}
+
 func TestCheckoutNewBranchIgnoresRepositoryFSMonitor(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
