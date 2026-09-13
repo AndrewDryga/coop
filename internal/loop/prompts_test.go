@@ -233,6 +233,24 @@ func TestLoopWorkPromptPreservesChangeOwnership(t *testing.T) {
 	}
 }
 
+func TestLoopWorkPromptEvidenceFirstProposals(t *testing.T) {
+	for _, audit := range []bool{false, true} {
+		work := LoopWorkPrompt("/repo", ".agent/tasks", "task-42", "claude", nil, nil, audit)
+		for _, want := range []string{
+			"Before proposing, use tasks_list with a literal ID/title query", "narrow truncated results",
+			"use tasks_get for plausible matches", "cite its ID and new evidence in YOUR assigned log",
+			"do not modify that task or file a duplicate", "For genuinely separate work",
+			"separate observed failure, suspected cause, actual command result, and remaining investigation",
+			"A passing retry does not prove the cause", "Report passed versus excluded tests exactly",
+			"Preserve the failing behavior and denial assertions", "human explicitly authorizes changing the contract",
+		} {
+			if !strings.Contains(work, want) {
+				t.Errorf("missing evidence-first guidance %q", want)
+			}
+		}
+	}
+}
+
 // TestLoopPreflightAndReviewFolder: the preflight prompt frames only the CUSTOM cleanup — the
 // built-in unblock runs host-side (unblockResolved), never in a box — bounded by the guardrails
 // (no task work, no code, no commits); the default review does bookkeeping + ONE whole-repo gate

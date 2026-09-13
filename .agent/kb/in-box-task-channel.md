@@ -93,7 +93,17 @@ If any matching summary cannot fit on its own, the tool refuses with its ID for 
 titles are never silently shortened. Omitted query retains the original unbounded
 tasks-only list. The fork proposal outbox and backlog are never searched.
 
+The loop prompt uses that bounded lookup before proposing related work, reads plausible
+matches with `tasks_get`, and records an existing owner's ID/new evidence in the assigned
+log without modifying the other task. Proposal context/acceptance descriptions distinguish
+observations from suspected causes and preserve failing behavior/denial assertions. The
+server validates structure and authority, not diagnostic truth or semantic duplication;
+an accepted proposal is not evidence that its diagnosis is correct.
+
 ## Changelog
+- 2026-09-13 — shared loop discovery now checks existing owners; proposal descriptions/example
+  preserve uncertainty and abnormal behavior. Scripted lookup/reuse and separate-new-proposal
+  tests do not claim native model compliance or semantic deduplication.
 - 2026-09-13 — added bounded literal ID/title search; real JSON-RPC regressions cover
   authority, unchanged unfiltered calls, invalid-query recovery and escaped-size limits.
 - 2026-09-12 — verified omission repair and byte-limit descriptions against real JSON-RPC

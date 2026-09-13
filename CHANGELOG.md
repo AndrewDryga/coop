@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Loop follow-up guidance checks existing task owners before proposing duplicates and
+  distinguishes observed failures from suspected causes without weakening test contracts.
+
 - Loop check guidance now includes an explicit working directory, unique full logs and the
   real command status after bounded output; background waits and cleanup stay ownership-scoped.
 

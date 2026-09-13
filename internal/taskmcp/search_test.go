@@ -123,6 +123,43 @@ func TestTaskSearchRefusalAndSessionRecovery(t *testing.T) {
 	}
 }
 
+// This follows the instructed lookup/reuse flow through JSON-RPC. Whether a
+// native model chooses that flow and diagnoses honestly is separate qualification.
+func TestTaskSearchReusesExistingOwnerWithoutRewritingAcceptance(t *testing.T) {
+	root := queue(t, map[string]string{"current": tasks.StateInProgress, "crash-timeout": tasks.StateTodo})
+	owner := filepath.Join(root, tasks.StateTodo, "crash-timeout", "task.md")
+	acceptance := "# Investigate crash timeout\n\nCause unknown; preserve exact abnormal crash reason and supervisor survival. Missing/wrong reason must fail.\n\n## Subtasks\n- [ ] Diagnose and verify\n"
+	if err := os.WriteFile(owner, []byte(acceptance), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sess := newSession(t, newServer(t, root, "current"))
+	before := taskFiles(t, root)
+	found := searchTasks(t, sess, map[string]any{"query": "crash timeout"})
+	if found.Matched != 1 || found.Truncated || found.Tasks[0].ID != "crash-timeout" {
+		t.Fatalf("existing owner not found: %+v", found)
+	}
+	if got := sess.mustCall("tasks_get", map[string]any{"id": found.Tasks[0].ID}); !strings.Contains(got, "Cause unknown") || !strings.Contains(got, "Missing/wrong reason must fail") {
+		t.Fatalf("lookup lost existing acceptance: %s", got)
+	}
+	if !maps.Equal(before, taskFiles(t, root)) {
+		t.Fatal("lookup mutated existing task")
+	}
+	sess.mustCall("tasks_append_log", map[string]any{"id": "current", "entry": "Existing owner crash-timeout: full-load timeout, three isolated passes, cause unknown. Focused check: 1 passed, 252 excluded; no duplicate filed."})
+	if got := searchTasks(t, sess, map[string]any{"query": "crash"}); got.Matched != 1 {
+		t.Fatal("reuse created a duplicate")
+	}
+	sess.mustCall("tasks_propose", map[string]any{
+		"kind": "task", "title": "Fix a separate confirmed retry bug", "context": "The retry handler returns success for a reproduced failure.",
+		"acceptance": "Failure remains nonzero and success stays green; required gate passes.", "approach": "Reproduce and repair the error propagation.", "subtasks": []string{"Test failure and success and run the gate"},
+	})
+	if got := searchTasks(t, sess, map[string]any{"query": "separate confirmed retry"}); got.Matched != 1 {
+		t.Fatal("genuinely new work was not fileable")
+	}
+	if got, err := os.ReadFile(owner); err != nil || string(got) != acceptance {
+		t.Fatalf("proposal changed existing acceptance: %q, %v", got, err)
+	}
+}
+
 func TestTaskSearchBoundsAndUnfilteredCompatibility(t *testing.T) {
 	root := queue(t, nil)
 	sess := newSession(t, newServer(t, root, ""))

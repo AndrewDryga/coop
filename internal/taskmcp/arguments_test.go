@@ -74,6 +74,15 @@ func TestTaskArgumentSchemasDescribeRuntimeBoundsAndExamples(t *testing.T) {
 			if len(examples(schema)) != 1 {
 				t.Fatal("proposal tool needs one complete example")
 			}
+			for field, want := range map[string]string{"context": "distinguish suspected cause from proven evidence", "acceptance": "preserving the failing behavior and denial assertions"} {
+				if !strings.Contains(properties[field].(map[string]any)["description"].(string), want) {
+					t.Fatalf("proposal %s lacks evidence guidance", field)
+				}
+			}
+			proposalExample := examples(schema)[0]
+			if !strings.Contains(proposalExample["context"].(string), "cause unknown") || !strings.Contains(proposalExample["acceptance"].(string), "missing or wrong crash reason still fails") {
+				t.Fatal("proposal example overstates cause or weakens denial")
+			}
 			p := properties["title"].(map[string]any)
 			if !strings.Contains(p["description"].(string), "256 bytes") {
 				t.Fatalf("title constraint = %v", p)
