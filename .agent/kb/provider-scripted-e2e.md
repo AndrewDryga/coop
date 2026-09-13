@@ -2,8 +2,8 @@
 name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
-sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/loop/loop.go, internal/loop/iteration.go, internal/tasks/audit.go, internal/cli/fork_cmd.go, internal/forkctl/meta.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/tasks/lease.go, internal/loop/streamjson.go, internal/loop/telemetry.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
-updated: 2026-09-03
+sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/loop/loop.go, internal/loop/iteration.go, internal/tasks/audit.go, internal/cli/fork_cmd.go, internal/forkctl/meta.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/tasks/lease.go, internal/loop/streamjson.go, internal/loop/telemetry.go, internal/loop/review.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_loop_handoff_telemetry_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
+updated: 2026-09-13
 ---
 
 `make provider-scripted-e2e` builds fresh Coop and fixture executables inside a disposable root,
@@ -75,6 +75,12 @@ outside the provider and validates its provider/target metadata while the attemp
 controller stops heartbeat writes while retaining the flock, then validates and finalizes only its
 assigned queue root and task ID. Unit tests own oversized stream and stderr bounds.
 
+Review handoff telemetry is checked against actual provider starts/exits and nonzero fixture
+usage in all three review stages. `runReview` observes only handoffs it will retry;
+`runReviewVerdict` owns terminal emission, including the handoff cap. Observing that terminal
+result in both layers duplicates its row and reported spend without launching another provider.
+The process matrix also preserves recovered handoffs and exact per-attempt target/outcome/retries.
+
 The delegate matrix crosses the corresponding write-capable boundary for all four provider arms
 and all 12 ordered distinct fallback pairs. It verifies the exact generated wrapper and one invoked
 role contract, scoped credential homes, native write-capable argv, depth, fallback, serialization,
@@ -118,6 +124,8 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-09-13 - reproduced and fixed duplicate terminal review handoff emission; process tests
+  compare all three stages with exact provider lifecycle, usage totals and successful recovery.
 - 2026-09-03 - fork provider and Coop-owned session IDs became required pre-launch writes; Codex's
   necessarily post-run native-ID write now reports partial success if exact resume cannot be saved
 - 2026-08-25 - removed provider-only and latest-by-cwd fork-session adoption; process coverage proves

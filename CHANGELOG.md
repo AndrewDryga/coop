@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Loop reviews record their last background-work handoff once, avoiding duplicate attempt rows
+  and double-counted reported tokens/cost when the recovery limit is reached.
+
 - Gemini sign-in can save its Google login selection across the CLI's restart. Login boxes use
   only the selected account, with no project services, development ports or MCP tools. Normal
   Gemini sessions translate shared MCP bearer references to native headers and refuse missing

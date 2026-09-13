@@ -179,12 +179,12 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 		// still live. Its review receipt is therefore not an observed verdict: discard it and rerun
 		// the review with a fresh provider that can inspect the settled result.
 		if isBackgroundHandoff(classification.outcome) {
-			if observeHandoff != nil {
-				observeHandoff(last, start, headBefore)
-			}
 			handoffs++
 			if handoffs >= 3 {
 				return last, fmt.Errorf("review provider ended with live background work %d times — stopped; rerun the review after its gate, consult, and delegate work finish in the foreground", handoffs)
+			}
+			if observeHandoff != nil {
+				observeHandoff(last, start, headBefore)
 			}
 			totalRetries++
 			ui.Alert("The reviewer exited while its background work was still running",
