@@ -226,7 +226,7 @@ func TestControllerKeepsBrokerLeaseOutOfAgentPolicy(t *testing.T) {
 	clock := testBootClock()
 	route := &CredentialBrokerRoute{Provider: "claude", Upstream: "api.anthropic.com", Header: "x-api-key", Method: "POST", Path: "/v1/messages", Port: 443}
 	c, err := NewController(Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32), PolicyFingerprint: policy.Fingerprint},
-		policy, nil, nil, nil, netip.Addr{}, route, clock, func(context.Context, string) error { return nil })
+		policy, nil, nil, nil, nil, netip.Addr{}, route, clock, func(context.Context, string) error { return nil })
 	if err != nil || c.Initialize(context.Background(), netip.MustParseAddr("1.1.1.1")) != nil {
 		t.Fatal("controller setup", err)
 	}

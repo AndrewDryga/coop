@@ -30,8 +30,13 @@ audit overstated several claims and proposed approving script contents.
 **How to apply:** retain a per-finding keep/narrow/withdraw/merge record. Remove withdrawn
 implementation checkboxes without marking them fixed. State source/reproduction boundaries.
 Broader proposals still need approval; pruning a task is not permission to weaken runtime checks.
+Compatibility is practical impact too: before recommending an internal-only service topology,
+check common runtime dependencies such as SaaS APIs, OIDC keys, object storage, email and webhooks.
 
 ## Changelog
+
+- 2026-09-13 — added the service-compatibility correction: a security fix must preserve common
+  approved outbound dependencies rather than assuming every sidecar is a database or cache.
 
 - 2026-09-12 — swept AGENTS.md's boring-first/root-cause/verification rules and the 43-ID audit.
   Withdrew S7/S14/S16/F11, merged duplicate test work and corrected overstated scan/session/loop

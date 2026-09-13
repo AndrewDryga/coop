@@ -1,6 +1,7 @@
 package networkgateway
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/binary"
@@ -18,6 +19,62 @@ import (
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
+
+func TestServiceProxyRoutesOnlyAnApprovedMatchingTLSName(t *testing.T) {
+	fixture := startGuardFixture(t)
+	server, client := net.Pipe()
+	t.Cleanup(func() { _ = client.Close() })
+	done := make(chan struct{})
+	go func() {
+		fixture.guard.serviceProxy(context.Background(), server, fixture.private.Addr().String())
+		close(done)
+	}()
+	_ = client.SetDeadline(time.Now().Add(wait.Deadline))
+	if _, err := io.WriteString(client, "CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	response, err := bufio.NewReader(client).ReadString('\n')
+	if err != nil || response != "HTTP/1.1 200 Connection Established\r\n" {
+		t.Fatalf("CONNECT response = %q, %v", response, err)
+	}
+	hello := clientHello(t, "api.example.com")
+	if _, err := io.WriteString(client, string(hello)); err != nil {
+		t.Fatal(err)
+	}
+	_ = fixture.private.SetDeadline(time.Now().Add(wait.Deadline))
+	private, err := fixture.private.AcceptUnix()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = private.Close() })
+	header := make([]byte, 63)
+	if _, err := io.ReadFull(private, header); err != nil {
+		t.Fatal(err)
+	}
+	replayed := make([]byte, len(hello))
+	if _, err := io.ReadFull(private, replayed); err != nil || !bytes.Equal(replayed, hello) {
+		t.Fatalf("service proxy changed ClientHello: %v", err)
+	}
+	_ = private.Close()
+	_ = client.Close()
+	select {
+	case <-done:
+	case <-time.After(wait.Deadline):
+		t.Fatal("service proxy flow leaked")
+	}
+
+	deniedServer, deniedClient := net.Pipe()
+	defer deniedClient.Close()
+	go fixture.guard.serviceProxy(context.Background(), deniedServer, fixture.private.Addr().String())
+	_ = deniedClient.SetDeadline(time.Now().Add(wait.Deadline))
+	if _, err := io.WriteString(deniedClient, "CONNECT forbidden.example.com:443 HTTP/1.1\r\nHost: forbidden.example.com:443\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	response, err = bufio.NewReader(deniedClient).ReadString('\n')
+	if err != nil || response != "HTTP/1.1 403 Forbidden\r\n" {
+		t.Fatalf("denied CONNECT response = %q, %v", response, err)
+	}
+}
 
 type guardFixture struct {
 	guard      *Guard
@@ -93,7 +150,7 @@ func startGuardPolicyFixture(t *testing.T, policy egress.Snapshot, clock *BootCl
 	done, ready := make(chan error, 1), make(chan struct{})
 	fixture.done = done
 	go func() {
-		done <- g.serve(ctx, fixture.tls, fixture.dns, fixture.udp, fixture.private.Addr().String(), func() { close(ready) })
+		done <- g.serve(ctx, fixture.tls, fixture.dns, fixture.udp, nil, fixture.private.Addr().String(), func() { close(ready) })
 		close(done)
 	}()
 	t.Cleanup(func() {

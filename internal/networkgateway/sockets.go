@@ -167,8 +167,9 @@ func parseSocketTable(table socketTable, b boundary, retained [3][]SocketRow) ([
 // gateway EXPECTS: the permanent denials, plus the frozen policy that says
 // which raw destinations this run may dial without passing through the guard.
 type boundary struct {
-	protected []netip.Prefix
-	policy    egress.Snapshot
+	protected           []netip.Prefix
+	policy              egress.Snapshot
+	serviceProxyClients []netip.Addr
 	// tlsPorts is the policy's TLS port set — what the capture chain redirects —
 	// held here because the inventory asks about it once per row per sample.
 	tlsPorts []int
@@ -195,8 +196,11 @@ func (b boundary) captured(uid uint32, local, peer netip.AddrPort) bool {
 			return true
 		}
 	}
-	// The accepted guard-side leg is local even with a namespace peer IP.
-	return uid == 65532 && local.Addr() == netip.AddrFrom4([4]byte{127, 0, 0, 1}) && (local.Port() == 15443 || local.Port() == 15353)
+	// The accepted guard-side leg is local even with a namespace peer IP. The
+	// service proxy listens on the internal bridge instead of loopback, so its
+	// accepted legs are matched to the exact prepared service addresses.
+	return uid == 65532 && (local.Addr() == netip.AddrFrom4([4]byte{127, 0, 0, 1}) && (local.Port() == 15443 || local.Port() == 15353) ||
+		local.Port() == ServiceProxyPort && slices.Contains(b.serviceProxyClients, peer.Addr()))
 }
 
 func protectedSocketPeer(peer netip.Addr, protected []netip.Prefix) bool {

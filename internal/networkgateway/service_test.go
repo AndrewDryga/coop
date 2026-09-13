@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -84,6 +85,33 @@ func TestGatewayLaunchConfigurationKeepsBrokerSeparateAndReserved(t *testing.T) 
 			mutate(&changed)
 			if changed.Validate() == nil {
 				t.Fatal("invalid broker route accepted")
+			}
+		})
+	}
+}
+
+func TestGatewayLaunchConfigurationBindsServiceProxyClientsToProtectedAddresses(t *testing.T) {
+	config := testLaunch(t)
+	config.Protected = []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}
+	config.ServiceProxyClients = []netip.Addr{netip.MustParseAddr("172.31.0.16")}
+	if err := config.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*LaunchConfig){
+		"outside internal network": func(c *LaunchConfig) { c.ServiceProxyClients[0] = netip.MustParseAddr("1.1.1.1") },
+		"duplicate":                func(c *LaunchConfig) { c.ServiceProxyClients = append(c.ServiceProxyClients, c.ServiceProxyClients[0]) },
+		"serve collision": func(c *LaunchConfig) {
+			c.Serve = []int{ServiceProxyPort}
+			c.Ingress = netip.MustParseAddr("172.17.0.1")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := config
+			changed.Protected = slices.Clone(config.Protected)
+			changed.ServiceProxyClients = slices.Clone(config.ServiceProxyClients)
+			mutate(&changed)
+			if changed.Validate() == nil {
+				t.Fatal("invalid service proxy client configuration accepted")
 			}
 		})
 	}

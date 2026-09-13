@@ -28,6 +28,9 @@ func (f *filteredExecution) resource(role string) networkstate.Resource {
 // stopped. Each operation has its own deadline so one wedged resource cannot
 // prevent containment attempts on the others.
 func (f *filteredExecution) cleanup(workload string) (agentGone bool, result error) {
+	if f.preparedServices != nil && f.preparedServices.cleanup != nil {
+		defer f.preparedServices.cleanup()
+	}
 	var evidence *networkstate.Evidence
 	// contained is what THIS containment pass proved absent at the runtime, for
 	// the exits where host storage can no longer record it.

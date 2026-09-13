@@ -249,9 +249,14 @@ func dockerNetworkName(value string) bool {
 // ConnectNetwork attaches ONE exactly-owned container to one existing network.
 // It is not `docker network create`: a network this daemon does not already
 // have is an error, so a launch cannot invent connectivity for itself.
-func (d *Docker) ConnectNetwork(ctx context.Context, network string, ref DockerRef) error {
+func (d *Docker) ConnectNetwork(ctx context.Context, network string, ref DockerRef, aliases ...string) error {
 	if !dockerNetworkName(network) || !ref.valid(false) || ref.ID == "" {
 		return errors.New("invalid exact Docker network attachment")
+	}
+	for _, alias := range aliases {
+		if !dockerName(alias) {
+			return errors.New("invalid exact Docker network attachment")
+		}
 	}
 	if err := d.VerifyLaunch(ctx); err != nil {
 		return err
@@ -261,7 +266,12 @@ func (d *Docker) ConnectNetwork(ctx context.Context, network string, ref DockerR
 	if _, present, err := d.InspectContainer(ctx, ref); err != nil || !present {
 		return errors.Join(errors.New("network attachment target is not this run's container"), err)
 	}
-	if _, err := d.output(ctx, 64<<10, "network", "connect", network, ref.ID); err != nil {
+	args := []string{"network", "connect"}
+	for _, alias := range aliases {
+		args = append(args, "--alias", alias)
+	}
+	args = append(args, network, ref.ID)
+	if _, err := d.output(ctx, 64<<10, args...); err != nil {
 		return errors.Join(errors.New("cannot attach the gateway to the project's services network"), err)
 	}
 	return nil
@@ -327,6 +337,7 @@ const maxDockerNetworks = 256
 // to containers and the gateway addresses the daemon itself holds in them.
 type DockerNetwork struct {
 	Name     string
+	Internal bool
 	Subnets  []netip.Prefix
 	Gateways []netip.Addr
 }
@@ -354,7 +365,7 @@ func (d *Docker) Networks(ctx context.Context) ([]DockerNetwork, error) {
 	if len(ids) > maxDockerNetworks {
 		return nil, errors.New("the container runtime has more networks than a filtered run can protect")
 	}
-	args := append([]string{"network", "inspect", "--format", `{"name":{{json .Name}},"ipam":{{json .IPAM.Config}}}`}, ids...)
+	args := append([]string{"network", "inspect", "--format", `{"name":{{json .Name}},"internal":{{json .Internal}},"ipam":{{json .IPAM.Config}}}`}, ids...)
 	data, inspectErr := d.output(ctx, 1<<20, args...)
 	var out []DockerNetwork
 	for _, line := range strings.Split(string(data), "\n") {
@@ -362,8 +373,9 @@ func (d *Docker) Networks(ctx context.Context) ([]DockerNetwork, error) {
 			continue
 		}
 		var value struct {
-			Name string `json:"name"`
-			IPAM []struct {
+			Name     string `json:"name"`
+			Internal bool   `json:"internal"`
+			IPAM     []struct {
 				Subnet  string `json:"Subnet"`
 				Gateway string `json:"Gateway"`
 			} `json:"ipam"`
@@ -371,7 +383,7 @@ func (d *Docker) Networks(ctx context.Context) ([]DockerNetwork, error) {
 		if json.Unmarshal([]byte(line), &value) != nil {
 			return nil, errors.New("invalid Docker network inventory")
 		}
-		network := DockerNetwork{Name: value.Name}
+		network := DockerNetwork{Name: value.Name, Internal: value.Internal}
 		for _, config := range value.IPAM {
 			if prefix, err := netip.ParsePrefix(config.Subnet); err == nil && prefix.Addr().Is4() {
 				network.Subnets = append(network.Subnets, prefix.Masked())

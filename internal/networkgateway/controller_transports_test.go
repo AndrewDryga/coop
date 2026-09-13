@@ -47,11 +47,32 @@ func transportController(t *testing.T, policy egress.Snapshot, services []Servic
 		ingress = serveIngress
 	}
 	c, err := NewController(Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32),
-		PolicyFingerprint: policy.Fingerprint}, policy, nil, services, serve, ingress, nil, clock, func(context.Context, string) error { return nil })
+		PolicyFingerprint: policy.Fingerprint}, policy, nil, services, nil, serve, ingress, nil, clock, func(context.Context, string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
 	return c
+}
+
+func TestServiceProxyIngressIsLimitedToPreparedServiceAddresses(t *testing.T) {
+	policy := transportPolicy(t, egress.Rule{To: egress.Destination{Domain: "api.example.com"}, Protocol: "tls", Ports: []int{443}})
+	client := netip.MustParseAddr("172.31.4.8")
+	clock := testBootClock()
+	c, err := NewController(Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32),
+		PolicyFingerprint: policy.Fingerprint}, policy, []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, nil,
+		[]netip.Addr{client}, nil, netip.Addr{}, nil, clock, func(context.Context, string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := c.initialRules(netip.MustParseAddr("1.1.1.1"))
+	for _, line := range []string{
+		"  ip saddr 172.31.4.8 tcp dport 15444 ct state new,established accept",
+		"  ip daddr 172.31.4.8 tcp sport 15444 ct state established accept",
+	} {
+		if !strings.Contains(rules, line+"\n") {
+			t.Errorf("service proxy rule missing:\n%s\n--- got ---\n%s", line, rules)
+		}
+	}
 }
 
 // The rendered ruleset IS the enforcement contract: every accepted grant is an
@@ -221,11 +242,11 @@ func TestServePortsCannotCollideWithACapturedTLSPort(t *testing.T) {
 	clock := testBootClock()
 	identity := Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32), PolicyFingerprint: policy.Fingerprint}
 	for _, port := range []int{443, 53, 8443} {
-		if _, err := NewController(identity, policy, nil, nil, []int{port}, serveIngress, nil, clock, func(context.Context, string) error { return nil }); err == nil {
+		if _, err := NewController(identity, policy, nil, nil, nil, []int{port}, serveIngress, nil, clock, func(context.Context, string) error { return nil }); err == nil {
 			t.Errorf("serve port %d was accepted alongside the capture", port)
 		}
 	}
-	if _, err := NewController(identity, policy, nil, nil, []int{8000}, serveIngress, nil, clock, func(context.Context, string) error { return nil }); err != nil {
+	if _, err := NewController(identity, policy, nil, nil, nil, []int{8000}, serveIngress, nil, clock, func(context.Context, string) error { return nil }); err != nil {
 		t.Fatal("an uncaptured serve port was refused", err)
 	}
 }
@@ -237,7 +258,7 @@ func TestGrantedCIDRCannotBeatAProtectedAddress(t *testing.T) {
 	host := netip.MustParsePrefix("10.7.7.7/32")
 	clock := testBootClock()
 	c, err := NewController(Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32),
-		PolicyFingerprint: policy.Fingerprint}, policy, []netip.Prefix{host}, nil, nil, netip.Addr{}, nil, clock, func(context.Context, string) error { return nil })
+		PolicyFingerprint: policy.Fingerprint}, policy, []netip.Prefix{host}, nil, nil, nil, netip.Addr{}, nil, clock, func(context.Context, string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}

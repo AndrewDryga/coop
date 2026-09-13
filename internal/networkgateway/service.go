@@ -51,6 +51,9 @@ type LaunchConfig struct {
 	// address the host read from the runtime at launch. The box never resolves
 	// a service name itself, so a sidecar that moves cannot widen the grant.
 	Services []ServiceBinding `json:"services,omitempty"`
+	// ServiceProxyClients are the exact containers on Coop's internal service
+	// network that may reach the guard's approved-TLS CONNECT endpoint.
+	ServiceProxyClients []netip.Addr `json:"service_proxy_clients,omitempty"`
 	// Serve is this project's published container ports. They are ingress the
 	// operator asked for, not egress authority.
 	Serve []int `json:"serve,omitempty"`
@@ -134,6 +137,9 @@ func (c LaunchConfig) Validate() error {
 			return Failure("gateway_configuration_invalid")
 		}
 	}
+	if !validServiceProxyClients(c.Protected, c.ServiceProxyClients) || len(c.ServiceProxyClients) != 0 && slices.Contains(c.Serve, ServiceProxyPort) {
+		return Failure("gateway_configuration_invalid")
+	}
 	if validServePorts(c.Serve, c.Policy.TLSPorts()) != nil {
 		return Failure("gateway_configuration_invalid")
 	}
@@ -168,7 +174,8 @@ func RunController(ctx context.Context, config LaunchConfig) error {
 	if err := os.Mkdir("/ipc/controller", 0710); err != nil {
 		return Failure("controller_socket_unavailable")
 	}
-	c, err := NewController(config.identity(clock), config.Policy, config.Protected, config.Services, config.Serve, config.Ingress, config.Broker, clock, applyKernelRules)
+	c, err := NewController(config.identity(clock), config.Policy, config.Protected, config.Services, config.ServiceProxyClients,
+		config.Serve, config.Ingress, config.Broker, clock, applyKernelRules)
 	if err != nil {
 		return err
 	}
@@ -239,6 +246,7 @@ func NewGuardRuntime(config LaunchConfig) (*GuardRuntime, error) {
 		doh.Close()
 		return nil, err
 	}
+	guard.serviceProxyClients = slices.Clone(config.ServiceProxyClients)
 	envoyEvents := NewEnvoyEvents(clock)
 	var broker *credentialBroker
 	if config.Broker != nil {

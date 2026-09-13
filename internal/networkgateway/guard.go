@@ -1,6 +1,7 @@
 package networkgateway
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/binary"
@@ -8,7 +9,9 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"net/netip"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,6 +25,9 @@ const (
 	GuardAdmissionTimeout = 10 * time.Second
 	GuardTLSAddress       = "127.0.0.1:15443"
 	GuardDNSAddress       = "127.0.0.1:15353"
+	ServiceProxyPort      = 15444
+	ServiceProxyAddress   = "0.0.0.0:15444"
+	MaxServiceProxyHeader = 16 << 10
 	EnvoyDataSocket       = "/private/data.sock"
 )
 
@@ -35,13 +41,14 @@ type destinationReader func(net.Conn) (netip.AddrPort, error)
 // construction. Envoy process supervision and host resource ownership are above
 // this server; no agent-facing handler can create privileges or change routing.
 type Guard struct {
-	policy     egress.Snapshot
-	clock      *BootClock
-	resolver   *Resolver
-	controller ControllerClient
-	events     *GuardEvents
-	peerCursor atomic.Uint64
-	original   atomic.Pointer[destinationReader]
+	policy              egress.Snapshot
+	clock               *BootClock
+	resolver            *Resolver
+	controller          ControllerClient
+	events              *GuardEvents
+	peerCursor          atomic.Uint64
+	original            atomic.Pointer[destinationReader]
+	serviceProxyClients []netip.Addr
 }
 
 func (g *Guard) setDestinationReader(read destinationReader) { g.original.Store(&read) }
@@ -63,7 +70,7 @@ func NewGuard(policy egress.Snapshot, clock *BootClock, resolver *Resolver, cont
 // which addresses are permanently denied, and which raw destinations a grant
 // lets the agent dial without a proxied leg to correlate.
 func (g *Guard) boundary() boundary {
-	return boundary{protected: g.resolver.protected, policy: g.policy, tlsPorts: g.policy.TLSPorts()}
+	return boundary{protected: g.resolver.protected, policy: g.policy, tlsPorts: g.policy.TLSPorts(), serviceProxyClients: g.serviceProxyClients}
 }
 
 func (g *Guard) Serve(ctx context.Context, ready func()) error {
@@ -82,31 +89,50 @@ func (g *Guard) Serve(ctx context.Context, ready func()) error {
 		return Failure("gateway_listener_unavailable")
 	}
 	defer dnsPacket.Close()
-	return g.serve(ctx, tlsListener, dnsListener, dnsPacket, EnvoyDataSocket, ready)
+	var serviceProxy net.Listener
+	if len(g.serviceProxyClients) != 0 {
+		serviceProxy, err = net.Listen("tcp4", ServiceProxyAddress)
+		if err != nil {
+			return Failure("gateway_listener_unavailable")
+		}
+		defer serviceProxy.Close()
+	}
+	return g.serve(ctx, tlsListener, dnsListener, dnsPacket, serviceProxy, EnvoyDataSocket, ready)
 }
 
-func (g *Guard) serve(ctx context.Context, tlsListener, dnsListener net.Listener, dnsPacket net.PacketConn, dataSocket string, ready func()) error {
+func (g *Guard) serve(ctx context.Context, tlsListener, dnsListener net.Listener, dnsPacket net.PacketConn, serviceProxy net.Listener, dataSocket string, ready func()) error {
 	if err := g.controller.Ready(ctx); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(ctx, func() { _ = tlsListener.Close(); _ = dnsListener.Close(); _ = dnsPacket.Close() })
+	closeServiceProxy := func() {
+		if serviceProxy != nil {
+			_ = serviceProxy.Close()
+		}
+	}
+	stop := context.AfterFunc(ctx, func() { _ = tlsListener.Close(); _ = dnsListener.Close(); _ = dnsPacket.Close(); closeServiceProxy() })
 	var workers sync.WaitGroup
 	defer func() {
 		cancel()
 		_ = tlsListener.Close()
 		_ = dnsListener.Close()
 		_ = dnsPacket.Close()
+		closeServiceProxy()
 		workers.Wait()
 		stop()
 	}()
-	failed := make(chan error, 4)
+	failed := make(chan error, 5)
 	workers.Go(func() { failed <- g.controller.Heartbeat(ctx) })
 	workers.Go(func() {
 		failed <- g.accept(ctx, tlsListener, MaxGuardFlows, func(ctx context.Context, conn net.Conn) { g.forward(ctx, conn, dataSocket) })
 	})
 	workers.Go(func() { failed <- g.accept(ctx, dnsListener, MaxDNSConnections, g.dnsTCP) })
 	workers.Go(func() { failed <- g.dnsUDP(ctx, dnsPacket) })
+	if serviceProxy != nil {
+		workers.Go(func() {
+			failed <- g.accept(ctx, serviceProxy, MaxGuardFlows, func(ctx context.Context, conn net.Conn) { g.serviceProxy(ctx, conn, dataSocket) })
+		})
+	}
 	if ready != nil {
 		ready()
 	}
@@ -178,6 +204,82 @@ func (g *Guard) forward(ctx context.Context, client net.Conn, dataSocket string)
 		g.events.emit(GuardEvent{Kind: "tls_denied", Name: hello.Name, Port: port, Reason: safeReason(err)})
 		return
 	}
+	g.forwardTLS(admission, client, dataSocket, port, hello)
+}
+
+type prefixedConn struct {
+	net.Conn
+	prefix []byte
+}
+
+func (c *prefixedConn) Read(data []byte) (int, error) {
+	if len(c.prefix) != 0 {
+		n := copy(data, c.prefix)
+		c.prefix = c.prefix[n:]
+		return n, nil
+	}
+	return c.Conn.Read(data)
+}
+
+func (g *Guard) serviceProxy(ctx context.Context, client net.Conn, dataSocket string) {
+	admission, cancel := context.WithTimeout(ctx, GuardAdmissionTimeout)
+	defer cancel()
+	deadline, _ := admission.Deadline()
+	_ = client.SetReadDeadline(deadline)
+	limited := &io.LimitedReader{R: client, N: MaxServiceProxyHeader + 1}
+	reader := bufio.NewReaderSize(limited, 4096)
+	request, err := http.ReadRequest(reader)
+	if err != nil || request.Method != http.MethodConnect || request.ContentLength > 0 || len(request.TransferEncoding) != 0 {
+		g.events.emit(GuardEvent{Kind: "tls_denied", Reason: "tls_proxy_request_invalid"})
+		proxyStatus(client, "400 Bad Request")
+		return
+	}
+	_ = request.Body.Close()
+	host, portText, err := net.SplitHostPort(request.Host)
+	port64, portErr := strconv.ParseUint(portText, 10, 16)
+	name, nameErr := egress.NormalizeDomain(host, false)
+	port := int(port64)
+	decision := g.policy.Domain(name, port)
+	if err != nil || portErr != nil || nameErr != nil || !decision.Allowed {
+		reason := "unapproved_name"
+		if err != nil || portErr != nil || nameErr != nil {
+			reason = "tls_proxy_request_invalid"
+		}
+		g.events.emit(GuardEvent{Kind: "tls_denied", Name: name, Port: port, Reason: reason})
+		proxyStatus(client, "403 Forbidden")
+		return
+	}
+	pending, _ := reader.Peek(reader.Buffered())
+	pending = append([]byte(nil), pending...)
+	_ = client.SetReadDeadline(time.Time{})
+	if !proxyStatus(client, "200 Connection Established") {
+		return
+	}
+	stream := &prefixedConn{Conn: client, prefix: pending}
+	hello, err := Inspect(admission, stream, g.policy, port)
+	if err != nil || hello.Name != name || hello.RuleID != decision.RuleID {
+		reason := safeReason(err)
+		if err == nil {
+			reason = "tls_name_mismatch"
+		}
+		g.events.emit(GuardEvent{Kind: "tls_denied", Name: hello.Name, Port: port, Reason: reason})
+		return
+	}
+	g.forwardTLS(admission, stream, dataSocket, port, hello)
+}
+
+func proxyStatus(conn net.Conn, status string) bool {
+	if err := conn.SetWriteDeadline(time.Now().Add(GuardAdmissionTimeout)); err != nil {
+		return false
+	}
+	err := writeAll(conn, []byte("HTTP/1.1 "+status+"\r\nContent-Length: 0\r\n\r\n"))
+	_ = conn.SetWriteDeadline(time.Time{})
+	return err == nil
+}
+
+func (g *Guard) forwardTLS(ctx context.Context, client net.Conn, dataSocket string, port int, hello Hello) {
+	admission, cancel := context.WithTimeout(ctx, GuardAdmissionTimeout)
+	defer cancel()
 	resolution, err := g.resolver.Resolve(admission, hello.Name)
 	if err != nil {
 		g.events.emit(GuardEvent{Kind: "admission_failed", Name: hello.Name, Reason: safeReason(err)})
@@ -228,7 +330,7 @@ func (g *Guard) forward(ctx context.Context, client net.Conn, dataSocket string)
 		return
 	}
 	flowID := hex.EncodeToString(random[:])
-	header, err := ProxyHeader(netip.AddrPortFrom(peer, destination.Port()), flowID)
+	header, err := ProxyHeader(netip.AddrPortFrom(peer, uint16(port)), flowID)
 	if err != nil {
 		g.events.emit(GuardEvent{Kind: "admission_failed", Reason: safeReason(err)})
 		return

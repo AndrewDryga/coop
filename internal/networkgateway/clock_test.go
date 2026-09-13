@@ -42,7 +42,7 @@ func TestBootClockDomainMismatchCannotConstructControllerOrClient(t *testing.T) 
 	policy := testPolicy(t)
 	identity := Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32), PolicyFingerprint: policy.Fingerprint}
 	identity.Clock.TimeNamespace = "54321"
-	if _, err := NewController(identity, policy, nil, nil, nil, netip.Addr{}, nil, clock, func(context.Context, string) error { return nil }); err == nil {
+	if _, err := NewController(identity, policy, nil, nil, nil, nil, netip.Addr{}, nil, clock, func(context.Context, string) error { return nil }); err == nil {
 		t.Fatal("controller accepted a different time namespace")
 	}
 	client := ControllerClient{Path: "/not-a-real-socket", Identity: identity, Clock: clock}
@@ -87,7 +87,7 @@ func TestControllerBootClockFailureAndSuspendAreTerminal(t *testing.T) {
 			policy := testPolicy(t)
 			identity := Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32), PolicyFingerprint: policy.Fingerprint}
 			updating := false
-			c, err := NewController(identity, policy, nil, nil, nil, netip.Addr{}, nil, clock, func(ctx context.Context, _ string) error {
+			c, err := NewController(identity, policy, nil, nil, nil, nil, netip.Addr{}, nil, clock, func(ctx context.Context, _ string) error {
 				if updating {
 					if failure == "suspend" {
 						now = now.Add(time.Minute)

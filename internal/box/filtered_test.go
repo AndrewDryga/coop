@@ -54,17 +54,18 @@ type filteredDaemonFixture struct {
 	networkMembers                         map[string]netip.Addr
 	composeServices                        map[string]string
 	connected                              []string
+	onStart                                func(string)
 	images                                 map[string]fixtureImage
 	layerReads, fileReads, treeReads       map[string]int
 }
 
-func (d *filteredDaemonFixture) ConnectNetwork(_ context.Context, network string, ref runtime.DockerRef) error {
+func (d *filteredDaemonFixture) ConnectNetwork(_ context.Context, network string, ref runtime.DockerRef, aliases ...string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if ref.ID == "" {
 		return errors.New("network attachment needs an exact container id")
 	}
-	d.connected = append(d.connected, network+"/"+ref.ID)
+	d.connected = append(d.connected, network+"/"+ref.ID+"/"+strings.Join(aliases, ","))
 	return nil
 }
 
@@ -352,6 +353,9 @@ func (d *filteredDaemonFixture) StartContainer(_ context.Context, ref runtime.Do
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.log = append(d.log, "start:"+ref.Labels["coop.network.role"])
+	if d.onStart != nil {
+		d.onStart(ref.Labels["coop.network.role"])
+	}
 	v := d.containers[ref.Name]
 	v.State = runtime.DockerContainerState{Status: "running", Running: true, StartedAt: time.Now()}
 	d.containers[ref.Name] = v

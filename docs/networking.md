@@ -94,10 +94,15 @@ runs are refused instead of silently receiving the reusable key. A configured cu
 `ANTHROPIC_BASE_URL` is refused rather than silently redirected to Anthropic. Other providers need
 their own pinned client and protocol qualification before they can use this boundary.
 
-A `service:` grant is a request like any other: it is approved by a human, it names one service, and
-it opens that container's address and ports only. Joining the services network does not grant
-anything — every other container on it stays behind the same default deny as the public internet.
-`box.network: true` alone is refused in filtered mode: name the sidecar you need.
+A `service:` grant is a request like any other: it is approved by a human and names one service.
+For a filtered run, Coop recreates that service and its dependencies on a project-owned internal
+network before starting them. Those services can talk to each other directly, but the network has
+no direct internet route. Standard HTTPS proxy variables point them at the existing Coop guard,
+which accepts only approved TLS names and verifies the real ClientHello name before forwarding.
+Removing the proxy variables removes connectivity; it does not restore direct internet access.
+`box.network: true` alone is refused in filtered mode: name the sidecar you need. Because the proxy
+belongs to one box execution, a second filtered box using project services is refused until the
+first stops.
 
 The approval captures the *definition* a human reviewed, not just the name: `coop net approve`
 records a digest of that service's Compose stanza, and a launch recomputes it from the file it is

@@ -44,26 +44,28 @@ func (l Lease) destination() netip.AddrPort {
 }
 
 type Controller struct {
-	identity    Identity
-	policy      egress.Snapshot
-	broker      *CredentialBrokerRoute
-	protected   []netip.Prefix
-	apply       ApplyRules
-	now         func() BootInstant
-	clock       *BootClock
-	mu          sync.Mutex
-	grants      []addressGrant
-	serve       []int
-	ingress     netip.Addr
-	leases      map[string]Lease
-	installed   map[netip.AddrPort]BootInstant
-	ready       atomic.Bool
-	closed      atomic.Bool
-	initialized bool
-	kernel      kernelEvents
+	identity            Identity
+	policy              egress.Snapshot
+	broker              *CredentialBrokerRoute
+	protected           []netip.Prefix
+	apply               ApplyRules
+	now                 func() BootInstant
+	clock               *BootClock
+	mu                  sync.Mutex
+	grants              []addressGrant
+	serviceProxyClients []netip.Addr
+	serve               []int
+	ingress             netip.Addr
+	leases              map[string]Lease
+	installed           map[netip.AddrPort]BootInstant
+	ready               atomic.Bool
+	closed              atomic.Bool
+	initialized         bool
+	kernel              kernelEvents
 }
 
-func NewController(identity Identity, policy egress.Snapshot, protected []netip.Prefix, services []ServiceBinding, serve []int, ingress netip.Addr, broker *CredentialBrokerRoute, clock *BootClock, apply ApplyRules) (*Controller, error) {
+func NewController(identity Identity, policy egress.Snapshot, protected []netip.Prefix, services []ServiceBinding, serviceProxyClients []netip.Addr,
+	serve []int, ingress netip.Addr, broker *CredentialBrokerRoute, clock *BootClock, apply ApplyRules) (*Controller, error) {
 	if err := policy.RequireSupported(); err != nil {
 		return nil, err
 	}
@@ -73,6 +75,9 @@ func NewController(identity Identity, policy egress.Snapshot, protected []netip.
 	}
 	if err := validServePorts(serve, policy.TLSPorts()); err != nil {
 		return nil, err
+	}
+	if !validServiceProxyClients(protected, serviceProxyClients) || len(serviceProxyClients) != 0 && slices.Contains(serve, ServiceProxyPort) {
+		return nil, errors.New("invalid service proxy client configuration")
 	}
 	if len(serve) != 0 && !ingress.Is4() {
 		return nil, errors.New("published serve ports require the bridge gateway address host traffic arrives from")
@@ -93,8 +98,21 @@ func NewController(identity Identity, policy egress.Snapshot, protected []netip.
 		value := *broker
 		brokerCopy = &value
 	}
-	return &Controller{identity: identity, policy: policy.Clone(), broker: brokerCopy, protected: slices.Clone(protected), grants: grants, serve: slices.Clone(serve),
+	return &Controller{identity: identity, policy: policy.Clone(), broker: brokerCopy, protected: slices.Clone(protected), grants: grants,
+		serviceProxyClients: slices.Clone(serviceProxyClients), serve: slices.Clone(serve),
 		ingress: ingress, apply: apply, now: clock.instant, clock: clock, leases: map[string]Lease{}}, nil
+}
+
+func validServiceProxyClients(protected []netip.Prefix, clients []netip.Addr) bool {
+	if len(clients) > 512 {
+		return false
+	}
+	for i, client := range clients {
+		if !client.Is4() || slices.Contains(clients[:i], client) || !slices.ContainsFunc(protected, func(prefix netip.Prefix) bool { return prefix.Contains(client) }) {
+			return false
+		}
+	}
+	return true
 }
 
 // addressGrant is one packet-filter grant as the kernel sees it: an exact IPv4
@@ -393,6 +411,10 @@ func (c *Controller) initialRules(maintenance netip.Addr) string {
 		// it: only a flow the ingress rule above admitted can be established.
 		fmt.Fprintf(&serviceIngress, "  ip saddr %s tcp dport %s ct state new,established accept\n", c.ingress, portSet(c.serve))
 		fmt.Fprintf(&serviceEgress, "  ip daddr %s tcp sport %s ct state established accept\n", c.ingress, portSet(c.serve))
+	}
+	for _, client := range c.serviceProxyClients {
+		fmt.Fprintf(&serviceIngress, "  ip saddr %s tcp dport %d ct state new,established accept\n", client, ServiceProxyPort)
+		fmt.Fprintf(&serviceEgress, "  ip daddr %s tcp sport %d ct state established accept\n", client, ServiceProxyPort)
 	}
 	return fmt.Sprintf(`table inet coop_net {
  counter denied_agent { }

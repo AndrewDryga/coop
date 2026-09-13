@@ -55,26 +55,28 @@ func capturedSessionWorkspace(capture *CapturedEgress, spec RunSpec, runRepo str
 }
 
 type filteredExecution struct {
-	store          *networkstate.Store
-	docker         filteredDocker
-	policy         egress.Snapshot
-	image          string
-	config         string
-	runfiles       string
-	identity       networkgateway.Identity
-	protected      []netip.Prefix
-	hostAddresses  func() ([]netip.Prefix, error) // nil uses live host inventory; fixtures own their topology
-	mu             sync.Mutex                     // host callbacks serialize registry CAS, never runtime I/O
-	record         networkstate.Execution
-	attempted      map[string]bool
-	startAttempted bool // monotonic host launch boundary, independent of registry publication
-	mainStarted    bool // the daemon reported the workload running: teardown may then speak of its main process
-	bindSources    map[string]os.FileInfo
-	unsafeRoots    []string
-	publish        []string // -p options the controller carries for serve.ports
-	serveEnv       []string // COOP_SERVE_URL_* the agent container still gets
-	servicesNet    string   // the Compose network the controller joins, if any
-	services       []networkgateway.ServiceBinding
+	store               *networkstate.Store
+	docker              filteredDocker
+	policy              egress.Snapshot
+	image               string
+	config              string
+	runfiles            string
+	identity            networkgateway.Identity
+	protected           []netip.Prefix
+	hostAddresses       func() ([]netip.Prefix, error) // nil uses live host inventory; fixtures own their topology
+	mu                  sync.Mutex                     // host callbacks serialize registry CAS, never runtime I/O
+	record              networkstate.Execution
+	attempted           map[string]bool
+	startAttempted      bool // monotonic host launch boundary, independent of registry publication
+	mainStarted         bool // the daemon reported the workload running: teardown may then speak of its main process
+	bindSources         map[string]os.FileInfo
+	unsafeRoots         []string
+	publish             []string // -p options the controller carries for serve.ports
+	serveEnv            []string // COOP_SERVE_URL_* the agent container still gets
+	servicesNet         string   // the Compose network the controller joins, if any
+	services            []networkgateway.ServiceBinding
+	serviceProxyClients []netip.Addr
+	preparedServices    *preparedFilteredServices
 	// taskVolume is the run-private task-channel volume coop created THIS run (taskchannel.go).
 	// It is coop-owned, holds only the coop socket, and is mounted read-only, so it is exempt from
 	// the workload volume-exposure check the same way this run's generated files are — its backing
@@ -118,7 +120,7 @@ type filteredDocker interface {
 	FileDigest(context.Context, runtime.DockerRef, string, int64) (runtime.DockerFile, error)
 	TreeDigest(context.Context, runtime.DockerRef, string, int64) (runtime.DockerTree, error)
 	ExistingNamedVolumeExposure(context.Context, []string) (runtime.VolumeExposure, error)
-	ConnectNetwork(context.Context, string, runtime.DockerRef) error
+	ConnectNetwork(context.Context, string, runtime.DockerRef, ...string) error
 	NetworkMembers(context.Context, string) (map[string]netip.Addr, error)
 	Networks(context.Context) ([]runtime.DockerNetwork, error)
 	ComposeServiceID(context.Context, string, string) (string, error)
@@ -259,13 +261,14 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 		if err != nil {
 			return f, err
 		}
-		f.servicesNet, f.services, err = resolveServiceBindings(ctx, docker, rt, spec, composeFile, approval, approvedServices, sections, privateRoots)
+		f.servicesNet, f.services, f.serviceProxyClients, f.preparedServices, err = resolveServiceBindings(ctx, docker, rt, spec, composeFile, approval, approvedServices, sections, privateRoots)
 		if err != nil {
 			return f, err
 		}
 	}
-	// The protection envelope is inventoried AFTER the approved sidecars are up:
-	// starting them can add a runtime network, and this run must protect the
+	// The protection envelope is inventoried AFTER Compose creates the approved
+	// sidecars and their stopped internal network. Preparing them can add a
+	// runtime network, and this run must protect the
 	// host topology it will actually launch into, not the one before it.
 	networks, err := docker.Networks(ctx)
 	if err != nil {
@@ -302,7 +305,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 		smoke.registered(f.record)
 	}
 	launch := networkgateway.LaunchConfig{Version: 1, RunID: f.record.ID, Epoch: f.record.Epoch, Policy: policy, Protected: protected,
-		Services: f.services, Serve: servePorts, Ingress: ingress, Broker: brokerCandidate.route()}
+		Services: f.services, ServiceProxyClients: f.serviceProxyClients, Serve: servePorts, Ingress: ingress, Broker: brokerCandidate.route()}
 	if err := launch.Validate(); err != nil {
 		return f, err
 	}

@@ -3,7 +3,7 @@ name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
 sources: [internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/gatewayimage/image.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go]
-updated: 2026-09-12
+updated: 2026-09-13
 ---
 
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
@@ -38,6 +38,14 @@ carrying the validated destination AND port plus a `PP2_TYPE_UNIQUE_ID` correlat
 `upstream_port_override` any more, so the port cannot come from anywhere but the kernel. Its DNS
 side admits the NAME alone (`AdmitsName`, never a port: a client must resolve before the kernel can
 record which granted port it dialed), then resolves upstream over DoH to a pinned peer.
+
+Filtered project services use the same guard through a second, bounded listener on `:15444`.
+Compose puts only the approved service closure on an internal network and points standard HTTPS
+proxy variables at the controller's `coop-gateway` alias. The controller admits that listener only
+from the closure's fixed addresses. CONNECT names outside the frozen TLS policy are refused; an
+allowed CONNECT receives `200`, then the guard parses the actual ClientHello and requires its SNI
+and rule identity to match before using the ordinary resolver, lease, Envoy and observation path.
+Direct service traffic cannot bypass the proxy because the Docker network itself is internal.
 
 Facts the code cannot say twice, all still true:
 
@@ -118,6 +126,9 @@ checkout, so a stale tar is a red gate, and a filtered launch only ever runs the
 [[restricted-networking]] qualification names.
 
 ## Changelog
+- 2026-09-13 — filtered Compose service closures now use an internal network and the existing guard's
+  bounded CONNECT path for approved TLS; startup waits for gateway readiness, and direct internet
+  remains blocked independently of proxy variables.
 - 2026-09-12 — topology growth is reconciled in place instead of ending the run: the host's
   `protectedSetUpdate` mirrors `initialRules`' rendering (kept out of the embedded sources so the
   qualified image is unchanged); verified the flush+add batch live on the pinned gateway image and

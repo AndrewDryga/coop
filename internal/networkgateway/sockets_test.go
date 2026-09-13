@@ -43,7 +43,9 @@ func TestSocketInventoryExcludesLocalNATLegAndQueuesAreNotBytes(t *testing.T) {
 func TestSocketInventoryMatchesEveryFixedLocalCaptureLeg(t *testing.T) {
 	dns := strings.Replace(procRow(1000, "01", 1), "01010101:01BB", "01010101:0035", 1)
 	accepted := strings.Replace(procRow(65532, "01", 2), "020011AC:C001", "0100007F:3C53", 1)
-	rows, err := parseSocketInventory(strings.NewReader(procHeader+dns+accepted), boundary{})
+	serviceProxy := strings.Replace(procRow(65532, "01", 3), "020011AC:C001", "020011AC:3C54", 1)
+	proxyClient := netip.MustParseAddr("1.1.1.1")
+	rows, err := parseSocketInventory(strings.NewReader(procHeader+dns+accepted+serviceProxy), boundary{serviceProxyClients: []netip.Addr{proxyClient}})
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("local DNS/accepted guard legs counted external: %#v %v", rows, err)
 	}

@@ -230,13 +230,11 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 		if err := f.createContainer(ctx, role, f.record.GatewayImage, f.helperOptions(role), []string{role}); err != nil {
 			return -1, err
 		}
-		// The approved sidecar's network is attached before the controller runs,
-		// so the address the rules were rendered for exists from the first
-		// packet. Joining it grants nothing on its own: every other member of
-		// that network is still refused by the same default deny.
+		// The internal service network is attached before the controller runs.
+		// Its fixed alias is the only route prepared services get to approved TLS.
 		if role == "controller" && f.servicesNet != "" {
 			attach, stop := context.WithTimeout(ctx, filteredControlTimeout)
-			err := f.docker.ConnectNetwork(attach, f.servicesNet, f.ref("controller"))
+			err := f.docker.ConnectNetwork(attach, f.servicesNet, f.ref("controller"), filteredServiceProxyAlias)
 			stop()
 			if err != nil {
 				return -1, err
@@ -247,6 +245,12 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 		}
 	}
 	if err := f.waitReady(ctx); err != nil {
+		return -1, err
+	}
+	if err := f.preparedServices.start(); err != nil {
+		return -1, err
+	}
+	if err := f.preparedServices.check(ctx, f.docker, f.servicesNet, ComposeProject(spec.Repo)); err != nil {
 		return -1, err
 	}
 	if err := f.reconcileTopology(ctx); err != nil {

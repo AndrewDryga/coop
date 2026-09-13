@@ -2,9 +2,11 @@ package box
 
 import (
 	"context"
+	"io"
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -127,7 +129,7 @@ func TestServiceGrantsWithoutAComposeFileRefuseTheLaunch(t *testing.T) {
 	if len(grants) != 2 {
 		t.Fatalf("expected both service grants, got %d", len(grants))
 	}
-	_, _, err := resolveServiceBindings(context.Background(), nil, runtime.Runtime{Name: "docker"}, RunSpec{Repo: t.TempDir()}, "", nil, grants, nil, nil)
+	_, _, _, _, err := resolveServiceBindings(context.Background(), nil, runtime.Runtime{Name: "docker"}, RunSpec{Repo: t.TempDir()}, "", nil, grants, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "cache") || !strings.Contains(err.Error(), "web") {
 		t.Fatalf("missing Compose file did not name the unresolved services: %v", err)
 	}
@@ -182,7 +184,7 @@ func TestApprovedServiceDefinitionChangeRefusesTheLaunch(t *testing.T) {
 		t.Fatalf("a rewritten service kept its grant: %v", err)
 	}
 	// The same refusal is what a launch gets, before anything is started.
-	_, _, launchErr := resolveServiceBindings(context.Background(), nil, runtime.Runtime{Name: "docker"}, RunSpec{Repo: repo}, compose, approval, serviceGrants(servicePolicy(t, "db")), nil, nil)
+	_, _, _, _, launchErr := resolveServiceBindings(context.Background(), nil, runtime.Runtime{Name: "docker"}, RunSpec{Repo: repo}, compose, approval, serviceGrants(servicePolicy(t, "db")), nil, nil)
 	if launchErr == nil || !strings.Contains(launchErr.Error(), "changed since it was approved") {
 		t.Fatalf("the launch ran a rewritten service: %v", launchErr)
 	}
@@ -226,10 +228,17 @@ func TestFilteredStartupScopesComposeToGrantedServices(t *testing.T) {
 	docker := &filteredDaemonFixture{
 		networkMembers:  map[string]netip.Addr{id: netip.MustParseAddr("172.31.0.2")},
 		composeServices: map[string]string{"db": id},
+		extraNetworks: []runtime.DockerNetwork{{Name: ComposeProject(repo) + "_filtered", Internal: true,
+			Subnets: []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.31.0.1")}}},
 	}
 	recorder := filepath.Join(t.TempDir(), "runtime.log")
-	if _, _, err := resolveServiceBindings(t.Context(), docker, recorderRuntime(t, recorder), RunSpec{Repo: repo}, compose,
-		&networkstate.Approval{Services: digests}, serviceGrants(servicePolicy(t, "db")), nil, nil); err != nil {
+	_, _, _, prepared, err := resolveServiceBindings(t.Context(), docker, recorderRuntime(t, recorder), RunSpec{Repo: repo}, compose,
+		&networkstate.Approval{Services: digests}, serviceGrants(servicePolicy(t, "db")), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(prepared.cleanup)
+	if err := prepared.start(); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(recorder)
@@ -251,6 +260,66 @@ func TestFilteredStartupScopesComposeToGrantedServices(t *testing.T) {
 	}
 	if err := checkApprovedServices(&networkstate.Approval{Services: digests}, compose, repo, false); err == nil || !strings.Contains(err.Error(), `service "cache" changed`) {
 		t.Fatalf("changed dependency kept the parent service approval: %v", err)
+	}
+}
+
+func TestFilteredServiceOverrideIsInternalAndKeepsPeerTrafficDirect(t *testing.T) {
+	services := []string{"app", "db"}
+	addresses := map[string]netip.Addr{
+		"app": netip.MustParseAddr("192.168.40.16"),
+		"db":  netip.MustParseAddr("192.168.40.17"),
+	}
+	data, err := filteredServiceOverride("coop-example_filtered", services, netip.MustParsePrefix("192.168.40.0/24"), addresses)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"networks: !override",
+		"internal: true",
+		"HTTPS_PROXY: \"http://coop-gateway:15444\"",
+		"https_proxy: \"http://coop-gateway:15444\"",
+		"NO_PROXY: \"localhost,127.0.0.1,app,db\"",
+		"ipv4_address: 192.168.40.16",
+		"subnet: 192.168.40.0/24",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("filtered override missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "admin:") {
+		t.Fatal("filtered override changed an unrelated service")
+	}
+}
+
+func TestFilteredLaunchStartsServicesAfterTheGateway(t *testing.T) {
+	f, docker := filteredFixture(t)
+	ready := filepath.Join(t.TempDir(), "gateway-ready")
+	docker.onStart = func(role string) {
+		if role == "guard" {
+			if err := os.WriteFile(ready, []byte("ready"), 0o600); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	runtimePath := filepath.Join(t.TempDir(), "compose")
+	script := "#!/bin/sh\n" +
+		"case \"$*\" in *'up -d --wait db'*) test -f " + strconv.Quote(ready) + " || exit 41 ;; esac\n"
+	if err := os.WriteFile(runtimePath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	address := netip.MustParseAddr("172.31.0.16")
+	f.servicesNet = ComposeProject(f.record.Project) + "_filtered"
+	f.preparedServices = &preparedFilteredServices{runtime: runtime.Runtime{Name: runtimePath}, args: []string{"compose"},
+		selected: []string{"db"}, addresses: map[string]netip.Addr{"db": address}, cleanup: func() {}}
+	docker.networkMembers = map[string]netip.Addr{strings.Repeat("a", 64): address}
+	docker.composeServices = map[string]string{"db": strings.Repeat("a", 64)}
+	code, err := f.launch(t.Context(), RunSpec{Repo: f.record.Project}, nil, nil, io.Discard, io.Discard)
+	if err != nil || code != 7 {
+		t.Fatalf("filtered launch = (%d, %v)", code, err)
+	}
+	if len(docker.connected) != 1 || !strings.HasSuffix(docker.connected[0], "/"+filteredServiceProxyAlias) {
+		t.Fatalf("controller network attachment = %v", docker.connected)
 	}
 }
 
@@ -282,7 +351,7 @@ func TestApprovedServiceBindsExternalVolumeIdentity(t *testing.T) {
 	}
 }
 
-func TestFilteredServiceStartSkipsComposeWhileAnotherBoxRuns(t *testing.T) {
+func TestFilteredServiceStartRefusesASecondLiveBox(t *testing.T) {
 	repo := t.TempDir()
 	compose := filepath.Join(repo, "compose.yml")
 	if err := os.WriteFile(compose, []byte("services:\n  db:\n    image: postgres:18\n"), 0o644); err != nil {
@@ -298,25 +367,15 @@ func TestFilteredServiceStartSkipsComposeWhileAnotherBoxRuns(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = forkspace.EndExecution(repo, other) })
 
-	id := strings.Repeat("a", 64)
-	docker := &filteredDaemonFixture{
-		networkMembers:  map[string]netip.Addr{id: netip.MustParseAddr("172.31.0.2")},
-		composeServices: map[string]string{"db": id},
-	}
 	recorder := filepath.Join(t.TempDir(), "runtime.log")
-	network, bindings, err := resolveServiceBindings(t.Context(), docker, recorderRuntime(t, recorder), RunSpec{Repo: repo}, compose,
+	_, _, _, _, err = resolveServiceBindings(t.Context(), &filteredDaemonFixture{}, recorderRuntime(t, recorder), RunSpec{Repo: repo}, compose,
 		&networkstate.Approval{Services: digests}, serviceGrants(servicePolicy(t, "db")), nil, nil)
-	if err != nil || network != ComposeProject(repo)+"_default" || len(bindings) != 1 {
-		t.Fatalf("running service discovery = network %q bindings %+v err %v", network, bindings, err)
+	if err == nil || !strings.Contains(err.Error(), "another box is already using") {
+		t.Fatalf("second filtered service box was accepted: %v", err)
 	}
 	if data, readErr := os.ReadFile(recorder); readErr == nil && len(data) != 0 {
 		t.Fatalf("filtered launch executed Compose beside a live box:\n%s", data)
 	} else if readErr != nil && !os.IsNotExist(readErr) {
 		t.Fatal(readErr)
-	}
-	docker.composeServices = nil
-	if _, _, err := resolveServiceBindings(t.Context(), docker, recorderRuntime(t, recorder), RunSpec{Repo: repo}, compose,
-		&networkstate.Approval{Services: digests}, serviceGrants(servicePolicy(t, "db")), nil, nil); err == nil || !strings.Contains(err.Error(), "is not running") {
-		t.Fatalf("missing already-running service was accepted: %v", err)
 	}
 }
