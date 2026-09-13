@@ -369,6 +369,32 @@ func TestDownServicesUsesCurrentProjectAndVolumePolicy(t *testing.T) {
 	assertComposeSnapshotCall(t, strings.TrimSpace(string(data)), repo, "down --remove-orphans --volumes")
 }
 
+func TestDownServicesFileVolumesDeletesOnlyReviewedTargets(t *testing.T) {
+	repo := testComposeRepo(t)
+	file := filepath.Join(repo, ".agent", "compose.yml")
+	// Simulate an edit after the user reviewed the original runtime volume list.
+	if err := os.WriteFile(file, []byte("services:\n  db:\n    image: postgres:18\nvolumes:\n  unreviewed:\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := filepath.Join(t.TempDir(), "rec")
+	reviewed := []ServiceVolume{{Name: "reviewed-data"}}
+	if err := DownServicesFileVolumes(recorderRuntime(t, rec), repo, file, reviewed, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(calls) != 2 {
+		t.Fatalf("runtime calls = %q, want Compose down then one exact volume removal", calls)
+	}
+	assertComposeSnapshotCall(t, calls[0], repo, "down --remove-orphans")
+	if calls[1] != "volume rm reviewed-data" {
+		t.Fatalf("volume removal = %q, want only the reviewed target", calls[1])
+	}
+}
+
 func assertComposeSnapshotCall(t *testing.T, call, repo, action string) string {
 	t.Helper()
 	if !strings.HasSuffix(call, " "+action) {

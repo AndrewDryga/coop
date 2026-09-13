@@ -249,7 +249,11 @@ func (a *app) cmdDown(args []string) (int, error) {
 	ui.Note("")
 	out, errOut := &seenWriter{w: os.Stdout}, &seenWriter{w: os.Stderr}
 	deleting := deleteVolumes && len(targets) > 0
-	err = box.DownServicesFile(a.rt, repo, file, deleting, out, errOut, box.ConfigExposureRoots(a.cfg)...)
+	if deleting {
+		err = box.DownServicesFileVolumes(a.rt, repo, file, targets, out, errOut, box.ConfigExposureRoots(a.cfg)...)
+	} else {
+		err = box.DownServicesFile(a.rt, repo, file, false, out, errOut, box.ConfigExposureRoots(a.cfg)...)
+	}
 	if out.seen || errOut.seen {
 		ui.Note("")
 	}

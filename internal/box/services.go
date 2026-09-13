@@ -281,6 +281,30 @@ func DownServicesFile(rt runtime.Runtime, workspace, file string, volumes bool, 
 	return runCompose(rt, stdout, stderr, "down", args)
 }
 
+// DownServicesFileVolumes stops the Compose project, then deletes exactly the volumes the caller
+// already reviewed. It deliberately does not pass --volumes to Compose: the file may have changed
+// since the review, but the confirmed runtime volume names have not.
+func DownServicesFileVolumes(rt runtime.Runtime, workspace, file string, volumes []ServiceVolume, stdout, stderr io.Writer, exposedRoots ...string) error {
+	if err := DownServicesFile(rt, workspace, file, false, stdout, stderr, exposedRoots...); err != nil {
+		return err
+	}
+	if len(volumes) == 0 {
+		return nil
+	}
+	args := []string{"volume", "rm"}
+	for _, volume := range volumes {
+		args = append(args, volume.Name)
+	}
+	code, err := rt.Run(nil, stdout, stderr, args...)
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return fmt.Errorf("volume rm exited with status %d", code)
+	}
+	return nil
+}
+
 const (
 	composeProjectLabel    = "com.docker.compose.project"
 	composeWorkingDirLabel = "com.docker.compose.project.working_dir"

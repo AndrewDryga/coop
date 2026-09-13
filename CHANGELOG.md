@@ -27,6 +27,9 @@
   database or advertise configuration-only endpoints; the original startup failure and retry
   guidance remain visible.
 
+- `coop down --delete-volumes` now deletes the exact runtime volumes shown for confirmation.
+  Later Compose-file edits cannot add an unreviewed deletion target.
+
 - Claude image tool results now keep their matching watchdog lifecycle within a bounded,
   provider-specific stream envelope. Large base64 bodies remain hidden, while malformed or
   over-limit events cannot close tools or manufacture activity. Unknown, unnamed-start, and
