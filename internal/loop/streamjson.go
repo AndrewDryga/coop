@@ -183,25 +183,34 @@ const (
 // decoder holds one instead of a bare map, so no stream can grow host memory by inventing ids.
 type boundedLabels struct{ byID map[string]string }
 
-func (b *boundedLabels) set(id, label string) {
+func (b *boundedLabels) set(id, label string) bool {
 	if id == "" {
-		return
+		return false
 	}
 	if _, tracked := b.byID[id]; !tracked && len(b.byID) >= maxStreamTrackedIDs {
-		return
+		return false
 	}
 	if b.byID == nil {
 		b.byID = map[string]string{}
 	}
 	b.byID[id] = label
+	return true
 }
 
-// take returns id's label and forgets it. A tool that reported its result is over; the entry that
-// outlives it is the leak, and every caller reads a label exactly once — at the result.
+// take returns id's label and forgets it. Call takeKnown when presence is also lifecycle authority.
 func (b *boundedLabels) take(id string) string {
-	label := b.byID[id]
-	delete(b.byID, id)
+	label, _ := b.takeKnown(id)
 	return label
+}
+
+// takeKnown returns id's label, whether it was tracked, and forgets it. The presence bit lets an
+// adapter require exact start/end pairing instead of treating an unknown result as activity.
+func (b *boundedLabels) takeKnown(id string) (string, bool) {
+	label, tracked := b.byID[id]
+	if tracked {
+		delete(b.byID, id)
+	}
+	return label, tracked
 }
 
 // mark records id and reports whether it was new — the "show this item exactly once" seam for
@@ -656,11 +665,12 @@ func (d *streamDecoder) assistant(msg json.RawMessage) {
 			} else {
 				d.emit(d.streamNamedToolLine(glyph, displayName, label, outside))
 			}
-			d.tool.set(b.ID, strings.TrimSpace(displayName+" "+label))
 			// A tool the watchdog can supervise needs both halves: the name it is calling, and the
 			// id its result will arrive under. Missing either, the block is shown but suspends no
-			// deadline — an unpairable start would suspend idle with nothing able to resume it.
-			if b.ID != "" && b.Name != "" {
+			// deadline — an unpairable start would suspend idle with nothing able to resume it. The
+			// bounded label entry is also the end's exact pairing authority; past its cap, neither
+			// half reaches the watchdog.
+			if b.ID != "" && b.Name != "" && d.tool.set(b.ID, strings.TrimSpace(displayName+" "+label)) {
 				d.noteToolStart(b.ID)
 			}
 		}
@@ -711,12 +721,13 @@ func (d *streamDecoder) toolResult(msg json.RawMessage) {
 		if b.Type != "tool_result" {
 			continue
 		}
-		if b.ToolUseID != "" {
-			// Every ID-bearing result closes its tool; an anonymous one cannot be paired with the
-			// start it ends, so it stays display and never touches a deadline.
+		label, tracked := d.tool.takeKnown(b.ToolUseID)
+		if tracked {
+			// Only a result paired with an accepted named start closes watchdog lifecycle. Unknown,
+			// anonymous, unnamed-start and duplicate results may still render a real failure, but
+			// they cannot reset or move a deadline.
 			d.noteToolEnd(b.ToolUseID)
 		}
-		label := d.tool.take(b.ToolUseID) // the tool is over either way: only failures earn a line
 		if !b.IsError {
 			continue
 		}

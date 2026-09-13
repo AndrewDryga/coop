@@ -12,7 +12,8 @@
 
 - Claude image tool results now keep their matching watchdog lifecycle within a bounded,
   provider-specific stream envelope. Large base64 bodies remain hidden, while malformed or
-  over-limit events cannot close tools or manufacture activity.
+  over-limit events cannot close tools or manufacture activity. Unknown, unnamed-start, and
+  duplicate tool-result IDs also stay out of watchdog activity.
 
 - Gemini API-key login now reads the key without terminal echo, stores it per account in a
   Coop-owned host vault, and supplies only the selected account through the box environment.

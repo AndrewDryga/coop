@@ -3,7 +3,7 @@ name: loop-provider-watchdog
 description: built-in attempts always stream; the watchdog is ARMED by default (10m/30m/2h) and trusts only decoder events, and the box's own process group makes redirected loops handle stop signals themselves
 subsystem: loop
 sources: [internal/loop/watchdog.go, internal/loop/streamjson.go, internal/loop/streamjson_providers.go, internal/loop/loop.go, internal/loop/iteration.go, internal/loop/ratelimit.go, internal/agent/agent.go, internal/agent/grok.go, internal/box/run.go, internal/runtime/runtime.go]
-updated: 2026-08-10
+updated: 2026-09-13
 ---
 
 Every built-in loop/review/preflight attempt requests the provider's structured stream —
@@ -44,14 +44,18 @@ with three layers, in this order:
 1. **Semantic validity** — recognition alone is not enough; an event must carry the fields that
    make it mean something, or it produces no activity at all. Claude: an assistant turn needs a
    block with text/thinking/redacted-`data`/tool name, and a `tool_use` needs BOTH id and name to
-   open a tool; a `tool_result` needs its `tool_use_id`. Codex: a recognized item kind AND a
+   open a tool; a `tool_result` creates end activity only when its `tool_use_id` matches that
+   decoder's bounded accepted start. Unknown, unnamed-start, and duplicate results may still show
+   a real failure but cannot move a deadline. Codex: a recognized item kind AND a
    nonempty item id (that id is what every lifecycle event is keyed on). Gemini: nonempty
    `content` for an assistant delta, nonempty `tool_id` for tool_use/tool_result. Grok: nonempty
    `data` for text and thought. Empty-but-schema-valid envelopes were free deadline resets before
    2026-08-09.
 2. **Bounded state** — everything the attempt retains per provider-supplied id is capped:
    `maxOpenTools` (64) in the watchdog, `maxStreamTrackedIDs` (256) for decoder labels and
-   show-once markers, plus the pre-existing 1 MiB event / 64 KiB narration / 64 KiB tail bounds.
+   show-once markers, plus the shared 1 MiB event / 64 KiB narration / 64 KiB tail bounds. Claude
+   alone has a 24 MiB complete-event envelope because its native `toolUseResult` can duplicate a
+   supported base64 image; malformed or over-envelope bytes never become activity.
    Overflow is DROPPED, never evicted — evicting the oldest open tool would re-anchor the absolute
    tool cap to a younger one and sell an endless extension for one forged start per interval.
 3. **The attempt ceiling** — the honest admission that 1 and 2 cannot make a stream truthful. A
@@ -123,6 +127,8 @@ Traps the code doesn't obviously carry:
   an interrupted run stays `interrupted`, never a provider timeout.
 
 ## Changelog
+- 2026-09-13 — Claude result activity now requires an exact bounded accepted-start match;
+  corrected the documented event bound for native duplicated image results.
 - 2026-08-09 — pre-launch setup is now itself step-boundary cancelable (`ctxStep` in
   `internal/box/run.go`, one check between each of the four named phases, plus one at entry).
   Corrected the arming trap above, which had claimed canceling the box context does nothing until

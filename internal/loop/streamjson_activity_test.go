@@ -44,6 +44,35 @@ func TestClaudeStreamActivity(t *testing.T) {
 	}
 }
 
+func TestClaudeToolResultsOnlyEndAcceptedMatchingStarts(t *testing.T) {
+	var out, tail bytes.Buffer
+	rec := &activityRecorder{}
+	d := newStreamDecoder(&out, &tail, "claude", "", "")
+	lines := []string{
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"known","name":"Bash","input":{"command":"make check"}}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"still-open","name":"Read","input":{"file_path":"result.png"}}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"unnamed","input":{}}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"unknown","is_error":true,"content":"permission denied"}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"unnamed","content":"ignored"}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"known","content":"ok"}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"known","content":"duplicate"}]}}`,
+	}
+	feedActivityLines(t, d, rec, lines)
+	want := []string{"progress", "tool_start:known", "progress", "tool_start:still-open", "tool_end:known"}
+	if !slices.Equal(rec.events, want) {
+		t.Fatalf("Claude paired activity = %v, want %v", rec.events, want)
+	}
+	if !strings.Contains(out.String(), "permission denied") {
+		t.Fatalf("unknown-ID tool failure was hidden instead of merely withheld from activity:\n%s", out.String())
+	}
+	if _, tracked := d.tool.byID["still-open"]; !tracked {
+		t.Fatal("unrelated accepted tool was closed")
+	}
+	if _, tracked := d.tool.byID["unnamed"]; tracked {
+		t.Fatal("unnamed tool was tracked as an accepted lifecycle start")
+	}
+}
+
 func TestCodexStreamActivity(t *testing.T) {
 	var out, tail bytes.Buffer
 	rec := &activityRecorder{}
@@ -267,7 +296,7 @@ func TestClaudeLargeImageResultClosesOnlyItsMatchingTool(t *testing.T) {
 	}}
 	result := map[string]any{"type": "tool_result", "tool_use_id": "image-read", "content": []any{image}}
 	frame, err := json.Marshal(map[string]any{
-		"type": "user", "message": map[string]any{"content": []any{result}}, "tool_use_result": image,
+		"type": "user", "message": map[string]any{"content": []any{result}}, "toolUseResult": image,
 	})
 	if err != nil {
 		t.Fatal(err)
