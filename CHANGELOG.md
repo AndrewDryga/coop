@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Fork candidates now retain immutable review rounds instead of deleting the previous reviewed
+  snapshot after a descendant fix. Every replacement HEAD receives a fresh candidate-wide,
+  read-only signoff bound to its exact tree, task assignments and projection digests; interrupted
+  reviews and partial publication resume without transferring old approval. Candidate and land
+  bookkeeping stay fenced under the fork lifecycle lock, and `coop fork merge --all` now replays
+  zero-ahead landing work while explicitly skipping only genuinely empty forks.
+
 - Final review now survives loop pauses, task limits and process death. Coop retains the exact
   host-accepted task generations and their original signoff/verification contract, resumes that
   debt before unrelated work, then continues the current queue. Signing rewrites are recovered

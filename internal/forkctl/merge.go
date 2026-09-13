@@ -278,6 +278,7 @@ func fetchForkForMerge(repo, ws, name string) error {
 
 type mergeOutcome struct {
 	landed   bool
+	skipped  bool
 	approval *landedFork
 }
 
@@ -481,6 +482,13 @@ func destroyLandedFork(rt runtime.Runtime, repo, name string, approval *landedFo
 // did NOT happen, while landed=true WITH an error means the commits are in the parent but the queue
 // reconciliation below couldn't be done — the caller reports it and stops, never rolls the land back.
 func (c *Control) mergeOne(repo, img, name string, force bool) (outcome mergeOutcome, retErr error) {
+	return c.mergeOneMode(repo, img, name, force, false)
+}
+
+// mergeOneMode keeps the batch-only empty decision inside the same lifecycle lock as land-journal
+// replay and task authority inspection. Single-fork merge retains its historical no-op landing
+// approval, which is also used by cleanup validation.
+func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (outcome mergeOutcome, retErr error) {
 	ws := forkspace.Workspace(repo, name)
 	if !pathExists(ws) {
 		return mergeOutcome{}, fmt.Errorf("no such fork: %s", name)
@@ -532,11 +540,24 @@ func (c *Control) mergeOne(repo, img, name string, force bool) (outcome mergeOut
 		if intent, ok, err := readLandIntent(repo, identity); err != nil {
 			return mergeOutcome{}, err
 		} else if ok {
+			ui.Note("Finishing interrupted merge bookkeeping for %s.", name)
 			finished, landed, err := c.advanceTaskLand(repo, ws, name, img, intent)
 			return finishLand(landed, finished.RebasedHead, err)
 		}
 	}
 	ref := "review/" + name
+	if skipEmpty && gitOut(repo, "rev-list", "--count", "HEAD.."+ref) == "0" {
+		if !hasGeneration {
+			return mergeOutcome{skipped: true}, nil
+		}
+		summary, err := tasks.ReadForkTaskStateSummary(repo, identity)
+		if err != nil {
+			return mergeOutcome{}, err
+		}
+		if !summary.Active() {
+			return mergeOutcome{skipped: true}, nil
+		}
+	}
 	if warns := PolicyScan(repo, ref); len(warns) > 0 && !force {
 		return mergeOutcome{}, fmt.Errorf("%s: policy flagged risky changes:\n%s\n(use --force to merge anyway)", name, indent(strings.Join(warns, "\n")))
 	}
@@ -851,6 +872,10 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	}
 	result, err := c.mergeOne(repo, img, name, force)
 	defer result.approval.close()
+	if result.skipped {
+		ui.Note("Skipped %s — no new commits or pending landing.", name)
+		return 0, nil
+	}
 	if result.landed {
 		// Say it BEFORE any error: the commits are in the parent branch either way.
 		ui.Note("")
@@ -927,7 +952,7 @@ func (c *Control) forkMergeAll(repo string, names []string, img string, force, y
 			eligible = append(eligible, n)
 		}
 	}
-	ui.Note("Merge %s into %s", ui.Count(len(eligible), "fork"), gitBranch(repo))
+	ui.Note("Process %s for merge into %s", ui.Count(len(eligible), "fork"), gitBranch(repo))
 	for _, n := range eligible {
 		ui.Note("  %s", n)
 	}
@@ -939,16 +964,17 @@ func (c *Control) forkMergeAll(repo string, names []string, img string, force, y
 		}
 	}
 	ui.Note("")
-	ui.Note("After merging:")
-	ui.Note("  - The %s fork %s will be deleted.", ui.List(eligible, "and"), pluralFolder(len(eligible)))
+	ui.Note("After processing:")
+	ui.Note("  - Each fork that lands will be deleted.")
+	ui.Note("  - A fork with no new commits or pending landing will be kept.")
 	if anyForkHasServices(repo, eligible) {
-		ui.Note("  - Their service containers, Docker volumes, and their stored data will be deleted.")
+		ui.Note("  - Service containers, Docker volumes, and stored data for forks that land will be deleted.")
 	}
 	ui.Note("")
 	// Landing every fork also DELETES each one — and unlike the single-fork path (which prompts per
 	// fork), this runs unattended. Ask once before destroying anything; --yes (already required for a
 	// non-interactive run) skips the prompt.
-	if err := ui.DestroyGate("Merge and delete these forks", yes); err != nil {
+	if err := ui.DestroyGate("Merge and delete forks that land", yes); err != nil {
 		return 2, ForkCancelled(err)
 	}
 	ui.Note("")
@@ -958,13 +984,12 @@ func (c *Control) forkMergeAll(repo string, names []string, img string, force, y
 			continue
 		}
 		ws := forkspace.Workspace(repo, n)
-		if err := fetchForkForMerge(repo, ws, n); err != nil {
-			return 1, err
+		result, err := c.mergeOneMode(repo, img, n, force, true)
+		if result.skipped {
+			ui.Note("Skipped %s — no new commits or pending landing.", n)
+			result.approval.close()
+			continue
 		}
-		if gitOut(repo, "rev-list", "--count", "HEAD..review/"+n) == "0" {
-			continue // nothing to land
-		}
-		result, err := c.mergeOne(repo, img, n, force)
 		if result.landed {
 			ui.OK("Merged fork %s into %s", n, gitBranch(repo))
 			// Keep the fork when its worktree still holds uncommitted work (an interrupted iteration),
@@ -991,6 +1016,9 @@ func (c *Control) forkMergeAll(repo string, names []string, img string, force, y
 			ui.Failure("Could not merge fork "+n, cause)
 			return 1, ui.Reported(err)
 		}
+	}
+	if len(landed) == 0 {
+		return 0, nil
 	}
 	ui.Note("")
 	ui.OK("Merged %s", ui.Count(len(landed), "fork"))

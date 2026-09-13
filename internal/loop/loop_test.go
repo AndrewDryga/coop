@@ -148,6 +148,36 @@ func TestLoopRejectsActionableDuplicateIDsAcrossQueues(t *testing.T) {
 	}
 }
 
+func TestCandidateReviewDoesNotReconcileTaskLifecycleBeforeLaunch(t *testing.T) {
+	repo := t.TempDir()
+	authorityRoot := t.TempDir()
+	t.Setenv(tasks.TestLeaseAuthorityRootEnv, authorityRoot)
+	id := "candidate-subject"
+	done := filepath.Join(repo, tasksRoot, tasks.StateDone, id)
+	writeTaskFile(t, filepath.Join(done, "task.md"), "# candidate subject\n")
+	writeTaskFile(t, filepath.Join(done, "log.md"), "# log\n")
+	writeTaskFile(t, filepath.Join(done, "state.md"), "# state\n")
+	key, err := tasks.LeaseAuthorityKey(filepath.Join(repo, tasksRoot), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFile(t, filepath.Join(authorityRoot, key+".json"),
+		"{\"version\":1,\"heartbeat_at\":\"2026-08-25T00:00:00Z\"}\n")
+	c := New(&config.Config{RepoOverride: repo}, runtime.Runtime{Name: "false"}, "test", Host{})
+	code, err := c.Run(RunSpec{
+		Repo: repo, Image: "no-such-image", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard,
+		CandidateReview: &CandidateReviewSpec{
+			CandidateID: "frozen-candidate", Head: "head", Tree: "tree", Round: 1, TaskIDs: []string{id},
+		},
+	})
+	if code != -1 || err == nil || !strings.Contains(err.Error(), "not built") {
+		t.Fatalf("candidate review prelaunch = code %d err %v", code, err)
+	}
+	if !pathExists(done) || pathExists(filepath.Join(repo, tasksRoot, tasks.StateInProgress, id)) {
+		t.Fatal("candidate-only review reconciled task lifecycle before its read-only launch")
+	}
+}
+
 // TestLoopAcceptsFolderQueue is the regression guard for the loop's queue-existence check:
 // it used fileExists, which is false for a directory, so it rejected every folder queue with
 // "no task file found" before running a single iteration. The guard must accept a real

@@ -42,6 +42,32 @@ func TestReviewReopenReceipt(t *testing.T) {
 	}
 }
 
+func TestCandidateReviewVerdictRequiresExactAllSubjectEvidence(t *testing.T) {
+	pass := "AUDIT EVIDENCE — alpha — gate: go test ./... — findings: none\n" +
+		"AUDIT EVIDENCE — beta — gate: go test ./... — findings: none (green)\n" +
+		"REVIEW COMPLETE — PASS — reopened: none\n"
+	if findings, err := candidateReviewVerdict([]string{"alpha", "beta"}, pass); err != nil || len(findings) != 0 {
+		t.Fatalf("candidate pass = %v, %v", findings, err)
+	}
+	fail := "AUDIT EVIDENCE — alpha — gate: go test ./... — findings: race remains\n" +
+		"AUDIT EVIDENCE — beta — gate: go test ./... — findings: none\n" +
+		"REVIEW COMPLETE — FAIL — reopened: alpha\n"
+	if findings, err := candidateReviewVerdict([]string{"alpha", "beta"}, fail); err != nil || !slices.Equal(findings, []string{"alpha"}) {
+		t.Fatalf("candidate findings = %v, %v", findings, err)
+	}
+	for name, output := range map[string]string{
+		"missing subject":  "AUDIT EVIDENCE — alpha — gate: go test ./... — findings: none\nREVIEW COMPLETE — PASS — reopened: none\n",
+		"foreign reopen":   "AUDIT EVIDENCE — alpha — gate: x — findings: none\nAUDIT EVIDENCE — beta — gate: x — findings: none\nREVIEW COMPLETE — FAIL — reopened: other\n",
+		"finding mismatch": "AUDIT EVIDENCE — alpha — gate: x — findings: unresolved\nAUDIT EVIDENCE — beta — gate: x — findings: none\nREVIEW COMPLETE — PASS — reopened: none\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := candidateReviewVerdict([]string{"alpha", "beta"}, output); err == nil || !errors.Is(err, errReviewVerdictMalformed) {
+				t.Fatalf("malformed candidate verdict = %v", err)
+			}
+		})
+	}
+}
+
 func reviewVerdictFixture(t *testing.T, ids ...string) (string, string, map[string]taskItem) {
 	t.Helper()
 	repo, run := gitrepo.New(t)

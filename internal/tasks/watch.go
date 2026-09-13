@@ -171,7 +171,8 @@ func forkHasVisibleActivity(fork ProjectForkSnapshot) bool {
 	// A reservation protects a persistent remote workspace; by itself it says nothing about
 	// current task work and stays available in the JSON snapshot instead of filling the board.
 	return fork.Starting || fork.DetachedRunning || fork.CleanupPending || fork.Assignments > 0 ||
-		fork.Candidate || fork.PendingLand
+		fork.Candidate || fork.PendingLand || fork.CandidatePhase == forkCandidateSuperseding ||
+		fork.CandidatePhase == forkCandidateReviewing || fork.CandidatePhase == forkCandidatePublishing
 }
 
 // watchExitFooter closes the live board. It is NOT part of the frame renderer: only the interactive
@@ -204,8 +205,14 @@ func tasksWatchFrameWithSnapshot(sources []watchSource, merged []mergedTask, sna
 			state = "cleanup-pending"
 		case fork.PendingLand:
 			state = "landing"
+		case fork.CandidatePhase == forkCandidateSuperseding:
+			state = fmt.Sprintf("review round %d pending", fork.CandidateRound)
+		case fork.CandidatePhase == forkCandidateReviewing:
+			state = fmt.Sprintf("reviewing round %d", fork.CandidateRound)
+		case fork.CandidatePhase == forkCandidatePublishing:
+			state = fmt.Sprintf("publishing round %d", fork.CandidateRound)
 		case fork.Candidate:
-			state = "ready"
+			state = fmt.Sprintf("ready · round %d", fork.CandidateRound)
 		case fork.Assignments > 0:
 			state = fmt.Sprintf("%d assignment(s)", fork.Assignments)
 		}

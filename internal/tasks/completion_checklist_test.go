@@ -169,7 +169,7 @@ func TestForkChecklistCheckedAgainAtPublicationAndLanding(t *testing.T) {
 			var candidate ForkCandidate
 			if stage == "landing" {
 				var err error
-				candidate, _, err = PublishForkCandidate(repo, assignment.Owner.Fork, strings.Repeat("b", 40), strings.Repeat("c", 40))
+				candidate, _, err = reviewAndPublishForkCandidate(t, repo, assignment.Owner.Fork, strings.Repeat("b", 40), strings.Repeat("c", 40))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -199,7 +199,7 @@ func TestForkChecklistCheckedAgainAtPublicationAndLanding(t *testing.T) {
 				t.Fatal(err)
 			}
 			if stage == "publication" {
-				_, _, err = PublishForkCandidate(repo, assignment.Owner.Fork, strings.Repeat("b", 40), strings.Repeat("c", 40))
+				_, _, err = reviewAndPublishForkCandidate(t, repo, assignment.Owner.Fork, strings.Repeat("b", 40), strings.Repeat("c", 40))
 			} else {
 				err = FinalizeForkCandidateTask(repo, candidate, candidate.Assignments[0])
 			}

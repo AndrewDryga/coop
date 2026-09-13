@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -1032,6 +1033,14 @@ func readOnlySessionOutputMountArgs(workspace string) ([]string, error) {
 	return []string{"-v", root + ":" + root + ":rw"}, nil
 }
 
+func forkLoopContinueCommand(name, presetName string, target agents.Target) string {
+	continueArg := target.String()
+	if presetName != "" {
+		continueArg = presetName
+	}
+	return fmt.Sprintf("coop fork %s %s --loop", shellWord(name), shellWord(continueArg))
+}
+
 // runForkLoop schedules against the parent project's canonical queue and materializes only its one
 // assigned task inside the fork. The projection runs through the ordinary loop lifecycle, while
 // canonical completion remains host-owned until an exact reviewed generation candidate lands.
@@ -1097,6 +1106,15 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 	if err != nil {
 		return -1, fmt.Errorf("fork %s: %w", name, err)
 	}
+	continueTarget := agents.Target{Provider: agent, Model: model, Effort: effort}
+	if credential != "" {
+		continueTarget.Accounts = []string{credential}
+	}
+	presetName := ""
+	if a.preset != nil && a.preset.Name != "" {
+		presetName = a.preset.Name
+	}
+	continueCmd := forkLoopContinueCommand(name, presetName, continueTarget)
 	for {
 		head := gitOut(ws, "rev-parse", "HEAD")
 		tree := gitOut(ws, "rev-parse", "HEAD^{tree}")
@@ -1111,7 +1129,8 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 			if retired, err := tasks.RetireStaleForkCandidate(repo, identity, head); err != nil {
 				return 1, err
 			} else if retired {
-				ui.Note("Fork %s changed after its review. It needs another review before merging.", name)
+				ui.Note("Changes in %s need another review.", name)
+				ui.Note("The previous reviewed version has been kept in history.")
 				continue
 			}
 			if _, _, err := tasks.PublishForkCandidate(repo, identity, head, tree); err != nil {
@@ -1156,11 +1175,52 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 				ui.Note("Fork %s is waiting for your decision.", name)
 				ui.Note("")
 				ui.Note("  Answer it: coop tasks decisions -i")
-				ui.Note("  Continue:  coop fork %s %s --loop", name, agent)
+				ui.Note("  Continue:  %s", continueCmd)
 				return 0, nil
 			}
 			head = gitOut(ws, "rev-parse", "HEAD")
 			tree = gitOut(ws, "rev-parse", "HEAD^{tree}")
+			review, exists, reviewErr := tasks.BeginForkCandidateReview(repo, identity, head, tree)
+			if reviewErr != nil {
+				return 1, reviewErr
+			}
+			if !exists {
+				if !detached {
+					forkctl.ForkNextSteps(name)
+				}
+				return 0, nil
+			}
+			if review.Required {
+				queueRels := make([]string, 0, len(review.Candidate.Assignments))
+				taskIDs := make([]string, 0, len(review.Candidate.Assignments))
+				for _, candidateAssignment := range review.Candidate.Assignments {
+					queueRel, err := tasks.ProjectionQueueRel(ws, candidateAssignment.Index.Projection)
+					if err != nil {
+						return 1, err
+					}
+					queueRels = append(queueRels, queueRel)
+					taskIDs = append(taskIDs, candidateAssignment.Index.Task.Ref.ID)
+				}
+				sort.Strings(taskIDs)
+				code, runErr := a.loopctl().Run(loop.RunSpec{
+					Repo: ws, Image: img, Agent: agent,
+					ForkName: name, ForkOwner: forkctl.ForkContainerOwner(repo, name, identity.Generation),
+					ForkGeneration: string(identity.Generation), ForkWorker: detached,
+					ActivityRepo: repo, ActivityKind: forkspace.ExecutionForkLoop,
+					Rotation: rot, Queues: queueRels, Preset: a.preset, Peers: peers, Sink: sink,
+					Continue: continueCmd, Network: network.admission(),
+					CandidateReview: &loop.CandidateReviewSpec{
+						CandidateID: review.Candidate.ID, Head: review.Candidate.Head, Tree: review.Candidate.Tree,
+						Round: review.Round, PreviousRound: review.PreviousRound, TaskIDs: taskIDs,
+					},
+				})
+				if runErr != nil || code != 0 {
+					return code, runErr
+				}
+				if err := tasks.AuthorizeForkCandidateReview(repo, identity, review.Candidate.ID); err != nil {
+					return 1, fmt.Errorf("record candidate review: %w", err)
+				}
+			}
 			if _, published, err := tasks.PublishForkCandidate(repo, identity, head, tree); err != nil {
 				return 1, err
 			} else if published {
@@ -1207,7 +1267,8 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 			ActivityRepo: repo, ActivityKind: forkspace.ExecutionForkLoop, ActivityTask: activityTask,
 			ProposalOutbox: proposalRel,
 			Rotation:       rot, Queues: []string{queueRel}, Preset: a.preset, Peers: peers, Sink: sink,
-			Network: network.admission(),
+			Continue: continueCmd,
+			Network:  network.admission(),
 		})
 		if runErr != nil || code != 0 {
 			// A provider or final-signoff failure is never review authority. If the execution-local

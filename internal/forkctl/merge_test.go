@@ -371,7 +371,15 @@ func prepareForkTaskCandidate(t *testing.T, name string) (string, string, string
 	if _, err := tasks.AcceptForkProjection(repo, root, "canonical-task", assignment.Owner); err != nil {
 		t.Fatal(err)
 	}
-	if _, published, err := tasks.PublishForkCandidate(repo, identity, gitOut(ws, "rev-parse", "HEAD"), gitOut(ws, "rev-parse", "HEAD^{tree}")); err != nil || !published {
+	head, tree := gitOut(ws, "rev-parse", "HEAD"), gitOut(ws, "rev-parse", "HEAD^{tree}")
+	review, exists, err := tasks.BeginForkCandidateReview(repo, identity, head, tree)
+	if err != nil || !exists || !review.Required {
+		t.Fatalf("begin task candidate review: review=%+v exists=%v err=%v", review, exists, err)
+	}
+	if err := tasks.AuthorizeForkCandidateReview(repo, identity, review.Candidate.ID); err != nil {
+		t.Fatalf("authorize task candidate review: %v", err)
+	}
+	if _, published, err := tasks.PublishForkCandidate(repo, identity, head, tree); err != nil || !published {
 		t.Fatalf("publish task candidate: published=%v err=%v", published, err)
 	}
 	c := &Control{cfg: &config.Config{ConfigDir: t.TempDir()}}
@@ -1363,7 +1371,14 @@ func TestTaskCandidateCanBeFixedAndRemergedAfterARedGate(t *testing.T) {
 		t.Fatalf("second retirement = (%v, %v)", retired, err)
 	}
 
-	// The next signoff republishes the fixed HEAD, and a green gate lands it.
+	// The next exact candidate-wide signoff authorizes round two, and a green gate lands it.
+	review, exists, err := tasks.BeginForkCandidateReview(repo, identity, fixedHead, fixedTree)
+	if err != nil || !exists || !review.Required || review.Round != 2 || review.PreviousRound != 1 {
+		t.Fatalf("begin fixed review = %+v, exists=%v err=%v", review, exists, err)
+	}
+	if err := tasks.AuthorizeForkCandidateReview(repo, identity, review.Candidate.ID); err != nil {
+		t.Fatalf("authorize fixed review: %v", err)
+	}
 	if _, published, err := tasks.PublishForkCandidate(repo, identity, fixedHead, fixedTree); err != nil || !published {
 		t.Fatalf("republish after the fix: published=%v err=%v", published, err)
 	}
@@ -1376,5 +1391,100 @@ func TestTaskCandidateCanBeFixedAndRemergedAfterARedGate(t *testing.T) {
 	}
 	if item, ok := mustCurrentTask(t, root, "canonical-task"); !ok || item.State != tasks.StateDone {
 		t.Fatalf("canonical task after the fixed merge = %+v, ok=%v", item, ok)
+	}
+}
+
+func TestForkMergeAllReplaysZeroAheadLandBookkeeping(t *testing.T) {
+	repo, ws, root, identity, c := prepareForkTaskCandidate(t, "zero-ahead-replay")
+	c.afterLandFastForward = func() error { return errors.New("injected crash after fast-forward") }
+	result, err := c.mergeOne(repo, "", identity.Name, false)
+	result.approval.close()
+	if err == nil || !result.landed {
+		t.Fatalf("injected land interruption = %+v, %v", result, err)
+	}
+	if gitOut(repo, "rev-list", "--count", "HEAD..review/"+identity.Name) != "0" {
+		t.Fatal("fixture is not zero commits ahead after the interrupted fast-forward")
+	}
+	if _, pending, err := readLandIntent(repo, identity); err != nil || !pending {
+		t.Fatalf("land journal after interruption = %v, %v", pending, err)
+	}
+	c.afterLandFastForward = nil
+	var lines []string
+	ui.SetLiveSink(func(line string) { lines = append(lines, line) })
+	t.Cleanup(func() { ui.SetLiveSink(nil) })
+	code, err := c.forkMergeAll(repo, []string{identity.Name}, "", false, true)
+	if err != nil || code != 0 {
+		t.Fatalf("merge-all replay = %d, %v", code, err)
+	}
+	if item, ok := mustCurrentTask(t, root, "canonical-task"); !ok || item.State != tasks.StateDone {
+		t.Fatalf("canonical task after replay = %+v, %v", item, ok)
+	}
+	if pathExists(ws) {
+		t.Fatal("clean replayed fork was not removed")
+	}
+	if _, pending, err := readLandIntent(repo, identity); err != nil || pending {
+		t.Fatalf("land journal after replay = %v, %v", pending, err)
+	}
+	output := strings.Join(lines, "\n")
+	if !strings.Contains(output, "Finishing interrupted merge bookkeeping for "+identity.Name+".") {
+		t.Fatalf("pending bookkeeping was not announced:\n%s", output)
+	}
+	if strings.Contains(output, "Skipped "+identity.Name+" — no new commits or pending landing.") {
+		t.Fatalf("pending bookkeeping was reported as empty:\n%s", strings.Join(lines, "\n"))
+	}
+	if _, err := os.Stat(filepath.Join(forkspace.StateDir(repo), "candidate-history", identity.Name+"."+string(identity.Generation))); err != nil {
+		t.Fatalf("candidate history was lost after cleanup: %v", err)
+	}
+}
+
+func TestForkMergeAllFinalizesZeroAheadCandidate(t *testing.T) {
+	repo, ws, root, identity, c := prepareForkTaskCandidate(t, "zero-ahead-candidate")
+	if err := gitFetchInto(repo, ws, identity.Name); err != nil {
+		t.Fatal(err)
+	}
+	if err := gitRun(repo, "merge", "--ff-only", "review/"+identity.Name); err != nil {
+		t.Fatal(err)
+	}
+	if gitOut(repo, "rev-list", "--count", "HEAD..review/"+identity.Name) != "0" {
+		t.Fatal("fixture is not zero commits ahead after the external fast-forward")
+	}
+	if _, pending, err := readLandIntent(repo, identity); err != nil || pending {
+		t.Fatalf("candidate-only fixture has land journal = %v, %v", pending, err)
+	}
+	code, err := c.forkMergeAll(repo, []string{identity.Name}, "", false, true)
+	if err != nil || code != 0 {
+		t.Fatalf("merge-all candidate finalization = %d, %v", code, err)
+	}
+	if item, ok := mustCurrentTask(t, root, "canonical-task"); !ok || item.State != tasks.StateDone {
+		t.Fatalf("canonical task after candidate finalization = %+v, %v", item, ok)
+	}
+	if pathExists(ws) {
+		t.Fatal("clean zero-ahead candidate fork was not removed")
+	}
+	if _, pending, err := readLandIntent(repo, identity); err != nil || pending {
+		t.Fatalf("candidate finalization land journal = %v, %v", pending, err)
+	}
+}
+
+func TestForkMergeAllSkipsOnlyGenuinelyEmptyFork(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := forkspace.Setup(repo, "empty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &Control{cfg: &config.Config{}}
+	var lines []string
+	ui.SetLiveSink(func(line string) { lines = append(lines, line) })
+	t.Cleanup(func() { ui.SetLiveSink(nil) })
+	code, err := c.forkMergeAll(repo, []string{"empty"}, "", false, true)
+	if err != nil || code != 0 {
+		t.Fatalf("empty merge-all = %d, %v", code, err)
+	}
+	if !pathExists(ws) {
+		t.Fatal("genuinely empty fork was deleted")
+	}
+	if got := strings.Join(lines, "\n"); !strings.Contains(got, "Skipped empty — no new commits or pending landing.") ||
+		strings.Contains(got, "Merged 0 forks") || strings.Contains(got, "empty fork will be deleted") {
+		t.Fatalf("empty skip output:\n%s", got)
 	}
 }

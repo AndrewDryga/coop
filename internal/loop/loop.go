@@ -208,12 +208,15 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// MCPFile is the one switch the box snapshot boundary keys off; the loop owns this process, so
 	// nothing else reads the config after it. Caveat: a verify: pass whose e2e
 	// depends on MCP tooling needs mcp left on — repo-local e2e via bash is unaffected.
-	if err := tasks.ReconcileInterruptedCompletions(hosts); err != nil {
-		return 1, fmt.Errorf("recover interrupted completion: %w", err)
-	}
-	recoveredReviewCompletions, err := tasks.ReconcileCompletionWindowsWithActivity(hosts)
-	if err != nil {
-		return 1, fmt.Errorf("recover interrupted completion window: %w", err)
+	var recoveredReviewCompletions []string
+	if spec.CandidateReview == nil {
+		if err := tasks.ReconcileInterruptedCompletions(hosts); err != nil {
+			return 1, fmt.Errorf("recover interrupted completion: %w", err)
+		}
+		recoveredReviewCompletions, err = tasks.ReconcileCompletionWindowsWithActivity(hosts)
+		if err != nil {
+			return 1, fmt.Errorf("recover interrupted completion window: %w", err)
+		}
 	}
 	pendingReview, err := tasks.LoadPendingReviews(repo, hosts)
 	if err != nil {
@@ -244,6 +247,25 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	if !resumingCohort {
 		custom = slices.Clone(currentCustom)
 	}
+	if spec.CandidateReview != nil {
+		if len(spec.ReviewTasks) > 0 || resumingCohort {
+			return 1, errors.New("fork candidate review cannot share generic pending-review state")
+		}
+		if len(currentCustom) > 0 {
+			return 1, errors.New("fork candidate review requires the built-in loop reviewer; remove work.command")
+		}
+		ids := spec.CandidateReview.TaskIDs
+		if spec.CandidateReview.CandidateID == "" || spec.CandidateReview.Head == "" ||
+			spec.CandidateReview.Tree == "" || spec.CandidateReview.Round == 0 || len(ids) == 0 ||
+			!slices.IsSorted(ids) || slices.Contains(ids, "") {
+			return 1, errors.New("invalid fork candidate review specification")
+		}
+		for i := 1; i < len(ids); i++ {
+			if ids[i] == ids[i-1] {
+				return 1, errors.New("fork candidate review has duplicate task subjects")
+			}
+		}
+	}
 	if len(spec.ReviewTasks) > 0 && len(currentCustom) > 0 {
 		return 1, errors.New("--review-task requires the built-in loop review; remove work.command or omit the import")
 	}
@@ -265,7 +287,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		if err != nil {
 			return 1, err
 		}
-		if cf.Todo+cf.Doing == 0 && len(spec.ReviewTasks) == 0 && len(pendingReview.Subjects) == 0 {
+		if cf.Todo+cf.Doing == 0 && len(spec.ReviewTasks) == 0 && len(pendingReview.Subjects) == 0 && spec.CandidateReview == nil {
 			if preflightBuiltinRan {
 				printPreflight(hosts, builtinResult)
 			}
@@ -433,6 +455,35 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	stopAwake, awake := armKeepAwake(c.cfg)
 	defer stopAwake()
 	printLoopPreparation(preparation, nudges, awake)
+	if spec.CandidateReview != nil {
+		review := *spec.CandidateReview
+		ui.Note("")
+		if review.PreviousRound > 0 {
+			ui.Note("Review round %d supersedes round %d.", review.Round, review.PreviousRound)
+		} else {
+			ui.Note("Review round %d covers the complete fork candidate.", review.Round)
+		}
+		ui.Note("Reviewer · %s · %s", cleanDiagnosticLine(agents.DisplayTarget(signoffRot.Active().String())), ui.Count(len(review.TaskIDs), "task"))
+		prompt := forkCandidateReviewPrompt(repo, queues, review, lc.Signoff.Prompt)
+		observe := func(run reviewRunResult, start time.Time, headBefore string) {
+			c.recordStage(repo, runid, "candidate-review", run.outcome, run.target, start, run.exit, run.retries, len(run.reopened), headBefore, hosts, nil, nil, run.usage)
+		}
+		run, reviewErr := c.runCandidateReviewVerdict(iterCtx, repo, img, signoffRot, forkName, prompt,
+			reviewActivity("candidate review", review.TaskIDs), iterCmd, hosts, review.TaskIDs, sink, peers, wake, observe)
+		if errors.Is(reviewErr, errReviewInterrupted) {
+			ui.Failure("Candidate review interrupted", "No review authority was recorded.", [2]string{"Continue:", continueCmd})
+			return LoopInterruptedExitCode, ui.Reported(reviewErr)
+		}
+		if reviewErr != nil {
+			ui.Failure("Candidate review did not pass", reviewErr.Error(), [2]string{"Continue:", continueCmd})
+			return 1, ui.Reported(reviewErr)
+		}
+		if len(run.reopened) != 0 {
+			return 1, errors.New("candidate review returned unresolved findings without an error")
+		}
+		ui.OK("Candidate review round %d passed", review.Round)
+		return 0, nil
+	}
 
 	// Pre-flight: one best-effort housekeeping pass before working the queue. The built-in job —
 	// return every blocked task whose decision.md now has a filled-in Resolution to todo — is

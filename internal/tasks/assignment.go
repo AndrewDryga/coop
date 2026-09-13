@@ -152,12 +152,13 @@ func AssignForkTask(hosts []string, request ForkAssignmentRequest) (ForkAssignme
 	if err != nil {
 		return ForkAssignment{}, err
 	}
-	// A published generation candidate freezes the reviewed HEAD and its exact assignment set.
-	// Re-entry may finish a partial ready publication in PublishForkCandidate, but it may not claim
-	// another task and silently make that immutable candidate incomplete.
-	if _, ready, err := ReadForkCandidate(request.AuthorityRepo, request.Fork); err != nil {
+	// Any candidate lifecycle record freezes the generation's assignment set. Transitional
+	// reviewing/publication state is deliberately non-landable, but it is still live authority and
+	// may not be mistaken for permission to claim another task. Terminal history also closes this
+	// generation; a kept landed workspace is evidence, not a fresh scheduler.
+	if _, exists, err := ReadForkCandidateRoundStatus(request.AuthorityRepo, request.Fork); err != nil {
 		return ForkAssignment{}, err
-	} else if ready {
+	} else if exists {
 		return ForkAssignment{Counts: counts, Outcome: ForkAssignmentExecutorDrained}, nil
 	}
 	for attempt := 0; attempt < maxLeaseRescans; attempt++ {

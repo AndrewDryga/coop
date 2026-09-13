@@ -94,6 +94,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [fork-review-scratch-two-copies](fork-review-scratch-two-copies.md) — forkctl and sessionsvc keep separate review-scratch clones on purpose: the same 18-line scaffold under opposite anchoring contracts (live HEAD preview vs verified captured intent)
 - [fork-lifecycle-state-file](fork-lifecycle-state-file.md) — one generation-bound owner-v2 file holds four fork lifecycle states; unsupported formats stay held and only pid+start-token — never file age — may decide a current owner is gone
 - [fork-lifecycle-test-barriers](fork-lifecycle-test-barriers.md) — lifecycle race tests observe command lock entry after preflight, never infer it from a fixed delay
+- [fork-candidate-review-rounds](fork-candidate-review-rounds.md) — immutable reviewed fork snapshots, the replayable current manifest, fresh candidate-wide signoff, and zero-ahead merge bookkeeping
 - [acp-preset-owns-toolbar](acp-preset-owns-toolbar.md) — active ACP presets own the whole lead target and refuse stale Provider/Account editor replays
 - [acp-auth-is-provider-account-scoped](acp-auth-is-provider-account-scoped.md) — initialize capability truth and successful authentication belong to one provider account
 - [acp-scripted-e2e](acp-scripted-e2e.md) — test the real ACP supervisor/control/proxy path with a scripted runtime and isolated state

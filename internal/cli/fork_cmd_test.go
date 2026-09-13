@@ -1184,6 +1184,20 @@ func TestParseForkCreateLoopFlags(t *testing.T) {
 	}
 }
 
+func TestForkLoopContinueCommandUsesSelectedTargetOrPreset(t *testing.T) {
+	target := agents.Target{Provider: "codex", Model: "gpt-5.6-terra", Effort: "xhigh", Accounts: []string{"work"}}
+	for _, tc := range []struct {
+		name, preset, want string
+	}{
+		{name: "api-fix", want: "coop fork api-fix codex:gpt-5.6-terra/xhigh@work --loop"},
+		{name: "api-fix", preset: "frontier", want: "coop fork api-fix frontier --loop"},
+	} {
+		if got := forkLoopContinueCommand(tc.name, tc.preset, target); got != tc.want {
+			t.Errorf("forkLoopContinueCommand(%q, %q) = %q, want %q", tc.name, tc.preset, got, tc.want)
+		}
+	}
+}
+
 func testDetachedReservationArg(t *testing.T) string {
 	t.Helper()
 	data, err := (forkspace.WorkerState{Claim: true, Launched: true, Pid: 42, Token: "linux-proc-v1:boot:123"}).Marshal()

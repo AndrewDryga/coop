@@ -254,7 +254,7 @@ func TestForkCandidateRequiresProposalOutboxDrained(t *testing.T) {
 	if _, err := ImportForkProposals(repo, assignment.Owner.Fork); err != nil {
 		t.Fatal(err)
 	}
-	if _, published, err := PublishForkCandidate(repo, assignment.Owner.Fork, strings.Repeat("b", 40), strings.Repeat("c", 40)); err != nil || !published {
+	if _, published, err := reviewAndPublishForkCandidate(t, repo, assignment.Owner.Fork, strings.Repeat("b", 40), strings.Repeat("c", 40)); err != nil || !published {
 		t.Fatalf("candidate after proposal import = published %v err %v", published, err)
 	}
 }

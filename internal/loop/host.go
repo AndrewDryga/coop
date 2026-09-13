@@ -171,9 +171,24 @@ type RunSpec struct {
 	Preflight   bool     // run the pre-flight probe before the first work iteration
 	MaxTasks    int      // stop after this many settled tasks, 0 for the whole queue
 	ReviewTasks []string // explicitly import these receipt-valid archived tasks into final review
+	// CandidateReview runs one read-only, exact fork-generation signoff over the supplied queue
+	// projections and returns only after a strict all-subject receipt. It never imports generic
+	// pending-review authority or reopens a task; the caller durably authorizes the candidate ID.
+	CandidateReview *CandidateReviewSpec
 
 	// Network is this launch's --egress/--allow-domain/--egress-rules. It is
 	// HOST-side input, resolved once at the start of the run: every iteration,
 	// review and pre-flight box then launches under the same frozen policy.
 	Network box.NetworkAdmission
+}
+
+// CandidateReviewSpec binds a provider review to the host-frozen candidate snapshot. The task IDs
+// name the exact projection archives visible through RunSpec.Queues.
+type CandidateReviewSpec struct {
+	CandidateID   string
+	Head          string
+	Tree          string
+	Round         uint64
+	PreviousRound uint64
+	TaskIDs       []string
 }

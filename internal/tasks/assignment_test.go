@@ -12,6 +12,34 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
+func reviewAndPublishForkCandidate(t *testing.T, repo string, identity forkspace.Identity, head, tree string) (ForkCandidate, bool, error) {
+	t.Helper()
+	review, exists, err := BeginForkCandidateReview(repo, identity, head, tree)
+	if err != nil || !exists {
+		return ForkCandidate{}, false, err
+	}
+	if review.Required {
+		unlock, lockErr := forkspace.LockState(repo, identity.Name)
+		if lockErr != nil {
+			return ForkCandidate{}, false, lockErr
+		}
+		state, stateExists, stateErr := readForkCandidateState(repo, identity)
+		if stateErr == nil && (!stateExists || state.manifest == nil || state.manifest.Phase != forkCandidateReviewing || state.manifest.Pending.ID != review.Candidate.ID) {
+			stateErr = errors.New("candidate review state changed in test")
+		}
+		if stateErr == nil {
+			manifest := *state.manifest
+			manifest.Phase, manifest.UpdatedAt = forkCandidatePublishing, time.Now().UTC()
+			stateErr = writeForkCandidateManifest(repo, manifest)
+		}
+		unlock()
+		if stateErr != nil {
+			return ForkCandidate{}, false, stateErr
+		}
+	}
+	return PublishForkCandidate(repo, identity, head, tree)
+}
+
 func testAssignmentFork(t *testing.T, repo, name string) (string, forkspace.Identity) {
 	t.Helper()
 	if err := os.MkdirAll(repo, 0o755); err != nil {
@@ -288,7 +316,7 @@ func TestForkCandidateFinalizesExactCanonicalTask(t *testing.T) {
 	if _, err := AcceptForkProjection(repo, root, "land-me", assignment.Owner); err != nil {
 		t.Fatal(err)
 	}
-	candidate, published, err := PublishForkCandidate(repo, identity, strings.Repeat("b", 40), strings.Repeat("c", 40))
+	candidate, published, err := reviewAndPublishForkCandidate(t, repo, identity, strings.Repeat("b", 40), strings.Repeat("c", 40))
 	if err != nil || !published {
 		t.Fatalf("publish candidate = %+v, %v, %v", candidate, published, err)
 	}
@@ -312,7 +340,7 @@ func TestForkCandidateFinalizesExactCanonicalTask(t *testing.T) {
 	if indexes, problems := IndexedForkAssignments(repo, identity); len(indexes) != 0 || len(problems) != 0 {
 		t.Fatalf("landed indexes = %+v problems=%v", indexes, problems)
 	}
-	if err := RemoveForkCandidateIfMatchesLocked(repo, candidate); err != nil {
+	if err := MarkForkCandidateLandedLocked(repo, candidate); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -341,7 +369,7 @@ func TestPublishedForkCandidateFreezesGenerationBeforeAnotherAssignment(t *testi
 	if _, err := AcceptForkProjection(repo, root, assignment.Task.Item.ID, assignment.Owner); err != nil {
 		t.Fatal(err)
 	}
-	if _, published, err := PublishForkCandidate(repo, identity, strings.Repeat("b", 40), strings.Repeat("c", 40)); err != nil || !published {
+	if _, published, err := reviewAndPublishForkCandidate(t, repo, identity, strings.Repeat("b", 40), strings.Repeat("c", 40)); err != nil || !published {
 		t.Fatalf("publish candidate = published %v, err=%v", published, err)
 	}
 	next, err := AssignForkTask([]string{root}, request)

@@ -455,6 +455,7 @@ func TestProviderScriptedForkLoopMergeProcess(t *testing.T) {
 	attempts := []loopProcessAttempt{
 		{Target: target, Stage: "work", Result: "complete"},
 		{Target: target, Stage: "signoff", Result: "pass"},
+		{Target: target, Stage: "signoff", Result: "pass"}, // exact candidate-wide review
 	}
 	scenario := loopProcessScenario{
 		Version: 6, Provider: provider, ProviderHomes: agents.Names(),
@@ -462,8 +463,29 @@ func TestProviderScriptedForkLoopMergeProcess(t *testing.T) {
 	}
 	result, trace := suite.run(t, []string{"fork", name, target, "--loop", "--tasks", filepath.Join(suite.layout.Repo, tasksRoot)}, scenario)
 	ws := forkspace.Workspace(suite.layout.Repo, name)
-	if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stdout, "fixture-loop-complete-"+provider) {
+	if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stdout, "fixture-loop-complete-"+provider) ||
+		!strings.Contains(result.Stderr, "Review round 1 covers the complete fork candidate.") ||
+		!strings.Contains(result.Stderr, "Reviewer · "+target+" · 1 task") {
 		t.Fatalf("fork loop = exit %d err %v\nstdout:\n%s\nstderr:\n%s\ntrace:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr, readProcessFile(t, suite.layout.Trace))
+	}
+	var reviewRuns []*processTrace
+	for _, event := range trace {
+		if event.Source == "runtime" && event.Event == "run" && event.Run != nil {
+			reviewRuns = append(reviewRuns, event)
+		}
+	}
+	if len(reviewRuns) != len(attempts) {
+		t.Fatalf("fork work/signoff/candidate-review run count = %d, want %d", len(reviewRuns), len(attempts))
+	}
+	lastRun := reviewRuns[len(reviewRuns)-1].Run
+	candidateRepoReadOnly := false
+	for _, mount := range lastRun.Mounts {
+		if mount.Target == lastRun.Workdir && mount.ReadOnly {
+			candidateRepoReadOnly = true
+		}
+	}
+	if !candidateRepoReadOnly || lastRun.Provider != provider {
+		t.Fatalf("candidate review did not use the selected provider over a read-only fork: %+v", lastRun)
 	}
 	identity := readProcessForkIdentity(t, suite.layout.Repo, name)
 	assignments, err := tasks.ForkAssignments(suite.layout.Repo, identity)
@@ -528,6 +550,79 @@ func TestProviderScriptedForkLoopMergeProcess(t *testing.T) {
 	}
 	if _, owned, err := tasks.ReadTaskOwnerRecord(filepath.Join(suite.layout.Repo, tasksRoot), taskID); err != nil || owned {
 		t.Fatalf("landed canonical task retained sandbox owner: owned %v, err %v", owned, err)
+	}
+}
+
+func TestProviderScriptedForkCandidateReviewResumesExactFrozenRound(t *testing.T) {
+	suite := newDirectProcessSuite(t)
+	t.Setenv(tasks.TestLeaseAuthorityRootEnv, processLeaseAuthorityRoot(suite.layout))
+	resetForkProcessRepo(t, suite)
+	name, provider, taskID := "review-resume", "codex", "review-resume-task"
+	seedLoopProcessTask(t, suite.layout.Repo, taskID)
+	model, effort, account := "candidate-review-model", "high", "work"
+	target := forkProcessTarget(provider, model, effort, account)
+	writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{target}, nil, 3)
+	loopProcessGit(t, suite, "add", ".agent/loop.yaml")
+	loopProcessGit(t, suite, "commit", "-qm", "fixture loop review config")
+	firstAttempts := []loopProcessAttempt{
+		{Target: target, Stage: "work", Result: "complete"},
+		{Target: target, Stage: "signoff", Result: "pass"},
+		{Target: target, Stage: "signoff", Result: "authentication"},
+	}
+	firstScenario := loopProcessScenario{
+		Version: 6, Provider: provider, ProviderHomes: agents.Names(),
+		Loop: loopProcessPlan{TaskID: taskID, Attempts: firstAttempts},
+	}
+	result, _ := suite.run(t, []string{"fork", name, target, "--loop", "--tasks", filepath.Join(suite.layout.Repo, tasksRoot)}, firstScenario)
+	continueCommand := "coop fork " + name + " " + target + " --loop"
+	if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stderr, "Candidate review did not pass") ||
+		!strings.Contains(result.Stderr, "authentication failed") || !strings.Contains(result.Stderr, continueCommand) {
+		t.Fatalf("interrupted candidate review = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+	}
+	identity := readProcessForkIdentity(t, suite.layout.Repo, name)
+	status, exists, err := tasks.ReadForkCandidateRoundStatus(suite.layout.Repo, identity)
+	if err != nil || !exists || status.Phase != "reviewing" || status.PendingRound != 1 || status.PendingID == "" {
+		t.Fatalf("frozen review after authentication failure = %+v, exists=%v err=%v", status, exists, err)
+	}
+	frozenID := status.PendingID
+	if _, active, err := tasks.ReadForkCandidate(suite.layout.Repo, identity); err != nil || active {
+		t.Fatalf("failed review became landable: active=%v err=%v", active, err)
+	}
+	assignments, err := tasks.ForkAssignments(suite.layout.Repo, identity)
+	if err != nil || len(assignments) != 1 || assignments[0].Record.Fork == nil ||
+		assignments[0].Record.Fork.Phase != tasks.ForkAssignmentReviewing || assignments[0].Record.Fork.CandidateID != "" {
+		t.Fatalf("failed review authorized owner state: %#v, %v", assignments, err)
+	}
+
+	secondScenario := loopProcessScenario{
+		Version: 6, Provider: provider, ProviderHomes: agents.Names(),
+		Loop: loopProcessPlan{TaskID: taskID, Attempts: []loopProcessAttempt{{Target: target, Stage: "signoff", Result: "pass"}}},
+	}
+	result, trace := suite.run(t, []string{"fork", name, target, "--loop", "--tasks", filepath.Join(suite.layout.Repo, tasksRoot)}, secondScenario)
+	if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stderr, "Candidate review round 1 passed") {
+		t.Fatalf("resumed candidate review = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+	}
+	status, exists, err = tasks.ReadForkCandidateRoundStatus(suite.layout.Repo, identity)
+	if err != nil || !exists || status.Phase != "active" || status.CurrentRound != 1 || status.CurrentID != frozenID {
+		t.Fatalf("resumed candidate round = %+v, exists=%v err=%v; want id %s", status, exists, err, frozenID)
+	}
+	candidate, active, err := tasks.ReadForkCandidate(suite.layout.Repo, identity)
+	if err != nil || !active || candidate.ID != frozenID {
+		t.Fatalf("resumed candidate authority = %+v, active=%v err=%v", candidate, active, err)
+	}
+	assignments, err = tasks.ForkAssignments(suite.layout.Repo, identity)
+	if err != nil || len(assignments) != 1 || assignments[0].Record.Fork == nil ||
+		assignments[0].Record.Fork.Phase != tasks.ForkAssignmentReady || assignments[0].Record.Fork.CandidateID != frozenID {
+		t.Fatalf("resumed review owner state = %#v, %v", assignments, err)
+	}
+	var runs int
+	for _, event := range trace {
+		if event.Source == "runtime" && event.Event == "run" {
+			runs++
+		}
+	}
+	if runs != 1 {
+		t.Fatalf("resumed candidate review launched %d boxes, want one review-only box", runs)
 	}
 }
 

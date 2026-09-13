@@ -145,6 +145,27 @@ func loopSignoffPrompt(repo string, queues []string, appendPrompt string, finish
 	return b.String()
 }
 
+func forkCandidateReviewPrompt(repo string, queues []string, review CandidateReviewSpec, appendPrompt string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Final fork candidate review round %d. Review exactly this frozen candidate:\n", review.Round)
+	fmt.Fprintf(&b, "  candidate: %s\n  HEAD: %s\n  tree: %s\n", review.CandidateID, review.Head, review.Tree)
+	if review.PreviousRound > 0 {
+		fmt.Fprintf(&b, "  supersedes reviewed round: %d\n", review.PreviousRound)
+	}
+	b.WriteString("The ONLY task projections in this candidate are:\n")
+	for _, id := range review.TaskIDs {
+		b.WriteString("  - " + id + "\n")
+	}
+	b.WriteString("\nAct as the senior engineer giving final signoff for the complete fork snapshot. Read the project contract and each named task's problem, acceptance criteria, final state, artifacts, and implementation. Inspect the exact candidate diff and surrounding source. Check correctness, regressions, security boundaries, failure and retry behavior, operator UX, and maintainability. Run the focused tests each task earns, then run the repository gate once when practical. A prior round or merge gate is context only and grants no authority to this snapshot. Repeated Coop-Task trailers can be legitimate history across review rounds; judge the final reachable implementation rather than requiring one historical commit per task. Do not modify source, task folders, Git, or host state. Report findings only; Coop keeps a failed candidate non-landable for the operator to fix and review again.\n\n")
+	if s := strings.TrimSpace(appendPrompt); s != "" {
+		b.WriteString("Also apply these project-specific final-signoff checks:\n" + s + "\n\n")
+	}
+	b.WriteString(auditEvidencePrompt)
+	b.WriteString("\n\nContext: the task projection queue(s) are at " + absJoin(repo, queues) + " and the project contract is " + filepath.Join(repo, "AGENTS.md") + ". Source and task lifecycle are read-only. Review every named subject as one exact candidate-wide cohort. A missing, malformed, interrupted, stale, or out-of-scope proposal authorizes nothing.")
+	b.WriteString(" You are the authoritative review for this stage: do not invoke the review-board skill or spawn another review board. End with exactly one receipt line and nothing after it: `REVIEW COMPLETE — PASS — reopened: none` if every subject passed, or `REVIEW COMPLETE — FAIL — reopened: <id1>,<id2>` listing every failing subject sorted by task ID with no spaces.")
+	return b.String()
+}
+
 // reviewContextFooter is appended to every review prompt (override or default) so the mechanics
 // never depend on the base text: the absolute in-box queue path(s), the AGENTS.md path, and the
 // host-applied verdict boundary. Task lifecycle is always report-only; a limit resume or failed

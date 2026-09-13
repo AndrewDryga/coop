@@ -331,7 +331,7 @@ func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent)
 				return intent, true, fmt.Errorf("finalize canonical task %s after land: %w", assignment.Index.Task.Ref.ID, err)
 			}
 		}
-		if err := tasks.RemoveForkCandidateIfMatchesLocked(repo, intent.Candidate); err != nil {
+		if err := tasks.MarkForkCandidateLandedLocked(repo, intent.Candidate); err != nil {
 			return intent, true, err
 		}
 		if err := removeLandIntent(repo, intent); err != nil {

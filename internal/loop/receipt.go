@@ -333,6 +333,41 @@ func applyReviewVerdictInRepo(repo string, hosts, subjects []string, output stri
 	return slices.Clone(receipt.reopened), nil
 }
 
+// candidateReviewVerdict validates the same strict evidence envelope as ordinary final review but
+// deliberately grants no generic task-reopen authority. A failing verdict leaves the frozen fork
+// candidate pending; only a complete PASS can be durably authorized by the host caller.
+func candidateReviewVerdict(subjects []string, output string) ([]string, error) {
+	output = normalizeReviewVerdictOutput(output)
+	receipt, ok := reviewReopenReceipt(output)
+	if !ok {
+		return nil, fmt.Errorf("%w: %w: missing or malformed terminal receipt; output tail was %s", errReviewVerdict, errReviewVerdictMalformed, receiptFailureTail(output))
+	}
+	if len(subjects) == 0 {
+		return nil, fmt.Errorf("%w: %w: candidate review has no task subjects", errReviewVerdict, errReviewVerdictMalformed)
+	}
+	evidence, ok := auditEvidenceFrom(output)
+	if !ok || len(evidence) != len(subjects) {
+		return nil, fmt.Errorf("%w: %w: expected exactly one structured audit record for each candidate review subject", errReviewVerdict, errReviewVerdictMalformed)
+	}
+	reopenSet := make(map[string]bool, len(receipt.reopened))
+	for _, id := range receipt.reopened {
+		if !slices.Contains(subjects, id) {
+			return nil, fmt.Errorf("%w: %w: task %s is not a candidate review subject", errReviewVerdict, errReviewVerdictMalformed, id)
+		}
+		reopenSet[id] = true
+	}
+	for _, id := range subjects {
+		observation, exists := evidence[id]
+		if !exists {
+			return nil, fmt.Errorf("%w: %w: candidate review subject %s has no structured audit record", errReviewVerdict, errReviewVerdictMalformed, id)
+		}
+		if reopenSet[id] != !auditFindingsNone(observation.findings) {
+			return nil, fmt.Errorf("%w: %w: candidate review subject %s findings disagree with the terminal receipt", errReviewVerdict, errReviewVerdictMalformed, id)
+		}
+	}
+	return slices.Clone(receipt.reopened), nil
+}
+
 func encodeUntrustedReviewField(value string) string {
 	const (
 		beginMarker = "BEGIN UNTRUSTED REVIEW EVIDENCE"

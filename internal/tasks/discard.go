@@ -20,6 +20,8 @@ import (
 type ForkTaskStateSummary struct {
 	Assignments       int    `json:"assignments"`
 	Candidate         bool   `json:"candidate"`
+	CandidatePhase    string `json:"candidate_phase,omitempty"`
+	CandidateRound    uint64 `json:"candidate_round,omitempty"`
 	PreparedProposals int    `json:"prepared_proposals"`
 	ImportedReceipts  int    `json:"imported_proposal_receipts"`
 	PendingProposals  int    `json:"pending_proposals"`
@@ -41,7 +43,7 @@ func ReadForkTaskStateSummary(repo string, identity forkspace.Identity) (ForkTas
 	if len(problems) > 0 {
 		return ForkTaskStateSummary{}, errors.Join(problems...)
 	}
-	candidate, hasCandidate, err := ReadForkCandidate(repo, identity)
+	candidateState, hasCandidateState, err := forkCandidateFingerprintValue(repo, identity)
 	if err != nil {
 		return ForkTaskStateSummary{}, err
 	}
@@ -53,7 +55,18 @@ func ReadForkTaskStateSummary(repo string, identity forkspace.Identity) (ForkTas
 	if len(proposalProblems) > 0 {
 		return ForkTaskStateSummary{}, errors.Join(proposalProblems...)
 	}
-	summary := ForkTaskStateSummary{Assignments: len(indexes), Candidate: hasCandidate, DiscardPending: hasDiscard}
+	summary := ForkTaskStateSummary{Assignments: len(indexes), DiscardPending: hasDiscard}
+	if hasCandidateState {
+		state := forkCandidateState{legacy: candidateState.Legacy, manifest: candidateState.Manifest}
+		status := forkCandidateStateStatus(state)
+		summary.CandidatePhase, summary.CandidateRound = status.Phase, status.CurrentRound
+		if status.PendingRound > 0 {
+			summary.CandidateRound = status.PendingRound
+		} else if status.Phase == forkCandidateSuperseding {
+			summary.CandidateRound++
+		}
+		summary.Candidate = candidateState.Legacy != nil || forkCandidateManifestActive(*candidateState.Manifest)
+	}
 	hash := sha256.New()
 	write := func(kind string, value any) error {
 		body, err := json.Marshal(value)
@@ -70,8 +83,8 @@ func ReadForkTaskStateSummary(repo string, identity forkspace.Identity) (ForkTas
 			return ForkTaskStateSummary{}, err
 		}
 	}
-	if hasCandidate {
-		if err := write("candidate", candidate); err != nil {
+	if hasCandidateState {
+		if err := write("candidate-state", candidateState); err != nil {
 			return ForkTaskStateSummary{}, err
 		}
 	}
@@ -269,7 +282,7 @@ func DiscardForkTaskStateLocked(repo string, identity forkspace.Identity) error 
 		if len(problems) > 0 {
 			return errors.Join(problems...)
 		}
-		candidate, hasCandidate, err := ReadForkCandidate(repo, identity)
+		status, hasCandidate, err := ReadForkCandidateRoundStatus(repo, identity)
 		if err != nil {
 			return err
 		}
@@ -277,7 +290,10 @@ func DiscardForkTaskStateLocked(repo string, identity forkspace.Identity) error 
 			Version: forkDiscardVersion, Fork: identity, Assignments: indexes, CreatedAt: time.Now().UTC(),
 		}
 		if hasCandidate {
-			intent.CandidateID = candidate.ID
+			intent.CandidateID = status.PendingID
+			if intent.CandidateID == "" {
+				intent.CandidateID = status.CurrentID
+			}
 		}
 		if err := writeForkDiscard(repo, intent); err != nil {
 			return err
@@ -301,13 +317,20 @@ func DiscardForkTaskStateLocked(repo string, identity forkspace.Identity) error 
 			return err
 		}
 	}
-	if candidate, ok, err := ReadForkCandidate(repo, identity); err != nil {
+	if status, ok, err := ReadForkCandidateRoundStatus(repo, identity); err != nil {
 		return err
 	} else if ok {
-		if intent.CandidateID == "" || candidate.ID != intent.CandidateID {
+		currentID := status.TerminalID
+		if currentID == "" {
+			currentID = status.PendingID
+			if currentID == "" {
+				currentID = status.CurrentID
+			}
+		}
+		if intent.CandidateID == "" || currentID != intent.CandidateID {
 			return errors.New("fork candidate changed during discard")
 		}
-		if err := RemoveForkCandidateIfMatchesLocked(repo, candidate); err != nil {
+		if err := DiscardForkCandidateStateLocked(repo, identity); err != nil {
 			return err
 		}
 	}

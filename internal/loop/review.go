@@ -370,6 +370,58 @@ func (c *Control) runReviewVerdict(ctx context.Context, repo, img string, rev *l
 	return last, nil
 }
 
+// runCandidateReviewVerdict runs the same provider/error/receipt boundary as final review without
+// importing generic pending-review authority. Candidate review never moves task folders: findings
+// leave the frozen manifest in reviewing, while only an exact all-subject pass returns success.
+func (c *Control) runCandidateReviewVerdict(ctx context.Context, repo, img string, rev *ladder.Rotation, forkName, prompt, activity string, iterCmd iterationCmdBuilder, hosts, subjects []string, sink io.Writer, peers []agents.Target, wake <-chan struct{}, observe reviewAttemptObserver) (reviewRunResult, error) {
+	hosts = slices.Clone(hosts)
+	subjects = slices.Clone(subjects)
+	subjectSnapshots, err := snapshotReviewSubjects(hosts, subjects)
+	if err != nil {
+		return reviewRunResult{target: rev.Active()}, fmt.Errorf("%w: snapshot candidate review subjects: %v", tasks.ErrCompletionWindowSetup, err)
+	}
+	var last reviewRunResult
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			if err := validateReviewSubjects(hosts, subjectSnapshots); err != nil {
+				return last, fmt.Errorf("%w: candidate review subjects changed before the corrected attempt: %v", tasks.ErrCompletionWindowAudit, err)
+			}
+		}
+		attemptPrompt := prompt
+		if attempt > 0 {
+			attemptPrompt += reviewVerdictCorrection
+		}
+		start, headBefore := time.Now(), gitOut(repo, "rev-parse", "HEAD")
+		run, err := c.runReview(ctx, repo, img, rev, forkName, attemptPrompt, activity, iterCmd, hosts, subjects, nil, loopcfg.ReviewWritesTasks, sink, peers, wake, observe)
+		run.output = normalizeReviewVerdictOutput(run.output)
+		if err == nil {
+			if len(run.concurrent) > 0 {
+				err = fmt.Errorf("%w: candidate review observed concurrent task completion", tasks.ErrCompletionWindowAudit)
+			} else if snapshotErr := validateReviewSubjects(hosts, subjectSnapshots); snapshotErr != nil {
+				err = fmt.Errorf("%w: candidate review subjects changed before verdict acceptance: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
+			} else {
+				run.reopened, err = candidateReviewVerdict(subjects, run.output)
+				if err == nil && len(run.reopened) > 0 {
+					err = fmt.Errorf("candidate review found unresolved issues in %s", strings.Join(run.reopened, ", "))
+				}
+			}
+		}
+		if observe != nil {
+			observe(run, start, headBefore)
+		}
+		last = run
+		if err == nil || !errors.Is(err, errReviewVerdictMalformed) || attempt > 0 {
+			return run, err
+		}
+		if reviewStopRequested(ctx, wake) {
+			return interruptedReviewResult(last, last.retries), errReviewInterrupted
+		}
+		ui.Alert("The candidate review result could not be read",
+			fmt.Sprintf("%v\nRepeating the complete review once with the required response format.", err))
+	}
+	return last, nil
+}
+
 func reviewStopRequested(ctx context.Context, wake <-chan struct{}) bool {
 	if ctx != nil && ctx.Err() != nil {
 		return true

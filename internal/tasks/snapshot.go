@@ -63,6 +63,8 @@ type ProjectForkSnapshot struct {
 	CleanupPending   bool                             `json:"cleanup_pending"`
 	Assignments      int                              `json:"assignments"`
 	Candidate        bool                             `json:"candidate"`
+	CandidatePhase   string                           `json:"candidate_phase,omitempty"`
+	CandidateRound   uint64                           `json:"candidate_round,omitempty"`
 	PendingLand      bool                             `json:"pending_land"`
 	Reservation      *forkspace.WorkspaceReservation  `json:"reservation,omitempty"`
 	Executions       []forkspace.ExecutionObservation `json:"executions,omitempty"`
@@ -310,10 +312,17 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 				fork.Assignments++
 			}
 		}
-		if candidate, ok, err := ReadForkCandidate(repo, identity); err != nil {
+		if status, ok, err := ReadForkCandidateRoundStatus(repo, identity); err != nil {
 			appendSnapshotProblem(&snapshot, "fork "+identity.Name+" candidate", err)
 		} else if ok {
-			fork.Candidate = candidate.ID != ""
+			fork.CandidatePhase = status.Phase
+			fork.CandidateRound = status.CurrentRound
+			if status.PendingRound > 0 {
+				fork.CandidateRound = status.PendingRound
+			} else if status.Phase == forkCandidateSuperseding {
+				fork.CandidateRound++
+			}
+			fork.Candidate = status.Phase == forkCandidateActive
 		}
 		if info, err := os.Lstat(forkspace.LandIntentPath(repo, identity)); err == nil {
 			fork.PendingLand = true
