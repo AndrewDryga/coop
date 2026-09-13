@@ -242,7 +242,7 @@ func TestFilteredStartupScopesComposeToGrantedServices(t *testing.T) {
 			up = call
 		}
 	}
-	if !strings.HasSuffix(up, " up -d --wait --remove-orphans db") {
+	if !strings.HasSuffix(up, " up -d --wait db") {
 		t.Fatalf("filtered startup was not scoped to the directly granted service: %q", up)
 	}
 	changed := strings.Replace(body, "redis:8", "redis:9", 1)

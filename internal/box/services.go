@@ -107,7 +107,10 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 	if len(selected) > 0 {
 		started.names = append([]string(nil), selected...)
 	}
-	upArgs := append(append([]string(nil), args...), "up", "-d", "--wait", "--remove-orphans")
+	upArgs := append(append([]string(nil), args...), "up", "-d", "--wait")
+	if len(selected) == 0 {
+		upArgs = append(upArgs, "--remove-orphans")
+	}
 	upArgs = append(upArgs, selected...)
 	if err := runCompose(rt, stdout, stderr, "up", upArgs); err != nil {
 		observed, observeErr := observedServicePorts(ctx, rt, workspace, file, network, ports)
