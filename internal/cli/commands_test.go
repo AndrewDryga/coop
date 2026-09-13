@@ -22,6 +22,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/liveprocess"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
@@ -1038,21 +1039,85 @@ func TestLoginRejectsBadProfileName(t *testing.T) {
 
 // TestStrictFlagParsing: value-bearing coop flags reject a missing value or a stray arg up
 // front (exit 2) instead of silently falling back to a default or ignoring the typo. These all
-// return before any runtime/scaffold work, so a bare app suffices.
+// return before runtime/scaffold work; explicit fixtures keep a regression out of the source tree.
 func TestStrictFlagParsing(t *testing.T) {
-	a := &app{cfg: &config.Config{}}
 	cases := []struct {
 		name string
-		fn   func() (int, error)
+		fn   func(*app) (int, error)
 	}{
-		{"login stray arg", func() (int, error) { return a.cmdLogin([]string{"claude", "extra"}) }},
-		{"init --stack no value", func() (int, error) { return a.cmdInit([]string{"--stack"}) }},
-		{"init --services no value", func() (int, error) { return a.cmdInit([]string{"--services"}) }},
-		{"init unknown flag", func() (int, error) { return a.cmdInit([]string{"--bogus"}) }},
+		{"login stray arg", func(a *app) (int, error) { return a.cmdLogin([]string{"claude", "extra"}) }},
+		{"init --stack no value", func(a *app) (int, error) { return a.cmdInit([]string{"--stack"}) }},
+		{"init --services= no value", func(a *app) (int, error) { return a.cmdInit([]string{"--services="}) }},
+		{"init unknown flag", func(a *app) (int, error) { return a.cmdInit([]string{"--bogus"}) }},
 	}
 	for _, c := range cases {
-		if code, err := c.fn(); code != 2 || err == nil {
-			t.Errorf("%s = (%d, %v), want (2, error)", c.name, code, err)
+		t.Run(c.name, func(t *testing.T) {
+			a, _ := initApp(t, t.TempDir())
+			if code, err := c.fn(a); code != 2 || err == nil {
+				t.Errorf("(%d, %v), want (2, error)", code, err)
+			}
+			for _, root := range []string{a.cfg.RepoOverride, a.cfg.ConfigDir} {
+				if entries, err := os.ReadDir(root); err != nil || len(entries) != 0 {
+					t.Fatalf("parser refusal changed its fixture: entries=%v err=%v", entries, err)
+				}
+			}
+		})
+	}
+}
+
+func TestInitServicesSpellingsWithoutTerminal(t *testing.T) {
+	stdin, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stdin.Close() })
+	t.Cleanup(stub(&os.Stdin, stdin))
+	for _, initialized := range []bool{false, true} {
+		for _, flag := range []string{"--services", "--services="} {
+			t.Run(strconv.FormatBool(initialized)+"/"+flag, func(t *testing.T) {
+				root := t.TempDir()
+				repo, cfgDir := filepath.Join(root, "repo"), filepath.Join(root, "config")
+				t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+				if err := os.Mkdir(repo, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: cfgDir, MCPFile: filepath.Join(cfgDir, "mcp.json")}}
+				if initialized {
+					captureStderr(t, func() {
+						if code, err := a.cmdInit(nil); code != 0 || err != nil {
+							t.Fatalf("fixture init = (%d, %v)", code, err)
+						}
+					})
+				}
+				before := snapshotInitTree(t, root)
+				var code int
+				var callErr error
+				captureStderr(t, func() { code, callErr = a.cmdInit([]string{flag}) })
+				if !initialized && flag == "--services" {
+					if code != 0 || callErr != nil || !scaffold.Initialized(repo) || !fileExists(a.cfg.MCPFile) {
+						t.Fatalf("bare services did not initialize its explicit fixture: (%d, %v)", code, callErr)
+					}
+					for _, rel := range []string{".git", ".agent/compose.yml"} {
+						if pathExists(filepath.Join(repo, rel)) {
+							t.Errorf("nonterminal init unexpectedly created %s", rel)
+						}
+					}
+					return
+				}
+				if code != 2 || callErr == nil {
+					t.Fatalf("refusal = (%d, %v), want (2, error)", code, callErr)
+				}
+				after := snapshotInitTree(t, root)
+				if len(before) != len(after) {
+					t.Fatal("refusal changed the fixture inventory")
+				}
+				for name, want := range before {
+					got, ok := after[name]
+					if !ok || !os.SameFile(want.info, got.info) || want.info.Mode() != got.info.Mode() || want.data != got.data || want.link != got.link {
+						t.Fatalf("refusal changed %s", name)
+					}
+				}
+			})
 		}
 	}
 }
