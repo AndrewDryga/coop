@@ -2,6 +2,7 @@ package box
 
 import (
 	"context"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
@@ -190,5 +192,44 @@ func TestApprovedServiceDefinitionChangeRefusesTheLaunch(t *testing.T) {
 	}
 	if err := checkApprovedServices(approval, compose, repo, false); err == nil || !strings.Contains(err.Error(), `no service "db"`) {
 		t.Fatalf("a removed service was not reported: %v", err)
+	}
+}
+
+func TestFilteredServiceStartSkipsComposeWhileAnotherBoxRuns(t *testing.T) {
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	if err := os.WriteFile(compose, []byte("services:\n  db:\n    image: postgres:18\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	digests, err := composeServiceDigests(compose, repo, false, []string{"db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := forkspace.BeginExecution(repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionLocalLoop, Workspace: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = forkspace.EndExecution(repo, other) })
+
+	id := strings.Repeat("a", 64)
+	docker := &filteredDaemonFixture{
+		networkMembers:  map[string]netip.Addr{id: netip.MustParseAddr("172.31.0.2")},
+		composeServices: map[string]string{"db": id},
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	network, bindings, err := resolveServiceBindings(t.Context(), docker, recorderRuntime(t, recorder), RunSpec{Repo: repo}, compose,
+		&networkstate.Approval{Services: digests}, serviceGrants(servicePolicy(t, "db")), nil, nil)
+	if err != nil || network != ComposeProject(repo)+"_default" || len(bindings) != 1 {
+		t.Fatalf("running service discovery = network %q bindings %+v err %v", network, bindings, err)
+	}
+	if data, readErr := os.ReadFile(recorder); readErr == nil && len(data) != 0 {
+		t.Fatalf("filtered launch executed Compose beside a live box:\n%s", data)
+	} else if readErr != nil && !os.IsNotExist(readErr) {
+		t.Fatal(readErr)
+	}
+	docker.composeServices = nil
+	if _, _, err := resolveServiceBindings(t.Context(), docker, recorderRuntime(t, recorder), RunSpec{Repo: repo}, compose,
+		&networkstate.Approval{Services: digests}, serviceGrants(servicePolicy(t, "db")), nil, nil); err == nil || !strings.Contains(err.Error(), "is not running") {
+		t.Fatalf("missing already-running service was accepted: %v", err)
 	}
 }

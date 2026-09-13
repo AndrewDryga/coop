@@ -65,21 +65,36 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 		}
 		return "", nil, err
 	}
+	projectRepo := spec.ActivityRepo
+	if projectRepo == "" {
+		projectRepo = spec.Repo
+	}
+	live, err := LiveBoxes(projectRepo, spec.activityID)
+	if err != nil {
+		return "", nil, err
+	}
+	startServices := len(live) == 0
+	if !startServices && sections != nil {
+		sections.servicesHeldByLiveBox("Another box is running in this project (" + DescribeLiveBoxes(live) + ").")
+	}
 	var composeErr bytes.Buffer
 	noticeHidden := sections == nil || !sections.loop
-	started, err := startServicesFile(rt, spec.Repo, composeFile, io.Discard, &composeErr, spec.RepoReadOnly, noticeHidden, exposedRoots...)
-	if sections != nil {
-		sections.serviceSecrets(started.hidden, composeFile)
-	}
-	if err != nil {
-		var refused *ComposeRefused
-		if sections != nil && sections.loop && errors.As(err, &refused) {
-			sections.servicesRefused(err.Error())
-			return "", nil, ui.Reported(fmt.Errorf("a filtered box needs this project's approved sidecars running: %w", err))
+	var started startedServices
+	if startServices {
+		started, err = startServicesFile(rt, spec.Repo, composeFile, io.Discard, &composeErr, spec.RepoReadOnly, noticeHidden, exposedRoots...)
+		if sections != nil {
+			sections.serviceSecrets(started.hidden, composeFile)
 		}
-		return "", nil, fmt.Errorf("a filtered box needs this project's approved sidecars running, and starting them failed: %w", err)
+		if err != nil {
+			var refused *ComposeRefused
+			if sections != nil && sections.loop && errors.As(err, &refused) {
+				sections.servicesRefused(err.Error())
+				return "", nil, ui.Reported(fmt.Errorf("a filtered box needs this project's approved sidecars running: %w", err))
+			}
+			return "", nil, fmt.Errorf("a filtered box needs this project's approved sidecars running, and starting them failed: %w", err)
+		}
 	}
-	if sections != nil && sections.loop {
+	if startServices && sections != nil && sections.loop {
 		sections.services(started.names)
 	}
 	network := ComposeProject(spec.Repo) + "_default"

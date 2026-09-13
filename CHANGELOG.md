@@ -90,6 +90,9 @@
 - New projects initialized with Postgres or Redis request the matching filtered service access,
   so their first agent run can be approved instead of being refused as misconfigured.
 
+- Filtered launches no longer execute Compose while another Coop box is active in the project;
+  they use an already-running approved service or fail if it is unavailable.
+
 - Structured task blocking preserves any edited decision draft, even when its question placeholder
   remains; only the exact untouched template can be replaced.
 
