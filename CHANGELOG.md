@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Final review now survives loop pauses, task limits and process death. Coop retains the exact
+  host-accepted task generations and their original signoff/verification contract, resumes that
+  debt before unrelated work, then continues the current queue. Signing rewrites are recovered
+  through an exact host journal; stale or mutated evidence fails closed, and reviewed generations
+  are not silently imported twice.
+
 - A partial project-service startup now keeps URLs and forwarders only for exact Compose-owned
   containers observed running, healthy when configured, and bound to Coop's expected loopback
   port and selected service network. Failed or skipped starts no longer discard a proven-ready

@@ -2,8 +2,8 @@
 name: signoff-scope-is-run-anchored
 description: the signoff reviews a run-anchored folder-diff subject list — re-anchor the baseline ONLY on a receipt-consistent round, or reworked reopens silently escape the next review
 subsystem: loop
-sources: [internal/loop/loop.go, internal/loop/signoff.go, internal/tasks/completion.go, internal/loop/changes.go, internal/tasks/cmd.go]
-updated: 2026-08-10
+sources: [internal/loop/loop.go, internal/loop/signoff.go, internal/loop/pending_review.go, internal/tasks/pending_review.go, internal/tasks/completion.go, internal/cli/sign.go, internal/loop/changes.go, internal/tasks/cmd.go]
+updated: 2026-09-13
 ---
 
 The signoff pass does NOT review all of `99_done/` (that dir holds every prior run's history until a
@@ -29,9 +29,22 @@ re-enters it they show up in the next round's diff). Two wrong placements that f
   Final verify returns to signoff when it observes one. If the controller crashes first, startup
   replay returns the journal's concurrent ids and excludes them from the new run baseline.
 
-Accepted tradeoff, by design: done tasks from a previous CRASHED run (completed but never signed
-off) are history to the new run and are not re-reviewed — there is no reviewed-marker to tell them
-apart, and they passed their own iteration.
+Accepted tasks now remain review debt across a graceful pause, hard process death, task limit, or
+interrupted signoff/verification. The host writes a versioned pending record under task authority
+before publishing the completion receipt. That record pins the exact task generation and receipt,
+raw unique commit binding, workspace/branch/queue identities, run base, review ladder/prompts/write
+policy, round and verification phase. Startup validates this bounded cohort before unrelated work,
+resumes only those subjects, then continues the current queue under a fresh cohort after the older
+debt settles. It never scans historical `99_done/` entries to guess what needs review.
+
+Signing is a second write-ahead boundary: while the ref-authority lock is held, Coop records the
+exact old-to-new commit map before the branch compare-and-swap. A crash after the ref update may
+rebind pending evidence only through that host-private map. Tree-equivalent arbitrary rewrites,
+wrong branches, changed queue/task generations, archive mutations and malformed records retain the
+debt and fail closed. Receipt-consistent acceptance writes a reviewed-generation tombstone before
+clearing the active record, so an explicit historical import cannot repeatedly review and bless the
+same generation. Pre-ledger archives remain unknown unless the operator names an exact receipt-valid
+task with `coop loop --review-task <id>`.
 
 Completed between audits add a second, separate run-scoped handoff: `auditEvidenceStore` keeps only
 receipt-consistent per-task summaries, caps their prompt size, and drops them when signoff reopens a
@@ -78,6 +91,8 @@ actionable integrity error names mutated archives, and the next startup is clean
 Related: [[task-state-is-the-folder]].
 
 ## Changelog
+- 2026-09-13 — replaced the process-local crash tradeoff with exact host-private pending cohorts,
+  signing-rewrite recovery, reviewed-generation tombstones and explicit bounded legacy import.
 - 2026-08-10 — sources repointed: `completionwindow.go`/`taskcmd.go` moved to
   `internal/tasks/completion.go`/`internal/tasks/cmd.go` (the 2026-08 tasks/lease/completion-audit
   extraction); `finishReview` is now exported `tasks.FinishReview`. Facts unchanged.

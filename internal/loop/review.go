@@ -145,7 +145,7 @@ func reviewReadOnlyPaths(mode completionWindowMode, repoReadOnly bool, hosts []s
 // stage's completion window, while a non-subject task a parallel host session completes during the
 // window is reported as concurrent activity instead of killing the run.
 // Local counters keep review trouble out of the work loop's stop accounting.
-func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.Rotation, forkName, prompt, activity string, iterCmd iterationCmdBuilder, hosts, subjects []string, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}, observeHandoff reviewAttemptObserver) (reviewRunResult, error) {
+func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.Rotation, forkName, prompt, activity string, iterCmd iterationCmdBuilder, hosts, subjects []string, pendingReview *tasks.PendingReviewPlan, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}, observeHandoff reviewAttemptObserver) (reviewRunResult, error) {
 	var fails, waits, outputRetries, totalRetries, handoffs, timeouts int
 	var concurrent []string
 	last := reviewRunResult{target: rev.Active()}
@@ -158,7 +158,7 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 		cmd, streaming, agentCommand := iterCmd(agent, prompt) // build after rotation so argv matches this provider
 		c.net.setStage(fmt.Sprintf("Review attempt %d", totalRetries+1))
 		start, headBefore := time.Now(), gitOut(repo, "rev-parse", "HEAD")
-		code, out, usage, classification, windows, runErr := c.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, agentCommand, hosts, completionWindowReview, subjects, reviewRepoReadOnly(writes), sink, peers, activity, "", nil)
+		code, out, usage, classification, windows, runErr := c.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, agentCommand, hosts, completionWindowReview, subjects, pendingReview, reviewRepoReadOnly(writes), sink, peers, activity, "", nil)
 		last = reviewRunResult{output: out, usage: usage, outcome: classification.outcome, exit: code, retries: totalRetries, target: target, concurrent: concurrent}
 		if errors.Is(runErr, tasks.ErrCompletionWindowSetup) {
 			return last, runErr
@@ -319,7 +319,7 @@ func validateReviewSubjects(hosts []string, snapshots []reviewSubjectSnapshot) e
 // verdict transaction. A successful process with malformed structured output gets one fresh full
 // review over cloned inputs; every other failure keeps runReview/applyReviewVerdict's existing
 // fail-closed behavior.
-func (c *Control) runReviewVerdict(ctx context.Context, repo, img string, rev *ladder.Rotation, forkName, prompt, activity string, iterCmd iterationCmdBuilder, hosts, subjects []string, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}, observe reviewAttemptObserver) (reviewRunResult, error) {
+func (c *Control) runReviewVerdict(ctx context.Context, repo, img string, rev *ladder.Rotation, forkName, prompt, activity string, iterCmd iterationCmdBuilder, hosts, subjects []string, pendingReview *tasks.PendingReviewPlan, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}, observe reviewAttemptObserver) (reviewRunResult, error) {
 	hosts = slices.Clone(hosts)
 	subjects = slices.Clone(subjects)
 	subjectSnapshots, err := snapshotReviewSubjects(hosts, subjects)
@@ -339,7 +339,7 @@ func (c *Control) runReviewVerdict(ctx context.Context, repo, img string, rev *l
 			attemptPrompt += reviewVerdictCorrection
 		}
 		start, headBefore := time.Now(), gitOut(repo, "rev-parse", "HEAD")
-		run, err := c.runReview(ctx, repo, img, rev, forkName, attemptPrompt, activity, iterCmd, hosts, subjects, writes, sink, peers, wake, observe)
+		run, err := c.runReview(ctx, repo, img, rev, forkName, attemptPrompt, activity, iterCmd, hosts, subjects, pendingReview, writes, sink, peers, wake, observe)
 		run.output = normalizeReviewVerdictOutput(run.output)
 		concurrent = slices.Compact(slices.Sorted(slices.Values(append(concurrent, run.concurrent...))))
 		run.concurrent = slices.Clone(concurrent)

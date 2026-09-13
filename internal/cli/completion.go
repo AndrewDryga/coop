@@ -147,7 +147,7 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 			return appendCompletionCandidates(
 				a.targetCandidates(cur, true, true),
 				a.presetCandidates(),
-				[]string{"--tasks", "--peer", "--max-tasks", "--preflight", "--no-preflight", "--no-mcp", "--debug-on-fail"},
+				[]string{"--tasks", "--peer", "--review-task", "--max-tasks", "--preflight", "--no-preflight", "--no-mcp", "--debug-on-fail"},
 			) // `coop loop [<target|preset>]`; `pool` is not a command, never completed
 		}
 		if len(prev) > 1 && prev[len(prev)-1] == "--max-tasks" {
@@ -157,7 +157,7 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 			return a.targetCandidates(cur, true, false)
 		}
 		if len(prev) > 1 {
-			return []string{"--tasks", "--peer", "--max-tasks", "--preflight", "--no-preflight", "--no-mcp", "--debug-on-fail"}
+			return []string{"--tasks", "--peer", "--review-task", "--max-tasks", "--preflight", "--no-preflight", "--no-mcp", "--debug-on-fail"}
 		}
 	case "acp":
 		if len(prev) == 1 {

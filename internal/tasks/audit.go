@@ -371,7 +371,11 @@ func CompleteTrustedTask(root string, task Item) (retErr error) {
 	if reopened {
 		generation = reopen.Generation
 	}
-	if err := writeLeaseCompletionReceipt(authority, current.Dir, generation); err != nil {
+	lease := &TaskLease{root: root, id: current.ID, authority: authority}
+	if reopened {
+		lease.Reopen = &reopen
+	}
+	if err := lease.MarkCompleted(current.Dir); err != nil {
 		return err
 	}
 	if reopened {

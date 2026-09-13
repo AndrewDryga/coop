@@ -1996,6 +1996,8 @@ func removeTaskFolderAndRecords(root string, task Item) (removed bool, err error
 	}
 	if err := errors.Join(
 		clearLeaseCompletionReceipt(authority),
+		removePendingReviewRecord(root, task.ID),
+		removePendingReviewReviewed(root, task.ID),
 		removeLeaseAuthorityMetadata(root, task.ID),
 		removeAuditReopenRecord(root, task.ID),
 		removeTrustedDoneDeparture(root, task.ID),

@@ -77,13 +77,17 @@ func spliceBeforeTrailing(cmd, insert []string, trailing int) []string {
 // live bar watches task counts while its explicit activity remains fixed. On interactive terminals
 // the agent's output is funneled into the scroll history above a sticky progress bar (a
 // Docker-build-style live view). Non-terminal output goes straight to the destination unchanged.
-func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming, agentCommand bool, hosts []string, windowMode completionWindowMode, reviewSubjects []string, repoReadOnly bool, sink io.Writer, peers []agents.Target, activity, assignedTask string, taskTools box.TaskToolServer) (code int, output string, res *iterResult, classification iterationClassification, windows *tasks.CompletionWindowSet, err error) {
+func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming, agentCommand bool, hosts []string, windowMode completionWindowMode, reviewSubjects []string, pendingReview *tasks.PendingReviewPlan, repoReadOnly bool, sink io.Writer, peers []agents.Target, activity, assignedTask string, taskTools box.TaskToolServer) (code int, output string, res *iterResult, classification iterationClassification, windows *tasks.CompletionWindowSet, err error) {
 	// Registered FIRST, so it is the LAST deferred step: a filtered box's
 	// refusals print after the live bar is torn down and the ui sink is plain
 	// stderr again, alongside the loop's other between-iteration lines.
 	defer c.net.finishIteration()
 	if windowMode == completionWindowReview {
-		windows, err = tasks.BeginReviewCompletionWindows(hosts, reviewSubjects)
+		if pendingReview != nil {
+			windows, err = tasks.BeginReviewCompletionWindowsWithPending(hosts, reviewSubjects, *pendingReview)
+		} else {
+			windows, err = tasks.BeginReviewCompletionWindows(hosts, reviewSubjects)
+		}
 	} else if windowMode == completionWindowWork {
 		if len(reviewSubjects) != 1 {
 			err = errors.New("work completion window requires one assigned subject")

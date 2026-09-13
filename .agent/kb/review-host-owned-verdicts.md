@@ -2,8 +2,8 @@
 name: review-host-owned-verdicts
 description: reviews report bounded evidence; Coop alone applies validated task lifecycle changes
 subsystem: box
-sources: [internal/box/run.go, internal/loop/review.go, internal/loop/receipt.go, internal/tasks/audit.go, internal/loop/changes.go, internal/loop/streamjson_providers.go, internal/tasks/cmd.go, internal/tasks/lease.go, internal/tasks/queue.go, internal/loopcfg/loopcfg.go]
-updated: 2026-08-26
+sources: [internal/box/run.go, internal/loop/review.go, internal/loop/receipt.go, internal/loop/pending_review.go, internal/tasks/audit.go, internal/tasks/pending_review.go, internal/loop/changes.go, internal/loop/streamjson_providers.go, internal/tasks/cmd.go, internal/tasks/lease.go, internal/tasks/queue.go, internal/loopcfg/loopcfg.go]
+updated: 2026-09-13
 ---
 
 `between`, `signoff`, and `verify` default to `writes: tasks`. The name is retained for
@@ -88,11 +88,16 @@ An absent configured queue fails with an actionable error instead of letting Doc
 root-owned nested bind destination in the host checkout.
 
 Commit trailers describe task changes but do not authorize review. A work iteration is rejected if
-it introduces a binding for any task other than its assigned task, and final verify can reopen only
-tasks this controller accepted as completed during the run and that remain archived.
+it introduces a binding for any task other than its assigned task. Final signoff and verify can act
+only on archived generations this controller accepted or exact host-private pending-review records
+that revalidate their completion receipt, task/queue identity and raw unique binding. They never
+derive authority by scanning historical archives.
 
 ## Changelog
 
+- 2026-09-13 — final review authority now persists exact accepted generations across process stops;
+  resumed and explicitly imported subjects retain the same host-verdict boundary without granting
+  archive-wide authority.
 - 2026-08-26 — removed support for the unshipped v1/v2 descendant formats and the now-unused
   manual adoption bridge; active v3 and pending v4 are now the only accepted formats, with
   unsupported versions and unknown fields rejected fail-closed.

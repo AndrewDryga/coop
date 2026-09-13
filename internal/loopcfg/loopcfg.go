@@ -192,6 +192,10 @@ type Snapshot struct {
 // configuration it derives from instead of claiming a file that is not there.
 func (s *Snapshot) Configured() bool { return s.digest != "" }
 
+// Digest returns the immutable startup configuration digest for host-side durable orchestration
+// records. It contains no config contents or credentials.
+func (s *Snapshot) Digest() string { return s.digest }
+
 // State describes the startup snapshot for the launch announcement, with an explicit
 // absent/default form so "no file" is stated rather than silent.
 func (s *Snapshot) State() string {

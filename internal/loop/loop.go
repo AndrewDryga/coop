@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -195,6 +196,11 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	currentSignoff, currentVerify := lc.Signoff, lc.Verify
+	currentSignoff.Agent = slices.Clone(currentSignoff.Agent)
+	currentVerify.Agent = slices.Clone(currentVerify.Agent)
+	currentMCPFile := c.cfg.MCPFile
+	currentMCPDisabled := lc.MCPDisabled() || currentMCPFile == ""
 	ui.Note("%s", loopConfigLine(cfgSnap.Configured()))
 	// loop.yaml `mcp: false` runs EVERY stage's box without the shared MCP config — the schemas
 	// ride at the front of each model request, so a drain that doesn't need those tools shouldn't
@@ -202,15 +208,16 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// MCPFile is the one switch the box snapshot boundary keys off; the loop owns this process, so
 	// nothing else reads the config after it. Caveat: a verify: pass whose e2e
 	// depends on MCP tooling needs mcp left on — repo-local e2e via bash is unaffected.
-	if lc.MCPDisabled() {
-		c.cfg.MCPFile = ""
-	}
 	if err := tasks.ReconcileInterruptedCompletions(hosts); err != nil {
 		return 1, fmt.Errorf("recover interrupted completion: %w", err)
 	}
 	recoveredReviewCompletions, err := tasks.ReconcileCompletionWindowsWithActivity(hosts)
 	if err != nil {
 		return 1, fmt.Errorf("recover interrupted completion window: %w", err)
+	}
+	pendingReview, err := tasks.LoadPendingReviews(repo, hosts)
+	if err != nil {
+		return 1, fmt.Errorf("recover pending final review: %w", err)
 	}
 	duplicates, err := tasks.NonArchivedDuplicateTaskIDs(hosts)
 	if err != nil {
@@ -219,14 +226,34 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	if len(duplicates) > 0 {
 		return 1, fmt.Errorf("aggregated loop cannot safely distinguish non-archived task id(s) present in multiple queues: %s — rename the duplicates or select one queue with --tasks", strings.Join(duplicates, ", "))
 	}
-	custom := lc.Work.Command
+	resumingCohort := len(pendingReview.Subjects) > 0
+	if resumingCohort {
+		applyStoredReviewPlan(lc, pendingReview.Plan)
+	}
+	activeMCPDisabled := currentMCPDisabled
+	if resumingCohort {
+		activeMCPDisabled = pendingReview.Plan.MCPDisabled
+	}
+	if activeMCPDisabled {
+		c.cfg.MCPFile = ""
+	} else {
+		c.cfg.MCPFile = currentMCPFile
+	}
+	currentCustom := slices.Clone(lc.Work.Command)
+	var custom []string
+	if !resumingCohort {
+		custom = slices.Clone(currentCustom)
+	}
+	if len(spec.ReviewTasks) > 0 && len(currentCustom) > 0 {
+		return 1, errors.New("--review-task requires the built-in loop review; remove work.command or omit the import")
+	}
 	limit := loopTaskLimit{max: maxTasks}
 	// A task-limited run with no actionable work is a pure host-side no-op: it does not need an
 	// image and must not launch a configured preflight agent. Its built-in preflight may first
 	// unblock answered decisions, since that is host-only and can make work actionable.
 	preflightBuiltinRan := false
 	var builtinResult preflightResult
-	if limit.enabled() && preflight && len(custom) == 0 {
+	if limit.enabled() && preflight && len(custom) == 0 && !resumingCohort {
 		builtinResult, err = builtinPreflight(hosts)
 		if err != nil {
 			return 1, err
@@ -238,7 +265,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		if err != nil {
 			return 1, err
 		}
-		if cf.Todo+cf.Doing == 0 {
+		if cf.Todo+cf.Doing == 0 && len(spec.ReviewTasks) == 0 && len(pendingReview.Subjects) == 0 {
 			if preflightBuiltinRan {
 				printPreflight(hosts, builtinResult)
 			}
@@ -266,7 +293,8 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// The signoff pass (end-of-loop) and between-tasks audits both run only under the signoff-aware
 	// agent form, not a custom work.command. Ordinary between review is opt-in; a completed task that
 	// changed a protected gate path gets the narrow built-in audit even when it is off.
-	betweenEnabled := len(custom) == 0 && lc.Between.Enabled
+	currentBetweenEnabled := len(currentCustom) == 0 && lc.Between.Enabled
+	betweenEnabled := currentBetweenEnabled && !resumingCohort
 	// Per-stage signoff/between rotations from .agent/loop.yaml — each runs on its OWN configured
 	// provider/model/effort/account and rotates its own fallback ladder on a limit (NOT a model name
 	// pasted onto the work provider). An unset stage falls back: between → signoff → the work loop.
@@ -283,6 +311,22 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	if err != nil {
 		return 2, fmt.Errorf("verify agent: %w", err)
 	}
+	currentSignoffRot, currentBetweenRot, currentVerifyRot := signoffRot, betweenRot, verifyRot
+	if resumingCohort {
+		currentSignoffRot, err = c.reviewRotation(currentSignoff.Agent, agent, rot)
+		if err != nil {
+			return 2, fmt.Errorf("current signoff agent: %w", err)
+		}
+		currentBetweenRot, err = c.reviewRotation(lc.Between.Agent, agent, currentSignoffRot)
+		if err != nil {
+			return 2, fmt.Errorf("current between agent: %w", err)
+		}
+		currentVerifyRot, err = c.reviewRotation(currentVerify.Agent, agent, currentSignoffRot)
+		if err != nil {
+			return 2, fmt.Errorf("current verify agent: %w", err)
+		}
+	}
+	currentVerifyEnabled := len(currentCustom) == 0 && currentVerify.Enabled
 	// Restricted networking is admitted ONCE, here, for the whole run: the
 	// operator's --egress choice, the project's approved requests, and the core
 	// endpoints of every rung this run may rotate onto are frozen into one policy,
@@ -293,7 +337,8 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	c.net = newNetworkLog()
 	defer c.net.summary()
 	capture, err := box.AdmitNetwork(c.cfg, c.rt,
-		networkAdmissionSpec(c.cfg, repo, img, agent, c.preset, peers, rot, signoffRot, betweenRot, verifyRot), spec.Network)
+		networkAdmissionSpec(c.cfg, repo, img, agent, c.preset, peers, rot, signoffRot, betweenRot, verifyRot,
+			currentSignoffRot, currentBetweenRot, currentVerifyRot), spec.Network)
 	if err != nil {
 		return 1, err
 	}
@@ -396,12 +441,18 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// no task and deletes nothing: done tasks are pruned only by a human (`coop tasks rm
 	// --all-done`), never by an agent. Opt-in (preflight.enabled / --preflight); skipped under a
 	// custom work.command (not the agent's headless form).
-	if preflight && len(custom) == 0 {
+	preflightRan := false
+	runPreflight := func() error {
+		if preflightRan || !preflight || len(custom) > 0 {
+			return nil
+		}
+		preflightRan = true
 		if !preflightBuiltinRan {
 			builtinResult, err = builtinPreflight(hosts)
 			if err != nil {
-				return 1, err
+				return err
 			}
+			preflightBuiltinRan = true
 		}
 		printPreflight(hosts, builtinResult)
 		// An agent runs only for a CUSTOM cleanup (loop.yaml preflight.prompt) — extra instructions
@@ -414,12 +465,12 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 			agent = c.applyTarget(rot)
 			pfStart, pfHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			pfCmd, streaming, agentCommand := iterCmd(agent, loopPreflightPrompt(repo, queues, s))
-			pfCode, _, _, pfClassification, windows, runErr := c.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, agentCommand, hosts, completionWindowReview, nil, false, sink, peers, "preflight", "", nil)
+			pfCode, _, _, pfClassification, windows, runErr := c.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, agentCommand, hosts, completionWindowReview, nil, nil, false, sink, peers, "preflight", "", nil)
 			if errors.Is(runErr, tasks.ErrCompletionWindowSetup) {
-				return 1, runErr
+				return runErr
 			}
 			if _, err := windows.FinishReview(); err != nil {
-				return 1, fmt.Errorf("pre-flight changed task completion ownership: %w", err)
+				return fmt.Errorf("pre-flight changed task completion ownership: %w", err)
 			}
 			c.recordStage(repo, runid, "preflight", pfClassification.outcome, rot.Active(), pfStart, pfCode, 0, 0, pfHead, hosts, nil, nil, nil)
 			prev := rot.Active()
@@ -434,6 +485,12 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 						cleanDiagnosticLine(agents.DisplayTarget(rot.Active().String()))))
 				}
 			}
+		}
+		return nil
+	}
+	if !resumingCohort {
+		if err := runPreflight(); err != nil {
+			return 1, err
 		}
 	}
 	c0, _, err := tasks.QueueProgress(hosts)
@@ -466,6 +523,58 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		return 1, ui.Reported(fmt.Errorf("read HEAD of %s: %w", repo, headErr))
 	}
 	loopStartHead := prevHead // for the end-of-run signing sweep (catches any straggler cycle)
+	var reviewPlan tasks.PendingReviewPlan
+	if len(pendingReview.Subjects) > 0 {
+		reviewPlan = pendingReview.Plan
+		loopStartHead = reviewPlan.BaseHead
+	} else {
+		if len(spec.ReviewTasks) > 0 {
+			loopStartHead, err = tasks.PendingReviewImportBase(repo, hosts, spec.ReviewTasks)
+			if err != nil {
+				return 1, fmt.Errorf("anchor archived task review context: %w", err)
+			}
+		}
+		reviewPlan, err = pendingReviewPlanForRun(repo, hosts, loopStartHead, cfgSnap.Digest(), continueCmd, lc, signoffRot, verifyRot, currentMCPDisabled)
+		if err != nil {
+			return 1, fmt.Errorf("prepare durable final review: %w", err)
+		}
+	}
+	if len(spec.ReviewTasks) > 0 {
+		if len(pendingReview.Subjects) > 0 {
+			additional := pendingReviewAdditionalImports(pendingReview, spec.ReviewTasks)
+			if len(additional) > 0 {
+				return 1, fmt.Errorf("pending final review already has fixed change context; resume it without importing %s, then import that archived work in a later loop", strings.Join(additional, ", "))
+			}
+		}
+		if err := tasks.EnrollExistingPendingReviews(repo, hosts, spec.ReviewTasks, reviewPlan); err != nil {
+			return 1, fmt.Errorf("import archived task for final review: %w", err)
+		}
+		pendingReview, err = tasks.LoadPendingReviews(repo, hosts)
+		if err != nil {
+			return 1, fmt.Errorf("reload imported final review: %w", err)
+		}
+		reviewPlan = pendingReview.Plan
+		ui.Note("Imported %s into pending final review.", ui.Count(len(slices.Compact(slices.Sorted(slices.Values(spec.ReviewTasks)))), "archived task"))
+	}
+	if len(recoveredReviewCompletions) > 0 {
+		if err := tasks.EnrollExistingPendingReviews(repo, hosts, recoveredReviewCompletions, reviewPlan); err != nil {
+			return 1, fmt.Errorf("preserve recovered final-review subjects: %w", err)
+		}
+		pendingReview, err = tasks.LoadPendingReviews(repo, hosts)
+		if err != nil {
+			return 1, fmt.Errorf("reload recovered final review: %w", err)
+		}
+		reviewPlan = pendingReview.Plan
+	}
+	for _, id := range pendingReviewIDs(pendingReview) {
+		completedThisRun[id] = true
+	}
+	resumingPendingReview := len(pendingReview.Subjects) > 0
+	pendingReopened := pendingReviewIDs(pendingReview, tasks.PendingReviewReopened)
+	announcePendingFinalReview(
+		pendingReviewIDs(pendingReview, tasks.PendingReviewSignoff, tasks.PendingReviewVerify),
+		reviewPlan.Continue,
+	)
 	// The signoff reviews only what THIS RUN completed: anchoring to the pre-run done set keeps
 	// 99_done/'s history (pruned only by a human) out of every round's subject list.
 	doneBaseline, err := doneTaskDirs(hosts)
@@ -473,6 +582,9 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		return 1, err
 	}
 	reviewBaseline := reviewBaselineAfterVerdict(doneBaseline, nil, nil, recoveredReviewCompletions)
+	for _, id := range pendingReviewIDs(pendingReview, tasks.PendingReviewSignoff) {
+		delete(reviewBaseline, id)
+	}
 	if len(recoveredReviewCompletions) > 0 {
 		ui.Note("Another session completed %s during an interrupted review. Reviewing it before finishing.", ui.Count(len(recoveredReviewCompletions), "task"))
 	}
@@ -483,12 +595,17 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// stuck task forever while a tiny batch still gets a few tries (computed per round from the run's
 	// completed count; the hard ceiling bounds it). A custom work.command has no signoff pass.
 	// Final verify may jump back here when a parallel host completion needs its own signoff.
-	signoffRound, maxReviewRounds := 1, 0
+	signoffRound, maxReviewRounds := pendingSignoffStartRound(pendingReview), 0
 	reviewCapped := false
 	verificationFailed := false
 reviewAgain:
 	for ; ; signoffRound++ {
 		for {
+			// Cross-run debt is settled before unrelated queue work. Reopened subjects are the only
+			// work eligible here; an already-completed cohort goes straight to its stored reviewer.
+			if resumingPendingReview && len(pendingReopened) == 0 {
+				break
+			}
 			// A first Ctrl-C (soft stop) that arrived between iterations — or that woke a wait
 			// below — stops here, before the next task is claimed; a second (hard) Ctrl-C that
 			// canceled iterCtx during a between-tasks audit stops here too, before respawning a box.
@@ -499,12 +616,14 @@ reviewAgain:
 			if snapshotErr != nil {
 				return 1, snapshotErr
 			}
-			reached, limitErr := limit.observe(snapshot)
-			if limitErr != nil {
-				return 1, limitErr
-			}
-			if reached {
-				break
+			if !resumingPendingReview {
+				reached, limitErr := limit.observe(snapshot)
+				if limitErr != nil {
+					return 1, limitErr
+				}
+				if reached {
+					break
+				}
 			}
 			// Point cfg at this iteration's target before leasing: the provider/target in metadata
 			// identifies the owning controller, while flock remains the actual authority.
@@ -512,9 +631,13 @@ reviewAgain:
 			target := rot.Active()
 			// Select and host-claim one authoritative task before the box starts. The returned task
 			// drives both the banner and prompt, so the model cannot guess a different "next" task.
+			onlyID := limit.scope()
+			if onlyID == "" && resumingPendingReview && len(pendingReopened) > 0 {
+				onlyID = pendingReopened[0]
+			}
 			assignment, assignErr := tasks.AssignLoopTaskOnly(hosts, tasks.TaskLeaseOwner{
 				RunID: c.runID, PID: os.Getpid(), Provider: agent, Target: target.String(),
-			}, limit.scope())
+			}, onlyID)
 			if assignErr != nil {
 				return 1, assignErr
 			}
@@ -531,7 +654,9 @@ reviewAgain:
 				break
 			}
 			assigned, lease := assignment.Task, assignment.Lease
-			limit.assign(assigned.Item.ID, assigned.Item.Title)
+			if !resumingPendingReview {
+				limit.assign(assigned.Item.ID, assigned.Item.Title)
+			}
 			// The active profile is shown on the model line (streamjson) — don't repeat it on the header.
 			active := cleanDiagnosticLine(assigned.Item.Title)
 			current := taskLine{id: assigned.Item.ID, title: assigned.Item.Title, scope: scopes[assigned.Root]}
@@ -587,7 +712,7 @@ reviewAgain:
 			iterStart := time.Now()
 			c.net.setStage(fmt.Sprintf("Task attempt %d", attempt))
 			cmd, streaming, agentCommand := iterCmd(agent, iterWork)
-			code, _, res, classification, windows, runErr := c.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, agentCommand, hosts, completionWindowWork, []string{assigned.Item.ID}, false, sink, peers, active, assigned.Item.ID, taskTools)
+			code, _, res, classification, windows, runErr := c.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, agentCommand, hosts, completionWindowWork, []string{assigned.Item.ID}, nil, false, sink, peers, active, assigned.Item.ID, taskTools)
 			if errors.Is(runErr, tasks.ErrCompletionWindowSetup) {
 				return 1, errors.Join(runErr, lease.Release())
 			}
@@ -901,7 +1026,13 @@ reviewAgain:
 					refRelease()
 					return 1, errors.Join(fmt.Errorf("%w — completion was not accepted; fix the obstruction and re-run `coop loop`", cleanupErr), releaseErr)
 				}
-				if receiptErr := lease.MarkCompleted(assignedCompletion.Item.Dir); receiptErr != nil {
+				var receiptErr error
+				if len(custom) == 0 {
+					receiptErr = lease.MarkCompletedForReview(repo, assignedCompletion.Item, reviewPlan)
+				} else {
+					receiptErr = lease.MarkCompleted(assignedCompletion.Item.Dir)
+				}
+				if receiptErr != nil {
 					restoreErr := tasks.RestoreUnrecordedCompletion(*assignedCompletion)
 					clearErr := lease.ClearCompleted()
 					releaseErr := errors.Join(lease.Release(), windows.Abandon())
@@ -920,6 +1051,9 @@ reviewAgain:
 			}
 			if assignedCompletion != nil {
 				completedThisRun[assignedCompletion.Item.ID] = true
+				pendingReopened = slices.DeleteFunc(pendingReopened, func(id string) bool {
+					return id == assignedCompletion.Item.ID
+				})
 				completedLine := taskReportLine(assignedCompletion.Item, scopes[assignedCompletion.Root])
 				completedLines = rememberCompletion(completedLines, completedLine)
 				printTaskCompleted(completedLine)
@@ -940,6 +1074,12 @@ reviewAgain:
 				if signed, serr := c.host.signUnpushed(repo, iterHead); serr != nil {
 					printSigningFailure(0, serr)
 				} else if signed > 0 {
+					signedHead := gitOut(repo, "rev-parse", "HEAD")
+					if assignedCompletion != nil && len(custom) == 0 {
+						if rebindErr := tasks.RebindPendingReviewAfterSigning(repo, assignedCompletion.Root, assignedCompletion.Item.ID, headAfter, signedHead); rebindErr != nil {
+							return 1, fmt.Errorf("rebind task %s final-review evidence after signing: %w", assignedCompletion.Item.ID, rebindErr)
+						}
+					}
 					ui.Note("Signed %s with your host key.", ui.Count(signed, "commit"))
 				}
 				headAfter = gitOut(repo, "rev-parse", "HEAD")
@@ -978,7 +1118,7 @@ reviewAgain:
 						observe := func(run reviewRunResult, start time.Time, headBefore string) {
 							c.recordStage(repo, runid, "between", run.outcome, run.target, start, run.exit, run.retries, len(run.reopened), headBefore, hosts, nil, auditGateFiles, run.usage)
 						}
-						btRun, rerr := c.runReviewVerdict(iterCtx, repo, img, betweenRot, forkName, prompt, reviewActivity(stage, finishedIDs), iterCmd, hosts, finishedIDs, lc.Between.Writes, sink, peers, hardStop, observe)
+						btRun, rerr := c.runReviewVerdict(iterCtx, repo, img, betweenRot, forkName, prompt, reviewActivity(stage, finishedIDs), iterCmd, hosts, finishedIDs, &reviewPlan, lc.Between.Writes, sink, peers, hardStop, observe)
 						reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, nil, nil, btRun.concurrent)
 						reopenedIDs := btRun.reopened
 						if errors.Is(rerr, errReviewInterrupted) {
@@ -1096,6 +1236,8 @@ reviewAgain:
 			if err != nil {
 				return 1, err
 			}
+			pending, _ := completedReviewSubjects(hosts, completedThisRun)
+			notePendingFinalReview(pending)
 			c.closeWith(func() { printInterrupted(cf, continueCmd, false) })
 			return LoopInterruptedExitCode, nil
 		}
@@ -1104,12 +1246,17 @@ reviewAgain:
 			if err != nil {
 				return 1, err
 			}
-			if limit.settled == 0 {
+			resumeDebt := len(pendingReview.Subjects) > 0
+			if limit.settled == 0 && !resumeDebt {
 				c.closeWith(func() { printNoActionableTasks(cf) })
 				return loopExitCode(cf), nil
 			}
-			c.closeWith(func() { printTaskLimitReached(limit, continueCmd) })
-			return 0, nil
+			if limit.settled > 0 {
+				pending, _ := completedReviewSubjects(hosts, completedThisRun)
+				notePendingFinalReview(pending)
+				c.closeWith(func() { printTaskLimitReached(limit, continueCmd) })
+				return 0, nil
+			}
 		}
 		// A custom work.command isn't the signoff-aware agent form, so it gets no signoff pass —
 		// today's behavior: drain the queue, then report.
@@ -1130,6 +1277,23 @@ reviewAgain:
 		if len(subjects) == 0 {
 			break // nothing newly completed: a review with no subject is not a verdict
 		}
+		subjectIDs := taskIDsOf(subjects)
+		// A host completion that landed between loop bookkeeping steps still carries its receipt.
+		// Enroll it before launching the reviewer; the folder diff names subjects, never authority.
+		if err := tasks.EnrollExistingPendingReviews(repo, hosts, subjectIDs, reviewPlan); err != nil {
+			return 1, fmt.Errorf("preserve final-review subjects: %w", err)
+		}
+		if err := tasks.BeginPendingReviewRound(hosts, subjectIDs, signoffRound); err != nil {
+			return 1, fmt.Errorf("record final-review round %d: %w", signoffRound, err)
+		}
+		roundCohort, err := tasks.LoadPendingReviews(repo, hosts)
+		if err != nil {
+			return 1, fmt.Errorf("capture final-review round %d subjects: %w", signoffRound, err)
+		}
+		roundRecords, err := pendingReviewRecordsForIDs(roundCohort, subjectIDs)
+		if err != nil {
+			return 1, err
+		}
 		printFinalReview(signoffRound, maxReviewRounds, signoffRot.Active().String(), len(subjects))
 		// The signoff runs on signoff.agent's OWN target — a stronger, usually different-vendor model
 		// reviews the work loop's output — and fails CLOSED: if it can't run after retries, stop loudly
@@ -1139,34 +1303,42 @@ reviewAgain:
 		// round because the range (loopStartHead..HEAD) grows as reopened work lands.
 		soHead := gitOut(repo, "rev-parse", "HEAD")
 		cs := loopChanges(repo, loopStartHead, soHead)
-		subjectIDs := taskIDsOf(subjects)
 		signoff := loopSignoffPrompt(repo, queues, substituteLoopVars(lc.Signoff.Prompt, cs, health), subjects) + audits.signoffBlock(subjectIDs) + cs.reviewBlock(health)
 		observe := func(run reviewRunResult, start time.Time, headBefore string) {
 			c.recordStage(repo, runid, "signoff", run.outcome, run.target, start, run.exit, run.retries, len(run.reopened), headBefore, hosts, nil, nil, run.usage)
 		}
-		soRun, serr := c.runReviewVerdict(iterCtx, repo, img, signoffRot, forkName, signoff, reviewActivity("signoff", subjectIDs), iterCmd, hosts, subjectIDs, lc.Signoff.Writes, sink, peers, wake, observe)
+		soRun, serr := c.runReviewVerdict(iterCtx, repo, img, signoffRot, forkName, signoff, reviewActivity("signoff", subjectIDs), iterCmd, hosts, subjectIDs, &reviewPlan, lc.Signoff.Writes, sink, peers, wake, observe)
 		// Preserve the exact tasks the host reopened before any early return.
 		reopenedIDs := soRun.reopened
+		if len(soRun.concurrent) > 0 {
+			if err := tasks.EnrollExistingPendingReviews(repo, hosts, soRun.concurrent, reviewPlan); err != nil {
+				return 1, fmt.Errorf("preserve concurrent final-review subjects: %w", err)
+			}
+		}
+		if len(reopenedIDs) > 0 {
+			reopenedRecords, selectErr := pendingReviewRecordsForIDs(tasks.PendingReviewCohort{Subjects: roundRecords}, reopenedIDs)
+			if selectErr != nil {
+				return 1, selectErr
+			}
+			if err := tasks.MarkExpectedPendingReviewsReopened(hosts, reopenedRecords); err != nil {
+				return 1, fmt.Errorf("record final-review reopens: %w", err)
+			}
+			if resumingPendingReview {
+				pendingReopened = slices.Compact(slices.Sorted(slices.Values(append(pendingReopened, reopenedIDs...))))
+			}
+		}
 		if errors.Is(serr, errReviewInterrupted) {
 			cf, _, err := tasks.QueueProgress(hosts)
 			if err != nil {
 				return 1, err
 			}
+			notePendingFinalReview(subjectIDs)
 			c.closeWith(func() { printInterrupted(cf, continueCmd, true) })
 			return LoopInterruptedExitCode, nil
 		}
 		if serr != nil {
 			ui.Failure("Could not complete the final review", serr.Error(), [2]string{"Continue:", continueCmd})
 			return 1, ui.Reported(serr)
-		}
-		// A stop that landed during the signoff pass is honored before the next round is decided.
-		if softStop.Load() || iterCtx.Err() != nil {
-			cf, _, err := tasks.QueueProgress(hosts)
-			if err != nil {
-				return 1, err
-			}
-			c.closeWith(func() { printInterrupted(cf, continueCmd, false) })
-			return LoopInterruptedExitCode, nil
 		}
 		health.noteReopen(reopenedIDs)
 		// Guard against a lost verdict (the 2026-07-10 incident): a signoff that DECIDES reopens as
@@ -1183,6 +1355,35 @@ reviewAgain:
 			ui.Alert("The review result could not be read",
 				fmt.Sprintf("It reported %s, but the task queue moved %s.\nRepeating the full review once with the required response format.", receiptClaim(receipt, ok), receiptIDs(reopenedIDs)))
 			continue
+		}
+		acceptedIDs := withoutReviewIDs(subjectIDs, reopenedIDs)
+		acceptedRecords, selectErr := pendingReviewRecordsForIDs(tasks.PendingReviewCohort{Subjects: roundRecords}, acceptedIDs)
+		if selectErr != nil {
+			return 1, selectErr
+		}
+		if verifyEnabled {
+			if err := tasks.MarkExpectedPendingReviewsVerify(hosts, acceptedRecords); err != nil {
+				return 1, fmt.Errorf("record final verification subjects: %w", err)
+			}
+		} else {
+			if err := tasks.ClearPendingReviews(hosts, acceptedRecords); err != nil {
+				return 1, fmt.Errorf("clear accepted final-review subjects: %w", err)
+			}
+		}
+		// A stop that landed during a successful signoff is honored only after its host-applied
+		// receipt and durable phase transition are complete.
+		if softStop.Load() || iterCtx.Err() != nil {
+			cf, _, err := tasks.QueueProgress(hosts)
+			if err != nil {
+				return 1, err
+			}
+			pendingStopIDs := slices.Clone(reopenedIDs)
+			if verifyEnabled {
+				pendingStopIDs = append(pendingStopIDs, acceptedIDs...)
+			}
+			notePendingFinalReview(pendingStopIDs)
+			c.closeWith(func() { printInterrupted(cf, continueCmd, false) })
+			return LoopInterruptedExitCode, nil
 		}
 		audits.drop(reopenedIDs)
 		// This round's verdict is consistent — advance the baseline past its accepted subjects
@@ -1242,12 +1443,29 @@ reviewAgain:
 				fmt.Sprintf("The run's changes could not be verified: %v\nThe affected work remains unverified.", changeErr))
 		} else if cs.empty() {
 			// Nothing changed: a check with nothing to check is omitted, not reported as skipped.
+			pendingVerify, pendingErr := tasks.LoadPendingReviews(repo, hosts)
+			if pendingErr != nil {
+				return 1, fmt.Errorf("validate no-op final verification subjects: %w", pendingErr)
+			}
+			verifyIDs := pendingReviewIDs(pendingVerify, tasks.PendingReviewVerify)
+			expected, selectErr := pendingReviewRecordsForIDs(pendingVerify, verifyIDs)
+			if selectErr != nil {
+				return 1, selectErr
+			}
+			if err := tasks.ClearPendingReviews(hosts, expected); err != nil {
+				return 1, fmt.Errorf("clear no-op final-verification subjects: %w", err)
+			}
 		} else {
 			vPrompt := substituteLoopVars(lc.Verify.Prompt, cs, health) + cs.reviewBlock(health) +
 				"\n\n" + auditEvidencePrompt + "\n\n" + reviewContextFooter(repo, queues)
-			verifyIDs, err := completedReviewSubjects(hosts, completedThisRun)
-			if err != nil {
-				return 1, err
+			pendingVerify, pendingErr := tasks.LoadPendingReviews(repo, hosts)
+			if pendingErr != nil {
+				return 1, fmt.Errorf("capture final-verification subjects: %w", pendingErr)
+			}
+			verifyIDs := pendingReviewIDs(pendingVerify, tasks.PendingReviewVerify)
+			verifyRecords, selectErr := pendingReviewRecordsForIDs(pendingVerify, verifyIDs)
+			if selectErr != nil {
+				return 1, selectErr
 			}
 			printVerification(verifyRot.Active().String(), len(verifyIDs))
 			if len(cs.subsystems) > 0 {
@@ -1260,14 +1478,32 @@ reviewAgain:
 			observe := func(run reviewRunResult, start time.Time, headBefore string) {
 				c.recordStage(repo, runid, "verify", run.outcome, run.target, start, run.exit, run.retries, len(run.reopened), headBefore, hosts, nil, nil, run.usage)
 			}
-			vRun, verr := c.runReviewVerdict(iterCtx, repo, img, verifyRot, forkName, vPrompt, verifyActivity, iterCmd, hosts, verifyIDs, lc.Verify.Writes, sink, peers, wake, observe)
+			vRun, verr := c.runReviewVerdict(iterCtx, repo, img, verifyRot, forkName, vPrompt, verifyActivity, iterCmd, hosts, verifyIDs, &reviewPlan, lc.Verify.Writes, sink, peers, wake, observe)
 			reopenedIDs := vRun.reopened
+			if len(vRun.concurrent) > 0 {
+				if err := tasks.EnrollExistingPendingReviews(repo, hosts, vRun.concurrent, reviewPlan); err != nil {
+					return 1, fmt.Errorf("preserve concurrent verification subjects: %w", err)
+				}
+			}
+			if len(reopenedIDs) > 0 {
+				reopenedRecords, selectErr := pendingReviewRecordsForIDs(tasks.PendingReviewCohort{Subjects: verifyRecords}, reopenedIDs)
+				if selectErr != nil {
+					return 1, selectErr
+				}
+				if err := tasks.MarkExpectedPendingReviewsReopened(hosts, reopenedRecords); err != nil {
+					return 1, fmt.Errorf("record verification reopens: %w", err)
+				}
+				if resumingPendingReview {
+					pendingReopened = slices.Compact(slices.Sorted(slices.Values(append(pendingReopened, reopenedIDs...))))
+				}
+			}
 			health.noteReopen(reopenedIDs)
 			if errors.Is(verr, errReviewInterrupted) {
 				cf, _, err := tasks.QueueProgress(hosts)
 				if err != nil {
 					return 1, err
 				}
+				notePendingFinalReview(verifyIDs)
 				c.closeWith(func() { printInterrupted(cf, continueCmd, true) })
 				return LoopInterruptedExitCode, nil
 			}
@@ -1285,6 +1521,13 @@ reviewAgain:
 					fmt.Sprintf("%v\nThe affected work remains unverified.", verr))
 			}
 			if verr == nil {
+				expected, selectErr := pendingReviewRecordsForIDs(tasks.PendingReviewCohort{Subjects: verifyRecords}, withoutReviewIDs(verifyIDs, reopenedIDs))
+				if selectErr != nil {
+					return 1, selectErr
+				}
+				if err := tasks.ClearPendingReviews(hosts, expected); err != nil {
+					return 1, fmt.Errorf("clear accepted final-verification subjects: %w", err)
+				}
 				audits.drop(reopenedIDs)
 				reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, nil, reopenedIDs, vRun.concurrent)
 				if len(reopenedIDs) > 0 {
@@ -1325,11 +1568,64 @@ reviewAgain:
 			}
 		}
 	}
+	if resumingPendingReview && !reviewCapped && !verificationFailed && !softStop.Load() && iterCtx.Err() == nil {
+		remaining, pendingErr := tasks.LoadPendingReviews(repo, hosts)
+		if pendingErr != nil {
+			return 1, fmt.Errorf("validate resumed final review: %w", pendingErr)
+		}
+		if len(remaining.Subjects) == 0 {
+			// The older cohort is fully receipt-accepted. Restore this invocation's settings before
+			// touching unrelated queue work, and give new completions their own run-anchored cohort.
+			resumingPendingReview = false
+			pendingReview = tasks.PendingReviewCohort{}
+			pendingReopened = nil
+			lc.Signoff, lc.Verify = currentSignoff, currentVerify
+			lc.Signoff.Agent = slices.Clone(currentSignoff.Agent)
+			lc.Verify.Agent = slices.Clone(currentVerify.Agent)
+			signoffRot, betweenRot, verifyRot = currentSignoffRot, currentBetweenRot, currentVerifyRot
+			betweenEnabled, verifyEnabled = currentBetweenEnabled, currentVerifyEnabled
+			custom = slices.Clone(currentCustom)
+			if currentMCPDisabled {
+				c.cfg.MCPFile = ""
+			} else {
+				c.cfg.MCPFile = currentMCPFile
+			}
+			if err := runPreflight(); err != nil {
+				return 1, err
+			}
+			c0, _, err = tasks.QueueProgress(hosts)
+			if err != nil {
+				return 1, err
+			}
+			settledBaseline = c0.Done + c0.Blocked
+			completedThisRun = map[string]bool{}
+			prevHead, headErr = gitOutErr(repo, "rev-parse", "HEAD")
+			if headErr != nil {
+				return 1, fmt.Errorf("read HEAD after resumed final review: %w", headErr)
+			}
+			loopStartHead = prevHead
+			reviewPlan, err = pendingReviewPlanForRun(repo, hosts, loopStartHead, cfgSnap.Digest(), continueCmd, lc, signoffRot, verifyRot, currentMCPDisabled)
+			if err != nil {
+				return 1, fmt.Errorf("prepare final review after recovery: %w", err)
+			}
+			reviewBaseline, err = doneTaskDirs(hosts)
+			if err != nil {
+				return 1, err
+			}
+			signoffRound, maxReviewRounds = 1, 0
+			if c0.Todo+c0.Doing > 0 {
+				ui.Note("The earlier final review is settled. Continuing with the current queue.")
+				goto reviewAgain
+			}
+		}
+	}
 	if softStop.Load() || iterCtx.Err() != nil {
 		cf, _, err := tasks.QueueProgress(hosts)
 		if err != nil {
 			return 1, err
 		}
+		pending, _ := completedReviewSubjects(hosts, completedThisRun)
+		notePendingFinalReview(pending)
 		c.closeWith(func() { printStoppedBeforeFinalVerdict(cf) })
 		return LoopInterruptedExitCode, nil
 	}
@@ -1337,9 +1633,24 @@ reviewAgain:
 	// but it catches any straggler — a commit from a previously interrupted run, or a preflight
 	// commit — so the whole run's range is signed before you push. Best-effort.
 	if forkspace.WantsSigning() && len(custom) == 0 {
+		unsignedHead := gitOut(repo, "rev-parse", "HEAD")
+		pendingBeforeSigning, pendingErr := tasks.LoadPendingReviews(repo, hosts)
+		if pendingErr != nil {
+			return 1, fmt.Errorf("validate pending final-review evidence before signing: %w", pendingErr)
+		}
 		if signed, serr := c.host.signUnpushed(repo, loopStartHead); serr != nil {
 			printSigningFailure(0, serr)
 		} else if signed > 0 {
+			signedHead := gitOut(repo, "rev-parse", "HEAD")
+			for _, subject := range pendingBeforeSigning.Subjects {
+				root := pendingReviewSubjectRoot(pendingBeforeSigning.Plan, subject)
+				if root == "" {
+					return 1, fmt.Errorf("pending final-review task %s has no recorded queue", subject.Task.Ref.ID)
+				}
+				if err := tasks.RebindPendingReviewAfterSigning(repo, root, subject.Task.Ref.ID, unsignedHead, signedHead); err != nil {
+					return 1, fmt.Errorf("rebind pending final-review evidence after signing: %w", err)
+				}
+			}
 			ui.Note("Signed %s with your host key.", ui.Count(signed, "commit"))
 		}
 	}

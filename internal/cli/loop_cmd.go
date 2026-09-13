@@ -23,7 +23,7 @@ const (
 )
 
 var loopOptions = []string{
-	"--tasks", "--peer", "--max-tasks", "--preflight", "--no-preflight", "--no-mcp", "--debug-on-fail",
+	"--tasks", "--peer", "--review-task", "--max-tasks", "--preflight", "--no-preflight", "--no-mcp", "--debug-on-fail",
 	"--egress", "--allow-domain", "--egress-rules",
 }
 
@@ -86,6 +86,11 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		return 2, err
 	}
 	peerVals, rest, err := extractPeer(loopCommand, rest)
+	if err != nil {
+		return 2, err
+	}
+	reviewTasks, rest, err := extractRepeatable(loopCommand, rest, "--review-task",
+		loopCommand+" --review-task <id> [--review-task <id>...]", loopCommand+" --review-task my-task")
 	if err != nil {
 		return 2, err
 	}
@@ -173,8 +178,9 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		Repo: repo, Image: img, Agent: agent,
 		Rotation: rot, Queues: queues, Preset: a.preset, Peers: peers,
 		DebugOnFail: debugOnFail, Preflight: preflight, MaxTasks: maxTasks,
-		Continue: loopContinueCommand(t, hasTarget, presetName, flags),
-		Network:  a.network.admission(),
+		ReviewTasks: reviewTasks,
+		Continue:    loopContinueCommand(t, hasTarget, presetName, flags),
+		Network:     a.network.admission(),
 	})
 }
 

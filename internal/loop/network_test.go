@@ -191,7 +191,7 @@ func TestEveryLoopLaunchCarriesTheRunsCapture(t *testing.T) {
 		boxRun: func(spec box.RunSpec) (int, error) { launched = append(launched, spec); return 0, nil },
 	}
 	if _, _, _, _, _, err := c.runIteration(context.Background(), repo, "img", "claude", "", []string{"true"},
-		false, false, []string{root}, completionWindowStrict, nil, false, io.Discard, nil, "work", "", nil); err != nil {
+		false, false, []string{root}, completionWindowStrict, nil, nil, false, io.Discard, nil, "work", "", nil); err != nil {
 		t.Fatalf("iteration: %v", err)
 	}
 	c.debugShell(repo, "img", "claude", "")

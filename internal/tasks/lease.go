@@ -156,6 +156,27 @@ func (l *TaskLease) Quiesce() {
 // flock is held. Task-local state is provider-writable and cannot distinguish a foreign controller
 // from an agent that moved an unleased folder.
 func (l *TaskLease) MarkCompleted(taskDir string) error {
+	if plan, ok, err := pendingReviewPlanForConcurrentCompletion(l.root, l.id); err != nil {
+		return fmt.Errorf("inspect active final-review windows: %w", err)
+	} else if ok {
+		current, exists, currentErr := CurrentTask(l.root, l.id)
+		if currentErr != nil || !exists || current.State != StateDone || current.Dir != taskDir {
+			return errors.Join(currentErr, fmt.Errorf("task %s changed before concurrent final-review enrollment", l.id))
+		}
+		return l.MarkCompletedForReview(plan.Workspace, current, plan)
+	}
+	if prior, ok, err := readPendingReviewRecord(l.root, l.id); err != nil {
+		return fmt.Errorf("inspect pending final review: %w", err)
+	} else if ok {
+		if prior.Phase != PendingReviewReopened || prior.Prepared {
+			return fmt.Errorf("task %s already has pending final review", l.id)
+		}
+		current, exists, currentErr := CurrentTask(l.root, l.id)
+		if currentErr != nil || !exists || current.State != StateDone || current.Dir != taskDir {
+			return errors.Join(currentErr, fmt.Errorf("task %s changed before final-review recompletion", l.id))
+		}
+		return l.MarkCompletedForReview(prior.Plan.Workspace, current, prior.Plan)
+	}
 	generation := ""
 	if l.Reopen != nil {
 		generation = l.Reopen.Generation

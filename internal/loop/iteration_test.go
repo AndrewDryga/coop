@@ -40,7 +40,7 @@ func TestRunIterationStopsBeforeLaunchOnCompletionWindowSetupFailure(t *testing.
 	c := &Control{}
 	code, output, usage, classification, windows, err := c.runIteration(
 		context.Background(), t.TempDir(), "must-not-launch", "codex", "", []string{"must-not-launch"},
-		false, false, []string{root}, completionWindowStrict, nil, true, io.Discard, nil, "setup failure", "", nil,
+		false, false, []string{root}, completionWindowStrict, nil, nil, true, io.Discard, nil, "setup failure", "", nil,
 	)
 	if code != 1 || !errors.Is(err, tasks.ErrCompletionWindowSetup) || windows != nil || output != "" || usage != nil {
 		t.Fatalf("setup-failed iteration = code %d output %q usage %#v windows %#v err %v", code, output, usage, windows, err)
@@ -59,7 +59,7 @@ func TestLoopIterationOptsIntoNarrationButNotProjectPortPublication(t *testing.T
 	}
 	_, _, _, _, windows, err := c.runIteration(
 		context.Background(), t.TempDir(), "image", "codex", "", []string{"true"},
-		false, false, []string{root}, completionWindowStrict, nil, true, io.Discard, nil, "test", "", nil,
+		false, false, []string{root}, completionWindowStrict, nil, nil, true, io.Discard, nil, "test", "", nil,
 	)
 	if windows != nil {
 		_ = windows.Close()
@@ -86,7 +86,7 @@ func TestLoopIdentityIsCapturedButRawTraceStaysRaw(t *testing.T) {
 	}
 	_, _, _, _, windows, err := c.runIteration(
 		context.Background(), repo, "image", "claude", "", []string{"claude"},
-		true, true, []string{root}, completionWindowStrict, nil, true, &forkLog, nil, "test", "", nil,
+		true, true, []string{root}, completionWindowStrict, nil, nil, true, &forkLog, nil, "test", "", nil,
 	)
 	if windows != nil {
 		_ = windows.Close()

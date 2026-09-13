@@ -167,9 +167,10 @@ type RunSpec struct {
 	// it: only the caller knows which spelling the user actually typed.
 	Continue string
 
-	DebugOnFail bool // open a shell in the box after a failed iteration
-	Preflight   bool // run the pre-flight probe before the first work iteration
-	MaxTasks    int  // stop after this many settled tasks, 0 for the whole queue
+	DebugOnFail bool     // open a shell in the box after a failed iteration
+	Preflight   bool     // run the pre-flight probe before the first work iteration
+	MaxTasks    int      // stop after this many settled tasks, 0 for the whole queue
+	ReviewTasks []string // explicitly import these receipt-valid archived tasks into final review
 
 	// Network is this launch's --egress/--allow-domain/--egress-rules. It is
 	// HOST-side input, resolved once at the start of the run: every iteration,
