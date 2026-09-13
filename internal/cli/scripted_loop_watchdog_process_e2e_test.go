@@ -492,7 +492,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		assertLoopTraceProcessesGone(t, trace)
 	})
 
-	t.Run("three consecutive timeouts stop with the task actionable", func(t *testing.T) {
+	t.Run("three timeout outcomes stop with the task actionable", func(t *testing.T) {
 		setLoopWatchdogDeadlines(t, suite, "start=1s,idle=20s,tool=30s")
 		resetLoopProcessRepo(t, suite)
 		taskID := "watchdog-timeout-cap"
@@ -505,7 +505,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopRecovery(t, suite, target)
-		if result.ExitCode == 0 || !strings.Contains(result.Stderr, "Stopped after 3 unresponsive attempts") {
+		if result.ExitCode == 0 || !strings.Contains(result.Stderr, "Stopped after 3 provider timeouts") {
 			t.Fatalf("timeout cap = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		records := readLoopStageRecords(t, suite)
@@ -519,6 +519,57 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		}
 		assertLoopTaskRecoverable(t, suite, taskID)
 		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+	})
+
+	t.Run("unlike recoveries do not erase work recovery budgets", func(t *testing.T) {
+		for _, tc := range []struct {
+			name        string
+			results     []string
+			wantOutcome string
+			wantMessage string
+		}{
+			{
+				name:        "timeout budget",
+				results:     []string{"wait", "background-drained", "wait", "background-timeout", "wait"},
+				wantOutcome: "provider_start_timeout",
+				wantMessage: "Stopped after 3 provider timeouts",
+			},
+			{
+				name:        "handoff budget",
+				results:     []string{"background-drained", "wait", "background-timeout", "wait", "background-drained"},
+				wantOutcome: "background_drained",
+				wantMessage: "Stopped after 3 live-background handoffs",
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				setLoopWatchdogDeadlines(t, suite, "start=1s,idle=20s,tool=30s")
+				resetLoopProcessRepo(t, suite)
+				taskID := "watchdog-work-aggregate-" + strings.ReplaceAll(tc.name, " ", "-")
+				seedLoopProcessTask(t, suite.layout.Repo, taskID)
+				target := loopRecoveryTarget("codex", "aggregate-model", "work")
+				attempts := make([]loopProcessAttempt, 0, len(tc.results))
+				for _, result := range tc.results {
+					attempts = append(attempts, loopProcessAttempt{Target: target, Stage: "work", Result: result})
+				}
+				suite.reset(t, loopRecoveryScenario(taskID, attempts))
+				result := runLoopRecovery(t, suite, target)
+				output := visibleProcessText(result.Stdout + result.Stderr)
+				if result.Err != nil || result.ExitCode == 0 || !strings.Contains(output, tc.wantMessage) ||
+					strings.Contains(output, "in a row") || strings.Contains(output, "consecutive") {
+					t.Fatalf("aggregate work budget = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+				}
+				records := readLoopStageRecords(t, suite)
+				if len(records) != len(attempts) || records[len(records)-1].Outcome != tc.wantOutcome {
+					t.Fatalf("aggregate work telemetry = %#v", records)
+				}
+				trace := readProcessTrace(t, suite.layout.Trace)
+				if starts, exits := processEvents(trace, "provider", "start"), processEvents(trace, "provider", "exit"); len(starts) != len(attempts) || len(exits) != len(attempts) {
+					t.Fatalf("aggregate work provider lifecycle = %d starts/%d exits, want %d/%d", len(starts), len(exits), len(attempts), len(attempts))
+				}
+				assertLoopTaskRecoverable(t, suite, taskID)
+				assertLoopTraceProcessesGone(t, trace)
+			})
+		}
 	})
 
 	t.Run("user interrupt wins over an armed watchdog", func(t *testing.T) {
@@ -626,5 +677,67 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 			t.Fatal("signoff-timed-out task did not stay completed after the retried pass")
 		}
 		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+	})
+
+	t.Run("review timeout budget is aggregate across unlike recoveries", func(t *testing.T) {
+		for _, tc := range []struct {
+			name        string
+			results     []string
+			wantOutcome string
+			wantMessage string
+		}{
+			{
+				name:        "three timeouts",
+				results:     []string{"wait", "wait", "wait"},
+				wantOutcome: "provider_start_timeout",
+				wantMessage: "review provider attempt timed out 3 times during recovery",
+			},
+			{
+				name:        "timeout first",
+				results:     []string{"wait", "background-drained-review", "wait", "background-timeout-review", "wait"},
+				wantOutcome: "provider_start_timeout",
+				wantMessage: "review provider attempt timed out 3 times during recovery",
+			},
+			{
+				name:        "handoff first",
+				results:     []string{"background-drained-review", "wait", "background-timeout-review", "wait", "background-drained-review"},
+				wantOutcome: "background_drained",
+				wantMessage: "review provider ended with live background work 3 times during recovery",
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				setLoopWatchdogDeadlines(t, suite, "start=1s,idle=20s,tool=30s")
+				resetLoopProcessRepo(t, suite)
+				taskID := "watchdog-review-aggregate-" + strings.ReplaceAll(tc.name, " ", "-")
+				seedLoopProcessTask(t, suite.layout.Repo, taskID)
+				work := loopRecoveryTarget("codex", "work-model", "work")
+				signoff := loopRecoveryTarget("gemini", "aggregate-model", "work")
+				writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{signoff}, nil, 3)
+				attempts := []loopProcessAttempt{{Target: work, Stage: "work", Result: "complete"}}
+				for _, result := range tc.results {
+					attempts = append(attempts, loopProcessAttempt{Target: signoff, Stage: "signoff", Result: result})
+				}
+				suite.reset(t, loopRecoveryScenario(taskID, attempts))
+				result := runLoopReview(t, suite, work, 30*time.Second)
+				output := visibleProcessText(result.Stdout + result.Stderr)
+				if result.Err != nil || result.ExitCode != 1 || !strings.Contains(output, tc.wantMessage) ||
+					strings.Contains(output, "in a row") || strings.Contains(output, "consecutive") ||
+					strings.Contains(output, "All tasks passed final review") {
+					t.Fatalf("aggregate review budget = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+				}
+				records := readLoopStageRecords(t, suite)
+				if len(records) != len(attempts) || records[len(records)-1].Outcome != tc.wantOutcome {
+					t.Fatalf("aggregate review telemetry = %#v", records)
+				}
+				if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
+					t.Fatal("failed aggregate review disturbed the completed task")
+				}
+				trace := readProcessTrace(t, suite.layout.Trace)
+				if starts, exits := processEvents(trace, "provider", "start"), processEvents(trace, "provider", "exit"); len(starts) != len(attempts) || len(exits) != len(attempts) {
+					t.Fatalf("aggregate review provider lifecycle = %d starts/%d exits, want %d/%d", len(starts), len(exits), len(attempts), len(attempts))
+				}
+				assertLoopTraceProcessesGone(t, trace)
+			})
+		}
 	})
 }

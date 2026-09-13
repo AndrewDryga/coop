@@ -142,8 +142,8 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 		})
 		cancel()
 		if result.Err != nil || result.ExitCode != 0 ||
-			!strings.Contains(result.Stderr, "Starting a fresh attempt · 2 of 3.") ||
-			!strings.Contains(result.Stderr, "Starting a fresh attempt · 3 of 3.") ||
+			!strings.Contains(result.Stderr, "Background handoffs · 1 of 3.") ||
+			!strings.Contains(result.Stderr, "Background handoffs · 2 of 3.") ||
 			strings.Contains(result.Stderr, "iteration failed") || strings.Contains(result.Stderr, "no progress") {
 			t.Fatalf("background handoff loop = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
@@ -194,7 +194,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 		})
 		cancel()
 		if result.ExitCode == 0 ||
-			!strings.Contains(result.Stderr, "Stopped after 3 attempts left background work running") ||
+			!strings.Contains(result.Stderr, "Stopped after 3 live-background handoffs") ||
 			strings.Contains(result.Stderr, "iteration failed") || strings.Contains(result.Stderr, "no progress") {
 			t.Fatalf("background handoff cap = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}

@@ -180,26 +180,27 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 		// the review with a fresh provider that can inspect the settled result.
 		if isBackgroundHandoff(classification.outcome) {
 			handoffs++
-			if handoffs >= 3 {
-				return last, fmt.Errorf("review provider ended with live background work %d times — stopped; rerun the review after its gate, consult, and delegate work finish in the foreground", handoffs)
+			if handoffs >= maxBackgroundHandoffs {
+				return last, fmt.Errorf("review provider ended with live background work %d times during recovery — stopped; rerun the review after its gate, consult, and delegate work finish in the foreground", handoffs)
 			}
 			if observeHandoff != nil {
 				observeHandoff(last, start, headBefore)
 			}
 			totalRetries++
 			ui.Alert("The reviewer exited while its background work was still running",
-				fmt.Sprintf("Its result was discarded.\nStarting a fresh attempt · %d of 3.", handoffs+1))
+				fmt.Sprintf("Its result was discarded.\nBackground handoffs · %d of %d. Starting a fresh attempt.", handoffs, maxBackgroundHandoffs))
 			continue
 		}
 		// A timed-out review attempt was killed for proven silence, so any receipt it printed
 		// is not an observed verdict: discard it, rotate without cooling, and retry under the
-		// dedicated timeout cap. Three consecutive timeouts stop the stage — a review that
-		// can't run is never an accept.
+		// dedicated timeout cap. Three timeout outcomes during one recovery episode stop the
+		// stage even when live-background handoffs occur between them — a review that can't run
+		// is never an accept.
 		if isProviderTimeout(classification.outcome) {
 			last.output = ""
 			timeouts++
 			if timeouts >= maxProviderTimeouts {
-				return last, fmt.Errorf("review provider attempt timed out %d times in a row (%s)%s — stopping (a review that can't run is never an accept)", timeouts, classification.outcome, classification.timeoutDetail())
+				return last, fmt.Errorf("review provider attempt timed out %d times during recovery (%s)%s — stopping (a review that can't run is never an accept)", timeouts, classification.outcome, classification.timeoutDetail())
 			}
 			if observeHandoff != nil {
 				observeHandoff(last, start, headBefore)
@@ -207,7 +208,7 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 			totalRetries++
 			rev.AdvanceOnTimeout(time.Now())
 			ui.Alert("Stopped an unresponsive review attempt",
-				fmt.Sprintf("%s.\nIts partial result was discarded. Starting a fresh attempt · %d of %d.", capitalize(silenceDetail(classification)), timeouts+1, maxProviderTimeouts))
+				fmt.Sprintf("%s.\nProvider timeouts · %d of %d. Its partial result was discarded. Starting a fresh attempt.", capitalize(silenceDetail(classification)), timeouts, maxProviderTimeouts))
 			continue
 		}
 		handoffs, timeouts = 0, 0

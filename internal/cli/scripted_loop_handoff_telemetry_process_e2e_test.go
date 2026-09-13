@@ -55,7 +55,7 @@ func TestProviderScriptedReviewHandoffTelemetry(t *testing.T) {
 						t.Fatalf("recovered review did not pass: exit %d", result.ExitCode)
 					}
 				} else {
-					if !strings.Contains(output, "review provider ended with live background work 3 times") {
+					if !strings.Contains(output, "review provider ended with live background work 3 times during recovery") {
 						t.Fatal("terminal handoff did not retain its failure diagnostic")
 					}
 					if stage == "signoff" && result.ExitCode != 1 {

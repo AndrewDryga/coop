@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Loop recovery output now reports provider-timeout and live-background-handoff budgets by name.
+  Each budget counts its outcome across an uninterrupted recovery episode—even when the other
+  recovery class occurs between—so alternating broken attempts stay bounded and the displayed
+  count no longer masquerades as the total attempt number.
+
 - An enabled loop final-verification pass that cannot run or return a valid verdict now exits
   nonzero and ends with an unverified result instead of contradicting itself with an all-passed
   banner. Completed tasks and the original verification failure details remain intact.

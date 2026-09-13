@@ -92,8 +92,8 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if result.Err != nil || result.ExitCode != 0 ||
 			// The alert renders its reason indented, one line each, so match the lines rather
 			// than the format string that produced them.
-			!strings.Contains(result.Stderr, "Starting a fresh attempt · 2 of 3.") ||
-			!strings.Contains(result.Stderr, "Starting a fresh attempt · 3 of 3.") ||
+			!strings.Contains(result.Stderr, "Background handoffs · 1 of 3.") ||
+			!strings.Contains(result.Stderr, "Background handoffs · 2 of 3.") ||
 			!strings.Contains(result.Stderr, "Its result was discarded.") ||
 			!strings.Contains(result.Stdout+result.Stderr, "All tasks passed final review") {
 			t.Fatalf("background review handoff = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)

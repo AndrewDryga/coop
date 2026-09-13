@@ -70,8 +70,9 @@ const (
 const providerSilenceFallbackMultiple = 4
 
 // Provider-attempt timeout outcomes, recorded verbatim in stage telemetry and handled by the
-// loop's dedicated timeout policy: rotate to the next usable rung without cooling, capped at
-// maxProviderTimeouts consecutive timeouts per stage.
+// loop's dedicated timeout policy: rotate to the next usable rung without cooling, capped by
+// maxProviderTimeouts during one recovery episode. A live-background handoff does not erase that
+// timeout budget; any ordinary provider outcome ends the episode and resets both counters.
 const (
 	outcomeStartTimeout   = "provider_start_timeout"
 	outcomeIdleTimeout    = "provider_idle_timeout"
@@ -112,9 +113,14 @@ func attemptCeiling(d watchdogDeadlines) time.Duration {
 // a genuine run never reaches it.
 const maxOpenTools = 64
 
-// maxProviderTimeouts caps CONSECUTIVE provider-attempt timeouts. Timeouts keep their own
-// counter so they never consume the ordinary failure, stall, output, or rate-limit budgets.
-const maxProviderTimeouts = 3
+// Provider timeouts and live-background handoffs keep independent aggregate counters during one
+// recovery episode. Unlike recovery outcomes do not reset each other: otherwise a broken provider
+// could alternate forever. An ordinary outcome resets both counters in the work and review loops.
+// Neither counter consumes the ordinary failure, stall, output, or rate-limit budgets.
+const (
+	maxProviderTimeouts   = 3
+	maxBackgroundHandoffs = 3
+)
 
 func isProviderTimeout(outcome string) bool {
 	switch outcome {

@@ -315,7 +315,7 @@ func TestWatchdogAttemptCeilingIsNotResettable(t *testing.T) {
 		t.Fatalf("phase deadline fired during the event flood: %q", h.wd.timedOut())
 	}
 	// It fires under its own generation, which no re-arm can retire, and it is a provider timeout
-	// so the loop's timeout policy — rotate, capped at three in a row — owns the outcome.
+	// so the loop's timeout policy — rotate, capped at three during one recovery episode — owns the outcome.
 	h.ceiling.fn()
 	if h.wd.timedOut() != outcomeAttemptTimeout || h.canceled != 1 {
 		t.Fatalf("ceiling fire: outcome=%q cancels=%d", h.wd.timedOut(), h.canceled)

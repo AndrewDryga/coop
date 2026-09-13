@@ -628,20 +628,21 @@ reviewAgain:
 				}
 				handoffs++
 				c.recordStage(repo, runid, "work", classification.outcome, rot.Active(), iterStart, code, retries, 0, iterHead, hosts, nil, nil, res)
-				if handoffs >= 3 {
-					ui.Failure("Stopped after 3 attempts left background work running",
+				if handoffs >= maxBackgroundHandoffs {
+					ui.Failure(fmt.Sprintf("Stopped after %d live-background handoffs", handoffs),
 						fmt.Sprintf("%s was returned to in progress.\nRun its checks and any peer work in the foreground before retrying.", active))
-					return code, ui.Reported(fmt.Errorf("provider ended with live background work 3 times for task %s", assigned.Item.ID))
+					return code, ui.Reported(fmt.Errorf("provider ended with live background work %d times during recovery for task %s", handoffs, assigned.Item.ID))
 				}
 				ui.Alert("The agent exited while its background work was still running",
-					fmt.Sprintf("The task was returned to in progress.\nStarting a fresh attempt · %d of 3.", handoffs+1))
+					fmt.Sprintf("The task was returned to in progress.\nBackground handoffs · %d of %d. Starting a fresh attempt.", handoffs, maxBackgroundHandoffs))
 				continue
 			}
 			// The watchdog killed this attempt for proven silence. Any completion it produced is
 			// premature: restore it, keep held audit authority truthful (rebase over a valid
 			// complete rewrite, park fail-closed otherwise), release the lease, and retry under
 			// the dedicated timeout policy — rotate to the next usable rung without cooling,
-			// capped at three consecutive timeouts, no ordinary counter consumed.
+			// capped at three timeout outcomes during one recovery episode, no ordinary counter
+			// consumed. A live-background handoff does not erase this independent timeout budget.
 			if isProviderTimeout(classification.outcome) {
 				if assignedCompletion != nil {
 					if restoreErr := tasks.RestoreProviderTimeoutCompletion(*assignedCompletion, lease.Reopen != nil); restoreErr != nil {
@@ -680,10 +681,10 @@ reviewAgain:
 				timeouts++
 				c.recordStage(repo, runid, "work", classification.outcome, rot.Active(), iterStart, code, retries, 0, iterHead, hosts, nil, nil, res)
 				if timeouts >= maxProviderTimeouts {
-					ui.Failure(fmt.Sprintf("Stopped after %d unresponsive attempts", timeouts),
+					ui.Failure(fmt.Sprintf("Stopped after %d provider timeouts", timeouts),
 						fmt.Sprintf("%s is still in progress.\nThe last attempt recorded %s.", active, silenceDetail(classification)),
 						[2]string{"Continue:", continueCmd})
-					return code, ui.Reported(fmt.Errorf("provider attempt timed out %d times in a row on task %s (%s)", timeouts, assigned.Item.ID, classification.outcome))
+					return code, ui.Reported(fmt.Errorf("provider attempt timed out %d times during recovery for task %s (%s)", timeouts, assigned.Item.ID, classification.outcome))
 				}
 				prev := rot.Active()
 				rot.AdvanceOnTimeout(time.Now())
@@ -693,7 +694,7 @@ reviewAgain:
 					resume = "Starting a fresh attempt with " + cleanDiagnosticLine(agents.DisplayTarget(next.String()))
 				}
 				ui.Alert("Stopped an unresponsive task attempt",
-					wrappedLoopText(fmt.Sprintf("%s. %s · %d of %d.", capitalize(silenceDetail(classification)), resume, timeouts+1, maxProviderTimeouts), 6))
+					wrappedLoopText(fmt.Sprintf("%s. Provider timeouts · %d of %d. %s.", capitalize(silenceDetail(classification)), timeouts, maxProviderTimeouts, resume), 6))
 				continue
 			}
 			handoffs, timeouts = 0, 0
