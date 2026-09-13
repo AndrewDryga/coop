@@ -104,6 +104,11 @@ func TestCLIConformance(t *testing.T) {
 			"no-provider error":     errText("missing loop target", noProviderErr("loop")),
 		}
 		for name, surface := range surfaces {
+			if name == "top-level help" {
+				// The approved beginner start row names the providers. Excuse only that
+				// exact row once; peer/target syntax elsewhere still uses the full grammar.
+				surface = strings.Replace(surface, "\n  coop <claude|codex|gemini|grok>   start Claude, Codex, Gemini, or Grok\n", "\n", 1)
+			}
 			for _, retired := range []string{
 				"--peer <agent>", "--peer <peer>", "[<agent>[:model]", "[target|preset]",
 				"<" + strings.Join(agents.Names(), "|") + ">",

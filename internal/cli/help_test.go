@@ -377,3 +377,30 @@ func TestHelpFirstRunHint(t *testing.T) {
 		t.Error("a signed-in user should not be told to get started")
 	}
 }
+
+func TestHelpRunAgentsNamesProviders(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		cfg  *config.Config
+		ref  bool
+	}{
+		{"first run", freshConfig(t), false},
+		{"signed in", signedInConfig(t), false},
+		{"first run with services", withServices(t, freshConfig(t)), false},
+		{"signed in with services", withServices(t, signedInConfig(t)), false},
+		{"reference", freshConfig(t), true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			out := renderMenu(ui.Palette{}, test.cfg, test.ref)
+			_, group, ok := strings.Cut(out, "RUN AGENTS —")
+			if !ok {
+				t.Fatal("RUN AGENTS group is missing")
+			}
+			group, _, _ = strings.Cut(group, "\n\n")
+			const syntax = "  coop <claude|codex|gemini|grok>  "
+			if !strings.Contains(group, "\n"+syntax) || strings.Contains(group, "\n  coop <agent>") {
+				t.Fatalf("RUN AGENTS must name the supported providers:\n%s", group)
+			}
+		})
+	}
+}

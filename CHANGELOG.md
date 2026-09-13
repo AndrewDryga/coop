@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- The main help menu names all four providers in its start command, restoring
+  `coop <claude|codex|gemini|grok>` for signed-in and first-run users alike.
+
 - `coop check-secrets` reports commit candidates hidden by `.coopignore`; hiding a file
   from the box no longer silences its findings. Exact reviewed `.coopsecretsignore`
   exceptions and box protection are unchanged.

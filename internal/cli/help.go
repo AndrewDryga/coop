@@ -112,7 +112,7 @@ func renderMenu(p ui.Palette, cfg *config.Config, ref bool) string {
 	row("coop shell", "open a shell in the box")
 
 	group("RUN AGENTS", "work with a coding agent or a team of agents")
-	row("coop <agent>", "start "+ui.List(providers, "or"))
+	row("coop <"+strings.Join(agents.Names(), "|")+">", "start "+ui.List(providers, "or"))
 	row("coop <preset>", "run agents together using a preset")
 	row("coop <target> --peer <target>...", "start with read-only peer agents")
 	// A newcomer meets the word "target" here, in three rows that all use it. Saying what it can be

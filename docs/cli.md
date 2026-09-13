@@ -12,7 +12,7 @@ THE BOX — an isolated environment for running commands in this project
   coop shell                        open a shell in the box
 
 RUN AGENTS — work with a coding agent or a team of agents
-  coop <agent>                      start Claude, Codex, Gemini, or Grok
+  coop <claude|codex|gemini|grok>   start Claude, Codex, Gemini, or Grok
   coop <preset>                     run agents together using a preset
   coop <target> --peer <target>...  start with read-only peer agents
 

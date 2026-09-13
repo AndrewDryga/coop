@@ -4,7 +4,7 @@ description: "UPPERCASE help headings, aligned command rows, practical prose and
 scope: cli-output
 sources: [internal/cli/help.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/cli/presetcmd.go, internal/cli/help_test.go, internal/cli/conformance_test.go]
 check: "none"
-updated: 2026-09-11
+updated: 2026-09-13
 ---
 
 # Help output: consistent headings, useful commands, practical guidance
@@ -14,6 +14,8 @@ updated: 2026-09-11
   a sentence explaining which file to edit should remain a sentence, not "EDIT ITS AGENTS".
 - One command per row, with a short action-oriented description. Do not hide several commands
   behind a verb placeholder or join their explanations with middle dots.
+- The top-level provider start row lists the registered names (`coop <claude|codex|gemini|grok>`),
+  not a generic agent placeholder. Derive it from the provider registry in every menu state.
 - Pad columns on plain text before applying color; use a minimum two-space gap even for a long
   syntax example. Top-level command cells stay at most 32 runes; full focused syntax must not
   omit required arguments to satisfy that index limit. See [[no-color-in-width-fields]].
@@ -42,6 +44,11 @@ TestCLIConformance cover portions of the historical rules, not this entire contr
 their relevant coverage during implementation; `check: none` remains honest until that lands.
 
 ## Changelog
+- 2026-09-13 — restored the user-approved concrete provider row (audit F14). Swept
+  renderMenu's first-run, signed-in, service and reference variants plus generated
+  CLI/man/llms references: RUN AGENTS had one generic-row regression; GET STARTED
+  was already registry-driven. TestHelpRunAgentsNamesProviders now covers all five
+  variants; this partial guard does not enforce every rule in the card.
 - 2026-09-11 — the runtime/integration family's pages are byte-pinned against the approved manual
   (`internal/cli/testdata/approved/{14,15,67,69,73,74,75,76,77}-*.txt`, TestApprovedRuntimeHelpPages):
   run, shell, ACP, the sessions family and each of its five leaves, sign, completion, prompt and
