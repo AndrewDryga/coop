@@ -66,7 +66,7 @@ func TestFailedServiceObservationKeepsComposeError(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stderr bytes.Buffer
-	started, err := startServicesFileContext(context.Background(), runtime.Runtime{Name: shim}, repo, compose, "", nil, &stderr, false, false, nil)
+	started, err := startServicesFileContext(context.Background(), runtime.Runtime{Name: shim}, repo, compose, "", nil, &stderr, false, false, false, nil)
 	if err == nil || !strings.Contains(err.Error(), "compose up exited with status "+strconv.Itoa(1)) ||
 		!strings.Contains(err.Error(), "availability is unknown") {
 		t.Fatalf("combined startup/observation error = %v", err)

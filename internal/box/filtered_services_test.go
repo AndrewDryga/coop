@@ -254,6 +254,34 @@ func TestFilteredStartupScopesComposeToGrantedServices(t *testing.T) {
 	}
 }
 
+func TestApprovedServiceBindsExternalVolumeIdentity(t *testing.T) {
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	body := func(volume string) string {
+		return "services:\n  db:\n    image: postgres:18\n    volumes: [customer:/data:ro]\nvolumes:\n  customer:\n    external: true\n    name: " + volume + "\n"
+	}
+	if err := os.WriteFile(compose, []byte(body("customer-a")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	approved, err := composeServiceDigests(compose, repo, false, []string{"db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(compose, []byte(body("customer-b")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkApprovedServices(&networkstate.Approval{Services: approved}, compose, repo, false); err == nil || !strings.Contains(err.Error(), `service "db" changed`) {
+		t.Fatalf("external volume retarget kept the service approval: %v", err)
+	}
+	writable := strings.Replace(body("customer-a"), ":ro]", ":rw]", 1)
+	if err := os.WriteFile(compose, []byte(writable), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkApprovedServices(&networkstate.Approval{Services: approved}, compose, repo, false); err == nil {
+		t.Fatal("external volume read/write increase kept the service approval")
+	}
+}
+
 func TestFilteredServiceStartSkipsComposeWhileAnotherBoxRuns(t *testing.T) {
 	repo := t.TempDir()
 	compose := filepath.Join(repo, "compose.yml")

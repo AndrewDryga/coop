@@ -37,6 +37,10 @@
   Dependency definitions are pinned by approval without becoming direct agent network grants,
   and subset startup leaves unrelated existing service containers alone.
 
+- External or custom-named Docker volumes now join a filtered service's approval identity.
+  Unapproved automatic startup refuses them; explicit `coop up` and project-owned volumes remain
+  available.
+
 - Claude image tool results now keep their matching watchdog lifecycle within a bounded,
   provider-specific stream envelope. Large base64 bodies remain hidden, while malformed or
   over-limit events cannot close tools or manufacture activity. Unknown, unnamed-start, and

@@ -410,8 +410,8 @@ func resolveExisting(p string) (string, error) {
 // runs. An approval names a service; the repository decides what that name
 // means, and an agent may write .agent/compose.yml — so the digest of the
 // reviewed stanza travels with the approval and a launch recomputes it from the
-// file it is about to run. Only the named service's own definition is hashed:
-// editing an unrelated service is not a change to this grant.
+// file it is about to run. Referenced external/custom volume declarations join that definition;
+// editing an unrelated service or ordinary project-owned volume is not a change to this grant.
 func composeServiceDigests(composeFile, repoRoot string, repoReadOnly bool, names []string) (map[string]string, error) {
 	if len(names) == 0 {
 		return nil, nil
@@ -437,7 +437,21 @@ func composeServiceDigests(composeFile, repoRoot string, repoReadOnly bool, name
 		if !ok {
 			return nil, fmt.Errorf("%s declares no service %q", project.DefaultCompose, name)
 		}
+		volumes := map[string]volumeDecl{}
+		for _, entry := range service.Volumes {
+			if source := namedVolumeSource(entry); source != "" {
+				if declaration, ok := doc.Volumes[source]; ok && (declaration.External || declaration.Name != "") {
+					volumes[source] = declaration
+				}
+			}
+		}
 		definition, err := json.Marshal(service)
+		if len(volumes) > 0 {
+			definition, err = json.Marshal(struct {
+				Service serviceSpec           `json:"service"`
+				Volumes map[string]volumeDecl `json:"volumes"`
+			}{Service: service, Volumes: volumes})
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -445,6 +459,56 @@ func composeServiceDigests(composeFile, repoRoot string, repoReadOnly bool, name
 		out[name] = hex.EncodeToString(sum[:])
 	}
 	return out, nil
+}
+
+func namedVolumeSource(entry any) string {
+	var source string
+	switch value := entry.(type) {
+	case string:
+		parts := strings.SplitN(value, ":", 3)
+		if len(parts) < 2 {
+			return ""
+		}
+		source = parts[0]
+	case map[string]any:
+		kind, _ := value["type"].(string)
+		if kind != "" && kind != "volume" {
+			return ""
+		}
+		source, _ = value["source"].(string)
+	}
+	if source == "" || looksLikePath(source) {
+		return ""
+	}
+	return source
+}
+
+func outsideServiceVolumes(data []byte) ([]string, error) {
+	var doc composeDoc
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	for _, service := range doc.Services {
+		for _, entry := range service.Volumes {
+			source := namedVolumeSource(entry)
+			declaration, ok := doc.Volumes[source]
+			if source == "" || !ok || !declaration.External && declaration.Name == "" {
+				continue
+			}
+			name := declaration.Name
+			if name == "" {
+				name = source
+			}
+			seen[name] = true
+		}
+	}
+	volumes := make([]string, 0, len(seen))
+	for name := range seen {
+		volumes = append(volumes, name)
+	}
+	slices.Sort(volumes)
+	return volumes, nil
 }
 
 func composeServiceClosure(services map[string]serviceSpec, names []string) ([]string, error) {

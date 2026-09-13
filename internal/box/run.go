@@ -1058,7 +1058,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			// continue-without-services behavior.
 			var composeStderr bytes.Buffer
 			servicesInspected = true
-			started, err := startServicesFileContext(serviceCtx, rt, spec.Repo, cf, serviceNetwork, io.Discard, &composeStderr, spec.RepoReadOnly, !sections.loop, nil, privateRoots...)
+			started, err := startServicesFileContext(serviceCtx, rt, spec.Repo, cf, serviceNetwork, io.Discard, &composeStderr, spec.RepoReadOnly, !sections.loop, false, nil, privateRoots...)
 			sections.serviceSecrets(started.hidden, cf)
 			servicePorts = started.ports
 			if err != nil {

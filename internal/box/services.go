@@ -50,7 +50,7 @@ type ServiceStart struct {
 // names, and leaves the hidden-file notice to the caller — `coop up` puts those files in front of
 // a human before starting, so the lower-level warning would be the second copy of one sentence.
 func UpServices(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer, exposedRoots ...string) (ServiceStart, error) {
-	started, err := startServicesFile(rt, workspace, file, stdout, stderr, false, false, exposedRoots...)
+	started, err := startServicesFileContext(context.Background(), rt, workspace, file, "", stdout, stderr, false, false, true, nil, exposedRoots...)
 	return ServiceStart{Names: started.names, Ports: started.ports}, err
 }
 
@@ -61,10 +61,10 @@ type startedServices struct {
 }
 
 func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer, repoReadOnly, noticeHidden bool, exposedRoots ...string) (startedServices, error) {
-	return startServicesFileContext(context.Background(), rt, workspace, file, "", stdout, stderr, repoReadOnly, noticeHidden, nil, exposedRoots...)
+	return startServicesFileContext(context.Background(), rt, workspace, file, "", stdout, stderr, repoReadOnly, noticeHidden, false, nil, exposedRoots...)
 }
 
-func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace, file, network string, stdout, stderr io.Writer, repoReadOnly, noticeHidden bool, selected []string, exposedRoots ...string) (startedServices, error) {
+func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace, file, network string, stdout, stderr io.Writer, repoReadOnly, noticeHidden, allowOutsideData bool, selected []string, exposedRoots ...string) (startedServices, error) {
 	if file == "" {
 		return startedServices{}, nil
 	}
@@ -72,7 +72,7 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 	// (the compose path is no longer shadowed), but the host refuses anything that reaches outside a
 	// repo-scoped, loopback-only container. The specific violation rides out to `coop up` / the
 	// auto-up warning, so a refused file names exactly why.
-	args, cleanup, hidden, err := snapshotComposeArgs(workspace, file, repoReadOnly, exposedRoots...)
+	args, cleanup, hidden, err := snapshotComposeArgsForStart(workspace, file, repoReadOnly, allowOutsideData, exposedRoots...)
 	if err != nil {
 		return startedServices{}, &ComposeRefused{Verb: "run", File: filepath.Base(file), Err: err}
 	}
@@ -126,9 +126,22 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 // hidden names the repo-relative secret-looking bind sources the services get decoys for — empty
 // when there are none or when a human approved this exact file (ReviewServiceSecrets).
 func snapshotComposeArgs(workspace, file string, repoReadOnly bool, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
+	return snapshotComposeArgsForStart(workspace, file, repoReadOnly, true, exposedRoots...)
+}
+
+func snapshotComposeArgsForStart(workspace, file string, repoReadOnly, allowOutsideData bool, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
 	data, err := readValidatedCompose(file, workspace, repoReadOnly)
 	if err != nil {
 		return nil, nil, nil, err
+	}
+	if !allowOutsideData {
+		volumes, err := outsideServiceVolumes(data)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if len(volumes) > 0 {
+			return nil, nil, nil, fmt.Errorf("automatic service startup cannot use outside project-owned Docker volume(s) %s — run 'coop up' explicitly", strings.Join(volumes, ", "))
+		}
 	}
 	abs, err := filepath.Abs(file)
 	if err != nil {

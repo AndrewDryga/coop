@@ -159,6 +159,35 @@ func TestEnsureServicesValidates(t *testing.T) {
 	})
 }
 
+func TestAutomaticServiceStartRefusesExternalVolumes(t *testing.T) {
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	body := "services:\n  db:\n    image: postgres:18\n    volumes: [customer:/data]\nvolumes:\n  customer:\n    external: true\n    name: customer-data\n"
+	if err := os.WriteFile(compose, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	rt := recorderRuntime(t, recorder)
+	if _, err := EnsureServicesFile(rt, repo, compose, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "coop up") {
+		t.Fatalf("automatic external-volume start = %v, want explicit host startup refusal", err)
+	}
+	if data, err := os.ReadFile(recorder); err == nil && len(data) > 0 {
+		t.Fatalf("runtime ran before external-volume refusal:\n%s", data)
+	} else if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if _, err := UpServices(rt, repo, compose, io.Discard, io.Discard); err != nil {
+		t.Fatalf("explicit coop up path refused the external volume: %v", err)
+	}
+	local := "services:\n  db:\n    image: postgres:18\n    volumes: [customer:/data]\nvolumes:\n  customer: {}\n"
+	if err := os.WriteFile(compose, []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureServicesFile(rt, repo, compose, io.Discard, io.Discard); err != nil {
+		t.Fatalf("automatic startup refused ordinary project-owned storage: %v", err)
+	}
+}
+
 func TestServiceHelpersRejectInvalidProjectBeforeRuntime(t *testing.T) {
 	for name, call := range map[string]func(runtime.Runtime, string) error{
 		"ensure": func(rt runtime.Runtime, repo string) error {
