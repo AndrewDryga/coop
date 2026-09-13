@@ -53,7 +53,7 @@ type Controller struct {
 	clock               *BootClock
 	mu                  sync.Mutex
 	grants              []addressGrant
-	serviceProxyClients []netip.Addr
+	serviceProxyClients []ServiceProxyClient
 	serve               []int
 	ingress             netip.Addr
 	leases              map[string]Lease
@@ -64,7 +64,7 @@ type Controller struct {
 	kernel              kernelEvents
 }
 
-func NewController(identity Identity, policy egress.Snapshot, protected []netip.Prefix, services []ServiceBinding, serviceProxyClients []netip.Addr,
+func NewController(identity Identity, policy egress.Snapshot, protected []netip.Prefix, services []ServiceBinding, serviceProxyClients []ServiceProxyClient,
 	serve []int, ingress netip.Addr, broker *CredentialBrokerRoute, clock *BootClock, apply ApplyRules) (*Controller, error) {
 	if err := policy.RequireSupported(); err != nil {
 		return nil, err
@@ -103,12 +103,14 @@ func NewController(identity Identity, policy egress.Snapshot, protected []netip.
 		ingress: ingress, apply: apply, now: clock.instant, clock: clock, leases: map[string]Lease{}}, nil
 }
 
-func validServiceProxyClients(protected []netip.Prefix, clients []netip.Addr) bool {
+func validServiceProxyClients(protected []netip.Prefix, clients []ServiceProxyClient) bool {
 	if len(clients) > 512 {
 		return false
 	}
 	for i, client := range clients {
-		if !client.Is4() || slices.Contains(clients[:i], client) || !slices.ContainsFunc(protected, func(prefix netip.Prefix) bool { return prefix.Contains(client) }) {
+		if client.Name == "" || !client.Address.Is4() || slices.ContainsFunc(clients[:i], func(other ServiceProxyClient) bool {
+			return other.Name == client.Name || other.Address == client.Address
+		}) || !slices.ContainsFunc(protected, func(prefix netip.Prefix) bool { return prefix.Contains(client.Address) }) {
 			return false
 		}
 	}
@@ -413,8 +415,8 @@ func (c *Controller) initialRules(maintenance netip.Addr) string {
 		fmt.Fprintf(&serviceEgress, "  ip daddr %s tcp sport %s ct state established accept\n", c.ingress, portSet(c.serve))
 	}
 	for _, client := range c.serviceProxyClients {
-		fmt.Fprintf(&serviceIngress, "  ip saddr %s tcp dport %d ct state new,established accept\n", client, ServiceProxyPort)
-		fmt.Fprintf(&serviceEgress, "  ip daddr %s tcp sport %d ct state established accept\n", client, ServiceProxyPort)
+		fmt.Fprintf(&serviceIngress, "  ip saddr %s tcp dport %d ct state new,established accept\n", client.Address, ServiceProxyPort)
+		fmt.Fprintf(&serviceEgress, "  ip daddr %s tcp sport %d ct state established accept\n", client.Address, ServiceProxyPort)
 	}
 	return fmt.Sprintf(`table inet coop_net {
  counter denied_agent { }

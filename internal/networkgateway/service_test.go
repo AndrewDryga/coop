@@ -93,12 +93,13 @@ func TestGatewayLaunchConfigurationKeepsBrokerSeparateAndReserved(t *testing.T) 
 func TestGatewayLaunchConfigurationBindsServiceProxyClientsToProtectedAddresses(t *testing.T) {
 	config := testLaunch(t)
 	config.Protected = []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}
-	config.ServiceProxyClients = []netip.Addr{netip.MustParseAddr("172.31.0.16")}
+	config.ServiceProxyClients = []ServiceProxyClient{{Name: "web", Address: netip.MustParseAddr("172.31.0.16")}}
 	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	for name, mutate := range map[string]func(*LaunchConfig){
-		"outside internal network": func(c *LaunchConfig) { c.ServiceProxyClients[0] = netip.MustParseAddr("1.1.1.1") },
+		"outside internal network": func(c *LaunchConfig) { c.ServiceProxyClients[0].Address = netip.MustParseAddr("1.1.1.1") },
+		"missing name":             func(c *LaunchConfig) { c.ServiceProxyClients[0].Name = "" },
 		"duplicate":                func(c *LaunchConfig) { c.ServiceProxyClients = append(c.ServiceProxyClients, c.ServiceProxyClients[0]) },
 		"serve collision": func(c *LaunchConfig) {
 			c.Serve = []int{ServiceProxyPort}

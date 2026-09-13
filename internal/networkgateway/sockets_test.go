@@ -45,7 +45,7 @@ func TestSocketInventoryMatchesEveryFixedLocalCaptureLeg(t *testing.T) {
 	accepted := strings.Replace(procRow(65532, "01", 2), "020011AC:C001", "0100007F:3C53", 1)
 	serviceProxy := strings.Replace(procRow(65532, "01", 3), "020011AC:C001", "020011AC:3C54", 1)
 	proxyClient := netip.MustParseAddr("1.1.1.1")
-	rows, err := parseSocketInventory(strings.NewReader(procHeader+dns+accepted+serviceProxy), boundary{serviceProxyClients: []netip.Addr{proxyClient}})
+	rows, err := parseSocketInventory(strings.NewReader(procHeader+dns+accepted+serviceProxy), boundary{serviceProxyClients: []ServiceProxyClient{{Name: "web", Address: proxyClient}}})
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("local DNS/accepted guard legs counted external: %#v %v", rows, err)
 	}

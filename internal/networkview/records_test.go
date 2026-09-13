@@ -57,8 +57,8 @@ func TestReceiptProjectionDoesNotLeakPrivateEndpointsCandidatesOrDigest(t *testi
 	privatePeer := "10.42.19.12:443"
 	rule := egress.Rule{To: egress.Destination{Domain: privateName}, Protocol: "tls", Ports: []int{443}}
 	private := Receipt{Version: Version, ID: "receipt", StartedAt: time.Now(), Finality: "final", Completeness: "partial", DigestScope: "owner-local",
-		Snapshot: Snapshot{Version: Version, RunID: "run", Projection: "owner-local", Connections: []Connection{{ID: "flow", Name: privateName, Peer: privatePeer, RuleID: "private-rule"}},
-			Denials:  []Denial{{ID: "event", Name: privateName, Candidate: &Candidate{ID: "candidate", Rule: rule}}},
+		Snapshot: Snapshot{Version: Version, RunID: "run", Projection: "owner-local", Connections: []Connection{{ID: "flow", Name: privateName, Service: "web", Peer: privatePeer, RuleID: "private-rule"}},
+			Denials:  []Denial{{ID: "event", Name: privateName, Service: "worker", Candidate: &Candidate{ID: "candidate", Rule: rule}}},
 			Counters: &Counters{SentBytes: Value(1<<53 + 1)}, Loss: Loss{Unknown: true}}}
 	if err := private.SealDigest(); err != nil {
 		t.Fatal(err)
@@ -79,6 +79,10 @@ func TestReceiptProjectionDoesNotLeakPrivateEndpointsCandidatesOrDigest(t *testi
 	if redacted.Completeness != "partial" || redacted.Finality != "final" || !redacted.Snapshot.Loss.Unknown || redacted.DigestScope != "destinations-withheld" {
 		t.Fatal("redaction hid incomplete evidence or changed finality")
 	}
+	if redacted.Snapshot.Connections[0].Service != "web" || redacted.Snapshot.Denials[0].Service != "worker" ||
+		!strings.Contains(string(data), `"service":"web"`) || !strings.Contains(string(data), `"service":"worker"`) {
+		t.Fatalf("projection lost service attribution: %s", data)
+	}
 	if private.Snapshot.Connections[0].Name != privateName || private.Snapshot.Denials[0].Candidate == nil {
 		t.Fatal("projection mutated owner-local receipt")
 	}
@@ -86,7 +90,8 @@ func TestReceiptProjectionDoesNotLeakPrivateEndpointsCandidatesOrDigest(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if exported.Snapshot.Connections[0].Name != privateName || exported.Snapshot.Denials[0].Candidate == nil || exported.DigestScope != "destinations-included" {
+	if exported.Snapshot.Connections[0].Name != privateName || exported.Snapshot.Connections[0].Service != "web" ||
+		exported.Snapshot.Denials[0].Candidate == nil || exported.Snapshot.Denials[0].Service != "worker" || exported.DigestScope != "destinations-included" {
 		t.Fatal("explicit destination export lost intended fields")
 	}
 	exported.Snapshot.Denials[0].Candidate.Rule.Ports[0] = 8443

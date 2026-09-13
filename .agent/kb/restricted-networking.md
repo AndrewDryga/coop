@@ -2,8 +2,8 @@
 name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
-sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, docs/networking.md]
-updated: 2026-09-13
+sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, docs/networking.md]
+updated: 2026-09-14
 ---
 
 `coop <agent> --egress filtered` runs the box behind a per-run gateway. Five boring layers stand
@@ -156,11 +156,19 @@ Traps:
   filesystem, peer/preset, and remote-session forms refuse this first slice rather than exposing
   the key. Ordinary OAuth/file runs keep their existing credential handling and are not broker-
   protected; restricted and session projections retain their existing access-only copies.
+- A selected Compose service and its dependency closure use fixed prepared addresses on an internal
+  network. The guard maps accepted proxy peers back to those exact service names. Approved and
+  denied external TLS therefore carry `service` through the existing event, receipt, human view,
+  watch and JSON paths. Internal peer traffic stays direct and never enters that external record.
+  This is observation only: `coop approve` remains the sole approval writer.
 
 [[network-gateway]] is the runtime that enforces the capture; [[network-consumers]] is how the loop,
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-14 — external TLS from filtered Compose services now retains the exact prepared service
+  name in the existing network evidence and views; internal service traffic remains direct and
+  unreported as external traffic.
 - 2026-09-13 — added a bounded, non-executing directory-archive digest for the complete locked
   JavaScript client installation; derived images may add tools elsewhere but may not change the
   npm dependency tree. Re-verified with real unchanged and transitive-mutation Docker builds.

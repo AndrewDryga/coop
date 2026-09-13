@@ -232,12 +232,21 @@ func TestFilteredStartupScopesComposeToGrantedServices(t *testing.T) {
 			Subnets: []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.31.0.1")}}},
 	}
 	recorder := filepath.Join(t.TempDir(), "runtime.log")
-	_, _, _, prepared, err := resolveServiceBindings(t.Context(), docker, recorderRuntime(t, recorder), RunSpec{Repo: repo}, compose,
+	_, _, clients, prepared, err := resolveServiceBindings(t.Context(), docker, recorderRuntime(t, recorder), RunSpec{Repo: repo}, compose,
 		&networkstate.Approval{Services: digests}, serviceGrants(servicePolicy(t, "db")), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(prepared.cleanup)
+	gotClients := map[string]netip.Addr{}
+	for _, client := range clients {
+		gotClients[client.Name] = client.Address
+	}
+	for _, name := range []string{"db", "cache", "queue"} {
+		if !gotClients[name].Is4() {
+			t.Fatalf("service proxy clients = %v, want named dependency closure", clients)
+		}
+	}
 	if err := prepared.start(); err != nil {
 		t.Fatal(err)
 	}

@@ -51,9 +51,9 @@ type LaunchConfig struct {
 	// address the host read from the runtime at launch. The box never resolves
 	// a service name itself, so a sidecar that moves cannot widen the grant.
 	Services []ServiceBinding `json:"services,omitempty"`
-	// ServiceProxyClients are the exact containers on Coop's internal service
-	// network that may reach the guard's approved-TLS CONNECT endpoint.
-	ServiceProxyClients []netip.Addr `json:"service_proxy_clients,omitempty"`
+	// ServiceProxyClients are the exact named containers on Coop's internal
+	// service network that may reach the guard's approved-TLS CONNECT endpoint.
+	ServiceProxyClients []ServiceProxyClient `json:"service_proxy_clients,omitempty"`
 	// Serve is this project's published container ports. They are ingress the
 	// operator asked for, not egress authority.
 	Serve []int `json:"serve,omitempty"`
@@ -89,6 +89,11 @@ func (r CredentialBrokerRoute) valid() bool {
 type ServiceBinding struct {
 	Name    string     `json:"name"`
 	RuleID  string     `json:"rule_id"`
+	Address netip.Addr `json:"address"`
+}
+
+type ServiceProxyClient struct {
+	Name    string     `json:"name"`
 	Address netip.Addr `json:"address"`
 }
 

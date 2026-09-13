@@ -60,7 +60,7 @@ func TestServiceProxyIngressIsLimitedToPreparedServiceAddresses(t *testing.T) {
 	clock := testBootClock()
 	c, err := NewController(Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32),
 		PolicyFingerprint: policy.Fingerprint}, policy, []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, nil,
-		[]netip.Addr{client}, nil, netip.Addr{}, nil, clock, func(context.Context, string) error { return nil })
+		[]ServiceProxyClient{{Name: "web", Address: client}}, nil, netip.Addr{}, nil, clock, func(context.Context, string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}

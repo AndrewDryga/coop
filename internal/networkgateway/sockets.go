@@ -169,7 +169,7 @@ func parseSocketTable(table socketTable, b boundary, retained [3][]SocketRow) ([
 type boundary struct {
 	protected           []netip.Prefix
 	policy              egress.Snapshot
-	serviceProxyClients []netip.Addr
+	serviceProxyClients []ServiceProxyClient
 	// tlsPorts is the policy's TLS port set — what the capture chain redirects —
 	// held here because the inventory asks about it once per row per sample.
 	tlsPorts []int
@@ -200,7 +200,7 @@ func (b boundary) captured(uid uint32, local, peer netip.AddrPort) bool {
 	// service proxy listens on the internal bridge instead of loopback, so its
 	// accepted legs are matched to the exact prepared service addresses.
 	return uid == 65532 && (local.Addr() == netip.AddrFrom4([4]byte{127, 0, 0, 1}) && (local.Port() == 15443 || local.Port() == 15353) ||
-		local.Port() == ServiceProxyPort && slices.Contains(b.serviceProxyClients, peer.Addr()))
+		local.Port() == ServiceProxyPort && slices.ContainsFunc(b.serviceProxyClients, func(client ServiceProxyClient) bool { return client.Address == peer.Addr() }))
 }
 
 func protectedSocketPeer(peer netip.Addr, protected []netip.Prefix) bool {

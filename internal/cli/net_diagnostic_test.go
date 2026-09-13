@@ -176,6 +176,18 @@ func TestExplainRendersTheExactRuleToPaste(t *testing.T) {
 	}
 }
 
+func TestExplainNamesTheOriginatingService(t *testing.T) {
+	port := 443
+	explanation := netExplanation{RunID: netTestRunTwo, Host: "registry.example.com", Causes: []netExplainCause{{Count: 1,
+		Explanation: networkstate.EventExplanation{RunID: netTestRunTwo, CandidateState: "none", Message: "blocked",
+			Event: networkview.Denial{ID: netTestEventID, Kind: "tls_denied", Reason: "unapproved_name", Name: "registry.example.com", Service: "web", Port: &port, At: time.Date(2026, 9, 10, 16, 3, 0, 0, time.UTC)}}}}}
+	var b bytes.Buffer
+	writeNetExplanation(&b, ui.Palette{}, time.Date(2026, 9, 10, 18, 0, 0, 0, time.UTC), explanation)
+	if !strings.Contains(b.String(), "  Run cb375d22 · today at 16:03 · service web\n") {
+		t.Fatalf("service attribution missing:\n%s", b.String())
+	}
+}
+
 // The refusal classes mean different things and must not be blurred: a boundary
 // no rule can cross, a failure that was no refusal, and evidence too thin to
 // name a transport. None of them fabricates YAML, and only the last one says

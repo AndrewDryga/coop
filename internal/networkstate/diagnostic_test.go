@@ -128,19 +128,19 @@ func TestNetworkExplainPreservesObservedFactsAndDraftBoundary(t *testing.T) {
 	snapshot := record.Snapshot
 	snapshot.Sequence, snapshot.AsOf = 1, time.Now().UTC()
 	snapshot.Denials = []networkview.Denial{{ID: id, Source: "guard", Sequence: 1, Basis: "observed", Kind: "tls_denied",
-		Reason: "unapproved_name", Name: "denied.example.org", Port: &port, At: snapshot.AsOf,
+		Reason: "unapproved_name", Name: "denied.example.org", Service: "web", Port: &port, At: snapshot.AsOf,
 		Candidate: &networkview.Candidate{ID: strings.Repeat("c", 32), EvidenceID: id, PolicyFingerprint: snapshot.PolicyFingerprint,
 			Rule: egress.Rule{To: egress.Destination{Domain: "denied.example.org"}, Protocol: "tls", Ports: []int{443}}, AppliesTo: "next_run"}}}
 	if _, err := s.AcceptSnapshot(context.Background(), record.ID, record.Revision, snapshot); err != nil {
 		t.Fatal(err)
 	}
 	got, err := evidence.Explain(record.ID, id, true)
-	if err != nil || got.CandidateState != "draft_not_approved" || got.Event.Candidate == nil || got.Kind != "observed" || got.Event.At != snapshot.AsOf || got.PolicyFingerprint != snapshot.PolicyFingerprint {
+	if err != nil || got.CandidateState != "draft_not_approved" || got.Event.Candidate == nil || got.Event.Service != "web" || got.Kind != "observed" || got.Event.At != snapshot.AsOf || got.PolicyFingerprint != snapshot.PolicyFingerprint {
 		t.Fatal("observed explanation lost its binding", got, err)
 	}
 	redacted, err := evidence.Explain(record.ID, id, false)
 	data, _ := json.Marshal(redacted)
-	if err != nil || redacted.CandidateState != "withheld" || redacted.Event.Candidate != nil || strings.Contains(string(data), "denied.example.org") {
+	if err != nil || redacted.CandidateState != "withheld" || redacted.Event.Candidate != nil || redacted.Event.Service != "web" || strings.Contains(string(data), "denied.example.org") {
 		t.Fatal("redacted explanation leaked a draft", err)
 	}
 	if _, err := evidence.Explain(record.ID, strings.Repeat("e", 32), true); !errors.Is(err, ErrEventNotRetained) {

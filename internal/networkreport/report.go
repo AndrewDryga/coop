@@ -154,8 +154,8 @@ const WorkloadName = "sni"
 // DestinationGroup is one destination the workload reached: the name, port
 // and transport a person recognizes, with every distinct peer beneath it.
 type DestinationGroup struct {
-	Name, Port, Transport string
-	Peers                 []*PeerTotals
+	Name, Port, Transport, Service string
+	Peers                          []*PeerTotals
 }
 
 // Label is the destination row: `example.com:443 · TLS`.
@@ -164,7 +164,11 @@ func (g DestinationGroup) Label() string {
 	if g.Port != "" {
 		label += ":" + g.Port
 	}
-	return label + " · " + TransportLabel(g.Transport)
+	label += " · " + TransportLabel(g.Transport)
+	if g.Service != "" {
+		label += " · service " + g.Service
+	}
+	return label
 }
 
 // totals sums this destination's peers into one row: what it carried, in the
@@ -339,7 +343,7 @@ func WorkloadDestinations(observed networkview.Snapshot) []DestinationGroup {
 		}
 	}
 	slices.SortFunc(groups, func(x, y *DestinationGroup) int {
-		return cmp.Or(strings.Compare(x.Name, y.Name), strings.Compare(x.Port, y.Port), strings.Compare(x.Transport, y.Transport))
+		return cmp.Or(strings.Compare(x.Name, y.Name), strings.Compare(x.Port, y.Port), strings.Compare(x.Transport, y.Transport), strings.Compare(x.Service, y.Service))
 	})
 	out := make([]DestinationGroup, 0, len(groups))
 	for _, group := range groups {
@@ -381,7 +385,7 @@ func destinationKey(c networkview.Connection) DestinationGroup {
 			name, port = peerLabel(c.Peer, c.DestinationID), ""
 		}
 	}
-	return DestinationGroup{Name: name, Port: port, Transport: c.Transport}
+	return DestinationGroup{Name: name, Port: port, Transport: c.Transport, Service: c.Service}
 }
 
 // SplitPeer splits a `host:port` peer the evidence recorded; ok is false for
@@ -508,7 +512,7 @@ func runExceptions(p ui.Palette, view View, inspection networkstate.Inspection) 
 	return out
 }
 
-// RefusalGroup coalesces the repeats of one blocked destination. The exact
+// RefusalGroup coalesces repeats from one service to one blocked destination. The exact
 // event identity stays in the evidence and in --json; a human argues with the
 // hostname they recognize.
 type RefusalGroup struct {
@@ -547,6 +551,9 @@ func RefusalLabel(denial networkview.Denial) string {
 		destination += ":" + strconv.Itoa(*denial.Port)
 	}
 	label := destination + " · " + refusalKind(denial.Kind)
+	if denial.Service != "" {
+		label += " · service " + denial.Service
+	}
 	if denial.Reason != "" && denial.Reason != "unapproved_name" {
 		label += " — " + refusalReasonText(denial.Reason)
 	}

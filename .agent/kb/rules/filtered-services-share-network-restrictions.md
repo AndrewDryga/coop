@@ -2,9 +2,9 @@
 name: filtered-services-share-network-restrictions
 description: agent-controlled services must obey approved network restrictions without freezing live code or approving every image update
 scope: security
-sources: [internal/box/filtered.go, internal/box/filtered_services.go, internal/box/filtered_launch.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go]
+sources: [internal/box/filtered.go, internal/box/filtered_services.go, internal/box/filtered_launch.go, internal/networkgateway/controller.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go]
 check: none
-updated: 2026-09-12
+updated: 2026-09-14
 ---
 
 # Enforce network restrictions for agent-controlled services too
@@ -24,10 +24,17 @@ setting must leave the service offline, not unrestricted. Do not assume every se
 offline; application APIs, workers, auth, storage and webhook integrations commonly need approved
 outbound TLS.
 Do not treat an existing unrestricted service as filtered or silently affect unrelated services.
+Carry the exact prepared Compose service name through allowed and denied external traffic in Coop's
+existing event, human-view and JSON paths. Internal service-to-service traffic stays direct and is
+not external network evidence. Observation must not grant access or create a second tracing system.
 Use the separately approved unified permission flow in [[project-edits-request-access]]; it does
 not expose new credentials or grant extra direct agent-to-service connections.
 
 ## Changelog
+
+- 2026-09-14 — added source attribution to existing network views after the user asked to observe
+  and approve service traffic through the same CLI UX. The exact prepared service/IP binding is the
+  identity; internal peer traffic is not recorded as external traffic.
 
 - 2026-09-13 — corrected the internal-only assumption after the user named real application-service
   outbound needs. Selected service closures now use an internal network for direct peer traffic and

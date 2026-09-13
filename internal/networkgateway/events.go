@@ -17,6 +17,7 @@ type GuardEvent struct {
 	Kind     string
 	FlowID   string
 	Name     string
+	Service  string
 	RuleID   string
 	Peer     netip.Addr
 	// Port is the connection's original destination port as the kernel recorded

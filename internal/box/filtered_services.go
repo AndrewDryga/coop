@@ -89,7 +89,7 @@ func (s *preparedFilteredServices) start() error {
 }
 
 func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runtime.Runtime, spec RunSpec, composeFile string,
-	approval *networkstate.Approval, grants []egress.Grant, sections *launchSections, exposedRoots []string) (string, []networkgateway.ServiceBinding, []netip.Addr, *preparedFilteredServices, error) {
+	approval *networkstate.Approval, grants []egress.Grant, sections *launchSections, exposedRoots []string) (string, []networkgateway.ServiceBinding, []networkgateway.ServiceProxyClient, *preparedFilteredServices, error) {
 	if sections != nil {
 		sections.servicesPreparing()
 	}
@@ -228,9 +228,9 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 		}
 		bindings = append(bindings, networkgateway.ServiceBinding{Name: name, RuleID: grant.ID, Address: address})
 	}
-	clients := make([]netip.Addr, 0, len(closure))
+	clients := make([]networkgateway.ServiceProxyClient, 0, len(closure))
 	for _, name := range closure {
-		clients = append(clients, addresses[name])
+		clients = append(clients, networkgateway.ServiceProxyClient{Name: name, Address: addresses[name]})
 	}
 	keepSnapshot = true
 	prepared := &preparedFilteredServices{runtime: rt, args: finalArgs, selected: selected, names: selected, sections: sections, addresses: addresses,

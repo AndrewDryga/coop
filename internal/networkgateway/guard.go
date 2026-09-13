@@ -48,7 +48,7 @@ type Guard struct {
 	events              *GuardEvents
 	peerCursor          atomic.Uint64
 	original            atomic.Pointer[destinationReader]
-	serviceProxyClients []netip.Addr
+	serviceProxyClients []ServiceProxyClient
 }
 
 func (g *Guard) setDestinationReader(read destinationReader) { g.original.Store(&read) }
@@ -204,7 +204,7 @@ func (g *Guard) forward(ctx context.Context, client net.Conn, dataSocket string)
 		g.events.emit(GuardEvent{Kind: "tls_denied", Name: hello.Name, Port: port, Reason: safeReason(err)})
 		return
 	}
-	g.forwardTLS(admission, client, dataSocket, port, hello)
+	g.forwardTLS(admission, client, dataSocket, port, hello, "")
 }
 
 type prefixedConn struct {
@@ -222,6 +222,11 @@ func (c *prefixedConn) Read(data []byte) (int, error) {
 }
 
 func (g *Guard) serviceProxy(ctx context.Context, client net.Conn, dataSocket string) {
+	service, ok := g.serviceProxyClient(client.RemoteAddr())
+	if !ok {
+		g.events.emit(GuardEvent{Kind: "admission_failed", Reason: "service_proxy_client_unrecognized"})
+		return
+	}
 	admission, cancel := context.WithTimeout(ctx, GuardAdmissionTimeout)
 	defer cancel()
 	deadline, _ := admission.Deadline()
@@ -230,7 +235,7 @@ func (g *Guard) serviceProxy(ctx context.Context, client net.Conn, dataSocket st
 	reader := bufio.NewReaderSize(limited, 4096)
 	request, err := http.ReadRequest(reader)
 	if err != nil || request.Method != http.MethodConnect || request.ContentLength > 0 || len(request.TransferEncoding) != 0 {
-		g.events.emit(GuardEvent{Kind: "tls_denied", Reason: "tls_proxy_request_invalid"})
+		g.events.emit(GuardEvent{Kind: "tls_denied", Service: service, Reason: "tls_proxy_request_invalid"})
 		proxyStatus(client, "400 Bad Request")
 		return
 	}
@@ -245,7 +250,7 @@ func (g *Guard) serviceProxy(ctx context.Context, client net.Conn, dataSocket st
 		if err != nil || portErr != nil || nameErr != nil {
 			reason = "tls_proxy_request_invalid"
 		}
-		g.events.emit(GuardEvent{Kind: "tls_denied", Name: name, Port: port, Reason: reason})
+		g.events.emit(GuardEvent{Kind: "tls_denied", Name: name, Service: service, Port: port, Reason: reason})
 		proxyStatus(client, "403 Forbidden")
 		return
 	}
@@ -262,10 +267,24 @@ func (g *Guard) serviceProxy(ctx context.Context, client net.Conn, dataSocket st
 		if err == nil {
 			reason = "tls_name_mismatch"
 		}
-		g.events.emit(GuardEvent{Kind: "tls_denied", Name: hello.Name, Port: port, Reason: reason})
+		g.events.emit(GuardEvent{Kind: "tls_denied", Name: hello.Name, Service: service, Port: port, Reason: reason})
 		return
 	}
-	g.forwardTLS(admission, stream, dataSocket, port, hello)
+	g.forwardTLS(admission, stream, dataSocket, port, hello, service)
+}
+
+func (g *Guard) serviceProxyClient(peer net.Addr) (string, bool) {
+	address, ok := peer.(*net.TCPAddr)
+	if !ok {
+		return "", false
+	}
+	ip := address.AddrPort().Addr().Unmap()
+	for _, client := range g.serviceProxyClients {
+		if client.Address == ip {
+			return client.Name, true
+		}
+	}
+	return "", false
 }
 
 func proxyStatus(conn net.Conn, status string) bool {
@@ -277,16 +296,16 @@ func proxyStatus(conn net.Conn, status string) bool {
 	return err == nil
 }
 
-func (g *Guard) forwardTLS(ctx context.Context, client net.Conn, dataSocket string, port int, hello Hello) {
+func (g *Guard) forwardTLS(ctx context.Context, client net.Conn, dataSocket string, port int, hello Hello, service string) {
 	admission, cancel := context.WithTimeout(ctx, GuardAdmissionTimeout)
 	defer cancel()
 	resolution, err := g.resolver.Resolve(admission, hello.Name)
 	if err != nil {
-		g.events.emit(GuardEvent{Kind: "admission_failed", Name: hello.Name, Reason: safeReason(err)})
+		g.events.emit(GuardEvent{Kind: "admission_failed", Name: hello.Name, Service: service, Reason: safeReason(err)})
 		return
 	}
 	if len(resolution.Addresses) == 0 {
-		g.events.emit(GuardEvent{Kind: "admission_failed", Name: hello.Name, Reason: "dns_no_address"})
+		g.events.emit(GuardEvent{Kind: "admission_failed", Name: hello.Name, Service: service, Reason: "dns_no_address"})
 		return
 	}
 	peer := resolution.Addresses[(g.peerCursor.Add(1)-1)%uint64(len(resolution.Addresses))]
@@ -321,32 +340,32 @@ func (g *Guard) forwardTLS(ctx context.Context, client net.Conn, dataSocket stri
 		break
 	}
 	if err != nil {
-		g.events.emit(GuardEvent{Kind: "admission_failed", Name: hello.Name, Reason: safeReason(err)})
+		g.events.emit(GuardEvent{Kind: "admission_failed", Name: hello.Name, Service: service, Reason: safeReason(err)})
 		return
 	}
 	var random [16]byte
 	if _, err := rand.Read(random[:]); err != nil {
-		g.events.emit(GuardEvent{Kind: "admission_failed", Reason: "gateway_unavailable"})
+		g.events.emit(GuardEvent{Kind: "admission_failed", Service: service, Reason: "gateway_unavailable"})
 		return
 	}
 	flowID := hex.EncodeToString(random[:])
 	header, err := ProxyHeader(netip.AddrPortFrom(peer, uint16(port)), flowID)
 	if err != nil {
-		g.events.emit(GuardEvent{Kind: "admission_failed", Reason: safeReason(err)})
+		g.events.emit(GuardEvent{Kind: "admission_failed", Service: service, Reason: safeReason(err)})
 		return
 	}
 	private, err := (&net.Dialer{}).DialContext(admission, "unix", dataSocket)
 	if err != nil {
-		g.events.emit(GuardEvent{Kind: "admission_failed", Name: hello.Name, Reason: "gateway_unavailable"})
+		g.events.emit(GuardEvent{Kind: "admission_failed", Name: hello.Name, Service: service, Reason: "gateway_unavailable"})
 		return
 	}
 	defer private.Close()
 	stop := context.AfterFunc(ctx, func() { _ = private.Close() })
 	defer stop()
-	g.events.emit(GuardEvent{Kind: "flow_registered", FlowID: flowID, Name: hello.Name, RuleID: hello.RuleID, Peer: peer, Port: port})
+	g.events.emit(GuardEvent{Kind: "flow_registered", FlowID: flowID, Name: hello.Name, Service: service, RuleID: hello.RuleID, Peer: peer, Port: port})
 	defer g.events.emit(GuardEvent{Kind: "private_flow_closed", FlowID: flowID})
 	if err := g.replay(admission, private, header, hello.Bytes, minTime(until, resolution.Expires)); err != nil {
-		g.events.emit(GuardEvent{Kind: "admission_failed", FlowID: flowID, Name: hello.Name, Reason: safeReason(err)})
+		g.events.emit(GuardEvent{Kind: "admission_failed", FlowID: flowID, Name: hello.Name, Service: service, Reason: safeReason(err)})
 		return
 	}
 	hello.Bytes = nil

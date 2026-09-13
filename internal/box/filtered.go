@@ -75,7 +75,7 @@ type filteredExecution struct {
 	serveEnv            []string // COOP_SERVE_URL_* the agent container still gets
 	servicesNet         string   // the Compose network the controller joins, if any
 	services            []networkgateway.ServiceBinding
-	serviceProxyClients []netip.Addr
+	serviceProxyClients []networkgateway.ServiceProxyClient
 	preparedServices    *preparedFilteredServices
 	// taskVolume is the run-private task-channel volume coop created THIS run (taskchannel.go).
 	// It is coop-owned, holds only the coop socket, and is mounted read-only, so it is exempt from

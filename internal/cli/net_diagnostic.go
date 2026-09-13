@@ -609,7 +609,7 @@ func writeNetNoBlock(w io.Writer, p ui.Palette, host, scope string, complete boo
 const netIncompleteRecording = "Recording incomplete — some blocked attempts may be missing"
 
 // netExplainHost reads one run for every refusal of one host and groups the
-// repeats by what actually differed — the boundary, the reason, the port — so
+// repeats by what actually differed — the boundary, the reason, the port, the service — so
 // a name refused forty times reads as one cause, and two different refusals
 // of it read as two.
 func netExplainHost(evidence *networkstate.Evidence, runID, host string) (netExplanation, error) {
@@ -660,7 +660,11 @@ func writeNetExplanation(w io.Writer, p ui.Palette, now time.Time, explanation n
 		title += ":" + strconv.Itoa(*first.Port)
 	}
 	fmt.Fprintf(w, "%s\n", p.Bold(p.Cyan(title+" "+netBlockedVerb(first.Reason))))
-	fmt.Fprintf(w, "  %s\n", p.Dim("Run "+networkreport.ShortID(explanation.RunID)+" · "+networkreport.WhenAt(now, first.At)))
+	detail := "Run " + networkreport.ShortID(explanation.RunID) + " · " + networkreport.WhenAt(now, first.At)
+	if len(explanation.Causes) == 1 && first.Service != "" {
+		detail += " · service " + first.Service
+	}
+	fmt.Fprintf(w, "  %s\n", p.Dim(detail))
 	var candidate *networkview.Candidate
 	if len(explanation.Causes) == 1 {
 		cause := explanation.Causes[0]
@@ -753,6 +757,9 @@ func netCauseLabel(event networkview.Denial, count int) string {
 	label := networkreport.TransportLabel(netCauseKind(event.Kind))
 	if event.Port != nil {
 		label += " on port " + strconv.Itoa(*event.Port)
+	}
+	if event.Service != "" {
+		label += " · service " + event.Service
 	}
 	return label + " · " + ui.Count(count, "attempt")
 }

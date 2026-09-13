@@ -20,9 +20,21 @@ import (
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
+type serviceProxyTestConn struct {
+	net.Conn
+	peer netip.Addr
+}
+
+func (c serviceProxyTestConn) RemoteAddr() net.Addr {
+	return &net.TCPAddr{IP: c.peer.AsSlice()}
+}
+
 func TestServiceProxyRoutesOnlyAnApprovedMatchingTLSName(t *testing.T) {
 	fixture := startGuardFixture(t)
+	serviceAddress := netip.MustParseAddr("172.31.0.16")
+	fixture.guard.serviceProxyClients = []ServiceProxyClient{{Name: "web", Address: serviceAddress}}
 	server, client := net.Pipe()
+	server = serviceProxyTestConn{Conn: server, peer: serviceAddress}
 	t.Cleanup(func() { _ = client.Close() })
 	done := make(chan struct{})
 	go func() {
@@ -64,6 +76,7 @@ func TestServiceProxyRoutesOnlyAnApprovedMatchingTLSName(t *testing.T) {
 	}
 
 	deniedServer, deniedClient := net.Pipe()
+	deniedServer = serviceProxyTestConn{Conn: deniedServer, peer: serviceAddress}
 	defer deniedClient.Close()
 	go fixture.guard.serviceProxy(context.Background(), deniedServer, fixture.private.Addr().String())
 	_ = deniedClient.SetDeadline(time.Now().Add(wait.Deadline))
@@ -73,6 +86,18 @@ func TestServiceProxyRoutesOnlyAnApprovedMatchingTLSName(t *testing.T) {
 	response, err = bufio.NewReader(deniedClient).ReadString('\n')
 	if err != nil || response != "HTTP/1.1 403 Forbidden\r\n" {
 		t.Fatalf("denied CONNECT response = %q, %v", response, err)
+	}
+	var events []GuardEvent
+	wait.For(t, "service traffic evidence", func() bool {
+		batch, _ := fixture.guard.events.Drain(MaxGuardEvents)
+		events = append(events, batch...)
+		return slices.ContainsFunc(events, func(event GuardEvent) bool { return event.Kind == "flow_registered" }) &&
+			slices.ContainsFunc(events, func(event GuardEvent) bool { return event.Kind == "tls_denied" })
+	})
+	for _, event := range events {
+		if (event.Kind == "flow_registered" || event.Kind == "tls_denied") && event.Service != "web" {
+			t.Fatalf("service event lost its source: %#v", event)
+		}
 	}
 }
 
@@ -241,7 +266,7 @@ func TestGuardReplaysExactAdmissionAndPreservesStreamingHalfClose(t *testing.T) 
 		events = append(events, batch...)
 		return len(events) >= 2
 	})
-	if len(events) != 2 || events[0].Kind != "flow_registered" || events[1].Kind != "private_flow_closed" || events[0].FlowID != flowID || events[1].FlowID != flowID {
+	if len(events) != 2 || events[0].Kind != "flow_registered" || events[1].Kind != "private_flow_closed" || events[0].FlowID != flowID || events[1].FlowID != flowID || events[0].Service != "" {
 		t.Fatalf("flow evidence: %#v", events)
 	}
 }

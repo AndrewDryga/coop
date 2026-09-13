@@ -215,6 +215,31 @@ func TestInspectCleanRunIsDestinationFirstAndSilentAboutHealth(t *testing.T) {
 	}
 }
 
+func TestNetworkViewsNameTheOriginatingService(t *testing.T) {
+	port := 443
+	inspection := netTestClean()
+	inspection.Observed.Connections[0].Service = "web"
+	inspection.Observed.Denials = []networkview.Denial{{ID: "d1", Source: "guard", Kind: "tls_denied", Reason: "unapproved_name", Name: "blocked.example.com", Service: "worker", Port: &port}}
+
+	got := renderNetRun(networkreport.View{ID: netTestRun}, inspection)
+	for _, want := range []string{
+		"    example.com:443 · TLS · service web\n",
+		"  blocked.example.com:443 · TLS · service worker\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+
+	delta := netWatchDelta(networkstate.Inspection{}, inspection, netTestRun)
+	joined := strings.Join(delta, "\n")
+	for _, want := range []string{"Allowed example.com:443 · TLS · service web", "Blocked blocked.example.com:443 · TLS · service worker"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("watch is missing %q in:\n%s", want, joined)
+		}
+	}
+}
+
 // Acceptance: repeated connections to one host and peer aggregate into a count
 // and exact totals; one name behind two peers keeps both; hosts sort
 // deterministically whatever order the evidence arrived in.

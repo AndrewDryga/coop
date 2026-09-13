@@ -234,7 +234,7 @@ func (c *Collector) ingest(guards []GuardEvent, gt GuardTotals, proxies []EnvoyE
 			peer := netip.AddrPortFrom(event.Peer, uint16(event.Port))
 			c.flows[event.FlowID] = &collectedFlow{peer: peer, lastBoot: event.BootAt,
 				row: networkview.Connection{ID: c.opaque("flow", event.FlowID), DestinationID: c.opaque("destination", event.Name),
-					State: "connecting", Transport: "tls", Name: event.Name, NameSource: "sni", Peer: peer.String(),
+					State: "connecting", Transport: "tls", Name: event.Name, NameSource: "sni", Service: event.Service, Peer: peer.String(),
 					RuleID: event.RuleID, StartedAt: &at, ObservedAt: event.At}}
 		case "private_flow_closed":
 			if f := c.flows[event.FlowID]; f != nil {
@@ -242,7 +242,7 @@ func (c *Collector) ingest(guards []GuardEvent, gt GuardTotals, proxies []EnvoyE
 			}
 		case "tls_denied", "dns_denied", "admission_failed":
 			row := networkview.Denial{ID: c.opaque("guard", fmt.Sprint(event.Sequence)), Source: "guard", Sequence: networkview.Count(event.Sequence),
-				At: event.At, Kind: event.Kind, Reason: event.Reason, Name: event.Name, Basis: "observed"}
+				At: event.At, Kind: event.Kind, Reason: event.Reason, Name: event.Name, Service: event.Service, Basis: "observed"}
 			if event.Name != "" {
 				row.DestinationID = c.opaque("destination", event.Name)
 			}

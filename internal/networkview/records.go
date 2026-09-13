@@ -142,6 +142,7 @@ type Connection struct {
 	Transport     string     `json:"transport"`
 	Name          string     `json:"name,omitempty"`
 	NameSource    string     `json:"name_source,omitempty"`
+	Service       string     `json:"service,omitempty"`
 	Peer          string     `json:"peer,omitempty"`
 	RuleID        string     `json:"rule_id,omitempty"`
 	StartedAt     *time.Time `json:"started_at"`
@@ -171,6 +172,7 @@ type Denial struct {
 	Kind          string     `json:"kind"`
 	Reason        string     `json:"reason"`
 	Name          string     `json:"name,omitempty"`
+	Service       string     `json:"service,omitempty"`
 	Peer          string     `json:"peer,omitempty"`
 	Port          *int       `json:"port,omitempty"`
 	Candidate     *Candidate `json:"candidate,omitempty"`
@@ -289,7 +291,7 @@ func (s Snapshot) Project(exportDestinations bool) Snapshot {
 	}
 	for _, c := range s.Connections {
 		row := Connection{ID: c.ID, DestinationID: c.DestinationID, State: c.State, Reason: c.Reason, Transport: c.Transport,
-			NameSource: c.NameSource, StartedAt: clone(c.StartedAt), ObservedAt: c.ObservedAt, SentBytes: clone(c.SentBytes),
+			NameSource: c.NameSource, Service: c.Service, StartedAt: clone(c.StartedAt), ObservedAt: c.ObservedAt, SentBytes: clone(c.SentBytes),
 			ReceivedBytes: clone(c.ReceivedBytes), Rate: clone(c.Rate), ConnectMillis: clone(c.ConnectMillis), Partial: c.Partial}
 		if exportDestinations {
 			row.Name, row.Peer, row.RuleID = c.Name, c.Peer, c.RuleID
@@ -298,7 +300,7 @@ func (s Snapshot) Project(exportDestinations bool) Snapshot {
 	}
 	for _, d := range s.Denials {
 		row := Denial{ID: d.ID, Source: d.Source, Sequence: d.Sequence, Basis: d.Basis, DestinationID: d.DestinationID,
-			At: d.At, Kind: d.Kind, Reason: d.Reason, Port: clone(d.Port), Withheld: !exportDestinations}
+			At: d.At, Kind: d.Kind, Reason: d.Reason, Service: d.Service, Port: clone(d.Port), Withheld: !exportDestinations}
 		if exportDestinations {
 			row.Name = d.Name
 			row.Peer = d.Peer

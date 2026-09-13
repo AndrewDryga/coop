@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Approved and blocked external TLS from filtered Compose services now names the originating
+  service in the existing network watch, inspection, blocked explanation, and JSON views. Internal
+  service traffic remains direct and is not reported as external traffic.
+
 - Filtered project images now preserve the complete locked JavaScript client installation, not
   only its launchers. Coop compares a bounded digest of Docker's directory archive and refuses a
   project layer that adds, removes or changes a dependency below `/opt/coop/clients`.

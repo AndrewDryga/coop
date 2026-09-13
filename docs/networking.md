@@ -100,6 +100,9 @@ network before starting them. Those services can talk to each other directly, bu
 no direct internet route. Standard HTTPS proxy variables point them at the existing Coop guard,
 which accepts only approved TLS names and verifies the real ClientHello name before forwarding.
 Removing the proxy variables removes connectivity; it does not restore direct internet access.
+Allowed and blocked external requests appear in the existing `coop net watch`, `inspect`,
+`blocked`, and JSON views with the originating Compose service name. Direct traffic between
+services stays on the internal network and is not reported as external traffic.
 `box.network: true` alone is refused in filtered mode: name the sidecar you need. Because the proxy
 belongs to one box execution, a second filtered box using project services is refused until the
 first stops.

@@ -42,6 +42,23 @@ func collectorFixture(t *testing.T) (*Collector, *BootInstant) {
 func registration(sequence uint64, now BootInstant, flow string) GuardEvent {
 	return GuardEvent{Sequence: sequence, BootAt: now, At: time.Unix(100, 0), Kind: "flow_registered", FlowID: flow, Name: "api.example.com", RuleID: "rule", Peer: netip.MustParseAddr("93.184.216.34"), Port: 443}
 }
+
+func TestCollectorRetainsServiceTrafficSource(t *testing.T) {
+	c, now := collectorFixture(t)
+	flow := strings.Repeat("f", 32)
+	allowed := registration(1, *now, flow)
+	allowed.Service = "web"
+	denied := GuardEvent{Sequence: 2, BootAt: *now, At: time.Unix(101, 0), Kind: "tls_denied", Name: "blocked.example.com", Service: "worker", Port: 443, Reason: "unapproved_name"}
+	c.ingest([]GuardEvent{allowed, denied}, GuardTotals{Sequence: 2}, []EnvoyEvent{proxyEvent(1, *now, flow, "TcpUpstreamConnected", 0, 0, 1)}, EnvoyTotals{Sequence: 1})
+
+	if got := c.flows[flow].row.Service; got != "web" {
+		t.Fatalf("allowed service = %q", got)
+	}
+	if len(c.denials) != 1 || c.denials[0].Service != "worker" {
+		t.Fatalf("denied service = %#v", c.denials)
+	}
+}
+
 func proxyEvent(sequence uint64, now BootInstant, flow, phase string, sent, received, duration uint64) EnvoyEvent {
 	return EnvoyEvent{Sequence: sequence, BootAt: now, At: time.Unix(100, 0), FlowID: flow, ConnectionID: "1", Phase: phase,
 		Peer: netip.MustParseAddrPort("93.184.216.34:443"), Local: netip.MustParseAddrPort("172.17.0.2:32000"), Sent: &sent, Received: &received, DurationMillis: &duration}
