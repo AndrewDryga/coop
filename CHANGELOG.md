@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- `coop init --services` refuses Compose links and paths outside the repository instead of
+  writing through them. Additive edits preserve comments and permissions, leave the original
+  intact on write failure, and report detected concurrent changes for retry.
+
 - Files beneath hidden directories stay hidden when bound directly into project
   services, including through symlink aliases. Secret scans and fork checks now
   recognize the same inherited hiding rules without skipping commit candidates.

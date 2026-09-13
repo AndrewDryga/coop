@@ -184,7 +184,8 @@ type projectFileSnapshot struct {
 }
 
 func readProjectFile(root *os.Root, rel, display string) (projectFileSnapshot, bool, error) {
-	file, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	// Nonblocking lets the regular-file check refuse a FIFO without waiting for a writer.
+	file, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		if info, statErr := root.Lstat(rel); errors.Is(statErr, os.ErrNotExist) {
 			return projectFileSnapshot{}, false, nil
@@ -261,6 +262,12 @@ func stageProjectFile(root *os.Root, rel, display string, data []byte, perm os.F
 			if current, currentErr := root.Lstat(name); currentErr == nil && os.SameFile(created, current) {
 				_ = root.Remove(name)
 			}
+		}
+		// Creation applies umask; replacement must retain the original file's permissions.
+		if err := file.Chmod(perm); err != nil {
+			_ = file.Close()
+			removePartial()
+			return "", fmt.Errorf("preserve permissions for %s: %w", display, err)
 		}
 		if err := write(file, data); err != nil {
 			_ = file.Close()

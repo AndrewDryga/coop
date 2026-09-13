@@ -1,6 +1,7 @@
 package scaffold
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -58,18 +59,46 @@ func ServiceName(catalog string) string { return composeCatalog[catalog].service
 
 // AddComposeServices adds the named catalog services to rel (repo-relative) without disturbing
 // anything already in it. An absent file is created from the catalog; an existing one is edited in
-// place. On any failure the file on disk is left exactly as it was.
+// place. Failed writes preserve the original; observed concurrent edits are refused.
 func AddComposeServices(repo, rel string, services []string) (ComposeAddition, error) {
+	return addComposeServices(repo, rel, services, writeAndSync, nil)
+}
+
+func addComposeServices(repo, rel string, services []string, write scaffoldFileWrite, beforePublish func() error) (ComposeAddition, error) {
 	out := ComposeAddition{Rel: rel}
-	path := filepath.Join(repo, filepath.FromSlash(rel))
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
+	dest := filepath.Join(repo, filepath.FromSlash(rel))
+	if !filepath.IsLocal(rel) {
+		return out, fmt.Errorf("compose path %s must be inside the repository", rel)
+	}
+	checkedRel, err := repoRelativePath(repo, dest)
+	if err != nil {
+		return out, err
+	}
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		return out, fmt.Errorf("open scaffold root %s: %w", repo, err)
+	}
+	defer root.Close()
+	before, present, err := readProjectFile(root, checkedRel, rel)
+	if err != nil {
+		return out, composeWriteError(rel, err)
+	}
+	if !present {
 		content := composeFor(services)
 		if content == "" {
 			return out, nil
 		}
-		if err := (&scaffolder{repo: repo}).writeContentIfAbsent(path, content, 0o644); err != nil {
+		if beforePublish != nil {
+			if err := beforePublish(); err != nil {
+				return out, err
+			}
+		}
+		created, err := writeNewRepoFile(repo, dest, []byte(content), 0o644, write)
+		if err != nil {
 			return out, err
+		}
+		if !created {
+			return out, composeWriteError(rel, ErrProjectChanged)
 		}
 		out.Created = true
 		for _, name := range ComposeServices {
@@ -79,9 +108,7 @@ func AddComposeServices(repo, rel string, services []string) (ComposeAddition, e
 		}
 		return out, nil
 	}
-	if err != nil {
-		return out, err
-	}
+	data := before.data
 	existing, err := composeServiceImages(data)
 	if err != nil {
 		return out, err
@@ -112,10 +139,17 @@ func AddComposeServices(repo, rel string, services []string) (ComposeAddition, e
 	if _, err := composeServiceImages([]byte(text)); err != nil {
 		return ComposeAddition{Rel: rel}, err
 	}
-	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
-		return ComposeAddition{Rel: rel}, err
+	if err := replaceProjectFile(root, checkedRel, rel, before, []byte(text), write, beforePublish); err != nil {
+		return ComposeAddition{Rel: rel}, composeWriteError(rel, err)
 	}
 	return out, nil
+}
+
+func composeWriteError(rel string, err error) error {
+	if errors.Is(err, ErrProjectChanged) {
+		return fmt.Errorf("compose file %s changed during service addition; retry coop init --services", rel)
+	}
+	return err
 }
 
 // spliceService inserts one service block at the end of the services mapping and declares its
