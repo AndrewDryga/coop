@@ -14,9 +14,8 @@ lead:
   # agent — REQUIRED. A target: provider[:model][@account], or a LIST of them (a
   # fallback ladder, even cross-provider). A bare provider:model runs on EVERY
   # signed-in account (rotating on a rate limit); @account pins one. A loop
-  # rotates the list top-to-bottom. The two frontier models at max effort,
-  # failing over to each other on a rate limit: Fable 5 (the long-horizon
-  # agentic frontier) with GPT-5.6 Sol as the cross-vendor twin.
+  # rotates the list top-to-bottom. The configured targets below define the
+  # models and effort; a single-item list has no cross-model fallback.
   agent: [codex:gpt-6-astra/xhigh]
 
   # prompt — OPTIONAL Markdown appended to (never replacing) the generated lead
@@ -32,10 +31,8 @@ roles:
     # Its agent may be one target or a fallback ladder;
     # only a failed rate-limit response advances it.
     mode: consult
-    # agent — a target or fallback list: provider[:model][/effort]. Terra at
-    # xhigh: near-frontier deep thinking without burning the Sol/Fable quota the
-    # lead and final review run on; its Opus 4.8 twin covers the same duty in
-    # loop ladders.
+    # agent — a target or fallback list: provider[:model][/effort].
+    # Route reasoning-heavy work here before the lead makes the final decision.
     agent: claude:claude-fable-5/xhigh
     # when — OPTIONAL routing hints; the lead's cue for what to route here.
     when: [architecture, debugging, security, code-review, before-commit]
@@ -47,9 +44,8 @@ roles:
     # it cannot edit files.
     mode: consult
     # agent — a target or fallback list: provider[:model][/effort].
-    # Grok 4.5: the second critical opinion from OUTSIDE the claude+codex pair
-    # doing the work — a third vendor's blind spots, for one-way doors and
-    # security calls.
+    # A second critical opinion on the plan and its tradeoffs. The configured
+    # target determines whether that opinion also comes from another provider.
     agent: codex:gpt-6-sol/xhigh
     # when — OPTIONAL routing hints.
     when: [plan-review, tradeoffs]
@@ -60,8 +56,8 @@ roles:
     # mode: delegate — a WRITE-CAPABLE worker via coop-delegate: it may edit the
     # worktree but never commits; the lead reviews the diff, gates, and commits.
     mode: delegate
-    # agent — a target or fallback list: provider[:model][/effort]. Luna at
-    # xhigh: the fast tier's lead hands; a fallback runs only if a limited rung
+    # agent — a target or fallback list: provider[:model][/effort].
+    # Mechanical, fully specified work; a fallback runs only if a limited rung
     # left every file and Git history unchanged.
     agent: codex:gpt-5.6-luna/xhigh
     # when — OPTIONAL routing hints.
