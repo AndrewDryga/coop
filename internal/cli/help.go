@@ -1572,7 +1572,7 @@ REPAIR — normally automatic
 
 HOW TO ADD A NETWORK RULE
 
-1. Edit .agent/project.yaml and add the destination under box.egress_rules:
+1. Edit .agent/project.yaml and add the network rule under box.egress_rules:
 
    box:
      egress: filtered
@@ -1644,7 +1644,7 @@ OPTIONS
   --json       print the evidence for scripts
 
   Without --run, finds the newest matching block in this project's runs.
-  Shows a rule you can copy when the record proves the destination and port.
+  Shows a rule you can copy when the record proves the remote address and port.
   An exact event ID can replace the host when --run is supplied.
 
 EXAMPLES

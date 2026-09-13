@@ -499,7 +499,7 @@ func netRuleText(rule egress.Rule) string {
 		}
 		return target
 	default:
-		target = "(no destination)"
+		target = "(no remote address)"
 	}
 	if len(rule.Ports) != 0 {
 		target += ":" + netPortList(rule.Ports)

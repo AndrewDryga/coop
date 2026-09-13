@@ -226,7 +226,7 @@ func netQueryHost(value string) (string, int, error) {
 	if strings.Contains(value, "://") {
 		parsed, err := url.Parse(value)
 		if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
-			return "", 0, errors.New("only https:// URLs name a destination a filtered run can reach")
+			return "", 0, errors.New("only https:// URLs are supported for filtered network access")
 		}
 		host = parsed.Hostname()
 		if text := parsed.Port(); text != "" {
@@ -416,7 +416,7 @@ func writeNetCheck(w io.Writer, p ui.Palette, answer netCheckAnswer) {
 // that is what makes the answer different from a current one. It is the same
 // one sentence: what the destination was, what decided it, and which run.
 func writeNetHistoricalCheck(w io.Writer, p ui.Palette, result networkstate.PolicyExplanation) {
-	destination := "the withheld destination"
+	destination := "the withheld remote address"
 	switch {
 	case !result.Withheld && result.Domain != "":
 		destination = result.Domain
@@ -457,7 +457,7 @@ func netBlockedClause(reason string) string {
 	case "protected_destination", "unsafe_dns_answer":
 		return "a protected address"
 	case "unapproved_name":
-		return "an unapproved destination"
+		return "an unapproved remote address"
 	case "protocol_not_allowed":
 		return "an unapproved connection type"
 	case "port_not_allowed":

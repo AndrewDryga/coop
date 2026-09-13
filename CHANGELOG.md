@@ -87,6 +87,9 @@
 - `coop net forget` now uses the approved short reset explanation instead of printing the
   saved approval's mode and rule ledger.
 
+- Remaining public network help and diagnostics now say network rule, network access, or
+  remote address instead of the ambiguous destination wording.
+
 - Task completion reminds agents that scratch logs are removed during finalization and
   only verified durable artifacts belong in the final handoff; normal scratch cleanup remains.
 

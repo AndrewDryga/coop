@@ -126,13 +126,20 @@ func TestHistoricalCheckNamesTheRunAndStops(t *testing.T) {
 		Message: "no rule in this run allows this name — a rule you approve now applies to the next run"}
 	b.Reset()
 	writeNetHistoricalCheck(&b, ui.Palette{}, denied)
-	if want := "✗ registry.npmjs.org:443 was blocked as an unapproved destination in run e644f07a.\n"; b.String() != want {
+	if want := "✗ registry.npmjs.org:443 was blocked as an unapproved remote address in run e644f07a.\n"; b.String() != want {
 		t.Errorf("denied:\n%s\nwant:\n%s", b.String(), want)
 	}
 	b.Reset()
 	writeNetHistoricalCheck(&b, ui.Palette{}, networkstate.PolicyExplanation{RunID: netTestRun, Protocol: "tls", Port: 443, Withheld: true, Reason: "unapproved_name", Message: "x"})
-	if !strings.Contains(b.String(), "the withheld destination:443 was blocked") {
-		t.Errorf("withheld destination view:\n%s", b.String())
+	if !strings.Contains(b.String(), "the withheld remote address:443 was blocked") {
+		t.Errorf("withheld remote address view:\n%s", b.String())
+	}
+}
+
+func TestNetQueryHostUsesNetworkAccessWording(t *testing.T) {
+	_, _, err := netQueryHost("http://example.com")
+	if err == nil || err.Error() != "only https:// URLs are supported for filtered network access" {
+		t.Fatalf("unsupported URL = %v", err)
 	}
 }
 

@@ -19,7 +19,7 @@ REPAIR — normally automatic
 
 HOW TO ADD A NETWORK RULE
 
-1. Edit .agent/project.yaml and add the destination under box.egress_rules:
+1. Edit .agent/project.yaml and add the network rule under box.egress_rules:
 
    box:
      egress: filtered

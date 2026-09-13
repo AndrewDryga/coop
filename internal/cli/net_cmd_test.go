@@ -1168,6 +1168,7 @@ func TestRunOutcomeSaysWhatHappenedInWords(t *testing.T) {
 
 func TestNetRuleTextReadsLikeADestination(t *testing.T) {
 	for want, rule := range map[string]egress.Rule{
+		"(no remote address)":             {},
 		"docs.example.com:443,8443 · TLS": {To: egress.Destination{Domain: "docs.example.com"}, Protocol: "tls", Ports: []int{443, 8443}},
 		"10.42.9.0/24:123 · UDP":          {To: egress.Destination{CIDR: "10.42.9.0/24"}, Protocol: "udp", Ports: []int{123}},
 		"10.42.8.12 · icmp echo-request":  {To: egress.Destination{IP: "10.42.8.12"}, Protocol: "icmp", Types: []string{"echo-request"}},
