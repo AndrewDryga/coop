@@ -3,7 +3,7 @@ name: loop-resume-never-rewrites-history
 description: a leaked box descendant un-completes committed work; resuming it later must never amend a non-HEAD commit, because that reparents the whole branch and cannot pass validation
 subsystem: loop
 sources: [internal/tasks/audit.go, internal/tasks/completion_recovery.go, internal/loop/completion.go, internal/loop/prompts.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/box/image.go, internal/box/run.go]
-updated: 2026-09-12
+updated: 2026-09-13
 ---
 A completed, committed task can land back in the queue with its work already in history. The chain,
 observed twice in emisar on 2026-08-01:
@@ -60,6 +60,13 @@ can hold another task's work at the same time).
 It is gated on the resumed state on purpose: a FRESH claim in a dirty tree is somebody else's work,
 and pointing a new task at it invites cross-task edits.
 
+The shared work prompt adds the same ownership boundary to ordinary, fork and audit attempts:
+inspect both working and cached diffs, preserve foreign/uncertain work, and never stage the ignored
+task folders. Whole-path `commit --only` is safe only for wholly owned paths; overlapping hunks
+need reviewed isolation. Mutation-test ownership checks and original-state capture come before
+any restoration hook, so a dirty-source refusal cannot trigger a HEAD restore. These are agent
+instructions, not a runtime guarantee that every generated shell command follows them.
+
 ## No-code decisions and refused completion
 
 A task can legitimately permit a decision without a source change. If it has no existing binding,
@@ -77,6 +84,9 @@ original diff from protected-gate review and signoff. The final report distingui
 completed work. See [[loop-completion-refusals-keep-work-moving]].
 
 ## Changelog
+- 2026-09-13 — repaired shared resume/staging guidance after ignored-task-folder Git failures;
+  removed blanket discard and casual worktree advice. Prompt and hermetic Git recipe tests cover
+  foreign index/content preservation and preflight refusal before restoration hooks.
 - 2026-09-12 — rechecked normal completion versus audit authority; documented meaningful no-code
   decisions, pre-move tool feedback, and clean no-commit recovery. Committed interruption remains
   distinct and cannot use the no-change retry path to hide its original diff.

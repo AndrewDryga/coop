@@ -191,6 +191,48 @@ func TestLoopWorkPromptDecisionOnlyCompletion(t *testing.T) {
 	}
 }
 
+func TestLoopWorkPromptPreservesChangeOwnership(t *testing.T) {
+	for _, tc := range []struct {
+		name, repo, root string
+		audit            bool
+	}{
+		{name: "ordinary resume", repo: "/repo", root: ".agent/tasks"},
+		{name: "monorepo resume", repo: "/repo", root: "portal/.agent/tasks"},
+		{name: "fork resume", repo: "/repo-forks/a", root: ".coop/task-executions/generation/assignment/tasks"},
+		{name: "audit rework", repo: "/repo", root: ".agent/tasks", audit: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			work := LoopWorkPrompt(tc.repo, tc.root, "task-42", "claude", nil, nil, tc.audit)
+			t.Logf("prompt overhead measurement: %d bytes, %d whitespace-delimited words (not model tokens)", len(work), len(strings.Fields(work)))
+			for _, want := range []string{
+				"`git status --short`, `git diff`, and `git diff --cached`",
+				"Preserve unrelated or uncertain staged, unstaged, and untracked work",
+				"Discard only verified task-owned paths/hunks when authorized",
+				"before arming any restoration hook",
+				"restore that captured state, not HEAD",
+				"Task folders are gitignored working state; never stage or force-add them",
+				"`git add -- path/to/file`", "`git commit --only -m '<message>' -- path/to/file`",
+				"Never use whole-path commits when ownership overlaps",
+				"isolate your commit without altering their index",
+				"Commit options precede the `--` path delimiter",
+				"Create worktrees or branches only when explicitly allowed by the project and human",
+			} {
+				if !strings.Contains(work, want) {
+					t.Errorf("missing ownership guidance %q", want)
+				}
+			}
+			for _, forbidden := range []string{
+				"discard partial work with `git restore`/`git checkout`",
+				"temporary worktrees, patches", "git add --only", "git status --cached",
+			} {
+				if strings.Contains(work, forbidden) {
+					t.Errorf("unsafe or invalid guidance retained: %q", forbidden)
+				}
+			}
+		})
+	}
+}
+
 // TestLoopPreflightAndReviewFolder: the preflight prompt frames only the CUSTOM cleanup — the
 // built-in unblock runs host-side (unblockResolved), never in a box — bounded by the guardrails
 // (no task work, no code, no commits); the default review does bookkeeping + ONE whole-repo gate

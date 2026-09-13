@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Loop agents receive scoped Git guidance: preserve unrelated staged and unstaged work,
+  exclude ignored task notes from commits, and check mutation-test ownership before cleanup.
+
 - Fork secret warnings ask you to review and remove real credentials before merging;
   they no longer suggest `.coopignore`, which hides files from agents but does not
   resolve a merge-policy finding.
