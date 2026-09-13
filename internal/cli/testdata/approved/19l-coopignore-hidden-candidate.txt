@@ -1,0 +1,12 @@
+✗ 1 possible secret found
+
+  config/credentials.yaml:1
+    OpenAI API key
+    Hidden from the box, but Git would commit this file.
+
+Remove real secrets from files you intend to commit.
+If this is a false positive, add this entry to .coopsecretsignore
+and replace <reason> with an explanation:
+
+  # config/credentials.yaml — OpenAI API key
+  fp-v1:ff38df99e25cce0989667751e23c37b43f3622a7063349aa14afd4ace2484f4b # <reason>

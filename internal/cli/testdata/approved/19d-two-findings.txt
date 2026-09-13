@@ -5,7 +5,7 @@
 
   deploy/id_ed25519:1
     Private key
-    Hidden from the box by name, but Git would commit this file.
+    Hidden from the box, but Git would commit this file.
 
 Remove real secrets from files you intend to commit.
 For false positives, copy the matching entries to .coopsecretsignore

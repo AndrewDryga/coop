@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- `coop check-secrets` reports commit candidates hidden by `.coopignore`; hiding a file
+  from the box no longer silences its findings. Exact reviewed `.coopsecretsignore`
+  exceptions and box protection are unchanged.
+
 - Task MCP can search IDs and titles with `tasks_list`'s optional `query`, returning a bounded
   result with explicit match/truncation counts instead of requiring a full archive listing.
 

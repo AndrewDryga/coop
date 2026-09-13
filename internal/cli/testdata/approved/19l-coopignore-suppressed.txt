@@ -1,2 +1,0 @@
-✓ No possible secrets found
-  Checked commit-candidate files and Coop's task files and notes.

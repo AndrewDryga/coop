@@ -153,7 +153,7 @@ func TestApprovedSecretScans(t *testing.T) {
 			repo: scanRepo{files: map[string]string{"src/app.go": "package app\n"}},
 		},
 		{
-			fixture: "19l-coopignore-suppressed", code: 0,
+			fixture: "19l-coopignore-hidden-candidate", code: 1,
 			repo: scanRepo{git: true, files: map[string]string{
 				".coopignore":             "config/credentials.yaml\n",
 				"config/credentials.yaml": "token: sk-proj-N7qFvZm2Ld8RwXcTb3JhKp6Ys9Ug4Aa1\n",

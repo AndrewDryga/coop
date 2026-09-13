@@ -262,8 +262,8 @@ func TestCheckSecretsLsFilesIsHardened(t *testing.T) {
 
 // A file coop shadows by NAME (id_ed25519, *.pem) is hidden from the box, but that protects only
 // the box: when git would commit it, the push leaks it just the same. The default scan therefore
-// reports such commit candidates (tagged), while an explicit .coopignore hide stays silent and a
-// shadowed file git would not commit stays skipped in both modes.
+// reports such commit candidates (tagged), including explicit .coopignore hides. A shadowed file
+// git would not commit stays skipped in both modes.
 func TestCheckSecretsReportsNameShadowedCommitCandidates(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -284,7 +284,7 @@ func TestCheckSecretsReportsNameShadowedCommitCandidates(t *testing.T) {
 	mk(".gitignore", "ignored.pem\n")
 	mk(".coopignore", "silenced.pem\n")
 	mk("id_ed25519", key)   // shadowed by name, untracked → git would commit it
-	mk("silenced.pem", key) // hidden by the user's .coopignore → intended, silent
+	mk("silenced.pem", key) // explicitly hidden, but still a commit candidate
 	mk("ignored.pem", key)  // shadowed by name AND gitignored → protected on both sides
 	mk("key.txt", key)      // plain commit candidate → the control
 	mk(".agent/tasks/notes/secret.key", key)
@@ -300,20 +300,18 @@ func TestCheckSecretsReportsNameShadowedCommitCandidates(t *testing.T) {
 	if !strings.Contains(joined, "key.txt") {
 		t.Errorf("default scan missed the control file:\n%s", joined)
 	}
-	for _, silent := range []string{"silenced.pem", "ignored.pem"} {
-		if strings.Contains(joined, silent) {
-			t.Errorf("default scan reported %s:\n%s", silent, joined)
-		}
+	if !strings.Contains(joined, "silenced.pem") || strings.Contains(joined, "ignored.pem") {
+		t.Errorf("default scan must report hidden candidates but skip hidden noncandidates:\n%s", joined)
 	}
 	all, err := scanVisibleTree(repo, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	joined = joinScan(all)
-	if strings.Contains(joined, "ignored.pem") || strings.Contains(joined, "silenced.pem") {
+	if strings.Contains(joined, "ignored.pem") {
 		t.Errorf("--include-ignored reported a file the box never sees and git never commits:\n%s", joined)
 	}
-	if !strings.Contains(joined, "id_ed25519") {
+	if !strings.Contains(joined, "id_ed25519") || !strings.Contains(joined, "silenced.pem") {
 		t.Errorf("--include-ignored dropped the name-shadowed commit candidate:\n%s", joined)
 	}
 }

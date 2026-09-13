@@ -285,8 +285,8 @@ vault/                   # a directory — its contents are hidden whole
 binds your *whole* working tree, so a gitignored-but-present file (e.g. a
 `serviceAccount.json`) is **fully visible** to the agent — shadow it with `.coopignore`.
 For a token hiding *inside* a file, `coop check-secrets` scans by content (`file:line`,
-exit 1 on a hit) — a file coop shadows by name (an `id_ed25519`, a `*.pem`) is still
-reported when git would commit it, since shadowing protects the box, not the push;
+exit 1 on a hit) — files hidden by built-in names or `.coopignore` are still
+reported when Git would commit them, since shadowing protects the box, not the push;
 `--include-ignored` widens the scan to the whole visible tree. A file it could not READ fails the
 scan by name, so a permission error never reads as a clean result. A finding you have reviewed and
 disagree with goes in **`.coopsecretsignore`** at the project root: paste the entry the scan prints

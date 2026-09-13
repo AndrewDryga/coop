@@ -80,10 +80,9 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 // shadowed from the box: its basename matches SecretGlobs (and AllowGlobs doesn't whitelist
 // it), or a .coopignore in the root or an ancestor directory matches it (AllowGlobs does NOT
 // override an explicit .coopignore — it's the user's final say). Each directory's .coopignore
-// is loaded once into the closure's cache. ComputeMounts (the
-// mount plan) and `coop check-secrets` (the scanner) share this single rule so "what the
-// box can see" can never drift between them — scanning a path the box hides is pointless,
-// and a secret that IS shadowed is already protected.
+// is loaded once into the closure's cache. ComputeMounts and check-secrets share this
+// visibility decision; the scanner still checks hidden commit candidates because
+// hiding a file from the box does not prevent committing it.
 func NewShadowDecider(repo string) func(relSlash string) bool {
 	cache := map[string]UserGlobs{} // dir (slash-rel, "" = root) → its .coopignore, loaded once
 	loadDir := func(dirRel string) UserGlobs {
@@ -120,23 +119,6 @@ func NewShadowDecider(repo string) func(relSlash string) bool {
 // basename patterns match anywhere in its subtree, and its path patterns are matched
 // against the path relative to that directory (so sub/.coopignore's "config/x" means
 // sub/config/x). loadDir caches the per-directory globs.
-// NewCoopignoreDecider is the .coopignore half of NewShadowDecider alone: the user's explicit,
-// authoritative hide rules, without the built-in secret-name globs. check-secrets uses it to tell
-// "hidden on purpose" from "shadowed by name" — the latter is still worth scanning when git would
-// commit the file.
-func NewCoopignoreDecider(repo string) func(relSlash string) bool {
-	cache := map[string]UserGlobs{}
-	loadDir := func(dirRel string) UserGlobs {
-		if g, ok := cache[dirRel]; ok {
-			return g
-		}
-		g := LoadUserGlobs(filepath.Join(repo, filepath.FromSlash(dirRel)))
-		cache[dirRel] = g
-		return g
-	}
-	return func(relSlash string) bool { return shadowedByCoopignore(relSlash, loadDir) }
-}
-
 func shadowedByCoopignore(relSlash string, loadDir func(string) UserGlobs) bool {
 	base := relSlash
 	if i := strings.LastIndexByte(relSlash, '/'); i >= 0 {

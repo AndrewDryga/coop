@@ -3,7 +3,7 @@ name: secret-finding-identity
 description: how a secret finding is named across runs (fp-v1 fingerprints), what .coopsecretsignore may and may not excuse, and why exceptions stop at check-secrets
 subsystem: secretscan
 sources: [internal/secretscan/secretscan.go, internal/secretscan/exceptions.go, internal/cli/checksecrets.go, internal/box/secretscan.go]
-updated: 2026-09-11
+updated: 2026-09-13
 ---
 
 A reviewed false positive is excused by NAMING the exact finding, so the detectors never learn to
@@ -30,6 +30,12 @@ needs a path those callers do not supply. `ScanFile(path, content)` is the check
 Exceptions are applied in `cmdCheckSecrets` after pure detection and NOWHERE else: an in-repository
 note is not permission to move a credential out of the repository.
 
+`.coopignore` never dismisses a commit-candidate finding. `scanVisibleTree` uses the
+shared shadow decision only to label hidden candidates and exclude hidden files
+outside the commit-candidate set. Root/nested hide rules, tracked files also matched
+by `.gitignore`, and untracked non-ignored files follow the same selection rule.
+Box hiding remains independent of reviewed exact-finding exceptions.
+
 Traps:
 - A file coop could not READ is not a skip. `readScannable` separates `scanSkipped` (binary,
   oversized, non-regular — quiet and deliberate) from `scanUnreadable`, and any unreadable file
@@ -40,5 +46,7 @@ Traps:
 - The exception file is scanned like any other project file; its comments are not a hiding place.
 
 ## Changelog
+- 2026-09-13: removed the scanner's unconditional .coopignore exemption; verified
+  hidden candidate selection, unchanged mount protection and exact exceptions.
 - 2026-09-11: created with the fingerprint contract, the ScanSecrets/ScanFile split, and the
   incomplete-scan rule. Verified against secretscan.go, exceptions.go and checksecrets.go.

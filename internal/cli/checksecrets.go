@@ -180,7 +180,7 @@ func reportFindings(findings []scanFinding) {
 		ui.Note("  %s:%d", f.Path, f.Line)
 		ui.Note("    %s", f.Label())
 		if f.shadowed {
-			ui.Note("    Hidden from the box by name, but Git would commit this file.")
+			ui.Note("    Hidden from the box, but Git would commit this file.")
 		}
 	}
 	ui.Note("")
@@ -199,7 +199,7 @@ func reportFindings(findings []scanFinding) {
 }
 
 // scanFinding is one finding with the file it came from and whether that file is one coop hides
-// from the box by name but git would still commit.
+// from the box but git would still commit.
 type scanFinding struct {
 	secretscan.SecretFinding
 	Path     string
@@ -240,11 +240,11 @@ func unscannedIgnoredCount(repo string) int {
 	return n
 }
 
-// scanVisibleTree runs the content scanner on each candidate file the box can see (see
-// candidateFiles), skipping any path the box shadows. It shares the detectors with the
-// fork-merge policy and box.NewShadowDecider with the mount plan, so it flags the secrets
-// an agent would see — never one already hidden. includeIgnored widens the candidate set
-// from commit-candidate files to the full visible tree (gitignored files included).
+// scanVisibleTree scans candidateFiles, skipping only hidden noncandidates. It shares
+// detectors with the fork-merge policy and box.NewShadowDecider with the mount plan.
+// Hidden commit candidates still need scanning: hiding protects the box, not a push.
+// includeIgnored widens the candidate set to the full tree (gitignored files included),
+// but hidden noncandidates stay excluded.
 //
 // A file it could not READ is recorded, not skipped: an intentionally skipped binary or oversized
 // blob is a decision, while a permission error is a hole in the answer, and reporting a clean
@@ -256,18 +256,14 @@ func scanVisibleTree(repo string, includeIgnored bool) (treeScan, error) {
 	}
 	scan := treeScan{git: usedGit}
 	shadowed := box.NewShadowDecider(repo)
-	coopignored := box.NewCoopignoreDecider(repo)
 	committable := commitCandidateSet(repo)
 	for _, rel := range rels {
-		if coopignored(rel) {
-			continue // the user's explicit hide rule — an intended file, silenced on purpose
-		}
-		// A file coop shadows by NAME (an id_ed25519, a *.pem) is hidden from the box, but that
-		// protects only the box: when git would commit it, the push leaks it just the same, so
-		// it is scanned like any other commit candidate. A shadowed file git would not commit
+		// Built-in names and explicit .coopignore rules both protect only the box.
+		// Every commit candidate is scanned; only an exact reviewed finding may be excused.
+		// A shadowed file git would not commit
 		// (gitignored, or coop's own .agent/ state) is protected on both sides and skipped.
-		byName := shadowed(rel)
-		if byName && !committable[rel] {
+		hidden := shadowed(rel)
+		if hidden && !committable[rel] {
 			continue
 		}
 		content, status := readScannable(filepath.Join(repo, filepath.FromSlash(rel)))
@@ -280,7 +276,7 @@ func scanVisibleTree(repo string, includeIgnored bool) (treeScan, error) {
 		}
 		scan.checked++
 		for _, s := range secretscan.ScanFile(rel, content) {
-			scan.findings = append(scan.findings, scanFinding{SecretFinding: s, Path: rel, shadowed: byName})
+			scan.findings = append(scan.findings, scanFinding{SecretFinding: s, Path: rel, shadowed: hidden})
 		}
 	}
 	return scan, nil
