@@ -121,6 +121,15 @@ func verifyProviderLoopLiveRepository(layout procharness.Layout, before provider
 	provider := target.Provider
 	taskID := providerLoopLiveTaskID(provider)
 	file := providerLoopLiveFile(provider)
+	// Read without following links before the digest folds these failures into a
+	// generic admin-tree mismatch. Neither check executes repository Git config.
+	commitEdit, err := readProviderLoopLiveFile(layout, filepath.Join(layout.Repo, ".git", "COMMIT_EDITMSG"))
+	if errors.Is(err, os.ErrNotExist) {
+		return errors.New("live loop Git commit message file is missing")
+	}
+	if err != nil {
+		return errors.New("live loop Git commit message file is unsafe or unreadable")
+	}
 	admin, err := providerLoopLiveAdminDigest(layout)
 	if err != nil || admin != before.Admin {
 		return fmt.Errorf("live loop changed Git administrative state")
@@ -206,9 +215,8 @@ func verifyProviderLoopLiveRepository(layout procharness.Layout, before provider
 	if err != nil {
 		return err
 	}
-	commitEdit, err := readProviderLoopLiveFile(layout, filepath.Join(layout.Repo, ".git", "COMMIT_EDITMSG"))
-	if err != nil || strings.TrimSpace(string(commitEdit)) != strings.TrimSpace(string(message)) {
-		return fmt.Errorf("live loop Git commit message state mismatch")
+	if strings.TrimSpace(string(commitEdit)) != strings.TrimSpace(string(message)) {
+		return errors.New("live loop Git commit message contents differ from HEAD")
 	}
 	if err := verifyProviderLoopLiveReflogs(layout, before.Reflogs, strings.TrimSpace(before.Repository.Head), head); err != nil {
 		return err
@@ -682,6 +690,78 @@ func TestProviderLoopLiveContract(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+	t.Run("commit message diagnostics", func(t *testing.T) {
+		for _, test := range []struct{ name, want string }{
+			{"missing", "live loop Git commit message file is missing"},
+			{"symlink", "live loop Git commit message file is unsafe or unreadable"},
+			{"hardlink", "live loop Git commit message file is unsafe or unreadable"},
+			{"fifo", "live loop Git commit message file is unsafe or unreadable"},
+			{"oversized", "live loop Git commit message file is unsafe or unreadable"},
+			{"changed content", "live loop Git commit message contents differ from HEAD"},
+			{"failed clean-tree follow-up", "live loop Git commit message contents differ from HEAD"},
+			{"outer whitespace", ""},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				layout, before, target, marker := newCompleted(t)
+				path := filepath.Join(layout.Repo, ".git", "COMMIT_EDITMSG")
+				original, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				switch test.name {
+				case "missing", "symlink", "hardlink", "fifo":
+					err = os.Remove(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					switch test.name {
+					case "symlink":
+						err = os.Symlink("config", path)
+					case "hardlink":
+						err = os.Link(filepath.Join(layout.Repo, ".git", "config"), path)
+					case "fifo":
+						err = syscall.Mkfifo(path, 0o600)
+					}
+				case "oversized":
+					err = os.WriteFile(path, []byte(strings.Repeat("x", providerLoopLiveFileLimit+1)), 0o600)
+				case "changed content":
+					err = os.WriteFile(path, []byte("untrusted-message-must-not-be-reported\n"), 0o600)
+				case "failed clean-tree follow-up":
+					_, commitErr := runProviderLoopLiveGit(layout, "commit", "-qm", "Nothing new to commit")
+					if commitErr == nil || !strings.Contains(commitErr.Error(), "exit 1:") {
+						t.Fatalf("expected clean-tree commit refusal, got %v", commitErr)
+					}
+					head, headErr := runProviderLoopLiveGit(layout, "rev-parse", "HEAD")
+					if headErr != nil {
+						t.Fatal(headErr)
+					}
+					if err := verifyProviderLoopLiveReflogs(layout, before.Reflogs, strings.TrimSpace(before.Repository.Head), strings.TrimSpace(string(head))); err != nil {
+						t.Fatal(err)
+					}
+					if err := verifyProviderLoopLiveIndex(layout); err != nil {
+						t.Fatal(err)
+					}
+					status, statusErr := runProviderLoopLiveGit(layout, "status", "--porcelain=v1", "--untracked-files=all")
+					if statusErr != nil || strings.TrimSpace(string(status)) != "" {
+						t.Fatal("failed clean-tree commit changed repository status")
+					}
+				case "outer whitespace":
+					err = os.WriteFile(path, append([]byte(" \n"), append(original, '\n', '\t')...), 0o600)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = verifyProviderLoopLiveRepository(layout, before, target, marker)
+				if test.want == "" {
+					if err != nil {
+						t.Fatal(err)
+					}
+				} else if err == nil || err.Error() != test.want {
+					t.Fatalf("commit message diagnostic = %v, want %q", err, test.want)
+				}
+			})
+		}
+	})
 	t.Run("rejects altered search archive", func(t *testing.T) {
 		layout, before, target, marker := newCompleted(t)
 		path := filepath.Join(layout.Repo, tasksRoot, stateDone, providerLoopLiveSearchID, "task.md")
@@ -861,11 +941,6 @@ func TestProviderLoopLiveContract(t *testing.T) {
 		}},
 		{"special Git ref", func(t *testing.T, layout procharness.Layout, _ agents.Target) {
 			if err := syscall.Mkfifo(filepath.Join(layout.Repo, ".git", "refs", "provider-fifo"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}},
-		{"changed Git commit message state", func(t *testing.T, layout procharness.Layout, _ agents.Target) {
-			if err := os.WriteFile(filepath.Join(layout.Repo, ".git", "COMMIT_EDITMSG"), []byte("secret\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}},

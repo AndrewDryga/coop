@@ -223,6 +223,15 @@ func TestPrepareCommitMsgHookStampsAssignedTask(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// The native loop verifier checks this scratch file as well as the commit.
+		// Cover ordinary commits and repeated --amend with the real generated hook.
+		scratch, err := os.ReadFile(filepath.Join(repo, ".git", "COMMIT_EDITMSG"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.TrimSpace(string(scratch)) != strings.TrimSpace(string(out)) {
+			t.Fatal("generated commit hook left a message different from HEAD")
+		}
 		return string(out)
 	}
 	commit := func(args ...string) string {

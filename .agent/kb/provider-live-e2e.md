@@ -43,6 +43,13 @@ provider starts one headless session. Before any post-provider Git command, the 
 entire Git administrative tree without following links; it then requires the exact commit-message
 file, raw reflog append, and an index structurally equal to a canonical index rebuilt from `HEAD`
 apart from cross-mount stat fields, so ignored Git metadata cannot hide provider output.
+Commit-message diagnostics distinguish a missing file, unsafe/unreadable file, and
+contents differing from `HEAD`, without printing either message. A no-follow bounded
+read precedes the administrative walk; both still precede any Git command. The content
+comparison ignores outer whitespace only. A passing retry does not diagnose a prior failure.
+A failed clean-tree commit can rewrite this scratch file without changing `HEAD` or
+its reflog. The strict fixture still refuses that leftover text: accepting arbitrary
+scratch content would also allow hidden output in otherwise ignored Git metadata.
 
 `make provider-resume-live-e2e COOP_LIVE_TARGETS='...'` spends two requests per admitted provider:
 one clean helper creates a marker-bearing native session, and a second provider request receives
@@ -145,6 +152,8 @@ isolation failures and take precedence over a provider result. Stable summaries 
 raw output; reproduce behavior in the deterministic fixture.
 
 ## Changelog
+- 2026-09-13 - separated native loop commit-message failure categories without changing
+  acceptance; generated-hook commit/amend tests check scratch-message equality.
 - 2026-09-13 - added a verified unchanged 300-task archive and native search observation without
   changing the credential, completion, proposal, call-budget or cleanup contracts.
 - 2026-09-12 - extended the native task fixture with exact proposal/state calls, cross-connection
