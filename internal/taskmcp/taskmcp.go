@@ -317,5 +317,8 @@ func (s *Server) call(ctx context.Context, params json.RawMessage) (*toolResult,
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if r := missingRequiredArguments(t, call.Arguments); r != nil {
+		return r, nil
+	}
 	return t.run(s, ctx, call.Arguments), nil
 }

@@ -2,7 +2,7 @@
 name: provider-live-e2e
 description: Probe installed upstream CLIs with isolated read-only, native-resume, and task-completion workflows
 subsystem: testing
-sources: [Makefile, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/run.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/runtime/process_group_live.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/acpctl/process_live.go, internal/cli/provider_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go]
+sources: [Makefile, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/run.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/runtime/process_group_live.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/acpctl/process_live.go, internal/cli/provider_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_loop_task_channel_live_test.go, internal/cli/provider_loop_task_observation_live_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go]
 updated: 2026-09-12
 ---
 
@@ -21,11 +21,18 @@ live child therefore makes one direct adapter `Headless` call with the productio
 against one pre-claimed mechanical task, avoiding the controller's ordinary paid retries. Success
 requires the exact marker file and sole task-bound commit, unchanged task instructions apart from
 checking the required subtask, clean Git state, final state/log, no scratch, no extra ignored files,
-and the task in done. The child attaches the production task MCP server through the real helper
+and the task in done. One explicitly requested, untouched TODO proposal is the only additional
+queue entry allowed: its exact fields and all three files are verified. The child attaches the production task MCP server through the real helper
 channel. Before doing the work, the provider must attempt completion while its required check is
 unrun, receive the unfinished-checklist refusal with the task still in progress, then finish and
 complete in that same session. A bounded observer correlates actual completion requests/replies;
-provider narration or a manually moved folder cannot satisfy this proof. It emits the same
+provider narration or a manually moved folder cannot satisfy this proof. It also requires a real
+state update on the assigned task and exactly one accepted proposal, counts missing-field refusals and matched repairs
+separately from the intentional checklist refusal, and cancels the paid diagnostic after 32
+task-tool calls across all connections. This is a test-only bound, not a product work limit.
+A bounded typed observation file lives beside the child attempt marker, outside the mounted
+repository; the parent validates it and logs numeric counts only. Usage is explicitly unavailable.
+It emits the same
 path/account/token-free `COOP_PROVIDER_LOOP_LIVE_SUMMARY` and remains opt-in because each admitted
 provider starts one headless session. Before any post-provider Git command, the verifier walks the
 entire Git administrative tree without following links; it then requires the exact commit-message
@@ -133,6 +140,9 @@ isolation failures and take precedence over a provider result. Stable summaries 
 raw output; reproduce behavior in the deterministic fixture.
 
 ## Changelog
+- 2026-09-12 - extended the native task fixture with exact proposal/state calls, cross-connection
+  call limits, and content-free repair counts; deterministic cap/observation/entry checks retain
+  strict repository verification. Native diagnostic remains distinct from full loop-controller proof.
 - 2026-09-12 - live loop previously supplied a task-tools prompt without attaching TaskTools;
   corrected the harness and added native refusal-then-repair evidence plus checklist-aware
   repository verification. The direct live fixture is still not the external loop controller.

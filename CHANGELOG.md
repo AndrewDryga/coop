@@ -26,6 +26,11 @@
   respawns it — how long it lived, its provider and account, and whether coop switched it or it died
   on its own — instead of a bare `spawn box` line after the fact.
 
+- Task tools report missing top-level required fields together, show complete state/proposal examples,
+  and describe their actual byte and list limits. State snapshots explicitly require every field
+  on each call. Invalid UTF-8 and explicit null optional values are refused instead of being
+  silently converted; fork proposals refuse serialized output too large for the host to import.
+
 - Task completion refuses empty or unfinished checklists with actionable progress counts.
   The check applies to task tools, host completion, loop finalization, and fork acceptance and
   landing; interrupted unfinished fork work can still resume. Agent guidance keeps failed,

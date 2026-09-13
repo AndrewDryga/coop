@@ -22,7 +22,7 @@ import (
 
 const (
 	forkProposalVersion    = 1
-	forkProposalFileLimit  = 256 << 10
+	forkProposalFileLimit  = TaskProposalFileLimit
 	forkProposalCountLimit = 32
 	forkProposalTotalLimit = 1 << 20
 )
@@ -79,10 +79,10 @@ func validateForkTaskProposal(proposal ForkTaskProposal) error {
 		return errors.New("fork task proposal requires version 1 and a 32-character lowercase hex id")
 	}
 	if proposal.Kind != ForkProposalTask && proposal.Kind != ForkProposalBacklog {
-		return errors.New("fork task proposal kind must be task or backlog")
+		return errors.New("kind must be task or backlog")
 	}
-	if !validProposalText(proposal.Title, false, 256) || slugify(proposal.Title) == "" {
-		return errors.New("fork task proposal title must be one safe line of at most 256 bytes")
+	if !validProposalText(proposal.Title, false, TaskTitleLimit) || slugify(proposal.Title) == "" {
+		return fmt.Errorf("title must be %s, and contain a letter or digit for its task id", TaskTextRequirement(false, TaskTitleLimit))
 	}
 	for _, field := range []struct {
 		name  string
@@ -92,16 +92,16 @@ func validateForkTaskProposal(proposal ForkTaskProposal) error {
 		{"acceptance", proposal.Acceptance},
 		{"approach", proposal.Approach},
 	} {
-		if !validProposalText(field.value, true, 64<<10) {
-			return fmt.Errorf("fork task proposal %s must be safe non-empty text of at most %d bytes", field.name, 64<<10)
+		if !validProposalText(field.value, true, TaskBlockLimit) {
+			return fmt.Errorf("%s must be %s", field.name, TaskTextRequirement(true, TaskBlockLimit))
 		}
 	}
-	if len(proposal.Subtasks) == 0 || len(proposal.Subtasks) > 64 {
-		return errors.New("fork task proposal needs 1 to 64 subtasks")
+	if len(proposal.Subtasks) == 0 || len(proposal.Subtasks) > TaskListLimit {
+		return fmt.Errorf("subtasks needs 1 to %d entries", TaskListLimit)
 	}
-	for _, subtask := range proposal.Subtasks {
-		if !validProposalText(subtask, false, 4096) {
-			return errors.New("fork task proposal subtasks must be safe non-empty lines of at most 4096 bytes")
+	for i, subtask := range proposal.Subtasks {
+		if !validProposalText(subtask, false, TaskLineLimit) {
+			return fmt.Errorf("subtasks[%d] must be %s", i, TaskTextRequirement(false, TaskLineLimit))
 		}
 	}
 	return nil

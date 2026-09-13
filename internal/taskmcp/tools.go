@@ -7,17 +7,19 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
 // Text bounds a box can hand a tool, matching the fork-proposal limits the host already enforces.
 const (
-	lineLimit  = 4096
-	blockLimit = 64 << 10
-	maxItems   = 64
+	lineLimit  = tasks.TaskLineLimit
+	blockLimit = tasks.TaskBlockLimit
+	maxItems   = tasks.TaskListLimit
 )
 
 type tool struct {
@@ -33,51 +35,53 @@ var toolTable = []tool{
 		name:        "tasks_list",
 		description: "List the task queue(s) by state, as `coop tasks ls` shows them: id, title, state, subtask counts, queue root, and which task is assigned to this run.",
 		schema: object(map[string]any{
-			"state": prop("string", "Only tasks in this state: todo, in_progress, blocked, or done. Omit for every lifecycle state."),
+			"state": enumProp("Only tasks in this state. Omit or use an empty string for every lifecycle state.", "", "todo", "in_progress", "blocked", "done"),
 		}),
 		run: (*Server).list,
 	},
 	{
 		name:        "tasks_get",
 		description: "Read one task: its task.md, state.md, log.md, and decision.md (when present), plus its folder path for tmp/ and artifacts/.",
-		schema:      object(map[string]any{"id": prop("string", "The task id (its folder name).")}, "id"),
+		schema:      object(map[string]any{"id": idProp()}, "id"),
 		run:         (*Server).get,
 	},
 	{
 		name:        "tasks_update_state",
-		description: "Overwrite the task's state.md resume snapshot with the four lifecycle fields. Refresh it before each commit and before pausing.",
-		schema: object(map[string]any{
-			"id":          prop("string", "The task id."),
-			"status":      prop("string", "One line: where the task stands (e.g. in progress — step 3 of 5)."),
-			"done_so_far": prop("string", "What is finished and verified; may span lines."),
-			"next_action": prop("string", "One line: the very next concrete step, or none."),
-			"traps":       prop("string", "Gotchas the next agent must know, or —; may span lines."),
-		}, "id", "status", "done_so_far", "next_action", "traps"),
+		description: "Replace state.md, not patch it: send id AND all four fields (status, done_so_far, next_action, traps) on EVERY call. Refresh before each commit and before pausing.",
+		schema: withExample(object(map[string]any{
+			"id":          idProp(),
+			"status":      textProp("Where the task stands, e.g. in progress — tests next.", false, blockLimit),
+			"done_so_far": textProp("What is finished and verified. Use the literal string \"—\" if nothing is finished.", true, blockLimit),
+			"next_action": textProp("The next concrete step. If there is no next action, send the literal string \"none\"; never omit it or send null/empty.", false, blockLimit),
+			"traps":       textProp("Gotchas for the next agent. If there are none, send the literal string \"—\"; never omit it or send null/empty.", true, blockLimit),
+		}, "id", "status", "done_so_far", "next_action", "traps"), map[string]any{
+			"id": "<exact task id>", "status": "not started", "done_so_far": "—", "next_action": "Read the task", "traps": "—",
+		}),
 		run: (*Server).updateState,
 	},
 	{
 		name:        "tasks_append_log",
 		description: "Append an entry to the task's log.md journal: what you did and why (decisions, dead ends, surprises). Entries are appended, never rewritten.",
 		schema: object(map[string]any{
-			"id":    prop("string", "The task id."),
-			"entry": prop("string", "The entry, as markdown; may span lines (a `## <date> — <what>` heading plus bullets is the house style)."),
+			"id":    idProp(),
+			"entry": textProp("The entry as markdown: a `## <date> — <what>` heading plus bullets.", true, blockLimit),
 		}, "id", "entry"),
 		run: (*Server).appendLog,
 	},
 	{
 		name:        "tasks_complete",
 		description: "Move the task into 99_done/ — the final action after its commit landed and required verification passed — normalizing state.md's Status to complete and Next action to none. Requires a nonempty, fully checked checklist. Failed, unavailable, and never-attempted required checks stay open. The loop checks the assigned commit before moving: fix any refusal and retry this tool in the same turn. Refused when another live process holds the task.",
-		schema:      object(map[string]any{"id": prop("string", "The task id.")}, "id"),
+		schema:      object(map[string]any{"id": idProp()}, "id"),
 		run:         (*Server).complete,
 	},
 	{
 		name:        "tasks_block",
 		description: "Park the task in 50_blocked/ on a one-way-door decision a human must make, writing its decision.md (question, options, your recommendation). Refused when another live process holds the task.",
 		schema: object(map[string]any{
-			"id":             prop("string", "The task id."),
-			"decision":       prop("string", "What must be chosen, and why it cannot be undone cheaply."),
-			"options":        array("string", "Each option as one line: `A — <name>: <consequence>`."),
-			"recommendation": prop("string", "Your pick and one line why."),
+			"id":             idProp(),
+			"decision":       textProp("What must be chosen, and why it cannot be undone cheaply.", true, blockLimit),
+			"options":        array(textProp("One option: A — <name>: <consequence>.", false, lineLimit), "1 to 64 options."),
+			"recommendation": textProp("Your pick and why.", true, blockLimit),
 		}, "id", "decision", "options", "recommendation"),
 		run: (*Server).block,
 	},
@@ -85,15 +89,17 @@ var toolTable = []tool{
 		name:        "tasks_set_subtasks",
 		description: "Rewrite the task's whole `## Subtasks` checklist — add, refine, reorder, or check items off. Send the complete list every time; it replaces the section. Check off only finished work: recording a required check as pending does not complete it. Do not drop required verification to allow completion.",
 		schema: object(map[string]any{
-			"id": prop("string", "The task id."),
+			"id": idProp(),
 			"subtasks": map[string]any{
 				"type":        "array",
-				"description": "The complete checklist, in order.",
+				"description": "The complete checklist, in order (1 to 64 items).",
+				"minItems":    1,
+				"maxItems":    maxItems,
 				"items": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"text": prop("string", "The subtask, one line."),
-						"done": prop("boolean", "Whether it is checked off."),
+						"text": textProp("The subtask.", false, lineLimit),
+						"done": prop("boolean", "Whether it is checked off; omitted means false."),
 					},
 					"required":             []string{"text"},
 					"additionalProperties": false,
@@ -104,16 +110,20 @@ var toolTable = []tool{
 	},
 	{
 		name:        "tasks_propose",
-		description: "File separate work you spotted, without folding it into this task: a ready task goes to 00_todo/ (kind task); only the genuinely large — work no single iteration could finish, or an idea a human must scope — goes to xx_backlog/ (kind backlog). When the call is close, file a task.",
-		schema: object(map[string]any{
-			"kind":       prop("string", "task (ready work) or backlog (genuinely large, needs human scoping)."),
-			"title":      prop("string", "One line."),
-			"context":    prop("string", "The problem, why it matters, and where in the code it lives."),
-			"acceptance": prop("string", "What proves it is done, including the project's required green gates. Do not offer recording required verification as pending as an alternative to passing it."),
-			"approach":   prop("string", "The boring plan."),
-			"subtasks":   array("string", "Small, end-to-end, testable steps (1 to 64)."),
-			"queue":      prop("string", "Optional queue root (as tasks_list reports it) in a monorepo; defaults to the assigned task's queue."),
-		}, "kind", "title", "context", "acceptance", "approach", "subtasks"),
+		description: fmt.Sprintf("File separate work you spotted, without folding it into this task: ready work is kind task; only genuinely large work needing human scoping is kind backlog. When the call is close, file a task. Fork proposals must also fit %d bytes of serialized JSON, including escaping and metadata.", tasks.TaskProposalFileLimit),
+		schema: withExample(object(map[string]any{
+			"kind":       enumProp("task (ready work) or backlog (genuinely large, needs human scoping).", "task", "backlog"),
+			"title":      textProp("Title containing a letter or digit for its task id.", false, tasks.TaskTitleLimit),
+			"context":    textProp("The problem, why it matters, and where in the code it lives.", true, blockLimit),
+			"acceptance": textProp("What proves it is done, including required green gates. Recording required verification as pending is not an alternative to passing it.", true, blockLimit),
+			"approach":   textProp("The boring plan.", true, blockLimit),
+			"subtasks":   array(textProp("One small, end-to-end, testable step.", false, lineLimit), "1 to 64 steps."),
+			"queue":      prop("string", "Plain loops: optional queue root from tasks_list; defaults to the assigned task's queue. Forks always use the host-bound canonical queue; this field cannot redirect it."),
+		}, "kind", "title", "context", "acceptance", "approach", "subtasks"), map[string]any{
+			"kind": "task", "title": "Fix the retry error", "context": "The retry path drops the error; name its source file.",
+			"acceptance": "The regression fails before the fix; it and the required gate pass after.",
+			"approach":   "Reproduce, fix the cause, run the gate.", "subtasks": []string{"Add the regression and verify the fix"},
+		}),
 		run: (*Server).propose,
 	},
 }
@@ -122,8 +132,26 @@ func prop(kind, description string) map[string]any {
 	return map[string]any{"type": kind, "description": description}
 }
 
-func array(kind, description string) map[string]any {
-	return map[string]any{"type": "array", "description": description, "items": map[string]any{"type": kind}}
+func idProp() map[string]any {
+	p := prop("string", "The exact non-empty task id (its folder name), as tasks_list reports it.")
+	p["minLength"] = 1
+	return p
+}
+
+func textProp(description string, multiline bool, limit int) map[string]any {
+	p := prop("string", description+" Must be "+tasks.TaskTextRequirement(multiline, limit)+".")
+	p["minLength"] = 1
+	return p
+}
+
+func enumProp(description string, values ...string) map[string]any {
+	p := prop("string", description)
+	p["enum"] = values
+	return p
+}
+
+func array(items map[string]any, description string) map[string]any {
+	return map[string]any{"type": "array", "description": description, "items": items, "minItems": 1, "maxItems": maxItems}
 }
 
 func object(properties map[string]any, required ...string) map[string]any {
@@ -131,6 +159,11 @@ func object(properties map[string]any, required ...string) map[string]any {
 	if len(required) > 0 {
 		schema["required"] = required
 	}
+	return schema
+}
+
+func withExample(schema, example map[string]any) map[string]any {
+	schema["examples"] = []map[string]any{example}
 	return schema
 }
 
@@ -162,15 +195,70 @@ func toolByName(name string) (tool, bool) {
 	return tool{}, false
 }
 
+// Use the advertised order, not a second required-field registry. Present but invalid values
+// still reach the strict decoder and field validators; this only makes omissions cheap to repair.
+func missingRequiredArguments(t tool, raw json.RawMessage) *toolResult {
+	if !utf8.Valid(raw) {
+		return nil // Let the strict decoder reject malformed bytes without normalizing them.
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+		return nil
+	}
+	required, _ := t.schema["required"].([]string)
+	var missing []string
+	for _, name := range required {
+		if _, present := fields[name]; !present {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	message := "missing required fields: " + strings.Join(missing, ", ") + "; resend the complete arguments object."
+	properties, _ := t.schema["properties"].(map[string]any)
+	for _, name := range missing {
+		property, _ := properties[name].(map[string]any)
+		if description, _ := property["description"].(string); description != "" {
+			message += "\n" + name + ": " + description
+		}
+	}
+	return refusal(message)
+}
+
 // decodeArgs decodes a tool's arguments strictly: an unknown field is a refusal, not a silent
 // drop, so a misspelled argument never becomes a mutation with a missing value.
 func decodeArgs(raw json.RawMessage, v any) *toolResult {
+	// encoding/json replaces malformed UTF-8 before the string validator can see it.
+	if !utf8.Valid(raw) {
+		return refusal("invalid arguments: send valid UTF-8 JSON")
+	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		return refusal("invalid arguments: " + err.Error())
 	}
 	return nil
+}
+
+// Omitted optional values keep their defaults; explicit null is not a boolean or string.
+// encoding/json otherwise silently converts it to the zero value, allowing invalid mutations.
+type nonNullString string
+
+func (s *nonNullString) UnmarshalJSON(raw []byte) error {
+	if bytes.Equal(raw, []byte("null")) {
+		return &json.UnmarshalTypeError{Value: "null", Type: reflect.TypeFor[string]()}
+	}
+	return json.Unmarshal(raw, (*string)(s))
+}
+
+type nonNullBool bool
+
+func (b *nonNullBool) UnmarshalJSON(raw []byte) error {
+	if bytes.Equal(raw, []byte("null")) {
+		return &json.UnmarshalTypeError{Value: "null", Type: reflect.TypeFor[bool]()}
+	}
+	return json.Unmarshal(raw, (*bool)(b))
 }
 
 // located is a task and the queue root it was found under.
@@ -265,7 +353,7 @@ func listed(root string, item tasks.Item, assigned string) listedTask {
 
 func (s *Server) list(_ context.Context, args json.RawMessage) *toolResult {
 	var in struct {
-		State string `json:"state"`
+		State nonNullString `json:"state"`
 	}
 	if r := decodeArgs(args, &in); r != nil {
 		return r
@@ -273,7 +361,7 @@ func (s *Server) list(_ context.Context, args json.RawMessage) *toolResult {
 	if in.State != "" {
 		known := false
 		for _, st := range tasks.TaskStates {
-			known = known || tasks.StateLabel(st) == in.State
+			known = known || tasks.StateLabel(st) == string(in.State)
 		}
 		if !known {
 			return refusal(fmt.Sprintf("unknown state %q — one of todo, in_progress, blocked, done", in.State))
@@ -286,7 +374,7 @@ func (s *Server) list(_ context.Context, args json.RawMessage) *toolResult {
 			return refusal(fmt.Sprintf("read queue %s: %v", root, err))
 		}
 		for _, item := range items {
-			if in.State != "" && tasks.StateLabel(item.State) != in.State {
+			if in.State != "" && tasks.StateLabel(item.State) != string(in.State) {
 				continue
 			}
 			out = append(out, listed(root, item, s.authority.Assigned))
@@ -483,8 +571,8 @@ func (s *Server) setSubtasks(_ context.Context, args json.RawMessage) *toolResul
 	var in struct {
 		ID       string `json:"id"`
 		Subtasks []struct {
-			Text string `json:"text"`
-			Done bool   `json:"done"`
+			Text string      `json:"text"`
+			Done nonNullBool `json:"done"`
 		} `json:"subtasks"`
 	}
 	if r := decodeArgs(args, &in); r != nil {
@@ -498,7 +586,7 @@ func (s *Server) setSubtasks(_ context.Context, args json.RawMessage) *toolResul
 		if r := checkText("subtasks[].text", st.Text, false, lineLimit); r != nil {
 			return r
 		}
-		items = append(items, tasks.Subtask{Text: st.Text, Done: st.Done})
+		items = append(items, tasks.Subtask{Text: st.Text, Done: bool(st.Done)})
 	}
 	loc, r := s.locate(in.ID)
 	if r != nil {
@@ -520,13 +608,13 @@ func (s *Server) setSubtasks(_ context.Context, args json.RawMessage) *toolResul
 
 func (s *Server) propose(_ context.Context, args json.RawMessage) *toolResult {
 	var in struct {
-		Kind       string   `json:"kind"`
-		Title      string   `json:"title"`
-		Context    string   `json:"context"`
-		Acceptance string   `json:"acceptance"`
-		Approach   string   `json:"approach"`
-		Subtasks   []string `json:"subtasks"`
-		Queue      string   `json:"queue"`
+		Kind       string        `json:"kind"`
+		Title      string        `json:"title"`
+		Context    string        `json:"context"`
+		Acceptance string        `json:"acceptance"`
+		Approach   string        `json:"approach"`
+		Subtasks   []string      `json:"subtasks"`
+		Queue      nonNullString `json:"queue"`
 	}
 	if r := decodeArgs(args, &in); r != nil {
 		return r
@@ -544,7 +632,7 @@ func (s *Server) propose(_ context.Context, args json.RawMessage) *toolResult {
 		}
 		return textResult(fmt.Sprintf("proposal filed as %s — the host imports it into the canonical queue when this fork lands", filepath.Base(path)))
 	}
-	root, r := s.proposalRoot(in.Queue)
+	root, r := s.proposalRoot(string(in.Queue))
 	if r != nil {
 		return r
 	}
@@ -583,9 +671,5 @@ func checkText(field, value string, multiline bool, limit int) *toolResult {
 	if tasks.ValidTaskText(value, multiline, limit) {
 		return nil
 	}
-	shape := "one line"
-	if multiline {
-		shape = "text"
-	}
-	return refusal(fmt.Sprintf("%s must be non-empty %s of at most %d bytes with no control characters", field, shape, limit))
+	return refusal(field + " must be " + tasks.TaskTextRequirement(multiline, limit))
 }

@@ -269,6 +269,18 @@ func runProviderLiveCompatibility(
 	result := liveprovider.ClassifyChildProcess(target.Provider, layout.Root, resultFile, liveprovider.ChildProcessObservation{
 		Result: processResult, DeadlineExceeded: timedOut, Attempted: attempted,
 	})
+	if workflow == liveWorkflowLoop && result.Attempted {
+		observation, observationErr := readProviderLoopLiveObservation(layout, attemptFile+".task-tools.json")
+		if observationErr == nil {
+			data, _ := json.Marshal(observation)
+			t.Logf("%s task MCP: %s; usage unavailable", target.Provider, data)
+		} else {
+			t.Logf("%s task MCP observation unavailable; usage unavailable", target.Provider)
+		}
+		if result.Passed && (observationErr != nil || !observation.verified()) {
+			result = fail(true, liveprovider.ReasonHarnessFailed, "task_observation")
+		}
+	}
 	revokeErr := prepared.Revoke()
 	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), liveCleanupDeadline)
 	cleanupErr := liveprovider.CleanupSupervisor(cleanupCtx, liveprovider.SupervisorCleanupSpec{
@@ -463,6 +475,7 @@ func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, 
 			return harnessFail(true, "task_channel")
 		}
 		taskTools = taskServer
+		taskServer.cancel = cancelPrompt
 		prompt = providerLoopLivePrompt(cfg.RepoOverride, target.Provider)
 		repoReadOnly = false
 		command = ag.Headless(cfg, prompt)
@@ -492,6 +505,11 @@ func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, 
 	})
 	promptTimedOut := errors.Is(runErr, context.DeadlineExceeded)
 	cancelPrompt()
+	if taskServer != nil {
+		if err := taskServer.writeObservation(attemptFile + ".task-tools.json"); err != nil {
+			return harnessFail(true, "task_observation")
+		}
+	}
 	if promptTimedOut {
 		return fail(true, liveprovider.ReasonPromptTimeout, "prompt", code, true, false, "timeout")
 	}

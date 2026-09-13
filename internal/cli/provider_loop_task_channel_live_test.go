@@ -9,8 +9,8 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
-	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -21,11 +21,15 @@ import (
 // Observe actual task-tool replies, not provider narration or a folder it
 // could move itself. The production server still owns every tool operation.
 type providerLoopLiveTaskServer struct {
-	server    *taskmcp.Server
-	root, id  string
-	refused   atomic.Bool
-	completed atomic.Bool
-	invalid   atomic.Bool
+	server                                *taskmcp.Server
+	root, id                              string
+	refused                               atomic.Bool
+	completed                             atomic.Bool
+	invalid                               atomic.Bool
+	cancel                                context.CancelFunc
+	statsMu                               sync.Mutex
+	stats                                 providerLoopLiveTaskObservation
+	stateNeedsRepair, proposalNeedsRepair bool
 }
 
 func newProviderLoopLiveTaskServer(repo, provider string) (*providerLoopLiveTaskServer, error) {
@@ -36,22 +40,27 @@ func newProviderLoopLiveTaskServer(repo, provider string) (*providerLoopLiveTask
 	if err != nil {
 		return nil, err
 	}
-	return &providerLoopLiveTaskServer{server: server, root: root, id: id}, nil
+	return &providerLoopLiveTaskServer{server: server, root: root, id: id, cancel: func() {}}, nil
 }
 
 func (s *providerLoopLiveTaskServer) Serve(ctx context.Context, rw io.ReadWriter) error {
-	return s.server.Serve(ctx, &providerLoopLiveObservedConn{ReadWriter: rw, owner: s, pending: make(map[string]bool)})
+	return s.server.Serve(ctx, &providerLoopLiveObservedConn{ReadWriter: rw, owner: s, pending: make(map[string]providerLoopLivePendingCall)})
 }
 
 func (s *providerLoopLiveTaskServer) verified() bool {
-	return s.refused.Load() && s.completed.Load() && !s.invalid.Load()
+	return s.observation().verified()
 }
 
 type providerLoopLiveObservedConn struct {
 	io.ReadWriter
 	owner   *providerLoopLiveTaskServer
 	partial []byte
-	pending map[string]bool
+	pending map[string]providerLoopLivePendingCall
+}
+
+type providerLoopLivePendingCall struct {
+	name          string
+	assignedState bool
 }
 
 func (c *providerLoopLiveObservedConn) Read(p []byte) (int, error) {
@@ -70,13 +79,24 @@ func (c *providerLoopLiveObservedConn) Read(p []byte) (int, error) {
 		var request struct {
 			ID     json.RawMessage
 			Method string
-			Params struct{ Name string }
+			Params struct {
+				Name      string
+				Arguments json.RawMessage
+			}
 		}
-		if json.Unmarshal(c.partial[:end], &request) == nil && request.Method == "tools/call" && request.Params.Name == "tasks_complete" {
+		if json.Unmarshal(c.partial[:end], &request) == nil && request.Method == "tools/call" {
+			if !c.owner.observeCall(request.Params.Name) {
+				return 0, errors.New("live task-tool call limit exceeded")
+			}
 			if len(c.pending) >= 64 {
 				c.owner.invalid.Store(true)
 			} else {
-				c.pending[string(request.ID)] = true
+				call := providerLoopLivePendingCall{name: request.Params.Name}
+				if call.name == "tasks_update_state" {
+					var args struct{ ID string }
+					call.assignedState = json.Unmarshal(request.Params.Arguments, &args) == nil && args.ID == c.owner.id
+				}
+				c.pending[string(request.ID)] = call
 			}
 		}
 		c.partial = c.partial[end+1:]
@@ -96,14 +116,27 @@ func (c *providerLoopLiveObservedConn) Write(p []byte) (int, error) {
 			Content []struct{ Text string }
 		}
 	}
-	if json.Unmarshal(p, &reply) != nil || !c.pending[string(reply.ID)] {
+	if json.Unmarshal(p, &reply) != nil {
+		return n, err
+	}
+	call, pending := c.pending[string(reply.ID)]
+	if !pending {
 		return n, err
 	}
 	delete(c.pending, string(reply.ID))
 	if len(reply.Result.Content) != 1 {
+		c.owner.invalid.Store(true)
 		return n, err
 	}
 	text := reply.Result.Content[0].Text
+	name := call.name
+	if name == "tasks_update_state" && !reply.Result.IsError && !call.assignedState {
+		c.owner.invalid.Store(true)
+	}
+	c.owner.observeReply(name, text, reply.Result.IsError)
+	if name != "tasks_complete" {
+		return n, err
+	}
 	if reply.Result.IsError && strings.HasPrefix(text, "task checklist is unfinished: "+c.owner.id+" has ") {
 		current, ok, readErr := tasks.CurrentTask(c.owner.root, c.owner.id)
 		if readErr == nil && ok && current.State == tasks.StateInProgress && errors.Is(tasks.RequireCompletedChecklist(current), tasks.ErrIncompleteChecklist) {
@@ -126,8 +159,16 @@ type providerLoopLiveTestConnection struct {
 }
 
 func TestProviderLoopLiveContractTaskChannel(t *testing.T) {
-	for _, firstRefusal := range []bool{false, true} {
-		t.Run(strconv.FormatBool(firstRefusal), func(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		firstRefusal bool
+		wrongState   bool
+	}{
+		{"premature completion", false, false},
+		{"assigned state", true, false},
+		{"wrong task state", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			repo := t.TempDir()
 			s, err := newProviderLoopLiveTaskServer(repo, "claude")
 			if err != nil {
@@ -141,19 +182,28 @@ func TestProviderLoopLiveContractTaskChannel(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if firstRefusal {
+			if tc.firstRefusal {
 				write(1, "tasks_complete", map[string]any{"id": s.id})
 			}
+			stateID := s.id
+			if tc.wrongState {
+				stateID = "other-task"
+				writeTaskFile(t, filepath.Join(s.root, tasks.StateTodo, stateID, "task.md"), "# Other task\n\n## Subtasks\n- [ ] check\n")
+			}
+			write(10, "tasks_update_state", map[string]any{"id": stateID, "status": "in progress", "done_so_far": "—", "next_action": "Run the check", "traps": "—"})
+			proposal := providerLoopLiveProposal()
+			write(11, "tasks_propose", map[string]any{"kind": proposal.Kind, "title": proposal.Title, "context": proposal.Context, "acceptance": proposal.Acceptance, "approach": proposal.Approach, "subtasks": proposal.Subtasks})
 			write(2, "tasks_set_subtasks", map[string]any{"id": s.id, "subtasks": []map[string]any{{"text": "required check", "done": true}}})
 			write(3, "tasks_complete", map[string]any{"id": s.id})
 			var replies bytes.Buffer
 			if err := s.Serve(context.Background(), providerLoopLiveTestConnection{strings.NewReader(requests.String()), &replies}); err != nil {
 				t.Fatal(err)
 			}
-			if s.verified() != firstRefusal {
-				t.Fatalf("verified=%v want refusal then completion=%v; replies=%s", s.verified(), firstRefusal, replies.String())
+			want := tc.firstRefusal && !tc.wrongState
+			if s.verified() != want {
+				t.Fatalf("verified=%v want=%v; replies=%s", s.verified(), want, replies.String())
 			}
-			if !firstRefusal {
+			if !tc.firstRefusal {
 				// A later refusal/repair cannot erase premature success, even
 				// if the provider can reopen its writable fixture folder.
 				done, ok, err := tasks.CurrentTask(s.root, s.id)

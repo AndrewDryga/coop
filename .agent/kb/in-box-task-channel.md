@@ -72,7 +72,21 @@ Fork identity validation still permits an unfinished done projection so crash re
 reopen it; captured completion acceptance, publication, and landing enforce the prerequisite.
 This checks task structure, not whether the agent actually ran a claimed verification.
 
+Tool input omissions are classified centrally from the same ordered required fields
+advertised by tools/list. Every missing top-level field is reported together, with its static
+description; submitted prose is never included in this repair. State updates replace
+all four fields on every call, including literal "none"/"—" when appropriate.
+Present null, empty, unsafe or overlong values still reach strict field validation.
+Text bounds and descriptions share the tasks package's UTF-8 byte limits: JSON Schema
+maxLength would count characters, so it cannot express those limits. The MCP decoder
+rejects invalid raw UTF-8 before encoding/json can replace it and hide it from validation.
+Optional fields default only when omitted: explicit null is refused, including checklist
+done booleans. A fork proposal also checks its serialized JSON size before publication so
+a successful write fits the importer's file bound, even when JSON escaping expands text.
+
 ## Changelog
+- 2026-09-12 — verified omission repair and byte-limit descriptions against real JSON-RPC
+  plain/fork calls; raw malformed UTF-8 previously reached a task log as replacement text.
 - 2026-09-12 — traced checklist feedback and freshness through MCP, host finalization and fork
   acceptance; documented the deliberate separation from recovery and independent test proof.
 - 2026-09-12 — traced assigned completion from loop authority through tasks_complete and its

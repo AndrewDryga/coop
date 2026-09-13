@@ -17,6 +17,27 @@ import (
 // collision rules the CLI uses, so a call from the box can never write a queue the host would not
 // have written itself.
 
+// Task text/list limits are shared by proposal validation and the task-channel descriptors.
+const (
+	TaskTitleLimit = 256
+	TaskLineLimit  = 4096
+	TaskBlockLimit = 64 << 10
+	TaskListLimit  = 64
+	// TaskProposalFileLimit includes JSON escaping and metadata, not just input text.
+	TaskProposalFileLimit = 256 << 10
+)
+
+// TaskTextRequirement describes ValidTaskText without confusing UTF-8 bytes with characters.
+func TaskTextRequirement(multiline bool, limit int) string {
+	shape := "one safe line"
+	controls := "no control characters"
+	if multiline {
+		shape = "text"
+		controls = "only newline and tab control characters allowed"
+	}
+	return fmt.Sprintf("non-blank UTF-8 %s of at most %d bytes; %s", shape, limit, controls)
+}
+
 // ValidTaskText reports whether value is safe, non-empty text of at most limit bytes: valid UTF-8
 // with no control characters other than (when multiline) newline and tab — the fork-proposal
 // rule, applied to every string a box hands the channel.
@@ -110,6 +131,9 @@ func WriteForkProposal(outbox string, draft TaskDraft) (string, error) {
 		return "", err
 	}
 	data = append(data, '\n')
+	if len(data) > TaskProposalFileLimit {
+		return "", fmt.Errorf("proposal exceeds %d bytes of serialized JSON — shorten its text or checklist before retrying", TaskProposalFileLimit)
+	}
 	name := proposal.ID + ".json"
 	f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o644)
 	if err != nil {

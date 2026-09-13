@@ -7,6 +7,7 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -42,15 +43,30 @@ func providerLoopLiveTaskID(provider string) string { return "provider-live-loop
 
 func providerLoopLiveFile(provider string) string { return "live-loop-" + provider + ".txt" }
 
+func providerLoopLiveProposal() tasks.TaskDraft {
+	return tasks.TaskDraft{
+		Kind: tasks.ForkProposalTask, Title: "Native MCP proposal",
+		Context:    "A disposable task-channel input qualification.",
+		Acceptance: "The task channel preserves every supplied section and subtask.",
+		Approach:   "Read the generated task and compare its exact fields.",
+		Subtasks:   []string{"Verify the generated task fields"},
+	}
+}
+
 func providerLoopLiveTaskBody(provider, marker string) string {
 	taskID := providerLoopLiveTaskID(provider)
 	file := providerLoopLiveFile(provider)
-	return fmt.Sprintf("# Live %s loop task\n\n**Context:** Exercise one real provider against Coop's task-completion contract.\n\n**Acceptance criteria:** Create `%s` containing exactly `%s` followed by one newline. Make no other repository change. Run `git diff --check`, commit the file with subject `test: complete live loop task` and an exact `Coop-Task: %s` trailer, update state.md and log.md, check off the subtask without changing its text, then complete this task through tasks_complete as the final action.\n\n**Approach:** Perform only the mechanical steps above.\n\n## Subtasks\n- [ ] Create the marker, pass git diff --check, and commit the exact task-bound change\n", provider, file, marker, taskID)
+	proposal := providerLoopLiveProposal()
+	args, _ := json.Marshal(map[string]any{
+		"kind": proposal.Kind, "title": proposal.Title, "context": proposal.Context,
+		"acceptance": proposal.Acceptance, "approach": proposal.Approach, "subtasks": proposal.Subtasks,
+	})
+	return fmt.Sprintf("# Live %s loop task\n\n**Context:** Exercise one real provider against Coop's task-completion contract.\n\n**Acceptance criteria:** Create `%s` containing exactly `%s` followed by one newline. Make no other tracked repository change. Run `git diff --check`, commit the file with subject `test: complete live loop task` and an exact `Coop-Task: %s` trailer, update state.md through tasks_update_state and append log.md, check off the subtask without changing its text, then complete this task through tasks_complete as the final action. Before completion, call tasks_propose exactly once successfully with these exact arguments: %s. Leave that generated proposal untouched in todo; do not work it.\n\n**Approach:** Perform only the mechanical steps above.\n\n## Subtasks\n- [ ] Create the marker, pass git diff --check, and commit the exact task-bound change\n", provider, file, marker, taskID, args)
 }
 
 func prepareProviderLoopLiveRepository(layout procharness.Layout, target agents.Target, marker string) error {
 	provider := target.Provider
-	contract := "# Live provider loop fixture\n\nWork only the assigned task. The task's stated gate is the complete gate for this disposable repository. Do not create other tasks or change Git configuration. Do not create task tmp/artifacts or unrelated queue entries; if a tool creates scratch, remove it before the final task move.\n"
+	contract := "# Live provider loop fixture\n\nWork only the assigned task. The task's stated gate is the complete gate for this disposable repository. Create only its one explicitly requested MCP proposal; do not create other tasks or change Git configuration. Do not create task tmp/artifacts or unrelated queue entries; if a tool creates scratch, remove it before the final task move.\n"
 	if err := os.WriteFile(filepath.Join(layout.Repo, "AGENTS.md"), []byte(contract), 0o600); err != nil {
 		return err
 	}
@@ -121,9 +137,17 @@ func verifyProviderLoopLiveRepository(layout procharness.Layout, before provider
 		filepath.Join(tasksRoot, stateDone, taskID, "task.md"),
 		".gitignore", "AGENTS.md", "README.md", file,
 	}
-	slices.Sort(wantEntries)
 	gotEntries, err := providerLoopLiveEntries(layout.Repo)
-	if err != nil || !slices.Equal(gotEntries, wantEntries) {
+	if err != nil {
+		return err
+	}
+	proposalEntries, err := verifyProviderLoopLiveProposal(layout)
+	if err != nil {
+		return err
+	}
+	wantEntries = append(wantEntries, proposalEntries...)
+	slices.Sort(wantEntries)
+	if !slices.Equal(gotEntries, wantEntries) {
 		return fmt.Errorf("live loop repository entries mismatch")
 	}
 	content, err := readProviderLoopLiveFile(layout, filepath.Join(layout.Repo, file))
@@ -196,6 +220,52 @@ func verifyProviderLoopLiveRepository(layout procharness.Layout, before provider
 		return fmt.Errorf("live loop retained unreachable Git objects")
 	}
 	return nil
+}
+
+func verifyProviderLoopLiveProposal(layout procharness.Layout) ([]string, error) {
+	todo := filepath.Join(tasksRoot, stateTodo)
+	entries, err := os.ReadDir(filepath.Join(layout.Repo, todo))
+	if err != nil || len(entries) != 1 || !entries[0].IsDir() {
+		return nil, errors.New("live loop needs exactly one untouched proposal in todo")
+	}
+	id := entries[0].Name()
+	if len(id) != len("2006-01-02-native-mcp-proposal") || !strings.HasSuffix(id, "-native-mcp-proposal") {
+		return nil, errors.New("live loop proposal id mismatch")
+	}
+	if _, err := time.Parse("2006-01-02", id[:10]); err != nil {
+		return nil, errors.New("live loop proposal id date mismatch")
+	}
+	dir := filepath.Join(todo, id)
+	proposal := providerLoopLiveProposal()
+	data, err := readProviderLoopLiveFile(layout, filepath.Join(layout.Repo, dir, "task.md"))
+	if err != nil {
+		return nil, err
+	}
+	fields, _ := tasks.SplitFrontmatter(string(data))
+	if len(fields) != 4 || fields["id"] != id || fields["title"] != proposal.Title || fields["labels"] != "[]" {
+		return nil, errors.New("live loop proposal metadata mismatch")
+	}
+	if _, err := time.Parse(time.RFC3339, fields["updated"]); err != nil {
+		return nil, errors.New("live loop proposal timestamp mismatch")
+	}
+	expected := fmt.Sprintf("# %s\n\n**Context:** %s\n\n**Acceptance criteria:** %s\n\n**Approach:** %s\n\n## Subtasks\n\n- [ ] %s\n",
+		proposal.Title, proposal.Context, proposal.Acceptance, proposal.Approach, proposal.Subtasks[0])
+	expected = fmt.Sprintf("---\nid: %s\ntitle: %s\nlabels: []\nupdated: %s\n---\n\n", id, proposal.Title, fields["updated"]) + expected
+	if string(data) != expected {
+		return nil, errors.New("live loop proposal body mismatch")
+	}
+	wantFiles := map[string]string{
+		"log.md": "<!-- Append progress, decisions and problems here.\n     Keep earlier entries. Put the latest resume summary in state.md. -->\n\n# Log — " + proposal.Title + "\n",
+		"state.md": "<!-- Replace this short summary at each checkpoint so another session can continue.\n     Keep the detailed history in log.md. -->\n\n# State — " + proposal.Title +
+			"\n\n**Status:** not started\n**Done so far:** —\n**Next action:** <the next concrete step>\n**Traps:** <anything the next session needs to watch for, or —>\n",
+	}
+	for name, want := range wantFiles {
+		got, err := readProviderLoopLiveFile(layout, filepath.Join(layout.Repo, dir, name))
+		if err != nil || string(got) != want {
+			return nil, errors.New("live loop proposal resume files changed")
+		}
+	}
+	return []string{dir + string(filepath.Separator), filepath.Join(dir, "task.md"), filepath.Join(dir, "state.md"), filepath.Join(dir, "log.md")}, nil
 }
 
 func providerLoopLiveEntries(repo string) ([]string, error) {
@@ -595,6 +665,9 @@ func TestProviderLoopLiveContract(t *testing.T) {
 		if err := os.Rename(task, filepath.Join(layout.Repo, tasksRoot, stateDone, providerLoopLiveTaskID(target.Provider))); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := tasks.CreateDraftTask(filepath.Join(layout.Repo, tasksRoot), providerLoopLiveProposal()); err != nil {
+			t.Fatal(err)
+		}
 		return layout, before, target, marker
 	}
 
@@ -604,6 +677,45 @@ func TestProviderLoopLiveContract(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+	for _, altered := range []string{"task body", "metadata comment", "state", "log", "second proposal"} {
+		t.Run("rejects altered proposal "+altered, func(t *testing.T) {
+			layout, before, target, marker := newCompleted(t)
+			todo := filepath.Join(layout.Repo, tasksRoot, stateTodo)
+			entries, err := os.ReadDir(todo)
+			if err != nil || len(entries) != 1 {
+				t.Fatalf("proposal fixture: %v", err)
+			}
+			dir := filepath.Join(todo, entries[0].Name())
+			if altered == "second proposal" {
+				draft := providerLoopLiveProposal()
+				draft.Title = "Unexpected second proposal"
+				if _, err := tasks.CreateDraftTask(filepath.Join(layout.Repo, tasksRoot), draft); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				name := "task.md"
+				if altered == "state" || altered == "log" {
+					name = altered + ".md"
+				}
+				path := filepath.Join(dir, name)
+				body, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if altered == "metadata comment" {
+					body = []byte(strings.Replace(string(body), "labels: []", "# unrequested metadata\nlabels: []", 1))
+				} else {
+					body = append(body, []byte("\nunrequested change\n")...)
+				}
+				if err := os.WriteFile(path, body, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := verifyProviderLoopLiveRepository(layout, before, target, marker); err == nil {
+				t.Fatal("altered proposal passed exact repository verification")
+			}
+		})
+	}
 	t.Run("index comparison ignores only filesystem stat fields", func(t *testing.T) {
 		layout, _, _, _ := newCompleted(t)
 		original, err := readProviderLoopLiveFile(layout, filepath.Join(layout.Repo, ".git", "index"))
