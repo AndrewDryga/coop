@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AndrewDryga/coop/internal/acpctl"
 	"github.com/AndrewDryga/coop/internal/acpproxy"
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
@@ -26,7 +26,7 @@ func TestModelsCacheRoundTrip(t *testing.T) {
 	if _, ok := loadModelsCache(cfg, "claude"); ok {
 		t.Fatal("a cold cache must not read as present")
 	}
-	want := []acpctl.Model{{ID: "default", Name: "Default (recommended)"}, {ID: "opus"}, {ID: "sonnet"}}
+	want := []agents.Model{{ID: "default", Name: "Default (recommended)"}, {ID: "opus"}, {ID: "sonnet"}}
 	if err := writeModelsCache(cfg, "claude", want); err != nil {
 		t.Fatal(err)
 	}
@@ -50,6 +50,62 @@ func TestModelsCacheRoundTrip(t *testing.T) {
 	}
 	if got, ok := loadModelsCache(cfg, "claude"); !ok || len(got.Models) != 3 {
 		t.Fatalf("empty write clobbered the cache: (%v, %v)", got, ok)
+	}
+}
+
+func TestModelCatalogHostDispatchAndFailure(t *testing.T) {
+	for _, tc := range []struct{ provider, args, output, id, cause string }{
+		{"codex", "debug models", `{"models":[{"slug":"native-codex","visibility":"list"}]}`, "native-codex", ""},
+		{"grok", "models", "  * native-grok (default)", "native-grok", ""},
+		{"grok", "models", "You are not authenticated.\n  * grok-build (default)", "", "The host grok CLI is not signed in."},
+	} {
+		t.Run(tc.provider+tc.id, func(t *testing.T) {
+			a := modelsApp(t)
+			dir := t.TempDir()
+			// An independent executable pins host argv; the injected ACP seam must not run.
+			argv := strings.Fields(tc.args)
+			script := fmt.Sprintf("#!/bin/sh\n[ \"$#\" -eq %d ] || exit 92\n", len(argv))
+			for i, arg := range argv {
+				script += fmt.Sprintf("[ \"${%d}\" = '%s' ] || exit 92\n", i+1, arg)
+			}
+			script += "printf '%s\\n' '" + tc.output + "'\n"
+			if err := os.WriteFile(filepath.Join(dir, tc.provider), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir)
+			a.acpModels = func(string) ([]agents.Model, error) { t.Fatal("host discovery reached ACP seam"); return nil, nil }
+			if err := writeModelsCache(a.cfg, tc.provider, []agents.Model{{ID: "last-good"}}); err != nil {
+				t.Fatal(err)
+			}
+			cause, failed := a.refreshCatalog(tc.provider, nil)
+			if cause != tc.cause || failed != (tc.cause != "") {
+				t.Fatalf("refresh = %q/%v", cause, failed)
+			}
+			cache, ok := loadModelsCache(a.cfg, tc.provider)
+			want := tc.id
+			if failed {
+				want = "last-good"
+			}
+			if !ok || len(cache.Models) != 1 || cache.Models[0].ID != want || cache.AttemptError != tc.cause {
+				t.Fatalf("cache = %+v/%v, want %s", cache, ok, want)
+			}
+		})
+	}
+}
+
+func TestModelCatalogNeedsBox(t *testing.T) {
+	a := modelsApp(t)
+	for _, seam := range []bool{false, true} {
+		a.acpModels = nil
+		if seam {
+			a.acpModels = func(string) ([]agents.Model, error) { return nil, nil }
+		}
+		for _, name := range agents.Names() {
+			want := !seam && (name == "claude" || name == "gemini")
+			if got := a.fetchNeedsBox(name); got != want {
+				t.Errorf("%s seam=%v needs box=%v, want %v", name, seam, got, want)
+			}
+		}
 	}
 }
 
@@ -88,7 +144,7 @@ func seedModelsCache(t *testing.T, cfg *config.Config, agent string, fetched, at
 	t.Helper()
 	mc := modelsCache{FetchedAt: fetched, AttemptedAt: attempted, AttemptError: attemptErr}
 	for _, id := range ids {
-		mc.Models = append(mc.Models, acpctl.Model{ID: id})
+		mc.Models = append(mc.Models, agents.Model{ID: id})
 	}
 	b, err := json.Marshal(mc)
 	if err != nil {
@@ -99,74 +155,6 @@ func seedModelsCache(t *testing.T, cfg *config.Config, agent string, fetched, at
 	}
 	if err := os.WriteFile(modelsCachePath(cfg, agent), b, 0o600); err != nil {
 		t.Fatal(err)
-	}
-}
-
-// TestParseGrokModels: `grok models` bullets → ids, the default's " (default)" marker stripped,
-// dupes and non-bullet lines ignored.
-func TestParseGrokModels(t *testing.T) {
-	out := `Available models:
-  * grok-4.5 (default)
-  - grok-composer-2.5-fast
-  - grok-4.5
-
-not a bullet line
-`
-	got := parseGrokModels([]byte(out))
-	want := []string{"grok-4.5", "grok-composer-2.5-fast"}
-	if len(got) != len(want) {
-		t.Fatalf("parseGrokModels = %v, want ids %v", got, want)
-	}
-	for i, id := range want {
-		if got[i].ID != id || got[i].Name != id {
-			t.Errorf("model %d = %+v, want id/name %q", i, got[i], id)
-		}
-	}
-	if grokUnauthenticated([]byte(out)) {
-		t.Error("a real catalog must not read as logged out")
-	}
-}
-
-// TestGrokUnauthenticated: a logged-out `grok models` still exits 0 and prints ONE placeholder
-// build. Taking that as a catalog would replace a good list with an id that is not a model, so it
-// has to read as a failed fetch. Recorded verbatim from a signed-out host CLI.
-func TestGrokUnauthenticated(t *testing.T) {
-	out := `You are not authenticated.
-
-Default model: grok-build
-
-Available models:
-  * grok-build (default)
-`
-	if !grokUnauthenticated([]byte(out)) {
-		t.Errorf("a logged-out grok answer should not be taken as a catalog:\n%s", out)
-	}
-}
-
-// TestParseCodexModels: only visibility=="list" models survive, slug + display_name captured,
-// a missing display_name falls back to the slug.
-func TestParseCodexModels(t *testing.T) {
-	out := `{"models":[
-	  {"slug":"gpt-5.5","display_name":"GPT-5.5","visibility":"list"},
-	  {"slug":"gpt-5.4","display_name":"","visibility":"list"},
-	  {"slug":"internal-only","display_name":"Hidden","visibility":"hidden"},
-	  {"slug":"","display_name":"Blank","visibility":"list"}
-	]}`
-	got, err := parseCodexModels([]byte(out))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("parseCodexModels = %v, want only the two list-visible, non-blank models", got)
-	}
-	if got[0].ID != "gpt-5.5" || got[0].Name != "GPT-5.5" {
-		t.Errorf("model 0 = %+v", got[0])
-	}
-	if got[1].ID != "gpt-5.4" || got[1].Name != "gpt-5.4" {
-		t.Errorf("model 1 = %+v, want display_name to fall back to the slug", got[1])
-	}
-	if _, err := parseCodexModels([]byte("not json")); err == nil {
-		t.Error("malformed JSON must error (→ caller keeps static)")
 	}
 }
 
@@ -308,12 +296,12 @@ func TestRefreshModelsUsesACPFetcher(t *testing.T) {
 		t.Run(agent+" success", func(t *testing.T) {
 			a := modelsApp(t)
 			calls := 0
-			a.acpModels = func(got string) ([]acpctl.Model, error) {
+			a.acpModels = func(got string) ([]agents.Model, error) {
 				calls++
 				if got != agent {
 					t.Fatalf("fetch agent = %q, want %q", got, agent)
 				}
-				return []acpctl.Model{{ID: agent + "-live", Name: "Live"}}, nil
+				return []agents.Model{{ID: agent + "-live", Name: "Live"}}, nil
 			}
 			if code, err := a.cmdModels([]string{agent, "--refresh"}); code != 0 || err != nil {
 				t.Fatalf("cmdModels = (%d, %v)", code, err)
@@ -330,10 +318,10 @@ func TestRefreshModelsUsesACPFetcher(t *testing.T) {
 
 	t.Run("failure preserves cache", func(t *testing.T) {
 		a := modelsApp(t)
-		if err := writeModelsCache(a.cfg, "claude", []acpctl.Model{{ID: "still-good"}}); err != nil {
+		if err := writeModelsCache(a.cfg, "claude", []agents.Model{{ID: "still-good"}}); err != nil {
 			t.Fatal(err)
 		}
-		a.acpModels = func(string) ([]acpctl.Model, error) { return nil, errors.New("box down") }
+		a.acpModels = func(string) ([]agents.Model, error) { return nil, errors.New("box down") }
 		out := captureStdout(t, func() { _, _ = a.cmdModels([]string{"claude", "--refresh"}) })
 		if !strings.Contains(out, "still-good") || !strings.Contains(out, "Could not refresh") {
 			t.Fatalf("failed refresh did not preserve/describe the cache:\n%s", out)
@@ -363,9 +351,9 @@ func TestModelsRefreshesOnlyWhatIsDue(t *testing.T) {
 			a := modelsApp(t)
 			seedModelsCache(t, a.cfg, "claude", tc.fetched, tc.attempts, "provider was down", "cached-id")
 			calls := 0
-			a.acpModels = func(string) ([]acpctl.Model, error) {
+			a.acpModels = func(string) ([]agents.Model, error) {
 				calls++
-				return []acpctl.Model{{ID: "refetched-id"}}, nil
+				return []agents.Model{{ID: "refetched-id"}}, nil
 			}
 			out := captureStdout(t, func() {
 				if code, err := a.cmdModels(tc.args); code != 0 || err != nil {
@@ -391,7 +379,7 @@ func TestModelsBacksOffWithTheRecordedCause(t *testing.T) {
 	a := modelsApp(t)
 	seedModelsCache(t, a.cfg, "claude", time.Now().Add(-50*time.Hour), time.Now().Add(-time.Minute),
 		"Docker is not running", "cached-id")
-	a.acpModels = func(string) ([]acpctl.Model, error) { t.Fatal("backed-off agent was refetched"); return nil, nil }
+	a.acpModels = func(string) ([]agents.Model, error) { t.Fatal("backed-off agent was refetched"); return nil, nil }
 	out := captureStdout(t, func() { _, _ = a.cmdModels([]string{"claude"}) })
 	want := "  ⚠ Could not refresh — showing the list saved 2 days ago\n\n      Docker is not running\n"
 	if !strings.Contains(out, want) || !strings.Contains(out, "cached-id") {
@@ -405,7 +393,7 @@ func TestModelsFailureWarnsOnlyTheAffectedAgent(t *testing.T) {
 	a := modelsApp(t)
 	seedModelsCache(t, a.cfg, "claude", time.Now().Add(-30*time.Hour), time.Time{}, "", "still-good")
 	seedModelsCache(t, a.cfg, "gemini", time.Now().Add(-time.Hour), time.Time{}, "", "gemini-fresh-id")
-	a.acpModels = func(agent string) ([]acpctl.Model, error) {
+	a.acpModels = func(agent string) ([]agents.Model, error) {
 		return nil, errors.New("box down")
 	}
 	out := captureStdout(t, func() { _, _ = a.cmdModels(nil) })

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,9 +18,16 @@ import (
 
 type grokAgent struct{}
 
+func (grokAgent) Scaffold() ScaffoldSpec { return ScaffoldSpec{} }
+
+func (grokAgent) ReviewOutput(raw string, _ ReviewOutputContract) (string, bool) { return raw, true }
+func (grokAgent) ReviewFooterLine(string) bool                                   { return false }
+func (grokAgent) PlainOutputProbe() PlainOutputProbe                             { return nil }
+
 func init() { register(grokAgent{}) }
 
 func (grokAgent) Name() string        { return "grok" }
+func (grokAgent) SkillsCapable() bool { return false }
 func (grokAgent) DisplayName() string { return "Grok" }
 func (grokAgent) Vendor() string      { return "xAI" }
 
@@ -449,4 +457,47 @@ func (grokAgent) LockedClients(ClientPlatform) []LockedClient { return nil }
 
 func (a grokAgent) NetworkBundle(NetworkBundleInput) (egress.Bundle, error) {
 	return egress.Bundle{}, fmt.Errorf("%s is unsupported for restricted networking", a.Name())
+}
+
+func (grokAgent) ModelCatalog() ModelCatalogSpec {
+	return ModelCatalogSpec{HostCommand: []string{"grok", "models"}, ParseHost: func(out []byte) ([]Model, error) {
+		// The host CLI's login is distinct from a Coop boxed profile.
+		if grokUnauthenticated(out) {
+			return nil, ModelCatalogError("The host grok CLI is not signed in.")
+		}
+		return parseGrokModels(out), nil
+	}}
+}
+
+func grokUnauthenticated(out []byte) bool {
+	return bytes.Contains(out, []byte("not authenticated"))
+}
+
+// parseGrokModels reads `grok models` output — a bullet per model, the default marked:
+//
+//   - grok-4.5 (default)
+//   - grok-composer-2.5-fast
+//
+// It returns ids in listed order (name = id; grok prints no separate display name), skipping
+// blanks and duplicates.
+func parseGrokModels(out []byte) []Model {
+	var models []Model
+	seen := map[string]bool{}
+	for _, raw := range strings.Split(string(out), "\n") {
+		line := strings.TrimSpace(raw)
+		rest, ok := strings.CutPrefix(line, "* ")
+		if !ok {
+			rest, ok = strings.CutPrefix(line, "- ")
+		}
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(rest) // the id, then an optional " (default)" marker
+		if len(fields) == 0 || seen[fields[0]] {
+			continue
+		}
+		seen[fields[0]] = true
+		models = append(models, Model{ID: fields[0], Name: fields[0]})
+	}
+	return models
 }

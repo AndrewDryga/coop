@@ -157,6 +157,12 @@ func TestAsdfDockerfileKeepsToolchainsOnLoginPath(t *testing.T) {
 	}
 }
 
+func testNativeCommitGate(name string, langs []string) string {
+	ag, _ := agents.Get(name)
+	gate := ag.Scaffold().CommitGate
+	return gate.Prefix + gateBody(langs, gate.FailureCode) + gate.Suffix
+}
+
 // TestGeneratedHooksShellcheckClean renders every commit gate coop writes into a user's repo —
 // the .githooks/pre-commit and .claude commit gate, for all detected langs and the neutral
 // fallback — and asserts shellcheck finds nothing. CI only shellchecks install.sh, so without
@@ -165,9 +171,9 @@ func TestGeneratedHooksShellcheckClean(t *testing.T) {
 	sc := shellcheckPath(t)
 	hooks := map[string]string{
 		"pre-commit (all langs)":  preCommitHook(GateLangs),
-		"claude gate (all langs)": claudeCommitGate(GateLangs),
+		"claude gate (all langs)": testNativeCommitGate("claude", GateLangs),
 		"pre-commit (neutral)":    preCommitHook(nil),
-		"claude gate (neutral)":   claudeCommitGate(nil),
+		"claude gate (neutral)":   testNativeCommitGate("claude", nil),
 	}
 	for name, body := range hooks {
 		path := filepath.Join(t.TempDir(), "hook.sh")
@@ -200,7 +206,7 @@ func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("node_modules/\n.agent/*.log\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := (&scaffolder{repo: repo}).updateGitignore(true); err != nil {
+	if err := (&scaffolder{repo: repo}).updateGitignore([]string{"gemini"}); err != nil {
 		t.Fatal(err)
 	}
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
@@ -212,7 +218,7 @@ func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 		}
 	}
 	// Idempotent: a second run doesn't duplicate the block.
-	_ = (&scaffolder{repo: repo}).updateGitignore(true)
+	_ = (&scaffolder{repo: repo}).updateGitignore([]string{"gemini"})
 	gi2, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
 	if n := strings.Count(string(gi2), "\n**/.agent/*\n"); n != 1 {
 		t.Errorf("coop block written %d times, want 1:\n%s", n, gi2)
@@ -228,10 +234,10 @@ func TestUpdateGitignoreCompletesMinimalCurrentBlock(t *testing.T) {
 	}
 
 	s := &scaffolder{repo: repo}
-	if err := s.updateGitignore(true); err != nil {
+	if err := s.updateGitignore([]string{"gemini"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.updateGitignore(true); err != nil {
+	if err := s.updateGitignore([]string{"gemini"}); err != nil {
 		t.Fatal(err)
 	}
 	gi, err := os.ReadFile(filepath.Join(repo, ".gitignore"))
@@ -261,7 +267,7 @@ func TestUpdateGitignoreCompletesMinimalCurrentBlock(t *testing.T) {
 // doesn't keep a .gemini/ shouldn't be given rules for one.
 func TestUpdateGitignoreSkipsGeminiRulesWhenUnused(t *testing.T) {
 	repo := t.TempDir()
-	if err := (&scaffolder{repo: repo}).updateGitignore(false); err != nil {
+	if err := (&scaffolder{repo: repo}).updateGitignore(nil); err != nil {
 		t.Fatal(err)
 	}
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
@@ -269,7 +275,7 @@ func TestUpdateGitignoreSkipsGeminiRulesWhenUnused(t *testing.T) {
 		t.Errorf("gemini rules written for a repo with no .gemini/:\n%s", gi)
 	}
 	// …and adding gemini later still gets them, exactly once.
-	if err := (&scaffolder{repo: repo}).updateGitignore(true); err != nil {
+	if err := (&scaffolder{repo: repo}).updateGitignore([]string{"gemini"}); err != nil {
 		t.Fatal(err)
 	}
 	gi, _ = os.ReadFile(filepath.Join(repo, ".gitignore"))

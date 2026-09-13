@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -22,9 +23,56 @@ import (
 
 type claudeAgent struct{}
 
+func (claudeAgent) Scaffold() ScaffoldSpec {
+	return ScaffoldSpec{
+		Project: ScaffoldLayout{
+			Dir: ".claude", Dirs: []string{".claude/hooks"},
+			Files:          []ScaffoldFile{{".claude/settings.json", "templates/claude/settings.json", 0o644}},
+			CommitGatePath: ".claude/hooks/commit-gate.sh",
+		},
+		Fallback: ScaffoldLayout{
+			Dirs:           []string{".agent/claude/hooks"},
+			Files:          []ScaffoldFile{{".agent/claude/settings.json", "templates/agent/claude/settings.json", 0o644}},
+			CommitGatePath: ".agent/claude/hooks/commit-gate.sh",
+		},
+		EstablishedSkills: ".claude/skills",
+		KnowledgeIgnore:   []string{"!**/.agent/claude/"},
+		AlwaysIgnore:      []string{"# preset native subagents coop generates in the box (coop-<role>) — never committed", ".claude/agents/coop-*.md"},
+		CommitGate: &ScaffoldCommitGate{Prefix: `#!/bin/bash
+# Fast commit gate: format staged files, block the commit if they're dirty.
+# Reads the tool call on stdin; only acts on git commit. Fails open.
+set -f          # the file lists below are word-split on purpose; don't also glob-expand a name
+IFS=$'\n'       # …and split only on newlines, so a staged filename with a space stays one path
+input=$(cat)
+echo "$input" | grep -q '"command"[^}]*git commit' || exit 0
+staged=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null) || exit 0
+
+`, Suffix: "\n\nexit 0\n", FailureCode: "2"},
+	}
+}
+
+func (claudeAgent) ModelCatalog() ModelCatalogSpec {
+	return ModelCatalogSpec{ParseACP: func(raw json.RawMessage) []Model {
+		var doc acpModelCatalog
+		if json.Unmarshal(raw, &doc) != nil {
+			return nil
+		}
+		for _, option := range doc.ConfigOptions {
+			if option.ID == "model" {
+				return modelsFromOptions(option.Options)
+			}
+		}
+		return nil
+	}}
+}
+
+func (claudeAgent) ReviewOutput(raw string, _ ReviewOutputContract) (string, bool) { return raw, true }
+func (claudeAgent) ReviewFooterLine(string) bool                                   { return false }
+
 func init() { register(claudeAgent{}) }
 
 func (claudeAgent) Name() string        { return "claude" }
+func (claudeAgent) SkillsCapable() bool { return true }
 func (claudeAgent) DisplayName() string { return "Claude Code" }
 func (claudeAgent) Vendor() string      { return "Anthropic" }
 
@@ -861,3 +909,57 @@ func (claudeAgent) ShellPrelude() string {
 	return claudeConsultText + consultPeerRowShell("claude", claudeConsultUsage) + consultCaptureShell("claude", "Claude")
 }
 func (claudeAgent) InstallScript() string { return "" }
+
+const maxClaudePlainLimitBytes = 512
+
+// claudePlainLimitProbe keeps only small, complete non-streaming stdout. Claude can print its
+// model-credit denial there and exit nonzero, but ordinary assistant prose also uses stdout, so a
+// truncated tail is unsafe: any overflow or extra text must invalidate the signal.
+type claudePlainLimitProbe struct {
+	mu       sync.Mutex
+	buf      []byte
+	overflow bool
+}
+
+func (p *claudePlainLimitProbe) Write(chunk []byte) (int, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.overflow || len(chunk) > maxClaudePlainLimitBytes-len(p.buf) {
+		p.buf = nil
+		p.overflow = true
+		return len(chunk), nil
+	}
+	p.buf = append(p.buf, chunk...)
+	return len(chunk), nil
+}
+
+func (p *claudePlainLimitProbe) Limited(code int) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if code == 0 || p.overflow {
+		return false
+	}
+	return ClaudeCreditLimitNotice(strings.TrimSpace(string(p.buf)))
+}
+
+// ClaudeCreditLimitNotice is the exact denial shared by plain and structured Claude output.
+func ClaudeCreditLimitNotice(text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if !strings.HasPrefix(lower, "you've reached your ") &&
+		!strings.HasPrefix(lower, "you have reached your ") {
+		return false
+	}
+	const action = "run /usage-credits to continue or switch models with /model"
+	actionAt := strings.Index(lower, action)
+	if actionAt < 0 {
+		return false
+	}
+	prefix := strings.TrimSpace(lower[:actionAt])
+	if !strings.HasSuffix(prefix, " limit.") || !CLIRateLimited(prefix) {
+		return false
+	}
+	suffix := strings.TrimSpace(lower[actionAt+len(action):])
+	return suffix == "" || suffix == "."
+}
+
+func (claudeAgent) PlainOutputProbe() PlainOutputProbe { return &claudePlainLimitProbe{} }

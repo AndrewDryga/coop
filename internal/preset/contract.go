@@ -44,7 +44,7 @@ func LeadContract(p *Preset, lead string) string {
 // prepended contract so the delegate knows its own ground rules. Delegate-only, so the
 // lead is immaterial (native/consult degradation never applies).
 func RoleContract(r *Role) string {
-	return roleContract(r, "claude")
+	return roleContract(r, "")
 }
 
 func roleContract(r *Role, lead string) string {

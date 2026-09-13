@@ -2,14 +2,29 @@ package cli
 
 import (
 	"errors"
-	"github.com/AndrewDryga/coop/internal/box"
-	"github.com/AndrewDryga/coop/internal/config"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 )
+
+func TestDoctorDefaultMatchesCredentialFixture(t *testing.T) {
+	ag, ok := agents.Get(agents.Default())
+	if !ok {
+		t.Fatal("default provider is not registered")
+	}
+	marker, key := ag.AuthMarker()
+	probe := doctorCredAndHomeProbe("/fixture")
+	if marker != ".credentials.json" || key != "ANTHROPIC_API_KEY" ||
+		!strings.Contains(probe, "/fixture/."+ag.Name()+"/"+marker) {
+		t.Fatal("doctor's scoped credential fixture no longer matches the default provider")
+	}
+}
 
 // probeReason turns a failed probe's stderr/error into the one sentence a reason slot holds, and
 // says so explicitly when neither the runtime nor the error said anything — a blank reason under

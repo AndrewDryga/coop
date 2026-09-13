@@ -72,38 +72,6 @@ func spliceBeforeTrailing(cmd, insert []string, trailing int) []string {
 	return append(result, cmd[at:]...)
 }
 
-const maxClaudePlainLimitBytes = 512
-
-// claudePlainLimitProbe keeps only small, complete non-streaming stdout. Claude can print its
-// model-credit denial there and exit nonzero, but ordinary assistant prose also uses stdout, so a
-// truncated tail is unsafe: any overflow or extra text must invalidate the signal.
-type claudePlainLimitProbe struct {
-	mu       sync.Mutex
-	buf      []byte
-	overflow bool
-}
-
-func (p *claudePlainLimitProbe) Write(chunk []byte) (int, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.overflow || len(chunk) > maxClaudePlainLimitBytes-len(p.buf) {
-		p.buf = nil
-		p.overflow = true
-		return len(chunk), nil
-	}
-	p.buf = append(p.buf, chunk...)
-	return len(chunk), nil
-}
-
-func (p *claudePlainLimitProbe) limited(code int) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if code == 0 || p.overflow {
-		return false
-	}
-	return claudeCreditLimitNotice(strings.TrimSpace(string(p.buf)))
-}
-
 // runIteration runs one boxed command in batch mode, teeing its output to the terminal while
 // capturing a response tail and a separate terminal-diagnostic tail. hosts are the queue files the
 // live bar watches task counts while its explicit activity remains fixed. On interactive terminals
@@ -172,7 +140,7 @@ func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName s
 	}
 	var stdoutW io.Writer
 	var dec iterationStreamDecoder
-	var plainClaudeLimit *claudePlainLimitProbe
+	var plainLimit agents.PlainOutputProbe
 	if streaming {
 		profile := c.cfg.ActiveProfile(agent)
 		selectedModel := c.cfg.ModelFor(agent)
@@ -201,9 +169,11 @@ func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName s
 		if rawTrace != nil {
 			plainWs = append([]io.Writer{rawTrace}, plainWs...)
 		}
-		if agent == "claude" && !streaming {
-			plainClaudeLimit = &claudePlainLimitProbe{}
-			plainWs = append(plainWs, plainClaudeLimit)
+		if ag, ok := agents.Get(agent); ok && !streaming {
+			plainLimit = ag.PlainOutputProbe()
+			if plainLimit != nil {
+				plainWs = append(plainWs, plainLimit)
+			}
 		}
 		stdoutW = io.MultiWriter(plainWs...)
 	}
@@ -299,8 +269,8 @@ func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName s
 			err = flushErr
 		}
 	}
-	if plainClaudeLimit != nil {
-		if plainClaudeLimit.limited(code) {
+	if plainLimit != nil {
+		if plainLimit.Limited(code) {
 			_, _ = io.WriteString(diagnostic, "rate limit exceeded\n")
 		}
 	}
@@ -309,8 +279,8 @@ func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName s
 		bar.stop()
 	}
 	output = tail.String()
-	if windowMode == completionWindowReview && agent == "codex" {
-		output, _ = normalizeCodexReviewOutput(output)
+	if windowMode == completionWindowReview {
+		output, _ = normalizeAgentReviewOutput(agent, output)
 	}
 	classification = classifyIteration(agent, code, err, diagnostic.String(), streamOutcome, time.Now())
 	// A watchdog kill owns the classification only when the attempt actually died and the

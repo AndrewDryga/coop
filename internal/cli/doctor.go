@@ -647,7 +647,7 @@ func doctorCheckCredAndHomeScope(s *doctorSection, a *app, fixture, img string, 
 
 	var out, errOut bytes.Buffer
 	_, runErr := box.Run(&credCfg, a.rt, box.RunSpec{
-		Image: img, Repo: fixture, Agent: "claude", Homes: true,
+		Image: img, Repo: fixture, Agent: agents.Default(), Homes: true,
 		Cmd: []string{"sh", "/credprobe.sh"}, Batch: true, Quiet: true, Stdout: &out, Stderr: &errOut,
 		ExtraArgs: []string{"-v", probe + ":/credprobe.sh:ro"},
 	})

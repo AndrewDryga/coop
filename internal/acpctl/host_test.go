@@ -63,16 +63,16 @@ func testHost() Host {
 	return Host{
 		ExpandLadder:     testExpandLadder,
 		AccountsFor:      testAccountsFor,
-		WriteModelsCache: func(*config.Config, string, []Model) error { return nil },
+		WriteModelsCache: func(*config.Config, string, []agents.Model) error { return nil },
 	}
 }
 
 // testHostCapturingModels is testHost with WriteModelsCache replaced by a fake that records what
 // was asked to be cached, per agent — see control_test.go's TestACPControlOpportunisticModelCache /
 // TestACPControlOpportunisticGeminiCache (RISK 2 in spec.md).
-func testHostCapturingModels(captured map[string][]Model) Host {
+func testHostCapturingModels(captured map[string][]agents.Model) Host {
 	h := testHost()
-	h.WriteModelsCache = func(_ *config.Config, agent string, models []Model) error {
+	h.WriteModelsCache = func(_ *config.Config, agent string, models []agents.Model) error {
 		captured[agent] = models
 		return nil
 	}

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AndrewDryga/coop/internal/acpctl"
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
@@ -27,7 +27,7 @@ func modelsApp(t *testing.T) *app {
 	t.Setenv("PATH", filepath.Join(dir, "no-agent-cli"))
 	return &app{
 		cfg:       &config.Config{ConfigDir: dir},
-		acpModels: func(string) ([]acpctl.Model, error) { return nil, errors.New("no provider in tests") },
+		acpModels: func(string) ([]agents.Model, error) { return nil, errors.New("no provider in tests") },
 	}
 }
 

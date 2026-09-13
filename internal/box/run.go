@@ -1776,11 +1776,6 @@ func readOptionalRegularFile(path string) ([]byte, bool, error) {
 // instructionItem is one agent's global instruction file and the content it should hold.
 type instructionItem struct{ agent, file, content string }
 
-// skillsCapableAgents are the agents coop synthesizes user-level skills for — the set the scaffolder
-// symlinks a skills dir into (.claude/.codex/.gemini). grok reads AGENTS.md, not a skills dir, so
-// it's omitted (a mount there would be inert anyway).
-var skillsCapableAgents = map[string]bool{"claude": true, "codex": true, "gemini": true}
-
 // synthSkillsMounts returns the user-level ~/.<agent>/skills mounts to synthesize from the repo's
 // shared skills source — .agent/skills, or an established .claude/skills fallback — one per
 // skills-capable agent whose repo has NO per-agent skills dir of its own. Each mount is a WRITABLE
@@ -1796,7 +1791,8 @@ func synthSkillsMounts(repo, homeInBox string, agentNames []string, exposedRoots
 	seen := map[string]bool{}
 	var selected []string
 	for _, ag := range agentNames {
-		if ag == "" || seen[ag] || !skillsCapableAgents[ag] {
+		adapter, ok := agents.Get(ag)
+		if seen[ag] || !ok || !adapter.SkillsCapable() {
 			continue
 		}
 		seen[ag] = true
@@ -1821,9 +1817,13 @@ func synthSkillsMounts(repo, homeInBox string, agentNames []string, exposedRoots
 	if !present {
 		// The old .claude source is only a compatibility fallback. Invalid links and other
 		// unusable legacy shapes remain equivalent to absence.
-		src = filepath.Join(".claude", "skills")
-		info, legacyErr := sources.root.Lstat(src)
-		if legacyErr != nil || !info.IsDir() {
+		for _, candidate := range agents.EstablishedSkillsSources() {
+			if info, legacyErr := sources.root.Lstat(candidate); legacyErr == nil && info.IsDir() {
+				src, present = candidate, true
+				break
+			}
+		}
+		if !present {
 			return nil, nil, nil
 		}
 	}

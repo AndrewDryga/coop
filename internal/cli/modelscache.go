@@ -12,10 +12,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
-	"github.com/AndrewDryga/coop/internal/acpctl"
 	"github.com/AndrewDryga/coop/internal/acpproxy"
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
@@ -40,16 +38,10 @@ const (
 // catalog refresh can never hang the menu.
 const modelFetchTimeout = 15 * time.Second
 
-// modelsCache is the per-agent model list coop keeps under the agent's config dir. Models is
-// acpctl.Model — the DTO moved to internal/acpctl (models.go) since it's a pure parser output the
-// ACP control also caches opportunistically; this file keeps the on-disk cache format and the
-// non-ACP fetch/parse paths (grok/codex native CLIs), which stay app-spine-bound.
-//
-// FetchedAt is the last SUCCESS; AttemptedAt/AttemptError are the last try, success or not. They
-// are separate fields because they answer different questions — how old is this list, versus
-// should we pay for another fetch right now.
+// modelsCache retains the last good catalog separately from the most recent fetch
+// attempt, so a failed refresh can back off without discarding usable model ids.
 type modelsCache struct {
-	Models       []acpctl.Model `json:"models"`
+	Models       []agents.Model `json:"models"`
 	FetchedAt    time.Time      `json:"fetchedAt"`
 	AttemptedAt  time.Time      `json:"attemptedAt,omitempty"`
 	AttemptError string         `json:"attemptError,omitempty"`
@@ -111,7 +103,7 @@ func loadModelsCache(cfg *config.Config, agent string) (modelsCache, bool) {
 // writeModelsCache atomically records a SUCCESSFUL fetch: models, stamped now as both the last
 // success and the last attempt, clearing any recorded failure. An empty list is a no-op — a failed
 // fetch must never clobber a good cache.
-func writeModelsCache(cfg *config.Config, agent string, models []acpctl.Model) error {
+func writeModelsCache(cfg *config.Config, agent string, models []agents.Model) error {
 	if len(models) == 0 {
 		return nil
 	}
@@ -159,18 +151,11 @@ func storeModelsCache(cfg *config.Config, agent string, mc modelsCache) error {
 	return os.Rename(tmp, modelsCachePath(cfg, agent))
 }
 
-// nativeModelFetchers maps an agent to its auth-free host-CLI model probe (grok/codex).
-// Claude/Gemini advertise models only through ACP and use fetchACPModelCatalog below.
-var nativeModelFetchers = map[string]func() ([]acpctl.Model, error){
-	"grok":  fetchGrokModels,
-	"codex": fetchCodexModels,
-}
-
 // runModelCLI runs an agent's list command on the host and returns its stdout, timeout-bounded. An
 // error (CLI not on PATH, non-zero exit, timeout) tells the caller to keep the cached/static list.
 // These two probes need no box because they ask the HOST's own CLI — which is also why each
 // fetcher has to judge the answer: codex prints its full catalog either way, grok answers a
-// logged-out CLI with a placeholder (see grokUnauthenticated).
+// logged-out CLI with a placeholder.
 func runModelCLI(name string, args ...string) ([]byte, error) {
 	if _, err := exec.LookPath(name); err != nil {
 		return nil, err
@@ -180,46 +165,23 @@ func runModelCLI(name string, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, name, args...).Output()
 }
 
-// fetchGrokModels lists grok's models via `grok models`.
-func fetchGrokModels() ([]acpctl.Model, error) {
-	out, err := runModelCLI("grok", "models")
-	if err != nil {
-		return nil, err
-	}
-	if grokUnauthenticated(out) {
-		// The HOST's own grok login, not a coop account — `coop login grok` would sign into the
-		// box's profile and leave this probe exactly as blind as it is now.
-		return nil, modelFetchError{cause: "The host grok CLI is not signed in."}
-	}
-	return parseGrokModels(out), nil
-}
-
-// grokUnauthenticated reports whether `grok models` answered without a login. It exits 0 either
-// way, printing a single placeholder build in place of the real catalog — so a refresh that took
-// it at face value would replace a good list with one id that is not a model. Only the host's own
-// grok login is at stake here (this probe runs on the host, not in a credential-scoped box), so
-// the honest outcome is a failed fetch that keeps whatever list coop already had.
-func grokUnauthenticated(out []byte) bool {
-	return bytes.Contains(out, []byte("not authenticated"))
-}
-
-// fetchCodexModels lists codex's models via `codex debug models`.
-func fetchCodexModels() ([]acpctl.Model, error) {
-	out, err := runModelCLI("codex", "debug", "models")
-	if err != nil {
-		return nil, err
-	}
-	return parseCodexModels(out)
-}
-
 // fetchModelCatalog selects the cheapest real catalog source per provider. The ACP seam is
 // deliberately app-local: unit tests can prove refresh wiring without detecting a runtime, while
 // production always launches the real credential-scoped box.
-func (a *app) fetchModelCatalog(agent string) ([]acpctl.Model, error) {
-	if fetch := nativeModelFetchers[agent]; fetch != nil {
-		return fetch()
+func (a *app) fetchModelCatalog(agent string) ([]agents.Model, error) {
+	ag, ok := agents.Get(agent)
+	if !ok {
+		return nil, fmt.Errorf("%s has no model fetcher", agent)
 	}
-	if agent != "claude" && agent != "gemini" {
+	spec := ag.ModelCatalog()
+	if len(spec.HostCommand) > 0 {
+		out, err := runModelCLI(spec.HostCommand[0], spec.HostCommand[1:]...)
+		if err != nil {
+			return nil, err
+		}
+		return spec.ParseHost(out)
+	}
+	if spec.ParseACP == nil {
 		return nil, fmt.Errorf("%s has no model fetcher", agent)
 	}
 	if a.acpModels != nil {
@@ -243,7 +205,7 @@ func signInToRefresh(agent string) string {
 // then tears down both its process group and any container generation carrying this exact
 // supervisor id. It bypasses the public supervisor: a two-request probe needs no warm pool,
 // restart replay, or editor control layer.
-func (a *app) fetchACPModelCatalog(agent string) ([]acpctl.Model, error) {
+func (a *app) fetchACPModelCatalog(agent string) ([]agents.Model, error) {
 	if err := a.ensureRuntime(); err != nil {
 		return nil, err
 	}
@@ -382,82 +344,10 @@ func readACPLine(ctx context.Context, r *bufio.Reader) ([]byte, error) {
 	}
 }
 
-func parseACPModelResult(agent string, result json.RawMessage) []acpctl.Model {
-	var doc struct {
-		Models        json.RawMessage `json:"models"`
-		ConfigOptions []struct {
-			ID      string          `json:"id"`
-			Options []acpctl.Option `json:"options"`
-		} `json:"configOptions"`
-	}
-	if json.Unmarshal(result, &doc) != nil {
+func parseACPModelResult(name string, result json.RawMessage) []agents.Model {
+	ag, ok := agents.Get(name)
+	if !ok || ag.ModelCatalog().ParseACP == nil {
 		return nil
 	}
-	if agent == "gemini" {
-		return acpctl.ParseGeminiModels(doc.Models)
-	}
-	if agent == "claude" {
-		for _, option := range doc.ConfigOptions {
-			if option.ID == "model" {
-				return acpctl.ParseClaudeModelOption(option.Options)
-			}
-		}
-	}
-	return nil
-}
-
-// parseGrokModels reads `grok models` output — a bullet per model, the default marked:
-//
-//   - grok-4.5 (default)
-//   - grok-composer-2.5-fast
-//
-// It returns ids in listed order (name = id; grok prints no separate display name), skipping
-// blanks and duplicates.
-func parseGrokModels(out []byte) []acpctl.Model {
-	var models []acpctl.Model
-	seen := map[string]bool{}
-	for _, raw := range strings.Split(string(out), "\n") {
-		line := strings.TrimSpace(raw)
-		rest, ok := strings.CutPrefix(line, "* ")
-		if !ok {
-			rest, ok = strings.CutPrefix(line, "- ")
-		}
-		if !ok {
-			continue
-		}
-		fields := strings.Fields(rest) // the id, then an optional " (default)" marker
-		if len(fields) == 0 || seen[fields[0]] {
-			continue
-		}
-		seen[fields[0]] = true
-		models = append(models, acpctl.Model{ID: fields[0], Name: fields[0]})
-	}
-	return models
-}
-
-// parseCodexModels reads `codex debug models` JSON, keeping only list-visible models
-// (visibility=="list", dropping bundled/internal ones) with their slug + display name.
-func parseCodexModels(out []byte) ([]acpctl.Model, error) {
-	var doc struct {
-		Models []struct {
-			Slug        string `json:"slug"`
-			DisplayName string `json:"display_name"`
-			Visibility  string `json:"visibility"`
-		} `json:"models"`
-	}
-	if err := json.Unmarshal(out, &doc); err != nil {
-		return nil, err
-	}
-	var models []acpctl.Model
-	for _, m := range doc.Models {
-		if m.Visibility != "list" || m.Slug == "" {
-			continue
-		}
-		name := m.DisplayName
-		if name == "" {
-			name = m.Slug
-		}
-		models = append(models, acpctl.Model{ID: m.Slug, Name: name})
-	}
-	return models, nil
+	return ag.ModelCatalog().ParseACP(result)
 }

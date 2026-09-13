@@ -26,6 +26,10 @@ import (
 
 type codexAgent struct{}
 
+func (codexAgent) Scaffold() ScaffoldSpec {
+	return ScaffoldSpec{Project: ScaffoldLayout{Dir: ".codex"}}
+}
+
 const (
 	// Float on npm's stable latest tag so `coop update` pulls new agent fixes
 	// without a source edit. The profile trigger below remains the local guard
@@ -37,6 +41,7 @@ const (
 func init() { register(codexAgent{}) }
 
 func (codexAgent) Name() string        { return "codex" }
+func (codexAgent) SkillsCapable() bool { return true }
 func (codexAgent) DisplayName() string { return "Codex" }
 func (codexAgent) Vendor() string      { return "OpenAI" }
 
@@ -807,3 +812,202 @@ func (codexAgent) ShellPrelude() string {
 	return codexConsultText + consultPeerRowShell("codex", codexConsultUsage) + consultCaptureShell("codex", "Codex")
 }
 func (codexAgent) InstallScript() string { return "" }
+
+const (
+	codexReviewFooter = "tokens used"
+	// This marker is returned only through the internal response tail. It keeps an adapter-owned
+	// envelope that failed validation from accidentally reaching a later valid-looking receipt.
+	codexMalformedReviewEnvelope = "\x00coop-codex-review-envelope-invalid\x00"
+)
+
+// ReviewOutput removes only the footer shape emitted by the Codex transport wrapper.
+// The wrapper appends `tokens used` plus a formatted count and may repeat the final agent message
+// or its exact terminal evidence/receipt block before or after that footer. Earlier agent messages
+// are narration, not part of the echoed response. A different trailing block is not a second answer
+// to merge: it is an invalid envelope and gets an impossible terminal marker so strict receipt
+// parsing fails.
+func (codexAgent) ReviewOutput(output string, contract ReviewOutputContract) (string, bool) {
+	return (codexReviewNormalizer{contract}).normalize(output)
+}
+
+type codexReviewNormalizer struct{ ReviewOutputContract }
+
+func (n codexReviewNormalizer) normalize(output string) (string, bool) {
+	output = n.Normalize(output)
+	lines := strings.Split(output, "\n")
+	end := len(lines) - 1
+	for end >= 0 && strings.TrimSpace(lines[end]) == "" {
+		end--
+	}
+	if end < 0 {
+		return output, true
+	}
+
+	footer := -1
+	for i := 0; i < end; i++ {
+		if lines[i] != codexReviewFooter {
+			continue
+		}
+		if !codexTokenCount(lines[i+1]) {
+			return rejectCodexReviewEnvelope(output)
+		}
+		if footer >= 0 {
+			return rejectCodexReviewEnvelope(output)
+		}
+		footer = i
+	}
+	if end >= 0 && lines[end] == codexReviewFooter {
+		return rejectCodexReviewEnvelope(output)
+	}
+	if footer < 0 {
+		if strings.Contains(output, "REVIEW COMPLETE — ") {
+			if !n.ValidOutput(output) {
+				return rejectCodexReviewEnvelope(output)
+			}
+			return output, true
+		}
+		return output, true
+	}
+
+	beforeFooter := lines[:footer]
+	afterFooter := strings.Join(lines[footer+2:end+1], "\n")
+	if afterFooter != "" {
+		if n.validCodexReviewCandidate(afterFooter) && !hasCodexStructuredReviewLine(beforeFooter) {
+			return afterFooter, true
+		}
+		if !n.validCodexReviewCandidate(afterFooter) ||
+			n.codexReviewReceiptCount(beforeFooter)+n.codexReviewReceiptCount(strings.Split(afterFooter, "\n")) != 2 ||
+			!hasCodexReviewSuffix(beforeFooter, afterFooter) {
+			return rejectCodexReviewEnvelope(output)
+		}
+		return afterFooter, true
+	}
+	if canonical, ok := n.codexReviewCandidate(beforeFooter); ok {
+		return canonical, true
+	}
+	if canonical, ok := n.duplicatedCodexReviewSuffix(beforeFooter); ok {
+		return canonical, true
+	}
+	return rejectCodexReviewEnvelope(output)
+}
+
+func hasCodexStructuredReviewLine(lines []string) bool {
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "AUDIT EVIDENCE — ") || strings.Contains(line, "REVIEW COMPLETE — ") {
+			return true
+		}
+	}
+	return false
+}
+
+func (n codexReviewNormalizer) codexReviewCandidate(lines []string) (string, bool) {
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) == 0 || n.codexReviewReceiptCount(lines) != 1 {
+		return "", false
+	}
+	candidate := strings.Join(lines, "\n")
+	if !n.ValidOutput(candidate) {
+		return "", false
+	}
+	return candidate, true
+}
+
+func (n codexReviewNormalizer) validCodexReviewCandidate(candidate string) bool {
+	_, ok := n.codexReviewCandidate(strings.Split(candidate, "\n"))
+	return ok
+}
+
+func (n codexReviewNormalizer) codexReviewReceiptCount(lines []string) int {
+	count := 0
+	for _, line := range lines {
+		if n.ValidReceiptLine(line) {
+			count++
+		}
+	}
+	return count
+}
+
+func hasCodexReviewSuffix(lines []string, candidate string) bool {
+	before := strings.Join(lines, "\n")
+	return before == candidate || strings.HasSuffix(before, "\n"+candidate)
+}
+
+func (n codexReviewNormalizer) duplicatedCodexReviewSuffix(lines []string) (string, bool) {
+	if n.codexReviewReceiptCount(lines) != 2 {
+		return "", false
+	}
+	for start := 1; start < len(lines); start++ {
+		candidate, ok := n.codexReviewCandidate(lines[start:])
+		if ok && hasCodexReviewSuffix(lines[:start], candidate) {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+func rejectCodexReviewEnvelope(output string) (string, bool) {
+	return strings.TrimRight(output, "\r\n") + "\n" + codexMalformedReviewEnvelope, false
+}
+
+func codexTokenCount(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	groups := strings.Split(value, ",")
+	if len(groups) > 1 && (len(groups[0]) < 1 || len(groups[0]) > 3) {
+		return false
+	}
+	for i, group := range groups {
+		if group == "" || (i > 0 && len(group) != 3) {
+			return false
+		}
+		for _, r := range group {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (codexAgent) ReviewFooterLine(line string) bool {
+	line = strings.TrimSpace(line)
+	return line == codexReviewFooter || codexTokenCount(line)
+}
+
+func (codexAgent) PlainOutputProbe() PlainOutputProbe { return nil }
+
+func (codexAgent) ModelCatalog() ModelCatalogSpec {
+	return ModelCatalogSpec{HostCommand: []string{"codex", "debug", "models"}, ParseHost: parseCodexModels}
+}
+
+// parseCodexModels reads `codex debug models` JSON, keeping only list-visible models
+// (visibility=="list", dropping bundled/internal ones) with their slug + display name.
+func parseCodexModels(out []byte) ([]Model, error) {
+	var doc struct {
+		Models []struct {
+			Slug        string `json:"slug"`
+			DisplayName string `json:"display_name"`
+			Visibility  string `json:"visibility"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(out, &doc); err != nil {
+		return nil, err
+	}
+	var models []Model
+	for _, m := range doc.Models {
+		if m.Visibility != "list" || m.Slug == "" {
+			continue
+		}
+		name := m.DisplayName
+		if name == "" {
+			name = m.Slug
+		}
+		models = append(models, Model{ID: m.Slug, Name: name})
+	}
+	return models, nil
+}

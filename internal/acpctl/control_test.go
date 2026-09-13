@@ -1773,7 +1773,7 @@ func TestSleepUntilReset(t *testing.T) {
 // and unreachable from this package's tests (RISK 2 in spec.md), so this asserts on what the
 // control asked to be cached instead of round-tripping through a real file.
 func TestACPControlOpportunisticModelCache(t *testing.T) {
-	captured := map[string][]Model{}
+	captured := map[string][]agents.Model{}
 	c := newTestControlWithHost(t, testHostCapturingModels(captured))
 	in := `{"jsonrpc":"2.0","id":1,"result":{"sessionId":"s1","configOptions":[` +
 		`{"id":"model","type":"select","currentValue":"default","options":[{"value":"opus[1m]","name":"Opus"},{"value":"sonnet","name":"Sonnet"}]}]}}` + "\n"
@@ -1784,11 +1784,32 @@ func TestACPControlOpportunisticModelCache(t *testing.T) {
 	}
 }
 
+func TestACPControlOpportunisticCatalogIsProtocolGeneric(t *testing.T) {
+	for _, provider := range agents.Names() {
+		for _, shape := range []string{"options", "models"} {
+			t.Run(provider+"/"+shape, func(t *testing.T) {
+				captured := map[string][]agents.Model{}
+				cfg := &config.Config{ConfigDir: t.TempDir()}
+				c := New(cfg, provider, "", "", t.TempDir(), Selection{}, nil, nil, testHostCapturingModels(captured))
+				raw := `{"sessionId":"s1","configOptions":[{"id":"model","type":"select","options":[{"value":"first","name":"First"},{"value":12},{"value":"second","name":"Second"}]}]}`
+				if shape == "models" {
+					raw = `{"sessionId":"s1","models":{"availableModels":[{"modelId":"first","name":"First"},{"modelId":"second","name":"Second"}]}}`
+				}
+				toEd(c, []byte(`{"jsonrpc":"2.0","id":1,"result":`+raw+"}\n"))
+				got := captured[provider]
+				if len(got) != 2 || got[0].ID != "first" || got[1].ID != "second" {
+					t.Fatalf("cached = %v", got)
+				}
+			})
+		}
+	}
+}
+
 // TestACPControlOpportunisticGeminiCache: the same free refresh for gemini — its `models`
 // field (no native model option, coop synthesizes the dropdown) reaches WriteModelsCache. See
 // TestACPControlOpportunisticModelCache for why this asserts on the captured call, not a file.
 func TestACPControlOpportunisticGeminiCache(t *testing.T) {
-	captured := map[string][]Model{}
+	captured := map[string][]agents.Model{}
 	c := newGeminiControlWithHost(t, "", testHostCapturingModels(captured))
 	toEd(c, []byte(geminiSessionNew))
 	got := captured["gemini"]

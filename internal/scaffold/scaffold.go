@@ -17,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/taskstate"
 )
@@ -53,19 +54,18 @@ func Init(repo, stack string, gateLangs, agentDirs []string) ([]Notice, error) {
 		skillsRoot,
 		filepath.Join(repo, ".agent", "presets"), // orchestration recipes live here (coop presets init writes one)
 	}
-	// The .agent/claude/ fallback is only ever read when the repo has NO project .claude/ artifact
-	// (see agent.claudeAgent.HomeFallbacks) — scaffolding both would commit a second, byte-identical
-	// copy of the same settings + commit gate that nothing reads.
-	if has("claude") {
-		dirs = append(dirs, filepath.Join(repo, ".claude", "hooks"))
-	} else {
-		dirs = append(dirs, filepath.Join(repo, ".agent", "claude", "hooks"))
-	}
-	if has("codex") {
-		dirs = append(dirs, filepath.Join(repo, ".codex"))
-	}
-	if has("gemini") {
-		dirs = append(dirs, filepath.Join(repo, ".gemini"))
+	for _, name := range agents.Names() {
+		ag, _ := agents.Get(name)
+		layout := ag.Scaffold().Fallback
+		if has(name) {
+			layout = ag.Scaffold().Project
+		}
+		if layout.Dir != "" {
+			dirs = append(dirs, filepath.Join(repo, layout.Dir))
+		}
+		for _, dir := range layout.Dirs {
+			dirs = append(dirs, filepath.Join(repo, dir))
+		}
 	}
 	// The task-queue state dirs come from the shared taskstate package, so `coop init` can never
 	// scaffold a name the cli can't read. The numeric prefix sorts `ls .agent/tasks` by lifecycle.
@@ -86,15 +86,15 @@ func Init(repo, stack string, gateLangs, agentDirs []string) ([]Notice, error) {
 		// One committed loop config (fully commented → no behavior change until you uncomment a key).
 		{filepath.Join(repo, ".agent", "loop.yaml"), "templates/agent/loop.yaml", 0o644},
 	}
-	if has("claude") {
-		// Claude's project settings. commit-gate.sh is generated per-stack in installGitHooks, not
-		// copied verbatim. Subagents are NOT scaffolded: a preset generates its own coop-<role> in the
-		// box, and a repo with its own roles doesn't want two competing sets committed.
-		files = append(files, scaffFile{filepath.Join(repo, ".claude", "settings.json"), "templates/claude/settings.json", 0o644})
-	} else {
-		// Claude fallback adapter: coop copies this user-level into a box only when the project
-		// .claude/ artifact is absent — which, with no .claude/ scaffolded, is exactly this repo.
-		files = append(files, scaffFile{filepath.Join(repo, ".agent", "claude", "settings.json"), "templates/agent/claude/settings.json", 0o644})
+	for _, name := range agents.Names() {
+		ag, _ := agents.Get(name)
+		layout := ag.Scaffold().Fallback
+		if has(name) {
+			layout = ag.Scaffold().Project
+		}
+		for _, f := range layout.Files {
+			files = append(files, scaffFile{filepath.Join(repo, f.Path), f.Template, f.Mode})
+		}
 	}
 	for _, f := range files {
 		if err := s.writeIfAbsent(f.dest, f.src, f.perm); err != nil {
@@ -105,20 +105,20 @@ func Init(repo, stack string, gateLangs, agentDirs []string) ([]Notice, error) {
 	// One brain, every agent: AGENTS.md is canonical and CLAUDE.md / GEMINI.md symlink to it.
 	// Workflow skills likewise keep one established source: .agent/skills normally, or an existing
 	// real .claude/skills. A real instruction file, skills dir, or valid skills link is never clobbered.
-	if has("claude") {
-		if err := s.linkIfAbsent("AGENTS.md", filepath.Join(repo, "CLAUDE.md")); err != nil {
-			return s.notices, err
-		}
-	}
-	if has("gemini") {
-		if err := s.linkIfAbsent("AGENTS.md", filepath.Join(repo, "GEMINI.md")); err != nil {
-			return s.notices, err
-		}
-	}
-	for _, dir := range []string{".claude", ".codex", ".gemini"} {
-		if !has(strings.TrimPrefix(dir, ".")) {
+	for _, name := range agents.Names() {
+		ag, _ := agents.Get(name)
+		if !has(name) || ag.Scaffold().Project.Dir == "" {
 			continue
 		}
+		if instruction := ag.InstructionFile(); instruction != "" && instruction != "AGENTS.md" {
+			if err := s.linkIfAbsent("AGENTS.md", filepath.Join(repo, instruction)); err != nil {
+				return s.notices, err
+			}
+		}
+		if !ag.SkillsCapable() {
+			continue
+		}
+		dir := ag.Scaffold().Project.Dir
 		link := filepath.Join(repo, dir, "skills")
 		target, err := filepath.Rel(filepath.Dir(link), skillsRoot)
 		if err != nil {
@@ -138,12 +138,12 @@ func Init(repo, stack string, gateLangs, agentDirs []string) ([]Notice, error) {
 	if _, err := WriteProject(repo, DetectSubprojects(repo)); err != nil {
 		return s.notices, err
 	}
-	if err := s.updateGitignore(has("gemini")); err != nil {
+	if err := s.updateGitignore(agentDirs); err != nil {
 		return s.notices, err
 	}
 	// The shared Claude fallback needs the same stack-aware commit gate even when the repo keeps no
 	// project .claude/ adapter. A selected Claude adapter receives its project copy as before.
-	if err := s.installGitHooks(gateLangs, has("claude")); err != nil {
+	if err := s.installGitHooks(gateLangs, agentDirs); err != nil {
 		return s.notices, err
 	}
 
@@ -234,9 +234,11 @@ func skillsSource(repo string) string {
 	if info, err := os.Stat(agentSkills); err == nil && info.IsDir() {
 		return agentSkills
 	}
-	claudeSkills := filepath.Join(repo, ".claude", "skills")
-	if info, err := os.Lstat(claudeSkills); err == nil && info.IsDir() {
-		return claudeSkills
+	for _, rel := range agents.EstablishedSkillsSources() {
+		path := filepath.Join(repo, rel)
+		if info, err := os.Lstat(path); err == nil && info.IsDir() {
+			return path
+		}
 	}
 	return agentSkills
 }
@@ -416,7 +418,7 @@ func (s *scaffolder) copySkills() error {
 // installGitHooks generates the tracked git hooks and Claude's commit gate — the project-scoped
 // copy when the repo keeps a .claude/ adapter, the .agent/claude/ fallback otherwise. A repo with
 // no detected stack gets a neutral gate. A user's custom hooksPath or existing hook is never clobbered.
-func (s *scaffolder) installGitHooks(langs []string, projectClaude bool) error {
+func (s *scaffolder) installGitHooks(langs, agentDirs []string) error {
 	if err := s.writeContentIfAbsent(filepath.Join(s.repo, ".githooks", "pre-commit"), preCommitHook(langs), 0o755); err != nil {
 		return err
 	}
@@ -436,15 +438,24 @@ func (s *scaffolder) installGitHooks(langs []string, projectClaude bool) error {
 	} else if err := s.writeContentIfAbsent(preparePath, prepareCommitMsgChainHook, 0o755); err != nil {
 		return err
 	}
-	// One copy of the Claude commit gate, not two: the project artifact always wins over the
-	// .agent/claude/ fallback (agent.claudeAgent.HomeFallbacks), so scaffolding both commits a
-	// byte-identical script the box never reads.
-	claudeGate := filepath.Join(s.repo, ".agent", "claude", "hooks", "commit-gate.sh")
-	if projectClaude {
-		claudeGate = filepath.Join(s.repo, ".claude", "hooks", "commit-gate.sh")
-	}
-	if err := s.writeContentIfAbsent(claudeGate, claudeCommitGate(langs), 0o755); err != nil {
-		return err
+	for _, name := range agents.Names() {
+		ag, _ := agents.Get(name)
+		spec := ag.Scaffold()
+		if spec.CommitGate == nil {
+			continue
+		}
+		layout := spec.Fallback
+		if slices.Contains(agentDirs, name) {
+			layout = spec.Project
+		}
+		if layout.CommitGatePath == "" {
+			continue
+		}
+		gate := spec.CommitGate
+		body := gate.Prefix + gateBody(langs, gate.FailureCode) + gate.Suffix
+		if err := s.writeContentIfAbsent(filepath.Join(s.repo, layout.CommitGatePath), body, 0o755); err != nil {
+			return err
+		}
 	}
 	if !gitRepo(s.repo) {
 		// Nothing to point core.hooksPath at yet. The caller says so once, as the action that
@@ -509,36 +520,23 @@ func gitConfigSet(repo, key, value string) error {
 // only project.yaml is TOP-LEVEL (the single subprojects+serve config), so its un-ignore stays
 // root-anchored. tasks/ needs the three-step dance because git never descends into an excluded
 // directory: re-include the dir, re-exclude its contents, then rescue the one committed doc.
-var (
-	coopIgnoreStanza = []string{
+func coopIgnoreStanza() []string {
+	lines := []string{
 		"# coop working state (commit knowledge, ignore state)",
-		"**/.agent/*",
-		"!**/.agent/kb/",
-		"!**/.agent/skills/",
-		"!**/.agent/presets/",
-		"!**/.agent/claude/",
-		"!**/.agent/loop.yaml",
-		"!**/.agent/compose.yml",
-		"!**/.agent/Dockerfile",
-		"!.agent/project.yaml",
+		"**/.agent/*", "!**/.agent/kb/", "!**/.agent/skills/", "!**/.agent/presets/",
+	}
+	for _, name := range agents.Names() {
+		ag, _ := agents.Get(name)
+		lines = append(lines, ag.Scaffold().KnowledgeIgnore...)
+	}
+	return append(lines,
+		"!**/.agent/loop.yaml", "!**/.agent/compose.yml", "!**/.agent/Dockerfile", "!.agent/project.yaml",
 		"# the queue is local state, but its layout doc is a BOOT entry point — commit just that",
-		"!**/.agent/tasks/",
-		"**/.agent/tasks/*",
-		"!**/.agent/tasks/README.md",
-	}
-	presetSubagentIgnoreStanza = []string{
-		"# preset native subagents coop generates in the box (coop-<role>) — never committed",
-		".claude/agents/coop-*.md",
-	}
-	geminiIgnoreStanza = []string{
-		"# .gemini may be globally ignored (local Gemini state); keep just the skills symlink",
-		"!.gemini/",
-		".gemini/*",
-		"!.gemini/skills",
-	}
-)
+		"!**/.agent/tasks/", "**/.agent/tasks/*", "!**/.agent/tasks/README.md",
+	)
+}
 
-func (s *scaffolder) updateGitignore(wantGemini bool) error {
+func (s *scaffolder) updateGitignore(agentDirs []string) error {
 	gi := filepath.Join(s.repo, ".gitignore")
 	data, _ := os.ReadFile(gi) // missing file → empty; we create it below
 	orig := string(data)
@@ -548,33 +546,31 @@ func (s *scaffolder) updateGitignore(wantGemini bool) error {
 	}
 
 	if !hasIgnoreLine(lines, "**/.agent/*") {
-		lines = appendIgnoreStanza(lines, coopIgnoreStanza)
+		lines = appendIgnoreStanza(lines, coopIgnoreStanza())
 	} else {
 		// Splice into an older stanza only what it lacks, each after the line it must follow. The
 		// order here is the stanza's own, so an anchor is always in place before the rule that needs it.
-		for _, up := range [][2]string{
-			{"!**/.agent/kb/", "**/.agent/*"},
-			{"!**/.agent/skills/", "!**/.agent/kb/"},
-			{"!**/.agent/presets/", "!**/.agent/skills/"},
-			{"!**/.agent/claude/", "!**/.agent/presets/"},
-			{"!**/.agent/loop.yaml", "!**/.agent/claude/"},
-			{"!**/.agent/compose.yml", "!**/.agent/loop.yaml"},
-			{"!**/.agent/Dockerfile", "!**/.agent/compose.yml"},
-			{"!.agent/project.yaml", "!**/.agent/Dockerfile"},
-			{"!**/.agent/tasks/", "!.agent/project.yaml"},
-			{"**/.agent/tasks/*", "!**/.agent/tasks/"},
-			{"!**/.agent/tasks/README.md", "**/.agent/tasks/*"},
-		} {
-			lines = insertIgnoreLineAfter(lines, up[0], up[1])
+		anchor := "**/.agent/*"
+		for _, line := range coopIgnoreStanza() {
+			if strings.HasPrefix(line, "#") || line == anchor {
+				continue
+			}
+			lines = insertIgnoreLineAfter(lines, line, anchor)
+			anchor = line
 		}
 	}
-	if !hasIgnoreLine(lines, ".claude/agents/coop-*.md") {
-		lines = appendIgnoreStanza(lines, presetSubagentIgnoreStanza)
-	}
-	// Only a repo that keeps a .gemini/ needs the rules that rescue its skills symlink from a
-	// global ignore; writing them into a repo with no .gemini/ is noise.
-	if wantGemini && !hasIgnoreLine(lines, "!.gemini/skills") {
-		lines = appendIgnoreStanza(lines, geminiIgnoreStanza)
+	for _, name := range agents.Names() {
+		ag, _ := agents.Get(name)
+		spec := ag.Scaffold()
+		stanzas := [][]string{spec.AlwaysIgnore}
+		if slices.Contains(agentDirs, name) {
+			stanzas = append(stanzas, spec.SelectedIgnore)
+		}
+		for _, stanza := range stanzas {
+			if len(stanza) > 0 && !hasIgnoreLine(lines, stanza[len(stanza)-1]) {
+				lines = appendIgnoreStanza(lines, stanza)
+			}
+		}
 	}
 
 	out := strings.Join(lines, "\n") + "\n"

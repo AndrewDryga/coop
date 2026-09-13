@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -340,7 +341,7 @@ func TestClaudeTerminalCreditLimitPromotion(t *testing.T) {
 	const notice = "You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model."
 	const uncontractedNotice = "You have reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model."
 	for _, direct := range []string{notice, uncontractedNotice} {
-		if !claudeCreditLimitNotice(direct) {
+		if !agents.ClaudeCreditLimitNotice(direct) {
 			t.Fatalf("direct Claude credit-limit notice not recognized: %q", direct)
 		}
 	}

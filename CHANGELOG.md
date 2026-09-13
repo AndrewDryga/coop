@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Provider adapters now declare model discovery, review-output handling, plain quota detection,
+  skills and project scaffolding. Existing behavior is preserved, with a source check that
+  prevents new provider selectors from being hard-coded in shared code.
+
 - Grok loop summaries retain reported cost and avoid counting reasoning twice in current
   streams, while preserving older streams that report reasoning separately.
 

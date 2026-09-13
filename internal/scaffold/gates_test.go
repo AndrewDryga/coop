@@ -55,7 +55,7 @@ func TestGateGeneration(t *testing.T) {
 		t.Error("pre-commit hook should block with exit 1")
 	}
 	// The Claude gate blocks the tool call with exit 2.
-	claude := claudeCommitGate([]string{"go"})
+	claude := testNativeCommitGate("claude", []string{"go"})
 	if !strings.Contains(claude, "command -v gofmt") || !strings.Contains(claude, "exit 2") {
 		t.Errorf("claude gate should gofmt-check and block with exit 2:\n%s", claude)
 	}

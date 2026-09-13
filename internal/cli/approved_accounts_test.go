@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AndrewDryga/coop/internal/acpctl"
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/preset"
@@ -429,8 +428,8 @@ func TestApprovedModelMenus(t *testing.T) {
 		t.Cleanup(func() { modelMenuWidth = old })
 	}
 	// No fetch may run: every case is inside the retry window a failed attempt left behind.
-	noFetch := func(t *testing.T) func(string) ([]acpctl.Model, error) {
-		return func(agent string) ([]acpctl.Model, error) {
+	noFetch := func(t *testing.T) func(string) ([]agents.Model, error) {
+		return func(agent string) ([]agents.Model, error) {
 			t.Errorf("the menu refetched %s instead of backing off", agent)
 			return nil, nil
 		}
@@ -567,10 +566,10 @@ func writeModelsCacheFixture(t *testing.T, cfg *config.Config, agent string, mc 
 	}
 }
 
-func modelList(ids ...string) []acpctl.Model {
-	out := make([]acpctl.Model, 0, len(ids))
+func modelList(ids ...string) []agents.Model {
+	out := make([]agents.Model, 0, len(ids))
 	for _, id := range ids {
-		out = append(out, acpctl.Model{ID: id, Name: id})
+		out = append(out, agents.Model{ID: id, Name: id})
 	}
 	return out
 }

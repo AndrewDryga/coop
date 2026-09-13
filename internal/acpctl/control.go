@@ -1978,7 +1978,7 @@ func (c *Control) rewriteConfigOptions(raw, models json.RawMessage, sid string, 
 		}
 		if head.ID == "model" {
 			hasModel = true
-			c.cacheModels(ParseClaudeModelOption(head.Options)) // free refresh of `coop models` for claude
+			c.cacheModels(agents.ParseACPModelOption(item)) // free refresh from native model options
 			if sel.Preset == "" && model != "" && optionHasValue(head.Options, model) {
 				item = withField(item, "currentValue", model) // default to coop's model; still switchable
 			}
@@ -1996,7 +1996,7 @@ func (c *Control) rewriteConfigOptions(raw, models json.RawMessage, sid string, 
 	if !hasModel && sel.Preset == "" {
 		if synth := c.synthModelOption(models, sel.Preset, model); synth != nil {
 			out = append(out, synth)
-			c.cacheModels(ParseGeminiModels(models)) // free refresh from the generic ACP `models` shape
+			c.cacheModels(agents.ParseACPAvailableModels(models)) // free refresh from the generic ACP `models` shape
 			c.mu.Lock()
 			c.leadUsesSetModel = true
 			c.mu.Unlock()
@@ -2018,7 +2018,7 @@ func (c *Control) rewriteConfigOptions(raw, models json.RawMessage, sid string, 
 // the free, opportunistic refresh that keeps `coop models` live from native options/models at zero
 // extra cost (the session/new models are already parsed here). Best-effort: an empty list or
 // a write error is ignored, so the plain `coop models` just falls back to the static list.
-func (c *Control) cacheModels(models []Model) {
+func (c *Control) cacheModels(models []agents.Model) {
 	_ = c.host.WriteModelsCache(c.cfg, c.lead, models)
 }
 

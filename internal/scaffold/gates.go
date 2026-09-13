@@ -193,18 +193,3 @@ hook="$HOME/.coop-git-hooks/prepare-commit-msg"
 [ -x "$hook" ] || exit 0
 exec "$hook" "$@"
 `
-
-// claudeCommitGate is the .claude/hooks/commit-gate.sh gate (Claude only; a Claude hook
-// blocks the tool call on exit 2). Reads the tool call on stdin and acts only on git commit.
-func claudeCommitGate(langs []string) string {
-	return `#!/bin/bash
-# Fast commit gate: format staged files, block the commit if they're dirty.
-# Reads the tool call on stdin; only acts on git commit. Fails open.
-set -f          # the file lists below are word-split on purpose; don't also glob-expand a name
-IFS=$'\n'       # …and split only on newlines, so a staged filename with a space stays one path
-input=$(cat)
-echo "$input" | grep -q '"command"[^}]*git commit' || exit 0
-staged=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null) || exit 0
-
-` + gateBody(langs, "2") + "\n\nexit 0\n"
-}

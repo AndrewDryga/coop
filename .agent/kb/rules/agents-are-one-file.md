@@ -2,9 +2,9 @@
 name: agents-are-one-file
 description: "a coding agent is one self-registering file in `internal/agent`, never a switch elsewhere"
 scope: architecture
-sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go]
-check: "go test ./internal/agent -run TestRegistry"
-updated: 2026-09-10
+sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/provider_decisions_test.go, Makefile]
+check: "go test ./internal/agent -run 'TestRegistry|TestProviderDecisionsStayInAdapters|TestProviderDecisionGuard'"
+updated: 2026-09-13
 ---
 
 # A coding agent is one file in internal/agent — never a switch elsewhere
@@ -27,9 +27,18 @@ adding an agent a single new file.
 - Need a new per-agent behavior → add a method to the `Agent` interface (the compiler then forces every adapter to implement it) and have the caller use `agents.Get(name).Method()`.
 - Never hard-code the provider set outside `internal/agent`. Validation is `agents.Valid`; the default agent is `agents.Default()`.
 - The narrow exceptions are the `testdata` process-test oracles — `internal/cli/testdata/providerfixture` (native provider argv/output) and `internal/acpproxy/testdata/acpfixture` (per-provider ACP scripts): each is an independent oracle that must enumerate provider shapes instead of reusing production adapter code. Their registry-completeness tests must fail when a new adapter has no oracle arm.
-- Guard production code only: `rg '\"(claude|codex|gemini|grok)\"' internal -g '!**/*_test.go' -g '!internal/agent/**' -g '!internal/cli/testdata/providerfixture/**' -g '!internal/acpproxy/testdata/acpfixture/**'` should return nothing.
+- `make rules-check` runs the provider-decision guard. It parses Go sources, rejecting exact
+  provider-name literals outside adapters while permitting comments and multiline examples.
+  The recognized names come from the registry, not a second frozen provider list. Only Go
+  tests and the two independent process-test oracle directories above are exempt.
 
 ## Changelog
+- 2026-09-13 — swept production Go sources: moved the remaining review envelope, plain limit,
+  model discovery, skills, scaffold and default selections behind the adapters. Strict host
+  receipt grammar and CLI cache/execution policy remain with their owners. The guard now
+  mechanically rejects selector/map/switch mutations, including a newly registered provider;
+  only four prose/example literal lines remain in the textual census. Model protocol DTOs
+  live below ACP control, preserving both opportunistic partial and forced strict decoding.
 - 2026-09-10 — `Vendor()` joined the interface (the company behind the product: Anthropic, OpenAI,
   Google, xAI) for the launch line that says whose endpoints a filtered box may reach and who an
   offline agent cannot reach — the per-agent fact went behind the interface, not into a map in

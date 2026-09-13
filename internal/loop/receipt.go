@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
@@ -94,8 +95,31 @@ func receiptFailureTail(output string) string {
 // still voids it, because the between prompt requires nothing after the receipt. The point is to
 // stop a FOOTER from voiding an otherwise valid receipt, not to license trailing prose.
 func wrapperFooterLine(line string) bool {
-	line = strings.TrimSpace(line)
-	return line == codexReviewFooter || codexTokenCount(line)
+	for _, name := range agents.Names() {
+		ag, _ := agents.Get(name)
+		if ag.ReviewFooterLine(line) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeAgentReviewOutput(name, raw string) (string, bool) {
+	ag, ok := agents.Get(name)
+	if !ok {
+		return raw, true
+	}
+	return ag.ReviewOutput(raw, agents.ReviewOutputContract{
+		Normalize: normalizeReviewVerdictOutput,
+		ValidOutput: func(output string) bool {
+			_, valid := reviewReopenReceipt(output)
+			return valid
+		},
+		ValidReceiptLine: func(line string) bool {
+			_, valid := parseReviewReceiptLine(line)
+			return valid
+		},
+	})
 }
 
 // reviewReopenReceipt parses the strict terminal receipt emitted by every review. A receipt-looking

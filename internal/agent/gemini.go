@@ -17,9 +17,34 @@ import (
 
 type geminiAgent struct{}
 
+func (geminiAgent) Scaffold() ScaffoldSpec {
+	return ScaffoldSpec{
+		Project: ScaffoldLayout{Dir: ".gemini"},
+		SelectedIgnore: []string{
+			"# .gemini may be globally ignored (local Gemini state); keep just the skills symlink",
+			"!.gemini/", ".gemini/*", "!.gemini/skills",
+		},
+	}
+}
+
+func (geminiAgent) ModelCatalog() ModelCatalogSpec {
+	return ModelCatalogSpec{ParseACP: func(raw json.RawMessage) []Model {
+		var doc acpModelCatalog
+		if json.Unmarshal(raw, &doc) != nil {
+			return nil
+		}
+		return ParseACPAvailableModels(doc.Models)
+	}}
+}
+
+func (geminiAgent) ReviewOutput(raw string, _ ReviewOutputContract) (string, bool) { return raw, true }
+func (geminiAgent) ReviewFooterLine(string) bool                                   { return false }
+func (geminiAgent) PlainOutputProbe() PlainOutputProbe                             { return nil }
+
 func init() { register(geminiAgent{}) }
 
 func (geminiAgent) Name() string        { return "gemini" }
+func (geminiAgent) SkillsCapable() bool { return true }
 func (geminiAgent) DisplayName() string { return "Gemini CLI" }
 func (geminiAgent) Vendor() string      { return "Google" }
 

@@ -631,7 +631,7 @@ func (d *streamDecoder) assistant(msg json.RawMessage) {
 					d.emitAssistant(t) // mark the agent's own voice
 				}
 				d.toTail(t) // the tail (limit detection) always gets the plain text
-				if claudeCreditLimitNotice(t) {
+				if agents.ClaudeCreditLimitNotice(t) {
 					d.terminalLimitNotice = t
 				}
 			}
@@ -684,25 +684,6 @@ func (d *streamDecoder) promoteTerminalLimitDiagnostic(code int, outcome provide
 		return
 	}
 	d.toDiagnostic(d.terminalLimitNotice)
-}
-
-func claudeCreditLimitNotice(text string) bool {
-	lower := strings.ToLower(strings.TrimSpace(text))
-	if !strings.HasPrefix(lower, "you've reached your ") &&
-		!strings.HasPrefix(lower, "you have reached your ") {
-		return false
-	}
-	const action = "run /usage-credits to continue or switch models with /model"
-	actionAt := strings.Index(lower, action)
-	if actionAt < 0 {
-		return false
-	}
-	prefix := strings.TrimSpace(lower[:actionAt])
-	if !strings.HasSuffix(prefix, " limit.") || !agents.CLIRateLimited(prefix) {
-		return false
-	}
-	suffix := strings.TrimSpace(lower[actionAt+len(action):])
-	return suffix == "" || suffix == "."
 }
 
 // A metadata key containing "error" is not a cause. Keep this stricter than command

@@ -92,6 +92,7 @@ tools-test: require-python3 ## Run standard-library tests for repository mainten
 
 rules-check: require-python3 ## Fail if a .agent/kb card or rule is malformed, unindexed, or names a source/check that doesn't exist
 	@python3 tools/check_rules.py
+	@go test ./internal/agent -run 'TestProviderDecisionsStayInAdapters|TestProviderDecisionGuard'
 
 build-all: ## Compile every package (a package no test imports can still break the build)
 	@go build ./...

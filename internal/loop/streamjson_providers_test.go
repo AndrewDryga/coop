@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	agents "github.com/AndrewDryga/coop/internal/agent"
 )
 
 func TestIterationCommandStreamFlags(t *testing.T) {
@@ -74,17 +76,18 @@ func TestClaudePlainLimitProbeRequiresExactFailedOutput(t *testing.T) {
 		{name: "discussion", chunks: []string{"The reply " + notice + " should rotate.\n"}, code: 23},
 		{name: "quoted notice", chunks: []string{"\"" + notice + "\"\n"}, code: 23},
 		{name: "extra task prose", chunks: []string{notice + "\nPlease update the classifier.\n"}, code: 23},
-		{name: "overflow before notice", chunks: []string{strings.Repeat("x", maxClaudePlainLimitBytes+1), notice}, code: 23},
+		{name: "overflow before notice", chunks: []string{strings.Repeat("x", 512+1), notice}, code: 23},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			var probe claudePlainLimitProbe
+			ag, _ := agents.Get("claude")
+			probe := ag.PlainOutputProbe()
 			for _, chunk := range tc.chunks {
 				if _, err := probe.Write([]byte(chunk)); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if got := probe.limited(tc.code); got != tc.want {
+			if got := probe.Limited(tc.code); got != tc.want {
 				t.Fatalf("plain Claude limit diagnostic = %v, want %v", got, tc.want)
 			}
 		})
@@ -310,6 +313,30 @@ func TestCodexStreamDecoder(t *testing.T) {
 	}
 }
 
+func TestNormalizeReviewAdapterDispatch(t *testing.T) {
+	const receipt = "AUDIT EVIDENCE — task-a — gate: make check — findings: none\nREVIEW COMPLETE — PASS — reopened: none"
+	const raw = receipt + "\ntokens used\n1,234"
+	for _, name := range append(agents.Names(), "unregistered") {
+		want := raw
+		if name == "codex" {
+			want = receipt
+		}
+		got, ok := normalizeAgentReviewOutput(name, raw)
+		if !ok || got != want {
+			t.Errorf("%s normalization = %q/%v", name, got, ok)
+		}
+		if _, ok := reviewReopenReceipt(got); !ok {
+			t.Errorf("%s lost existing wrapper-footer acceptance", name)
+		}
+	}
+	for _, name := range agents.Names() {
+		ag, _ := agents.Get(name)
+		if (ag.PlainOutputProbe() != nil) != (name == "claude") {
+			t.Errorf("%s changed plain-output probe capability", name)
+		}
+	}
+}
+
 func TestNormalizeCodexReviewOutput(t *testing.T) {
 	pass := "AUDIT EVIDENCE — task-a — gate: make check — findings: none\n" +
 		"REVIEW COMPLETE — PASS — reopened: none"
@@ -341,7 +368,7 @@ func TestNormalizeCodexReviewOutput(t *testing.T) {
 			if tc.echoAfterFooter {
 				output += "\n" + tc.block
 			}
-			got, ok := normalizeCodexReviewOutput(output)
+			got, ok := normalizeAgentReviewOutput("codex", output)
 			if !ok || got != tc.block {
 				t.Fatalf("normalizeCodexReviewOutput = %q/%v, want %q/true", got, ok, tc.block)
 			}
@@ -373,7 +400,7 @@ func TestNormalizeCodexReviewOutput(t *testing.T) {
 			if tc.echoAfterFooter {
 				output += "\n" + final
 			}
-			got, ok := normalizeCodexReviewOutput(output)
+			got, ok := normalizeAgentReviewOutput("codex", output)
 			if !ok || got != final {
 				t.Fatalf("normalizeCodexReviewOutput = %q/%v, want final response %q/true", got, ok, final)
 			}
@@ -409,8 +436,8 @@ func TestNormalizeCodexReviewOutput(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := normalizeCodexReviewOutput(tc.output)
-			if ok || !strings.Contains(got, codexMalformedReviewEnvelope) {
+			got, ok := normalizeAgentReviewOutput("codex", tc.output)
+			if ok || !strings.Contains(got, "\x00coop-codex-review-envelope-invalid\x00") {
 				t.Fatalf("malformed envelope = %q/%v, want internal rejection marker", got, ok)
 			}
 			if _, ok := reviewReopenReceipt(got); ok {
@@ -419,11 +446,11 @@ func TestNormalizeCodexReviewOutput(t *testing.T) {
 		})
 	}
 
-	got, ok := normalizeCodexReviewOutput(pass)
+	got, ok := normalizeAgentReviewOutput("codex", pass)
 	if !ok || got != pass {
 		t.Fatalf("ordinary Codex response = %q/%v, want unchanged", got, ok)
 	}
-	got, ok = normalizeCodexReviewOutput(pass + "\n" + pass)
+	got, ok = normalizeAgentReviewOutput("codex", pass+"\n"+pass)
 	if !ok || got != pass {
 		t.Fatalf("byte-identical Codex response echo = %q/%v, want %q/true", got, ok, pass)
 	}
@@ -431,7 +458,7 @@ func TestNormalizeCodexReviewOutput(t *testing.T) {
 		footer + "\n" + pass,
 		footer + "\n" + pass + "\n" + pass,
 	} {
-		got, ok = normalizeCodexReviewOutput(output)
+		got, ok = normalizeAgentReviewOutput("codex", output)
 		if !ok || got != pass {
 			t.Fatalf("Codex footer reordered before response = %q/%v, want %q/true", got, ok, pass)
 		}

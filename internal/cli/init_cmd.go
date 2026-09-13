@@ -23,10 +23,6 @@ import (
 // project in a state its owner recognises. Everything it writes is no-clobber, every question has
 // a safe default, and nothing it says claims a step it did not take.
 
-// scaffoldableAgents are the agents with a per-agent dir `coop init` can scaffold (grok reads the
-// root AGENTS.md, no dir of its own).
-var scaffoldableAgents = []string{"claude", "codex", "gemini"}
-
 // initInput is the narrow test seam ui.confirmInput already establishes for the same problem: a
 // first-run question can only be answered from the terminal coop detected, and no test has one.
 // nil — which it always is outside this package's own tests — means the real path, os.Stdin gated
@@ -95,19 +91,23 @@ var (
 		flag: "--services", command: "coop init", example: "coop init --services postgres,redis",
 		valid: scaffold.ComposeServices, sentinel: "none",
 	}
-	initAgents = listOption{
-		flag: "--agents", command: "coop init", example: "coop init --agents claude,codex",
-		valid: scaffoldableAgents, sentinel: "all", expand: scaffoldableAgents,
-	}
 	initOptions = []string{"--stack", "--services", "--agents"}
 )
+
+func initAgentsOption() listOption {
+	names := agents.Scaffoldable()
+	return listOption{
+		flag: "--agents", command: "coop init", example: "coop init --agents claude,codex",
+		valid: names, sentinel: "all", expand: names,
+	}
+}
 
 // scaffoldAgentSet resolves the implicit per-agent dirs from signed-in agents. Empty means
 // .agent/ only; a box synthesizes a missing agent's skills from the shared source on demand.
 func scaffoldAgentSet(cfg *config.Config) []string {
 	var out []string
 	for _, name := range box.AuthedAgents(cfg) {
-		if slices.Contains(scaffoldableAgents, name) && !slices.Contains(out, name) {
+		if ag, ok := agents.Get(name); ok && ag.Scaffold().Project.Dir != "" && !slices.Contains(out, name) {
 			out = append(out, name)
 		}
 	}
@@ -148,6 +148,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 			continue
 		}
 		if v, n, ok, e := flagValue(args, i, "--agents"); ok {
+			initAgents := initAgentsOption()
 			if e != nil { // the list is required: say so with a valid example, not a bare "needs a value"
 				return 2, ui.MissingOptionValue(initAgents.flag, initAgents.command, initAgents.example)
 			}
@@ -461,7 +462,7 @@ func initActions(cfg *config.Config, repo string, services, agentDirs []string, 
 	}
 	// The agent to sign in to is also the one the loop line below names, so a first run reads as
 	// one story rather than two unrelated suggestions.
-	loopTarget := "claude"
+	loopTarget := agents.Default()
 	if len(agentDirs) > 0 {
 		loopTarget = agentDirs[0]
 	}

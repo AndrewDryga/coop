@@ -772,10 +772,10 @@ func TestParseExplicitList(t *testing.T) {
 		{name: "services normalized and de-duplicated", option: initServices, in: "Redis, POSTGRES redis", want: []string{"redis", "postgres"}},
 		{name: "unknown service", option: initServices, in: "postgres,mongo", wantErr: `Invalid value "mongo" for "--services" in "coop init"`},
 		{name: "none is standalone", option: initServices, in: "postgres,none", wantErr: `Value "none" must be used alone for "--services" in "coop init"`},
-		{name: "agents all", option: initAgents, in: "ALL", want: scaffoldableAgents},
-		{name: "agents normalized and de-duplicated", option: initAgents, in: "Codex claude,codex", want: []string{"codex", "claude"}},
-		{name: "unknown agent", option: initAgents, in: "claude,grok", wantErr: `Invalid value "grok" for "--agents" in "coop init"`},
-		{name: "all is standalone", option: initAgents, in: "all,codex", wantErr: `Value "all" must be used alone for "--agents" in "coop init"`},
+		{name: "agents all", option: initAgentsOption(), in: "ALL", want: []string{"claude", "codex", "gemini"}},
+		{name: "agents normalized and de-duplicated", option: initAgentsOption(), in: "Codex claude,codex", want: []string{"codex", "claude"}},
+		{name: "unknown agent", option: initAgentsOption(), in: "claude,grok", wantErr: `Invalid value "grok" for "--agents" in "coop init"`},
+		{name: "all is standalone", option: initAgentsOption(), in: "all,codex", wantErr: `Value "all" must be used alone for "--agents" in "coop init"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

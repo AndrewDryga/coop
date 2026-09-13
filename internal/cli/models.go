@@ -12,7 +12,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/AndrewDryga/coop/internal/acpctl"
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -248,7 +247,7 @@ func (a *app) refreshDueCatalogs(names []string, forced bool) map[string]string 
 // unavailable runtime), which still counts as the attempt. It reports whether the fetch failed and
 // the human cause when there is one.
 func (a *app) refreshCatalog(agent string, blocked error) (string, bool) {
-	var models []acpctl.Model
+	var models []agents.Model
 	err := blocked
 	if err == nil {
 		models, err = a.fetchModelCatalog(agent)
@@ -271,7 +270,8 @@ func (a *app) refreshCatalog(agent string, blocked error) (string, bool) {
 // fetchNeedsBox reports whether refreshing agent has to launch a container — the ACP-only
 // providers, unless a test seam has replaced the fetch.
 func (a *app) fetchNeedsBox(agent string) bool {
-	return a.acpModels == nil && nativeModelFetchers[agent] == nil
+	ag, ok := agents.Get(agent)
+	return a.acpModels == nil && (!ok || len(ag.ModelCatalog().HostCommand) == 0)
 }
 
 // probeBoxRuntime resolves the container runtime a boxed catalog fetch needs, naming what is
@@ -307,9 +307,12 @@ func (e modelFetchError) Unwrap() error { return e.err }
 // list is old.
 func modelFetchCause(agent string, err error) string {
 	var named modelFetchError
+	var catalog agents.ModelCatalogError
 	switch {
 	case errors.As(err, &named):
 		return named.cause
+	case errors.As(err, &catalog):
+		return string(catalog)
 	case errors.Is(err, exec.ErrNotFound):
 		return titleName(agent) + " is unavailable on this host."
 	case errors.Is(err, context.DeadlineExceeded):

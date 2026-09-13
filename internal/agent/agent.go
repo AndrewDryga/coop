@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -294,6 +295,16 @@ const (
 // new file implementing this interface and self-register it from an init().
 type Agent interface {
 	Name() string
+	// SkillsCapable reports whether the native client discovers project skills.
+	SkillsCapable() bool
+	// ReviewOutput removes native transport envelopes without owning host verdict grammar.
+	ReviewOutput(string, ReviewOutputContract) (string, bool)
+	ReviewFooterLine(string) bool
+	// PlainOutputProbe recognizes only a complete native denial, not assistant prose.
+	PlainOutputProbe() PlainOutputProbe
+	// ModelCatalog declares native discovery; the caller owns execution, auth and caching.
+	ModelCatalog() ModelCatalogSpec
+	Scaffold() ScaffoldSpec
 	// DisplayName is the human product name for UX surfaces (the ACP toolbar dropdowns):
 	// "Claude Code", "Codex", … Name() stays the grammar token everywhere a value is parsed.
 	DisplayName() string
@@ -819,6 +830,18 @@ type ACPSignal struct {
 	Value string
 }
 
+// ReviewOutputContract keeps host-owned evidence and receipt validation at the caller.
+type ReviewOutputContract struct {
+	Normalize        func(string) string
+	ValidOutput      func(string) bool
+	ValidReceiptLine func(string) bool
+}
+
+type PlainOutputProbe interface {
+	io.Writer
+	Limited(exitCode int) bool
+}
+
 var registry = map[string]Agent{}
 
 // register adds an agent to the registry; called from each adapter's init().
@@ -829,6 +852,9 @@ func register(a Agent) {
 
 // Get returns the agent registered under name.
 func Get(name string) (Agent, bool) { a, ok := registry[name]; return a, ok }
+
+// Default is the stable initial provider, independent of registry sorting.
+func Default() string { return (claudeAgent{}).Name() }
 
 // Valid reports whether name is a known agent.
 func Valid(name string) bool { _, ok := registry[name]; return ok }
