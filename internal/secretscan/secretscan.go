@@ -218,7 +218,11 @@ func ScanFile(path, content string) []SecretFinding {
 		}
 		// One line repeating one exact value under one detector is one finding: a second copy
 		// would print the same row twice and be covered by the same exception anyway.
-		key := fmt.Sprintf("%d\x00%s\x00%s", f.Line, f.Detector, f.Fingerprint)
+		identity := f.Fingerprint
+		if identity == "" {
+			identity = material
+		}
+		key := fmt.Sprintf("%d\x00%s\x00%s", f.Line, f.Detector, identity)
 		if seen[key] {
 			return
 		}
@@ -228,7 +232,7 @@ func ScanFile(path, content string) []SecretFinding {
 	lines := strings.Split(content, "\n")
 	for i, line := range lines {
 		n := i + 1
-		matched := false
+		precise := map[string]bool{}
 		for _, p := range secretPatterns {
 			// EVERY match on the line, not just the first: two tokens side by side are two
 			// independent findings, and ignoring one must never hide the other.
@@ -243,26 +247,23 @@ func ScanFile(path, content string) []SecretFinding {
 					material = privateKeyBlock(lines, i, content)
 				}
 				add(SecretFinding{Line: n, Kind: p.kind, Detector: p.detector}, material)
-				matched = true
+				precise[tok] = true
 			}
 		}
 		// A password embedded in a connection-string URL (postgres://user:pw@host) — flagged when
 		// the password looks real (long enough, not a placeholder or a ${VAR}/code reference).
-		if !matched {
-			if m := urlCredRe.FindStringSubmatch(line); m != nil &&
-				!placeholderRe.MatchString(m[1]) && !looksLikeCodeRef(m[1]) {
+		for _, m := range urlCredRe.FindAllStringSubmatch(line, -1) {
+			if !precise[m[1]] && !placeholderRe.MatchString(m[1]) && !looksLikeCodeRef(m[1]) {
 				add(SecretFinding{Line: n, Kind: "password in a connection-string URL", Detector: DetectorURLPassword}, m[1])
-				matched = true
 			}
 		}
-		// The fuzzy entropy heuristic only fires on a plausible literal credential: not a
-		// line a pattern already flagged, not a comment, not a match drowning in a
-		// minified/generated line, and a value that isn't a code reference, URL, or
-		// filesystem path.
-		if !matched && !commentRe.MatchString(line) {
+		// The fuzzy entropy heuristic only fires on a plausible literal credential: not the
+		// same value a precise pattern already flagged, not a comment, not a match drowning
+		// in a minified/generated line, and not a code reference, URL, or filesystem path.
+		if !commentRe.MatchString(line) {
 			if m := secretAssignRe.FindStringSubmatch(line); m != nil &&
 				len(line)-len(m[0]) <= maxEntropyLineSlack &&
-				!looksLikeCodeRef(m[2]) && !looksLikeURLOrPath(m[2]) && !placeholderRe.MatchString(m[2]) &&
+				!precise[m[2]] && !looksLikeCodeRef(m[2]) && !looksLikeURLOrPath(m[2]) && !placeholderRe.MatchString(m[2]) &&
 				shannonEntropy(m[2]) >= entropyThreshold {
 				add(SecretFinding{Line: n, Kind: "high-entropy value assigned to '" + m[1] + "'",
 					Detector: DetectorAssignedHighEntro, Key: m[1]}, m[2])

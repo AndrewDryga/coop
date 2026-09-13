@@ -90,6 +90,9 @@
 - Structured task blocking preserves any edited decision draft, even when its question placeholder
   remains; only the exact untouched template can be replaced.
 
+- Secret scans keep independent provider, connection-URL, and assigned-value findings that share
+  a line, including multiple different credentials found by the same detector.
+
 - `coop net forget` now uses the approved short reset explanation instead of printing the
   saved approval's mode and rule ledger.
 

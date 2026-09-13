@@ -82,6 +82,42 @@ func TestSameLineTokensAreIndependentFindings(t *testing.T) {
 	}
 }
 
+func TestSameLineDetectorFamiliesAreIndependent(t *testing.T) {
+	for name, tc := range map[string]struct {
+		content string
+		want    []string
+	}{
+		"provider and URL": {
+			`key="` + openAIKey + `" db=postgres://app:Tr0ub4dorAlpha9@db/app`,
+			[]string{DetectorOpenAIAPIKey, DetectorURLPassword},
+		},
+		"two URLs": {
+			`a=postgres://app:Tr0ub4dorAlpha9@db/a b=redis://app:C0rrectHorseBeta8@db/b`,
+			[]string{DetectorURLPassword, DetectorURLPassword},
+		},
+		"provider and assigned value": {
+			`key="` + openAIKey + `" api_key="aB3xK9mP2qL7vR4tY8wZ1cF6nH5jD0sUvWx"`,
+			[]string{DetectorOpenAIAPIKey, DetectorAssignedHighEntro},
+		},
+		"same literal": {
+			`api_key="` + openAIKey + `"`,
+			[]string{DetectorOpenAIAPIKey},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			findings := ScanSecrets(tc.content)
+			if len(findings) != len(tc.want) {
+				t.Fatalf("findings = %+v, want detectors %v", findings, tc.want)
+			}
+			for i, want := range tc.want {
+				if findings[i].Detector != want {
+					t.Errorf("finding %d detector = %q, want %q", i, findings[i].Detector, want)
+				}
+			}
+		})
+	}
+}
+
 // Every private key in a file starts with the same BEGIN marker. Identity is the BLOCK, so two
 // keys in one file are two findings with two ids.
 func TestPrivateKeysWithIdenticalHeadersDiffer(t *testing.T) {
