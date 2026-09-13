@@ -493,9 +493,11 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 			return -1, err
 		}
 		tmpDirs = append(tmpDirs, decoyDir)
-		plan.sources[spec.Repo], plan.sources[decoy], plan.sources[decoyDir] = true, true, true
-		for _, companion := range spec.CompanionRepositories {
-			plan.sources[companion.HostPath] = true
+		plan.sources[decoy], plan.sources[decoyDir] = true, true
+		for _, mount := range mounts {
+			if mount.Kind == Bind || mount.Kind == Policy {
+				plan.sources[mount.Source] = true
+			}
 		}
 	}
 

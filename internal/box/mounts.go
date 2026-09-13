@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// MountKind distinguishes the three ways a path enters (or is blocked from) the box.
+// MountKind distinguishes the ways a path enters (or is blocked from) the box.
 type MountKind int
 
 const (
@@ -16,21 +16,24 @@ const (
 	DirDecoy
 	// Decoy overlays an empty read-only file, shadowing a secret file.
 	Decoy
+	// Policy overlays a readable .coopignore file as read-only.
+	Policy
 )
 
 // Mount is one entry in the container's filesystem plan.
 type Mount struct {
 	Kind   MountKind
-	Source string // host path (Bind only)
+	Source string // host path (Bind and Policy only)
 	Target string // path inside the box
 	RO     bool   // read-only bind
 }
 
 // ComputeMounts is the security core: it returns the mounts that bind the repo
 // into the box at workdir and shadow every secret path beneath it. The first
-// mount is always the repo bind; each later mount shadows a secret (DirDecoy for a
-// directory, Decoy for a file). Secret directories are not descended into, so a
-// shadowed dir hides all of its contents at once. The repo's .git is skipped.
+// mount is always the repo bind; later mounts shadow a secret (DirDecoy for a
+// directory, Decoy for a file) or protect a .coopignore policy file. Secret directories
+// are not descended into, so a shadowed dir hides all of its contents at once. The repo's
+// .git is skipped.
 //
 // A path is shadowed when its basename matches SecretGlobs (unless AllowGlobs whitelists
 // it — templates and public CA bundles stay visible by default), OR a .coopignore — in the
@@ -59,10 +62,14 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 			return err
 		}
 		relSlash := filepath.ToSlash(rel)
+		target := workdir + "/" + relSlash
+		if d.Name() == CoopIgnoreFile && d.Type().IsRegular() {
+			mounts = append(mounts, Mount{Kind: Policy, Source: p, Target: target, RO: true})
+			return nil
+		}
 		if !shadowed(relSlash) {
 			return nil
 		}
-		target := workdir + "/" + relSlash
 		if d.IsDir() {
 			mounts = append(mounts, Mount{Kind: DirDecoy, Target: target, RO: true})
 			return fs.SkipDir // prune: a shadowed dir hides everything within it
@@ -154,11 +161,11 @@ func shadowedByCoopignore(relSlash string, loadDir func(string) UserGlobs) bool 
 	}
 }
 
-// ShadowCount is the number of secret paths shadowed (everything but the bind).
+// ShadowCount is the number of secret paths shadowed.
 func ShadowCount(mounts []Mount) int {
 	n := 0
 	for _, m := range mounts {
-		if m.Kind != Bind {
+		if m.Kind == Decoy || m.Kind == DirDecoy {
 			n++
 		}
 	}
@@ -184,6 +191,8 @@ func RenderMounts(mounts []Mount, decoyFile, decoyDir string) []string {
 			args = append(args, "-v", decoyDir+":"+m.Target+":ro")
 		case Decoy:
 			args = append(args, "-v", decoyFile+":"+m.Target+":ro")
+		case Policy:
+			args = append(args, "-v", m.Source+":"+m.Target+":ro")
 		}
 	}
 	return args

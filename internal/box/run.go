@@ -640,6 +640,23 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			os.RemoveAll(d)
 		}
 	}()
+	if filtered != nil {
+		for i := range mounts {
+			if mounts[i].Kind != Policy {
+				continue
+			}
+			data, err := os.ReadFile(mounts[i].Source)
+			if err != nil {
+				return -1, fmt.Errorf("snapshot %s: %w", CoopIgnoreFile, err)
+			}
+			path, err := artifacts.writeFile(artifacts.parent, string(data))
+			if err != nil {
+				return -1, fmt.Errorf("snapshot %s: %w", CoopIgnoreFile, err)
+			}
+			mounts[i].Source = path
+			tmpFiles = append(tmpFiles, path)
+		}
+	}
 	var mcpMounts []extraMount
 	rawMCP := false
 	if mcpPresent {

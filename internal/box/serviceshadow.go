@@ -34,13 +34,13 @@ func serviceShadowOverride(repo, composeFile string, data []byte, dir string) (s
 	return writeServiceShadowOverride(decoys, dir)
 }
 
-// serviceDecoy is one decoy the override mounts over a service's bind target. source is the
-// repo-relative path being hidden — the key a human approval is matched against, so an approval
-// covers exactly the files it listed and nothing that appears later under the same bind.
+// serviceDecoy is one read-only override mount. Most entries are empty decoys; bindSource marks
+// a readable .coopignore overlay that secret approval must not remove.
 type serviceDecoy struct {
-	target string
-	dir    bool
-	source string
+	target     string
+	dir        bool
+	source     string
+	bindSource string // non-empty for a readable, read-only policy bind
 }
 
 // serviceShadowPlan decides, per service, which bind targets get a decoy, and lists the
@@ -92,6 +92,9 @@ func serviceShadowPlan(repo, composeFile string, data []byte) (map[string][]serv
 				continue
 			}
 			if !info.IsDir() {
+				if filepath.Base(real) == CoopIgnoreFile && info.Mode().IsRegular() {
+					decoys[name] = append(decoys[name], serviceDecoy{target: target, source: filepath.ToSlash(rel), bindSource: real})
+				}
 				continue
 			}
 			err = filepath.WalkDir(real, func(p string, d fs.DirEntry, walkErr error) error {
@@ -108,12 +111,16 @@ func serviceShadowPlan(repo, composeFile string, data []byte) (map[string][]serv
 				if err != nil {
 					return err
 				}
-				if !shadowed(filepath.ToSlash(relRepo)) {
-					return nil
-				}
 				under, err := filepath.Rel(real, p)
 				if err != nil {
 					return err
+				}
+				if d.Name() == CoopIgnoreFile && d.Type().IsRegular() {
+					decoys[name] = append(decoys[name], serviceDecoy{target: target + "/" + filepath.ToSlash(under), source: filepath.ToSlash(relRepo), bindSource: p})
+					return nil
+				}
+				if !shadowed(filepath.ToSlash(relRepo)) {
+					return nil
 				}
 				decoys[name] = append(decoys[name], serviceDecoy{target: target + "/" + filepath.ToSlash(under), dir: d.IsDir(), source: filepath.ToSlash(relRepo)})
 				hidden[filepath.ToSlash(relRepo)] = true
@@ -147,11 +154,13 @@ func keepDecoysOutside(decoys map[string][]serviceDecoy, approved []string) (map
 	hidden := map[string]bool{}
 	for name, list := range decoys {
 		for _, d := range list {
-			if allow[d.source] {
+			if d.bindSource == "" && allow[d.source] {
 				continue
 			}
 			kept[name] = append(kept[name], d)
-			hidden[d.source] = true
+			if d.bindSource == "" {
+				hidden[d.source] = true
+			}
 		}
 	}
 	paths := make([]string, 0, len(hidden))
@@ -230,7 +239,9 @@ func writeServiceShadowOverride(decoys map[string][]serviceDecoy, dir string) (s
 		fmt.Fprintf(&b, "  %s:\n    volumes:\n", name)
 		for _, d := range list {
 			source := decoyFile
-			if d.dir {
+			if d.bindSource != "" {
+				source = d.bindSource
+			} else if d.dir {
 				source = decoyDir
 			}
 			fmt.Fprintf(&b, "      - type: bind\n        source: %q\n        target: %q\n        read_only: true\n", source, d.target)

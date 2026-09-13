@@ -148,11 +148,16 @@ func TestComputeMountsCoopIgnore(t *testing.T) {
 		"/workspace/other/creds.yaml",          // path pattern is config/creds.yaml only
 		"/workspace/config/creds.yaml.example", // template stays visible
 		"/workspace/src/app.js",
-		"/workspace/" + CoopIgnoreFile, // the ignore file itself is not a secret
 	} {
 		if shadowed(target) {
 			t.Errorf("%s must stay visible", target)
 		}
+	}
+	if policy := find(mounts, "/workspace/"+CoopIgnoreFile); policy == nil || policy.Kind != Policy || !policy.RO || policy.Source != filepath.Join(root, CoopIgnoreFile) {
+		t.Errorf("%s must be visible through a read-only policy mount: %+v", CoopIgnoreFile, policy)
+	}
+	if got := ShadowCount(mounts); got != 5 {
+		t.Errorf("ShadowCount = %d, want only the 5 hidden paths", got)
 	}
 }
 
@@ -198,6 +203,9 @@ func TestComputeMountsSubdirCoopIgnore(t *testing.T) {
 			t.Errorf("%s must stay visible (sub/.coopignore is scoped to sub/)", target)
 		}
 	}
+	if policy := find(mounts, "/workspace/sub/"+CoopIgnoreFile); policy == nil || policy.Kind != Policy || !policy.RO {
+		t.Errorf("nested %s must be visible through a read-only policy mount: %+v", CoopIgnoreFile, policy)
+	}
 }
 
 func TestRenderMounts(t *testing.T) {
@@ -205,12 +213,14 @@ func TestRenderMounts(t *testing.T) {
 		{Kind: Bind, Source: "/repo", Target: "/workspace"},
 		{Kind: Decoy, Target: "/workspace/.env", RO: true},
 		{Kind: DirDecoy, Target: "/workspace/secrets", RO: true},
+		{Kind: Policy, Source: "/repo/.coopignore", Target: "/workspace/.coopignore", RO: true},
 	}
 	got := RenderMounts(mounts, "/tmp/decoy", "/tmp/decoydir")
 	want := []string{
 		"-v", "/repo:/workspace",
 		"-v", "/tmp/decoy:/workspace/.env:ro",
 		"-v", "/tmp/decoydir:/workspace/secrets:ro",
+		"-v", "/repo/.coopignore:/workspace/.coopignore:ro",
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("RenderMounts = %v, want %v", got, want)

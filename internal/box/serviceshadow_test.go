@@ -28,6 +28,7 @@ func TestServiceShadowOverrideProjectsThePrimaryShadows(t *testing.T) {
 	write("config/prod.tfvars", "token = 1\n")
 	write("data/public.csv", "1,2\n")
 	write("data/notes.txt", "hidden by coopignore\n")
+	write("data/.coopignore", "local.txt\n")
 	write(".coopignore", "data/notes.txt\n")
 	write("public/readme.md", "hello\n")
 	if err := os.Symlink(filepath.Join(repo, ".env"), filepath.Join(repo, "alias")); err != nil {
@@ -94,6 +95,20 @@ volumes:
 			t.Errorf("decoy at %s does not use %s:\n%s", want.target, want.source, override)
 		}
 	}
+	realRepo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct{ target, source string }{
+		{"/repo/.coopignore", filepath.Join(realRepo, ".coopignore")},
+		{"/repo/data/.coopignore", filepath.Join(realRepo, "data", ".coopignore")},
+		{"/data/.coopignore", filepath.Join(realRepo, "data", ".coopignore")},
+	} {
+		block := "source: " + quoted(want.source) + "\n        target: " + quoted(want.target) + "\n        read_only: true"
+		if !strings.Contains(override, block) {
+			t.Errorf("no read-only policy mount at %s:\n%s", want.target, override)
+		}
+	}
 	for _, public := range []string{"/repo/.ssh/id_ed25519", "/repo/data/public.csv", "/repo/public/readme.md", "/public", "pgdata", "clean:"} {
 		if strings.Contains(override, public) {
 			t.Errorf("override touches %q, which has nothing to hide:\n%s", public, override)
@@ -113,3 +128,12 @@ volumes:
 }
 
 func quoted(s string) string { return `"` + s + `"` }
+
+func TestServiceSecretApprovalKeepsPolicyReadOnly(t *testing.T) {
+	policy := serviceDecoy{target: "/repo/.coopignore", source: ".coopignore", bindSource: "/repo/.coopignore"}
+	secret := serviceDecoy{target: "/repo/.env", source: ".env"}
+	kept, hidden := keepDecoysOutside(map[string][]serviceDecoy{"app": {policy, secret}}, []string{".coopignore", ".env"})
+	if len(hidden) != 0 || len(kept["app"]) != 1 || kept["app"][0] != policy {
+		t.Fatalf("kept=%+v hidden=%v, want only the policy mount", kept, hidden)
+	}
+}
