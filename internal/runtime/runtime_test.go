@@ -466,6 +466,11 @@ exit 9
 		t.Fatal("observation with missing Paused field was accepted")
 	}
 
+	t.Setenv("COOP_TEST_INSPECT", `{"ID":"`+id+`","Labels":{"com.docker.compose.project":"coop-repo-12345678","com.docker.compose.project.working_dir":"/repo with space/dev","com.docker.compose.service":"db","com.docker.compose.oneoff":"False"},"Status":"running","Running":true,"Paused":false,"Healthcheck":false,"Health":"","Ports":{},"Networks":{"bad network":{}}}`)
+	if _, _, err := (Runtime{Name: runtimeCLI}).ObserveServiceContainer(context.Background(), labels); err == nil {
+		t.Fatal("malformed service network name was accepted")
+	}
+
 	t.Setenv("COOP_TEST_IDS", "")
 	if _, found, err := (Runtime{Name: runtimeCLI}).ObserveServiceContainer(context.Background(), labels); err != nil || found {
 		t.Fatalf("missing service observation = (%v, %v), want false without error", found, err)
