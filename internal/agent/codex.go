@@ -155,6 +155,10 @@ func (codexAgent) SessionIDs(cfg *config.Config, cwd string) []string {
 	return codexSessionIDs(cfg.AgentDir("codex"), cwd)
 }
 
+func (codexAgent) LoginConfig(cfg *config.Config) (MCPConfig, error) {
+	return MCPConfig{Mounts: []MCPMount{{Content: mcp.CodexManagedDefaults, BoxPath: cfg.HomeInBox + "/.codex/config.toml"}}}, nil
+}
+
 func (codexAgent) Login(*config.Config) []string {
 	// Device-code flow: the box has no browser and codex's localhost OAuth redirect
 	// can't reach the host, so browser login hangs. --device-auth prints a URL + code.

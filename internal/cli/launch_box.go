@@ -16,6 +16,9 @@ import (
 // dispatcher prints nothing more. The remedy repeats the original command: the launch retries
 // this repair itself, so a manual 'coop build' would be a redundant detour.
 func (a *app) checkCoopBox(repo, img string) error {
+	if a.loginProvider != "" {
+		return nil // sign-in uses the existing image; it must not execute a project build
+	}
 	builtBy, skewed := box.BaseImageSkew(a.cfg, img)
 	if !skewed {
 		return nil

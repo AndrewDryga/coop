@@ -99,6 +99,9 @@ type RunSpec struct {
 	// so box.Run may apply adapter-owned command wiring from the validated MCP snapshot. ACP and
 	// maintenance commands leave it false even when Agent scopes their credential home.
 	AgentCommand bool
+	// Login runs only the selected provider's sign-in flow. Project service/tool setup is not
+	// part of authentication; network policy and secret-shadowing protections still apply.
+	Login bool
 
 	ForceNoTTY   bool               // ACP: attach stdin (-i) but never allocate a tty
 	Serve        bool               // publish .agent/project.yaml serve.ports so a dev server in the box is reachable from the host
@@ -316,6 +319,15 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			return -1, fmt.Errorf("consult requires agent homes so its instructions, wrapper, and peer credentials can mount")
 		}
 	}
+	if spec.Login {
+		if !spec.Homes || !agents.Valid(spec.Agent) {
+			return -1, errors.New("sign-in requires the selected provider's writable credential home")
+		}
+		spec.Preset, spec.Peers, spec.ConsultLead = nil, nil, ""
+		spec.TaskTools, spec.AssignedTask, spec.CompanionRepositories = nil, "", nil
+		spec.AgentCommand, spec.ShareACPSessions = false, false
+		spec.Workdir = "/tmp" // native login must not load project config or warn about running in HOME
+	}
 	if (spec.ForkName == "") != (spec.ForkOwner == "") {
 		return -1, errors.New("fork box requires both name and scoped owner")
 	}
@@ -343,6 +355,11 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	projectEnv := p.Box.Env
 	composeFile := ComposeFileAt(spec.Repo, p.ComposeRel())
 	spec.servePorts = p.Serve.Ports
+	if spec.Login {
+		// Apply after project policy so a project's network toggle cannot turn services back on.
+		spec.Network, spec.Serve = false, false
+		projectEnv, composeFile, spec.servePorts = nil, "", nil
+	}
 	workdir := resolveWorkdir(spec, cfg)
 	if spec.Homes {
 		if err := ensureAgentHomes(cfg, spec); err != nil {
@@ -367,7 +384,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	var mcpSnapshot []byte
 	mcpPresent := false
-	if spec.Homes {
+	if spec.Homes && !spec.Login {
 		mcpSource := cfg.MCPFile
 		if cfg.MCPFile != "" {
 			var err error
@@ -398,14 +415,17 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			mcpPresent = true
 		}
 	}
-	mounts, err := ComputeMounts(spec.Repo, workdir)
-	if err != nil {
-		return -1, err
+	var mounts []Mount
+	if !spec.Login {
+		mounts, err = ComputeMounts(spec.Repo, workdir)
+		if err != nil {
+			return -1, err
+		}
 	}
 	if spec.RepoReadOnly && len(mounts) > 0 {
 		mounts[0].RO = true // ComputeMounts guarantees the primary repo bind is first
 	}
-	if !spec.RepoReadOnly && len(spec.RepoReadOnlyPaths) > 0 {
+	if !spec.Login && !spec.RepoReadOnly && len(spec.RepoReadOnlyPaths) > 0 {
 		protected, err := repoReadOnlyPathMounts(spec.Repo, workdir, spec.RepoReadOnlyPaths)
 		if err != nil {
 			return -1, err
@@ -628,17 +648,31 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		wiring agents.MCPConfig
 	}
 	generated := make([]generatedMCP, 0, len(configAgents))
+	var requiredMCPEnv []string
 	for _, name := range configAgents {
 		ag, _ := agents.Get(name)
-		wiring, genErr := ag.MCP(configForAgent, workdir)
+		var wiring agents.MCPConfig
+		var genErr error
+		if spec.Login {
+			wiring, genErr = ag.LoginConfig(configForAgent)
+		} else {
+			wiring, genErr = ag.MCP(configForAgent, workdir)
+		}
 		if genErr != nil {
 			return -1, fmt.Errorf("assemble MCP config for %s: %w", name, genErr)
 		}
 		generated = append(generated, generatedMCP{name: name, wiring: wiring})
+		requiredMCPEnv = append(requiredMCPEnv, wiring.RequiredEnv...)
 	}
 
 	for _, item := range generated {
 		name, wiring := item.name, item.wiring
+		if spec.Login && name == spec.Agent {
+			spec.Cmd = append(spec.Cmd, wiring.CommandArgs...)
+		}
+		for _, env := range wiring.Env {
+			spec.ExtraArgs = append(spec.ExtraArgs, "-e", env)
+		}
 		if mcpPresent && spec.AgentCommand && name == spec.Agent && len(wiring.CommandArgs) > 0 {
 			spec.Cmd = append(spec.Cmd, wiring.CommandArgs...)
 			rawMCP = true
@@ -652,7 +686,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		for _, m := range wiring.Mounts {
 			p, err := artifacts.writeFile(artifacts.parent, m.Content)
 			if err != nil {
-				if mcpPresent {
+				if mcpPresent || spec.Login {
 					return -1, fmt.Errorf("write MCP config for %s: %w", name, err)
 				}
 				continue
@@ -741,13 +775,17 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	for _, companion := range spec.CompanionRepositories {
 		privateRoots = append(privateRoots, companion.HostPath)
 	}
-	synthMounts, synthDirs, err := synthSkillsMounts(spec.Repo, cfg.HomeInBox, configAgents, privateRoots...)
+	workflowAgents := configAgents
+	if spec.Login {
+		workflowAgents = nil
+	}
+	synthMounts, synthDirs, err := synthSkillsMounts(spec.Repo, cfg.HomeInBox, workflowAgents, privateRoots...)
 	if err != nil {
 		return -1, err
 	}
 	tmpDirs = append(tmpDirs, synthDirs...)
 	if spec.Homes {
-		homeMounts, homeDirs, err := synthHomeFallbackMounts(spec.Repo, cfg.HomeInBox, configAgents, privateRoots...)
+		homeMounts, homeDirs, err := synthHomeFallbackMounts(spec.Repo, cfg.HomeInBox, workflowAgents, privateRoots...)
 		if err != nil {
 			return -1, err
 		}
@@ -759,7 +797,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// box holds no key) and your global gitignore, mounted into every box run. Without
 	// it the agent would commit with no author and ignore none of your global patterns.
 	var gitMounts []extraMount
-	if spec.Homes {
+	if spec.Homes && !spec.Login {
 		// coop's own co-author trailer, applied by a prepare-commit-msg hook mounted into the box —
 		// so a box commit is attributed to coop and its target, replacing whatever the agent CLI
 		// stamps. Empty for a raw run (no agent), which then gets no hook and no trailer.
@@ -884,6 +922,13 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if filtered != nil {
 		options := assembleOptions(cfg, rt.SupportsInit(), spec, mounts, decoy.Name(), decoyDir, workdir, mode, rawMCP,
 			mcpMounts, consultMounts, gitMounts, instructionMounts, synthMounts, "", envFile, boxLimits(cfg, rt)...)
+		options, capturedEnv, err := captureRequiredMCPEnv(options, requiredMCPEnv, artifacts)
+		if err != nil {
+			return finish(-1, err)
+		}
+		if capturedEnv != "" {
+			tmpFiles = append(tmpFiles, capturedEnv)
+		}
 		generated := append([]string{decoy.Name()}, tmpFiles...)
 		for _, mount := range synthMounts {
 			generated = append(generated, mount.host) // includes exact fallback-file leaves
@@ -1041,6 +1086,15 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	limits := boxLimits(cfg, rt)
 	args := assembleArgs(cfg, rt.SupportsInit(), spec, mounts, decoy.Name(), decoyDir, workdir, mode, rawMCP, mcpMounts, consultMounts, gitMounts, instructionMounts, synthMounts, networkName, envFile, limits...)
+	optionEnd := len(args) - len(spec.Cmd) - 1
+	options, capturedEnv, err := captureRequiredMCPEnv(args[:optionEnd], requiredMCPEnv, artifacts)
+	if err != nil {
+		return finish(-1, err)
+	}
+	if capturedEnv != "" {
+		tmpFiles = append(tmpFiles, capturedEnv)
+	}
+	args = append(options, args[optionEnd:]...)
 	// The launch boundary: everything above is host work, everything below is the provider's.
 	// A caller that clocks the provider starts counting HERE, never from Run's entry — an early
 	// return above launched nothing, so it signals nothing.
@@ -1881,7 +1935,7 @@ func synthHomeFallbackMounts(repo, homeInBox string, agentNames []string, expose
 // it gets its augmented file instead. Pure (no temp files / mounts),
 // so the selection and content are unit-testable; Run writes + mounts the result.
 func instructionPlan(cfg *config.Config, spec RunSpec, network string) ([]instructionItem, error) {
-	if !spec.Homes {
+	if !spec.Homes || spec.Login {
 		return nil, nil
 	}
 	var out []instructionItem

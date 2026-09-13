@@ -189,6 +189,12 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 		Homes:        a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache, Serve: true,
 		CompanionRepositories: companionRepositories,
 		StartingNotice:        a.loginStartingNotice(agent),
+		Login:                 a.loginProvider == agent && agent != "",
+	}
+	if spec.Login {
+		spec.Preset, spec.Peers, spec.ConsultLead = nil, nil, ""
+		spec.CompanionRepositories = nil
+		spec.Network, spec.Serve, spec.AgentCommand = false, false, false
 	}
 	if forkIdentity != nil {
 		spec.ActivityKind = forkspace.ExecutionForkInteractive
@@ -216,7 +222,9 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 	code, err := box.Run(a.cfg, a.rt, spec)
 	// An interactive/run box makes unsigned commits; sign what THIS session produced on exit so a
 	// protected remote accepts them. Best-effort, session-scoped, skipped for a dirty tree.
-	a.signOnBoxExit(repo, pre, false)
+	if !spec.Login {
+		a.signOnBoxExit(repo, pre, false)
+	}
 	return code, err
 }
 

@@ -286,6 +286,11 @@ func TestFilteredProjectImageSkipsAProjectWithoutADockerfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	image, err = filteredProjectImage(context.Background(), runtime.Runtime{Name: "must-not-execute"}, d, nil,
+		RunSpec{Repo: repo, Login: true}, fixtureCandidate())
+	if image != "" || err != nil {
+		t.Fatal("login tried to inspect or build the project's Dockerfile", image, err)
+	}
+	image, err = filteredProjectImage(context.Background(), runtime.Runtime{Name: "must-not-execute"}, d, nil,
 		RunSpec{Repo: repo}, fixtureCandidate())
 	if image != "" || err == nil || !strings.Contains(err.Error(), "disappeared while the box was starting") {
 		t.Fatal("a missing client image was built on anyway", image, err)

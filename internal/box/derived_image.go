@@ -72,6 +72,9 @@ func filteredProjectTag(repo, lockedImage string) string {
 // image and returns the built image's ID once both proofs hold. It returns ""
 // for a project with no Dockerfile, which runs the locked image itself.
 func filteredProjectImage(ctx context.Context, rt runtime.Runtime, docker filteredDocker, store *networkstate.Store, spec RunSpec, candidate networkstate.CandidateSpec) (string, error) {
+	if spec.Login {
+		return "", nil // sign-in uses the locked client, never the project's build instructions
+	}
 	repo := projectPolicyRepo(spec)
 	// The PROJECT's Dockerfile, not the workspace's: a remote session's box
 	// mounts a fork of this project, and what defines the box belongs to the

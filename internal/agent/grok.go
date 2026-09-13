@@ -160,6 +160,8 @@ func grokBucketCWD(root *os.Root, bucket string) string {
 	return cwd
 }
 
+func (grokAgent) LoginConfig(*config.Config) (MCPConfig, error) { return MCPConfig{}, nil }
+
 // Login: device-code flow for the box (no browser, and grok's OAuth redirect can't reach the
 // host), mirroring codex's split.
 func (grokAgent) Login(*config.Config) []string {

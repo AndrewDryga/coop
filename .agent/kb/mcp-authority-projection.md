@@ -2,8 +2,8 @@
 name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
-sources: [internal/mcp/mcp.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
-updated: 2026-09-10
+sources: [internal/mcp/mcp.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
+updated: 2026-09-13
 ---
 
 `COOP_MCP_FILE` is one host authority, but a box has four different consumers. `box.Run` captures
@@ -58,6 +58,24 @@ profile is never written by a projection (`EnsureDefaults` alone writes it, for 
 Claude's controls are environment, not a file (`claudeAgent.BoxEnv`). Why the traffic is stopped at
 the client rather than granted or hidden: [[provider-bundles-carry-function-not-chatter]].
 
+Sign-in is deliberately not a coding session. `RunSpec.Login` selects `Agent.LoginConfig`, skips
+the shared MCP snapshot and project mount, and mounts only the selected credential home plus its
+managed login controls. Gemini keeps user `settings.json` writable so native Google selection can
+survive its relaunch; separate immutable system settings retain managed defaults and deny MCP via
+`mcp.allowed: []`, while `--extensions none` prevents extension activation. Native system merges
+do not replace a user's server map with an empty map, and v0.59's remote-admin merge supersedes
+local `admin` controls: neither is a substitute for the empty allowlist. Project services, ports,
+instructions and preset/peer tools do not belong in login. Network admission still applies.
+
+Gemini's native schema rejects canonical `bearer_token_env_var`. Its renderer converts that field
+to `headers.Authorization: "Bearer ${NAME}"` and returns the required variable names; it never
+stores token values in settings. Before a provider launch, `captureRequiredMCPEnv` resolves those
+names from the assembled, credential-scoped runtime environment and freezes nonempty values in a
+private temporary env file, removing their explicit argv overrides. Missing or blank values stop
+the launch: Gemini itself leaves a missing placeholder literal, so interpolation alone is not a
+denial check. Normal, ACP and nested Gemini all use this boundary. This check happens after setup,
+before the provider; it does not promise that no daemon or sidecar was started.
+
 Credential scope is not proof of command consumption. `credentialScope` answers whose login may be
 mounted, while `nestedAgentCommand` answers whether an explicit peer or consult/delegate/degraded
 native role can actually spawn that provider CLI. The raw snapshot mount exists only for an outer
@@ -72,6 +90,8 @@ adds ordinary `CommandArgs` must decide whether its nested commands need an equi
 mounting the raw snapshot for every scoped credential is not the fallback.
 
 ## Changelog
+- 2026-09-13 — isolated native login controls from coding projections; verified Gemini 0.59 schema,
+  allowlist and save/relaunch persistence; documented bearer projection and runtime capture.
 - 2026-09-10 — the codex and gemini overlays are always-on carriers of the managed-client defaults
   (no update check, no analytics/telemetry export); codex's keeps the profile's native MCP tables
   when shared MCP is inactive; grok moved to `GenerateGrok` so codex's keys never reach its file.

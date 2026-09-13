@@ -446,7 +446,7 @@ func TestGenerateGeminiMerge(t *testing.T) {
 		"mcpServers":{"old":{"command":"true"}}
 	}`
 	existing := writeTmp(t, "settings.json", existingBody)
-	got, err := GenerateGemini(writeTmp(t, "mcp.json", sample), existing)
+	got, _, err := GenerateGemini(writeTmp(t, "mcp.json", sample), existing)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -494,7 +494,7 @@ func TestGenerateGeminiMerge(t *testing.T) {
 func TestGenerateGeminiWithoutMCP(t *testing.T) {
 	existingBody := `{"theme":"dark","context":{"includeDirectories":["src"],"fileFiltering":{"respectGitIgnore":true,"custom":"keep"}}}`
 	existing := writeTmp(t, "settings.json", existingBody)
-	got, err := GenerateGemini("", existing)
+	got, _, err := GenerateGemini("", existing)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -533,7 +533,7 @@ func TestGenerateMalformed(t *testing.T) {
 	if _, err := GenerateCodex(writeTmp(t, "mcp.json", "{not json"), ""); err == nil {
 		t.Error("malformed mcp.json should error")
 	}
-	if _, err := GenerateGemini(filepath.Join(t.TempDir(), "missing.json"), ""); err == nil {
+	if _, _, err := GenerateGemini(filepath.Join(t.TempDir(), "missing.json"), ""); err == nil {
 		t.Error("missing mcp.json should error")
 	}
 }
@@ -619,14 +619,14 @@ func TestConfigReadDistinguishesInitialAbsenceFromPostObservationRemoval(t *test
 // gemini keeps its real config), not silently produce a settings.json containing only mcpServers.
 func TestGenerateGeminiMalformedExistingErrors(t *testing.T) {
 	mcpFile := writeTmp(t, "mcp.json", sample)
-	if _, err := GenerateGemini(mcpFile, writeTmp(t, "settings.json", `{"theme":"dark", oops`)); err == nil {
+	if _, _, err := GenerateGemini(mcpFile, writeTmp(t, "settings.json", `{"theme":"dark", oops`)); err == nil {
 		t.Error("malformed existing settings.json should error, not discard the user's settings")
 	}
 	// Missing/empty existing is fine — nothing to merge onto.
-	if _, err := GenerateGemini(mcpFile, filepath.Join(t.TempDir(), "nope.json")); err != nil {
+	if _, _, err := GenerateGemini(mcpFile, filepath.Join(t.TempDir(), "nope.json")); err != nil {
 		t.Errorf("missing existing settings should be ok, got %v", err)
 	}
-	if _, err := GenerateGemini(mcpFile, writeTmp(t, "empty.json", "  \n")); err != nil {
+	if _, _, err := GenerateGemini(mcpFile, writeTmp(t, "empty.json", "  \n")); err != nil {
 		t.Errorf("empty existing settings should be ok, got %v", err)
 	}
 	for _, tc := range []struct {
@@ -659,7 +659,7 @@ func TestGenerateGeminiMalformedExistingErrors(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := GenerateGemini(mcpFile, tc.make(t)); err == nil || !strings.Contains(err.Error(), tc.want) {
+			if _, _, err := GenerateGemini(mcpFile, tc.make(t)); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("GenerateGemini existing %s error = %v, want %q", tc.name, err, tc.want)
 			}
 		})
@@ -689,7 +689,7 @@ func TestGenerateGeminiHTTPPassthrough(t *testing.T) {
 		"emisar": { "type": "http", "url": "https://emisar.dev/api/mcp/rpc", "headers": { "Authorization": "Bearer emk-x" } },
 		"legacy": { "type": "sse",  "url": "https://legacy.example/sse",      "headers": { "X-Api-Key": "k" } }
 	} }`
-	got, err := GenerateGemini(writeTmp(t, "mcp.json", src), "")
+	got, _, err := GenerateGemini(writeTmp(t, "mcp.json", src), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -776,7 +776,7 @@ func TestMCPConsumersRejectAmbiguousAuthorization(t *testing.T) {
 		run  func(string) error
 	}{
 		{"Codex", func(path string) error { _, err := GenerateCodex(path, ""); return err }},
-		{"Gemini", func(path string) error { _, err := GenerateGemini(path, ""); return err }},
+		{"Gemini", func(path string) error { _, _, err := GenerateGemini(path, ""); return err }},
 		{"ACP", func(path string) error { _, err := ACPServers(path, os.LookupEnv); return err }},
 		{"box snapshot", func(path string) error { _, _, err := ReadValidatedSnapshot(path); return err }},
 	}
@@ -979,7 +979,7 @@ func TestTaskToolsBindingRendersForEveryConsumer(t *testing.T) {
 	if !strings.Contains(codex, "[mcp_servers.coop-tasks]\ncommand = \"socat\"\nargs = [\"STDIO\", \"UNIX-CONNECT:/coop/tasks/mcp.sock\"]") {
 		t.Fatalf("codex TOML = %s", codex)
 	}
-	gemini, err := GenerateGemini(file, "")
+	gemini, _, err := GenerateGemini(file, "")
 	if err != nil {
 		t.Fatal(err)
 	}

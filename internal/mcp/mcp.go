@@ -25,6 +25,7 @@ import (
 	"math"
 	"os"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -70,22 +71,36 @@ type server struct {
 // packages/cli/src/config/settingsSchema.ts, all three default to true upstream). A non-empty
 // mcpFile also merges the shared servers; "" leaves the user's mcpServers untouched. existing
 // may be "" or a missing file.
-func GenerateGemini(mcpFile, existing string) (string, error) {
+func GenerateGemini(mcpFile, existing string) (string, []string, error) {
 	settings, err := readJSONObject(existing)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
+	var requiredEnv []string
 
 	if mcpFile != "" {
 		servers, err := loadServersAny(mcpFile)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		merged, _ := settings["mcpServers"].(map[string]any)
 		if merged == nil {
 			merged = map[string]any{}
 		}
-		for name, def := range servers {
+		for _, name := range sortedKeys(servers) {
+			def := servers[name].(map[string]any) // validated by loadServerViews
+			if raw, present := def["bearer_token_env_var"]; present {
+				ref, ok := raw.(string)
+				if !ok || !validBearerReference(ref) {
+					return "", nil, fmt.Errorf("MCP server %q needs a valid bearer_token_env_var name", name)
+				}
+				if url, ok := def["url"].(string); !ok || strings.TrimSpace(url) == "" {
+					return "", nil, fmt.Errorf("MCP server %q needs a URL for bearer authentication", name)
+				}
+				delete(def, "bearer_token_env_var")
+				nestedObject(def, "headers")["Authorization"] = "Bearer ${" + ref + "}"
+				requiredEnv = append(requiredEnv, ref)
+			}
 			merged[name] = def
 		}
 		settings["mcpServers"] = merged
@@ -102,9 +117,10 @@ func GenerateGemini(mcpFile, existing string) (string, error) {
 	enc.SetIndent("", "  ")
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(settings); err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return buf.String(), nil
+	sort.Strings(requiredEnv)
+	return buf.String(), slices.Compact(requiredEnv), nil
 }
 
 // nestedObject returns m[key] as an object, replacing anything else with a new one.

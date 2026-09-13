@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Gemini sign-in can save its Google login selection across the CLI's restart. Login boxes use
+  only the selected account, with no project services, development ports or MCP tools. Normal
+  Gemini sessions translate shared MCP bearer references to native headers and refuse missing
+  authentication before launching, without writing tokens into settings.
+
 - **Reopening an editor thread after `coop acp` restarted brings back the whole conversation.**
   Every provider or account switch continues a thread on a fresh native session; coop now remembers
   which one each thread is on (`~/.config/coop/agents/acp-threads/`, host-only, pruned after 90

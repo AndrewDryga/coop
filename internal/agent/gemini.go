@@ -178,6 +178,34 @@ func geminiSessionMetadata(r io.Reader) (sessionID, projectHash string) {
 
 func (geminiAgent) Login(*config.Config) []string { return []string{"gemini"} }
 
+func (geminiAgent) LoginConfig(cfg *config.Config) (MCPConfig, error) {
+	gm, _, err := mcp.GenerateGemini("", "")
+	if err != nil {
+		return MCPConfig{}, err
+	}
+	gm, err = ensureGeminiBoxDefaults(gm)
+	if err != nil {
+		return MCPConfig{}, err
+	}
+	var settings map[string]any
+	if err := json.Unmarshal([]byte(gm), &settings); err != nil {
+		return MCPConfig{}, err
+	}
+	// Gemini intersects this system allowlist with user/workspace lists. An explicitly empty
+	// list disables all MCP; an empty mcpServers object would merely merge with existing servers.
+	settings["mcp"] = map[string]any{"allowed": []string{}}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return MCPConfig{}, err
+	}
+	systemPath := cfg.HomeInBox + "/.coop-gemini-login.json"
+	return MCPConfig{
+		Mounts:      []MCPMount{{Content: string(append(data, '\n')), BoxPath: systemPath}},
+		CommandArgs: []string{"--extensions", "none"},
+		Env:         []string{"GEMINI_CLI_SYSTEM_SETTINGS_PATH=" + systemPath, "NO_BROWSER=true"},
+	}, nil
+}
+
 func (geminiAgent) ConsultCmd(question string) []string {
 	// -p takes the prompt as its value, so it must come last (right before the
 	// question); otherwise -p swallows --approval-mode and gemini prints help.
@@ -285,7 +313,7 @@ func (geminiAgent) StoredCredentialStatus(string, time.Time) StoredCredentialSta
 // no usage statistics), and shared servers only when MCP is active. The host file is never
 // written here; EnsureDefaults owns the one host-side change (folder trust).
 func (geminiAgent) MCP(cfg *config.Config, _ string) (MCPConfig, error) {
-	gm, err := mcp.GenerateGemini(cfg.MCPFile, filepath.Join(cfg.AgentDir("gemini"), "settings.json"))
+	gm, requiredEnv, err := mcp.GenerateGemini(cfg.MCPFile, filepath.Join(cfg.AgentDir("gemini"), "settings.json"))
 	if err != nil {
 		return MCPConfig{}, err
 	}
@@ -293,7 +321,7 @@ func (geminiAgent) MCP(cfg *config.Config, _ string) (MCPConfig, error) {
 	if err != nil {
 		return MCPConfig{}, err
 	}
-	return MCPConfig{Mounts: []MCPMount{{Content: gm, BoxPath: cfg.HomeInBox + "/.gemini/settings.json"}}}, nil
+	return MCPConfig{Mounts: []MCPMount{{Content: gm, BoxPath: cfg.HomeInBox + "/.gemini/settings.json"}}, RequiredEnv: requiredEnv}, nil
 }
 
 func ensureGeminiBoxDefaults(settingsJSON string) (string, error) {

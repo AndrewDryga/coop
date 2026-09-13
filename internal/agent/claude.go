@@ -137,6 +137,8 @@ func (a claudeAgent) Resume(cfg *config.Config, ws, id string) ([]string, bool) 
 // (it just opens a session) — `auth login` re-authenticates and switches accounts.
 func (claudeAgent) Login(*config.Config) []string { return []string{"claude", "auth", "login"} }
 
+func (claudeAgent) LoginConfig(*config.Config) (MCPConfig, error) { return MCPConfig{}, nil }
+
 func (claudeAgent) ConsultCmd(question string) []string {
 	return []string{"claude", "-p", "--permission-mode", "plan", question}
 }

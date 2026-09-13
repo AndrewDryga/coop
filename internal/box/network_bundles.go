@@ -75,7 +75,7 @@ func NetworkMCPDependencies(cfg *config.Config, spec RunSpec) ([]egress.Input, e
 // networkMCPSnapshot reads the same validated shared configuration box.Run
 // mounts. A run without agent homes has no MCP at all, so it derives nothing.
 func networkMCPSnapshot(cfg *config.Config, spec RunSpec) ([]byte, error) {
-	if !spec.Homes || cfg.MCPFile == "" {
+	if !spec.Homes || spec.Login || cfg.MCPFile == "" {
 		return nil, nil
 	}
 	source, err := validateMCPSourceIsolation(cfg, spec)

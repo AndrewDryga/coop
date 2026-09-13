@@ -49,6 +49,20 @@ func builds(t *testing.T, recorder string) int {
 	return strings.Count(string(data), "build ")
 }
 
+func TestLoginDoesNotRebuildAStaleImage(t *testing.T) {
+	a, recorder := boxCheckApp(t, "rt", 1)
+	a.loginProvider = "gemini"
+	stampBoxDefinition(t, a.cfg, "coop old\ndef stale\n")
+	got := captureStderr(t, func() {
+		if err := a.checkCoopBox(t.TempDir(), boxCheckImage); err != nil {
+			t.Errorf("login image check: %v", err)
+		}
+	})
+	if got != "" || builds(t, recorder) != 0 {
+		t.Fatalf("login tried to update its image: %s", got)
+	}
+}
+
 // Acceptance: a current image prints no section, and an age-only nudge is not a mismatch — it
 // must not force an unpinned update. Neither an unstamped (foreign) image nor an old one is
 // touched.

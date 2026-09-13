@@ -341,6 +341,9 @@ type Agent interface {
 	PresetSessionID() bool
 	// Login authenticates the agent (its token persists in its config dir).
 	Login(cfg *config.Config) []string
+	// LoginConfig supplies only box-managed login settings, never shared MCP or project tools.
+	// User authentication state must remain writable in the selected account's home.
+	LoginConfig(cfg *config.Config) (MCPConfig, error)
 	// ConsultCmd is the read-only, non-interactive command to ask this agent a
 	// question as a consult peer — it returns analysis and never edits files.
 	ConsultCmd(question string) []string
@@ -782,6 +785,10 @@ func Packages() []string {
 type MCPConfig struct {
 	Mounts      []MCPMount
 	CommandArgs []string
+	// Env is trusted runtime configuration, applied after operator env files/extra arguments.
+	Env []string
+	// RequiredEnv names authentication references that must be nonempty in the captured box env.
+	RequiredEnv []string
 	// NestedCommandEnv is trusted KEY=value wiring consumed by this adapter's in-box wrapper
 	// commands. box.Run appends it after the user env file so the projected path stays authoritative.
 	NestedCommandEnv []string

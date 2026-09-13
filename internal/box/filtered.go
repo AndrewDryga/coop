@@ -161,6 +161,11 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 		}
 	}
 	approvedServices := serviceGrants(policy)
+	if spec.Login && len(approvedServices) != 0 {
+		// Every captured service grant requires a runtime binding. Do not start sidecars for
+		// login, or silently strip grants and launch a different policy from the one admitted.
+		return nil, errors.New("sign-in does not start project services; this filtered policy includes service grants — sign in from a project with a service-free network policy")
+	}
 	// box.network is the old join-everything switch; in filtered mode a sidecar
 	// is reached through an approved `to: {service: <name>}` grant, one exact
 	// container at a time, never by joining a shared network.

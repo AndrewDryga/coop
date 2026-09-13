@@ -66,6 +66,9 @@ func credentialScope(cfg *config.Config, spec RunSpec) []string {
 		return nil // raw/maintenance run — no agent session, no credentials
 	}
 	scope := []string{primary}
+	if spec.Login {
+		return scope
+	}
 	add := func(agent string, gate bool) {
 		if agent != "" && agent != primary && !slices.Contains(scope, agent) && gate {
 			scope = append(scope, agent)
@@ -204,11 +207,15 @@ func excluding(names []string, drop string) []string {
 // (internal/sessionsvc, ACP mcpServers). One parser, so the two can never disagree about what the
 // box has.
 func EnvFileValues(path string) map[string]string {
-	values := map[string]string{}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return values
+		return map[string]string{}
 	}
+	return envFileValues(data)
+}
+
+func envFileValues(data []byte) map[string]string {
+	values := map[string]string{}
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
