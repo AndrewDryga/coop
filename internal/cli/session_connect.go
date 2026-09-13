@@ -31,8 +31,25 @@ var (
 )
 
 func parseSessionConnectFlags(args []string) (string, error) {
-	if len(args) != 2 || args[0] != "--config" || args[1] == "" {
-		return "", ui.MissingOptionValue("--config", "coop sessions connect", "coop sessions connect --config /path/to/worker.json")
+	const command = "coop sessions connect"
+	const usage = command + " --config /path/to/worker.json"
+	if len(args) == 0 {
+		return "", ui.MissingOptionValue("--config", command, usage)
+	}
+	if args[0] != "--config" {
+		if strings.HasPrefix(args[0], "-") {
+			return "", ui.UnknownOption(args[0], command, "")
+		}
+		return "", ui.UnexpectedArgument(args[0], command, usage)
+	}
+	if len(args) == 1 || args[1] == "" {
+		return "", ui.MissingOptionValue("--config", command, usage)
+	}
+	if len(args) > 2 {
+		if strings.HasPrefix(args[2], "-") {
+			return "", ui.UnknownOption(args[2], command, "")
+		}
+		return "", ui.UnexpectedArgument(args[2], command, usage)
 	}
 	// A relative path is resolved here, so nobody has to type an absolute one: the loader below
 	// still requires the absolute form, because everything it reads is owner-private.

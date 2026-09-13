@@ -324,6 +324,12 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 		return TasksWatch(host, repo, rels, jsonOutput)
 	}
 	if sub == "queues" {
+		if len(rest) > 1 {
+			if strings.HasPrefix(rest[1], "-") {
+				return 2, ui.UnknownOption(rest[1], "coop tasks queues", "")
+			}
+			return 2, ui.UnexpectedArgument(rest[1], "coop tasks queues", "coop tasks queues")
+		}
 		// Print each configured queue's absolute path, one per line — a stable primitive for scripts
 		// and the sweep queue guard, which counts actionable tasks across every queue.
 		for _, rel := range rels {

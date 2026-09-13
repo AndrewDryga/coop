@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 func TestAggregateReleasePreservesSandboxOwner(t *testing.T) {
@@ -135,6 +136,17 @@ func TestTaskQueues(t *testing.T) {
 	// A path escaping the repo is rejected.
 	if _, err := TaskQueues(cfg, repo, []string{"../outside/tasks"}); err == nil {
 		t.Error("a path escaping the repo should error")
+	}
+}
+
+func TestTasksQueuesRejectsArguments(t *testing.T) {
+	cfg := &config.Config{RepoOverride: t.TempDir(), TasksFiles: []string{".agent/tasks"}}
+	for _, args := range [][]string{{"queues", "extra"}, {"queues", "--bogus"}} {
+		code, err := CmdTasks(Host{}, cfg, args)
+		var usage *ui.UsageError
+		if code != 2 || !errors.As(err, &usage) {
+			t.Errorf("CmdTasks(%v) = %d, %v; want usage error", args, code, err)
+		}
 	}
 }
 

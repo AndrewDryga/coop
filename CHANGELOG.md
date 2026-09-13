@@ -72,6 +72,9 @@
   source-reading commands work while content creation, replacement and deletion stay blocked.
   File-mode changes remain a known low-impact limitation of that deprecated backend.
 
+- `coop tasks queues` now rejects trailing arguments, and `coop sessions connect` reports the
+  actual unknown option instead of incorrectly saying that `--config` is missing.
+
 - Task completion reminds agents that scratch logs are removed during finalization and
   only verified durable artifacts belong in the final handoff; normal scratch cleanup remains.
 

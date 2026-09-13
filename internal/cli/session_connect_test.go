@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -11,7 +12,30 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/ui"
 )
+
+func TestParseSessionConnectFlagsReportsTheActualBadArgument(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--bogus", "x"}, `Unknown option "--bogus"`},
+		{[]string{"config.json"}, `Unexpected argument "config.json"`},
+		{[]string{"--config"}, `Missing value for "--config"`},
+		{[]string{"--config", "config.json", "extra"}, `Unexpected argument "extra"`},
+	} {
+		_, err := parseSessionConnectFlags(tc.args)
+		var usage *ui.UsageError
+		if !errors.As(err, &usage) || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("parseSessionConnectFlags(%v) = %v, want %q usage error", tc.args, err, tc.want)
+		}
+	}
+	if got, err := parseSessionConnectFlags([]string{"--config", "config.json"}); err != nil || !filepath.IsAbs(got) {
+		t.Fatalf("valid config = %q, %v; want absolute path", got, err)
+	}
+}
 
 // shortHome is a REAL, short directory for a session state root. t.TempDir() will not do: on macOS
 // it is a symlinked /var/folders path (the service refuses a state parent that is not a real
