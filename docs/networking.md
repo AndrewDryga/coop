@@ -62,8 +62,11 @@ nothing about the checks after it, and ends with `✗ this host is not ready for
 **Provider access is what the client needs to work, and nothing it merely chats to.** A filtered
 `coop claude` reaches `api.anthropic.com`, `platform.claude.com` (the OAuth refresh) and
 `mcp-proxy.anthropic.com` (the claude.ai connectors a login has on by default); a filtered
-`coop codex` reaches `chatgpt.com` and `auth.openai.com`. Gemini and Grok have no qualified client
-yet and are refused in filtered mode. The client's own release feed, package registry, update check
+`coop codex` reaches `chatgpt.com` and `auth.openai.com`; Gemini reaches
+`generativelanguage.googleapis.com` with a portable AI Studio API key; and Grok reaches
+`cli-chat-proxy.grok.com` and `code.grok.com` with a portable access file. Gemini OAuth and Vertex
+AI credentials are not supported in filtered mode and are refused before launch. The client's own
+release feed, package registry, update check
 and telemetry — `raw.githubusercontent.com`, `registry.npmjs.org`, `api.github.com`, the Datadog
 intakes — are deliberately not in any bundle. Instead, every box switches that traffic off with
 the client's own controls, in the box only: Claude runs with

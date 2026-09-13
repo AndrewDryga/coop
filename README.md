@@ -1141,8 +1141,9 @@ lines up: a thread you started with `coop loop` is there to resume in Zed.
 
 coop's proxy sits between the editor and the box and owns the session:
 
-- Filtered networking offers only compatible providers and complete presets. Claude and Codex
-  support filtered ACP; Gemini and Grok currently require open networking. Switching providers
+- Filtered networking offers only compatible providers and complete presets. Claude and Codex,
+  Gemini with a portable AI Studio API key, and Grok with a portable access file support filtered
+  ACP. Gemini OAuth and Vertex AI credentials require open networking. Switching providers
   never widens the session's network access, and explicitly requesting an unsupported provider
   or preset still fails before launch.
 
@@ -1835,7 +1836,7 @@ when a tool needs current joined state.
 | **"no container runtime found"** | Install Apple [`container`](https://github.com/apple/container) (macOS 26+), Docker, or Podman, then `coop build && coop doctor`. Force one with `COOP_RUNTIME=docker`. |
 | **"image … isn't built — run 'coop build'"** | `coop build` (shared base), or `coop build` in a repo with a `.agent/Dockerfile` (its own image). |
 | **Login hangs or "usage limit reached"** | `coop login <agent>` re-runs the sign-in (paste-code, no browser). Hit a subscription limit? It resets on a schedule — wait, or `coop login` into another account. The unattended loop waits out the reset on its own; a [Zed session](#drive-it-from-zed-acp) rotates to your next signed-in account and re-sends by itself. |
-| **Gemini says its Google sign-in client is no longer supported** | Google retired Gemini CLI access for individual Google accounts. Run `coop login gemini[@<name>]` and paste a Gemini API key from the displayed AI Studio link; Coop does not launch that retired Google flow. Enterprise Gemini CLI and Vertex credentials remain separate provider-supported options. |
+| **Gemini says its Google sign-in client is no longer supported** | Google retired Gemini CLI access for individual Google accounts. Run `coop login gemini[@<name>]` and paste a Gemini API key from the displayed AI Studio link; Coop does not launch that retired Google flow. Enterprise Gemini CLI and Vertex credentials remain separate provider-supported options and are not supported with `--egress filtered`. |
 | **Agent seems stuck / a detached loop won't quit** | `coop fork logs <name> -f` to watch it; `coop fork stop <name>` to stop a detached loop. A foreground run is just Ctrl-C. |
 | **"permission denied" writing `~/.cache` / build or test caches** | The shared cache volume initialized root-owned. Recreate it: `docker volume rm coop-cache` (or your runtime's equivalent), then `coop build`. |
 | **`go`/`gofmt`: "No version is set for command go"** | The box provisions toolchains from `.tool-versions` via asdf — add the required `golang` version there so it's installed and shimmed. Set `COOP_NO_ASDF=1` to skip provisioning. |
@@ -1949,7 +1950,7 @@ live quota.
 |---|---|
 | `missing_runtime`, `missing_image`, `missing_cli`, `missing_credential` | Install/build/sign in, then rerun. No paid request started. |
 | `credential_refresh_required` | Re-authenticate the selected account; its projected access token cannot outlive the deadline. |
-| `credential_not_portable` | Select an env-backed key (for Gemini, `GEMINI_API_KEY` or Vertex `GOOGLE_API_KEY`). |
+| `credential_not_portable` | Select an env-backed key (for Gemini, `GEMINI_API_KEY`; Vertex `GOOGLE_API_KEY` works only with open networking). |
 | `ring_prerequisite` | Repair the named prerequisite. The consult ring admitted zero paid calls. |
 | `failed` with `attempted=true` | Treat as an upstream CLI/provider compatibility failure; reproduce syntax/policy with the deterministic fixture. |
 | `repository_changed`, `source_changed`, `cleanup_failed`, `harness_failed` | Treat as a local isolation/harness defect; these override provider success. |
