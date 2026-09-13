@@ -56,10 +56,11 @@ type LockedNativeArtifact struct {
 func (c LockedClient) Launcher() string { return "/usr/local/bin/" + c.Binary }
 
 type ClientClosure struct {
-	Platform ClientPlatform
-	Digest   string
-	Clients  []LockedClient
-	Files    map[string][]byte
+	Platform   ClientPlatform
+	Digest     string
+	Clients    []LockedClient
+	Files      map[string][]byte
+	ClientRoot string
 }
 
 var lockedVersion = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
@@ -105,15 +106,16 @@ func LockedClientClosure(platform ClientPlatform) (ClientClosure, error) {
 	// JSON maps sort keys, so definitions, platform and bytes have one stable
 	// identity. The image ID remains the final construction observation.
 	identity, err := json.Marshal(struct {
-		Platform ClientPlatform
-		Clients  []LockedClient
-		Files    map[string][]byte
-	}{platform, clients, files})
+		Platform   ClientPlatform
+		Clients    []LockedClient
+		Files      map[string][]byte
+		ClientRoot string
+	}{platform, clients, files, lockedClientRoot})
 	if err != nil {
 		return ClientClosure{}, err
 	}
 	digest := sha256.Sum256(identity)
-	return ClientClosure{Platform: platform, Digest: hex.EncodeToString(digest[:]), Clients: clients, Files: files}, nil
+	return ClientClosure{Platform: platform, Digest: hex.EncodeToString(digest[:]), Clients: clients, Files: files, ClientRoot: lockedClientRoot}, nil
 }
 
 func validateClientClosure(platform ClientPlatform, files map[string][]byte, clients []LockedClient) error {

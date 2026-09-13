@@ -55,7 +55,7 @@ type filteredDaemonFixture struct {
 	composeServices                        map[string]string
 	connected                              []string
 	images                                 map[string]fixtureImage
-	layerReads, fileReads                  map[string]int
+	layerReads, fileReads, treeReads       map[string]int
 }
 
 func (d *filteredDaemonFixture) ConnectNetwork(_ context.Context, network string, ref runtime.DockerRef) error {
@@ -156,7 +156,7 @@ func filteredFixture(t *testing.T) (*filteredExecution, *filteredDaemonFixture) 
 	}
 	f.hostAddresses = func() ([]netip.Prefix, error) { return []netip.Prefix{netip.MustParsePrefix("192.0.2.1/32")}, nil }
 	d := &filteredDaemonFixture{f: f, smoke: smoke, containers: map[string]runtime.DockerContainer{}, volumes: map[string]runtime.DockerVolume{},
-		images: map[string]fixtureImage{}, layerReads: map[string]int{}, fileReads: map[string]int{}, attached: make(chan struct{})}
+		images: map[string]fixtureImage{}, layerReads: map[string]int{}, fileReads: map[string]int{}, treeReads: map[string]int{}, attached: make(chan struct{})}
 	f.docker = d
 	// The envelope a real launch inventories: this host plus the daemon's networks.
 	networks, _ := d.Networks(ctx)
@@ -177,6 +177,7 @@ type fixtureImage struct {
 	labels map[string]string
 	layers []string
 	files  map[string]runtime.DockerFile
+	tree   runtime.DockerTree
 }
 
 func (d *filteredDaemonFixture) Image(_ context.Context, name string) (string, map[string]string, error) {
@@ -219,6 +220,21 @@ func (d *filteredDaemonFixture) FileDigest(_ context.Context, ref runtime.Docker
 	}
 	d.fileReads[image.id]++
 	return file, nil
+}
+
+func (d *filteredDaemonFixture) TreeDigest(_ context.Context, ref runtime.DockerRef, source string, limit int64) (runtime.DockerTree, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	container, ok := d.containers[ref.Name]
+	if !ok || ref.ID == "" || source == "" || limit <= 0 {
+		return runtime.DockerTree{}, errors.New("fixture has no created container " + ref.Name)
+	}
+	image, ok := d.images[container.Image]
+	if !ok || image.tree.Size == 0 {
+		return runtime.DockerTree{}, errors.New("no such directory")
+	}
+	d.treeReads[image.id]++
+	return image.tree, nil
 }
 
 // ExistingNamedVolumeExposure reports no backing sources: the fixture's ordinary

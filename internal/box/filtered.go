@@ -116,6 +116,7 @@ type filteredDocker interface {
 	Image(context.Context, string) (string, map[string]string, error)
 	ImageLayers(context.Context, string) (string, []string, error)
 	FileDigest(context.Context, runtime.DockerRef, string, int64) (runtime.DockerFile, error)
+	TreeDigest(context.Context, runtime.DockerRef, string, int64) (runtime.DockerTree, error)
 	ExistingNamedVolumeExposure(context.Context, []string) (runtime.VolumeExposure, error)
 	ConnectNetwork(context.Context, string, runtime.DockerRef) error
 	NetworkMembers(context.Context, string) (map[string]netip.Addr, error)

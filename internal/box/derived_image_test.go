@@ -22,8 +22,11 @@ func resetPinnedDigests(t *testing.T) {
 	t.Helper()
 	drop := func() {
 		pinnedDigests.Lock()
-		defer pinnedDigests.Unlock()
 		pinnedDigests.images = nil
+		pinnedDigests.Unlock()
+		pinnedTreeDigests.Lock()
+		pinnedTreeDigests.trees = nil
+		pinnedTreeDigests.Unlock()
 	}
 	drop()
 	t.Cleanup(drop)
@@ -58,9 +61,10 @@ func derivedImageFixture(t *testing.T, d *filteredDaemonFixture) agents.ClientCl
 	base := []string{"sha256:" + strings.Repeat("a", 64), "sha256:" + strings.Repeat("b", 64)}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.images[fixtureLockedImage] = fixtureImage{id: fixtureLockedImage, layers: base, files: files}
+	tree := runtime.DockerTree{Size: 4096, SHA256: strings.Repeat("8", 64)}
+	d.images[fixtureLockedImage] = fixtureImage{id: fixtureLockedImage, layers: base, files: files, tree: tree}
 	d.images[fixtureBuiltImage] = fixtureImage{id: fixtureBuiltImage,
-		layers: append(slices.Clone(base), "sha256:"+strings.Repeat("c", 64)), files: maps.Clone(files)}
+		layers: append(slices.Clone(base), "sha256:"+strings.Repeat("c", 64)), files: maps.Clone(files), tree: tree}
 	return closure
 }
 
@@ -120,6 +124,12 @@ func TestDerivedImageProvesDerivationAndPinnedClients(t *testing.T) {
 			file.Mode = 0o644
 			i.files[native] = file
 		}, want: "at " + native},
+		"replaced transitive dependency": {change: func(i *fixtureImage) {
+			i.tree.SHA256 = strings.Repeat("7", 64)
+		}, want: "changes the locked JavaScript clients below " + closure.ClientRoot},
+		"missing client tree": {change: func(i *fixtureImage) {
+			i.tree = runtime.DockerTree{}
+		}, want: "cannot check the locked JavaScript clients"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, d := filteredFixture(t)
@@ -165,6 +175,9 @@ func TestPinnedClientProofReadsEachImageOnce(t *testing.T) {
 	if reads[fixtureLockedImage] != files || reads[fixtureBuiltImage] != files {
 		t.Fatal("a proof re-read an image it had already identified", reads, files)
 	}
+	if d.treeReads[fixtureLockedImage] != 1 || d.treeReads[fixtureBuiltImage] != 1 {
+		t.Fatal("a proof re-read a client tree", d.treeReads)
+	}
 	// A rebuild that produces different bytes produces a different ID, and that
 	// is what the memo is keyed on — so the new image is read, not assumed.
 	rebuilt := "sha256:" + strings.Repeat("3", 64)
@@ -178,7 +191,7 @@ func TestPinnedClientProofReadsEachImageOnce(t *testing.T) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.fileReads[rebuilt] != files || d.fileReads[fixtureLockedImage] != files {
+	if d.fileReads[rebuilt] != files || d.fileReads[fixtureLockedImage] != files || d.treeReads[rebuilt] != 1 {
 		t.Fatal("a rebuilt image reused another image's identity", d.fileReads)
 	}
 }

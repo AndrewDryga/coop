@@ -407,6 +407,35 @@ func (d *Docker) FileDigest(ctx context.Context, ref DockerRef, source string, l
 	return file, nil
 }
 
+// DockerTree is the digest of the exact archive Docker returns for one image
+// directory. The archive includes paths, metadata, links and file bytes, so any
+// change below the directory changes this value without running the image.
+type DockerTree struct {
+	Size   int64
+	SHA256 string
+}
+
+const maxDockerTreeEvidence = 4 << 30
+
+func (d *Docker) TreeDigest(ctx context.Context, ref DockerRef, source string, limit int64) (DockerTree, error) {
+	value, present, err := d.InspectContainer(ctx, ref)
+	if err != nil || ref.ID == "" || !present || value.State.Running || !strings.HasPrefix(source, "/") ||
+		strings.ContainsAny(source, "\x00\r\n") || limit <= 0 || limit > maxDockerTreeEvidence {
+		return DockerTree{}, errors.Join(errors.New("Docker tree evidence source unavailable"), err)
+	}
+	var tree DockerTree
+	err = d.read(ctx, 10*time.Minute, func(stream io.Reader) error {
+		digest := sha256.New()
+		size, copyErr := io.Copy(digest, io.LimitReader(stream, limit+1))
+		if copyErr != nil || size == 0 || size > limit {
+			return errors.New("the directory could not be read within its size limit")
+		}
+		tree = DockerTree{Size: size, SHA256: hex.EncodeToString(digest.Sum(nil))}
+		return nil
+	}, "container", "cp", ref.ID+":"+source, "-")
+	return tree, err
+}
+
 const dockerImageLayerFormat = `{"ID":{{json .Id}},"Layers":{{json .RootFS.Layers}}}`
 
 // maxDockerImageLayers bounds one chain. Docker's own limit is far lower; an

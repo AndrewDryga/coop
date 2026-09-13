@@ -2,7 +2,7 @@
 name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
-sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, docs/networking.md]
+sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, docs/networking.md]
 updated: 2026-09-13
 ---
 
@@ -101,17 +101,15 @@ Traps:
   Dockerfile text, gate it (`box/derived_image.go:118`): the locked image's `RootFS.Layers` must be a
   PREFIX of the built image's, and every pinned client entry point (launcher, each `Exec` element
   including `/usr/local/bin/node`, and every `RequiredExecutables` path) must be byte-identical in
-  both images. The file reads happen in a container that is CREATED AND NEVER STARTED
-  (`runtime.Docker.FileDigest`, `runtime/docker_lifecycle.go:333`): asking a tampered image to
-  describe itself is how the check would be defeated. They cost ~775 MB of `docker cp` per image on
-  the current closure — ~3s each on this host — so a read is memoized per image ID in the process
-  AND recorded in the owner-private store (`networkstate/image_files.go`, keyed by the image id and
-  the exact path set, so a release that pins one more path cannot be satisfied by an older record).
-  host setup records the locked image's set while it has the daemon in hand
-  (`box/network_setup.go`, `setupClientFiles`), and a launch records what it read out of the image it built, so a
-  first launch after a build reads one image (~8.2s here) and a repeat reads none (~5.9s, the same
-  as a project with no Dockerfile) against ~11.9s before. A record that is missing, damaged or for
-  another image is a MISS and the image is read; nothing there can make a file pass. `COOP_IMAGE` stays refused at
+  both images. The complete `/opt/coop/clients` directory archive is also hashed, so changing,
+  adding or removing an imported JavaScript dependency is refused. The file and tree reads happen
+  in a container that is CREATED AND NEVER STARTED (`runtime.Docker.FileDigest` and `TreeDigest`):
+  asking a tampered image to describe itself is how the check would be defeated. Both reads are
+  memoized per immutable image ID in the process and owner-private store
+  (`networkstate/image_files.go`, `networkstate/image_trees.go`). Host setup records the locked
+  image's pinned files while it has the daemon in hand; the first derived-image proof records the
+  complete tree. A record that is missing, damaged or for another image/root is a MISS and the image
+  is read; nothing there can make a changed image pass. `COOP_IMAGE` stays refused at
   admission (`box/network_admission.go:175`): nothing qualified it and no proof can.
 - That build is run by the LAUNCH, not by a human `coop build`, and a Docker build has root and
   ordinary network. The proofs bind what the box RUNS, not what the build may do, so an
@@ -163,6 +161,9 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-13 — added a bounded, non-executing directory-archive digest for the complete locked
+  JavaScript client installation; derived images may add tools elsewhere but may not change the
+  npm dependency tree. Re-verified with real unchanged and transitive-mutation Docker builds.
 - 2026-09-13 — added exact Gemini npm and Grok native-artifact closures, including shared CLI/ACP
   coverage, direct no-redirect download, embedded digest verification and platform mutation checks;
   added account/auth-family bundle binding for filtered ACP

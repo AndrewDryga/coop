@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Filtered project images now preserve the complete locked JavaScript client installation, not
+  only its launchers. Coop compares a bounded digest of Docker's directory archive and refuses a
+  project layer that adds, removes or changes a dependency below `/opt/coop/clients`.
+
 - Fork candidates now retain immutable review rounds instead of deleting the previous reviewed
   snapshot after a descendant fix. Every replacement HEAD receives a fresh candidate-wide,
   read-only signoff bound to its exact tree, task assignments and projection digests; interrupted

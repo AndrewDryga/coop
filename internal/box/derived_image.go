@@ -43,6 +43,10 @@ import (
 // are a few hundred megabytes; anything past this is not one of them.
 const maxPinnedClientBytes = 512 << 20
 
+// The installed npm tree is much larger than one launcher, but still finite.
+// Hash the stream instead of retaining it in memory.
+const maxPinnedClientTreeBytes = 4 << 30
+
 // filteredProjectDockerfile returns the repo-relative box Dockerfile a filtered
 // launch must build, or "" when the project has none and the locked client image
 // runs as-is. A `box.dockerfile` naming a file that is not there is "none", the
@@ -226,6 +230,17 @@ func provePinnedClients(ctx context.Context, docker filteredDocker, store *netwo
 			return fmt.Errorf("this project's %s changes %s at %s — a filtered box runs the clients this host's setup qualified, so add your tools instead of replacing them", dfRel, file.owner, file.path)
 		}
 	}
+	pinnedTree, err := imageTreeDigest(ctx, docker, store, locked, closure.ClientRoot)
+	if err != nil {
+		return fmt.Errorf("coop's locked JavaScript clients cannot be checked: %w — run 'coop net setup' again", err)
+	}
+	observedTree, err := imageTreeDigest(ctx, docker, store, built, closure.ClientRoot)
+	if err != nil {
+		return fmt.Errorf("the image this project's %s built cannot check the locked JavaScript clients: %w — add tools outside %s", dfRel, err, closure.ClientRoot)
+	}
+	if observedTree != pinnedTree {
+		return fmt.Errorf("this project's %s changes the locked JavaScript clients below %s — add tools outside Coop's client installation", dfRel, closure.ClientRoot)
+	}
 	return nil
 }
 
@@ -242,6 +257,11 @@ var pinnedDigests struct {
 	images map[string]map[string]runtime.DockerFile
 }
 
+var pinnedTreeDigests struct {
+	sync.Mutex
+	trees map[string]runtime.DockerTree
+}
+
 // imageFileDigests identifies each pinned file inside one image, reading them
 // out of a container that is created and NEVER started. Running anything from
 // the image to describe itself would let a tampered image write its own proof.
@@ -256,21 +276,12 @@ func imageFileDigests(ctx context.Context, docker filteredDocker, store *network
 		storeFileDigests(image, remembered)
 		return remembered, nil
 	}
-	nonce := make([]byte, 8)
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, err
-	}
-	ref := runtime.DockerRef{Name: "coop-image-proof-" + hex.EncodeToString(nonce),
-		Labels: map[string]string{"coop.image.proof": image}}
-	// `true` overrides nothing that matters and is never run: it only keeps the
-	// create honest for an image whose own entrypoint a project cleared.
-	id, err := docker.CreateContainer(ctx, runtime.DockerCreate{Ref: ref, Image: image, Command: []string{"true"}})
-	if id != "" {
+	ref, err := createImageProofContainer(ctx, docker, image)
+	if ref.ID != "" {
 		// Removed on every path, including a create that failed after submitting.
 		// A removal that itself fails leaves one never-started container behind and
 		// is not worth failing an otherwise complete proof over: it holds no
 		// resource, and its exact name says where it came from.
-		ref.ID = id
 		defer func() { _ = docker.RemoveContainer(ctx, ref) }()
 	}
 	if err != nil {
@@ -287,6 +298,63 @@ func imageFileDigests(ctx context.Context, docker filteredDocker, store *network
 	storeFileDigests(image, digests)
 	rememberFileDigests(store, image, files, digests)
 	return digests, nil
+}
+
+func createImageProofContainer(ctx context.Context, docker filteredDocker, image string) (runtime.DockerRef, error) {
+	nonce := make([]byte, 8)
+	if _, err := rand.Read(nonce); err != nil {
+		return runtime.DockerRef{}, err
+	}
+	ref := runtime.DockerRef{Name: "coop-image-proof-" + hex.EncodeToString(nonce),
+		Labels: map[string]string{"coop.image.proof": image}}
+	id, err := docker.CreateContainer(ctx, runtime.DockerCreate{Ref: ref, Image: image, Command: []string{"true"}})
+	ref.ID = id
+	return ref, err
+}
+
+func imageTreeDigest(ctx context.Context, docker filteredDocker, store *networkstate.Store, image, root string) (runtime.DockerTree, error) {
+	key := image + "\x00" + root
+	pinnedTreeDigests.Lock()
+	tree, ok := pinnedTreeDigests.trees[key]
+	pinnedTreeDigests.Unlock()
+	if ok {
+		return tree, nil
+	}
+	if store != nil {
+		if remembered, ok := store.ImageTreeDigest(image, root); ok {
+			tree = runtime.DockerTree{Size: remembered.Size, SHA256: remembered.SHA256}
+			storeTreeDigest(key, tree)
+			return tree, nil
+		}
+	}
+	ref, err := createImageProofContainer(ctx, docker, image)
+	if ref.ID != "" {
+		defer func() { _ = docker.RemoveContainer(ctx, ref) }()
+	}
+	if err != nil {
+		return runtime.DockerTree{}, err
+	}
+	tree, err = docker.TreeDigest(ctx, ref, root, maxPinnedClientTreeBytes)
+	if err != nil {
+		return runtime.DockerTree{}, err
+	}
+	storeTreeDigest(key, tree)
+	if store != nil {
+		_ = store.RememberImageTree(image, root, networkstate.ImageTree{Size: tree.Size, SHA256: tree.SHA256})
+	}
+	return tree, nil
+}
+
+func storeTreeDigest(key string, tree runtime.DockerTree) {
+	pinnedTreeDigests.Lock()
+	defer pinnedTreeDigests.Unlock()
+	if len(pinnedTreeDigests.trees) >= maxPinnedDigestImages*2 {
+		pinnedTreeDigests.trees = nil
+	}
+	if pinnedTreeDigests.trees == nil {
+		pinnedTreeDigests.trees = make(map[string]runtime.DockerTree, maxPinnedDigestImages*2)
+	}
+	pinnedTreeDigests.trees[key] = tree
 }
 
 func cachedFileDigests(image string, files []pinnedFile) map[string]runtime.DockerFile {

@@ -800,6 +800,48 @@ func TestDockerFileDigestIdentifiesOneRegularFile(t *testing.T) {
 	}
 }
 
+func TestDockerTreeDigestChangesWithTheArchivedTree(t *testing.T) {
+	read := func(mode string, running bool, limit int64) (DockerTree, error) {
+		t.Helper()
+		container := dockerFixtureContainer()
+		if running {
+			container.State = DockerContainerState{Status: "running", Running: true, StartedAt: time.Now()}
+		}
+		rt, _ := fixtureDocker(t, dockerFixture{Container: container, Copy: mode, CopyBody: "module.exports = 1\n"})
+		d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+		if err != nil {
+			return DockerTree{}, err
+		}
+		defer d.Close()
+		return d.TreeDigest(context.Background(), dockerFixtureRef(), "/opt/coop/clients", limit)
+	}
+	base, err := read("", false, 1<<20)
+	if err != nil || base.Size == 0 || len(base.SHA256) != 64 {
+		t.Fatal("client tree was not digested", base, err)
+	}
+	for _, mode := range []string{"two-entries", "directory", "symlink"} {
+		changed, err := read(mode, false, 1<<20)
+		if err != nil || changed == base {
+			t.Fatalf("%s tree was not distinguished: %v %v", mode, changed, err)
+		}
+	}
+	for name, test := range map[string]struct {
+		mode    string
+		running bool
+		limit   int64
+	}{
+		"missing":   {mode: "missing", limit: 1 << 20},
+		"running":   {running: true, limit: 1 << 20},
+		"too large": {limit: 32},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := read(test.mode, test.running, test.limit); err == nil {
+				t.Fatal("unreadable tree was accepted")
+			}
+		})
+	}
+}
+
 // A client attached to coop's terminal must run in coop's OWN process group: a background group is
 // suspended by the kernel the moment it touches the terminal, which hangs an interactive box before
 // the daemon is ever told to start it. Every other client keeps its own group, so cancelling one
