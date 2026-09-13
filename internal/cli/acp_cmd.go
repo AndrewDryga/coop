@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -108,6 +109,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	a.acpPeers = slices.Clone(peers)
 	// The positional who-runs slot pins the session: a TARGET (provider[:model][/effort][@account],
 	// so an editor's agent_servers entry runs ["acp","claude:opus@work"]) OR a PRESET NAME (routing +
 	// role wiring; its lead is the agent). Parsed BEFORE the inner
@@ -174,6 +176,13 @@ func (a *app) cmdACP(args []string) (int, error) {
 			tool, toolSet = t.Provider, true
 			model, effort, profile = t.Model, t.Effort, t.Account()
 		}
+		if os.Getenv(box.SessionNetworkCaptureEnv) != "" {
+			bindings, err := applyACPAccountBindings(a.cfg, os.Getenv(acpAccountBindingsEnv))
+			if err != nil {
+				return 2, err
+			}
+			a.acpAccountBindings = bindings
+		}
 	}
 	p, err := a.loadRunPreset(presetName)
 	if err != nil {
@@ -228,7 +237,11 @@ func (a *app) cmdACP(args []string) (int, error) {
 		// could spawn has to be in the scope its bundles derive from. Required
 		// targets stay intact; optional toolbar choices contribute only complete
 		// supported scopes. The control freezes that same scope after admission.
-		scope, err := a.acpNetworkScope(repo, peers, a.preset)
+		initial := agents.Target{Provider: tool}
+		if profile != "" {
+			initial.Accounts = []string{profile}
+		}
+		scope, err := a.acpNetworkScope(repo, initial, peers, a.preset)
 		if err != nil {
 			return 1, err
 		}
@@ -240,6 +253,9 @@ func (a *app) cmdACP(args []string) (int, error) {
 		}, a.network.admission())
 		if err != nil {
 			return 1, err
+		}
+		if a.acpCapture != nil {
+			a.acpNetworkTargets = slices.Clone(scope)
 		}
 		defer a.acpCapture.Close()
 		// Ports the inner box will publish (.agent/project.yaml serve), reported to the editor once per
@@ -257,11 +273,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		}
 		ctrl := acpctl.New(a.cfg, tool, ctrlModel, ctrlEffort, repo, sel, a.acpPresetNames(repo), serveURLs, acpHost())
 		if a.acpCapture != nil {
-			providers := []string{tool}
-			for _, target := range scope {
-				providers = append(providers, target.Provider)
-			}
-			ctrl.LimitNetworkProviders(providers)
+			ctrl.LimitNetworkTargets(scope)
 		}
 		if a.acpSupervise != nil {
 			return a.acpSupervise(inner, ctrl)
@@ -324,6 +336,15 @@ func (a *app) cmdACP(args []string) (int, error) {
 	}
 	defer capture.Close()
 	if capture != nil {
+		if err := validateACPAccountBindings(a.cfg, spec, a.acpAccountBindings); err != nil {
+			return 1, err
+		}
+		// Rebuild the concrete credential scope after the child applied its lead
+		// target and preset. This is the final boundary before any provider home is
+		// mounted, and catches role/default-account drift hidden by a portable sibling.
+		if _, err := box.NetworkProviderBundles(a.cfg, spec); err != nil {
+			return 1, fmt.Errorf("selected ACP scope is no longer available under this session's network rules: %w", err)
+		}
 		spec.CapturedEgress = capture
 		// A filtered child owns a gateway, two volumes and a receipt. The
 		// supervisor stops it with a signal, so that signal has to arrive as a
@@ -595,6 +616,143 @@ func newSupervisorID() (string, error) {
 }
 
 const acpCleanupTimeout = 5 * time.Second
+const acpAccountBindingsEnv = "COOP_ACP_ACCOUNTS"
+
+type acpAccountBinding struct {
+	Account string `json:"account"`
+	Default string `json:"default"`
+}
+
+// applyACPAccountBindings restores the supervisor's exact provider/account
+// choices before the child builds credential mounts. The host parent is the
+// sole writer of this scrubbed variable; a captured child missing it refuses.
+func applyACPAccountBindings(cfg *config.Config, raw string) (map[string]acpAccountBinding, error) {
+	if raw == "" {
+		return nil, errors.New("filtered ACP account bindings are missing")
+	}
+	var bindings map[string]acpAccountBinding
+	if err := json.Unmarshal([]byte(raw), &bindings); err != nil || len(bindings) == 0 {
+		return nil, errors.New("filtered ACP account bindings are malformed")
+	}
+	for provider, binding := range bindings {
+		target, err := agents.ParseTarget(provider + "@" + binding.Account)
+		if err != nil || target.Provider != provider || target.Account() != binding.Account || binding.Default == "" {
+			return nil, errors.New("filtered ACP account bindings are malformed")
+		}
+		if current := cfg.DefaultProfileOf(provider); current != binding.Default {
+			return nil, fmt.Errorf("%s default account changed from %q to %q after this filtered ACP session started", provider, binding.Default, current)
+		}
+		cfg.SetActiveProfile(provider, binding.Account)
+	}
+	return bindings, nil
+}
+
+// validateACPAccountBindings closes the tiny parent-load/child-load race: a
+// preset edited to add a role after the supervisor's final check cannot fall
+// back to that provider's current default. Every provider the child can mount
+// must name exactly the account the parent handed it.
+func validateACPAccountBindings(cfg *config.Config, spec box.RunSpec, bindings map[string]acpAccountBinding) error {
+	need := map[string]string{}
+	add := func(provider string) error {
+		if provider == "" {
+			return nil
+		}
+		account := cfg.ActiveProfile(provider)
+		bound, ok := bindings[provider]
+		if !ok || bound.Account != account || bound.Default != cfg.DefaultProfileOf(provider) {
+			return fmt.Errorf("filtered ACP has no supervisor-approved binding for %s account %q", provider, account)
+		}
+		need[provider] = account
+		return nil
+	}
+	if err := add(spec.Agent); err != nil {
+		return err
+	}
+	for _, peer := range spec.Peers {
+		if err := add(peer.Provider); err != nil {
+			return err
+		}
+	}
+	if spec.Preset != nil {
+		for _, provider := range spec.Preset.RunnableRoleAgents(spec.Agent) {
+			if err := add(provider); err != nil {
+				return err
+			}
+		}
+	}
+	if len(need) == 0 {
+		return errors.New("filtered ACP has no supervisor-approved credential scope")
+	}
+	return nil
+}
+
+// acpFilteredSpawnScope returns both the complete preset closure that must
+// still be qualified after a reset wait and the exact account each provider in
+// this child will mount. The latter is passed to the re-exec so a changed host
+// default cannot widen the frozen supervisor session.
+func (a *app) acpFilteredSpawnScope(lead agents.Target, presetName string) ([]agents.Target, map[string]acpAccountBinding, error) {
+	if lead.Provider == "" {
+		return nil, nil, errors.New("filtered ACP needs a concrete provider")
+	}
+	if lead.Account() == "" {
+		lead.Accounts = []string{a.cfg.ActiveProfile(lead.Provider)}
+	}
+	var targets []agents.Target
+	bindings := map[string]acpAccountBinding{}
+	addTarget := func(target agents.Target) {
+		if target.Account() == "" {
+			target.Accounts = []string{a.cfg.ActiveProfile(target.Provider)}
+		}
+		targets = append(targets, target)
+	}
+	bind := func(provider, account string) error {
+		binding := acpAccountBinding{Account: account, Default: a.cfg.DefaultProfileOf(provider)}
+		if existing, ok := bindings[provider]; ok && existing != binding {
+			return fmt.Errorf("filtered ACP selected two %s accounts (%q and %q) for one child", provider, existing.Account, account)
+		}
+		bindings[provider] = binding
+		return nil
+	}
+	addTarget(lead)
+	if err := bind(lead.Provider, lead.Account()); err != nil {
+		return nil, nil, err
+	}
+	for _, peer := range a.acpPeers {
+		if peer.Account() == "" {
+			peer.Accounts = []string{a.cfg.ActiveProfile(peer.Provider)}
+		}
+		addTarget(peer)
+		if err := bind(peer.Provider, peer.Account()); err != nil {
+			return nil, nil, err
+		}
+	}
+	if presetName == "" {
+		return targets, bindings, nil
+	}
+	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	if err != nil {
+		return nil, nil, err
+	}
+	p, err := preset.Load(repo, a.cfg.GlobalPresetsDir(), presetName)
+	if err != nil {
+		return nil, nil, err
+	}
+	closure, err := a.acpPresetNetworkTargets(p)
+	if err != nil {
+		return nil, nil, err
+	}
+	targets = append(targets, closure...)
+	for _, provider := range p.RunnableRoleAgents(lead.Provider) {
+		account := a.cfg.ActiveProfile(provider)
+		if provider == lead.Provider {
+			account = lead.Account()
+		}
+		if err := bind(provider, account); err != nil {
+			return nil, nil, err
+		}
+	}
+	return targets, bindings, nil
+}
 
 func cleanACPChildEnv(env []string) []string {
 	out := make([]string, 0, len(env))
@@ -603,7 +761,7 @@ func cleanACPChildEnv(env []string) []string {
 		switch key {
 		// The network capture is minted per child by this supervisor. An inherited
 		// one names a snapshot this session never admitted, so it never rides in.
-		case "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE", "COOP_ACP_ACTIVITY_ROLE",
+		case "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE", "COOP_ACP_ACTIVITY_ROLE", acpAccountBindingsEnv,
 			box.SessionNetworkCaptureEnv,
 			liveprocess.ControlFDEnv, liveprocess.ProcessDirEnv, liveprocess.CleanupIDEnv, liveprocess.RevokePathEnv:
 			continue
@@ -622,7 +780,10 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 		provider = ctrl.LeadProvider()
 	}
 	if ctrl != nil {
-		if err := ctrl.ValidateNetworkTarget(agents.Target{Provider: provider}, psName); err != nil {
+		if a.acpCapture != nil {
+			t = ctrl.ResolveNetworkTarget(t)
+		}
+		if err := ctrl.ValidateNetworkTarget(t, psName); err != nil {
 			return nil, err
 		}
 	}
@@ -680,6 +841,57 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 		}
 		env = append(env, "COOP_ACP_TARGET="+t.String())
 		acpproxy.Trace("spawn box on target=%s preset=%s", t.String(), psName)
+	}
+	// Reset waits can last for hours. Re-prove the complete preset and exact
+	// authentication families after the wait and immediately before launching
+	// the child; open/offline ACP deliberately retains every native auth mode.
+	if a.acpCapture != nil {
+		if ctrl != nil {
+			if err := ctrl.ValidateNetworkTarget(t, psName); err != nil {
+				inR.Close()
+				inW.Close()
+				outR.Close()
+				outW.Close()
+				return nil, err
+			}
+		}
+		targets, bindings, err := a.acpFilteredSpawnScope(t, psName)
+		if err == nil {
+			for _, target := range targets {
+				if !slices.ContainsFunc(a.acpNetworkTargets, func(admitted agents.Target) bool {
+					return admitted.Provider == target.Provider && admitted.Account() == target.Account()
+				}) {
+					err = fmt.Errorf("%s account %q was not admitted by this filtered ACP supervisor", target.Provider, target.Account())
+				}
+				if ctrl != nil {
+					if validateErr := ctrl.ValidateNetworkTarget(target, ""); err == nil {
+						err = validateErr
+					}
+				}
+				if err == nil {
+					_, err = box.NetworkTargetBundle(a.cfg, target, egress.ClientACP)
+				}
+				if err != nil {
+					break
+				}
+			}
+		}
+		if err != nil {
+			inR.Close()
+			inW.Close()
+			outR.Close()
+			outW.Close()
+			return nil, fmt.Errorf("selected ACP target is no longer available under this session's network rules: %w", err)
+		}
+		encoded, err := json.Marshal(bindings)
+		if err != nil {
+			inR.Close()
+			inW.Close()
+			outR.Close()
+			outW.Close()
+			return nil, fmt.Errorf("encode ACP account bindings: %w", err)
+		}
+		env = append(env, acpAccountBindingsEnv+"="+string(encoded))
 	}
 	if a.rt.SupportsCIDFile() {
 		if d, derr := os.MkdirTemp("", "coop-acp-cid-"); derr == nil {

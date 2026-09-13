@@ -2,7 +2,7 @@
 name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
-sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/agent/network_bundle.go, internal/agent/claude.go, docs/networking.md]
+sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, docs/networking.md]
 updated: 2026-09-13
 ---
 
@@ -82,6 +82,15 @@ whole result — two sentences, one `✓`/`✗` line per proved property, one ve
 `ErrNetworkSetupFailed`, which `cmdNetSetup` maps to exit 1 without repeating the verdict. Nothing
 else builds an image or installs tooling at launch.
 
+The locked client closure has two supply-chain arms with the same identity rule. npm clients come
+from the embedded exact package lock and registry SHA-512 integrity; a native artifact carries one
+versioned HTTPS object URL and a Coop-owned SHA-256 digest. The image downloads that object without
+following redirects, verifies the digest before decompression, and only then installs it. One
+physical executable may record both CLI and ACP coverage only when provider, package/artifact,
+launcher argv and environment controls are byte-for-byte identical. Gemini 0.59.0 uses this shared
+npm shape; Grok 1.0.25 uses the direct checksummed GCS object. A floating installer, downloaded
+checksum, mismatched platform URL, or two conflicting declarations is not a locked client.
+
 Traps:
 
 - A filtered run's box is the LOCKED client image, or that image plus the project's own layers.
@@ -154,6 +163,9 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-13 — added exact Gemini npm and Grok native-artifact closures, including shared CLI/ACP
+  coverage, direct no-redirect download, embedded digest verification and platform mutation checks;
+  added account/auth-family bundle binding for filtered ACP
 - 2026-09-13 — added the locked Claude API-key credential-broker first slice: guard-only secret,
   helper-only route admission, Envoy-attributed upstream, session substitute, and fail-closed
   unsupported-mode boundary. Re-verified against the listed adapter, box, and gateway sources.

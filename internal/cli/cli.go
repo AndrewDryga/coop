@@ -54,6 +54,9 @@ type app struct {
 	network              networkFlags                                 // this launch's --egress/--allow-domain/--egress-rules, resolved by box.AdmitNetwork
 	mode                 agents.ExecutionMode                         // this launch's --readonly/--bare; "" (normal) is every launch that takes neither
 	acpCapture           *box.CapturedEgress                          // an ACP supervisor's frozen policy; every child it spawns gets a reference to this one
+	acpPeers             []agents.Target                              // exact ad-hoc peers whose accounts a filtered ACP supervisor freezes for its children
+	acpNetworkTargets    []agents.Target                              // exact provider/accounts admitted with acpCapture, including optional warm/probe choices
+	acpAccountBindings   map[string]acpAccountBinding                 // filtered child-only account/default handoff, checked against its reloaded preset before mounts
 	acpResume            *acpctl.ResumeState                          // consumed once before admission; restored by the supervisor afterward
 	beforeSignRefUpdate  func(repo, ref, oldHead, newHead string)     // test seam for a concurrent signing ref move
 	afterDetachedPublish func()                                       // test seam for state replacement before repeated child validation

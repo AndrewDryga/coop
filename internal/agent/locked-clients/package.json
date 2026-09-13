@@ -3,10 +3,11 @@
   "private": true,
   "version": "1.0.0",
   "dependencies": {
-    "@anthropic-ai/claude-code": "2.1.260",
-    "@openai/codex": "0.153.4",
     "@agentclientprotocol/claude-agent-acp": "0.75.1",
     "@agentclientprotocol/codex-acp": "1.10.0",
+    "@anthropic-ai/claude-code": "2.1.260",
+    "@google/gemini-cli": "0.59.0",
+    "@openai/codex": "0.153.4",
     "playwright": "1.63.0"
   }
 }

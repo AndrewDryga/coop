@@ -110,6 +110,40 @@ func TestGeminiHostCredentialScopesAccountsAndPreservesDefaultEnvPrecedence(t *t
 	}
 }
 
+// Filtered ACP freezes the default identity as well as ActiveProfile because
+// making a selected named account the new default deliberately changes which
+// credential source wins: provider-wide env replaces that account's stored key.
+func TestGeminiDefaultChangeReinterpretsProjectedCredentialSource(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	gemini, _ := agents.Get("gemini")
+	if err := SaveHostCredential(cfg, gemini, "work", []byte("work-key")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg.EnvFile(), []byte("GEMINI_API_KEY=default-env\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg.SetActiveProfile("gemini", "work")
+	artifacts := defaultCompositionArtifactOps()
+	projected := func() string {
+		t.Helper()
+		envFile, tmp, err := prepareBoxEnvFile(cfg, RunSpec{Homes: true, Agent: "gemini"}, artifacts, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.Remove(tmp)
+		return EnvFileValues(envFile)["GEMINI_API_KEY"]
+	}
+	if got := projected(); got != "work-key" {
+		t.Fatalf("named-account source = %q, want stored work key", got)
+	}
+	if err := cfg.SetDefaultProfile("gemini", "work"); err != nil {
+		t.Fatal(err)
+	}
+	if got := projected(); got != "default-env" {
+		t.Fatalf("new-default source = %q, want provider-wide env", got)
+	}
+}
+
 func TestGeminiHostCredentialIsInactiveOutsideItsSelectedAuthFamily(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	gemini, _ := agents.Get("gemini")

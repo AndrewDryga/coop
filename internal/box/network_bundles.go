@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
+	"strings"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -46,21 +48,115 @@ func NetworkProviderBundles(cfg *config.Config, spec RunSpec) ([]egress.Bundle, 
 		}
 	}
 	var bundles []egress.Bundle
-	for _, name := range credentialScope(cfg, spec) {
+	seenBundles := map[string]bool{}
+	for _, name := range networkCredentialScope(cfg, spec) {
 		if brokered[name] {
 			continue // broker helper authority is distinct from the agent's captured policy
 		}
-		ag, ok := agents.Get(name)
-		if !ok {
+		if _, ok := agents.Get(name); !ok {
 			return nil, errors.New("unknown provider in the restricted credential scope")
 		}
-		bundle, err := ag.NetworkBundle(agents.NetworkBundleInput{Client: spec.networkClient()})
-		if err != nil {
-			return nil, err
+		targets := networkTargetsForProvider(cfg, spec, name)
+		for _, target := range targets {
+			bundle, err := NetworkTargetBundle(cfg, target, spec.networkClient())
+			if err != nil {
+				return nil, err
+			}
+			identity := strings.Join([]string{bundle.Provider, string(bundle.Client), bundle.Backend, bundle.AuthMode, bundle.Version}, "\x00")
+			if seenBundles[identity] {
+				continue
+			}
+			seenBundles[identity] = true
+			bundles = append(bundles, bundle)
 		}
-		bundles = append(bundles, bundle)
 	}
 	return egress.SelectedBundles(bundles)
+}
+
+// networkCredentialScope is stricter than the mount planner: a missing preset
+// role credential is a launch refusal, not permission to silently omit that
+// role from network validation. Successful runs return the same providers as
+// credentialScope; only broken required roles differ.
+func networkCredentialScope(cfg *config.Config, spec RunSpec) []string {
+	scope := credentialScope(cfg, spec)
+	if !spec.Homes || runPrimary(spec) == "" || spec.Preset == nil || spec.Login {
+		return scope
+	}
+	for _, provider := range spec.Preset.RunnableRoleAgents(runPrimary(spec)) {
+		if !slices.Contains(scope, provider) {
+			scope = append(scope, provider)
+		}
+	}
+	return scope
+}
+
+func networkTargetsForProvider(cfg *config.Config, spec RunSpec, provider string) []agents.Target {
+	var targets []agents.Target
+	for _, target := range spec.Peers {
+		if target.Provider != provider {
+			continue
+		}
+		if len(target.Accounts) == 0 {
+			target.Accounts = []string{cfg.ActiveProfile(provider)}
+		}
+		for _, account := range target.Accounts {
+			t := target
+			t.Accounts = []string{account}
+			targets = append(targets, t)
+		}
+	}
+	if len(targets) == 0 {
+		targets = append(targets, agents.Target{Provider: provider, Accounts: []string{cfg.ActiveProfile(provider)}})
+	}
+	return targets
+}
+
+// NetworkTargetBundle binds one exact account's selected authentication family
+// to its release-owned endpoint bundle without reading credential bytes. It is
+// shared by initial admission and ACP's pre-spawn revalidation.
+func NetworkTargetBundle(cfg *config.Config, target agents.Target, client egress.Client) (egress.Bundle, error) {
+	ag, ok := agents.Get(target.Provider)
+	if !ok {
+		return egress.Bundle{}, errors.New("unknown provider in the restricted credential scope")
+	}
+	if len(target.Accounts) > 1 {
+		return egress.Bundle{}, fmt.Errorf("restricted networking requires one concrete %s account", target.Provider)
+	}
+	account := target.Account()
+	if account == "" {
+		account = cfg.ActiveProfile(target.Provider)
+	}
+	if !ProfileCredentialReady(cfg, target.Provider, account, time.Now()) {
+		return egress.Bundle{}, fmt.Errorf("%s account %q is not ready for restricted networking", target.Provider, account)
+	}
+	input := agents.NetworkBundleInput{Client: client}
+	if selector, ok := ag.(agents.NetworkAuthSelector); ok {
+		profileDir := cfg.AgentProfileDir(target.Provider, account)
+		selection, err := selector.NetworkAuthSelection(profileDir, ProfileMarkerPresent(cfg, target.Provider, account))
+		if err != nil {
+			return egress.Bundle{}, err
+		}
+		if selection.EnvKey != "" {
+			available := ProfileHostCredentialPresent(cfg, target.Provider, account)
+			if account == cfg.DefaultProfileOf(target.Provider) {
+				available = available || envFileKeys(cfg.EnvFile())[selection.EnvKey]
+			}
+			if !available {
+				return egress.Bundle{}, fmt.Errorf("%s account %q has no portable %s credential", target.Provider, account, selection.EnvKey)
+			}
+		}
+		if selection.RequirePortable {
+			live := ag.LiveCredentials()
+			if live.Portability == nil || live.Portability(profileDir, time.Now().Add(RestrictedCredentialHorizon)) != agents.CredentialPortable {
+				return egress.Bundle{}, fmt.Errorf("%s account %q has no portable credential for restricted networking", target.Provider, account)
+			}
+		}
+		input.AuthMode = strings.TrimSpace(selection.AuthMode)
+		if input.AuthMode == "" {
+			return egress.Bundle{}, fmt.Errorf("%s account %q has no qualified authentication family", target.Provider, account)
+		}
+	}
+	return ag.NetworkBundle(input)
 }
 
 func networkAdmissionBrokerProviders(cfg *config.Config, spec RunSpec) (map[string]bool, error) {

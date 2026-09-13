@@ -19,7 +19,7 @@ func TestLockedClientsAreCompletePinnedAndFresh(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(closure.Clients) != 4 || len(closure.Files) != 6 || len(closure.Digest) != 64 || closure.Digest == previous {
+		if len(closure.Clients) != 8 || len(closure.Files) != 8 || len(closure.Digest) != 64 || closure.Digest == previous {
 			t.Fatal("incomplete or platform-ambiguous closure", closure.Digest)
 		}
 		previous = closure.Digest
@@ -60,7 +60,7 @@ func TestLockedClientsAreCompletePinnedAndFresh(t *testing.T) {
 }
 
 func TestLockedClosureRejectsMutableOrInconsistentInputs(t *testing.T) {
-	for _, change := range []string{"floating-root", "lock-root-drift", "missing-root", "missing-integrity", "untrusted-registry", "git-url", "link", "bad-path", "bad-exec", "bad-env", "duplicate-binary", "clobber-node", "missing-native-lock"} {
+	for _, change := range []string{"floating-root", "lock-root-drift", "missing-root", "missing-integrity", "untrusted-registry", "git-url", "link", "bad-path", "bad-exec", "bad-env", "duplicate-binary", "duplicate-variant", "conflicting-shared-binary", "conflicting-shared-package", "bad-native-digest", "bad-native-url", "wrong-native-platform", "clobber-node", "missing-native-lock"} {
 		t.Run(change, func(t *testing.T) {
 			c, err := LockedClientClosure(ClientPlatform{"linux", "arm64", "glibc"})
 			if err != nil {
@@ -96,6 +96,18 @@ func TestLockedClosureRejectsMutableOrInconsistentInputs(t *testing.T) {
 				c.Clients[0].UnsetEnv = []string{"KEY; exit 0"}
 			case "duplicate-binary":
 				c.Clients[1].Binary = c.Clients[0].Binary
+			case "duplicate-variant":
+				c.Clients[1].Client = c.Clients[0].Client
+			case "conflicting-shared-binary":
+				c.Clients[len(c.Clients)-1].Exec = []string{"/opt/coop/clients/native/other"}
+			case "conflicting-shared-package":
+				c.Clients[len(c.Clients)-4].Binary = "other-gemini"
+			case "bad-native-digest":
+				c.Clients[len(c.Clients)-1].NativeArtifact.SHA256 = strings.Repeat("0", 63)
+			case "bad-native-url":
+				c.Clients[len(c.Clients)-1].NativeArtifact.URL = "https://example.com/grok.gz"
+			case "wrong-native-platform":
+				c.Clients[len(c.Clients)-1].NativeArtifact.URL = strings.ReplaceAll(c.Clients[len(c.Clients)-1].NativeArtifact.URL, "aarch64", "x86_64")
 			case "clobber-node":
 				c.Clients[0].Binary = "node"
 			case "missing-native-lock":
@@ -105,7 +117,7 @@ func TestLockedClosureRejectsMutableOrInconsistentInputs(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if validateClientClosure(c.Files, c.Clients) == nil {
+			if validateClientClosure(c.Platform, c.Files, c.Clients) == nil {
 				t.Fatal("accepted mutable/inconsistent closure")
 			}
 		})
@@ -173,8 +185,8 @@ func TestProviderBundlesCarryFunctionNotChatter(t *testing.T) {
 	for _, rule := range claude.Core {
 		domains = append(domains, rule.To.Domain)
 	}
-	if want := []string{"api.anthropic.com", "platform.claude.com", "mcp-proxy.anthropic.com"}; !slices.Equal(domains, want) || claude.Version != "2026-09-10.1" {
-		t.Fatalf("claude core = %v under %s; want %v under 2026-09-10.1 (a different set needs its own NetworkBundleVersion)", domains, claude.Version, want)
+	if want := []string{"api.anthropic.com", "platform.claude.com", "mcp-proxy.anthropic.com"}; !slices.Equal(domains, want) || claude.Version != NetworkBundleVersion {
+		t.Fatalf("claude core = %v under %s; want %v under %s (a different set needs its own NetworkBundleVersion)", domains, claude.Version, want, NetworkBundleVersion)
 	}
 }
 
@@ -201,7 +213,7 @@ func TestNetworkBundleAndLockedClientSupportAgree(t *testing.T) {
 			}
 			// Selection is the operator's; an override the adapter cannot serve
 			// must refuse instead of silently returning the default tuple.
-			for _, override := range []NetworkBundleInput{{Client: client, Backend: "gateway"}, {Client: client, AuthMode: "api-key"}, {Client: "console"}} {
+			for _, override := range []NetworkBundleInput{{Client: client, Backend: "gateway"}, {Client: client, AuthMode: "unsupported"}, {Client: "console"}} {
 				if _, err := ag.NetworkBundle(override); err == nil {
 					t.Fatalf("%s: unqualified selection %+v was served", name, override)
 				}

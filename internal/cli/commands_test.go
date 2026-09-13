@@ -20,6 +20,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/liveprocess"
+	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/scaffold"
@@ -585,6 +586,92 @@ func TestSpawnBoxExportsEmptyPresetSelection(t *testing.T) {
 	})
 	if string(recorded) != "set:" {
 		t.Fatalf("COOP_ACP_PRESET handoff = %q, want present-but-empty", recorded)
+	}
+}
+
+func TestSpawnBoxKeepsNativeAuthInOpenACPAndRefusesItInFilteredACP(t *testing.T) {
+	shim := filepath.Join(t.TempDir(), "inner")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name     string
+		provider string
+		prepare  func(*testing.T, *config.Config)
+	}{
+		{name: "Gemini OAuth", provider: "gemini", prepare: func(t *testing.T, cfg *config.Config) {
+			dir := cfg.AgentProfileDir("gemini", "default")
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"security":{"auth":{"selectedType":"oauth-personal"}}}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "gemini-credentials.json"), []byte(`{"encrypted":"host-bound"}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "Grok API key", provider: "grok", prepare: func(t *testing.T, cfg *config.Config) {
+			if err := os.WriteFile(cfg.EnvFile(), []byte("XAI_API_KEY=host-key\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: t.TempDir()}
+			tc.prepare(t, cfg)
+			target := agents.Target{Provider: tc.provider, Accounts: []string{"default"}}
+			ctrl := acpctl.New(cfg, tc.provider, "", "", t.TempDir(), acpctl.Selection{Account: "default"}, nil, nil, acpHost())
+			a := &app{cfg: cfg}
+			child, err := a.spawnBox(context.Background(), shim, nil, "open-supervisor", ctrl, target, "", true, io.Discard)
+			if err != nil {
+				t.Fatalf("open ACP rejected native auth: %v", err)
+			}
+			child.Stop()
+
+			a.acpCapture = &box.CapturedEgress{}
+			if child, err := a.spawnBox(context.Background(), shim, nil, "filtered-supervisor", ctrl, target, "", true, io.Discard); err == nil {
+				child.Stop()
+				t.Fatal("filtered ACP accepted an unqualified native authentication family")
+			}
+		})
+	}
+}
+
+func TestFilteredACPAccountBindingsPinTheSupervisorsProfiles(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	cfg.SetActiveProfile("gemini", "new-default")
+	bindings, err := applyACPAccountBindings(cfg, `{"codex":{"account":"work","default":"default"},"gemini":{"account":"portable","default":"default"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.ActiveProfile("codex"); got != "work" {
+		t.Fatalf("Codex binding = %q, want work", got)
+	}
+	if got := cfg.ActiveProfile("gemini"); got != "portable" {
+		t.Fatalf("Gemini binding followed changed default: %q", got)
+	}
+	for _, raw := range []string{"", `{}`, `{"gemini":{}}`, `{"unknown":{"account":"default","default":"default"}}`} {
+		if _, err := applyACPAccountBindings(cfg, raw); err == nil {
+			t.Fatalf("malformed account binding %q was accepted", raw)
+		}
+	}
+	p := &preset.Preset{LeadTargets: []agents.Target{{Provider: "codex"}}, Roles: []preset.Role{{
+		Name: "critic", Mode: preset.ModeConsult, Targets: []agents.Target{{Provider: "gemini"}},
+	}}}
+	if err := validateACPAccountBindings(cfg, box.RunSpec{Agent: "codex", Homes: true, Preset: p}, bindings); err != nil {
+		t.Fatal(err)
+	}
+	p.Roles = append(p.Roles, preset.Role{Name: "new", Mode: preset.ModeConsult, Targets: []agents.Target{{Provider: "grok"}}})
+	if err := validateACPAccountBindings(cfg, box.RunSpec{Agent: "codex", Homes: true, Preset: p}, bindings); err == nil {
+		t.Fatal("a role added after supervisor validation had no exact account binding")
+	}
+	drift := &config.Config{ConfigDir: t.TempDir()}
+	if err := drift.SetDefaultProfile("gemini", "portable"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := applyACPAccountBindings(drift, `{"gemini":{"account":"portable","default":"default"}}`); err == nil {
+		t.Fatal("a changed default was allowed to reinterpret provider-wide env authority")
 	}
 }
 
@@ -1553,8 +1640,11 @@ func TestACPChildCaptureIsAPerChildReference(t *testing.T) {
 			t.Errorf("child capture %s is missing %q", first, want)
 		}
 	}
-	cleaned := cleanACPChildEnv([]string{box.SessionNetworkCaptureEnv + "=inherited", "PATH=/usr/bin"})
+	cleaned := cleanACPChildEnv([]string{box.SessionNetworkCaptureEnv + "=inherited", acpAccountBindingsEnv + `={"gemini":"other"}`, "PATH=/usr/bin"})
 	if slices.ContainsFunc(cleaned, func(value string) bool { return strings.HasPrefix(value, box.SessionNetworkCaptureEnv+"=") }) {
 		t.Fatalf("an inherited network capture reached the child: %v", cleaned)
+	}
+	if slices.ContainsFunc(cleaned, func(value string) bool { return strings.HasPrefix(value, acpAccountBindingsEnv+"=") }) {
+		t.Fatalf("inherited ACP account bindings reached the child: %v", cleaned)
 	}
 }

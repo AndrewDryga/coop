@@ -264,9 +264,6 @@ func TestPinnedClientFilesCoverEveryEntryPointOnce(t *testing.T) {
 			t.Fatal("a refusal would not name the client", client.Binary, covered[client.Launcher()])
 		}
 	}
-	if len(files) < len(closure.Clients)*2 {
-		t.Fatal("fewer proven paths than clients have entry points", len(files))
-	}
 }
 
 // A project with no Dockerfile runs the locked client image itself: nothing is

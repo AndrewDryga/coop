@@ -455,12 +455,40 @@ func (grokAgent) InstallScript() string {
 		` && b="$(readlink -f /usr/local/bin/grok)" && rm -f /usr/local/bin/grok && install -m 0755 "$b" /usr/local/bin/grok`
 }
 
-// LockedClients is nil: grok has no qualified locked client build yet, so
-// restricted networking cannot launch it.
-func (grokAgent) LockedClients(ClientPlatform) []LockedClient { return nil }
+// LockedClients uses the exact native build whose CLI and ACP behavior is
+// retained in this repository. The immutable vendor object is checked against
+// Coop's embedded digest before it is decompressed or made executable.
+func (grokAgent) LockedClients(platform ClientPlatform) []LockedClient {
+	if !platform.valid() {
+		return nil
+	}
+	arch, digest := "aarch64", "c401805423a934de6ae1544da5ab210ad406fd446328e6b06557f1a3a003721c"
+	if platform.Architecture == "amd64" {
+		arch, digest = "x86_64", "54bfe73e542b2207a21a5888f58ceb2e4fb22bccc66d53d19b54bc8289cc2476"
+	}
+	destination := lockedClientRoot + "/native/grok"
+	client := LockedClient{Version: "1.0.25", Binary: "grok", Exec: []string{destination},
+		RequiredExecutables: []LockedExecutable{{Path: destination, Version: "1.0.25"}},
+		NativeArtifact: &LockedNativeArtifact{
+			URL:    "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.25-linux-" + arch + ".gz",
+			SHA256: digest, Destination: destination,
+		}}
+	cli, acp := client, client
+	cli.Client, acp.Client = egress.ClientCLI, egress.ClientACP
+	return []LockedClient{cli, acp}
+}
 
-func (a grokAgent) NetworkBundle(NetworkBundleInput) (egress.Bundle, error) {
-	return egress.Bundle{}, fmt.Errorf("%s is unsupported for restricted networking", a.Name())
+func (a grokAgent) NetworkBundle(input NetworkBundleInput) (egress.Bundle, error) {
+	return directNetworkBundle(a.Name(), "access-file", input,
+		[]string{"cli-chat-proxy.grok.com", "code.grok.com"},
+		[]string{"https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.25-linux-aarch64.gz"})
+}
+
+func (grokAgent) NetworkAuthSelection(_ string, markerPresent bool) (NetworkAuthSelection, error) {
+	if !markerPresent {
+		return NetworkAuthSelection{}, fmt.Errorf("grok API-key authentication is unsupported for restricted networking")
+	}
+	return NetworkAuthSelection{AuthMode: "access-file", RequirePortable: true}, nil
 }
 
 func (grokAgent) ModelCatalog() ModelCatalogSpec {

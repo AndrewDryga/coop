@@ -81,11 +81,11 @@ func TestLockedImageBuildContextIsPinnedDeterministicAndEmbeddedOnly(t *testing.
 			t.Fatal(err)
 		}
 	}
-	if len(files) != 8 || len(files["global.npmrc"]) != 0 || !bytes.Equal(files["package-lock.json"], closure.Files["package-lock.json"]) {
+	if len(files) != 10 || len(files["global.npmrc"]) != 0 || !bytes.Equal(files["package-lock.json"], closure.Files["package-lock.json"]) {
 		t.Fatal("context omitted or added inputs")
 	}
 	df := string(files["Dockerfile"])
-	for _, want := range []string{"npm ci --prefix /opt/coop/clients --ignore-scripts --include=optional --omit=dev", "--userconfig=/dev/null --globalconfig=/opt/coop/clients/global.npmrc", "/node_modules/playwright/cli.js install-deps chromium", "chmod -R a-w /opt/coop/clients", "USER node", "COOP_SUPERVISE_DESCENDANTS", "terminate_jobs"} {
+	for _, want := range []string{"npm ci --prefix /opt/coop/clients --ignore-scripts --include=optional --omit=dev", "--userconfig=/dev/null --globalconfig=/opt/coop/clients/global.npmrc", "/node_modules/playwright/cli.js install-deps chromium", "curl --fail --silent --show-error --proto '=https'", "sha256sum -c -", "grok-1.0.25-linux-aarch64.gz", "chmod -R a-w /opt/coop/clients", "USER node", "COOP_SUPERVISE_DESCENDANTS", "terminate_jobs"} {
 		if !strings.Contains(df, want) {
 			t.Fatal("missing locked-image requirement", want)
 		}

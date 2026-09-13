@@ -538,10 +538,40 @@ func (geminiAgent) ShellPrelude() string {
 }
 func (geminiAgent) InstallScript() string { return "" }
 
-// LockedClients is nil: gemini has no qualified locked client build yet, so
-// restricted networking cannot launch it.
-func (geminiAgent) LockedClients(ClientPlatform) []LockedClient { return nil }
+// LockedClients pins Gemini's bundled CLI once while recording both ways Coop
+// launches it. The npm tarball is integrity-locked by package-lock.json; the
+// bundle is the executable entry point for ordinary and ACP sessions alike.
+func (geminiAgent) LockedClients(platform ClientPlatform) []LockedClient {
+	if !platform.valid() {
+		return nil
+	}
+	client := LockedClient{Package: "@google/gemini-cli", Version: "0.59.0", Binary: "gemini",
+		Exec:                []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@google/gemini-cli/bundle/gemini.js"},
+		RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@google/gemini-cli/bundle/gemini.js", Version: "0.59.0"}}}
+	cli, acp := client, client
+	cli.Client, acp.Client = egress.ClientCLI, egress.ClientACP
+	return []LockedClient{cli, acp}
+}
 
-func (a geminiAgent) NetworkBundle(NetworkBundleInput) (egress.Bundle, error) {
-	return egress.Bundle{}, fmt.Errorf("%s is unsupported for restricted networking", a.Name())
+func (a geminiAgent) NetworkBundle(input NetworkBundleInput) (egress.Bundle, error) {
+	return directNetworkBundle(a.Name(), "api-key", input,
+		[]string{"generativelanguage.googleapis.com"},
+		[]string{"https://github.com/google-gemini/gemini-cli/blob/v0.59.0/packages/core/src/core/contentGenerator.ts"})
+}
+
+// NetworkAuthSelection refuses native OAuth and Vertex until each has its own
+// portable authority and endpoint trace. A saved or env-backed AI Studio key is
+// the one account family qualified by this release.
+func (geminiAgent) NetworkAuthSelection(profileDir string, markerPresent bool) (NetworkAuthSelection, error) {
+	selected, ok, err := geminiSelectedAuthType(profileDir)
+	if err != nil {
+		return NetworkAuthSelection{}, fmt.Errorf("read Gemini authentication selection: %w", err)
+	}
+	if ok && selected != "gemini-api-key" {
+		return NetworkAuthSelection{}, fmt.Errorf("gemini authentication %q is unsupported for restricted networking", selected)
+	}
+	if markerPresent && !ok {
+		return NetworkAuthSelection{}, fmt.Errorf("gemini stored authentication is unsupported for restricted networking")
+	}
+	return NetworkAuthSelection{AuthMode: "api-key", EnvKey: "GEMINI_API_KEY"}, nil
 }

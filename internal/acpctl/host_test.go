@@ -27,6 +27,12 @@ func signInCred(t *testing.T, cfg *config.Config, agent, name string) {
 	if !ok {
 		t.Fatalf("unknown agent %q", agent)
 	}
+	if agent == "gemini" {
+		if err := box.SaveHostCredential(cfg, ag, name, []byte("gemini-fixture-key")); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
 	file, _ := ag.AuthMarker()
 	body := map[string]string{
 		"claude": `{"claudeAiOauth":{"refreshToken":"refresh","scopes":["user:inference"]}}`,

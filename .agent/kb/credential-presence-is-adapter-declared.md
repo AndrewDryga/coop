@@ -27,13 +27,15 @@ provider-wide token cannot shadow the account-specific marker mounted into the b
 presence when the adapter selects no env authority; the optional `MarkerCredentialSelector`
 capability can additionally declare that a native marker stores the same credential as a selected
 env family. Environment selection and filtering remain independent. This matters for Gemini:
-`gemini-api-key` accepts either `GEMINI_API_KEY` for the default account or the encrypted native
-marker for that exact account, `vertex-ai` accepts only `GOOGLE_API_KEY`, and `oauth-personal`
-requires the marker. Named accounts never consume provider-wide env keys, while a default env key
-retains the Gemini CLI's environment-first behavior. Because Gemini's shared encrypted marker is
-opaque, presence remains a best-effort heuristic rather than proof that its selected entry is
-usable. The live credential isolator uses the same adapter-declared rule before it decides whether
-a real prompt may run, and classifies Gemini's encrypted marker as host-bound rather than portable.
+`gemini-api-key` accepts `GEMINI_API_KEY` from the default account's env or Coop's owner-private
+per-account host credential. Gemini's encrypted native marker is bound to the box identity that
+created it and does not make an API key portable; `vertex-ai` selects `GOOGLE_API_KEY`, and
+`oauth-personal` requires the marker. Named accounts never consume provider-wide env keys, while a
+default env key retains the Gemini CLI's environment-first behavior. Because Gemini's shared
+encrypted marker is opaque, broad presence remains a best-effort heuristic rather than proof that
+its selected entry is usable. Filtered-network admission is stricter: it admits only the exact
+account/auth family whose portable authority it can prove and keeps OAuth and not-yet-qualified
+Vertex accounts out of the selector.
 
 After presence succeeds, `ProfileCredentialReady` asks the adapter for marker readiness only when
 that exact profile has a marker. Claude, Codex, and Grok distinguish usable or refreshable OAuth
@@ -55,6 +57,8 @@ and the default MCP file are `0600`. Coop does not recursively chmod provider tr
 the private ancestors protect those descendants without taking ownership of their formats.
 
 ## Changelog
+- 2026-09-13 - corrected the native Gemini API-key assumption after fresh-box reproduction and
+  documented exact-account filtered admission for Coop-owned/API-key authority
 - 2026-09-13 - allowed adapters to declare a native marker alongside selected env authority;
   verified Gemini native API-key presence, default env precedence, named-account isolation,
   Vertex denial, credential listing, and host-bound live preflight

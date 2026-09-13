@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net/url"
 	"path"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -38,11 +39,19 @@ type LockedClient struct {
 	Package, Version, Binary string
 	Exec, UnsetEnv           []string
 	RequiredExecutables      []LockedExecutable
+	NativeArtifact           *LockedNativeArtifact
 }
 
 // Version is the exact npm package version, not the adapter or engine version.
 // An ACP adapter can carry a differently versioned native SDK.
 type LockedExecutable struct{ Path, Version string }
+
+// LockedNativeArtifact is the non-npm arm of the same closed client supply chain.
+// The adapter owns an immutable vendor URL and Coop owns the expected digest; the
+// image verifies the downloaded bytes before decompressing or executing them.
+type LockedNativeArtifact struct {
+	URL, SHA256, Destination string
+}
 
 func (c LockedClient) Launcher() string { return "/usr/local/bin/" + c.Binary }
 
@@ -76,7 +85,7 @@ func LockedClientClosure(platform ClientPlatform) (ClientClosure, error) {
 			clients = append(clients, client)
 		}
 	}
-	if err := validateClientClosure(files, clients); err != nil {
+	if err := validateClientClosure(platform, files, clients); err != nil {
 		return ClientClosure{}, err
 	}
 	for _, client := range clients {
@@ -107,7 +116,7 @@ func LockedClientClosure(platform ClientPlatform) (ClientClosure, error) {
 	return ClientClosure{Platform: platform, Digest: hex.EncodeToString(digest[:]), Clients: clients, Files: files}, nil
 }
 
-func validateClientClosure(files map[string][]byte, clients []LockedClient) error {
+func validateClientClosure(platform ClientPlatform, files map[string][]byte, clients []LockedClient) error {
 	invalid := errors.New("embedded locked client manifest, lock or adapter declaration is inconsistent")
 	var manifest struct {
 		Private      bool
@@ -126,27 +135,56 @@ func validateClientClosure(files map[string][]byte, clients []LockedClient) erro
 		return invalid
 	}
 	expected := map[string]string{"playwright": "1.63.0"}
-	binaries := make(map[string]bool)
+	binaries := make(map[string]LockedClient)
+	packages := make(map[string]LockedClient)
+	variants := make(map[string]bool)
 	for _, client := range clients {
-		if client.Provider == "" || (client.Client != egress.ClientCLI && client.Client != egress.ClientACP) || !lockedVersion.MatchString(client.Version) || client.Binary == "" || strings.Trim(client.Binary, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" || binaries[client.Binary] || len(client.Exec) < 1 || len(client.Exec) > 2 {
+		if client.Provider == "" || (client.Client != egress.ClientCLI && client.Client != egress.ClientACP) || !lockedVersion.MatchString(client.Version) || client.Binary == "" || strings.Trim(client.Binary, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" || len(client.Exec) < 1 || len(client.Exec) > 2 {
 			return invalid
 		}
-		if _, ok := expected[client.Package]; ok {
+		if prior, ok := binaries[client.Binary]; ok {
+			left, right := prior, client
+			left.Client, right.Client = "", ""
+			if !reflect.DeepEqual(left, right) {
+				return invalid
+			}
+		} else {
+			binaries[client.Binary] = client
+		}
+		variant := client.Provider + "\x00" + string(client.Client)
+		if variants[variant] {
 			return invalid
 		}
-		if lock.Packages["node_modules/"+client.Package].Bin[client.Binary] == "" {
+		variants[variant] = true
+		if client.NativeArtifact == nil {
+			if client.Package == "" || lock.Packages["node_modules/"+client.Package].Bin[client.Binary] == "" {
+				return invalid
+			}
+			if prior, ok := packages[client.Package]; ok {
+				left, right := prior, client
+				left.Client, right.Client = "", ""
+				if !reflect.DeepEqual(left, right) {
+					return invalid
+				}
+			} else {
+				packages[client.Package] = client
+			}
+			if prior, ok := expected[client.Package]; ok && prior != client.Version {
+				return invalid
+			}
+			expected[client.Package] = client.Version
+		} else if client.Package != "" || !validLockedNativeArtifact(*client.NativeArtifact, client, platform) {
 			return invalid
 		}
-		expected[client.Package] = client.Version
-		binaries[client.Binary] = true
 		for i, arg := range client.Exec {
-			if path.Clean(arg) != arg || strings.Trim(arg, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/_@.-") != "" || !(strings.HasPrefix(arg, lockedClientRoot+"/node_modules/") || i == 0 && len(client.Exec) == 2 && arg == "/usr/local/bin/node") {
+			allowed := strings.HasPrefix(arg, lockedClientRoot+"/node_modules/") || client.NativeArtifact != nil && arg == client.NativeArtifact.Destination || i == 0 && len(client.Exec) == 2 && arg == "/usr/local/bin/node"
+			if path.Clean(arg) != arg || strings.Trim(arg, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/_@.-") != "" || !allowed {
 				return invalid
 			}
-			if arg != "/usr/local/bin/node" && lock.Packages[lockedExecutablePackage(arg)].Version == "" {
+			if client.NativeArtifact == nil && arg != "/usr/local/bin/node" && lock.Packages[lockedExecutablePackage(arg)].Version == "" {
 				return invalid
 			}
-			if len(client.Exec) == 2 && i == 1 && lockedExecutablePackage(arg) != "node_modules/"+client.Package {
+			if client.NativeArtifact == nil && len(client.Exec) == 2 && i == 1 && lockedExecutablePackage(arg) != "node_modules/"+client.Package {
 				return invalid
 			}
 		}
@@ -159,7 +197,13 @@ func validateClientClosure(files map[string][]byte, clients []LockedClient) erro
 			return invalid
 		}
 		for _, executable := range client.RequiredExecutables {
-			if path.Clean(executable.Path) != executable.Path || !strings.HasPrefix(executable.Path, lockedClientRoot+"/node_modules/") || strings.Trim(executable.Path, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/_@.-") != "" || !lockedVersion.MatchString(executable.Version) || lock.Packages[lockedExecutablePackage(executable.Path)].Version != executable.Version {
+			validPath := strings.HasPrefix(executable.Path, lockedClientRoot+"/node_modules/")
+			validVersion := lock.Packages[lockedExecutablePackage(executable.Path)].Version == executable.Version
+			if client.NativeArtifact != nil {
+				validPath = executable.Path == client.NativeArtifact.Destination
+				validVersion = executable.Version == client.Version
+			}
+			if path.Clean(executable.Path) != executable.Path || !validPath || strings.Trim(executable.Path, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/_@.-") != "" || !lockedVersion.MatchString(executable.Version) || !validVersion {
 				return invalid
 			}
 		}
@@ -190,6 +234,27 @@ func validateClientClosure(files map[string][]byte, clients []LockedClient) erro
 		}
 	}
 	return nil
+}
+
+func validLockedNativeArtifact(artifact LockedNativeArtifact, client LockedClient, platform ClientPlatform) bool {
+	u, err := url.Parse(artifact.URL)
+	arch := "aarch64"
+	if platform.Architecture == "amd64" {
+		arch = "x86_64"
+	}
+	wantPath := "/grok-build-public-artifacts/cli/grok-" + client.Version + "-linux-" + arch + ".gz"
+	if err != nil || u.Scheme != "https" || u.Host != "storage.googleapis.com" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
+		u.Path != wantPath ||
+		strings.Trim(u.Path, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/_.-") != "" {
+		return false
+	}
+	if len(artifact.SHA256) != sha256.Size*2 {
+		return false
+	}
+	if _, err := hex.DecodeString(artifact.SHA256); err != nil {
+		return false
+	}
+	return artifact.Destination == lockedClientRoot+"/native/"+client.Binary && len(client.Exec) == 1 && client.Exec[0] == artifact.Destination
 }
 
 func lockedExecutablePackage(executable string) string {

@@ -2,8 +2,8 @@
 name: acp-auth-is-provider-account-scoped
 description: ACP initialize capability truth and successful authentication belong to one provider account
 subsystem: acp
-sources: [internal/acpproxy/proxy.go, internal/acpctl/control.go, internal/agent/agent.go, internal/agent/target.go, internal/box/profiles.go, internal/cli/commands.go, internal/cli/rotation.go, internal/acpproxy/scripted_e2e_test.go]
-updated: 2026-08-17
+sources: [internal/acpproxy/proxy.go, internal/acpctl/control.go, internal/acpctl/network.go, internal/agent/agent.go, internal/agent/target.go, internal/box/network_bundles.go, internal/box/profiles.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/commands.go, internal/cli/rotation.go, internal/acpproxy/scripted_e2e_test.go]
+updated: 2026-09-13
 ---
 
 An editor's `initialize` request can be reused when a child is replaced, but its response is fresh
@@ -34,7 +34,21 @@ Pinned or exhausted plain accounts use the same explicit recovery instead of ent
 The rewritten RPC error preserves its structural code and names the exact
 `coop login provider@account` command instead of forwarding provider-specific dead-end prose.
 
+Filtered ACP freezes provider **and account** eligibility at supervisor admission. An adapter whose
+network bundle depends on its auth family describes the selected family without exposing secret
+bytes; the host separately proves that exact account's credential authority. The toolbar, automatic
+account rotation, warm/model probes, preset spawns and restored targets all use the frozen account
+set. After any rate-limit wait the complete preset closure and each authentication family are
+revalidated; the supervisor then passes exact role/peer account bindings to the re-exec, which
+applies them before the child validates its required credential scope and creates any mount. A
+portable Gemini API-key account can therefore appear while a sibling OAuth account stays absent;
+changing settings, defaults, or deleting a role credential after capture refuses the next child
+rather than reusing the API-key grant for another account or silently dropping the role.
+
 ## Changelog
+- 2026-09-13 - froze filtered ACP admission at provider/account granularity, pinned role/peer
+  accounts across the supervisor re-exec, and added post-wait plus pre-mount validation so one
+  portable account cannot admit a host-bound sibling or hide a deleted role
 - 2026-08-17 - excluded known re-login credentials before launch and from the Account selector,
   recognized the observed Claude `authentication_failed` shape, kept prose matching adapter-owned,
   and made pinned or exhausted recovery name the exact shell-safe login command

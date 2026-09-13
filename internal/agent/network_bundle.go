@@ -11,7 +11,7 @@ import (
 // adapter or CLI version. Changing any bundle's contents requires a new value:
 // the same version with different content is integrity drift, never an update
 // (networkstate.checkBundles pins each version's content on first admission).
-const NetworkBundleVersion = "2026-09-10.1"
+const NetworkBundleVersion = "2026-09-13.1"
 
 // NetworkBundleInput names an ALREADY SELECTED target: the client this run
 // launches plus, when the operator was explicit, the backend and auth variant.
@@ -24,6 +24,23 @@ type NetworkBundleInput struct {
 	Client   egress.Client
 	Backend  string
 	AuthMode string
+}
+
+// NetworkAuthSelection is adapter-owned, non-secret evidence of the credential
+// family a concrete profile selected. EnvKey names the exact portable authority
+// the host must prove present; RequirePortable asks the host to prove a projected
+// file remains usable for the restricted credential horizon.
+type NetworkAuthSelection struct {
+	AuthMode        string
+	EnvKey          string
+	RequirePortable bool
+}
+
+// NetworkAuthSelector is implemented only by providers whose filtered bundle
+// depends on the selected account's credential family. Providers with one
+// already-qualified family keep using NetworkBundle's default.
+type NetworkAuthSelector interface {
+	NetworkAuthSelection(profileDir string, markerPresent bool) (NetworkAuthSelection, error)
 }
 
 // directNetworkBundle is the provider's own API surface, reached directly. A

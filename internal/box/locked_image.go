@@ -78,6 +78,16 @@ func lockedImageDefinition(platform agents.ClientPlatform) (runtime.DockerBuild,
 	if err != nil {
 		return runtime.DockerBuild{}, nil, agents.ClientClosure{}, err
 	}
+	install := "/usr/local/bin/npm ci --prefix /opt/coop/clients --ignore-scripts --include=optional --omit=dev --no-audit --no-fund --registry=https://registry.npmjs.org --userconfig=/dev/null --globalconfig=/opt/coop/clients/global.npmrc --cache=/tmp/coop-client-npm-cache \\\n && rm -rf /tmp/coop-client-npm-cache"
+	native := map[string]bool{}
+	for _, client := range closure.Clients {
+		artifact := client.NativeArtifact
+		if artifact == nil || native[artifact.Destination] {
+			continue
+		}
+		native[artifact.Destination] = true
+		install += fmt.Sprintf(" \\\n && mkdir -p /opt/coop/clients/native \\\n && curl --fail --silent --show-error --proto '=https' --output /tmp/coop-client.gz '%s' \\\n && printf '%%s  %%s\\n' '%s' /tmp/coop-client.gz | sha256sum -c - \\\n && gzip -dc /tmp/coop-client.gz > '%s.tmp' \\\n && install -m 0755 '%s.tmp' '%s' \\\n && rm -f /tmp/coop-client.gz '%s.tmp'", artifact.URL, artifact.SHA256, artifact.Destination, artifact.Destination, artifact.Destination, artifact.Destination)
+	}
 	// npm ci still creates normal executable links while ignoring every
 	// lifecycle hook. Our absolute launchers replace only the four selected bins.
 	var checks strings.Builder
@@ -104,7 +114,7 @@ func lockedImageDefinition(platform agents.ClientPlatform) (runtime.DockerBuild,
 	checks.WriteString("\nRUN chmod -R a-w /opt/coop/clients\n")
 	dockerfile := renderBaseDockerfile(baseImageParts{
 		files:       "COPY package.json package-lock.json global.npmrc /opt/coop/clients/",
-		install:     "/usr/local/bin/npm ci --prefix /opt/coop/clients --ignore-scripts --include=optional --omit=dev --no-audit --no-fund --registry=https://registry.npmjs.org --userconfig=/dev/null --globalconfig=/opt/coop/clients/global.npmrc --cache=/tmp/coop-client-npm-cache \\\n && rm -rf /tmp/coop-client-npm-cache",
+		install:     install,
 		browserDeps: "/usr/local/bin/node /opt/coop/clients/node_modules/playwright/cli.js install-deps chromium",
 		loginPath:   `printf 'export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"\n' > /etc/profile.d/coop-path.sh`,
 		pathEnv:     "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
