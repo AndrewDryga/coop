@@ -3,7 +3,7 @@ name: provider-live-e2e
 description: Probe installed upstream CLIs with isolated read-only, native-resume, and task-completion workflows
 subsystem: testing
 sources: [Makefile, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/run.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/runtime/process_group_live.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/acpctl/process_live.go, internal/cli/provider_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_loop_task_channel_live_test.go, internal/cli/provider_loop_task_observation_live_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go]
-updated: 2026-09-12
+updated: 2026-09-13
 ---
 
 `make provider-live-e2e COOP_LIVE_TARGETS='...'` is the permissive prerequisite probe;
@@ -32,6 +32,11 @@ separately from the intentional checklist refusal, and cancels the paid diagnost
 task-tool calls across all connections. This is a test-only bound, not a product work limit.
 A bounded typed observation file lives beside the child attempt marker, outside the mounted
 repository; the parent validates it and logs numeric counts only. Usage is explicitly unavailable.
+The same fixture includes 300 synthetic archived tasks that must remain unchanged. The agent must use
+`tasks_list`'s literal title search for the single frostlight match; correlated tool
+requests/replies prove the exact ID, result counts and serialized size. Listing the
+archive or merely claiming a search does not satisfy it. The verifier checks every
+archive file's exact content/mode and retains a fixed entry bound sized for this fixture.
 It emits the same
 path/account/token-free `COOP_PROVIDER_LOOP_LIVE_SUMMARY` and remains opt-in because each admitted
 provider starts one headless session. Before any post-provider Git command, the verifier walks the
@@ -140,6 +145,8 @@ isolation failures and take precedence over a provider result. Stable summaries 
 raw output; reproduce behavior in the deterministic fixture.
 
 ## Changelog
+- 2026-09-13 - added a verified unchanged 300-task archive and native search observation without
+  changing the credential, completion, proposal, call-budget or cleanup contracts.
 - 2026-09-12 - extended the native task fixture with exact proposal/state calls, cross-connection
   call limits, and content-free repair counts; deterministic cap/observation/entry checks retain
   strict repository verification. Native diagnostic remains distinct from full loop-controller proof.

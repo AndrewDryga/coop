@@ -28,14 +28,15 @@ type providerLoopLiveToolCounts struct {
 }
 
 type providerLoopLiveTaskObservation struct {
-	Calls            int                        `json:"calls"`
-	State            providerLoopLiveToolCounts `json:"state"`
-	Proposal         providerLoopLiveToolCounts `json:"proposal"`
-	OtherRefusals    int                        `json:"other_refusals"`
-	ChecklistRefused bool                       `json:"checklist_refused"`
-	Completed        bool                       `json:"completed"`
-	Invalid          bool                       `json:"invalid"`
-	LimitExceeded    bool                       `json:"limit_exceeded"`
+	Calls            int                          `json:"calls"`
+	State            providerLoopLiveToolCounts   `json:"state"`
+	Proposal         providerLoopLiveToolCounts   `json:"proposal"`
+	Search           providerLoopLiveSearchCounts `json:"search"`
+	OtherRefusals    int                          `json:"other_refusals"`
+	ChecklistRefused bool                         `json:"checklist_refused"`
+	Completed        bool                         `json:"completed"`
+	Invalid          bool                         `json:"invalid"`
+	LimitExceeded    bool                         `json:"limit_exceeded"`
 }
 
 func (s *providerLoopLiveTaskServer) observeCall(name string) bool {
@@ -103,7 +104,7 @@ func (s *providerLoopLiveTaskServer) observation() providerLoopLiveTaskObservati
 
 func (o providerLoopLiveTaskObservation) valid() bool {
 	if o.Calls < 0 || o.Calls > providerLoopLiveTaskCallLimit+1 || o.OtherRefusals < 0 || o.OtherRefusals > o.Calls ||
-		o.LimitExceeded != (o.Calls > providerLoopLiveTaskCallLimit) || o.State.Calls+o.Proposal.Calls > o.Calls {
+		o.LimitExceeded != (o.Calls > providerLoopLiveTaskCallLimit) || o.State.Calls+o.Proposal.Calls+o.Search.Calls > o.Calls || !o.Search.valid(o.Calls) {
 		return false
 	}
 	for _, c := range []providerLoopLiveToolCounts{o.State, o.Proposal} {
@@ -118,7 +119,7 @@ func (o providerLoopLiveTaskObservation) valid() bool {
 
 func (o providerLoopLiveTaskObservation) verified() bool {
 	return o.valid() && o.ChecklistRefused && o.Completed && !o.Invalid && !o.LimitExceeded &&
-		o.State.Accepted > 0 && o.Proposal.Accepted == 1
+		o.State.Accepted > 0 && o.Proposal.Accepted == 1 && o.Search.Accepted > 0
 }
 
 func (s *providerLoopLiveTaskServer) writeObservation(path string) error {

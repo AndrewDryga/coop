@@ -17,9 +17,12 @@ import (
 
 // Text bounds a box can hand a tool, matching the fork-proposal limits the host already enforces.
 const (
-	lineLimit  = tasks.TaskLineLimit
-	blockLimit = tasks.TaskBlockLimit
-	maxItems   = tasks.TaskListLimit
+	lineLimit         = tasks.TaskLineLimit
+	blockLimit        = tasks.TaskBlockLimit
+	maxItems          = tasks.TaskListLimit
+	searchQueryLimit  = 256
+	searchResultLimit = 20
+	searchByteLimit   = 64 << 10
 )
 
 type tool struct {
@@ -33,10 +36,11 @@ type tool struct {
 var toolTable = []tool{
 	{
 		name:        "tasks_list",
-		description: "List the task queue(s) by state, as `coop tasks ls` shows them: id, title, state, subtask counts, queue root, and which task is assigned to this run.",
-		schema: object(map[string]any{
+		description: "List task summaries by state. To find related work without reading the whole archive, use query for a literal ID/title search. Searches return at most 20 complete summaries within 64 KiB, with total match and returned counts; narrow the query when truncated. Omit query to list all tasks as before.",
+		schema: withExample(object(map[string]any{
 			"state": enumProp("Only tasks in this state. Omit or use an empty string for every lifecycle state.", "", "todo", "in_progress", "blocked", "done"),
-		}),
+			"query": textProp("Optional case-insensitive literal substring of task ID or title, not a regex. Surrounding spaces are trimmed; omit rather than sending an empty query.", false, searchQueryLimit),
+		}), map[string]any{"query": "retry", "state": "todo"}),
 		run: (*Server).list,
 	},
 	{
@@ -353,10 +357,22 @@ func listed(root string, item tasks.Item, assigned string) listedTask {
 
 func (s *Server) list(_ context.Context, args json.RawMessage) *toolResult {
 	var in struct {
-		State nonNullString `json:"state"`
+		State nonNullString   `json:"state"`
+		Query json.RawMessage `json:"query"`
 	}
 	if r := decodeArgs(args, &in); r != nil {
 		return r
+	}
+	query := ""
+	if in.Query != nil {
+		var value nonNullString
+		if r := decodeArgs(in.Query, &value); r != nil {
+			return r
+		}
+		if r := checkText("query", string(value), false, searchQueryLimit); r != nil {
+			return r
+		}
+		query = strings.ToLower(strings.TrimSpace(string(value)))
 	}
 	if in.State != "" {
 		known := false
@@ -368,6 +384,7 @@ func (s *Server) list(_ context.Context, args json.RawMessage) *toolResult {
 		}
 	}
 	out := []listedTask{}
+	matched := 0
 	for _, root := range s.authority.QueueRoots {
 		items, err := tasks.ReadTaskTree(root)
 		if err != nil {
@@ -377,10 +394,50 @@ func (s *Server) list(_ context.Context, args json.RawMessage) *toolResult {
 			if in.State != "" && tasks.StateLabel(item.State) != string(in.State) {
 				continue
 			}
-			out = append(out, listed(root, item, s.authority.Assigned))
+			if query != "" && !strings.Contains(strings.ToLower(item.ID), query) && !strings.Contains(strings.ToLower(item.Title), query) {
+				continue
+			}
+			matched++
+			summary := listed(root, item, s.authority.Assigned)
+			if query != "" {
+				// Even a match beyond the returned prefix needs a useful refusal
+				// if no narrower query could ever return its whole summary.
+				if r := searchedTasks([]listedTask{summary}, 1); r.IsError {
+					return r
+				}
+			}
+			if query == "" || len(out) < searchResultLimit {
+				out = append(out, summary)
+			}
 		}
 	}
+	if query != "" {
+		return searchedTasks(out, matched)
+	}
 	return jsonResult(map[string]any{"tasks": out})
+}
+
+// Fit a complete deterministic prefix; count omissions even after the result cap.
+// Measure the actual MCP result because escaping titles and text can expand it.
+func searchedTasks(out []listedTask, matched int) *toolResult {
+	for {
+		result := map[string]any{"tasks": out, "matched": matched, "returned": len(out), "truncated": len(out) < matched}
+		if len(out) < matched {
+			result["hint"] = "Narrow query or select a state to see omitted matches."
+		}
+		reply := jsonResult(result)
+		data, err := json.Marshal(reply)
+		if err != nil {
+			return refusal("encode search result: " + err.Error())
+		}
+		if len(data) <= searchByteLimit {
+			return reply
+		}
+		if len(out) == 1 {
+			return refusal(fmt.Sprintf("task %q summary exceeds the 64 KiB search limit; use tasks_get with that id, or narrow query to other tasks", out[0].ID))
+		}
+		out = out[:len(out)-1]
+	}
 }
 
 func (s *Server) get(_ context.Context, args json.RawMessage) *toolResult {

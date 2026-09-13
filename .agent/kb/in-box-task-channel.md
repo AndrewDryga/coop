@@ -3,7 +3,7 @@ name: in-box-task-channel
 description: the loop box reaches its task queue through a coop-owned MCP server over a helper-container unix socket, never a host-created one and never HTTP
 subsystem: box
 sources: [internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/box/taskchannel.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go]
-updated: 2026-09-12
+updated: 2026-09-13
 ---
 
 A loop work box changes task state through the `coop-tasks` MCP server (eight tools:
@@ -84,7 +84,18 @@ Optional fields default only when omitted: explicit null is refused, including c
 done booleans. A fork proposal also checks its serialized JSON size before publication so
 a successful write fits the importer's file bound, even when JSON escaping expands text.
 
+`tasks_list` accepts an optional literal, case-insensitive `query` over ID/title,
+combined with `state`, using only QueueRoots and their existing ordering. Query
+input is validated before trimming (nonempty, control-free UTF-8, at most 256 bytes).
+Searched calls return a complete prefix of at most 20 summaries and 64 KiB of serialized
+MCP result, with matched/returned counts and explicit truncation/narrow-query guidance.
+If any matching summary cannot fit on its own, the tool refuses with its ID for `tasks_get`;
+titles are never silently shortened. Omitted query retains the original unbounded
+tasks-only list. The fork proposal outbox and backlog are never searched.
+
 ## Changelog
+- 2026-09-13 — added bounded literal ID/title search; real JSON-RPC regressions cover
+  authority, unchanged unfiltered calls, invalid-query recovery and escaped-size limits.
 - 2026-09-12 — verified omission repair and byte-limit descriptions against real JSON-RPC
   plain/fork calls; raw malformed UTF-8 previously reached a task log as replacement text.
 - 2026-09-12 — traced checklist feedback and freshness through MCP, host finalization and fork

@@ -61,6 +61,7 @@ type providerLoopLiveObservedConn struct {
 type providerLoopLivePendingCall struct {
 	name          string
 	assignedState bool
+	searchQuery   bool
 }
 
 func (c *providerLoopLiveObservedConn) Read(p []byte) (int, error) {
@@ -92,6 +93,9 @@ func (c *providerLoopLiveObservedConn) Read(p []byte) (int, error) {
 				c.owner.invalid.Store(true)
 			} else {
 				call := providerLoopLivePendingCall{name: request.Params.Name}
+				if call.name == "tasks_list" {
+					call.searchQuery = c.owner.observeSearchRequest(request.Params.Arguments)
+				}
 				if call.name == "tasks_update_state" {
 					var args struct{ ID string }
 					call.assignedState = json.Unmarshal(request.Params.Arguments, &args) == nil && args.ID == c.owner.id
@@ -134,6 +138,12 @@ func (c *providerLoopLiveObservedConn) Write(p []byte) (int, error) {
 		c.owner.invalid.Store(true)
 	}
 	c.owner.observeReply(name, text, reply.Result.IsError)
+	if call.searchQuery {
+		var wire struct{ Result json.RawMessage }
+		if json.Unmarshal(p, &wire) == nil {
+			c.owner.observeSearchReply(text, len(wire.Result), reply.Result.IsError)
+		}
+	}
 	if name != "tasks_complete" {
 		return n, err
 	}
@@ -175,6 +185,9 @@ func TestProviderLoopLiveContractTaskChannel(t *testing.T) {
 				t.Fatal(err)
 			}
 			writeTaskFile(t, filepath.Join(s.root, tasks.StateInProgress, s.id, "task.md"), "# Task\n\n## Subtasks\n- [ ] required check\n")
+			if err := prepareProviderLoopLiveArchive(repo); err != nil {
+				t.Fatal(err)
+			}
 			var requests strings.Builder
 			write := func(id int, name string, args any) {
 				t.Helper()
@@ -185,6 +198,7 @@ func TestProviderLoopLiveContractTaskChannel(t *testing.T) {
 			if tc.firstRefusal {
 				write(1, "tasks_complete", map[string]any{"id": s.id})
 			}
+			write(12, "tasks_list", map[string]any{"query": providerLoopLiveSearchQuery})
 			stateID := s.id
 			if tc.wrongState {
 				stateID = "other-task"

@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Task MCP can search IDs and titles with `tasks_list`'s optional `query`, returning a bounded
+  result with explicit match/truncation counts instead of requiring a full archive listing.
+
 - Loop tool failures show a useful available cause after Claude's generic exit-code header.
   Narrow terminals leave room for that cause alongside the tool and exit status; raw logs
   retain the full provider output.

@@ -98,11 +98,11 @@ func prepareProviderLoopLiveRepository(layout procharness.Layout, target agents.
 			return err
 		}
 	}
-	return nil
+	return prepareProviderLoopLiveArchive(layout.Repo)
 }
 
 func providerLoopLivePrompt(repo, provider string) string {
-	return "This disposable task-channel test deliberately exercises one refusal: BEFORE creating the marker, running its check, or checking off the subtask, call tasks_complete once while the required verification is still unrun. Confirm the unfinished-checklist refusal, then do the work normally and complete successfully in this same session. Do not fabricate verification or alter the task's acceptance or checklist text.\n\n" + loop.LoopWorkPrompt(repo, tasksRoot, providerLoopLiveTaskID(provider), provider, nil, nil, false)
+	return "This disposable task-channel test deliberately exercises one refusal: BEFORE creating the marker, running its check, or checking off the subtask, call tasks_complete once while the required verification is still unrun. Confirm the unfinished-checklist refusal, then do the work normally and complete successfully in this same session. Do not fabricate verification or alter the task's acceptance or checklist text. Before proposing work, check for existing frostlight work using tasks_list's literal search; use the returned summary directly, without listing or reading the whole archive. Leave every archived task unchanged.\n\n" + loop.LoopWorkPrompt(repo, tasksRoot, providerLoopLiveTaskID(provider), provider, nil, nil, false)
 }
 
 func snapshotProviderLoopLiveBaseline(layout procharness.Layout, repository liveprovider.RepositorySnapshot) (providerLoopLiveBaseline, error) {
@@ -141,6 +141,11 @@ func verifyProviderLoopLiveRepository(layout procharness.Layout, before provider
 	if err != nil {
 		return err
 	}
+	archiveEntries, err := verifyProviderLoopLiveArchive(layout)
+	if err != nil {
+		return err
+	}
+	wantEntries = append(wantEntries, archiveEntries...)
 	proposalEntries, err := verifyProviderLoopLiveProposal(layout)
 	if err != nil {
 		return err
@@ -289,7 +294,7 @@ func providerLoopLiveEntries(repo string) ([]string, error) {
 			return nil
 		}
 		count++
-		if count > 64 || entry.Type()&os.ModeSymlink != 0 {
+		if count > 64+2*providerLoopLiveArchiveCount || entry.Type()&os.ModeSymlink != 0 {
 			return fmt.Errorf("live loop repository has unsafe entries")
 		}
 		if entry.IsDir() {
@@ -675,6 +680,16 @@ func TestProviderLoopLiveContract(t *testing.T) {
 		layout, before, target, marker := newCompleted(t)
 		if err := verifyProviderLoopLiveRepository(layout, before, target, marker); err != nil {
 			t.Fatal(err)
+		}
+	})
+	t.Run("rejects altered search archive", func(t *testing.T) {
+		layout, before, target, marker := newCompleted(t)
+		path := filepath.Join(layout.Repo, tasksRoot, stateDone, providerLoopLiveSearchID, "task.md")
+		if err := os.WriteFile(path, []byte("# Rewritten archive\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := verifyProviderLoopLiveRepository(layout, before, target, marker); err == nil {
+			t.Fatal("altered search archive passed exact verification")
 		}
 	})
 	for _, altered := range []string{"task body", "metadata comment", "state", "log", "second proposal"} {
