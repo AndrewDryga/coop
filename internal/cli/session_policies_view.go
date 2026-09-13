@@ -26,16 +26,17 @@ import (
 // network this host compiled. issue is set INSTEAD of the network rows when the host could not
 // resolve them — an unresolved policy gets the question it raises, never a made-up permission.
 type sessionConfigurationView struct {
-	Name       string
-	Repository string
-	Branch     string
-	Companions []string
-	Access     string
-	Targets    []string
-	Network    string
-	Rules      []string
-	Export     bool
-	Issue      string
+	Name             string
+	Repository       string
+	Branch           string
+	Companions       []string
+	Access           string
+	Targets          []string
+	Network          string
+	Rules            []string
+	Export           bool
+	Issue            string
+	ApprovalRequired bool
 }
 
 func sessionConfigurationViewOf(name string, policy sessionsvc.Policy, network sessionPolicyNetwork, snapshot egress.Snapshot) sessionConfigurationView {
@@ -56,6 +57,7 @@ func sessionConfigurationViewOf(name string, policy sessionsvc.Policy, network s
 	}
 	if network.Unresolved != "" {
 		view.Issue = network.Unresolved
+		view.ApprovalRequired = network.ApprovalRequired
 		return view
 	}
 	view.Network, view.Rules = sessionNetworkSummary(egress.Mode(network.Mode), snapshot, policy)
@@ -208,13 +210,19 @@ func renderSessionConfigurations(w io.Writer, p ui.Palette, file string, views [
 			// An unresolved network is a question to answer, not a permission summary to invent.
 			// The remedy names the policy's OWN project: the reader's shell may be elsewhere.
 			fmt.Fprintln(w)
-			fmt.Fprintf(w, "  %s Network access needs approval\n", p.Yellow("⚠"))
+			headline := "Network access is not ready"
+			if view.ApprovalRequired {
+				headline = "Network access needs approval"
+			}
+			fmt.Fprintf(w, "  %s %s\n", p.Yellow("⚠"), headline)
 			fmt.Fprintln(w)
 			for _, line := range strings.Split(sessionsvc.BoundedDetail(view.Issue), "\n") {
 				fmt.Fprintln(w, "      "+line)
 			}
-			fmt.Fprintln(w)
-			fmt.Fprintln(w, "  Run coop net approve in "+view.Repository+".")
+			if view.ApprovalRequired {
+				fmt.Fprintln(w)
+				fmt.Fprintln(w, "  Run coop net approve in "+view.Repository+".")
+			}
 			continue
 		}
 		field("Network", view.Network)

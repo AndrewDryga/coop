@@ -27,6 +27,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkctl"
+	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -310,6 +311,7 @@ type sessionPolicyNetwork struct {
 	ExportDestinations bool     `json:"export_destinations,omitempty"`
 	Fingerprint        string   `json:"fingerprint,omitempty"`
 	Unresolved         string   `json:"unresolved,omitempty"`
+	ApprovalRequired   bool     `json:"-"`
 }
 
 // sessionPolicyNetworkOf is the JSON projection AND, beside it, the compiled snapshot the human
@@ -329,6 +331,11 @@ func sessionPolicyNetworkOf(cfg *config.Config, policy sessionsvc.Policy) (sessi
 	switch {
 	case err != nil:
 		out.Unresolved = err.Error()
+		if resolved.Mode != "" {
+			out.Mode = string(resolved.Mode)
+		}
+		var pending *networkstate.PendingApproval
+		out.ApprovalRequired = errors.As(err, &pending)
 	case resolved.Fingerprint != "":
 		out.Mode, out.Fingerprint = string(resolved.Mode), resolved.Fingerprint
 	default:

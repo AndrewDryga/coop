@@ -78,6 +78,9 @@
 - Explicit network-run queries now name the missing requested run, and `coop net recover`
   reports a clean host without requiring a container runtime.
 
+- Session-policy output now distinguishes missing project approval from missing host network
+  setup, and unresolved filtered policies keep their actual mode in JSON.
+
 - Task completion reminds agents that scratch logs are removed during finalization and
   only verified durable artifacts belong in the final handoff; normal scratch cleanup remains.
 

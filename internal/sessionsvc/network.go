@@ -131,7 +131,7 @@ func ResolvePolicyNetworkSnapshot(cfg *config.Config, policy Policy) (PolicyNetw
 			OmitMCP:            policy.OmitMCP,
 		})
 	if err != nil {
-		return PolicyNetwork{}, egress.Snapshot{}, err
+		return PolicyNetwork{Mode: mode}, egress.Snapshot{}, err
 	}
 	return PolicyNetwork{Mode: mode, Fingerprint: snapshot.Fingerprint}, snapshot, nil
 }

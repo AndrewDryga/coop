@@ -319,7 +319,7 @@ func TestSessionPolicyNetworkReportsWhatItCannotResolve(t *testing.T) {
 		t.Fatal(err)
 	}
 	network, snapshot := sessionPolicyNetworkOf(cfg, policies["filtered"])
-	if network.Fingerprint != "" || !strings.Contains(network.Unresolved, "coop net setup") {
+	if network.Mode != string(egress.Filtered) || network.Fingerprint != "" || !strings.Contains(network.Unresolved, "coop net setup") {
 		t.Fatalf("unresolvable policy network = %+v; want no fingerprint and the reason", network)
 	}
 	// The human view raises the unresolved reach as an ISSUE instead of listing rules it could not
@@ -328,9 +328,42 @@ func TestSessionPolicyNetworkReportsWhatItCannotResolve(t *testing.T) {
 	view := sessionConfigurationViewOf("filtered", policies["filtered"], network, snapshot)
 	renderSessionConfigurations(&out, ui.Palette{}, policyPath, []sessionConfigurationView{view})
 	got := out.String()
-	for _, want := range []string{"⚠ Network access needs approval", "coop net setup", "Run coop net approve in " + real + ".\n"} {
+	for _, want := range []string{"⚠ Network access is not ready", "coop net setup"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("unresolved configuration lacks %q:\n%s", want, got)
+		}
+	}
+	for _, forbidden := range []string{"Network access needs approval", "coop net approve", "Network  ", "example.com"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("setup failure contains %q:\n%s", forbidden, got)
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Join(real, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	silent := policies["filtered"]
+	silent.Egress = sessionsvc.EgressPolicy{}
+	projectFile := filepath.Join(real, ".agent", "project.yaml")
+	if err := os.WriteFile(projectFile, []byte("box:\n  egress: filtered\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inherited, _ := sessionPolicyNetworkOf(cfg, silent)
+	if inherited.Mode != string(egress.Filtered) || inherited.Unresolved == "" {
+		t.Fatalf("inherited filtered failure = %+v", inherited)
+	}
+
+	if err := os.WriteFile(projectFile, []byte("box:\n  egress: open\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pending, pendingSnapshot := sessionPolicyNetworkOf(cfg, silent)
+	out.Reset()
+	renderSessionConfigurations(&out, ui.Palette{}, policyPath,
+		[]sessionConfigurationView{sessionConfigurationViewOf("filtered", silent, pending, pendingSnapshot)})
+	got = out.String()
+	for _, want := range []string{"⚠ Network access needs approval", "Run coop net approve in " + real + ".\n"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("pending approval lacks %q:\n%s", want, got)
 		}
 	}
 	if strings.Contains(got, "Network  ") || strings.Contains(got, "example.com") {

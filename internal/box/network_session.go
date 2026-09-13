@@ -139,21 +139,21 @@ func ResolveSessionNetworkSnapshot(cfg *config.Config, spec RunSpec, options Ses
 		return mode, egress.Snapshot{}, nil
 	}
 	if err := plan.prepareFiltered(cfg, spec, options); err != nil {
-		return "", egress.Snapshot{}, err
+		return mode, egress.Snapshot{}, err
 	}
 	// OpenExisting, never Open: asking what a policy resolves to must not be the act that creates
 	// this host's owner key. A host with no network authority yet has no fingerprint to report.
 	store, err := networkstate.OpenExisting(plan.root, plan.exposed)
 	if errors.Is(err, os.ErrNotExist) {
-		return "", egress.Snapshot{}, errors.New("this host has no network records to resolve against — run 'coop net setup', then 'coop net approve' in the project")
+		return mode, egress.Snapshot{}, errors.New("this host has no network records to resolve against — run 'coop net setup'")
 	}
 	if err != nil {
-		return "", egress.Snapshot{}, err
+		return mode, egress.Snapshot{}, err
 	}
 	defer store.Close()
 	policy, err := resolveFilteredNetwork(cfg, spec, store, plan.project, plan.input)
 	if err != nil {
-		return "", egress.Snapshot{}, err
+		return mode, egress.Snapshot{}, err
 	}
 	return mode, policy, nil
 }

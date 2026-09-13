@@ -38,8 +38,9 @@ func TestApprovedSessionConfigurations(t *testing.T) {
 	export.Export = true
 	unresolved := sessionConfigurationView{
 		Name: "code-review", Repository: "/Users/andrewdryga/Projects/os/coop", Access: "Read-only",
-		Targets: []string{"codex:gpt-5.6-sol/high@personal"},
-		Issue:   "This project's network rules have not been approved.",
+		Targets:          []string{"codex:gpt-5.6-sol/high@personal"},
+		Issue:            "This project's network rules have not been approved.",
+		ApprovalRequired: true,
 	}
 	bare := sessionConfigurationView{
 		Name: "questions", Access: "Questions and answers only; no project files or tools",
