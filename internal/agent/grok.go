@@ -391,6 +391,8 @@ func (grokAgent) HomeFallbacks() []HomeFallback { return nil }
 
 // Native 1.0.25 fresh/resume captures (2026-09-13): text deltas exclude thought,
 // end carries invocation-local usage/cost, and output_tokens includes reasoning.
+// A total matching input+output identifies this format; otherwise keep older
+// streams' separate reasoning count, as the loop decoder does.
 const grokConsultText = `grok_text() {
 	jq -ers 'select(all(.[]; type=="object")) | select(.[-1].type=="end")
 		| select([.[] | select(.type=="end")]|length==1)
@@ -404,9 +406,12 @@ const grokConsultUsage = `select(.[-1].type=="end")
 		| select([.[] | select(.type=="end")]|length==1) | .[-1]
 		| select((.usage|type)=="object")
 		| {input:.usage.input_tokens, output:.usage.output_tokens,
-		   read:(.usage.cache_read_input_tokens // 0), write:(.usage.cache_creation_input_tokens // 0), cost:.total_cost_usd}
+		   read:(.usage.cache_read_input_tokens // 0), write:(.usage.cache_creation_input_tokens // 0),
+		   reasoning:(.usage.reasoning_tokens // 0), total:.usage.total_tokens, cost:.total_cost_usd}
 		| select(.input|token) | select(.output|token) | select(.read|token) | select(.write|token)
 		| .input=(.input + .read + .write) | select(.input<=1000000000)
+		| if .total>0 and .total==(.input + .output) then .
+		  else select(.reasoning|token) | .output=(.output + .reasoning) | select(.output<=1000000000) end
 		| if (.cost|type=="number" and isfinite and .>=0) then . else del(.cost) end`
 
 func (grokAgent) ConsultFresh() string {

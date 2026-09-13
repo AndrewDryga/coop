@@ -24,6 +24,10 @@ const capturedGrokConsult = `{"type":"available_commands","commands":[],"tools":
 {"type":"text","data":"USAGE_PROBE"}
 {"type":"end","num_turns":1,"total_cost_usd":0.00119612,"usage":{"cache_creation_input_tokens":0,"cache_read_input_tokens":6272,"input_tokens":95,"output_tokens":32,"reasoning_tokens":26,"total_tokens":6399}}`
 
+// Preserve the older recorded shape used by the loop's TestGrokStreamDecoder.
+const legacyGrokConsult = `{"type":"text","data":"COOP_USAGE_PROBE"}
+{"type":"end","num_turns":1,"usage":{"input_tokens":16016,"cache_read_input_tokens":11264,"output_tokens":125,"reasoning_tokens":62,"total_tokens":27467}}`
+
 func TestStreamConsultCapturedReplyAndUsage(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("jq not on PATH")
@@ -35,6 +39,7 @@ func TestStreamConsultCapturedReplyAndUsage(t *testing.T) {
 	}{
 		{"gemini", capturedGeminiConsult, `{"type":"result","status":"success"}`, 10866, 7, 0},
 		{"grok", capturedGrokConsult, `{"type":"end"}`, 6367, 32, 0.00119612},
+		{"grok", legacyGrokConsult, `{"type":"end"}`, 27280, 187, 0},
 	} {
 		t.Run(tc.provider, func(t *testing.T) {
 			ag, _ := Get(tc.provider)

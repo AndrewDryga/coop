@@ -2,7 +2,7 @@
 name: provider-consult-e2e
 description: Verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring
 subsystem: testing
-sources: [Makefile, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/consult_shell.go, internal/loop/telemetry.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go]
+sources: [Makefile, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/consult_shell.go, internal/loop/telemetry.go, internal/loop/streamjson_providers.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go]
 updated: 2026-09-13
 ---
 
@@ -35,6 +35,10 @@ the scripted process suite's explicit telemetry scenario currently covers Codex 
 Native fresh/resume feasibility captures on 2026-09-13 qualified Claude 2.1.267 JSON,
 Gemini 0.59.0 stream-json, and Grok 1.0.25 streaming-json session flags and field shapes.
 These narrow captures do not replace the final installed wrapper-in-loop qualification.
+Grok lead and consult decoding also retain older separate-reasoning streams: a positive native
+total equal to input plus output identifies inclusive output; otherwise its legacy
+reasoning addition remains. Optional malformed cost is ignored without losing a terminal
+event or valid token usage. No version guessed from the selected model name.
 Same-target calls serialize on a private lock. The Coop image uses `flock`, so the kernel releases
 ownership after an unclean exit. A custom image without `flock` uses a fail-closed `mkdir` fallback;
 after confirming no consult is active, remove its private `.lock.d` directory.
@@ -66,6 +70,9 @@ in final/state/log. Wrapper fixtures preserve a partial reply at exit0; they do 
 native lead carries its caveats through synthesis. No prose-to-verdict parser is involved.
 
 ## Changelog
+- 2026-09-13 — Grok native captures also reproduced a lead-decoder accounting bug:
+  preserved older separate-reasoning streams while honoring current inclusive totals
+  and provider-reported cost; focused lead/consult fixtures cover both formats.
 - 2026-09-13 — extended consult usage to all built-in adapters and optional reported cost;
   documented captured token semantics, best-effort publication and deferred native proof.
   Rechecked credential preflight advice: a refreshable token is not a lost login.

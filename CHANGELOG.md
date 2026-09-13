@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Grok loop summaries retain reported cost and avoid counting reasoning twice in current
+  streams, while preserving older streams that report reasoning separately.
+
 - Preset-loop cost summaries include Claude, Gemini and Grok consult usage alongside Codex,
   including provider-reported Claude and Grok cost. Missing usage never fails a consult,
   and reasoning/cache tokens are counted according to each provider's native result.

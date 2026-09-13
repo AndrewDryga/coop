@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"time"
 )
@@ -784,10 +785,22 @@ func (d *grokStreamDecoder) event(raw json.RawMessage) {
 		d.text.WriteString(ev.Data)
 	case "end":
 		d.noteTerminal()
+		input := ev.Usage.InputTokens + ev.Usage.CacheReadInputTokens + ev.Usage.CacheCreationInputTokens
+		output := ev.Usage.OutputTokens
+		// Current Grok includes reasoning in output; older streams report it
+		// separately. The native total distinguishes the two without a CLI guess.
+		if ev.Usage.TotalTokens <= 0 || ev.Usage.TotalTokens != input+output {
+			output += ev.Usage.ReasoningTokens
+		}
+		var cost float64
+		if json.Unmarshal(ev.CostUSD, &cost) != nil || cost < 0 || math.IsInf(cost, 0) || math.IsNaN(cost) {
+			cost = 0
+		}
 		d.last = &iterResult{
-			Turns:  ev.NumTurns,
-			InTok:  ev.Usage.InputTokens + ev.Usage.CacheReadInputTokens,
-			OutTok: ev.Usage.OutputTokens + ev.Usage.ReasoningTokens,
+			Turns:   ev.NumTurns,
+			InTok:   input,
+			OutTok:  output,
+			CostUSD: cost,
 		}
 		d.emit(d.palette.Dim(fmt.Sprintf("· %d turns · %s", d.last.Turns, tokenUsage(d.last.InTok, d.last.OutTok))))
 	default:
@@ -841,14 +854,17 @@ func (d *grokStreamDecoder) streamOutcome() providerStreamOutcome {
 }
 
 type grokStreamEvent struct {
-	Type     string `json:"type"`
-	Data     string `json:"data"`
-	NumTurns int    `json:"num_turns"`
+	Type     string          `json:"type"`
+	Data     string          `json:"data"`
+	NumTurns int             `json:"num_turns"`
+	CostUSD  json.RawMessage `json:"total_cost_usd"`
 	Usage    struct {
-		InputTokens          int `json:"input_tokens"`
-		CacheReadInputTokens int `json:"cache_read_input_tokens"`
-		OutputTokens         int `json:"output_tokens"`
-		ReasoningTokens      int `json:"reasoning_tokens"`
+		InputTokens              int `json:"input_tokens"`
+		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		OutputTokens             int `json:"output_tokens"`
+		ReasoningTokens          int `json:"reasoning_tokens"`
+		TotalTokens              int `json:"total_tokens"`
 	} `json:"usage"`
 }
 

@@ -17,7 +17,7 @@ func TestConsultWrapperStreamingReplyAndTelemetry(t *testing.T) {
 		{"grok", `{"type":"thought","data":"not the reply"}
 {"type":"text","data":"FIRST_"}
 {"type":"text","data":"SECOND"}
-{"type":"end","total_cost_usd":0.25,"usage":{"input_tokens":14,"cache_read_input_tokens":7,"output_tokens":5,"reasoning_tokens":3}}`, "21", "5"},
+{"type":"end","total_cost_usd":0.25,"usage":{"input_tokens":14,"cache_read_input_tokens":7,"output_tokens":5,"reasoning_tokens":3,"total_tokens":26}}`, "21", "5"},
 	} {
 		t.Run(tc.peer, func(t *testing.T) {
 			for _, sample := range []struct {
