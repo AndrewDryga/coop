@@ -57,6 +57,12 @@ func TestTaskArgumentSchemasDescribeRuntimeBoundsAndExamples(t *testing.T) {
 			}
 		}
 		switch name {
+		case "tasks_complete":
+			for _, want := range []string{"promote any promised logs", "verify their durable paths", "not links back into tmp/"} {
+				if !strings.Contains(descriptor["description"].(string), want) {
+					t.Fatalf("completion descriptor lacks %q", want)
+				}
+			}
 		case "tasks_update_state":
 			if len(examples(schema)) != 1 {
 				t.Fatal("state tool needs one complete example")

@@ -2,8 +2,8 @@
 name: task-tmp-lifetime
 description: task-local tmp survives resumable states but is containment-cleaned on done before review; artifacts persist
 subsystem: tasks
-sources: [internal/tasks/cmd.go, internal/tasks/lease.go, internal/tasks/audit.go, internal/loop/loop.go, internal/scaffold/templates/agent/tasks/README.md]
-updated: 2026-08-25
+sources: [internal/tasks/cmd.go, internal/tasks/lease.go, internal/tasks/audit.go, internal/loop/loop.go, internal/taskmcp/tools.go, internal/taskmcp/evidence_handoff_test.go, internal/scaffold/templates/agent/tasks/README.md]
+updated: 2026-09-13
 ---
 A task's `tmp/` is disposable but resumable: because it sits inside the task folder, ordinary
 todo/in-progress/blocked/reopen moves carry it along. `tasksFolderMove` removes only `tmp/` when a
@@ -16,11 +16,21 @@ removed without touching their targets. Cleanup errors fail completion/review lo
 retried with `coop tasks done <id>`. Anything a reviewer or future maintainer needs belongs in
 `artifacts/`, which survives done.
 
+Assigned MCP completion moves and normalizes the folder before the host finalizes it;
+its return does not mean scratch has already vanished. The tool description asks for
+promotion and verified durable paths before the call (links into tmp are not durable).
+All successful/already-done replies remind the agent of host cleanup and require an
+honest handoff: verified durable artifacts or an explicit unretained-log limitation.
+This feedback does not inspect artifacts or attest that a check ran. A native agent
+must still be qualified against the actual handoff, separately from lifecycle tests.
+
 Task authority does not live in `tmp/`. The host-only registry under
 `~/.local/state/coop/task-leases/` owns its flock and heartbeat metadata, so provider-writable task
 scratch is never lease evidence and task-folder moves do not relocate authority.
 
 ## Changelog
+- 2026-09-13 — rechecked assigned versus host completion timing, added evidence-handoff feedback
+  and lifecycle tests for retained copies, disappearing scratch/dangling links and refusals.
 - 2026-08-25 — removed the task-local lease mirror; `tmp/` is scratch only, while the host registry
   is the sole task-lease authority and heartbeat store
 - 2026-07-14 — documented loop lease lifetime and the release-before-done-cleanup boundary against `tasklease.go`, `controller.go`, and `commands.go`.

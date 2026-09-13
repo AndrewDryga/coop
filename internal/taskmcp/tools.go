@@ -74,7 +74,7 @@ var toolTable = []tool{
 	},
 	{
 		name:        "tasks_complete",
-		description: "Move the task into 99_done/ — the final action after its commit landed and required verification passed — normalizing state.md's Status to complete and Next action to none. Requires a nonempty, fully checked checklist. Failed, unavailable, and never-attempted required checks stay open. The loop checks the assigned commit before moving: fix any refusal and retry this tool in the same turn. Refused when another live process holds the task.",
+		description: "Move the task into 99_done/ — the final action after its commit landed and required verification passed — normalizing state.md's Status to complete and Next action to none. Before calling, promote any promised logs from tmp/ to artifacts/ and verify their durable paths, not links back into tmp/. Requires a nonempty, fully checked checklist. Failed, unavailable, and never-attempted required checks stay open. The loop checks the assigned commit before moving: fix any refusal and retry this tool in the same turn. Refused when another live process holds the task.",
 		schema:      object(map[string]any{"id": idProp()}, "id"),
 		run:         (*Server).complete,
 	},
@@ -518,6 +518,8 @@ func (s *Server) appendLog(_ context.Context, args json.RawMessage) *toolResult 
 	return textResult(fmt.Sprintf("entry appended to log.md of %s", loc.item.ID))
 }
 
+const completionEvidenceHandoff = " — write nothing more inside that folder. Host finalization removes tmp/; never cite tmp/ as retained evidence. Cite only durable artifacts you verified before completion, or say the full log was not retained. Stored output is not independent proof a check ran."
+
 func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 	var in struct {
 		ID string `json:"id"`
@@ -533,7 +535,7 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 		if err := tasks.RequireCompletedChecklist(loc.item); err != nil {
 			return refusal(err.Error())
 		}
-		return textResult(fmt.Sprintf("%s is already done", loc.item.ID))
+		return textResult(fmt.Sprintf("%s is already done", loc.item.ID) + completionEvidenceHandoff)
 	}
 	if loc.item.ID != s.authority.Assigned {
 		// Another task: the host's own trusted completion — its lease, receipt, and normalization —
@@ -544,7 +546,7 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 			}
 			return refusal(fmt.Sprintf("complete %s: %v", loc.item.ID, err))
 		}
-		return textResult(fmt.Sprintf("%s moved to %s/", loc.item.ID, tasks.StateDone))
+		return textResult(fmt.Sprintf("%s moved to %s/", loc.item.ID, tasks.StateDone) + completionEvidenceHandoff)
 	}
 	// The assigned task moves under the launching iteration's lease; the host finalizes it after
 	// the box exits (commit binding, receipt, tmp/ removal). Normalizing here keeps state.md's
@@ -570,7 +572,7 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 	if err := tasks.NormalizeTaskState(loc.item.ID, dir, "complete", "none", "—", "—"); err != nil {
 		return refusal(fmt.Sprintf("%s moved to %s/ but its state.md could not be normalized: %v", loc.item.ID, tasks.StateDone, err))
 	}
-	return textResult(fmt.Sprintf("%s moved to %s/ — write nothing more inside that folder", loc.item.ID, tasks.StateDone))
+	return textResult(fmt.Sprintf("%s moved to %s/", loc.item.ID, tasks.StateDone) + completionEvidenceHandoff)
 }
 
 func (s *Server) block(_ context.Context, args json.RawMessage) *toolResult {

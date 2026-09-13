@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Task completion reminds agents that scratch logs are removed during finalization and
+  only verified durable artifacts belong in the final handoff; normal scratch cleanup remains.
+
 - Loop follow-up guidance checks existing task owners before proposing duplicates and
   distinguishes observed failures from suspected causes without weakening test contracts.
 
