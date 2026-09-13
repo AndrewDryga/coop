@@ -120,7 +120,7 @@ func (c *Config) Cmd(env, def string) []string {
 // Load resolves the configuration from the environment and conf file. A genuinely absent default
 // file is optional; an explicitly selected file or a present invalid file is an operator error.
 func Load() (*Config, error) {
-	boxHome := filepath.Join(xdgConfigHome(), "coop")
+	boxHome := RootDir()
 	confPath, explicitConf := os.LookupEnv("COOP_CONF")
 	if !explicitConf {
 		confPath = filepath.Join(boxHome, "coop.conf")
@@ -682,6 +682,9 @@ func xdgConfigHome() string {
 	}
 	return filepath.Join(home, ".config")
 }
+
+// RootDir is Coop's per-user configuration root.
+func RootDir() string { return filepath.Join(xdgConfigHome(), "coop") }
 
 // ShellSplit exposes shellSplit so other packages can split a committed command setting (e.g. the
 // .agent/project.yaml gate:) into argv exactly as Load splits COOP_GATE — one splitter, one rule.

@@ -81,6 +81,9 @@
 - Session-policy output now distinguishes missing project approval from missing host network
   setup, and unresolved filtered policies keep their actual mode in JSON.
 
+- Default remote-session policy discovery now follows `XDG_CONFIG_HOME` instead of always
+  reading `~/.config/coop/session-policies.yaml`.
+
 - Task completion reminds agents that scratch logs are removed during finalization and
   only verified durable artifacts belong in the final handoff; normal scratch cleanup remains.
 

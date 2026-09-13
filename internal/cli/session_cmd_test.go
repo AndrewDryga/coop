@@ -104,17 +104,26 @@ func captureSessionDoctorJSON(t *testing.T, socket string) (int, string) {
 	return code, string(data)
 }
 
-func TestSessionCLIPathsUseRealHomeDefaults(t *testing.T) {
-	state, policy, socket, err := sessionCLIPaths("", "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestSessionCLIPathsUseConfiguredDefaults(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(state, filepath.Join(home, ".local", "state", "coop", "sessions")) || policy != filepath.Join(home, ".config", "coop", "session-policies.yaml") || socket != filepath.Join(state, "control.sock") {
-		t.Fatalf("defaults = state %q policy %q socket %q", state, policy, socket)
+	for name, xdg := range map[string]string{"home fallback": "", "XDG config home": t.TempDir()} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", xdg)
+			state, policy, socket, err := sessionCLIPaths("", "", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			configHome := filepath.Join(home, ".config")
+			if xdg != "" {
+				configHome = xdg
+			}
+			if !strings.HasPrefix(state, filepath.Join(home, ".local", "state", "coop", "sessions")) || policy != filepath.Join(configHome, "coop", "session-policies.yaml") || socket != filepath.Join(state, "control.sock") {
+				t.Fatalf("defaults = state %q policy %q socket %q", state, policy, socket)
+			}
+		})
 	}
 }
 

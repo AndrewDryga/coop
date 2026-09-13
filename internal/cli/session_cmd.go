@@ -42,11 +42,7 @@ func defaultSessionStateRoot() (string, error) {
 }
 
 func defaultSessionPolicyPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve user home: %w", err)
-	}
-	return filepath.Join(home, ".config", "coop", "session-policies.yaml"), nil
+	return filepath.Join(config.RootDir(), "session-policies.yaml"), nil
 }
 
 func sessionCLIPaths(state, policy, socket string) (string, string, string, error) {
