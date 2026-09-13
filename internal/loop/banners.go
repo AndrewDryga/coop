@@ -23,6 +23,18 @@ func loopExitCode(cf tasks.TaskCounts) int {
 	return 0
 }
 
+// loopExitCodeAfterVerification preserves the queue's existing actionable/decision outcomes,
+// while refusing success for a clean queue whose explicitly enabled final verification failed.
+func loopExitCodeAfterVerification(cf tasks.TaskCounts, verificationFailed bool) int {
+	if code := loopExitCode(cf); code != 0 {
+		return code
+	}
+	if verificationFailed {
+		return 1
+	}
+	return 0
+}
+
 // maxReportedTasks bounds every closing list. A run that reopened forty tasks is not made clearer
 // by forty lines; the queue commands have the rest.
 const maxReportedTasks = 5
@@ -45,6 +57,14 @@ func printFinalVerdict(cf tasks.TaskCounts, actionable, blocked []taskLine, cont
 		ui.Note("")
 		ui.OK("All tasks passed final review · %d/%d done", cf.Done, cf.Total())
 	}
+}
+
+// printFailedVerificationVerdict is the terminal result for a completed queue whose enabled final
+// verification could not produce an accepted verdict. The detailed cause is printed at the failed
+// verification boundary; this last line keeps the run's machine and human conclusions aligned.
+func printFailedVerificationVerdict(cf tasks.TaskCounts) {
+	ui.Note("")
+	ui.Error("Final verification failed · %d/%d done · completed work is unverified", cf.Done, cf.Total())
 }
 
 // actionableCause says, in the task's own words, what the review left to do — using the state the
@@ -105,6 +125,14 @@ func printInterrupted(cf tasks.TaskCounts, continueCmd string, duringReview bool
 	ui.Note("%s · %d/%d tasks done", headline, cf.Done, cf.Total())
 	ui.Note("")
 	ui.Note("  Continue: %s", continueCmd)
+}
+
+// printStoppedBeforeFinalVerdict covers the narrow race where the first Ctrl-C arrives while the
+// final verifier is running, but that verifier still returns an accepted receipt. The check did
+// finish; the operator nevertheless stopped the command before it could issue a success verdict.
+func printStoppedBeforeFinalVerdict(cf tasks.TaskCounts) {
+	ui.Note("")
+	ui.Note("Stopped before the final verdict · %d/%d tasks done", cf.Done, cf.Total())
 }
 
 // printNoActionableTasks is the honest empty result: nothing to work on. It is not a review

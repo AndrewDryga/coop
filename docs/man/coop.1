@@ -934,11 +934,11 @@ NETWORK ACCESS
   See coop help net for rules and approvals.
 
 EXIT STATUS
-  0    review passed, or the requested task limit was reached
-  1    the run failed or left work to do
+  0    review and enabled final checks passed, or the task limit was reached
+  1    the run failed, final checks failed, or work remains
   2    invalid command or configuration
   3    stopped for a decision
-  130  interrupted before final review completed
+  130  interrupted before the final verdict
 
 ==============================================================================
 

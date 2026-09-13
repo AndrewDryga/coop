@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"sort"
@@ -357,6 +358,21 @@ func loopChanges(repo, base, head string) loopChangeSet {
 		cs.tasks = append(cs.tasks, taskChanges{id: id, commits: commits, files: commitFiles(repo, commits)})
 	}
 	return cs
+}
+
+// finalVerificationChanges distinguishes a genuinely empty run range from commit context Coop
+// could not read or bind uniquely. An enabled verification cannot be silently skipped in the
+// latter case: without trustworthy subjects, an accepting provider verdict would prove nothing.
+func finalVerificationChanges(repo, base string) (loopChangeSet, error) {
+	head, err := gitOutErr(repo, "rev-parse", "HEAD")
+	if err != nil {
+		return loopChangeSet{}, fmt.Errorf("read final verification HEAD: %w", err)
+	}
+	cs := loopChanges(repo, base, head)
+	if cs.invalidTaskBindings {
+		return loopChangeSet{}, errors.New("the run's commits do not have one readable task binding each")
+	}
+	return cs, nil
 }
 
 // rangeFiles lists every file changed across a commit range.

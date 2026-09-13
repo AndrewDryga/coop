@@ -292,6 +292,26 @@ func TestLoopChangesFromGit(t *testing.T) {
 	}
 }
 
+func TestFinalVerificationChangesRejectsUnreadableOrAmbiguousContext(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	if _, err := finalVerificationChanges(t.TempDir(), "base"); err == nil || !strings.Contains(err.Error(), "read final verification HEAD") {
+		t.Fatalf("unreadable final verification context = %v", err)
+	}
+
+	repo, run := gitrepo.New(t)
+	run("commit", "-q", "--allow-empty", "-m", "base")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	if cs, err := finalVerificationChanges(repo, base); err != nil || !cs.empty() {
+		t.Fatalf("genuine empty range = (%+v, %v)", cs, err)
+	}
+	run("commit", "-q", "--allow-empty", "-m", "ambiguous\n\nCoop-Task: task-a\nCoop-Task: task-b")
+	if _, err := finalVerificationChanges(repo, base); err == nil || !strings.Contains(err.Error(), "one readable task binding") {
+		t.Fatalf("ambiguous final verification context = %v", err)
+	}
+}
+
 func TestCommitFilesPreservesUnicodeProtectedPath(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

@@ -74,6 +74,26 @@ func TestLoopExitCode(t *testing.T) {
 	}
 }
 
+func TestFailedFinalVerificationCannotReportSuccess(t *testing.T) {
+	cf := tasks.TaskCounts{Done: 5}
+	got := captureStderr(t, func() { printFailedVerificationVerdict(cf) })
+	if !strings.Contains(got, "✗ Final verification failed · 5/5 done · completed work is unverified") {
+		t.Fatalf("failed verification verdict = %q", got)
+	}
+	if strings.Contains(got, "passed final review") {
+		t.Fatalf("failed verification reported success: %q", got)
+	}
+	if code := loopExitCodeAfterVerification(cf, true); code != 1 {
+		t.Fatalf("failed verification exit = %d, want 1", code)
+	}
+	if code := loopExitCodeAfterVerification(cf, false); code != 0 {
+		t.Fatalf("successful verification exit = %d, want 0", code)
+	}
+	if code := loopExitCodeAfterVerification(tasks.TaskCounts{Done: 4, Blocked: 1}, true); code != 3 {
+		t.Fatalf("blocked queue exit = %d, want existing decision exit 3", code)
+	}
+}
+
 // A stop the user asked for and a limit the user set are both successes — and neither may read as
 // a verdict. Each says the final review has not run, and how to carry on.
 func TestLoopIntentionalAndInterruptedStopsAreDistinct(t *testing.T) {

@@ -1279,7 +1279,8 @@ stronger model than the cheaper `work.agent` loop. Settings live here too: `sign
 defaults), and `coop init` scaffolds a fully-commented starter.
 
 **Exit codes.** A cron job or CI can branch on the loop's outcome without parsing output: `0` the
-queue is verified done; `1` a failure; `2` a usage error; `3` the loop stopped with a task blocked
+queue is verified done (including an enabled final verification); `1` a failure, an unverified
+final pass, or actionable work; `2` a usage error; `3` the loop stopped with a task blocked
 on a human decision — including one the review kept reopening past the round cap (resolve with `coop
 tasks decisions`, then re-run).
 
@@ -1809,8 +1810,10 @@ five — but a bare `&&`/`|`/`$VAR` is a literal argument: wrap those in `bash -
 **Exit codes.** Every command follows one contract, so CI and scripts can branch without parsing
 output: `0` success · `1` a failure (or findings — e.g. `coop check-secrets` on a hit) · `2` a usage
 error (unknown command/flag or bad arguments). `coop loop` adds `3` when it stopped with a task
-blocked on a human decision and `130` when Ctrl-C interrupted it before queue verification; an
-intentional `--max-tasks N` pause is successful without claiming the whole queue was verified (see
+blocked on a human decision and `130` when Ctrl-C interrupted it before the final verdict; an
+enabled final verification that fails exits nonzero while preserving completed work (`1` when no
+blocked-only outcome takes precedence); an intentional `--max-tasks N` pause is successful without
+claiming the whole queue was verified (see
 [Exit codes](#the-loop) above).
 
 **Why is `--json` uncommon?** Mutating commands use exit codes as their machine contract instead

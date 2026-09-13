@@ -485,6 +485,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// Final verify may jump back here when a parallel host completion needs its own signoff.
 	signoffRound, maxReviewRounds := 1, 0
 	reviewCapped := false
+	verificationFailed := false
 reviewAgain:
 	for ; ; signoffRound++ {
 		for {
@@ -1230,11 +1231,15 @@ reviewAgain:
 	// what, typically "e2e-test the affected features". It runs after the signoff accepted the batch,
 	// on its own model, with the run's change context injected; best-effort, and it may reopen a task
 	// whose e2e it can't get to pass (surfaced in the closing digest + exit). Skipped on a custom
-	// work.command or a requested stop. Ordinary process failures remain best-effort; completion
-	// ownership setup/audit failures are hard boundaries and stop the loop.
+	// work.command or a requested stop. Ordinary process failures preserve completed work but make
+	// the final verdict unverified and nonzero; completion ownership setup/audit failures stop here.
 	if verifyEnabled && !reviewCapped && !softStop.Load() && iterCtx.Err() == nil {
-		cs := loopChanges(repo, loopStartHead, gitOut(repo, "rev-parse", "HEAD"))
-		if cs.empty() {
+		cs, changeErr := finalVerificationChanges(repo, loopStartHead)
+		if changeErr != nil {
+			verificationFailed = true
+			ui.Alert("The final checks could not run",
+				fmt.Sprintf("The run's changes could not be verified: %v\nThe affected work remains unverified.", changeErr))
+		} else if cs.empty() {
 			// Nothing changed: a check with nothing to check is omitted, not reported as skipped.
 		} else {
 			vPrompt := substituteLoopVars(lc.Verify.Prompt, cs, health) + cs.reviewBlock(health) +
@@ -1267,6 +1272,9 @@ reviewAgain:
 			}
 			if errors.Is(verr, tasks.ErrCompletionWindowSetup) || errors.Is(verr, tasks.ErrCompletionWindowAudit) {
 				return 1, verr
+			}
+			if verr != nil {
+				verificationFailed = true
 			}
 			if errors.Is(verr, errReviewVerdictMalformed) {
 				ui.Alert("The final checks could not be read",
@@ -1308,7 +1316,21 @@ reviewAgain:
 				signoffRound = 1
 				goto reviewAgain
 			}
+			if verr == nil {
+				// Reaching here means this verification returned an accepted verdict, reopened
+				// nothing and observed no completion that still needs its own signoff. Only that
+				// complete pass can clear an earlier failed attempt from a prior review round.
+				verificationFailed = false
+			}
 		}
+	}
+	if softStop.Load() || iterCtx.Err() != nil {
+		cf, _, err := tasks.QueueProgress(hosts)
+		if err != nil {
+			return 1, err
+		}
+		c.closeWith(func() { printStoppedBeforeFinalVerdict(cf) })
+		return LoopInterruptedExitCode, nil
 	}
 	// End-of-run signing sweep: normally a no-op (per-cycle signing already covered each iteration),
 	// but it catches any straggler — a commit from a previously interrupted run, or a preflight
@@ -1340,8 +1362,14 @@ reviewAgain:
 	if err != nil {
 		return 1, err
 	}
-	c.closeWith(func() { printFinalVerdict(cf, actionable, blocked, continueCmd) })
-	return loopExitCode(cf), nil
+	c.closeWith(func() {
+		if verificationFailed && cf.Todo+cf.Doing+cf.Blocked == 0 {
+			printFailedVerificationVerdict(cf)
+			return
+		}
+		printFinalVerdict(cf, actionable, blocked, continueCmd)
+	})
+	return loopExitCodeAfterVerification(cf, verificationFailed), nil
 }
 
 // closeWith prints the run's final banner, flushing the networking summary first

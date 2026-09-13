@@ -115,6 +115,126 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		assertLoopTraceProcessesGone(t, trace)
 	})
 
+	t.Run("failed final verification cannot claim the completed batch passed", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		t.Cleanup(func() { logLoopProcessFailure(t, suite) })
+		taskID := "failed-final-verification"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		signoff := loopRecoveryTarget("gemini", "signoff-model", "work")
+		verify := loopRecoveryTarget("grok", "verify-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{signoff}, []string{verify}, 3)
+		attempts := []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "complete"},
+			{Target: signoff, Stage: "signoff", Result: "pass"},
+			{Target: verify, Stage: "verify", Result: "background-drained-review"},
+			{Target: verify, Stage: "verify", Result: "background-timeout-review"},
+			{Target: verify, Stage: "verify", Result: "background-drained-review"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopReview(t, suite, work, 20*time.Second)
+		output := result.Stdout + result.Stderr
+		if result.Err != nil || result.ExitCode != 1 ||
+			!strings.Contains(output, "The final checks could not run") ||
+			!strings.Contains(output, "Final verification failed · 1/1 done · completed work is unverified") ||
+			strings.Contains(output, "All tasks passed final review") {
+			t.Fatalf("failed final verification = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
+			t.Fatal("failed final verification disturbed the completed task")
+		}
+		records := readLoopStageRecords(t, suite)
+		if len(records) != len(attempts) || records[1].Stage != "signoff" || records[1].Outcome != "success" ||
+			records[2].Stage != "verify" || records[2].Outcome != "background_drained" ||
+			records[3].Stage != "verify" || records[3].Outcome != "background_timeout" ||
+			records[4].Stage != "verify" || records[4].Outcome != "background_drained" {
+			t.Fatalf("failed verification telemetry = %#v", records)
+		}
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
+		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+	})
+
+	t.Run("two malformed final verification verdicts leave the batch unverified", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		t.Cleanup(func() { logLoopProcessFailure(t, suite) })
+		taskID := "malformed-final-verification"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		signoff := loopRecoveryTarget("gemini", "signoff-model", "work")
+		verify := loopRecoveryTarget("grok", "verify-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{signoff}, []string{verify}, 3)
+		attempts := []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "complete"},
+			{Target: signoff, Stage: "signoff", Result: "pass"},
+			{Target: verify, Stage: "verify", Result: "malformed-review"},
+			{Target: verify, Stage: "verify", Result: "malformed-review-corrected"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopReview(t, suite, work, 20*time.Second)
+		output := result.Stdout + result.Stderr
+		if result.Err != nil || result.ExitCode != 1 ||
+			!strings.Contains(output, "The final checks could not be read") ||
+			!strings.Contains(output, "Final verification failed · 1/1 done · completed work is unverified") ||
+			strings.Contains(output, "All tasks passed final review") {
+			t.Fatalf("malformed final verification = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
+			t.Fatal("malformed final verification disturbed the completed task")
+		}
+		records := readLoopStageRecords(t, suite)
+		if len(records) != len(attempts) || records[2].Stage != "verify" || records[3].Stage != "verify" ||
+			records[2].Outcome != "success" || records[3].Outcome != "success" {
+			t.Fatalf("malformed verification telemetry = %#v", records)
+		}
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
+		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+	})
+
+	t.Run("soft stop during final verification exits before the success verdict", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		taskID := "interrupted-final-verification"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		signoff := loopRecoveryTarget("gemini", "signoff-model", "work")
+		verify := loopRecoveryTarget("grok", "verify-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{signoff}, []string{verify}, 3)
+		attempts := []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "complete"},
+			{Target: signoff, Stage: "signoff", Result: "pass"},
+			{Target: verify, Stage: "verify", Result: "pass-gated"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		process, err := procharness.Start(terminalLoopCommand(t, loopReviewCommand(suite, work)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer process.Cleanup()
+		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 10*time.Second)
+		coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin), 5*time.Second)
+		if err := syscall.Kill(coopPID, syscall.SIGINT); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-release-"+taskID), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		result := process.Wait(ctx)
+		cancel()
+		output := result.Stdout + result.Stderr
+		if result.ExitCode != loop.LoopInterruptedExitCode || !strings.Contains(output, "Stopped before the final verdict · 1/1 tasks done") ||
+			strings.Contains(output, "All tasks passed final review") || strings.Contains(output, "Final verification failed") {
+			t.Fatalf("interrupted verification = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
+			t.Fatal("interrupted verification disturbed the completed task")
+		}
+		records := readLoopStageRecords(t, suite)
+		if len(records) != len(attempts) || records[2].Stage != "verify" || records[2].Outcome != "success" || records[2].Exit != 0 {
+			t.Fatalf("interrupted verification telemetry = %#v", records)
+		}
+		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+	})
+
 	t.Run("Codex split footer echo is accepted without a malformed-verdict retry", func(t *testing.T) {
 		resetLoopProcessRepo(t, suite)
 		t.Cleanup(func() { logLoopProcessFailure(t, suite) })
@@ -497,6 +617,48 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		records := readLoopStageRecords(t, suite)
 		if len(records) != 5 || records[3].Stage != "signoff" || records[4].Stage != "verify" {
 			t.Fatalf("verify concurrent-completion telemetry = %#v", records)
+		}
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
+	})
+
+	t.Run("later accepted verification clears a failed concurrent attempt", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		taskID := "verify-failure-concurrent-completion"
+		hostID := taskID + "-host"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		seedLoopProcessTaskIn(t, suite.layout.Repo, stateBlocked, hostID)
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		signoff := loopRecoveryTarget("gemini", "signoff-model", "work")
+		verify := loopRecoveryTarget("grok", "verify-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{signoff}, []string{verify}, 3)
+		attempts := []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "complete"},
+			{Target: signoff, Stage: "signoff", Result: "pass"},
+			{Target: verify, Stage: "verify", Result: "background-drained-review"},
+			{Target: verify, Stage: "verify", Result: "background-timeout-review"},
+			{Target: verify, Stage: "verify", Result: "background-drained-review-host-completion"},
+			{Target: signoff, Stage: "signoff", Result: "pass-with-host"},
+			{Target: verify, Stage: "verify", Result: "pass"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopReview(t, suite, work, 20*time.Second)
+		output := result.Stdout + result.Stderr
+		if result.Err != nil || result.ExitCode != 0 ||
+			!strings.Contains(output, "The final checks could not run") ||
+			!strings.Contains(output, "Another session completed 1 task during this review.") ||
+			!strings.Contains(output, "All tasks passed final review · 2/2 done") ||
+			strings.Contains(output, "Final verification failed · 2/2 done") {
+			t.Fatalf("verification recovery = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) ||
+			!pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, hostID)) {
+			t.Fatal("verification recovery disturbed completed tasks")
+		}
+		records := readLoopStageRecords(t, suite)
+		if len(records) != len(attempts) || records[4].Stage != "verify" || records[4].Outcome != "background_drained" ||
+			records[5].Stage != "signoff" || records[5].Outcome != "success" ||
+			records[6].Stage != "verify" || records[6].Outcome != "success" {
+			t.Fatalf("verification recovery telemetry = %#v", records)
 		}
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 	})
@@ -1542,7 +1704,7 @@ func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []
 			attempt.Result != "repair-older-binding-blocked" &&
 			attempt.Result != "repair-older-binding-changed-descendant" && attempt.Result != "verify-only" &&
 			attempt.Result != "verify-only-after-block" &&
-			attempt.Result != "second-binding" && attempt.Result != "pass" && attempt.Result != "pass-host-completion" &&
+			attempt.Result != "second-binding" && attempt.Result != "pass" && attempt.Result != "pass-gated" && attempt.Result != "pass-host-completion" &&
 			attempt.Result != "pass-with-host" && attempt.Result != "pass-with-descendant" &&
 			attempt.Result != "pass-corrected" && attempt.Result != "reopen" && attempt.Result != "reopen-gated" &&
 			attempt.Result != "reopen-injection" && attempt.Result != "reopen-corrected" &&
@@ -1552,7 +1714,7 @@ func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []
 		}
 		if attempt.Result == "wait" {
 			wantExit = 130
-		} else if attempt.Result == "background-drained-review" {
+		} else if attempt.Result == "background-drained-review" || attempt.Result == "background-drained-review-host-completion" {
 			wantExit = 190
 		} else if attempt.Result == "background-timeout-review" {
 			wantExit = 191

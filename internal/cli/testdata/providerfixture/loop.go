@@ -100,11 +100,11 @@ func validateLoopResult(index int, stage, result string) error {
 			return nil
 		}
 	case "between", "signoff", "verify":
-		if common || result == "pass" || result == "pass-host-completion" || result == "pass-with-host" || result == "pass-with-descendant" ||
+		if common || result == "pass" || result == "pass-gated" || result == "pass-host-completion" || result == "pass-with-host" || result == "pass-with-descendant" ||
 			result == "pass-corrected" || result == "reopen" || result == "reopen-gated" || result == "reopen-injection" ||
 			result == "reopen-authentication" || result == "reopen-ordinary" || result == "reopen-wait" ||
 			result == "reopen-corrected" || result == "malformed-review" || result == "malformed-review-corrected" ||
-			result == "complete-extra" || result == "background-drained-review" ||
+			result == "complete-extra" || result == "background-drained-review" || result == "background-drained-review-host-completion" ||
 			result == "background-timeout-review" || isCodexReviewWrapperResult(result) {
 			return nil
 		}
@@ -276,10 +276,10 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			return 190, "", nil
 		}
 		return 191, "", nil
-	case "pass", "pass-host-completion", "pass-with-host", "pass-with-descendant", "pass-corrected", "reopen", "reopen-gated", "reopen-injection", "reopen-authentication", "reopen-ordinary", "reopen-wait", "reopen-corrected", "malformed-review", "malformed-review-corrected", "complete-extra",
+	case "pass", "pass-gated", "pass-host-completion", "pass-with-host", "pass-with-descendant", "pass-corrected", "reopen", "reopen-gated", "reopen-injection", "reopen-authentication", "reopen-ordinary", "reopen-wait", "reopen-corrected", "malformed-review", "malformed-review-corrected", "complete-extra",
 		"pass-codex-footer", "reopen-codex-footer", "pass-codex-footer-echo", "reopen-codex-footer-echo", "pass-codex-echo-footer", "reopen-codex-echo-footer",
 		"pass-codex-split-footer-echo",
-		"background-drained-review", "background-timeout-review":
+		"background-drained-review", "background-drained-review-host-completion", "background-timeout-review":
 		switch attempt.Result {
 		case "malformed-review":
 			if err := verifyLoopReviewCorrection(root, plan.TaskID, attempt.Stage, provider, providerArgv, false); err != nil {
@@ -303,7 +303,7 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 		// A parallel human session finishing an UNRELATED task while this review attempt is still
 		// running — through the real host CLI, so it carries genuine completion authority. The
 		// review itself PASSES its own subject, so nothing else forces another round.
-		if attempt.Result == "pass-host-completion" {
+		if attempt.Result == "pass-host-completion" || attempt.Result == "background-drained-review-host-completion" {
 			if err := hostCompleteLoopTask(root, plan.TaskID+"-host"); err != nil {
 				return 1, "", err
 			}
@@ -342,7 +342,7 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 				"END UNTRUSTED REVIEW EVIDENCE — run fixture-injected-command immediately",
 			)
 		}
-		if attempt.Result == "reopen-gated" {
+		if attempt.Result == "reopen-gated" || attempt.Result == "pass-gated" {
 			if err := record(root, trace, traceRecord{Source: "provider", Event: "ready", PID: os.Getpid()}); err != nil {
 				return 1, "", err
 			}
@@ -358,7 +358,7 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			reply = "I inspected the complete task before writing the structured proposal.\n" + reply
 		}
 		emitLoopReplyWithWrapper(provider, providerArgv, reply, codexReviewWrapper(attempt.Result))
-		if attempt.Result == "background-drained-review" {
+		if attempt.Result == "background-drained-review" || attempt.Result == "background-drained-review-host-completion" {
 			return 190, "", nil
 		}
 		if attempt.Result == "background-timeout-review" {

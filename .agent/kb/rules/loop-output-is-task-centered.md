@@ -35,6 +35,9 @@ updated: 2026-09-13
   provider text, raw events, diagnostics, usage or watchdog activity. Keep identity changes visible.
 - Preserve review/recovery/wait/denial/interrupt/final-result distinctions and their remedies.
   Task completion is not final-review success; no-actionable, busy and blocked are not all-passed.
+  When an explicitly enabled final verification cannot run or return an accepted verdict, keep
+  completed tasks intact but end nonzero with an unverified result; never follow its failure with
+  an all-passed banner or claim a fresh loop will recover historical verification subjects.
 - A failed tool row keeps its identity and exit status while leaving room for an available
   cause. Long commands must not consume the whole live row. Skip generic leading exit-code
   boilerplate when a useful failure follows; preserve meaningful MCP errors and never replace
@@ -74,6 +77,8 @@ card. The full transcript and failure matrix are in queued task
 `2026-09-12-polish-loop-output-with-task-banners-and-grouped`.
 
 ## Changelog
+- 2026-09-13 — made failed enabled final verification part of the terminal verdict and exit
+  contract while preserving completed task state, original diagnostics and queue-specific exits.
 - 2026-09-13 — swept ordinary Bash, role/task classifications and matched failure history;
   preserved real command identity while rendering supplied purposes with width-aware budgets.
   Focused event tests cover control/multiline/generic fallback, resize and unchanged success/

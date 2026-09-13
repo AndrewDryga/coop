@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- An enabled loop final-verification pass that cannot run or return a valid verdict now exits
+  nonzero and ends with an unverified result instead of contradicting itself with an all-passed
+  banner. Completed tasks and the original verification failure details remain intact.
+
 - Direct filtered Claude API-key runs keep the reusable `ANTHROPIC_API_KEY` outside the agent
   container. A per-run loopback broker in the capless network guard accepts only the pinned
   Messages route, uses separate helper-only network authority, and preserves normal traffic
