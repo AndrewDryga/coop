@@ -141,12 +141,28 @@ func ReviewProjectNetwork(cfg *config.Config, repo string) (_ *ProjectNetworkApp
 	if err := checkSupportedRequests(input); err != nil {
 		return nil, err
 	}
-	preview, err := networkstate.PreviewAdmission(root, canonical, exposed, input)
-	if err != nil {
-		return nil, err
+	// Launch posture deliberately prefers a remembered restriction over a project edit. Approval
+	// review is the one place that must compare the replacement requested posture instead, or an
+	// offline approval can never be changed to filtered without first deleting it.
+	var before *networkstate.Approval
+	if existing, openErr := networkstate.OpenExisting(root, exposed); openErr == nil {
+		before, err = existing.Approval(canonical)
+		err = errors.Join(err, existing.Close())
+		if err != nil {
+			return nil, err
+		}
+	} else if !errors.Is(openErr, fs.ErrNotExist) {
+		return nil, openErr
 	}
-	if preview.Pending == nil {
-		return &ProjectNetworkApproval{project: canonical, unchanged: true}, nil
+	modeChanged := before != nil && approvalMode(input, before) != before.Posture
+	if !modeChanged {
+		preview, previewErr := networkstate.PreviewAdmission(root, canonical, exposed, input)
+		if previewErr != nil {
+			return nil, previewErr
+		}
+		if preview.Pending == nil {
+			return &ProjectNetworkApproval{project: canonical, unchanged: true}, nil
+		}
 	}
 	// Approve is the explicit host operation that may create the authority
 	// root: a launch never does, so this is where an owner key is born.
@@ -159,7 +175,7 @@ func ReviewProjectNetwork(cfg *config.Config, repo string) (_ *ProjectNetworkApp
 			err = errors.Join(err, store.Close())
 		}
 	}()
-	before, err := store.Approval(canonical)
+	before, err = store.Approval(canonical)
 	if err != nil {
 		return nil, err
 	}

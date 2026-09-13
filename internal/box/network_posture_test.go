@@ -9,6 +9,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/networkstate"
 )
 
 // requestFixtureYAML is a project asking for one website: the smallest request
@@ -132,6 +133,43 @@ func TestReviewAndApproveRemembersTheProjectRequest(t *testing.T) {
 	}
 	if access.Pending != nil || len(access.Add) != 0 || len(access.Remove) != 0 {
 		t.Errorf("an approved request still reads as pending: %v %+v %+v", access.Pending, access.Add, access.Remove)
+	}
+}
+
+func TestReviewCanReplaceRememberedOfflineWithFiltered(t *testing.T) {
+	cfg, repo, root := postureFixture(t, "box:\n  egress: offline\n")
+	store, err := networkstate.Open(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.ReviewApproval(repo, egress.None, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Approve(t.Context(), repo, egress.None, nil, nil, nil, before.Digest); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte(requestFixtureYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	review, err := ReviewProjectNetwork(cfg, repo)
+	if err != nil {
+		t.Fatalf("offline-to-filtered review: %v", err)
+	}
+	defer review.Close()
+	if review.Unchanged() || review.Before().Posture != egress.None || review.After().Posture != egress.Filtered {
+		t.Fatalf("review = before %+v, after %+v, unchanged %v", review.Before(), review.After(), review.Unchanged())
+	}
+	if err := review.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	access, err := ProjectNetworkAccess(t.Context(), cfg, repo)
+	if err != nil || access.Pending != nil || access.Mode != egress.Filtered {
+		t.Fatalf("approved access = %+v, err %v", access, err)
 	}
 }
 
