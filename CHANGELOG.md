@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Peer-review guidance preserves unresolved source-access limits and unrun checks in
+  final reports and task notes; a usable partial reply is not treated as verified approval.
+
 - Task completion reminds agents that scratch logs are removed during finalization and
   only verified durable artifacts belong in the final handoff; normal scratch cleanup remains.
 

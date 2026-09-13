@@ -513,6 +513,8 @@ func TestLeadInstructions(t *testing.T) {
 		"second opinion", "coop-consult codex --fresh", "coop-consult gemini --fresh",
 		"not the peer reply", "session handle", "same session to terminal exit", "complete output",
 		"Default to --fresh", "FRESH from the saved transcript", "resend full context", "BASE",
+		"complete reply and material diagnostics", "bounded chunks", "not only its tail",
+		"assumptions and unrun checks in final/state/log", "not source-verified approval", "partial-review qualification",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("LeadInstructions missing %q in:\n%s", want, out)
@@ -655,6 +657,26 @@ exec "$@"`
 		wantTelemetry bool
 		wantResumable bool
 	}{
+		{
+			name: "useful partial review is not a failed transport",
+			body: `printf '%s\n' \
+'{"type":"thread.started","thread_id":"thread-partial"}' \
+'{"type":"item.completed","item":{"type":"agent_message","text":"PARTIAL: source inspection blocked; tests not run.\nUseful advice: verify account scope.\nNo confirmed blocker in supplied diff; not source-verified approval."}}' \
+'{"type":"turn.completed","usage":{"input_tokens":11,"output_tokens":5,"reasoning_output_tokens":2}}'`,
+			wantText:      "PARTIAL: source inspection blocked; tests not run.\nUseful advice: verify account scope.\nNo confirmed blocker in supplied diff; not source-verified approval.",
+			wantTelemetry: true,
+			wantResumable: true,
+		},
+		{
+			name: "completed source review remains usable",
+			body: `printf '%s\n' \
+'{"type":"thread.started","thread_id":"thread-reviewed"}' \
+'{"type":"item.completed","item":{"type":"agent_message","text":"Reviewed source and callers; targeted tests passed. No issue found within that scope."}}' \
+'{"type":"turn.completed","usage":{"input_tokens":11,"output_tokens":5,"reasoning_output_tokens":2}}'`,
+			wantText:      "Reviewed source and callers; targeted tests passed. No issue found within that scope.",
+			wantTelemetry: true,
+			wantResumable: true,
+		},
 		{
 			name: "successful reply",
 			body: `printf '%s\n' \

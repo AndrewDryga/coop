@@ -2,8 +2,8 @@
 name: provider-consult-e2e
 description: Verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring
 subsystem: testing
-sources: [Makefile, internal/consult/wrapper.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go]
-updated: 2026-08-25
+sources: [Makefile, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go]
+updated: 2026-09-13
 ---
 
 `make provider-scripted-e2e` is the blocking consult contract. A strict external Coop binary mounts
@@ -14,11 +14,12 @@ timeouts, empty/malformed/stderr-only/ordinary failure, bounds, scope denial, Co
 repository integrity, and process cleanup without real credentials or quota.
 
 Continuation state is one versioned record replaced atomically under the box `TMPDIR`. Candidate
-native ids are published only after a bounded usable stdout reply. Stderr is diagnostic only. A
+native ids are published only after a usable stdout reply. Stderr is diagnostic only. A
 failed resume
 clears its uncertain id but retains the last complete transcript; the next `--continue` starts that
 same successful rung fresh. Only a proven nonzero rate limit advances a ladder. Reply and diagnostic
-streams cap independently at 1 MiB; prompt and transcript state cap independently at 512 KiB.
+streams are unlimited by default; an explicit COOP_CONSULT_STREAM_LIMIT caps each independently.
+Prompt and transcript state cap independently at 512 KiB.
 Same-target calls serialize on a private lock. The Coop image uses `flock`, so the kernel releases
 ownership after an unclean exit. A custom image without `flock` uses a fail-closed `mkdir` fallback;
 after confirming no consult is active, remove its private `.lock.d` directory.
@@ -41,6 +42,14 @@ behavior. `repository_changed`, `source_changed`, `cleanup_failed`, and `harness
 isolation failures and take precedence. Raw output is intentionally absent; reproduce adapter
 syntax and faults in the deterministic fixture instead of retaining a live response.
 
+Successful transport is not completed source review: a peer can return useful advice while
+reporting denied source reads or unrun checks. Normal and preset lead guidance requires full
+reply/material-diagnostic reading in bounded chunks and preserving unresolved qualifications
+in final/state/log. Wrapper fixtures preserve a partial reply at exit0; they do not prove a
+native lead carries its caveats through synthesis. No prose-to-verdict parser is involved.
+
 ## Changelog
+- 2026-09-13 — documented review-evidence carry-through and partial-versus-complete wrapper
+  fixtures; rechecked configured output bounds and corrected stale fixed1MiB default prose.
 - 2026-08-25 - source path moved from `internal/fusion` to `internal/consult`; wrapper contract unchanged
 - 2026-07-15 - created with the complete deterministic matrix and isolated four-edge live ring

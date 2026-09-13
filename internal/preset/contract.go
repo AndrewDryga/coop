@@ -23,6 +23,12 @@ func LeadContract(p *Preset, lead string) string {
 	b.WriteString("You lead this session: you make the calls, do the final review, run the gate,\n")
 	b.WriteString("and make every commit. Route work to your roles by their \"use for\" hints —\n")
 	b.WriteString("spend yourself on judgment, not on work a role covers.\n")
+	b.WriteString("\nAsk for concise conclusions. Read the complete reply and material diagnostics in\n")
+	b.WriteString("bounded chunks when necessary, not only its tail. Preserve remaining access limits,\n")
+	b.WriteString("assumptions and unrun checks in final/state/log. Exit 0 or \"no confirmed blocker\"\n")
+	b.WriteString("is not source-verified approval. Resolve named source gaps yourself before claiming\n")
+	b.WriteString("a verified review; otherwise keep the partial-review qualification alongside the\n")
+	b.WriteString("useful advice. A completed, evidenced review remains usable.\n")
 	for i := range p.Roles {
 		b.WriteString("\n")
 		b.WriteString(roleContract(&p.Roles[i], lead))

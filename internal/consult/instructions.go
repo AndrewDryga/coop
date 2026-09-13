@@ -83,6 +83,12 @@ Consulting more than one? Run them in parallel and read every reply:
 %s
 
 Weigh each answer against your own reasoning, then decide and act.
+Ask for concise conclusions. Read the complete reply and material diagnostics in
+bounded chunks when necessary, not only its tail. Preserve remaining access limits,
+assumptions and unrun checks in final/state/log. Exit 0 or "no confirmed blocker"
+is not source-verified approval. Resolve named source gaps yourself before claiming
+a verified review; otherwise keep the partial-review qualification alongside the
+useful advice. A completed, evidenced review remains usable.
 `, strings.Join(peers, " and "), peerCmdList(peers), consultBlock(peers))
 }
 
