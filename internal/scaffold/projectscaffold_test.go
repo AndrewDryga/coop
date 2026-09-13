@@ -39,10 +39,35 @@ func TestScaffoldedProjectParses(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, filepath.FromSlash(project.File)), edited, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if wrote, err := WriteProject(repo, nil); err != nil || wrote {
+	if wrote, err := WriteProject(repo, nil, "postgres"); err != nil || wrote {
 		t.Fatalf("re-init rewrote an existing project.yaml: wrote=%v err=%v", wrote, err)
 	}
 	if data, _ := os.ReadFile(filepath.Join(repo, filepath.FromSlash(project.File))); string(data) != string(edited) {
 		t.Errorf("re-init changed the project file:\n%s", data)
+	}
+}
+
+func TestScaffoldedProjectRequestsSelectedServices(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := WriteProject(repo, nil, "postgres", "redis"); err != nil {
+		t.Fatal(err)
+	}
+	p, err := project.Load(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int{"db": 5432, "redis": 6379}
+	if len(p.Box.EgressRules) != len(want) {
+		t.Fatalf("service rules = %+v, want db and redis", p.Box.EgressRules)
+	}
+	for _, rule := range p.Box.EgressRules {
+		port, ok := want[rule.To.Service]
+		if !ok || rule.Protocol != "tcp" || len(rule.Ports) != 1 || rule.Ports[0] != port {
+			t.Errorf("unexpected generated service rule: %+v", rule)
+		}
+		delete(want, rule.To.Service)
+	}
+	if len(want) != 0 {
+		t.Errorf("missing generated service rules: %v", want)
 	}
 }

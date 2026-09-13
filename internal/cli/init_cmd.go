@@ -213,7 +213,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 	if !agentsSet {
 		agentDirs = scaffoldAgentSet(a.cfg)
 	}
-	notices, err := scaffold.Init(repo, stack, langs, agentDirs)
+	notices, err := scaffold.Init(repo, stack, langs, agentDirs, services...)
 	if err != nil {
 		return 1, setupFailure(repo, err)
 	}

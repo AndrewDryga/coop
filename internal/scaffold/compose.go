@@ -15,6 +15,7 @@ var ComposeServices = []string{"postgres", "redis"}
 // composeUnit is one service's compose block plus the named volume it declares.
 type composeUnit struct {
 	service string // the Compose service name this catalog entry writes
+	port    int    // the port agents use for this service
 	image   string // the image it writes, so an existing service of the same name can be recognised
 	block   string // the indented "  <name>:" service definition (with a trailing newline)
 	volume  string // the named volume to declare under volumes:, or ""
@@ -24,6 +25,7 @@ type composeUnit struct {
 var composeCatalog = map[string]composeUnit{
 	"postgres": {
 		service: "db",
+		port:    5432,
 		image:   "postgres:",
 		block: `  db:
     image: postgres:18
@@ -43,6 +45,7 @@ var composeCatalog = map[string]composeUnit{
 	},
 	"redis": {
 		service: "redis",
+		port:    6379,
 		image:   "redis:",
 		block: `  redis:
     image: redis:8

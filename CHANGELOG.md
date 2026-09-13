@@ -87,6 +87,9 @@
 - The generated Postgres service uses an explicit development password that passes Coop's own
   secret scanner, and its generated connection hint matches that value.
 
+- New projects initialized with Postgres or Redis request the matching filtered service access,
+  so their first agent run can be approved instead of being refused as misconfigured.
+
 - Structured task blocking preserves any edited decision draft, even when its question placeholder
   remains; only the exact untouched template can be replaced.
 

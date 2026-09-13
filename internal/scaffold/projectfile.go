@@ -84,12 +84,12 @@ var subprojectSkipDirs = map[string]bool{
 }
 
 // WriteProject writes <dir>/.agent/project.yaml if it's absent, reporting whether it wrote one. A
-// non-empty subprojects list makes it a monorepo root listing them; empty writes a leaf template with
-// commented serve/subprojects examples. It never clobbers an existing file (so re-running init keeps
-// your edits — cmdInit notes any newly-detected members instead).
-func WriteProject(dir string, subprojects []string) (bool, error) {
+// non-empty subprojects list makes it a monorepo root listing them; selected catalog services add
+// the filtered service rules the generated Compose file needs. It never clobbers an existing file
+// (so re-running init keeps your edits — cmdInit notes any newly-detected members instead).
+func WriteProject(dir string, subprojects []string, services ...string) (bool, error) {
 	dest := filepath.Join(dir, project.File)
-	return writeNewRepoFile(dir, dest, []byte(projectYAML(subprojects)), 0o644, writeAndSync)
+	return writeNewRepoFile(dir, dest, []byte(projectYAML(subprojects, services...)), 0o644, writeAndSync)
 }
 
 // RegisterSubprojects adds any detected member missing from an EXISTING project.yaml's
@@ -296,7 +296,7 @@ func indexOfLine(lines []string, want string) int {
 // default, so the file itself is the reference. The prose stays short because `coop help init`
 // and the command pages carry the explanation — a config comment that repeats a help page goes
 // stale on its own schedule. A re-init never rewrites an existing file.
-func projectYAML(subprojects []string) string {
+func projectYAML(subprojects []string, services ...string) string {
 	var b strings.Builder
 	b.WriteString("# Coop project settings. Commit this file with your project.\n")
 	b.WriteString("# Help: coop help init\n\n")
@@ -324,11 +324,26 @@ box:
   egress: filtered
 
   # Network rules this project asks you to approve.
-  # egress_rules:
-  #   - to: {domain: "docs.example.com"}
-  #     protocol: tls
-  #     ports: [443]
-
+`)
+	requested := false
+	for _, name := range ComposeServices {
+		if slices.Contains(services, name) {
+			requested = true
+		}
+	}
+	if requested {
+		b.WriteString("  egress_rules:\n")
+		for _, name := range ComposeServices {
+			if !slices.Contains(services, name) {
+				continue
+			}
+			unit := composeCatalog[name]
+			fmt.Fprintf(&b, "    - to: {service: %q}\n      protocol: tcp\n      ports: [%d]\n", unit.service, unit.port)
+		}
+	} else {
+		b.WriteString("  # egress_rules:\n  #   - to: {domain: \"docs.example.com\"}\n  #     protocol: tls\n  #     ports: [443]\n")
+	}
+	b.WriteString(`
   # Use a project Dockerfile or Compose file instead of the default paths.
   # dockerfile: .agent/Dockerfile
   # compose: .agent/compose.yml

@@ -37,7 +37,7 @@ var ErrNotRegular = errors.New("an existing entry is not a regular file")
 // Routine per-artifact progress is NOT printed: the caller states the outcome once and lists
 // the actions it left. Only an exception a person must act on (a hooks path or prepare hook
 // coop refused to take over) speaks. Existing files are never clobbered.
-func Init(repo, stack string, gateLangs, agentDirs []string) ([]Notice, error) {
+func Init(repo, stack string, gateLangs, agentDirs []string, services ...string) ([]Notice, error) {
 	dockerfile, _, err := initDockerfile(repo, stack)
 	if err != nil {
 		return nil, err
@@ -135,7 +135,7 @@ func Init(repo, stack string, gateLangs, agentDirs []string) ([]Notice, error) {
 		}
 	}
 	// The committed per-project config (serve ports, monorepo members). Never clobbers an existing one.
-	if _, err := WriteProject(repo, DetectSubprojects(repo)); err != nil {
+	if _, err := WriteProject(repo, DetectSubprojects(repo), services...); err != nil {
 		return s.notices, err
 	}
 	if err := s.updateGitignore(agentDirs); err != nil {
