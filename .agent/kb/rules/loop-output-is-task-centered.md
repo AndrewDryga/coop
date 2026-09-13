@@ -4,7 +4,7 @@ description: loop output groups startup and environment work around dim task ban
 scope: cli-output
 sources: [internal/loop/report.go, internal/loop/loop.go, internal/loop/iteration.go, internal/loop/streamjson.go, internal/loop/streamjson_providers.go, internal/loop/banners.go, internal/box/launch_sections.go, internal/box/run.go, internal/box/filtered_services.go, internal/box/services_note.go, internal/cli/acp_cmd.go, internal/cli/commands.go, internal/cli/boxsweep.go, internal/cli/loop_cmd.go, internal/tasks/dir.go, internal/tasks/cmd.go, internal/cli/help.go, internal/ui/ui.go, internal/ui/wrap.go]
 check: make check
-updated: 2026-09-12
+updated: 2026-09-13
 ---
 
 # Center loop output on the task and the actual attempt
@@ -35,6 +35,10 @@ updated: 2026-09-12
   provider text, raw events, diagnostics, usage or watchdog activity. Keep identity changes visible.
 - Preserve review/recovery/wait/denial/interrupt/final-result distinctions and their remedies.
   Task completion is not final-review success; no-actionable, busy and blocked are not all-passed.
+- A failed tool row keeps its identity and exit status while leaving room for an available
+  cause. Long commands must not consume the whole live row. Skip generic leading exit-code
+  boilerplate when a useful failure follows; preserve meaningful MCP errors and never replace
+  a generic error with unrelated trailing metadata. Raw provider evidence stays unchanged.
 - Give reviews compact thin-rule stage/result banners, with their own reviewer and affected
   work. A valid review or verification reopen continues automatically within the shared round
   budget; only a real stop, cap, ownership boundary or error justifies a stopping remedy.
@@ -66,6 +70,12 @@ card. The full transcript and failure matrix are in queued task
 `2026-09-12-polish-loop-output-with-task-banners-and-grouped`.
 
 ## Changelog
+- 2026-09-13 — reproduced Claude's missing-log-directory result displaying only Exit code 1,
+  and long labels hiding the diagnostic at 38/80 columns. Swept Claude, Codex and Gemini failure
+  paths: Claude now skips generic boilerplate, text blocks retain boundaries, and the shared
+  live row reserves cause space while keeping Codex exit suffixes. Static caps, raw traces,
+  tool completion and provider-limit classification remain unchanged. Added native-shaped
+  event controls and real CLI process checks for static and normal narrow terminals.
 - 2026-09-12 — swept startup/sweep, task banner/counts, box setup, provider initialization,
   reviews/retries, network/final reports and live-bar source families. Current deviations:
   late Working-through intro; ungrouped startup/preflight; banner without attempt/counts;

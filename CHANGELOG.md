@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Loop tool failures show a useful available cause after Claude's generic exit-code header.
+  Narrow terminals leave room for that cause alongside the tool and exit status; raw logs
+  retain the full provider output.
+
 - Loop reviews record their last background-work handoff once, avoiding duplicate attempt rows
   and double-counted reported tokens/cost when the recovery limit is reached.
 

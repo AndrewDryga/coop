@@ -59,7 +59,7 @@ func validateLoopScenario(provider string, homes map[string]bool, plan loopScena
 		if !homes[target.Provider] {
 			return fmt.Errorf("loop attempt %d provider %q has no projected home", i, target.Provider)
 		}
-		if attempt.Result == "claude-credit-limit" && target.Provider != "claude" {
+		if (attempt.Result == "claude-credit-limit" || attempt.Result == "complete-tool-failure") && target.Provider != "claude" {
 			return fmt.Errorf("loop attempt %d result %q requires provider claude", i, attempt.Result)
 		}
 		if (attempt.Result == "tool-wait" || attempt.Result == "tool-gated-complete" || attempt.Result == "forged-flood-wait") &&
@@ -88,7 +88,7 @@ func validateLoopResult(index int, stage, result string) error {
 		result == "progress-wait"
 	switch stage {
 	case "work":
-		if common || result == "complete" || result == "complete-delay" || result == "complete-gated" || result == "complete-reopen-archive" || result == "reopen-archive-wait" || result == "complete-host-reopen-archive" || result == "complete-forged-archive-binding" || result == "complete-extra-unbound" || result == "complete-extra-bound" || result == "complete-extra-finalized" || result == "complete-wait" || result == "unbound" || result == "unbound-extra-finalized" || result == "unbound-wait" ||
+		if common || result == "complete" || result == "complete-tool-failure" || result == "complete-delay" || result == "complete-gated" || result == "complete-reopen-archive" || result == "reopen-archive-wait" || result == "complete-host-reopen-archive" || result == "complete-forged-archive-binding" || result == "complete-extra-unbound" || result == "complete-extra-bound" || result == "complete-extra-finalized" || result == "complete-wait" || result == "unbound" || result == "unbound-extra-finalized" || result == "unbound-wait" ||
 			result == "unbound-log-symlink" || result == "unbound-state-symlink" || result == "repair-binding" || result == "repair-review-binding" ||
 			result == "repair-older-binding" || result == "repair-older-binding-blocked" ||
 			result == "repair-older-binding-changed-descendant" || result == "verify-only" ||
@@ -191,9 +191,9 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			return 1, "", err
 		}
 		return waitLoopSignal(root, trace)
-	case "complete", "complete-delay", "complete-gated", "complete-reopen-archive", "complete-host-reopen-archive", "complete-forged-archive-binding", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-changed-descendant", "verify-only", "verify-only-after-block", "second-binding", "background-drained-complete", "uncommitted-complete", "decision-complete":
+	case "complete", "complete-tool-failure", "complete-delay", "complete-gated", "complete-reopen-archive", "complete-host-reopen-archive", "complete-forged-archive-binding", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-changed-descendant", "verify-only", "verify-only-after-block", "second-binding", "background-drained-complete", "uncommitted-complete", "decision-complete":
 		outcome := attempt.Result
-		if outcome == "complete" || outcome == "complete-delay" || outcome == "complete-gated" || outcome == "complete-reopen-archive" || outcome == "complete-host-reopen-archive" || outcome == "complete-forged-archive-binding" || outcome == "complete-extra-unbound" || outcome == "complete-extra-bound" || outcome == "complete-extra-finalized" || outcome == "complete-wait" || outcome == "background-drained-complete" {
+		if outcome == "complete" || outcome == "complete-tool-failure" || outcome == "complete-delay" || outcome == "complete-gated" || outcome == "complete-reopen-archive" || outcome == "complete-host-reopen-archive" || outcome == "complete-forged-archive-binding" || outcome == "complete-extra-unbound" || outcome == "complete-extra-bound" || outcome == "complete-extra-finalized" || outcome == "complete-wait" || outcome == "background-drained-complete" {
 			outcome = ""
 		} else if outcome == "unbound-extra-finalized" {
 			outcome = "unbound"
@@ -239,7 +239,11 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 				return 1, "", err
 			}
 		}
-		emitLoopReply(provider, providerArgv, "fixture-loop-complete-"+provider)
+		if attempt.Result == "complete-tool-failure" {
+			emitLoopReplyWithWrapper(provider, providerArgv, "fixture-loop-complete-"+provider, "tool-failure")
+		} else {
+			emitLoopReply(provider, providerArgv, "fixture-loop-complete-"+provider)
+		}
 		if attempt.Result == "complete-delay" {
 			if err := record(root, trace, traceRecord{Source: "provider", Event: "ready", PID: os.Getpid()}); err != nil {
 				return 1, "", err
@@ -991,6 +995,15 @@ func emitLoopReplyWithWrapper(provider string, argv []string, reply, wrapper str
 	switch provider {
 	case "claude":
 		_ = encoder.Encode(map[string]any{"type": "system", "subtype": "init", "model": loopModelArg(argv)})
+		if wrapper == "tool-failure" {
+			_ = encoder.Encode(map[string]any{"type": "assistant", "message": map[string]any{"content": []map[string]any{{
+				"type": "tool_use", "id": "failed-tool", "name": "Bash", "input": map[string]any{"command": "./run test " + strings.Repeat("long-command-part ", 12) + "command-tail"},
+			}}}})
+			_ = encoder.Encode(map[string]any{"type": "user", "message": map[string]any{"content": []map[string]any{{
+				"type": "tool_result", "tool_use_id": "failed-tool", "is_error": true,
+				"content": "Exit code 1\ntail: cannot open 'focused.log' for reading: No such file or directory",
+			}}}})
+		}
 		_ = encoder.Encode(map[string]any{"type": "assistant", "message": map[string]any{"content": []map[string]any{{"type": "text", "text": reply}}}})
 		_ = encoder.Encode(map[string]any{"type": "result", "subtype": "success", "num_turns": 1, "duration_ms": 100, "total_cost_usd": 0.25, "usage": map[string]int{"input_tokens": 101, "output_tokens": 11}})
 	case "codex":

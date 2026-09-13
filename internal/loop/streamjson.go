@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -412,7 +413,7 @@ func (d *ndjsonDecoder) streamNamedToolLine(glyph, name, label string, outside b
 }
 
 // streamFailureLine preserves the failure marker and caller-supplied structural suffix. In live
-// output the label yields to that suffix, then the diagnostic uses any remaining row; redirected
+// output the label yields to that suffix and a share of the diagnostic; redirected
 // output preserves the old per-field caps (labelFallback=0 means the label was uncapped).
 func (d *ndjsonDecoder) streamFailureLine(label, suffix, diagnostic string, labelFallback int) string {
 	label = cleanDiagnosticLine(label)
@@ -437,16 +438,15 @@ func (d *ndjsonDecoder) streamFailureLine(label, suffix, diagnostic string, labe
 		return "  " + d.palette.Red("✗")
 	}
 	rest := ""
-	if suffix != "" {
-		shownSuffix := truncate(suffix, available)
-		labelBudget := available - len([]rune(shownSuffix)) - 1
-		if shownLabel := truncate(label, labelBudget); shownLabel != "" {
-			rest = " " + shownLabel
-		}
-		rest += shownSuffix
-	} else if shownLabel := truncate(label, available-1); shownLabel != "" {
+	shownSuffix := truncate(suffix, available)
+	labelBudget := available - len([]rune(shownSuffix)) - 1
+	if diagnostic != "" && labelBudget > 0 {
+		labelBudget -= min(len([]rune(diagnostic))+2, labelBudget*2/3)
+	}
+	if shownLabel := truncate(label, labelBudget); shownLabel != "" {
 		rest = " " + shownLabel
 	}
+	rest += shownSuffix
 	if remaining := available - len([]rune(rest)); diagnostic != "" && remaining > 0 {
 		rest += truncate(": "+diagnostic, remaining)
 	}
@@ -673,6 +673,10 @@ func claudeCreditLimitNotice(text string) bool {
 	return suffix == "" || suffix == "."
 }
 
+// A metadata key containing "error" is not a cause. Keep this stricter than command
+// diagnostics: replacing a generic tool error requires a failure word, not an identifier.
+var toolFailurePhrase = regexp.MustCompile(`(?i)(^|[^[:alnum:]_-])(error|failed|failure|panic|fatal|undefined|cannot|can't|denied|refused|not found|no such|exit status|exit code|err|fail)([^[:alnum:]_-]|$)`)
+
 // toolResult flags a failed tool call; a success is left implied by the next action, to keep
 // the stream from doubling every step with a checkmark line.
 func (d *streamDecoder) toolResult(msg json.RawMessage) {
@@ -693,7 +697,19 @@ func (d *streamDecoder) toolResult(msg json.RawMessage) {
 		if !b.IsError {
 			continue
 		}
-		d.emit(d.streamFailureLine(label, "", firstLine(rawText(b.Content)), 0))
+		output := rawText(b.Content)
+		diagnostic := ""
+		if lines := diagnosticLines(output); len(lines) > 0 {
+			diagnostic = lines[0]
+			// Keep useful first-line errors (including MCP); only generic summaries yield
+			// to a later cause. Native tool names may have been rewritten for display.
+			if isWeakDiagnostic(diagnostic) {
+				if cause := commandFailureDiagnostic(output); !isWeakDiagnostic(cause) && (diagnosticLocation(cause) || toolFailurePhrase.MatchString(cause)) {
+					diagnostic = cause
+				}
+			}
+		}
+		d.emit(d.streamFailureLine(label, "", diagnostic, 0))
 	}
 }
 
@@ -1270,6 +1286,9 @@ func rawText(raw json.RawMessage) string {
 	if json.Unmarshal(raw, &blocks) == nil {
 		var b strings.Builder
 		for _, x := range blocks {
+			if b.Len() > 0 {
+				b.WriteByte('\n')
+			}
 			b.WriteString(x.Text)
 		}
 		return b.String()
