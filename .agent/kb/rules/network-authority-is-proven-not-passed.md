@@ -3,8 +3,8 @@ name: network-authority-is-proven-not-passed
 description: a filtered launch proves its network authority against the owner-private store; a boundary crossing carries a name, never a grant
 scope: security
 sources: [internal/box/run.go, internal/box/network_session.go, internal/networkstate/authority.go, internal/networkstate/approval_review.go, internal/sessionsvc/network.go, internal/cli/net_approve.go]
-check: "go test ./internal/box -run 'TestFilteredPublicLaunchRequiresCaptureAndRejectsExtraArgs|TestCapturedEgressFromEnvironmentAuthenticatesAgainstTheOwnerStore'"
-updated: 2026-09-13
+check: "go test ./internal/box -run 'TestFilteredPublicLaunchRequiresCaptureAndRejectsExtraArgs|TestProjectFilteredLaunchRequiresCaptureBeforeRuntime|TestCapturedEgressFromEnvironmentAuthenticatesAgainstTheOwnerStore'"
+updated: 2026-09-14
 ---
 
 # Network authority is proven against the owner store, never accepted from its carrier
@@ -44,6 +44,8 @@ Background: [[restricted-networking]] (where authority lives), [[network-consume
 reference).
 
 ## Changelog
+- 2026-09-14 — moved the box's capture check after project-policy resolution and added a regression
+  proving project-requested filtered mode cannot reach the runtime through an unadmitted caller.
 - 2026-09-13 — moved the sole CLI writer to `coop approve`; the retired network subcommand now
   returns migration guidance before it can reach approval state.
 - 2026-09-12 — reread the CLI review/commit path; net approve is still the writer. Recorded its

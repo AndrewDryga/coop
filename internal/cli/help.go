@@ -1228,8 +1228,11 @@ EXAMPLE
 Usage: coop fork <name> acp <target> [<options>]
 
 OPTIONS
-  --readonly       mount the fork read-only
-  --peer <target>  start with read-only peer agents; repeatable
+  --readonly             mount the fork read-only
+  --peer <target>        start with read-only peer agents; repeatable
+  --egress <mode>        internet access: filtered, open or none
+  --allow-domain <name>  allow exact TLS access on port 443; repeatable
+  --egress-rules <file>  add this file's network rules for the session
 
   Read-only mode has no peer agents, project hooks or MCP servers.
   The editor controls whether to start or resume a conversation.

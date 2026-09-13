@@ -20,9 +20,11 @@ import (
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
@@ -479,6 +481,28 @@ func TestForkCreateStopsBeforeBoxWhenProviderMetadataCannotBeSaved(t *testing.T)
 	}
 }
 
+func TestInteractiveForkUsesSharedNetworkAdmission(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo := initRepo(t)
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, project.File), []byte("box:\n  egress: filtered\n  egress_rules:\n    - to: {domain: project.example}\n      protocol: tls\n      ports: [443]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", project.File)
+	git(t, repo, "commit", "-qm", "request filtered network")
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), BaseImage: "test-image", Egress: "open"}, rt: recordingRuntime(t, recorder), rtSet: true}
+	code, err := a.forkCreate([]string{"networked", "claude", "--allow-domain", "example.com"})
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "Review it: coop approve") {
+		t.Fatalf("interactive fork without approval = (%d, %v)", code, err)
+	}
+	if data, readErr := os.ReadFile(recorder); readErr != nil || strings.Contains("\n"+string(data), "\nrun ") {
+		t.Fatalf("pending fork reached box runtime: %q, %v", data, readErr)
+	}
+}
+
 func TestForkFreshConfirmsBeforeRuntimeWork(t *testing.T) {
 	repo := initRepo(t)
 	ws, err := forkspace.Setup(repo, "perf")
@@ -612,7 +636,7 @@ func TestForkACPValidatesTargetArgumentsBeforeRun(t *testing.T) {
 		t.Errorf("fork ACP with repeatable peers = (%d, %v), want target account validation after peer extraction", code, err)
 	}
 	code, err = a.forkACP("myfork", []string{"claude", "--credential", "ghost"})
-	wantUsage := "usage: coop fork myfork acp <target> [--readonly] [--peer <target>...]"
+	wantUsage := "usage: coop fork myfork acp <target> [--readonly] [--peer <target>...] [--egress <mode>]"
 	if code != 2 || err == nil || err.Error() != wantUsage {
 		t.Errorf("fork acp --credential = (%d, %v), want (2, %q)", code, err, wantUsage)
 	}
@@ -852,6 +876,33 @@ func TestForkACPRejectsMalformedSessionCompanionsBeforeRuntime(t *testing.T) {
 	}
 	if _, err := os.Stat(recorder); !os.IsNotExist(err) {
 		t.Fatalf("malformed companion binding reached runtime: %v", err)
+	}
+}
+
+func TestLocalForkACPUsesSharedNetworkAdmission(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("COOP_SESSION_RUN_ID", "")
+	t.Setenv(box.SessionNetworkCaptureEnv, "")
+	repo := initRepo(t)
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, project.File), []byte("box:\n  egress: filtered\n  egress_rules:\n    - to: {domain: project.example}\n      protocol: tls\n      ports: [443]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", project.File)
+	git(t, repo, "commit", "-qm", "request filtered network")
+	if _, err := forkspace.Setup(repo, "networked"); err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), BaseImage: "test-image", Egress: "open"}, rt: recordingRuntime(t, recorder), rtSet: true}
+	code, err := a.forkACP("networked", []string{"claude", "--allow-domain", "example.com"})
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "Review it: coop approve") {
+		t.Fatalf("local fork ACP without approval = (%d, %v)", code, err)
+	}
+	if data, readErr := os.ReadFile(recorder); readErr != nil || strings.Contains("\n"+string(data), "\nrun ") {
+		t.Fatalf("pending fork ACP reached box runtime: %q, %v", data, readErr)
 	}
 }
 

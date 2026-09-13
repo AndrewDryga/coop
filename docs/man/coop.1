@@ -975,16 +975,18 @@ SESSION OPTIONS
   -f, --force     with --fresh, stop active work and discard unmerged changes
   -y, --yes       with --fresh, skip confirmation
 
+NETWORK OPTIONS
+  --egress <mode>       internet access: filtered, open or none
+  --allow-domain <name> allow this exact domain over TLS on port 443; repeatable
+  --egress-rules <file> add this file's network rules for the run
+
 LOOP OPTIONS
   --loop              work through the project's task queue
   -d, --detach        run the loop in the background (implies --loop)
   -t, --tasks <path>  select one project task queue
   --peer <target>     start with read-only peer agents; repeatable
-  --egress <mode>     internet access: filtered, open or none
-  --allow-domain <name> allow this exact domain over TLS on port 443; repeatable
-  --egress-rules <file> add this file's network rules for the loop
 
-  Task, peer and network options above apply to fork loops.
+  Task and peer options above apply to fork loops.
   Each fork receives one project task at a time. Its task is completed in the
   project queue when you merge the reviewed work. Stopping keeps it resumable.
 
@@ -1002,8 +1004,11 @@ coop fork <name> acp — use an existing fork from an ACP editor
 Usage: coop fork <name> acp <target> [<options>]
 
 OPTIONS
-  --readonly       mount the fork read-only
-  --peer <target>  start with read-only peer agents; repeatable
+  --readonly             mount the fork read-only
+  --peer <target>        start with read-only peer agents; repeatable
+  --egress <mode>        internet access: filtered, open or none
+  --allow-domain <name>  allow exact TLS access on port 443; repeatable
+  --egress-rules <file>  add this file's network rules for the session
 
   Read-only mode has no peer agents, project hooks or MCP servers.
   The editor controls whether to start or resume a conversation.

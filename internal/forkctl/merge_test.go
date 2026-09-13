@@ -148,6 +148,24 @@ func TestForkMergeRejectsInvalidProjectBeforeRuntimeOrMutation(t *testing.T) {
 	}
 }
 
+func TestForkGateUsesSharedNetworkAdmission(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo := initRepo(t)
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, project.File), []byte("box:\n  egress: filtered\n  egress_rules:\n    - to: {domain: project.example}\n      protocol: tls\n      ports: [443]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", project.File)
+	git(t, repo, "commit", "-qm", "request filtered network")
+	c := &Control{cfg: &config.Config{RepoOverride: repo, Gate: []string{"true"}, Egress: "open"}}
+	ok, err := c.runGateMode(repo, repo, "test-image", false)
+	if ok || err == nil || !strings.Contains(err.Error(), "Review it: coop approve") {
+		t.Fatalf("fork gate without approval = (%v, %v)", ok, err)
+	}
+}
+
 func TestForkMergeRefusesLegacyCopiedTaskQueue(t *testing.T) {
 	repo := initRepo(t)
 	ws, err := forkspace.Setup(repo, "legacy-tasks")

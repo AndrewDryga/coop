@@ -100,9 +100,9 @@ func TestForkLoopForwardsTheEgressFlagsToItsWorker(t *testing.T) {
 	if len(forwarded) != 2 || !filepath.IsAbs(forwarded[1]) {
 		t.Errorf("forwarded rules file = %q, want an absolute path", forwarded)
 	}
-	// An interactive fork is not wired into restricted networking; refuse rather
-	// than accept a flag that would silently do nothing.
-	if _, err := parseForkCreate([]string{"risky", "claude", "--egress", "filtered"}); err == nil {
-		t.Error("an interactive fork accepted --egress")
+	interactive, err := parseForkCreate([]string{"risky", "claude", "--egress", "filtered", "--allow-domain", "example.com"})
+	if err != nil || interactive.network.Mode == nil || *interactive.network.Mode != egress.Filtered ||
+		!slices.Equal(interactive.network.Domains, []string{"example.com"}) {
+		t.Fatalf("interactive fork network flags = %#v, %v", interactive.network, err)
 	}
 }

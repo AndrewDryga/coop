@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Interactive forks, fork ACP sessions, and fork review/merge gates now use the same approved
+  network admission as direct runs and loops. A project-requested filtered run without a captured
+  approval fails before mounts or runtime execution.
+
 - Approved and blocked external TLS from filtered Compose services now names the originating
   service in the existing network watch, inspection, blocked explanation, and JSON views. Internal
   service traffic remains direct and is not reported as external traffic.

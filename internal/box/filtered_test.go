@@ -617,6 +617,19 @@ func TestFilteredPublicLaunchRequiresCaptureAndRejectsExtraArgs(t *testing.T) {
 	}
 }
 
+func TestProjectFilteredLaunchRequiresCaptureBeforeRuntime(t *testing.T) {
+	repo := t.TempDir()
+	writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), "box:\n  egress: filtered\n")
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	_, err := Run(&config.Config{Egress: "open"}, recorderRuntime(t, recorder), RunSpec{Repo: repo})
+	if err == nil || !strings.Contains(err.Error(), "host policy capture") {
+		t.Fatalf("project-filtered launch without capture = %v", err)
+	}
+	if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("missing admission reached runtime: %v", statErr)
+	}
+}
+
 func TestFinalObservationArchiveRejectsUnexpectedEntries(t *testing.T) {
 	for _, name := range []string{"../final.json", "nested/final.json", "other.json"} {
 		var buffer bytes.Buffer

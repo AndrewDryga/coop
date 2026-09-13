@@ -180,7 +180,7 @@ func (c *Control) runGateMode(gateRepo, treeDir, img string, review bool) (bool,
 	if review {
 		activityKind = forkspace.ExecutionReview
 	}
-	code, err := box.Run(c.cfg, c.rt, box.RunSpec{
+	spec := box.RunSpec{
 		Image: img, Repo: treeDir, Cmd: gate, Batch: true,
 		PolicyRepo: gateRepo,
 		Review:     review,
@@ -188,7 +188,14 @@ func (c *Control) runGateMode(gateRepo, treeDir, img string, review bool) (bool,
 		ExtraArgs:  []string{"-e", "COOP_REVIEW_BASE=" + reviewBase},
 		Homes:      c.cfg.Homes, Network: c.cfg.Network, Cache: c.cfg.Cache,
 		ActivityRepo: gateRepo, ActivityKind: activityKind,
-	})
+	}
+	capture, err := box.AdmitNetwork(c.cfg, c.rt, spec, box.NetworkAdmission{})
+	if err != nil {
+		return false, err
+	}
+	defer capture.Close()
+	spec.CapturedEgress = capture
+	code, err := box.Run(c.cfg, c.rt, spec)
 	if err != nil {
 		return false, err
 	}

@@ -95,16 +95,18 @@ SESSION OPTIONS
   -f, --force     with --fresh, stop active work and discard unmerged changes
   -y, --yes       with --fresh, skip confirmation
 
+NETWORK OPTIONS
+  --egress <mode>       internet access: filtered, open or none
+  --allow-domain <name> allow this exact domain over TLS on port 443; repeatable
+  --egress-rules <file> add this file's network rules for the run
+
 LOOP OPTIONS
   --loop              work through the project's task queue
   -d, --detach        run the loop in the background (implies --loop)
   -t, --tasks <path>  select one project task queue
   --peer <target>     start with read-only peer agents; repeatable
-  --egress <mode>     internet access: filtered, open or none
-  --allow-domain <name> allow this exact domain over TLS on port 443; repeatable
-  --egress-rules <file> add this file's network rules for the loop
 
-  Task, peer and network options above apply to fork loops.
+  Task and peer options above apply to fork loops.
   Each fork receives one project task at a time. Its task is completed in the
   project queue when you merge the reviewed work. Stopping keeps it resumable.
 
@@ -219,8 +221,8 @@ type forkArgs struct {
 	preset      string   // the orchestration preset this fork runs under (named in the who-runs positional)
 	worker      bool     // internal: this process IS the detached loop worker (--_detached=<reservation>)
 	reservation []byte   // exact launched reservation inherited from the detaching parent
-	// network is the fork loop's --egress/--allow-domain/--egress-rules, admitted
-	// once by the loop it starts (foreground or detached worker alike).
+	// network is this fork run's --egress/--allow-domain/--egress-rules. A loop
+	// admits once at its start; an interactive fork admits before its one box.
 	network networkFlags
 }
 
@@ -342,12 +344,6 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	// --peer names loop peers; an interactive fork has no ad-hoc peer set (name them on a loop).
 	if len(fa.peers) > 0 && !fa.loop {
 		return fa, errors.New("coop fork --peer only applies with --loop (name each peer: --peer <target>)")
-	}
-	// Restricted networking is admitted once per LOOP run. An interactive fork is
-	// an ordinary session launch this release has not wired it into; say so rather
-	// than accept a flag that would quietly do nothing.
-	if fa.network.set() && !fa.loop {
-		return fa, errors.New("coop fork: --egress/--allow-domain/--egress-rules only apply with --loop")
 	}
 	return fa, nil
 }
@@ -741,19 +737,28 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if err != nil {
 		return -1, fmt.Errorf("prepare fork session before launch: %w — fix ownership or permissions of %s and retry", err, filepath.Join(ws, ".coop"))
 	}
-	// An interactive fork launch narrates itself like a plain one, starting with the box
-	// repair when the shared image's definition drifted from this coop's.
-	if err := a.checkCoopBox(ws, img); err != nil {
-		return 1, err
-	}
-	code, err := box.Run(a.cfg, a.rt, box.RunSpec{
+	spec := box.RunSpec{
 		Image: img, Repo: ws, Cmd: cmd, Agent: fa.agent, ConsultLead: fa.agent, Preset: a.preset,
 		ActivityRepo: repo, ActivityKind: forkspace.ExecutionForkInteractive,
 		AgentCommand: true,
 		Homes:        a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 		ForkName: forkIdentity.Name, ForkOwner: forkctl.ForkContainerOwner(repo, forkIdentity.Name, forkIdentity.Generation),
 		ForkGeneration: string(forkIdentity.Generation),
-	})
+	}
+	capture, err := box.AdmitNetwork(a.cfg, a.rt, spec, fa.network.admission())
+	if err != nil {
+		return 1, err
+	}
+	defer capture.Close()
+	spec.CapturedEgress = capture
+	// An interactive fork launch narrates itself like a plain one. Filtered runs
+	// use the qualified client image; open and offline runs check this repo's image.
+	if capture == nil {
+		if err := a.checkCoopBox(ws, img); err != nil {
+			return 1, err
+		}
+	}
+	code, err := box.Run(a.cfg, a.rt, spec)
 	if err == nil {
 		var rememberErr error
 		if captureNewSession {
@@ -879,6 +884,9 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		return -1, err
 	}
 	repositoryReadOnly := os.Getenv("COOP_SESSION_REPOSITORY_READ_ONLY") == "1"
+	if rest, err = a.takeNetworkFlags(rest); err != nil {
+		return 2, err
+	}
 	// --readonly fronts the fork under the restricted profile: the fork and its companions mount
 	// read-only, the box writes only to run-private scratch, and the adapter is started under the
 	// mode's switches by the ACP client (the session daemon). It is a different contract from the
@@ -896,7 +904,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if a.mode.Restricted() && len(peerVals) > 0 {
 		return 2, fmt.Errorf("a %s run consults no peers — drop --peer", a.mode)
 	}
-	usage := fmt.Sprintf("usage: coop fork %s acp <target> [--readonly] [--peer <target>...]", name)
+	usage := fmt.Sprintf("usage: coop fork %s acp <target> [--readonly] [--peer <target>...] [--egress <mode>]", name)
 	if len(rest) == 0 {
 		return 2, fmt.Errorf("name the target — coop fork %s acp <target>; sign in with 'coop login <agent>' or see 'coop credentials'", name)
 	}
@@ -1006,6 +1014,14 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	capture, err := box.CapturedEgressFromEnvironment(a.cfg, spec)
 	if err != nil {
 		return 1, err
+	}
+	// A local fork ACP launch admits here. A remote session already froze its
+	// policy in the daemon, including open/offline runs that carry no capture.
+	if capture == nil && sessionsvc.RunIDFromEnv() == "" {
+		capture, err = box.AdmitNetwork(a.cfg, a.rt, spec, a.network.admission())
+		if err != nil {
+			return 1, err
+		}
 	}
 	defer capture.Close()
 	if capture != nil {

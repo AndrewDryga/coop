@@ -2,16 +2,19 @@
 name: network-consumers
 description: how the loop, direct/ACP runs and remote sessions consume one frozen network capture, and which surface reads which evidence
 subsystem: networking
-sources: [internal/networkreport/report.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/cli/session_policies_view.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/session/schema.go, internal/workerproto/protocol.go]
-updated: 2026-09-11
+sources: [internal/networkreport/report.go, internal/box/run.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/cli/session_policies_view.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/session/schema.go, internal/workerproto/protocol.go]
+updated: 2026-09-14
 ---
 
 Admission happens ONCE per unit of work and the resulting `*box.CapturedEgress` is passed down; no
 consumer admits twice. See [[restricted-networking]] for what admission decides.
 
 **Direct runs** admit in the CLI and hand the capture to `box.Run` on the same host process
-(`cli/commands.go:203`). A fork loop re-renders the operator's flags in their exact spelling so the
-detached worker admits what its foreground twin would have (`cli/network_flags.go:84`).
+(`cli/commands.go`). Interactive forks and local fork ACP sessions do the same in `cli/fork_cmd.go`;
+fork review/merge gates use the trusted parent policy in `forkctl/merge.go`. A fork loop re-renders
+the operator's flags in their exact spelling so the detached worker admits what its foreground twin
+would have (`cli/network_flags.go`). `box.Run` reloads project policy before its final capture check,
+so a future caller that misses admission fails before mounts or runtime execution.
 
 **An ACP session** admits ONCE, in the outer supervisor, before the first child
 (`cli/acp_cmd.go:204`): its scope unions every provider the toolbar could switch to, so a provider
@@ -127,9 +130,9 @@ bold unprefixed sections before agent output — `Protecting secrets` (the exact
 Dockerfile that drifted) as `⚠` rows, and in the cli (`cli/launch_box.go`, after admission and only
 for a run that will use the repo's image — a filtered box runs the qualified client image) the
 automatic `box.Build` when `BaseImageSkew` reports a definition mismatch, never for an age nudge
-or an unstamped image. `runInBoxMode` only: the interactive fork path (`fork_cmd.go`) and the
-restricted modes (`restricted.go`) still print the old `coop: shadowed …` line and get no box
-check. A failure before the main process is rendered once as a nested `ui.Fail` under its
+or an unstamped image. Restricted modes (`restricted.go`) still print the old
+`coop: shadowed …` line and get no box check. A failure before the main process is rendered once as
+a nested `ui.Fail` under its
 section, AFTER the deferred cleanup has joined its own error into the reason, and comes back as
 `ui.Reported(err)`, which `cli.Main` does not print again; a cancellation the stop line named is
 marked the same way when teardown added nothing. Teardown prints exactly one
@@ -139,6 +142,8 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-09-14 — interactive forks, local fork ACP and fork review/merge gates now use the shared
+  admission path; the box boundary rechecks project policy before requiring a capture.
 - 2026-09-11 — the CLI design landed: `explain` became `blocked`, `export --include-destinations`
   became `--include-addresses`, bare `coop net` lost its project header and keeps the YAML
   explanation only where YAML selected the mode, `runs` shows 25 with a header row, the box's inline

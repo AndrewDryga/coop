@@ -2,9 +2,9 @@
 name: project-edits-request-access
 description: project configuration requests access; one host approval grants it, checked before execution and enforced throughout agent and service runs
 scope: security
-sources: [internal/cli/net_approve.go, internal/box/network_approval.go, internal/networkstate/approval_review.go, internal/networkstate/admission.go, internal/box/filtered_services.go, internal/box/composecheck.go]
+sources: [internal/cli/net_approve.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/box/run.go, internal/box/network_approval.go, internal/networkstate/approval_review.go, internal/networkstate/admission.go, internal/box/filtered_services.go, internal/box/composecheck.go]
 check: none
-updated: 2026-09-13
+updated: 2026-09-14
 ---
 
 # Approve added access, not ordinary development
@@ -32,6 +32,9 @@ denial from agent-controlled services. A command rename or UI warning is not enf
 
 ## Changelog
 
+- 2026-09-14 — swept launch callers and closed missing shared admission in interactive forks, local
+  fork ACP, and fork review/merge gates. The box boundary now also catches project-requested filtered
+  mode after loading policy, before mounts or runtime execution.
 - 2026-09-13 — moved the existing host approval writer to `coop approve`; the old network
   subcommand now gives migration guidance and cannot grant access.
 - 2026-09-12 — recorded approved design. Swept the six source files and searched CLI/box/scaffold

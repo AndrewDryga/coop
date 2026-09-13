@@ -272,11 +272,11 @@ and writes nothing. Provider endpoints an agent brings with it are not part of t
 grants those itself, and they are never shown as project access.
 
 While the file and the approval differ, the request is *pending*: `coop init` ends with
-`⚠ This project asks for network access that has not been approved` and `Review it: coop net
-approve`, bare `coop net` shows the same diff under `New runs cannot start until this project's
-network request is approved`, and every launch — `coop run`, a named agent, `coop acp`,
-`coop loop` — refuses before any box or main process starts, naming the same review. A project
-with nothing pending pays no line for any of this.
+`⚠ This project asks for network access that has not been approved` and `Review it: coop approve`,
+bare `coop net` shows the same diff under `New runs cannot start until this project's network
+request is approved`, and every launch — `coop run`, a named agent, `coop acp`, `coop loop`, an
+interactive fork, fork ACP, or a fork review/merge gate — refuses before any box or main process
+starts, naming the same review. A project with nothing pending pays no line for any of this.
 
 For a single invocation, the operator can pass `--allow-domain <name>` (exact TLS 443) or
 `--egress-rules <file>` with a full rule document. A file inside an agent mount is a request, not a

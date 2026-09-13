@@ -347,12 +347,6 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if spec.networkSmoke != nil && spec.CapturedEgress == nil {
 		return -1, errors.New("network preflight requires a filtered capture")
 	}
-	// Restricted networking fails CLOSED at the box boundary: the gateway is
-	// installed by the host before any agent starts, so a filtered posture that
-	// reached Run without a host capture never launches.
-	if cfg.Egress == "filtered" && spec.CapturedEgress == nil {
-		return -1, errors.New("restricted networking requires host policy capture before box launch")
-	}
 	policyRepo := projectPolicyRepo(spec)
 	p, err := project.Load(policyRepo)
 	if err != nil {
@@ -367,6 +361,12 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		// Apply after project policy so a project's network toggle cannot turn services back on.
 		spec.Network, spec.Serve = false, false
 		projectEnv, composeFile, spec.servePorts = nil, "", nil
+	}
+	// Apply project policy before this last fail-closed check. Callers normally
+	// admit first (which marks the resolved mode explicit), but a missed caller
+	// must not turn a project's filtered request into an ordinary offline box.
+	if cfg.Egress == "filtered" && spec.CapturedEgress == nil {
+		return -1, errors.New("restricted networking requires host policy capture before box launch")
 	}
 	workdir := resolveWorkdir(spec, cfg)
 	if spec.Homes {
