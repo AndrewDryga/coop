@@ -104,9 +104,13 @@ func TestRuntimeComposeShadowsRepoSecretsIntoSidecars(t *testing.T) {
 	}
 	realRepo, _ := filepath.EvalSymlinks(repo)
 	fromRepo := func(src string) bool { return strings.HasPrefix(src, repo) || strings.HasPrefix(src, realRepo) }
+	decoyRoot, err := serviceStateRoot("decoys")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, target := range []string{"/env", "/repo/.env"} {
 		src := byTarget[target]
-		if src == "" || fromRepo(src) || !strings.HasSuffix(src, "/decoy") {
+		if src == "" || fromRepo(src) || filepath.Dir(src) != decoyRoot {
 			t.Errorf("%s is bound from %q; want the decoy, never the repo's .env\n%s", target, src, out.String())
 		}
 	}
