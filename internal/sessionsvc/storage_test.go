@@ -354,12 +354,8 @@ func TestForkAllocationRefusesNewForksUnderPressureButStillAdoptsExistingWork(t 
 		t.Fatal(err)
 	}
 
-	filesystem, err := forkspace.MeasureFilesystem(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
 	limits := storageTestLimits(t)
-	limits.ReserveBytes = filesystem.FreeBytes + 1 // every allocation now falls below the floor
+	limits.ReserveBytes = 1<<63 - 1 // every real filesystem is safely below the floor
 	mustSetStorageLimits(t, service, limits)
 
 	_, err = ensureSessionWorkspaceContext(context.Background(), service, repo, "fork-new", base)
