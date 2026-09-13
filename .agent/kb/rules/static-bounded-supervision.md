@@ -2,9 +2,9 @@
 name: static-bounded-supervision
 description: "supervised long commands keep output static and only a bounded excerpt in context"
 scope: agent-workflow
-sources: [AGENTS.md, internal/loop/bar.go, internal/loop/iteration.go, internal/ui/live.go]
-check: "go test ./internal/loop -run TestLoopBarSupported"
-updated: 2026-09-12
+sources: [AGENTS.md, internal/loop/bar.go, internal/loop/iteration.go, internal/ui/live.go, internal/loop/prompts.go, internal/loop/shell_recipe_test.go]
+check: "go test ./internal/loop -run 'TestLoopBarSupported|TestLoopCheckScript|TestLoopShellGuidance'"
+updated: 2026-09-13
 ---
 
 # Agent-supervised long commands use static, bounded output
@@ -22,9 +22,13 @@ frames, consumes context without adding evidence, and can obscure the final exit
   non-terminal output or `TERM=dumb` disables the loop bar. Use the latter when a real PTY is
   required to test the user's invocation without feeding cursor repaints into model context.
 - Redirect complete stdout and stderr to the task's `tmp/` directory or `/tmp`; preserve and
-  report the command's real exit status.
+  report the command's real exit status. Establish the check's explicit cwd, create scratch
+  before redirection, and use a unique log per invocation so concurrent checks retain evidence.
 - While it runs, poll for completion without streaming the log. Inspect only a bounded `tail`
   or a targeted `rg` filter, expanding narrowly when a failure needs more evidence.
+- Use the runtime's supported completion mechanism, not long blind sleeps. Cleanup targets only
+  verified owned resources through their lifecycle command or exact identity, then checks the
+  stopped/absent postcondition; a cleanup failure remains a failure, not a successful tail.
 - Do not dump the complete log into model context, pipe a live command through `tail`, or disable
   the interactive UI in product code to satisfy this supervision rule.
 - Verify human output separately: readable task/provider/account identity, distinct sections,
@@ -33,6 +37,10 @@ frames, consumes context without adding evidence, and can obscure the final exit
 See also [[command-output-tiers]] and [[fix-the-bug-not-the-feature]].
 
 ## Changelog
+- 2026-09-13 — swept the work prompt, loop bar/iteration and shared spinner: retained human UI,
+  repaired missing setup/status/owned-job guidance with one executable POSIX check recipe.
+  Focused tests cover cwd/setup refusal, argv boundaries, complete unique logs and producer failure
+  despite a successful tail. Synthetic cleanup tests do not prove native model or DB compliance.
 - 2026-09-12 — user reiterated no progress bar during supervision and informative human output.
   Swept loop bar selection, its iteration caller and shared spinner control: spinner-off retained
   the region and TERM=dumb was ignored. Fixed the loop's TERM capability check; regression proves

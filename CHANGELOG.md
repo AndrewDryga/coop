@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Loop check guidance now includes an explicit working directory, unique full logs and the
+  real command status after bounded output; background waits and cleanup stay ownership-scoped.
+
 - Loop agents receive scoped Git guidance: preserve unrelated staged and unstaged work,
   exclude ignored task notes from commits, and check mutation-test ownership before cleanup.
 
