@@ -2,7 +2,9 @@ package box
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -52,18 +55,74 @@ func servicePortsWithArgs(rt runtime.Runtime, workspacePath string, args []strin
 	return parseServicePorts(buf.Bytes(), workspacePath)
 }
 
+const maxResolvedServiceConfigBytes = 4 << 20
+
+type boundedServiceConfig struct {
+	buf      bytes.Buffer
+	limit    int
+	overflow bool
+}
+
+func (b *boundedServiceConfig) Write(p []byte) (int, error) {
+	written := len(p)
+	remaining := b.limit - b.buf.Len()
+	if remaining < 0 {
+		remaining = 0
+	}
+	if len(p) > remaining {
+		p = p[:remaining]
+		b.overflow = true
+	}
+	_, _ = b.buf.Write(p)
+	return written, nil
+}
+
+func (b *boundedServiceConfig) Bytes() []byte { return b.buf.Bytes() }
+
+// servicePortsWithArgsContext is the strict discovery form: it is bounded, cancellable and
+// distinguishes a valid empty Compose config from an unavailable or malformed observation.
+func servicePortsWithArgsContext(ctx context.Context, rt runtime.Runtime, workspacePath string, args []string) ([]ServicePort, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	var out boundedServiceConfig
+	out.limit = maxResolvedServiceConfigBytes
+	configArgs := append(append([]string(nil), args...), "config", "--format", "json")
+	code, err := rt.RunInterruptible(ctx, nil, &out, io.Discard, configArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("inspect resolved service configuration: %w", err)
+	}
+	if out.overflow {
+		return nil, errors.New("resolved service configuration exceeds 4 MiB")
+	}
+	if code != 0 {
+		return nil, fmt.Errorf("compose config --format json exited with status %d", code)
+	}
+	return parseServicePortsChecked(out.Bytes(), workspacePath)
+}
+
 // parseServicePorts is the pure core of ServicePorts: given `docker compose config --format json`
 // output and a workspace path, it returns the expose→host-port mapping, in a deterministic order
 // (services sorted, ports as listed). Only plain integer container ports are handled in v1.
 func parseServicePorts(configJSON []byte, workspacePath string) []ServicePort {
+	ports, _ := parseServicePortsChecked(configJSON, workspacePath)
+	return ports
+}
+
+func parseServicePortsChecked(configJSON []byte, workspacePath string) ([]ServicePort, error) {
 	var cfg struct {
 		Services map[string]struct {
 			Expose []string          `json:"expose"`
 			Labels map[string]string `json:"labels"`
 		} `json:"services"`
 	}
-	if json.Unmarshal(configJSON, &cfg) != nil {
-		return nil
+	if err := json.Unmarshal(configJSON, &cfg); err != nil {
+		return nil, fmt.Errorf("parse resolved service configuration: %w", err)
+	}
+	if cfg.Services == nil {
+		return nil, errors.New("parse resolved service configuration: missing services object")
 	}
 	canon := canonicalWorkspace(workspacePath)
 	names := make([]string, 0, len(cfg.Services))
@@ -93,7 +152,7 @@ func parseServicePorts(configJSON []byte, workspacePath string) []ServicePort {
 			})
 		}
 	}
-	return out
+	return out, nil
 }
 
 // writeServiceOverride writes a temp compose override publishing each ServicePort to

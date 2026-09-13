@@ -981,9 +981,17 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// runtime) plus COOP_AUTO_UP. Idempotent; progress goes to stderr (never stdout, which may
 	// carry ACP/JSON) and only when not Quiet; a failure warns but never blocks the session.
 	var servicePorts []ServicePort
+	serviceCtx := spec.Ctx
+	if serviceCtx == nil {
+		serviceCtx = context.Background()
+	}
 	services := serviceLaunchOutcome{state: servicesNotConfigured}
 	if composeFile != "" {
 		services.state = servicesUnknown
+	}
+	serviceNetwork := cfg.ServicesNet
+	if serviceNetwork == "" || spec.Review && composeFile != "" {
+		serviceNetwork = ComposeProject(spec.Repo) + "_default"
 	}
 	servicesInspected := false
 	if composeFile != "" && autoUpServices(cfg, spec, rt.Name) {
@@ -1010,12 +1018,12 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			if spec.Review {
 				return finish(-1, fmt.Errorf("start review services: an agent box is running in this project (%s) — sidecars start only when none is", DescribeLiveBoxes(live)))
 			}
-			// Do not race a running agent's filesystem access by starting services. Service discovery
-			// still configures the new box's forwarders, but it does not prove those services are live.
+			// Do not race a running agent's filesystem access by starting services. Read-only discovery
+			// below configures only forwarders backed by an exact owned running-service observation.
 			sections.servicesHeldByLiveBox("Another box is running in this project (" + DescribeLiveBoxes(live) + ").")
 			services = serviceLaunchOutcome{state: servicesSkipped, err: fmt.Errorf("another box is running in this project (%s)", DescribeLiveBoxes(live))}
 			if !sections.on && !spec.Quiet {
-				ui.Note("sidecars not started: an agent box is running in this project (%s) — they start when none is; service availability was not checked", DescribeLiveBoxes(live))
+				ui.Note("sidecars not started: an agent box is running in this project (%s) — they start when none is; only observed running services will be made available", DescribeLiveBoxes(live))
 			}
 			startServices = false
 		}
@@ -1033,8 +1041,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			// continue-without-services behavior.
 			var composeStderr bytes.Buffer
 			servicesInspected = true
-			started, err := startServicesFile(rt, spec.Repo, cf, io.Discard, &composeStderr, spec.RepoReadOnly, !sections.loop, privateRoots...)
+			started, err := startServicesFileContext(serviceCtx, rt, spec.Repo, cf, serviceNetwork, io.Discard, &composeStderr, spec.RepoReadOnly, !sections.loop, privateRoots...)
 			sections.serviceSecrets(started.hidden, cf)
+			servicePorts = started.ports
 			if err != nil {
 				var refused *ComposeRefused
 				if sections.loop && errors.As(err, &refused) {
@@ -1048,14 +1057,17 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 					}
 					return finish(-1, fmt.Errorf("start review services: %w", err))
 				}
-				sections.servicesFailed(boundedCause(composeStderr.String(), err))
+				sections.servicesFailed(boundedCause(composeStderr.String(), err), started.ports...)
 				if !sections.on {
-					ui.Note("services: %v — continuing without them (run 'coop up' to retry)", err)
+					if len(started.ports) > 0 {
+						ui.Note("services: %v — continuing with observed service(s) %s (run 'coop up' to retry)", err, strings.Join(servicePortNames(started.ports), ", "))
+					} else {
+						ui.Note("services: %v — continuing without them (run 'coop up' to retry)", err)
+					}
 				}
 				services = serviceLaunchOutcome{state: servicesFailed, err: err}
 			} else {
 				sections.services(started.names)
-				servicePorts = started.ports
 				services = serviceLaunchOutcome{state: servicesRunning}
 			}
 		}
@@ -1064,16 +1076,29 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if err := ctxStep(spec.Ctx, "network inspection"); err != nil {
 		return finish(-1, err)
 	}
+	networkName := ""
+	if cfg.Egress == "open" && spec.Network && rt.Silent("network", "inspect", serviceNetwork) {
+		networkName = serviceNetwork
+	}
 
 	// Sidecar discovery + same-URL forwarders: whenever the box will join the services network,
 	// tell it each expose'd sidecar's stable per-workspace host URL (COOP_SERVICE_<NAME>_URL) and
 	// hand coop-entry the mappings (COOP_FORWARD) so localhost:<hostport> reaches the sidecar from
 	// inside the box identically to the host browser. Gated like the network join, not on auto-up —
-	// the services may already be running from `coop up`. Best-effort; no sidecars → nothing added.
-	if cfg.Egress == "open" && spec.Network && rt.Name != "container" {
+	// the services may already be running from `coop up`. A skipped start gets a fresh bounded
+	// ownership/state/health/binding observation; config alone never becomes an advertised URL.
+	if networkName != "" && rt.Name != "container" {
 		if cf := composeFile; cf != "" {
 			if !servicesInspected {
-				servicePorts = ServicePorts(rt, spec.Repo, cf, privateRoots...)
+				var observeErr error
+				servicePorts, observeErr = discoverObservedServicePorts(serviceCtx, rt, spec.Repo, cf, serviceNetwork, spec.RepoReadOnly, privateRoots...)
+				if observeErr != nil {
+					services.err = errors.Join(services.err, observeErr)
+				}
+				if len(servicePorts) > 0 {
+					services.state = servicesObserved
+					sections.servicesObserved(servicePorts)
+				}
 			}
 			if svc := servicePorts; len(svc) > 0 {
 				spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_FORWARD="+forwardEnv(svc))
@@ -1088,28 +1113,14 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// Decide each serve port ONCE, so the note below and the publish arguments agree, then tell the
 	// agent what this box actually got. The instruction files exist but are not mounted yet; the
 	// sidecars simply start after they are assembled, so their facts are appended here.
-	joined := cfg.Egress == "open" && spec.Network && rt.Name != "container"
+	joined := networkName != "" && rt.Name != "container"
 	spec.servePlan = requestedServePublicationPlan(cfg, spec, hostPortFree)
 	if err := appendInstructionNote(instructionMounts, servicesNote(services, servicePorts, joined, spec.servePlan)); err != nil {
 		return finish(-1, err)
 	}
 
-	networkName := ""
-	// Only "open" gets any networking (the same fail-closed test the --network flag uses below):
-	// an offline box (COOP_EGRESS=none) has nothing to reach, so skip the services-net join.
-	if cfg.Egress == "open" && spec.Network {
-		net := cfg.ServicesNet
-		if spec.Review && composeFile != "" {
-			// A review candidate owns a short-lived Compose project. It must never join the
-			// operator's ordinary shared-services network, even when COOP_SERVICES_NET is set.
-			net = ComposeProject(spec.Repo) + "_default"
-		} else if net == "" {
-			net = ComposeProject(spec.Repo) + "_default"
-		}
-		if rt.Silent("network", "inspect", net) {
-			networkName = net
-		}
-	}
+	// networkName is the exact service network already inspected above. An unavailable network
+	// withholds both the join and every in-box service URL/forwarder derived from it.
 
 	if err := ctxStep(spec.Ctx, "argument assembly"); err != nil {
 		return finish(-1, err)

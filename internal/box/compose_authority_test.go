@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
@@ -212,5 +213,151 @@ func TestRunReusesStartedServicePorts(t *testing.T) {
 	if strings.Count(calls, "config --format json") != 1 ||
 		!strings.Contains(calls, "COOP_SERVICE_DB_URL=") || strings.Contains(calls, "COOP_SERVICE_OTHER_URL=") {
 		t.Fatalf("box ports diverged from started services:\n%s", calls)
+	}
+}
+
+func TestRunKeepsOnlyObservedServicePortsAfterPartialStartup(t *testing.T) {
+	repo, compose := writeCompose(t, "services:\n  db:\n    image: postgres:18\n    expose: [5432]\n    labels: {coop.service.scheme: postgresql}\n  keycloak:\n    image: keycloak:latest\n    expose: [9091]\n")
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	instructions := filepath.Join(t.TempDir(), "instructions")
+	shim := filepath.Join(t.TempDir(), "runtime")
+	dbID, keycloakID := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	projectName := ComposeProject(repo)
+	workingDir := filepath.Dir(compose)
+	dbPort := project.HostPortFor(canonicalWorkspace(repo), "db:5432")
+	keycloakPort := project.HostPortFor(canonicalWorkspace(repo), "keycloak:9091")
+	network := projectName + "_default"
+	dbInspect := `{"ID":"` + dbID + `","Labels":{"com.docker.compose.project":"` + projectName + `","com.docker.compose.project.working_dir":"` + workingDir + `","com.docker.compose.service":"db","com.docker.compose.oneoff":"False"},"Status":"running","Running":true,"Paused":false,"Healthcheck":true,"Health":"healthy","Ports":{"5432/tcp":[{"HostIp":"127.0.0.1","HostPort":"` + strconv.Itoa(dbPort) + `"}]},"Networks":{"` + network + `":{}}}`
+	keycloakInspect := `{"ID":"` + keycloakID + `","Labels":{"com.docker.compose.project":"` + projectName + `","com.docker.compose.project.working_dir":"` + workingDir + `","com.docker.compose.service":"keycloak","com.docker.compose.oneoff":"False"},"Status":"running","Running":true,"Paused":false,"Healthcheck":true,"Health":"unhealthy","Ports":{"9091/tcp":[{"HostIp":"127.0.0.1","HostPort":"` + strconv.Itoa(keycloakPort) + `"}]},"Networks":{"` + network + `":{}}}`
+	t.Setenv("COOP_TEST_DB_ID", dbID)
+	t.Setenv("COOP_TEST_KEYCLOAK_ID", keycloakID)
+	t.Setenv("COOP_TEST_DB_INSPECT", dbInspect)
+	t.Setenv("COOP_TEST_KEYCLOAK_INSPECT", keycloakInspect)
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> " + strconv.Quote(recorder) + "\n" +
+		"for arg in \"$@\"; do case \"$arg\" in *:/home/node/.claude/CLAUDE.md:ro) cp \"${arg%%:*}\" " + strconv.Quote(instructions) + " ;; esac; done\n" +
+		"case \"$*\" in\n" +
+		"  *'config --format json'*) printf '%s\\n' 'services: {escape: {image: x, privileged: true}}' > " + strconv.Quote(compose) + "; printf '%s\\n' '{\"services\":{\"db\":{\"expose\":[\"5432\"],\"labels\":{\"coop.service.scheme\":\"postgresql\"}},\"keycloak\":{\"expose\":[\"9091\"]}}}' ;;\n" +
+		"  *'config --services'*) printf '%s\\n' db keycloak ;;\n" +
+		"  *'up -d --wait --remove-orphans'*) printf '%s\\n' 'keycloak failed its healthcheck' >&2; exit 1 ;;\n" +
+		"  *'ps -q -a --no-trunc'*'com.docker.compose.service=db'*) printf '%s\\n' \"$COOP_TEST_DB_ID\" ;;\n" +
+		"  *'ps -q -a --no-trunc'*'com.docker.compose.service=keycloak'*) printf '%s\\n' \"$COOP_TEST_KEYCLOAK_ID\" ;;\n" +
+		"  *'inspect --format'*\"$COOP_TEST_DB_ID\"*) printf '%s\\n' \"$COOP_TEST_DB_INSPECT\" ;;\n" +
+		"  *'inspect --format'*\"$COOP_TEST_KEYCLOAK_ID\"*) printf '%s\\n' \"$COOP_TEST_KEYCLOAK_INSPECT\" ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(shim, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "open", AutoUp: true}
+	var code int
+	var runErr error
+	human := captureStderr(t, func() {
+		code, runErr = Run(cfg, runtime.Runtime{Name: shim}, RunSpec{
+			Image: "i", Repo: repo, Cmd: []string{"true"}, Network: true,
+			Agent: "claude", AgentCommand: true, Homes: true,
+		})
+	})
+	if runErr != nil || code != 0 {
+		t.Fatalf("Run = %d, %v", code, runErr)
+	}
+	for _, want := range []string{"Some project services could not start", "keycloak failed its healthcheck", "Available now: db.", "Run coop up to retry."} {
+		if !strings.Contains(human, want) {
+			t.Errorf("partial startup output lacks %q:\n%s", want, human)
+		}
+	}
+	data, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := string(data)
+	if strings.Count(calls, "config --format json") != 1 ||
+		!strings.Contains(calls, "COOP_SERVICE_DB_URL=postgresql://localhost:"+strconv.Itoa(dbPort)) ||
+		!strings.Contains(calls, strconv.Itoa(dbPort)+":db:5432") ||
+		strings.Contains(calls, "COOP_SERVICE_KEYCLOAK_URL=") || strings.Contains(calls, strconv.Itoa(keycloakPort)+":keycloak:9091") {
+		t.Fatalf("partial startup service projection was not narrowed to the healthy DB:\n%s", calls)
+	}
+	changed, err := os.ReadFile(compose)
+	if err != nil || !strings.Contains(string(changed), "privileged") {
+		t.Fatalf("fixture did not replace the mutable source: %q, %v", changed, err)
+	}
+	note, err := os.ReadFile(instructions)
+	if err != nil {
+		t.Fatalf("capture generated agent instructions: %v", err)
+	}
+	for _, want := range []string{"startup was partial", "sidecar db: postgresql://localhost:", "Only the services observed below are available"} {
+		if !strings.Contains(string(note), want) {
+			t.Errorf("generated partial-service instructions lack %q:\n%s", want, note)
+		}
+	}
+	if strings.Contains(string(note), "sidecar keycloak:") {
+		t.Fatalf("generated instructions advertised unhealthy Keycloak:\n%s", note)
+	}
+}
+
+func TestRunOnlyDiscoversObservedServicePortsWithoutAutoUp(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		queryFail    bool
+		wrongNetwork bool
+		networkGone  bool
+		wantURL      bool
+	}{
+		{"owned running service", false, false, false, true},
+		{"status query failure", true, false, false, false},
+		{"wrong service network", false, true, false, false},
+		{"selected network unavailable", false, false, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, compose := writeCompose(t, "services:\n  db:\n    image: postgres:18\n    expose: [5432]\n")
+			recorder := filepath.Join(t.TempDir(), "runtime.log")
+			shim := filepath.Join(t.TempDir(), "runtime")
+			id := strings.Repeat("c", 64)
+			port := project.HostPortFor(canonicalWorkspace(repo), "db:5432")
+			network := ComposeProject(repo) + "_default"
+			if tc.wrongNetwork {
+				network = "unrelated"
+			}
+			inspect := `{"ID":"` + id + `","Labels":{"com.docker.compose.project":"` + ComposeProject(repo) + `","com.docker.compose.project.working_dir":"` + filepath.Dir(compose) + `","com.docker.compose.service":"db","com.docker.compose.oneoff":"False"},"Status":"running","Running":true,"Paused":false,"Healthcheck":false,"Health":"","Ports":{"5432/tcp":[{"HostIp":"127.0.0.1","HostPort":"` + strconv.Itoa(port) + `"}]},"Networks":{"` + network + `":{}}}`
+			t.Setenv("COOP_TEST_ID", id)
+			t.Setenv("COOP_TEST_INSPECT", inspect)
+			query := `printf '%s\n' "$COOP_TEST_ID"`
+			if tc.queryFail {
+				query = "exit 7"
+			}
+			networkQuery := ":"
+			if tc.networkGone {
+				networkQuery = "exit 9"
+			}
+			script := "#!/bin/sh\n" +
+				"printf '%s\\n' \"$*\" >> " + strconv.Quote(recorder) + "\n" +
+				"case \"$*\" in\n" +
+				"  *'config --format json'*) printf '%s\\n' '{\"services\":{\"db\":{\"expose\":[\"5432\"]}}}' ;;\n" +
+				"  *'ps -q -a --no-trunc'*) " + query + " ;;\n" +
+				"  *'inspect --format'*) printf '%s\\n' \"$COOP_TEST_INSPECT\" ;;\n" +
+				"  *'network inspect'*) " + networkQuery + " ;;\n" +
+				"esac\n"
+			if err := os.WriteFile(shim, []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "open", AutoUp: false}
+			code, err := Run(cfg, runtime.Runtime{Name: shim}, RunSpec{
+				Image: "i", Repo: repo, Cmd: []string{"true"}, Network: true, Batch: true, Quiet: true,
+			})
+			if err != nil || code != 0 {
+				t.Fatalf("Run = %d, %v", code, err)
+			}
+			data, err := os.ReadFile(recorder)
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls := string(data)
+			if strings.Contains(calls, "up -d --wait") {
+				t.Fatalf("disabled auto-up started services:\n%s", calls)
+			}
+			hasURL := strings.Contains(calls, "COOP_SERVICE_DB_URL=http://localhost:"+strconv.Itoa(port))
+			if hasURL != tc.wantURL {
+				t.Fatalf("observed URL = %v, want %v:\n%s", hasURL, tc.wantURL, calls)
+			}
+		})
 	}
 }

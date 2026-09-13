@@ -22,6 +22,7 @@ type serviceLaunchState int
 const (
 	servicesNotConfigured serviceLaunchState = iota
 	servicesRunning
+	servicesObserved
 	servicesSkipped
 	servicesFailed
 	servicesUnknown
@@ -67,15 +68,31 @@ func servicesNote(services serviceLaunchOutcome, ports []ServicePort, joined boo
 	var lines []string
 	switch {
 	case services.state == servicesNotConfigured:
+	case services.state == servicesFailed && len(ports) == 0:
+		detail := "service startup failed"
+		if services.err != nil {
+			detail = strings.TrimSpace(services.err.Error())
+		}
+		lines = append(lines,
+			"- Sibling service startup failed: "+detail+".",
+			"  Coop could not confirm any available sibling service, so it injected no service URL or forwarder.",
+			"  A human retries them with `coop up`.")
 	case services.state == servicesFailed:
 		detail := "service startup failed"
 		if services.err != nil {
 			detail = strings.TrimSpace(services.err.Error())
 		}
 		lines = append(lines,
-			"- Sibling services did NOT start: "+detail+".",
-			"  This box runs without them: a connection to a sidecar fails because it is not there,",
-			"  not because of your work. A human retries them with `coop up`.")
+			"- Sibling service startup was partial: "+detail+".",
+			"  Only the services observed below are available; a human retries the full set with `coop up`.")
+		lines = append(lines, servicePortAvailabilityLines(ports, joined)...)
+	case services.state == servicesObserved:
+		detail := "Sibling service startup was not requested"
+		if services.err != nil {
+			detail += ": " + strings.TrimSpace(services.err.Error())
+		}
+		lines = append(lines, "- "+detail+"; Coop observed these existing services:")
+		lines = append(lines, servicePortAvailabilityLines(ports, joined)...)
 	case services.state == servicesSkipped || services.state == servicesUnknown:
 		detail := "startup was not requested"
 		if services.err != nil {
@@ -87,17 +104,7 @@ func servicesNote(services serviceLaunchOutcome, ports []ServicePort, joined boo
 	case !joined:
 		lines = append(lines, "- Sibling services are running, but this box is not on their network (networking is off), so it cannot reach them.")
 	default:
-		sorted := append([]ServicePort(nil), ports...)
-		sort.SliceStable(sorted, func(i, j int) bool {
-			if sorted[i].Service != sorted[j].Service {
-				return sorted[i].Service < sorted[j].Service
-			}
-			return sorted[i].ContainerPort < sorted[j].ContainerPort
-		})
-		for _, p := range sorted {
-			lines = append(lines, fmt.Sprintf("- sidecar %s: %s://localhost:%d from this box (its own port %d; also %s:%d by name on the services network)",
-				p.Service, p.Scheme, p.HostPort, p.ContainerPort, p.Service, p.ContainerPort))
-		}
+		lines = append(lines, servicePortAvailabilityLines(ports, joined)...)
 	}
 	for _, s := range serve {
 		if s.Published {
@@ -110,6 +117,25 @@ func servicesNote(services serviceLaunchOutcome, ports []ServicePort, joined boo
 		return ""
 	}
 	return "\n# Services and ports (coop) — what this box actually got\n" + strings.Join(lines, "\n") + "\n"
+}
+
+func servicePortAvailabilityLines(ports []ServicePort, joined bool) []string {
+	if !joined {
+		return []string{"- Sibling services are running, but this box is not on their network (networking is off), so it cannot reach them."}
+	}
+	sorted := append([]ServicePort(nil), ports...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].Service != sorted[j].Service {
+			return sorted[i].Service < sorted[j].Service
+		}
+		return sorted[i].ContainerPort < sorted[j].ContainerPort
+	})
+	lines := make([]string, 0, len(sorted))
+	for _, p := range sorted {
+		lines = append(lines, fmt.Sprintf("- sidecar %s: %s://localhost:%d from this box (its own port %d; also %s:%d by name on the services network)",
+			p.Service, p.Scheme, p.HostPort, p.ContainerPort, p.Service, p.ContainerPort))
+	}
+	return lines
 }
 
 // appendInstructionNote adds a launch-time section to every agent's already written instruction

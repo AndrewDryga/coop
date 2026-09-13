@@ -41,13 +41,23 @@ func TestServicesNoteStatesWhatTheBoxGot(t *testing.T) {
 	}
 
 	failed := servicesNote(serviceLaunchOutcome{state: servicesFailed, err: errors.New("compose refused: unsafe bind")}, nil, true, nil)
-	for _, want := range []string{"did NOT start: compose refused: unsafe bind", "runs without them", "coop up"} {
+	for _, want := range []string{"startup failed: compose refused: unsafe bind", "could not confirm any available sibling service", "injected no service URL or forwarder", "coop up"} {
 		if !strings.Contains(failed, want) {
 			t.Errorf("degraded note lacks %q:\n%s", want, failed)
 		}
 	}
 	if strings.Contains(failed, "localhost:") {
 		t.Errorf("a failed start must not list an address as reachable:\n%s", failed)
+	}
+	partial := servicesNote(serviceLaunchOutcome{state: servicesFailed, err: errors.New("keycloak unhealthy")}, []ServicePort{db}, true, nil)
+	for _, want := range []string{"startup was partial", "keycloak unhealthy", "Only the services observed below", "sidecar db: tcp://localhost:41234", "coop up"} {
+		if !strings.Contains(partial, want) {
+			t.Errorf("partial service note lacks %q:\n%s", want, partial)
+		}
+	}
+	observed := servicesNote(serviceLaunchOutcome{state: servicesObserved}, []ServicePort{db}, true, nil)
+	if !strings.Contains(observed, "startup was not requested") || !strings.Contains(observed, "sidecar db: tcp://localhost:41234") {
+		t.Errorf("existing observed service note is not truthful:\n%s", observed)
 	}
 
 	unjoined := servicesNote(serviceLaunchOutcome{state: servicesRunning}, []ServicePort{web}, false, nil)
@@ -124,7 +134,7 @@ func TestAppendInstructionNoteReachesEveryAgent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.HasPrefix(string(data), "# base\n") || !strings.Contains(string(data), "did NOT start: daemon down") {
+		if !strings.HasPrefix(string(data), "# base\n") || !strings.Contains(string(data), "startup failed: daemon down") {
 			t.Errorf("%s = %q", m.host, data)
 		}
 	}

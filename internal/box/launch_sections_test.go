@@ -247,6 +247,25 @@ func TestLoopServiceWarningsStayNestedAndSanitized(t *testing.T) {
 	}
 }
 
+func TestServiceWarningsNameObservedPartialAvailability(t *testing.T) {
+	db := ServicePort{Service: "db", ContainerPort: 5432, HostPort: 25432, Scheme: "postgresql"}
+	loop := captureStderr(t, func() {
+		s := newLaunchSections(RunSpec{Agent: "claude", AgentCommand: true, Batch: true, LoopPresentation: true})
+		s.servicesFailed("keycloak unhealthy", db)
+	})
+	for _, want := range []string{"Some services failed to start", "Continuing with observed service(s): db.", "To retry: coop up"} {
+		if !strings.Contains(loop, want) {
+			t.Errorf("partial loop warning lacks %q:\n%s", want, loop)
+		}
+	}
+	interactive := captureStderr(t, func() {
+		newLaunchSections(RunSpec{Agent: "claude"}).servicesFailed("keycloak unhealthy", db)
+	})
+	if !strings.Contains(interactive, "Some project services could not start") || !strings.Contains(interactive, "Available now: db.") {
+		t.Fatalf("partial interactive warning is not actionable:\n%s", interactive)
+	}
+}
+
 func TestInteractiveServiceWarningsAreSeparateParagraphs(t *testing.T) {
 	for _, report := range []func(*launchSections){
 		func(s *launchSections) { s.servicesFailed("compose failed") },
@@ -281,7 +300,7 @@ func TestLoopServiceStartupHeldByLiveBoxHasNoUnsafeRetry(t *testing.T) {
 		}
 	}
 	visible := strings.Join(strings.Fields(got), " ")
-	if !strings.Contains(visible, "Service availability was not checked; Coop will not restart services while that box is active.") {
+	if !strings.Contains(visible, "Coop will not restart services while that box is active; only services it can observe as running will be made available.") {
 		t.Errorf("live-box service narration lost its wrapped availability caveat:\n%s", got)
 	}
 	if strings.Contains(got, "To retry: coop up") || strings.Contains(got, "\x1b") {

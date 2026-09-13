@@ -1,11 +1,15 @@
 package box
 
 import (
+	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
 // parseServicePorts reads each service's `expose` (the shape `docker compose config --format json`
@@ -32,6 +36,53 @@ func TestParseServicePorts(t *testing.T) {
 	// no services / no expose → nothing.
 	if got := parseServicePorts([]byte(`{"services":{}}`), repo); len(got) != 0 {
 		t.Errorf("no services → no ports, got %+v", got)
+	}
+}
+
+func TestServicePortDiscoveryIsBoundedAndStrict(t *testing.T) {
+	dir := t.TempDir()
+	shim := filepath.Join(dir, "runtime")
+	large := filepath.Join(dir, "large")
+	largeJSON := `{"services":{},"padding":"` + strings.Repeat("x", maxResolvedServiceConfigBytes) + `"}`
+	if err := os.WriteFile(large, []byte(largeJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_LARGE_CONFIG", large)
+	if err := os.WriteFile(shim, []byte(`#!/bin/sh
+case "$COOP_TEST_CONFIG_MODE" in
+  valid) printf '%s\n' '{"services":{"db":{"expose":["5432"]}}}' ;;
+  missing) printf '%s\n' '{}' ;;
+  malformed) printf '%s\n' '{' ;;
+  oversized) cat "$COOP_TEST_LARGE_CONFIG" ;;
+  failed) exit 7 ;;
+  stalled) sleep 30 ;;
+esac
+`), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rt := runtime.Runtime{Name: shim}
+	repo := t.TempDir()
+	t.Setenv("COOP_TEST_CONFIG_MODE", "valid")
+	ports, err := servicePortsWithArgsContext(context.Background(), rt, repo, nil)
+	if err != nil || len(ports) != 1 || ports[0].Service != "db" {
+		t.Fatalf("valid bounded discovery = (%+v, %v)", ports, err)
+	}
+	for _, mode := range []string{"missing", "malformed", "oversized", "failed"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv("COOP_TEST_CONFIG_MODE", mode)
+			if ports, err := servicePortsWithArgsContext(context.Background(), rt, repo, nil); err == nil || len(ports) != 0 {
+				t.Fatalf("%s discovery = (%+v, %v), want no ports and an error", mode, ports, err)
+			} else if mode == "oversized" && !strings.Contains(err.Error(), "exceeds 4 MiB") {
+				t.Fatalf("oversized discovery bypassed its cap: %v", err)
+			}
+		})
+	}
+	t.Setenv("COOP_TEST_CONFIG_MODE", "stalled")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	if ports, err := servicePortsWithArgsContext(ctx, rt, repo, nil); err == nil || len(ports) != 0 || time.Since(started) > 2*time.Second {
+		t.Fatalf("canceled discovery = (%+v, %v) after %s", ports, err, time.Since(started))
 	}
 }
 

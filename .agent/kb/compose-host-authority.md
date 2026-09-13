@@ -2,7 +2,7 @@
 name: compose-host-authority
 description: sibling Compose execution uses a validated private snapshot and explicit values rather than ambient host imports
 subsystem: box/services
-sources: [internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/serviceapproval.go, internal/box/sweep.go]
+sources: [internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/serviceapproval.go, internal/box/sweep.go]
 updated: 2026-09-13
 ---
 
@@ -21,7 +21,13 @@ the original `--project-directory`, and an empty `--env-file`; the generated por
 same placement requirement. Callers also exclude credential configuration and ACP transcript mount
 roots, with inode-aware ancestry so case aliases cannot place an artifact back in the workspace.
 `Run` reuses the startup port list for forwarding instead of reading
-the mutable source again. Teardown and independent port inspection also validate a snapshot.
+the mutable source again. If `compose up --wait` fails, or startup is deliberately skipped, Coop
+advertises only ports backed by a bounded read-only observation of one exact project/workdir/service
+container: running and unpaused, healthy when an effective healthcheck exists, and carrying the
+expected `127.0.0.1` binding on the network the box will join. The skipped-start config query is
+also bounded, cancellable and strict; malformed or unavailable config cannot become an empty-success
+claim. Unknown, duplicate, unhealthy or mismatched observations stay absent; the original startup
+error remains the diagnostic. Teardown and independent port inspection also validate a snapshot.
 
 This freezes configuration bytes, not bind-source filesystem identity: changing a bind path after
 validation is a separate boundary. Do not describe snapshots as freezing mounted directory contents.
@@ -72,6 +78,9 @@ like coop's (`^coop-…-<8hex>$`) — never a human's compose project. "Unused" 
 containers as users (`ps -a --filter network=`), because they reconnect on the next start.
 
 ## Changelog
+- 2026-09-13: partial and skipped starts now expose only exact-owned observed running service
+  bindings on the selected network while retaining the original Compose failure; skipped discovery
+  is bounded and strict.
 - 2026-09-13: fixed direct descendant queries that missed hidden ancestor directories;
   native Compose fixtures reproduced the exposure before and mutation denial after.
 - 2026-09-07: repo-side `services.require_real_files` request labels the approval prompt.

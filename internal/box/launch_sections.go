@@ -474,24 +474,52 @@ func (s *launchSections) servicesRefused(cause string) {
 // servicesFailed is a launch that CONTINUES without the services it could not start. It is a
 // warning, not a failure: the box is about to run, and the person needs the compose error and the
 // command that retries it. A review launch refuses the whole launch instead and never reaches here.
-func (s *launchSections) servicesFailed(cause string) {
+func (s *launchSections) servicesFailed(cause string, available ...ServicePort) {
 	if !s.on {
 		return
 	}
+	names := servicePortNames(available)
 	if !s.loop {
 		ui.Note("")
-		ui.Warning("Project services could not start", cause, "Run coop up to retry.")
+		if len(names) > 0 {
+			ui.Warning("Some project services could not start", cause,
+				"Available now: "+strings.Join(names, ", ")+".\nRun coop up to retry.")
+		} else {
+			ui.Warning("Project services could not start", cause, "Run coop up to retry.")
+		}
 		return
 	}
 	s.section("Starting services")
-	ui.Note("  %s Services failed to start%s", ui.Yellow("⚠"), serviceExitSummary(cause))
+	if len(names) > 0 {
+		ui.Note("  %s Some services failed to start%s", ui.Yellow("⚠"), serviceExitSummary(cause))
+	} else {
+		ui.Note("  %s Services failed to start%s", ui.Yellow("⚠"), serviceExitSummary(cause))
+	}
 	for _, line := range serviceCauseDetails(cause) {
 		if line != "" {
 			loopLaunchDetail(line, 4)
 		}
 	}
-	ui.Note("    Continuing without sibling services.")
+	if len(names) > 0 {
+		ui.Note("    Continuing with observed service(s): %s.", strings.Join(names, ", "))
+	} else {
+		ui.Note("    Continuing without sibling services.")
+	}
 	ui.Note("    To retry: coop up")
+}
+
+func (s *launchSections) servicesObserved(ports []ServicePort) {
+	if !s.on || len(ports) == 0 {
+		return
+	}
+	names := strings.Join(servicePortNames(ports), ", ")
+	if !s.loop {
+		ui.Note("")
+		ui.Note("Observed running project service(s): %s", names)
+		return
+	}
+	s.section("Starting services")
+	ui.Note("  %s Existing service(s) available: %s", ui.Green("✓"), names)
 }
 
 // servicesSkipped is a launch that did not even attempt them, with the reason it did not. It never
@@ -524,7 +552,7 @@ func (s *launchSections) servicesHeldByLiveBox(cause string) {
 	s.section("Starting services")
 	ui.Note("  %s Service startup skipped", ui.Yellow("⚠"))
 	loopLaunchDetail(cause, 4)
-	loopLaunchDetail("Service availability was not checked; Coop will not restart services while that box is active.", 4)
+	loopLaunchDetail("Coop will not restart services while that box is active; only services it can observe as running will be made available.", 4)
 }
 
 func loopLaunchDetail(text string, indent int) {

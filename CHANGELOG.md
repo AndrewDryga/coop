@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A partial project-service startup now keeps URLs and forwarders only for exact Compose-owned
+  containers observed running, healthy when configured, and bound to Coop's expected loopback
+  port and selected service network. Failed or skipped starts no longer discard a proven-ready
+  database or advertise configuration-only endpoints; the original startup failure and retry
+  guidance remain visible.
+
 - Claude image tool results now keep their matching watchdog lifecycle within a bounded,
   provider-specific stream envelope. Large base64 bodies remain hidden, while malformed or
   over-limit events cannot close tools or manufacture activity.

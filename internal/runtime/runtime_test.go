@@ -403,6 +403,95 @@ if [ "$1" = ps ]; then echo owned-sidecar; fi
 	}
 }
 
+func TestObserveServiceContainerRequiresOneExactOwnedObservation(t *testing.T) {
+	dir := t.TempDir()
+	runtimeCLI := filepath.Join(dir, "runtime")
+	events := filepath.Join(dir, "events")
+	if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
+printf '%s\n' "$*" >> "$COOP_TEST_EVENTS"
+if [ "$1" = ps ]; then
+  if [ -n "$COOP_TEST_BLOCK" ]; then sleep 30; fi
+  if [ -n "$COOP_TEST_PS_FAIL" ]; then exit 7; fi
+  printf '%s\n' "$COOP_TEST_IDS"; exit 0
+fi
+if [ "$1" = inspect ]; then
+  if [ -n "$COOP_TEST_INSPECT_FILE" ]; then exec cat "$COOP_TEST_INSPECT_FILE"; fi
+  printf '%s\n' "$COOP_TEST_INSPECT"; exit 0
+fi
+exit 9
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	id := strings.Repeat("a", 64)
+	labels := map[string]string{
+		"com.docker.compose.project":             "coop-repo-12345678",
+		"com.docker.compose.project.working_dir": "/repo with space/dev",
+		"com.docker.compose.service":             "db",
+		"com.docker.compose.oneoff":              "False",
+	}
+	t.Setenv("COOP_TEST_EVENTS", events)
+	t.Setenv("COOP_TEST_IDS", id)
+	t.Setenv("COOP_TEST_INSPECT", `{"ID":"`+id+`","Labels":{"com.docker.compose.project":"coop-repo-12345678","com.docker.compose.project.working_dir":"/repo with space/dev","com.docker.compose.service":"db","com.docker.compose.oneoff":"False"},"Status":"running","Running":true,"Paused":false,"Healthcheck":true,"Health":"healthy","Ports":{"5432/tcp":[{"HostIp":"127.0.0.1","HostPort":"25432"}]},"Networks":{"coop-repo-12345678_default":{}}}`)
+	got, found, err := (Runtime{Name: runtimeCLI}).ObserveServiceContainer(context.Background(), labels)
+	if err != nil || !found || got.ID != id || !got.Running || got.Health != "healthy" || len(got.Ports["5432/tcp"]) != 1 || !got.Networks["coop-repo-12345678_default"] {
+		t.Fatalf("service observation = (%+v, %v, %v)", got, found, err)
+	}
+	eventBytes, err := os.ReadFile(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventText := string(eventBytes)
+	if !strings.Contains(eventText, "ps -q -a --no-trunc") || !strings.Contains(eventText, "label=com.docker.compose.project.working_dir=/repo with space/dev") ||
+		!strings.Contains(eventText, "inspect --format") || !strings.HasSuffix(eventText, id+"\n") {
+		t.Fatalf("bounded observation calls = %q", eventText)
+	}
+
+	t.Setenv("COOP_TEST_IDS", id+"\n"+strings.Repeat("b", 64))
+	if _, _, err := (Runtime{Name: runtimeCLI}).ObserveServiceContainer(context.Background(), labels); err == nil {
+		t.Fatal("duplicate service containers were accepted")
+	}
+	t.Setenv("COOP_TEST_IDS", id)
+	t.Setenv("COOP_TEST_INSPECT", `{"ID":"`+id+`","Labels":{"com.docker.compose.project":"wrong","com.docker.compose.project.working_dir":"/repo with space/dev","com.docker.compose.service":"db","com.docker.compose.oneoff":"False"},"Status":"running","Running":true,"Paused":false,"Healthcheck":false,"Health":"","Ports":{},"Networks":{}}`)
+	if _, _, err := (Runtime{Name: runtimeCLI}).ObserveServiceContainer(context.Background(), labels); err == nil {
+		t.Fatal("changed service ownership was accepted")
+	}
+	replacement := strings.Repeat("b", 64)
+	t.Setenv("COOP_TEST_INSPECT", `{"ID":"`+replacement+`","Labels":{"com.docker.compose.project":"coop-repo-12345678","com.docker.compose.project.working_dir":"/repo with space/dev","com.docker.compose.service":"db","com.docker.compose.oneoff":"False"},"Status":"running","Running":true,"Paused":false,"Healthcheck":false,"Health":"","Ports":{},"Networks":{}}`)
+	if _, _, err := (Runtime{Name: runtimeCLI}).ObserveServiceContainer(context.Background(), labels); err == nil {
+		t.Fatal("replaced service identity was accepted")
+	}
+
+	t.Setenv("COOP_TEST_INSPECT", `{"ID":"`+id+`","Labels":{"com.docker.compose.project":"coop-repo-12345678","com.docker.compose.project.working_dir":"/repo with space/dev","com.docker.compose.service":"db","com.docker.compose.oneoff":"False"},"Status":"running","Running":true,"Healthcheck":false,"Health":"","Ports":{},"Networks":{}}`)
+	if _, _, err := (Runtime{Name: runtimeCLI}).ObserveServiceContainer(context.Background(), labels); err == nil {
+		t.Fatal("observation with missing Paused field was accepted")
+	}
+
+	t.Setenv("COOP_TEST_IDS", "")
+	if _, found, err := (Runtime{Name: runtimeCLI}).ObserveServiceContainer(context.Background(), labels); err != nil || found {
+		t.Fatalf("missing service observation = (%v, %v), want false without error", found, err)
+	}
+
+	t.Setenv("COOP_TEST_IDS", id)
+	oversized := filepath.Join(dir, "oversized-inspect")
+	oversizedJSON := `{"ID":"` + id + `","Labels":{"com.docker.compose.project":"coop-repo-12345678","com.docker.compose.project.working_dir":"/repo with space/dev","com.docker.compose.service":"db","com.docker.compose.oneoff":"False"},"Status":"running","Running":true,"Paused":false,"Healthcheck":false,"Health":"","Ports":{},"Networks":{},"Padding":"` + strings.Repeat("x", 300<<10) + `"}`
+	if err := os.WriteFile(oversized, []byte(oversizedJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_INSPECT_FILE", oversized)
+	if _, _, err := (Runtime{Name: runtimeCLI}).ObserveServiceContainer(context.Background(), labels); err == nil {
+		t.Fatal("oversized service inspection was accepted")
+	}
+	t.Setenv("COOP_TEST_INSPECT_FILE", "")
+
+	t.Setenv("COOP_TEST_BLOCK", "1")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	if _, _, err := (Runtime{Name: runtimeCLI}).ObserveServiceContainer(ctx, labels); err == nil || time.Since(started) > 2*time.Second {
+		t.Fatalf("canceled service observation did not stop promptly: %v", err)
+	}
+}
+
 func TestAbsoluteRuntimePathsKeepDockerCapabilities(t *testing.T) {
 	dir := t.TempDir()
 	docker := filepath.Join(dir, "docker")

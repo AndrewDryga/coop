@@ -61,6 +61,10 @@ type startedServices struct {
 }
 
 func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer, repoReadOnly, noticeHidden bool, exposedRoots ...string) (startedServices, error) {
+	return startServicesFileContext(context.Background(), rt, workspace, file, "", stdout, stderr, repoReadOnly, noticeHidden, exposedRoots...)
+}
+
+func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace, file, network string, stdout, stderr io.Writer, repoReadOnly, noticeHidden bool, exposedRoots ...string) (startedServices, error) {
 	if file == "" {
 		return startedServices{}, nil
 	}
@@ -101,7 +105,10 @@ func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stder
 	}
 	upArgs := append(append([]string(nil), args...), "up", "-d", "--wait", "--remove-orphans")
 	if err := runCompose(rt, stdout, stderr, "up", upArgs); err != nil {
-		return started, err
+		started.names = services
+		observed, observeErr := observedServicePorts(ctx, rt, workspace, file, network, ports)
+		started.ports = observed
+		return started, errors.Join(err, observeErr)
 	}
 	started.names, started.ports = services, ports
 	return started, nil
