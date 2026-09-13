@@ -44,9 +44,9 @@ between:
   writes: tasks
 
   # Audit model ladder. Default: the signoff model.
-  # The FAST pair: Luna and Opus 4.8 at xhigh, failing over to each other — exactly the
+  # The FAST pair: Luna and Opus 5 at xhigh, failing over to each other — exactly the
   # tier a focused per-task audit wants.
-  agent: [codex:gpt-5.6-luna/xhigh, claude:claude-opus-4-8/xhigh]
+  agent: [codex:gpt-5.6-luna/xhigh, claude:claude-opus-5/xhigh]
 
   # The ordinary per-task audit prompt — SET it here (required when enabled).
   # coop prepends the just-finished task's id + folder, so "the task named above" is exact.
