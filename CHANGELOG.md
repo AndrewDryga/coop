@@ -75,6 +75,9 @@
 - `coop tasks queues` now rejects trailing arguments, and `coop sessions connect` reports the
   actual unknown option instead of incorrectly saying that `--config` is missing.
 
+- Explicit network-run queries now name the missing requested run, and `coop net recover`
+  reports a clean host without requiring a container runtime.
+
 - Task completion reminds agents that scratch logs are removed during finalization and
   only verified durable artifacts belong in the final handoff; normal scratch cleanup remains.
 

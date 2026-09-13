@@ -653,6 +653,55 @@ func TestNetResolveRunAcceptsUniquePrefixesAndNeverGuesses(t *testing.T) {
 	}
 }
 
+func TestExplicitNetRunWithoutHistoryNamesTheRequestedRun(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	a := &app{cfg: &config.Config{}}
+	for name, run := range map[string]func() (int, error){
+		"inspect": func() (int, error) { return a.cmdNetRun("inspect", []string{"deadbeef"}) },
+		"watch":   func() (int, error) { return a.cmdNetRun("watch", []string{"deadbeef"}) },
+		"export":  func() (int, error) { return a.cmdNetExport([]string{"deadbeef"}) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			code, err := run()
+			if code != 1 || err == nil || !strings.Contains(err.Error(), `No network run matches "deadbeef"`) {
+				t.Fatalf("explicit missing run = (%d, %v)", code, err)
+			}
+		})
+	}
+}
+
+func TestNetRecoverNeedsNoRuntimeWhenNothingNeedsCleanup(t *testing.T) {
+	t.Run("no history", func(t *testing.T) {
+		t.Setenv("XDG_STATE_HOME", t.TempDir())
+		assertCleanRecoveryWithoutRuntime(t, nil)
+	})
+	t.Run("empty history", func(t *testing.T) {
+		_ = netHostFixture(t)
+		assertCleanRecoveryWithoutRuntime(t, nil)
+	})
+}
+
+func assertCleanRecoveryWithoutRuntime(t *testing.T, args []string) {
+	t.Helper()
+	a := &app{cfg: &config.Config{RuntimeName: "definitely-not-a-runtime"}}
+	var code int
+	var err error
+	out := captureStderr(t, func() { code, err = a.cmdNetRecover(args) })
+	if code != 0 || err != nil || out != "No interrupted network runs need cleanup.\n" {
+		t.Fatalf("clean recovery without a runtime = (%d, %v, %q)", code, err, out)
+	}
+}
+
+func TestNetRecoverStillRequiresRuntimeForPendingCleanup(t *testing.T) {
+	store := netHostFixture(t)
+	netRecordRun(t, store, netFixtureProject(t))
+	a := &app{cfg: &config.Config{RuntimeName: "definitely-not-a-runtime"}}
+	code, err := a.cmdNetRecover(nil)
+	if code != -1 || err == nil || !strings.Contains(err.Error(), `runtime "definitely-not-a-runtime" not found`) {
+		t.Fatalf("pending recovery without a runtime = (%d, %v)", code, err)
+	}
+}
+
 // Acceptance: inspect without a run selects the newest recorded run of the
 // current project only; watch selects the sole active one and refuses to pick
 // among several.

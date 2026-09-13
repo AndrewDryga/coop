@@ -255,7 +255,7 @@ func (a *app) netDiagnostic(verb string, args []string) (int, error) {
 	if verb == "check" && opts.run == "" {
 		return a.netCheckCurrent(opts)
 	}
-	evidence, err := openNetRunEvidence()
+	evidence, err := openNetRunEvidence(opts.run)
 	if err != nil {
 		return 1, err
 	}

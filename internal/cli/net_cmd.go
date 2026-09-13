@@ -105,15 +105,30 @@ func (a *app) cmdNetRecover(args []string) (int, error) {
 			ref = arg
 		}
 	}
+	page, err := netExecutions()
+	if err != nil {
+		return 1, err
+	}
 	runID := ""
 	if ref != "" {
-		page, err := netExecutions()
-		if err != nil {
-			return 1, err
-		}
 		if runID, err = netResolveRun(page, ref, command); err != nil {
 			return 1, err
 		}
+	}
+	needsRuntime, found := page.Incomplete, runID == ""
+	for _, run := range page.Executions {
+		if runID != "" && run.ID != runID {
+			continue
+		}
+		found = true
+		needsRuntime = needsRuntime || run.CleanupPending
+	}
+	if !found && !page.Incomplete {
+		return 1, netUnknownRunErr(ref)
+	}
+	if !needsRuntime {
+		ui.Note("No interrupted network runs need cleanup.")
+		return 0, nil
 	}
 	if err := a.ensureRuntime(); err != nil {
 		return -1, err
@@ -934,7 +949,7 @@ func (a *app) cmdNetRun(verb string, args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	evidence, err := openNetRunEvidence()
+	evidence, err := openNetRunEvidence(opts.id)
 	if err != nil {
 		return 1, err
 	}
@@ -1063,7 +1078,7 @@ func (a *app) cmdNetExport(args []string) (int, error) {
 	if ref == "" {
 		return 2, ui.MissingArgument("run", command, usage)
 	}
-	evidence, err := openNetRunEvidence()
+	evidence, err := openNetRunEvidence(ref)
 	if err != nil {
 		return 1, err
 	}
@@ -1309,9 +1324,12 @@ func openNetEvidence() (*networkstate.Evidence, error) {
 	return networkstate.OpenEvidence(path, nil)
 }
 
-func openNetRunEvidence() (*networkstate.Evidence, error) {
+func openNetRunEvidence(ref string) (*networkstate.Evidence, error) {
 	evidence, err := openNetEvidence()
 	if errors.Is(err, fs.ErrNotExist) {
+		if ref != "" {
+			return nil, netUnknownRunErr(ref)
+		}
 		return nil, errors.New("no filtered run has been recorded on this host yet — start one with 'coop run --egress filtered'")
 	}
 	return evidence, err
