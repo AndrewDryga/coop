@@ -73,7 +73,7 @@ func PolicyScan(repo, ref string) []string {
 			}
 		}
 		for _, s := range box.ScanSecrets(content) {
-			warns = append(warns, fmt.Sprintf("possible secret in %s:%d (%s) — remove it or add the file to .coopignore", path, s.Line, s.Kind))
+			warns = append(warns, fmt.Sprintf("possible secret in %s:%d (%s) — review the finding and remove any real credential from the fork before merging", path, s.Line, s.Kind))
 		}
 	}
 	return warns

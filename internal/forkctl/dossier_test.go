@@ -125,6 +125,7 @@ func TestForkBriefDossier(t *testing.T) {
 		"Changes in fork risky", "Into: main", "Commits",
 		"⚠ This change needs your review before merging",
 		".envrc", "possible secret in conf.yaml",
+		"review the finding and remove any real credential from the fork before merging",
 		"Merge is blocked by the project's merge policy:",
 		"Files", dossierConfig + ":", dossierCode + ":", dossierTests + ":",
 		"AGENTS.md", "⚠ No project checks are configured",
@@ -132,6 +133,9 @@ func TestForkBriefDossier(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("dossier missing %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "AKIA"+"1234567890ABCDEF") || strings.Contains(out, "add the file to .coopignore") {
+		t.Errorf("dossier leaked the synthetic credential or offered misleading hiding advice:\n%s", out)
 	}
 	// A fixture with no completed task has no notes to show, and an empty section is not evidence.
 	if strings.Contains(out, "Agent's notes") {

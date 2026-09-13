@@ -2,7 +2,7 @@
 name: secret-finding-identity
 description: how a secret finding is named across runs (fp-v1 fingerprints), what .coopsecretsignore may and may not excuse, and why exceptions stop at check-secrets
 subsystem: secretscan
-sources: [internal/secretscan/secretscan.go, internal/secretscan/exceptions.go, internal/cli/checksecrets.go, internal/box/secretscan.go]
+sources: [internal/secretscan/secretscan.go, internal/secretscan/exceptions.go, internal/cli/checksecrets.go, internal/box/secretscan.go, internal/forkctl/merge.go]
 updated: 2026-09-13
 ---
 
@@ -39,6 +39,8 @@ The shared shadow decision includes hidden ancestor directories: their committab
 descendants are still scanned and labeled, while ignored noncandidates are skipped
 and do not inflate the visible-ignored count. Fork policy also warns on changed
 files below a hidden parent, without changing content detection or exceptions.
+Its warning asks for review and removal of real credentials from the fork, not box
+hiding or scanner exceptions. The warning carries path, line and kind, never raw material.
 
 Traps:
 - A file coop could not READ is not a skip. `readScannable` separates `scanSkipped` (binary,
@@ -50,6 +52,8 @@ Traps:
 - The exception file is scanned like any other project file; its comments are not a hiding place.
 
 ## Changelog
+- 2026-09-13: corrected fork warning advice; synthetic visible/hidden fixtures retain
+  non-forced merge refusal and prove removing the credential clears only its content finding.
 - 2026-09-13: verified ancestor-directory hiding across scanner modes and ignored
   counts, with a fork policy regression for hidden and public siblings.
 - 2026-09-13: removed the scanner's unconditional .coopignore exemption; verified

@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Fork secret warnings ask you to review and remove real credentials before merging;
+  they no longer suggest `.coopignore`, which hides files from agents but does not
+  resolve a merge-policy finding.
+
 - `coop init --services` refuses Compose links and paths outside the repository instead of
   writing through them. Additive edits preserve comments and permissions, leave the original
   intact on write failure, and report detected concurrent changes for retry.
