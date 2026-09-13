@@ -109,7 +109,7 @@ func TestCommands(t *testing.T) {
 			[]string{"codex", "--dangerously-bypass-approvals-and-sandbox"},
 			[]string{"codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "go"},
 			[]string{"env", "INITIAL_AGENT_MODE=agent-full-access", "codex-acp"},
-			[]string{"codex", "exec", "-s", "read-only", "q"}},
+			[]string{"codex", "exec", "--enable", "use_legacy_landlock", "-s", "read-only", "q"}},
 		{"gemini",
 			[]string{"gemini", "--yolo"},
 			[]string{"gemini", "--yolo", "-p", "go"},

@@ -171,7 +171,9 @@ func (codexAgent) Login(*config.Config) []string {
 }
 
 func (codexAgent) ConsultCmd(question string) []string {
-	return []string{"codex", "exec", "-s", "read-only", question}
+	// Bubblewrap cannot create its namespace inside Coop's unprivileged box. Landlock keeps
+	// repository content read-only there; it may still allow recoverable file-mode changes.
+	return []string{"codex", "exec", "--enable", "use_legacy_landlock", "-s", "read-only", question}
 }
 
 // RestrictedCommand: no restricted mode is qualified on this CLI yet (see unqualifiedRestrictedCommand).
@@ -794,7 +796,7 @@ const codexConsultUsage = `[.[] | select(type=="object" and .type=="turn.complet
 		 | .output=(.output + .reasoning) | select(.output<=1000000000)] | last // empty`
 
 func (codexAgent) ConsultFresh() string {
-	return `codex_run codex exec -s read-only ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"; finish_status=$?
+	return `codex_run codex exec --enable use_legacy_landlock -s read-only ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"; finish_status=$?
 	# Only record a thread id parsed from a bounded usable reply. The generic wrapper commits this
 	# candidate after validating the decoded stdout, so failed calls never become resumable.
 	tid=$(jq -r 'select(.type=="thread.started" and (.thread_id|type)=="string") | .thread_id | select(test("^[A-Za-z0-9._:-]{1,512}$"))' "$codex_raw" 2>/dev/null | head -n1)
@@ -805,7 +807,7 @@ func (codexAgent) ConsultFresh() string {
 }
 
 func (codexAgent) ConsultResume() string {
-	return `codex_run codex exec resume "$id" -c sandbox_mode=read-only ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"; return "$?"`
+	return `codex_run codex exec resume --enable use_legacy_landlock "$id" -c sandbox_mode=read-only ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"; return "$?"`
 }
 
 func (codexAgent) DelegateExec() string {

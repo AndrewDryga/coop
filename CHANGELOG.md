@@ -68,6 +68,10 @@
 - Peer-review guidance preserves unresolved source-access limits and unrun checks in
   final reports and task notes; a usable partial reply is not treated as verified approval.
 
+- Codex consultations enable its Linux Landlock compatibility backend inside Coop boxes, so
+  source-reading commands work while content creation, replacement and deletion stay blocked.
+  File-mode changes remain a known low-impact limitation of that deprecated backend.
+
 - Task completion reminds agents that scratch logs are removed during finalization and
   only verified durable artifacts belong in the final handoff; normal scratch cleanup remains.
 

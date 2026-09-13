@@ -66,7 +66,7 @@ func TestConsultCmds(t *testing.T) {
 	cases := map[string][]string{
 		"claude": {"claude", "-p", "--permission-mode", "plan", "Q"},
 		"gemini": {"gemini", "--approval-mode", "plan", "-p", "Q"},
-		"codex":  {"codex", "exec", "-s", "read-only", "Q"},
+		"codex":  {"codex", "exec", "--enable", "use_legacy_landlock", "-s", "read-only", "Q"},
 		// grok locks read-only via a tool allowlist — NOT --permission-mode plan, which is a
 		// no-op in headless (only bypassPermissions takes effect via that flag).
 		"grok": {"grok", "--tools", "read_file,grep,list_dir", "-p", "Q"},
@@ -104,9 +104,9 @@ func TestConsultWrapperMatchesAdapters(t *testing.T) {
 	// form), so guard that each keeps its read-only sandbox flag — a drift here would silently
 	// un-sandbox a resumed peer.
 	for _, want := range []string{
-		"--permission-mode plan --resume",        // claude
-		"--approval-mode plan --resume",          // gemini
-		`resume "$id" -c sandbox_mode=read-only`, // codex
+		"--permission-mode plan --resume",                                     // claude
+		"--approval-mode plan --resume",                                       // gemini
+		`resume --enable use_legacy_landlock "$id" -c sandbox_mode=read-only`, // codex
 	} {
 		if !strings.Contains(ConsultWrapper(), want) {
 			t.Errorf("coop-consult resume invocation missing %q — a --continue may have lost its read-only flag", want)
