@@ -2,6 +2,7 @@ package loop
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -246,6 +247,103 @@ func TestCompletedToolsLeaveNoDecoderState(t *testing.T) {
 	feedActivityLines(t, claude, rec, lines)
 	if len(claude.tool.byID) != 0 {
 		t.Errorf("1000 completed tools left %d labels behind", len(claude.tool.byID))
+	}
+}
+
+func TestClaudeLargeImageResultClosesOnlyItsMatchingTool(t *testing.T) {
+	var out, tail, diagnostic bytes.Buffer
+	rec := &activityRecorder{}
+	d := newStreamDecoder(&out, &tail, "claude", "", "")
+	d.diagnostic = &diagnostic
+	d.setActivity(rec)
+	start := `{"type":"assistant","message":{"content":[` +
+		`{"type":"tool_use","id":"image-read","name":"Read","input":{"file_path":"capture.png"}},` +
+		`{"type":"tool_use","id":"still-open","name":"Bash","input":{"command":"make check"}}]}}`
+	_, _ = d.Write([]byte(start + "\n"))
+
+	imageData := strings.Repeat("A", 630648)
+	image := map[string]any{"type": "image", "source": map[string]any{
+		"type": "base64", "media_type": "image/png", "data": imageData,
+	}}
+	result := map[string]any{"type": "tool_result", "tool_use_id": "image-read", "content": []any{image}}
+	frame, err := json.Marshal(map[string]any{
+		"type": "user", "message": map[string]any{"content": []any{result}}, "tool_use_result": image,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frame) <= maxStreamEventBytes || len(frame) > maxClaudeStreamEventBytes {
+		t.Fatalf("Claude image fixture size = %d, want (%d, %d]", len(frame), maxStreamEventBytes, maxClaudeStreamEventBytes)
+	}
+	for len(frame) > 0 {
+		n := min(8191, len(frame))
+		_, _ = d.Write(frame[:n])
+		frame = frame[n:]
+	}
+	_, _ = d.Write([]byte("\n"))
+	d.flush()
+
+	for _, want := range []string{"tool_start:image-read", "tool_start:still-open", "tool_end:image-read"} {
+		if !slices.Contains(rec.events, want) {
+			t.Fatalf("large image lifecycle missing %q: %v", want, rec.events)
+		}
+	}
+	if slices.Contains(rec.events, "tool_end:still-open") {
+		t.Fatalf("large image result closed another tool: %v", rec.events)
+	}
+	if _, tracked := d.tool.byID["image-read"]; tracked {
+		t.Fatal("completed image tool label remained tracked")
+	}
+	if _, tracked := d.tool.byID["still-open"]; !tracked {
+		t.Fatal("unrelated open tool label was lost")
+	}
+	combined := out.String() + tail.String() + diagnostic.String()
+	if strings.Contains(combined, imageData[:256]) || strings.Contains(combined, "provider stream event exceeded") {
+		t.Fatalf("image bytes leaked or valid result was omitted: output bytes=%d", len(combined))
+	}
+}
+
+func TestClaudeLargeMalformedAndOverCapEventsDoNotCloseTools(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		frame []byte
+	}{
+		{
+			name: "malformed within Claude envelope",
+			frame: []byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"open","content":"` +
+				strings.Repeat("A", maxStreamEventBytes+1) + `"}]}`),
+		},
+		{
+			name:  "beyond Claude envelope",
+			frame: bytes.Repeat([]byte("x"), maxClaudeStreamEventBytes+1),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out, tail bytes.Buffer
+			rec := &activityRecorder{}
+			d := newStreamDecoder(&out, &tail, "claude", "", "")
+			d.setActivity(rec)
+			_, _ = d.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"open","name":"Read","input":{"file_path":"capture.png"}}]}}` + "\n"))
+			before := len(rec.events)
+			for len(tc.frame) > 0 {
+				n := min(8191, len(tc.frame))
+				_, _ = d.Write(tc.frame[:n])
+				tc.frame = tc.frame[n:]
+			}
+			_, _ = d.Write([]byte("\n"))
+			if len(rec.events) != before || slices.Contains(rec.events, "tool_end:open") {
+				t.Fatalf("invalid large event changed lifecycle: %v", rec.events)
+			}
+			// Dropping or rejecting one frame must not poison later ordinary decoding.
+			_, _ = d.Write([]byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"open","content":"ok"}]}}` + "\n"))
+			d.flush()
+			if !slices.Contains(rec.events, "tool_end:open") {
+				t.Fatalf("ordinary result after invalid large event did not close tool: %v", rec.events)
+			}
+			if len(out.String()+tail.String()) > 512 {
+				t.Fatalf("invalid large event produced unbounded output: %d bytes", len(out.String()+tail.String()))
+			}
+		})
 	}
 }
 

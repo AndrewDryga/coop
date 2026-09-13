@@ -47,6 +47,10 @@ type streamDecoder struct {
 func newStreamDecoder(out, tail io.Writer, agent, profile, root string) *streamDecoder {
 	d := &streamDecoder{agent: agent, profile: profile, root: root}
 	d.ndjsonDecoder = newNDJSONDecoder(out, tail, d.event)
+	// Claude can repeat one base64 image in both message.content and tool_use_result. Keep the
+	// complete typed event so its tool_use_id can close exactly one watchdog lifecycle, but bound
+	// that provider-specific envelope independently from every other stream.
+	d.maxEventBytes = maxClaudeStreamEventBytes
 	return d
 }
 
@@ -145,24 +149,26 @@ func newIterationStreamDecoder(agent string, out, tail, diagnostic io.Writer, pr
 // Writes, final-line flushing, and raw passthrough for diagnostics that are not JSON events.
 // Provider decoders only handle complete, valid JSON values.
 type ndjsonDecoder struct {
-	out          io.Writer
-	tail         io.Writer
-	diagnostic   io.Writer
-	buf          []byte
-	dropping     bool
-	malformed    bool
-	event        func(json.RawMessage)
-	beforeRaw    func()
-	activity     streamActivity
-	displayWidth func() int
-	identity     func(model string)
-	palette      ui.Palette
-	plainCopy    io.Writer
+	out           io.Writer
+	tail          io.Writer
+	diagnostic    io.Writer
+	buf           []byte
+	dropping      bool
+	malformed     bool
+	event         func(json.RawMessage)
+	beforeRaw     func()
+	activity      streamActivity
+	displayWidth  func() int
+	identity      func(model string)
+	palette       ui.Palette
+	plainCopy     io.Writer
+	maxEventBytes int
 }
 
 const (
-	maxStreamEventBytes     = 1 << 20
-	maxStreamNarrationBytes = 64 << 10
+	maxStreamEventBytes       = 1 << 20
+	maxClaudeStreamEventBytes = 24 << 20
+	maxStreamNarrationBytes   = 64 << 10
 	// maxStreamTrackedIDs bounds every per-attempt map keyed by a PROVIDER-SUPPLIED id — tool
 	// labels, shown-once markers. Those ids arrive on the box's own stdout, so unique ones are free
 	// to forge, and an uncapped map is host memory the box decides the size of. Past the cap a new
@@ -216,7 +222,7 @@ func (b *boundedLabels) mark(id string) bool {
 }
 
 func newNDJSONDecoder(out, tail io.Writer, event func(json.RawMessage)) *ndjsonDecoder {
-	return &ndjsonDecoder{out: out, tail: tail, event: event}
+	return &ndjsonDecoder{out: out, tail: tail, event: event, maxEventBytes: maxStreamEventBytes}
 }
 
 func (d *ndjsonDecoder) Write(p []byte) (int, error) {
@@ -248,13 +254,17 @@ func (d *ndjsonDecoder) Write(p []byte) (int, error) {
 }
 
 func (d *ndjsonDecoder) appendFragment(p []byte) {
-	if len(d.buf)+len(p) <= maxStreamEventBytes {
+	limit := d.maxEventBytes
+	if limit <= 0 {
+		limit = maxStreamEventBytes
+	}
+	if len(d.buf)+len(p) <= limit {
 		d.buf = append(d.buf, p...)
 		return
 	}
 	d.buf = nil
 	d.dropping = true
-	d.reportStreamProblem("provider stream event exceeded the size limit")
+	d.reportStreamProblem("provider stream event exceeded the safe size limit and was omitted")
 }
 
 // flush renders any trailing line left without a newline. A well-formed NDJSON stream ends
