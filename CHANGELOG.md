@@ -93,6 +93,9 @@
 - Secret scans keep independent provider, connection-URL, and assigned-value findings that share
   a line, including multiple different credentials found by the same detector.
 
+- `coop check-secrets` reads candidates through a bounded repository-rooted descriptor, skipping
+  symlinks and special files instead of following them outside the project.
+
 - `coop net forget` now uses the approved short reset explanation instead of printing the
   saved approval's mode and rule ledger.
 

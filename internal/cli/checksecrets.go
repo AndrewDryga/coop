@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/hostsurface"
@@ -255,6 +257,11 @@ func scanVisibleTree(repo string, includeIgnored bool) (treeScan, error) {
 		return treeScan{}, err
 	}
 	scan := treeScan{git: usedGit}
+	repoRoot, err := os.OpenRoot(repo)
+	if err != nil {
+		return treeScan{}, err
+	}
+	defer repoRoot.Close()
 	shadowed := box.NewShadowDecider(repo)
 	committable := commitCandidateSet(repo)
 	for _, rel := range rels {
@@ -266,7 +273,7 @@ func scanVisibleTree(repo string, includeIgnored bool) (treeScan, error) {
 		if hidden && !committable[rel] {
 			continue
 		}
-		content, status := readScannable(filepath.Join(repo, filepath.FromSlash(rel)))
+		content, status := readScannable(repoRoot, filepath.FromSlash(rel))
 		switch status.kind {
 		case scanUnreadable:
 			scan.unreadable = append(scan.unreadable, fmt.Sprintf("%s could not be read: %s.", rel, status.cause))
@@ -401,11 +408,26 @@ const (
 // readScannable returns a file's text for scanning. An oversized or binary file is skipped on
 // purpose and quietly; anything coop failed to open or read comes back as unreadable, with the
 // OS cause, so the command can say the scan did not finish.
-func readScannable(path string) (string, scanStatus) {
-	fi, err := os.Stat(path)
+func readScannable(root *os.Root, path string) (string, scanStatus) {
+	entry, err := root.Lstat(path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		return "", scanStatus{kind: scanSkipped} // deleted between listing and read; nothing to judge
+		return "", scanStatus{kind: scanSkipped}
+	case err != nil:
+		return "", scanStatus{kind: scanUnreadable, cause: osCause(err)}
+	case entry.Mode()&os.ModeSymlink != 0:
+		return "", scanStatus{kind: scanSkipped}
+	}
+	file, err := root.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	switch {
+	case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ELOOP):
+		return "", scanStatus{kind: scanSkipped} // missing or symlink: no regular candidate content
+	case err != nil:
+		return "", scanStatus{kind: scanUnreadable, cause: osCause(err)}
+	}
+	defer file.Close()
+	fi, err := file.Stat()
+	switch {
 	case err != nil:
 		return "", scanStatus{kind: scanUnreadable, cause: osCause(err)}
 	case !fi.Mode().IsRegular():
@@ -413,9 +435,12 @@ func readScannable(path string) (string, scanStatus) {
 	case fi.Size() > maxScanBytes:
 		return "", scanStatus{kind: scanSkipped}
 	}
-	data, err := os.ReadFile(path)
+	data, err := io.ReadAll(io.LimitReader(file, int64(maxScanBytes)+1))
 	if err != nil {
 		return "", scanStatus{kind: scanUnreadable, cause: osCause(err)}
+	}
+	if len(data) > maxScanBytes {
+		return "", scanStatus{kind: scanSkipped}
 	}
 	if bytes.IndexByte(data, 0) >= 0 {
 		return "", scanStatus{kind: scanSkipped}

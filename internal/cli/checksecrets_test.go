@@ -218,15 +218,41 @@ func TestScanVisibleTreeScansAgentByDefault(t *testing.T) {
 
 func TestReadScannable(t *testing.T) {
 	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
 	text := filepath.Join(dir, "a.txt")
 	os.WriteFile(text, []byte("plain text\n"), 0o644)
-	if s, status := readScannable(text); status.kind != scanRead || s == "" {
+	if s, status := readScannable(root, "a.txt"); status.kind != scanRead || s == "" {
 		t.Errorf("text file should be scannable, got kind=%v", status.kind)
 	}
 	bin := filepath.Join(dir, "b.bin")
 	os.WriteFile(bin, []byte("PNG\x00\x01\x02binary"), 0o644)
-	if _, status := readScannable(bin); status.kind != scanSkipped {
+	if _, status := readScannable(root, "b.bin"); status.kind != scanSkipped {
 		t.Errorf("binary file (NUL byte) should be skipped, got kind=%v", status.kind)
+	}
+	large := filepath.Join(dir, "large.txt")
+	if err := os.WriteFile(large, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(large, maxScanBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	if _, status := readScannable(root, "large.txt"); status.kind != scanSkipped {
+		t.Errorf("oversized file should be skipped, got kind=%v", status.kind)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("ghp_abcdefghijklmnopqrstuvwxyz0123456789\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "outside-link")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	if content, status := readScannable(root, "outside-link"); status.kind != scanSkipped || content != "" {
+		t.Errorf("outside symlink should be skipped, got status=%+v content=%q", status, content)
 	}
 }
 
