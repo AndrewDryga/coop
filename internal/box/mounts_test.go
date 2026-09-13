@@ -101,8 +101,8 @@ func TestComputeMounts(t *testing.T) {
 }
 
 // TestComputeMountsCoopIgnore covers the repo-local .coopignore extension: basename
-// patterns (any depth), repo-relative path patterns (exact + glob, not matched
-// elsewhere), a directory entry, comments/blanks, and that a template still wins.
+// patterns (any depth), repo-relative path patterns (exact + glob), relocation-safe exact
+// basenames, a directory entry, comments/blanks, and that a template still wins.
 func TestComputeMountsCoopIgnore(t *testing.T) {
 	root := t.TempDir()
 	write := func(rel, body string) {
@@ -132,7 +132,7 @@ func TestComputeMountsCoopIgnore(t *testing.T) {
 
 	for _, target := range []string{
 		"/workspace/prod.yml", "/workspace/nested/prod.yml",
-		"/workspace/config/creds.yaml", "/workspace/data/big.csv",
+		"/workspace/config/creds.yaml", "/workspace/other/creds.yaml", "/workspace/data/big.csv",
 	} {
 		if !shadowed(target) {
 			t.Errorf("%s should be shadowed by .coopignore", target)
@@ -145,7 +145,6 @@ func TestComputeMountsCoopIgnore(t *testing.T) {
 		t.Error("vault/ contents must not be enumerated (dir is pruned)")
 	}
 	for _, target := range []string{
-		"/workspace/other/creds.yaml",          // path pattern is config/creds.yaml only
 		"/workspace/config/creds.yaml.example", // template stays visible
 		"/workspace/src/app.js",
 	} {
@@ -156,8 +155,46 @@ func TestComputeMountsCoopIgnore(t *testing.T) {
 	if policy := find(mounts, "/workspace/"+CoopIgnoreFile); policy == nil || policy.Kind != Policy || !policy.RO || policy.Source != filepath.Join(root, CoopIgnoreFile) {
 		t.Errorf("%s must be visible through a read-only policy mount: %+v", CoopIgnoreFile, policy)
 	}
-	if got := ShadowCount(mounts); got != 5 {
-		t.Errorf("ShadowCount = %d, want only the 5 hidden paths", got)
+	if got := ShadowCount(mounts); got != 6 {
+		t.Errorf("ShadowCount = %d, want only the 6 hidden paths", got)
+	}
+}
+
+func TestCoopIgnorePathSurvivesParentRename(t *testing.T) {
+	repo := t.TempDir()
+	write := func(rel, body string) {
+		path := filepath.Join(repo, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(CoopIgnoreFile, "private/config.txt\n")
+	write("private/config.txt", "hidden\n")
+	write("main.go", "package main\n")
+
+	if err := os.Rename(filepath.Join(repo, "private"), filepath.Join(repo, "moved")); err != nil {
+		t.Fatal(err)
+	}
+	mounts, err := ComputeMounts(repo, "/workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if find(mounts, "/workspace/moved/config.txt") == nil {
+		t.Error("renamed hidden file would be visible on the next launch")
+	}
+	ctx, cleanup, err := stageBuildContext(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if _, err := os.Stat(filepath.Join(ctx, "moved", "config.txt")); !os.IsNotExist(err) {
+		t.Errorf("renamed hidden file entered the next build context: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(ctx, "main.go")); err != nil {
+		t.Errorf("ordinary source was not staged: %v", err)
 	}
 }
 

@@ -277,9 +277,12 @@ your home dir, SSH keys, the rest of the disk — simply isn't in the container.
 
 ```gitignore
 prod.yml                 # basename — matched at any depth
-config/credentials.yaml  # a slash makes it a repo-relative path
+config/credentials.yaml  # exact path; its final name stays hidden if the parent moves
 vault/                   # a directory — its contents are hidden whole
 ```
+
+Exact path entries keep their final file or directory name hidden throughout that policy's scope.
+This prevents a box from exposing the same secret later by renaming its parent directory.
 
 **The boundary is `.coopignore`, not `.gitignore`.** A normal `coop run`/`loop`/`shell`
 binds your *whole* working tree, so a gitignored-but-present file (e.g. a

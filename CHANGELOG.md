@@ -30,6 +30,9 @@
 - `coop down --delete-volumes` now deletes the exact runtime volumes shown for confirmation.
   Later Compose-file edits cannot add an unreviewed deletion target.
 
+- Exact `.coopignore` paths keep their final name protected after a parent directory is renamed,
+  including on later box launches and project builds.
+
 - Claude image tool results now keep their matching watchdog lifecycle within a bounded,
   provider-specific stream envelope. Large base64 bodies remain hidden, while malformed or
   over-limit events cannot close tools or manufacture activity. Unknown, unnamed-start, and

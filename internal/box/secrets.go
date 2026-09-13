@@ -67,7 +67,8 @@ const CoopIgnoreFile = ".coopignore"
 // UserGlobs are the extra shadow patterns parsed from a repo's .coopignore, split by
 // whether they target a basename (no slash, matched at any depth, like SecretGlobs) or
 // a repo-relative path (contains a slash, matched against the path with filepath.Match,
-// so `config/*.yaml` and `config/creds.yaml` work; there is no `**`).
+// so `config/*.yaml` and `config/creds.yaml` work; there is no `**`). Exact path rules also
+// retain their final basename so moving a protected file's parent cannot expose it later.
 type UserGlobs struct {
 	Base []string
 	Path []string
@@ -98,6 +99,9 @@ func LoadUserGlobs(repo string) UserGlobs {
 		}
 		if strings.Contains(line, "/") {
 			g.Path = append(g.Path, filepath.ToSlash(line))
+			if !strings.ContainsAny(line, "*?[") {
+				g.Base = append(g.Base, filepath.Base(line))
+			}
 		} else {
 			g.Base = append(g.Base, line)
 		}

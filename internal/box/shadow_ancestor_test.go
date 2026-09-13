@@ -44,8 +44,8 @@ func TestShadowDeciderHiddenAncestors(t *testing.T) {
 			if tc.policy != ".coopignore" && shadowed("private/notes.txt") {
 				t.Error("nested policy escaped its subtree")
 			}
-			if tc.rules == "config/private/\n" && shadowed(filepath.ToSlash(filepath.Join(filepath.Dir(tc.policy), "other/config/private/notes.txt"))) {
-				t.Error("path rule lost its directory-relative anchor")
+			if tc.rules == "config/private/\n" && !shadowed(filepath.ToSlash(filepath.Join(filepath.Dir(tc.policy), "other/config/private/notes.txt"))) {
+				t.Error("exact path rule lost relocation-safe final directory protection")
 			}
 		})
 	}
