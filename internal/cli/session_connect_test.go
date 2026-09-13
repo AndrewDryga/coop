@@ -54,6 +54,15 @@ func shortHome(t *testing.T) string {
 	return real
 }
 
+func fakeSessionRuntime(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "runtime")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 // fakeService answers /healthz and /readyz on a real Unix socket, the way the local session
 // service does — so the autostart decision is exercised against an actual listening socket
 // instead of a stub of the probe. ready=false is a service that is up but cannot take sessions.
@@ -156,6 +165,7 @@ func TestSessionConnectStartsAndOwnsAService(t *testing.T) {
 	writeConnectPolicy(t, policy)
 
 	cfg := signedInConfig(t)
+	cfg.RuntimeName = fakeSessionRuntime(t)
 	var owned *ownedSessionService
 	out := captureStderr(t, func() {
 		var err error
@@ -222,6 +232,7 @@ func TestSessionConnectResolvesARaceThroughTheStorageLock(t *testing.T) {
 	writeConnectPolicy(t, policy)
 
 	cfg := signedInConfig(t)
+	cfg.RuntimeName = fakeSessionRuntime(t)
 	winner, err := ensureLocalSessionService(context.Background(), cfg, state, policy, socket)
 	if err != nil || winner == nil {
 		t.Fatalf("first connect = (%v, %v)", winner, err)
