@@ -8,6 +8,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/secretscan"
 )
 
 func TestComposeFor(t *testing.T) {
@@ -57,5 +58,12 @@ func TestScaffoldedComposeValidates(t *testing.T) {
 	}
 	if err := box.ValidateComposeFile(path, repo, false); err != nil {
 		t.Fatalf("coop's own scaffolded compose file must pass validation: %v", err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findings := secretscan.ScanFile(project.DefaultCompose, string(content)); len(findings) != 0 {
+		t.Fatalf("coop's own scaffolded compose file must pass its secret scanner: %+v", findings)
 	}
 }

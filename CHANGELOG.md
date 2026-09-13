@@ -84,6 +84,9 @@
 - Default remote-session policy discovery now follows `XDG_CONFIG_HOME` instead of always
   reading `~/.config/coop/session-policies.yaml`.
 
+- The generated Postgres service uses an explicit development password that passes Coop's own
+  secret scanner, and its generated connection hint matches that value.
+
 - `coop net forget` now uses the approved short reset explanation instead of printing the
   saved approval's mode and rule ledger.
 

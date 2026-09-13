@@ -29,7 +29,7 @@ var composeCatalog = map[string]composeUnit{
     image: postgres:18
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: dev-password
       POSTGRES_DB: app_dev
     volumes: ["pgdata:/var/lib/postgresql"]
     healthcheck:
@@ -39,7 +39,7 @@ var composeCatalog = map[string]composeUnit{
       retries: 15
 `,
 		volume: "pgdata",
-		note:   "# Postgres in the box:\n# DATABASE_URL=postgres://postgres:postgres@db:5432/app_dev",
+		note:   "# Postgres in the box:\n# DATABASE_URL=postgres://postgres:dev-password@db:5432/app_dev",
 	},
 	"redis": {
 		service: "redis",
