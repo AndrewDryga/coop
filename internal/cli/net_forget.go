@@ -82,6 +82,7 @@ func (a *app) cmdNetForget(args []string) (int, error) {
 		return 0, nil
 	}
 	err = confirmNetForget(context.Background(), review, os.Stderr, func() bool {
+		fmt.Fprintln(os.Stderr)
 		return ui.Confirm(netForgetPrompt, false)
 	})
 	declined := errors.Is(err, errNetDeclined)
@@ -108,22 +109,15 @@ var errNetDeclined = errors.New("declined")
 // The question and the answer carry what withdrawing costs — the next run waits
 // for a fresh approval — so the review above them can be the approval itself.
 const (
-	netForgetTitle     = "Withdraw this project's network approval?"
-	netForgetPrompt    = "Withdraw this approval?"
-	netForgetForgotten = "Network approval withdrawn"
-	netForgetCancelled = "Cancelled. Network approval was kept."
+	netForgetTitle     = "Reset this project's network approvals?"
+	netForgetPrompt    = "Reset approvals?"
+	netForgetForgotten = "Network approvals reset"
+	netForgetCancelled = "Cancelled. Network approvals were kept."
 	netForgetNothing   = "No network approval is saved for this project."
-	netForgetRestore   = "Restore approval with:"
+	netForgetRestore   = "To restore approval:"
 	netForgetGone      = "The project folder no longer exists."
+	netForgetEffect    = "This only resets the approvals; it does not change the settings in .agent/project.yaml."
 )
-
-// netForgetConsequences is what withdrawing does, grouped the way a person
-// checks it: what does not change, what stops, and what is kept.
-var netForgetConsequences = []string{
-	"The settings in .agent/project.yaml are unchanged.",
-	"New runs will wait for you to approve network access again.",
-	"Existing boxes, recorded runs, and host setup will be kept.",
-}
 
 // netForgetReview is what the confirmation needs: the project, the approval it
 // would remove, and one commit that consumes it.
@@ -142,23 +136,13 @@ func confirmNetForget(ctx context.Context, review netForgetReview, out io.Writer
 	var b strings.Builder
 	p := ui.For(os.Stderr)
 	fmt.Fprintf(&b, "%s\n", p.Bold(netForgetTitle))
-	// What is being withdrawn: the approved mode, and the rules it granted when
-	// it granted any. The same words every other network view uses for a mode.
-	fmt.Fprintf(&b, "\n  Approved: %s\n", netModeWord(approval.Posture))
-	for _, rule := range approval.Envelope {
-		fmt.Fprintf(&b, "    %s\n", netRuleText(rule))
-	}
 	// A checkout that is gone is why this command takes a path at all: say so
-	// before the consequences, since the usual "edit the file instead" does not
+	// before the effect, since the usual "edit the file instead" does not
 	// apply to a project that no longer has one.
 	if review.Gone() {
-		fmt.Fprintf(&b, "\n  %s\n", netForgetGone)
+		fmt.Fprintf(&b, "\n%s\n", netForgetGone)
 	}
-	fmt.Fprintln(&b)
-	for _, line := range netForgetConsequences {
-		fmt.Fprintf(&b, "  - %s\n", line)
-	}
-	fmt.Fprintf(&b, "\n%s\n  %s\n\n", netForgetRestore, p.Cyan("coop net approve"))
+	fmt.Fprintf(&b, "\n%s\n\n%s\n  %s\n", netForgetEffect, netForgetRestore, p.Cyan("coop net approve"))
 	if _, err := io.WriteString(out, b.String()); err != nil {
 		return err
 	}

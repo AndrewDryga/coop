@@ -45,10 +45,9 @@ func TestForgetProjectFlagParsing(t *testing.T) {
 	}
 }
 
-// The preview names the blast radius before the question: the approval that
-// goes, and the evidence that does not. Its exact bytes are pinned by
-// TestApprovedNetForget; this is the contract behind them.
-func TestForgetPreviewShowsWhatGoesAndWhatStays(t *testing.T) {
+// The preview says what reset means without dumping the approval's internal
+// mode/rule ledger. Its exact bytes are pinned by TestApprovedNetForget.
+func TestForgetPreviewUsesTheShortResetExplanation(t *testing.T) {
 	review := &fakeForgetReview{approval: &networkstate.Approval{Posture: egress.Filtered,
 		Envelope: []egress.Rule{approvalRule("old.example"), approvalRule("other.example")}}}
 	var out bytes.Buffer
@@ -56,10 +55,15 @@ func TestForgetPreviewShowsWhatGoesAndWhatStays(t *testing.T) {
 		t.Fatalf("confirmNetForget: %v", err)
 	}
 	text := out.String()
-	for _, want := range append([]string{netForgetTitle, "  Approved: Filtered",
-		"    old.example:443 · TLS", "    other.example:443 · TLS", netForgetRestore}, netForgetConsequences...) {
+	for _, want := range []string{netForgetTitle,
+		"This only resets the approvals; it does not change the settings in .agent/project.yaml.", netForgetRestore} {
 		if !strings.Contains(text, want) {
 			t.Errorf("forget preview is missing %q:\n%s", want, text)
+		}
+	}
+	for _, forbidden := range []string{"Approved:", "old.example", "other.example", "  - "} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("forget preview contains %q:\n%s", forbidden, text)
 		}
 	}
 	// Withdrawing can be undone by approving again, so the preview must not
@@ -78,7 +82,7 @@ func TestForgetPreviewSaysWhenTheProjectItselfIsGone(t *testing.T) {
 	if err := confirmNetForget(context.Background(), review, &out, func() bool { return true }); err != nil {
 		t.Fatalf("confirmNetForget: %v", err)
 	}
-	for _, want := range []string{netForgetGone, "  Approved: Offline"} {
+	for _, want := range []string{netForgetGone, "This only resets the approvals"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("gone-project preview is missing %q:\n%s", want, out.String())
 		}

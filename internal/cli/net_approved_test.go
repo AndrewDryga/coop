@@ -507,7 +507,7 @@ func TestApprovedNetForget(t *testing.T) {
 	assertApprovedOutput(t, "25b-net-forget-decline", b.String())
 
 	// The two outcomes are fixed copy: no error marker for a declined answer.
-	for _, want := range []string{"Network approval withdrawn", "Cancelled. Network approval was kept.",
+	for _, want := range []string{"Network approvals reset", "Cancelled. Network approvals were kept.",
 		"No network approval is saved for this project."} {
 		if want == "" {
 			t.Error("empty outcome copy")

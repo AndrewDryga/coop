@@ -84,6 +84,9 @@
 - Default remote-session policy discovery now follows `XDG_CONFIG_HOME` instead of always
   reading `~/.config/coop/session-policies.yaml`.
 
+- `coop net forget` now uses the approved short reset explanation instead of printing the
+  saved approval's mode and rule ledger.
+
 - Task completion reminds agents that scratch logs are removed during finalization and
   only verified durable artifacts belong in the final handoff; normal scratch cleanup remains.
 

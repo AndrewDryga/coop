@@ -1,13 +1,6 @@
-Withdraw this project's network approval?
+Reset this project's network approvals?
 
-  Approved: Filtered
-    github.com:443 · TLS
-    registry.npmjs.org:443 · TLS
+This only resets the approvals; it does not change the settings in .agent/project.yaml.
 
-  - The settings in .agent/project.yaml are unchanged.
-  - New runs will wait for you to approve network access again.
-  - Existing boxes, recorded runs, and host setup will be kept.
-
-Restore approval with:
+To restore approval:
   coop net approve
-
