@@ -87,6 +87,9 @@
 - The generated Postgres service uses an explicit development password that passes Coop's own
   secret scanner, and its generated connection hint matches that value.
 
+- Structured task blocking preserves any edited decision draft, even when its question placeholder
+  remains; only the exact untouched template can be replaced.
+
 - `coop net forget` now uses the approved short reset explanation instead of printing the
   saved approval's mode and rule ledger.
 

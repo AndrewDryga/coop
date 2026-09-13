@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,6 +77,27 @@ func TestBlockRefusesToOverwriteAnExistingDecision(t *testing.T) {
 	}
 	if readFile(t, dec) != answered {
 		t.Errorf("the existing decision was modified:\n%s", readFile(t, dec))
+	}
+}
+
+func TestBlockRefusesToOverwriteAnEditedScaffold(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, StateTodo, "picked", "task.md"), "# Picked\n")
+	if code, err := tasksFolderBlock(root, []string{"picked"}); code != 0 || err != nil {
+		t.Fatalf("seed scaffold = %d, %v", code, err)
+	}
+	dec := filepath.Join(root, StateBlocked, "picked", "decision.md")
+	edited := strings.Replace(readFile(t, dec), "- **A — <name>:** <consequence>", "- **A — Postgres:** familiar", 1)
+	writeTaskFile(t, dec, edited)
+
+	code, err := tasksFolderBlock(root, []string{
+		"picked", "--question", "Which database?", "--option", "A — SQLite", "--recommendation", "A",
+	})
+	if code != 1 || !errors.Is(err, errDecisionAlreadyWritten) {
+		t.Fatalf("edited scaffold request = %d, %v; want existing-decision refusal", code, err)
+	}
+	if got := readFile(t, dec); got != edited {
+		t.Errorf("edited scaffold was overwritten:\n%s", got)
 	}
 }
 

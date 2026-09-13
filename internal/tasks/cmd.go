@@ -1712,18 +1712,7 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 			return code, fmt.Errorf("%s is blocked, but its decision request was not saved: %w", t.ID, err)
 		}
 	} else if !fileExists(dec) {
-		stub := "<!-- Explain the choice and your recommendation. A human supplies the answer.\n" +
-			"     To save the answer and return this task to todo:\n" +
-			"     coop tasks unblock " + t.ID + " \"<answer>\" -->\n\n" +
-			"# Decision: " + t.Title + "?\n\n" +
-			"**Blocks:** this task (" + t.ID + ").\n\n" +
-			"**The decision:** " + decisionScaffoldMarker + "\n\n" +
-			"**Options:**\n\n" +
-			"- **A — <name>:** <consequence>\n" +
-			"- **B — <name>:** <consequence>\n\n" +
-			"**Recommendation:** <your choice and why>\n\n" +
-			"---\n\n" +
-			decisionResolutionLine
+		stub := renderDecisionScaffold(t.ID, t.Title)
 		if err := os.WriteFile(dec, []byte(stub), 0o644); err != nil {
 			return -1, err
 		}
@@ -1750,6 +1739,21 @@ const decisionScaffoldMarker = "<what needs to be chosen and why you cannot safe
 // human writes the answer, and the command that saves it for them.
 const decisionResolutionLine = "**Resolution:** <!-- Human: write your answer here, or use coop tasks unblock. -->\n"
 
+func renderDecisionScaffold(id, title string) string {
+	return "<!-- Explain the choice and your recommendation. A human supplies the answer.\n" +
+		"     To save the answer and return this task to todo:\n" +
+		"     coop tasks unblock " + id + " \"<answer>\" -->\n\n" +
+		"# Decision: " + title + "?\n\n" +
+		"**Blocks:** this task (" + id + ").\n\n" +
+		"**The decision:** " + decisionScaffoldMarker + "\n\n" +
+		"**Options:**\n\n" +
+		"- **A — <name>:** <consequence>\n" +
+		"- **B — <name>:** <consequence>\n\n" +
+		"**Recommendation:** <your choice and why>\n\n" +
+		"---\n\n" +
+		decisionResolutionLine
+}
+
 // errDecisionAlreadyWritten is the refusal that protects a decision somebody already wrote — a
 // human's answer, or an earlier agent's question. It is the caller's to resolve, not a failure.
 var errDecisionAlreadyWritten = errors.New("the task already carries a decision somebody wrote")
@@ -1759,14 +1763,14 @@ var errDecisionAlreadyWritten = errors.New("the task already carries a decision 
 // after a partial failure completes), and a DIFFERENT one is refused with the file to edit.
 func saveRequestedDecision(taskDir, id, title string, d Decision) error {
 	existing, err := os.ReadFile(filepath.Join(taskDir, "decision.md"))
+	rendered := RenderDecision(id, title, d)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:
 		return err
-	case !strings.Contains(string(existing), decisionScaffoldMarker):
-		if string(existing) == RenderDecision(id, title, d) {
-			return nil // the same request again — already saved, nothing to do
-		}
+	case string(existing) == rendered:
+		return nil // the same request again — already saved, nothing to do
+	case string(existing) != renderDecisionScaffold(id, title):
 		return fmt.Errorf("%w — edit %s instead", errDecisionAlreadyWritten, displayPath(filepath.Join(taskDir, "decision.md")))
 	}
 	return WriteDecision(taskDir, id, title, d)
