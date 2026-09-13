@@ -775,6 +775,16 @@ func TestMetadata(t *testing.T) {
 		if primaryEnvCount != 1 {
 			t.Errorf("%s primary AuthMarker key %q appears %d times in CredentialEnvKeys", name, authEnv, primaryEnvCount)
 		}
+		host := a.HostCredential()
+		hostDeclared := host.Declared()
+		if hostDeclared {
+			if !host.Valid() || !seen[host.EnvKey] {
+				t.Errorf("%s HostCredential is malformed or uses an undeclared credential key", name)
+			}
+			if name != "gemini" {
+				t.Errorf("%s unexpectedly declares a host credential", name)
+			}
+		}
 		broker := a.CredentialBroker()
 		if broker != (CredentialBrokerSpec{}) {
 			if !broker.Valid() || !seen[broker.CredentialEnv] {
@@ -1500,7 +1510,7 @@ func TestGeminiMarkerCredentialSelection(t *testing.T) {
 	}
 	dir := t.TempDir()
 	for authType, want := range map[string]bool{
-		"gemini-api-key": true,
+		"gemini-api-key": false,
 		"oauth-personal": true,
 		"vertex-ai":      false,
 		"unknown":        false,
@@ -1523,6 +1533,57 @@ func TestGeminiMarkerCredentialSelection(t *testing.T) {
 	}
 	if selector.MarkerProvidesSelectedCredential(dir) {
 		t.Error("missing settings granted marker authority")
+	}
+}
+
+func TestGeminiHostCredentialSelectsAPIKeyWithoutClobberingSettings(t *testing.T) {
+	gemini, _ := Get("gemini")
+	spec := gemini.HostCredential()
+	if !spec.Valid() || spec.EnvKey != "GEMINI_API_KEY" || spec.File != "api-key" {
+		t.Fatalf("Gemini host credential = %#v", spec)
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(path, []byte(`{"theme":"dark","security":{"auth":{"selectedType":"oauth-personal","other":true}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := spec.Activate(dir); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	security := settings["security"].(map[string]any)
+	auth := security["auth"].(map[string]any)
+	if settings["theme"] != "dark" || auth["other"] != true || auth["selectedType"] != "gemini-api-key" {
+		t.Fatalf("Gemini settings were clobbered: %s", data)
+	}
+	if err := os.WriteFile(path, []byte(`{`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := spec.Activate(dir); err == nil {
+		t.Fatal("malformed Gemini settings were overwritten")
+	}
+	outside := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(outside, []byte(`{"theme":"outside"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := spec.Activate(dir); err == nil {
+		t.Fatal("linked Gemini settings were followed")
+	}
+	if data, err := os.ReadFile(outside); err != nil || string(data) != `{"theme":"outside"}` {
+		t.Fatalf("linked settings target changed: %q, %v", data, err)
 	}
 }
 
@@ -1646,8 +1707,17 @@ func TestStoredCredentialStatus(t *testing.T) {
 	}
 
 	gemini, _ := Get("gemini")
-	if got := gemini.StoredCredentialStatus(filepath.Join(root, "gemini"), now); got != StoredCredentialUnknown {
-		t.Errorf("gemini stored credential status = %v, want unknown", got)
+	geminiDir := filepath.Join(root, "gemini")
+	if got := gemini.StoredCredentialStatus(geminiDir, now); got != StoredCredentialReauthRequired {
+		t.Errorf("Gemini marker without a selector = %v, want reauth", got)
+	}
+	mustWrite(t, filepath.Join(geminiDir, "settings.json"), `{"security":{"auth":{"selectedType":"oauth-personal"}}}`)
+	if got := gemini.StoredCredentialStatus(geminiDir, now); got != StoredCredentialUnknown {
+		t.Errorf("Gemini OAuth stored credential status = %v, want unknown", got)
+	}
+	mustWrite(t, filepath.Join(geminiDir, "settings.json"), `{"security":{"auth":{"selectedType":"gemini-api-key"}}}`)
+	if got := gemini.StoredCredentialStatus(geminiDir, now); got != StoredCredentialReauthRequired {
+		t.Errorf("Gemini native API-key status = %v, want reauth", got)
 	}
 }
 

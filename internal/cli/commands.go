@@ -645,6 +645,8 @@ func validProfileName(name string) bool {
 	return !strings.ContainsAny(name, "/\\")
 }
 
+var readLoginSecret = ui.ReadSecret
+
 // loginTo runs an agent's sign-in flow in the box; its token persists in the agent's
 // config dir for the chosen credential. Shared by `coop login <provider>[@<account>]` and
 // `coop <provider>[@<account>] login`.
@@ -686,6 +688,10 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	}
 	a.cfg.SetActiveProfile(tool, profile)
 	loginHandoff(tool, profile)
+	hostCredential := ag.HostCredential()
+	if hostCredential.Declared() {
+		return a.loginWithHostCredential(ag, profile)
+	}
 	previousLogin := a.loginProvider
 	a.loginProvider = tool
 	defer func() { a.loginProvider = previousLogin }()
@@ -702,6 +708,26 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	// Exiting zero is not proof: the provider may have been dismissed without writing a usable
 	// credential, and a green ✓ over that would send the user into a failing run.
 	loginResult(tool, profile, box.ProfileCredentialReady(a.cfg, tool, profile, time.Now()))
+	return 0, nil
+}
+
+func (a *app) loginWithHostCredential(ag agents.Agent, profile string) (int, error) {
+	spec := ag.HostCredential()
+	if !spec.Valid() {
+		return -1, fmt.Errorf("%s has an invalid host credential declaration", ag.DisplayName())
+	}
+	if spec.Instructions != "" {
+		ui.Note("%s\n", spec.Instructions)
+	}
+	secret, err := readLoginSecret(spec.Prompt)
+	if err != nil {
+		return -1, err
+	}
+	defer clear(secret)
+	if err := box.SaveHostCredential(a.cfg, ag, profile, secret); err != nil {
+		return -1, err
+	}
+	loginResult(ag.Name(), profile, box.ProfileCredentialReady(a.cfg, ag.Name(), profile, time.Now()))
 	return 0, nil
 }
 

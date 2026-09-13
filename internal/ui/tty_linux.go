@@ -3,6 +3,8 @@
 package ui
 
 import (
+	"fmt"
+	"os"
 	"syscall"
 	"unsafe"
 )
@@ -24,4 +26,25 @@ func termWidthFd(fd uintptr) int {
 		return 0
 	}
 	return int(ws.Col)
+}
+
+func disableTerminalEcho(f *os.File) (func() error, error) {
+	var old syscall.Termios
+	_, _, errno := syscall.Syscall6(syscall.SYS_IOCTL, f.Fd(), syscall.TCGETS, uintptr(unsafe.Pointer(&old)), 0, 0, 0)
+	if errno != 0 {
+		return nil, errno
+	}
+	next := old
+	next.Lflag &^= syscall.ECHO
+	_, _, errno = syscall.Syscall6(syscall.SYS_IOCTL, f.Fd(), syscall.TCSETS, uintptr(unsafe.Pointer(&next)), 0, 0, 0)
+	if errno != 0 {
+		return nil, errno
+	}
+	return func() error {
+		_, _, errno := syscall.Syscall6(syscall.SYS_IOCTL, f.Fd(), syscall.TCSETS, uintptr(unsafe.Pointer(&old)), 0, 0, 0)
+		if errno != 0 {
+			return fmt.Errorf("restore terminal attributes: %w", errno)
+		}
+		return nil
+	}, nil
 }

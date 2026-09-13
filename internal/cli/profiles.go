@@ -177,6 +177,10 @@ func (a *app) accountBlock(agent string) accountBlock {
 func (a *app) profileIssue(agent, p string) string {
 	switch {
 	case !box.ProfileAuthed(a.cfg, agent, p):
+		if ag, ok := agents.Get(agent); ok && box.ProfileMarkerPresent(a.cfg, agent, p) &&
+			ag.StoredCredentialStatus(a.cfg.AgentProfileDir(agent, p), time.Now()) == agents.StoredCredentialReauthRequired {
+			return "Sign in again"
+		}
 		return "Not signed in"
 	case !box.ProfileCredentialReady(a.cfg, agent, p, time.Now()):
 		return "Sign in again"
@@ -187,7 +191,8 @@ func (a *app) profileIssue(agent, p string) string {
 // envBackedAccount reports whether this account's authority is the env file rather than a stored
 // login: it is signed in, but has no marker file of its own.
 func (a *app) envBackedAccount(agent, profile string) bool {
-	return box.ProfileAuthed(a.cfg, agent, profile) && !box.ProfileMarkerPresent(a.cfg, agent, profile)
+	return box.ProfileAuthed(a.cfg, agent, profile) && !box.ProfileMarkerPresent(a.cfg, agent, profile) &&
+		!box.ProfileHostCredentialPresent(a.cfg, agent, profile)
 }
 
 // credentialAge renders how long ago agent's profile token material last changed ("19 days ago"),
@@ -369,7 +374,8 @@ func warnRows(headline string, rows ...[2]string) {
 // that's gone). A preset ladder that still names the account is harmless: expandLadder skips a
 // target that isn't signed in.
 func (a *app) removeProfile(agent, name string, yes bool) (int, error) {
-	if _, ok := agents.Get(agent); !ok {
+	ag, ok := agents.Get(agent)
+	if !ok {
 		return 2, unknownAgentErr(agent, "coop credentials")
 	}
 	if err := a.requireProfile(agent, name); err != nil {
@@ -400,7 +406,9 @@ func (a *app) removeProfile(agent, name string, yes bool) (int, error) {
 	if !yes {
 		ui.Note("") // the Enter that answered the prompt ended its line; keep the result a paragraph
 	}
-	if err := os.RemoveAll(dir); err != nil {
+	secretErr := box.RemoveHostCredential(a.cfg, ag, name)
+	profileErr := os.RemoveAll(dir)
+	if err := errors.Join(secretErr, profileErr); err != nil {
 		// A partial delete is durable: never claim nothing was removed unless that is proved.
 		return -1, fmt.Errorf("could not finish removing %s account %q: %w", title, name, err)
 	}

@@ -1169,13 +1169,19 @@ func prepareBoxEnvFile(cfg *config.Config, spec RunSpec, artifacts compositionAr
 func prepareBoxEnvFileWithMarkers(cfg *config.Config, spec RunSpec, artifacts compositionArtifactOps, projectEnv map[string]string, markers map[string]bool) (envFile, tmp string, err error) {
 	userEnvFile := ""
 	drop := map[string]bool{}
+	userEnv := map[string]string{}
 	if spec.Homes && fileExists(cfg.EnvFile()) {
 		userEnvFile = cfg.EnvFile()
+		userEnv = EnvFileValues(userEnvFile)
 		drop = envKeysOutsideScopeWithMarkers(cfg, credentialScope(cfg, spec), markers)
 	}
+	profileEnv, err := scopedHostCredentialEnv(cfg, spec, userEnv)
+	if err != nil {
+		return "", "", err
+	}
 	switch {
-	case len(projectEnv) > 0:
-		p, err := writeMergedEnvFile(artifacts.parent, projectEnv, userEnvFile, drop)
+	case len(projectEnv) > 0 || len(profileEnv) > 0:
+		p, err := writeComposedEnvFile(artifacts.parent, projectEnv, profileEnv, userEnvFile, drop)
 		if err != nil {
 			return "", "", fmt.Errorf("prepare project box env: %w", err)
 		}

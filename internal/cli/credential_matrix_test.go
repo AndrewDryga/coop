@@ -45,13 +45,7 @@ func TestCredentialSourcesDriveProviderWorkflows(t *testing.T) {
 				cfg := &config.Config{ConfigDir: t.TempDir()}
 				profile := "work"
 				if source == "file" {
-					dir := cfg.AgentProfileDir(name, profile)
-					if err := os.MkdirAll(dir, 0o700); err != nil {
-						t.Fatal(err)
-					}
-					if err := os.WriteFile(filepath.Join(dir, marker), credentialMatrixMarker(name), 0o600); err != nil {
-						t.Fatal(err)
-					}
+					writeCredentialMatrixFile(t, cfg, ag, profile, marker)
 				} else {
 					if err := os.WriteFile(cfg.EnvFile(), []byte(source+"=token\n"), 0o600); err != nil {
 						t.Fatal(err)
@@ -164,6 +158,23 @@ func credentialMatrixMarker(provider string) []byte {
 	}
 }
 
+func writeCredentialMatrixFile(t *testing.T, cfg *config.Config, ag agents.Agent, profile, marker string) {
+	t.Helper()
+	if ag.Name() == "gemini" {
+		if err := box.SaveHostCredential(cfg, ag, profile, []byte("gemini-fixture-key")); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	dir := cfg.AgentProfileDir(ag.Name(), profile)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, marker), credentialMatrixMarker(ag.Name()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestACPCredentialSourcesFollowProviderSelection(t *testing.T) {
 	names := agents.Names()
 	for _, name := range agents.Names() {
@@ -179,13 +190,7 @@ func TestACPCredentialSourcesFollowProviderSelection(t *testing.T) {
 				}
 				signInCred(t, cfg, base, "base")
 				if source == "file" {
-					dir := cfg.AgentProfileDir(name, "work")
-					if err := os.MkdirAll(dir, 0o700); err != nil {
-						t.Fatal(err)
-					}
-					if err := os.WriteFile(filepath.Join(dir, marker), credentialMatrixMarker(name), 0o600); err != nil {
-						t.Fatal(err)
-					}
+					writeCredentialMatrixFile(t, cfg, ag, "work", marker)
 				} else if err := os.WriteFile(cfg.EnvFile(), []byte(source+"=token\n"), 0o600); err != nil {
 					t.Fatal(err)
 				}

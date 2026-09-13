@@ -277,6 +277,42 @@ func (geminiAgent) AuthMarker() (file, envKey string) {
 	return "gemini-credentials.json", "GEMINI_API_KEY"
 }
 
+func (geminiAgent) HostCredential() HostCredentialSpec {
+	return HostCredentialSpec{
+		Prompt:       "Gemini API key (input hidden): ",
+		Instructions: "Create or copy a key at https://aistudio.google.com/apikey",
+		File:         "api-key",
+		EnvKey:       "GEMINI_API_KEY",
+		Activate:     selectGeminiAPIKey,
+	}
+}
+
+// selectGeminiAPIKey changes only Gemini's selected auth family. The user's other settings and a
+// native encrypted credential file are left alone; malformed or linked settings fail closed.
+func selectGeminiAPIKey(profileDir string) error {
+	path := filepath.Join(profileDir, "settings.json")
+	settings, _, err := readJSONDefaults(path)
+	if err != nil {
+		return fmt.Errorf("read Gemini settings before saving API key: %w", err)
+	}
+	security, _ := settings["security"].(map[string]any)
+	if security == nil {
+		security = map[string]any{}
+		settings["security"] = security
+	}
+	auth, _ := security["auth"].(map[string]any)
+	if auth == nil {
+		auth = map[string]any{}
+		security["auth"] = auth
+	}
+	auth["selectedType"] = "gemini-api-key"
+	encoded, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode Gemini settings after selecting API key: %w", err)
+	}
+	return config.WriteFileAtomic(path, append(encoded, '\n'))
+}
+
 // CredentialEnvKeys lists every env var the Gemini CLI reads a key from: GEMINI_API_KEY
 // and the GOOGLE_API_KEY it also honors.
 func (geminiAgent) CredentialEnvKeys() []string {
@@ -324,20 +360,21 @@ func (a geminiAgent) ActiveCredentialEnvKeys(profileDir string, markerPresent bo
 	return nil
 }
 
-// MarkerProvidesSelectedCredential recognizes Gemini's encrypted native API-key and OAuth store.
-// It adds marker authority without changing the CLI's environment-key selection or precedence.
+// MarkerProvidesSelectedCredential recognizes only Gemini's native OAuth store. Its encrypted
+// API-key store is bound to one container hostname and is therefore not runnable in a fresh box;
+// Coop's host credential is the portable API-key authority.
 func (geminiAgent) MarkerProvidesSelectedCredential(profileDir string) bool {
 	selectedType, ok, err := geminiSelectedAuthType(profileDir)
-	return err == nil && ok && (selectedType == "gemini-api-key" || selectedType == "oauth-personal")
+	return err == nil && ok && selectedType == "oauth-personal"
 }
 
 func geminiSelectedAuthType(profileDir string) (string, bool, error) {
-	data, err := os.ReadFile(filepath.Join(profileDir, "settings.json"))
+	data, present, err := readDefaultsFile(filepath.Join(profileDir, "settings.json"))
 	if err != nil {
-		if os.IsNotExist(err) {
-			return "", false, nil
-		}
 		return "", false, err
+	}
+	if !present {
+		return "", false, nil
 	}
 	var settings struct {
 		Security struct {
@@ -352,7 +389,14 @@ func geminiSelectedAuthType(profileDir string) (string, bool, error) {
 	return settings.Security.Auth.SelectedType, true, nil
 }
 
-func (geminiAgent) StoredCredentialStatus(string, time.Time) StoredCredentialStatus {
+func (geminiAgent) StoredCredentialStatus(profileDir string, _ time.Time) StoredCredentialStatus {
+	selectedType, ok, err := geminiSelectedAuthType(profileDir)
+	if err != nil || !ok {
+		return StoredCredentialReauthRequired
+	}
+	if selectedType == "gemini-api-key" {
+		return StoredCredentialReauthRequired
+	}
 	return StoredCredentialUnknown
 }
 

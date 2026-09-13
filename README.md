@@ -535,18 +535,21 @@ shows this canonical lifecycle together with every sandbox and any stale/unknown
 
 ## Agents & config
 
-One box, four agents. Each reads its config and credentials from
-`~/.config/coop/agents/<name>/`, mounted into the box at `~/.claude`, `~/.codex`,
-`~/.gemini`, and `~/.grok`. That directory lives outside any repo, so credentials never land in git —
-edit those files on the host and they take effect in the box. The folders appear on
-first run, and each tool's normal user-level config works there as-is —
+One box, four agents. Each reads its settings and session state from
+`~/.config/coop/agents/<name>/`, with the active profile mounted into the box at `~/.claude`,
+`~/.codex`, `~/.gemini`, or `~/.grok`. That directory lives outside any repo, so credentials never
+land in git. Gemini API keys entered through `coop login` are kept in a private sibling vault
+outside the mounted profile and projected into only the selected account's box environment. The
+folders appear on first run, and each tool's normal user-level config works there as-is —
 `claude/settings.json`, `codex/config.toml`, `gemini/settings.json`,
 `grok/config.toml`. Only the *active*
 credential is mounted, so a running agent sees just the account it's using, not the
 whole vault.
 
-Each run mounts only the launched agent's credentials: `coop claude` mounts
-`~/.claude` (and that agent's API key from the env file), never the Codex or Gemini ones.
+Each run receives only the launched agent's credentials: `coop claude` mounts
+`~/.claude` (and that agent's API key from the env file), never the Codex or Gemini ones. A Gemini
+key saved by `coop login` is not mounted as a file; Coop adds it to the private per-run environment
+file for that exact account.
 The exceptions are runs where the lead is explicitly told to call peers —
 `coop <target> --peer <target>...` (including loops and forks) — which
 also mount the named peers so they can be consulted read-only (only those you
@@ -556,7 +559,8 @@ skipped. Raw runs (`coop run`,
 `coop shell`) and maintenance runs (the merge gate, `coop doctor`) mount no agent
 credentials at all. `coop login <agent>` mounts only the agent being signed in.
 
-> **Blast radius.** That credential dir is mounted read-write — the agent must write its
+> **Blast radius.** The selected provider receives its own credential through its mounted home or
+> environment, and its credential dir is generally mounted read-write — the agent must write its
 > session history, and OAuth refresh rewrites the token in place. So a prompt-injected
 > agent can (a) read its own credentials and try to exfiltrate them — set
 > `COOP_EGRESS=none` to cut the box off the network — and (b) write config its CLI
@@ -570,7 +574,7 @@ credentials at all. `coop login <agent>` mounts only the agent being signed in.
 ```bash
 coop login claude     # interactive login; the token persists in agents/claude/
 coop login codex      # device-code login (the box has no browser for an OAuth redirect)
-coop login gemini     # or it logs in on first use
+coop login gemini     # hidden API-key prompt; stored outside the mounted Gemini home
 ```
 
 …or use a token in Coop's env file. Coop recognizes every key the adapter accepts and exposes it
@@ -600,9 +604,9 @@ using them, including installations created by older versions.
 ambient environment. An unset bare import is omitted, while a set import or assignment wins over
 earlier entries. An env-only login appears as the provider's default credential in
 `coop credentials` without requiring a credential marker file. It represents only that one default
-credential; additional named accounts need their own file-backed login. When a named account runs,
-Coop removes that provider's env-token keys so they cannot override the selected account's marker,
-including when that file-backed account is marked as the default.
+credential; additional named accounts need their own account-scoped stored login. When a named
+account runs, Coop removes that provider's env-token keys so they cannot override the selected
+account's credential, including when that stored account is marked as the default.
 
 A run only sees the token keys of the agents in its credential scope (above): a `coop
 claude` box gets Claude's accepted keys but not the Codex, Gemini, or Grok keys, which
@@ -657,10 +661,12 @@ name — so you can name them all meaningfully. Credential properties are edited
 coop credentials claude personal default  # `coop claude` now runs on the personal account
 ```
 
-Credentials live in the vault (`~/.config/coop/agents/<agent>/profiles/<name>/`), never in
-the repo, and only the active one is mounted into the box — so a running agent sees just
-the account it's using, not your whole vault. Switching accounts loses no work: each loop
-iteration is a fresh run, and the queue plus git carry the progress.
+Credentials live in the vault under `~/.config/coop/agents/<agent>/`, never in the repo. Provider
+homes live in `profiles/<name>/`; Coop-managed Gemini keys live in the separate private
+`host-credentials/<name>/` tree. Only the active home is mounted and only its selected key is
+projected into the box — so a running agent sees just the account it's using, not your whole vault.
+Switching accounts loses no work: each loop iteration is a fresh run, and the queue plus git carry
+the progress.
 
 ### Picking models
 

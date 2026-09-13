@@ -30,8 +30,10 @@ func ProfileAuthed(cfg *config.Config, agent, profile string) bool {
 		return false
 	}
 	return profileCredentialPresent(
+		cfg,
 		ag,
-		cfg.AgentProfileDir(agent, profile),
+		agent,
+		profile,
 		envFileKeys(cfg.EnvFile()),
 		profile == cfg.DefaultProfileOf(agent),
 	)
@@ -42,14 +44,41 @@ func ProfileAuthed(cfg *config.Config, agent, profile string) bool {
 // and env-backed credentials preserve the presence-based behavior because the adapter cannot prove
 // them invalid locally.
 func ProfileCredentialReady(cfg *config.Config, agent, profile string, now time.Time) bool {
+	ag, ok := agents.Get(agent)
+	if !ok {
+		return false
+	}
+	profileDir := cfg.AgentProfileDir(agent, profile)
+	markerPresent := profileMarkerPresent(ag, profileDir)
+	activeEnvKeys := ag.ActiveCredentialEnvKeys(profileDir, markerPresent)
+	if profile == cfg.DefaultProfileOf(agent) && anyCredentialEnvPresent(activeEnvKeys, envFileKeys(cfg.EnvFile())) {
+		return true
+	}
+	if hostCredentialSelected(ag, profileDir, markerPresent) {
+		_, _, hostFound, hostErr := LoadHostCredential(cfg, ag, profile)
+		if hostErr != nil {
+			return false
+		}
+		if hostFound {
+			return true
+		}
+	}
 	if !ProfileAuthed(cfg, agent, profile) {
 		return false
 	}
-	ag, ok := agents.Get(agent)
-	if !ok || !ProfileMarkerPresent(cfg, agent, profile) {
+	if !ProfileMarkerPresent(cfg, agent, profile) {
 		return true
 	}
 	return ag.StoredCredentialStatus(cfg.AgentProfileDir(agent, profile), now) != agents.StoredCredentialReauthRequired
+}
+
+func anyCredentialEnvPresent(keys []string, present map[string]bool) bool {
+	for _, key := range keys {
+		if present[key] {
+			return true
+		}
+	}
+	return false
 }
 
 // ProfileMarkerPresent reports whether this exact profile has the adapter's login marker. It lets
@@ -63,14 +92,36 @@ func ProfileMarkerPresent(cfg *config.Config, agent, profile string) bool {
 	return profileMarkerPresent(ag, cfg.AgentProfileDir(agent, profile))
 }
 
+// ProfileHostCredentialPresent reports whether this account has a valid Coop-owned credential
+// outside the provider home. It distinguishes that stored key from a provider-wide env-only
+// default without exposing its value.
+func ProfileHostCredentialPresent(cfg *config.Config, agent, profile string) bool {
+	ag, ok := agents.Get(agent)
+	if !ok {
+		return false
+	}
+	profileDir := cfg.AgentProfileDir(agent, profile)
+	if !hostCredentialSelected(ag, profileDir, profileMarkerPresent(ag, profileDir)) {
+		return false
+	}
+	_, _, found, err := LoadHostCredential(cfg, ag, profile)
+	return err == nil && found
+}
+
 // profileCredentialPresent is the canonical presence heuristic for one adapter profile. Adapters
 // declare the active token keys for this account and may additionally declare that their native
 // marker can satisfy the selected mode. Callers may share a parsed env key set when scanning
 // providers, but they never reconstruct provider-specific precedence. A provider-wide env token
 // represents one effective default account, never every named profile.
-func profileCredentialPresent(ag agents.Agent, profileDir string, envKeys map[string]bool, allowEnv bool) bool {
+func profileCredentialPresent(cfg *config.Config, ag agents.Agent, agent, profile string, envKeys map[string]bool, allowEnv bool) bool {
+	profileDir := cfg.AgentProfileDir(agent, profile)
 	markerPresent := profileMarkerPresent(ag, profileDir)
 	activeEnvKeys := ag.ActiveCredentialEnvKeys(profileDir, markerPresent)
+	if hostCredentialSelected(ag, profileDir, markerPresent) {
+		if _, _, found, err := LoadHostCredential(cfg, ag, profile); err == nil && found {
+			return true
+		}
+	}
 	if allowEnv {
 		for _, key := range activeEnvKeys {
 			if envKeys[key] {
@@ -99,8 +150,14 @@ func ProfileTokenMtime(cfg *config.Config, agent, profile string) (time.Time, bo
 	if !ok {
 		return time.Time{}, false
 	}
+	profileDir := cfg.AgentProfileDir(agent, profile)
+	if hostCredentialSelected(ag, profileDir, profileMarkerPresent(ag, profileDir)) {
+		if info, ok := hostCredentialMtime(cfg, ag, profile); ok {
+			return info.ModTime(), true
+		}
+	}
 	file, _ := ag.AuthMarker()
-	fi, err := os.Stat(filepath.Join(cfg.AgentProfileDir(agent, profile), file))
+	fi, err := os.Stat(filepath.Join(profileDir, file))
 	if err != nil {
 		return time.Time{}, false
 	}

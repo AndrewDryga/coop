@@ -1,6 +1,7 @@
 package box
 
 import (
+	"fmt"
 	"os"
 	"slices"
 	"sort"
@@ -19,7 +20,7 @@ func AuthedAgents(cfg *config.Config) []string {
 	for _, name := range agents.Names() {
 		ag, _ := agents.Get(name)
 		active := cfg.ActiveProfile(name)
-		if profileCredentialPresent(ag, cfg.AgentProfileDir(name, active), keys, active == cfg.DefaultProfileOf(name)) {
+		if profileCredentialPresent(cfg, ag, name, active, keys, active == cfg.DefaultProfileOf(name)) {
 			authed = append(authed, name)
 		}
 	}
@@ -159,6 +160,14 @@ func writeFilteredEnvFile(parent, path string, drop map[string]bool) (string, er
 // writeMergedEnvFile renders deterministic project defaults followed by the trusted user env.
 // Later duplicate entries win in Docker/Podman env files, so agents/env remains authoritative.
 func writeMergedEnvFile(parent string, projectEnv map[string]string, userPath string, drop map[string]bool) (string, error) {
+	return writeComposedEnvFile(parent, projectEnv, nil, userPath, drop)
+}
+
+// writeComposedEnvFile renders project defaults, then the selected account's Coop-owned key,
+// then the trusted user env. The last layer preserves the established rule that an explicit
+// default-account environment credential wins over stored state. Named-account keys are removed
+// from the user layer by drop, so they cannot be shadowed by another account.
+func writeComposedEnvFile(parent string, projectEnv, profileEnv map[string]string, userPath string, drop map[string]bool) (string, error) {
 	keys := make([]string, 0, len(projectEnv))
 	for key := range projectEnv {
 		keys = append(keys, key)
@@ -171,6 +180,17 @@ func writeMergedEnvFile(parent string, projectEnv map[string]string, userPath st
 		b.WriteString(projectEnv[key])
 		b.WriteByte('\n')
 	}
+	keys = keys[:0]
+	for key := range profileEnv {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		b.WriteString(key)
+		b.WriteByte('=')
+		b.WriteString(profileEnv[key])
+		b.WriteByte('\n')
+	}
 	if userPath != "" {
 		data, err := os.ReadFile(userPath)
 		if err != nil {
@@ -179,6 +199,37 @@ func writeMergedEnvFile(parent string, projectEnv map[string]string, userPath st
 		b.WriteString(filteredEnvContent(data, drop))
 	}
 	return writeTempFile(parent, b.String())
+}
+
+// scopedHostCredentialEnv loads only adapter-owned credentials for providers this box was
+// explicitly authorized to run. A provider-wide key for the effective default account retains
+// precedence; named profiles always use their own stored key.
+func scopedHostCredentialEnv(cfg *config.Config, spec RunSpec, userEnv map[string]string) (map[string]string, error) {
+	values := map[string]string{}
+	for _, name := range credentialScope(cfg, spec) {
+		ag, ok := agents.Get(name)
+		if !ok {
+			continue
+		}
+		profile := cfg.ActiveProfile(name)
+		profileDir := cfg.AgentProfileDir(name, profile)
+		if !hostCredentialSelected(ag, profileDir, profileMarkerPresent(ag, profileDir)) {
+			continue
+		}
+		spec := ag.HostCredential()
+		if profile == cfg.DefaultProfileOf(name) && strings.TrimSpace(userEnv[spec.EnvKey]) != "" {
+			continue
+		}
+		key, value, found, err := LoadHostCredential(cfg, ag, profile)
+		if err != nil {
+			return nil, fmt.Errorf("load %s account %q credential: %w", ag.DisplayName(), profile, err)
+		}
+		if !found {
+			continue
+		}
+		values[key] = value
+	}
+	return values, nil
 }
 
 func filteredEnvContent(data []byte, drop map[string]bool) string {

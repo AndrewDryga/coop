@@ -313,6 +313,8 @@ func (claudeAgent) AuthMarker() (file, envKey string) {
 	return ".credentials.json", "ANTHROPIC_API_KEY"
 }
 
+func (claudeAgent) HostCredential() HostCredentialSpec { return HostCredentialSpec{} }
+
 // CredentialEnvKeys lists every env var Claude Code reads a token from: the API key plus
 // the two alternates (a custom auth token and a headless OAuth token).
 func (claudeAgent) CredentialEnvKeys() []string {

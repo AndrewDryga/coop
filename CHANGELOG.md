@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Gemini API-key login now reads the key without terminal echo, stores it per account in a
+  Coop-owned host vault, and supplies only the selected account through the box environment.
+  Fresh boxes no longer depend on Gemini's container-hostname-bound encrypted file; existing
+  native credential files stay untouched and are not mistaken for portable API-key access.
+
 - Loop recovery output now reports provider-timeout and live-background-handoff budgets by name.
   Each budget counts its outcome across an uninterrupted recovery episode—even when the other
   recovery class occurs between—so alternating broken attempts stay bounded and the displayed
@@ -79,9 +84,8 @@
 - Gemini sign-in can save its Google login selection across the CLI's restart. Login boxes use
   only the selected account, with no project services, development ports or MCP tools. Normal
   Gemini sessions translate shared MCP bearer references to native headers and refuse missing
-  authentication before launching, without writing tokens into settings. A named account whose
-  API key Gemini saved in its encrypted native store is recognized without borrowing the default
-  account's environment key.
+  authentication before launching, without writing tokens into settings. Provider-wide keys
+  remain confined to the default account and cannot shadow a named account's stored key.
 
 - **Reopening an editor thread after `coop acp` restarted brings back the whole conversation.**
   Every provider or account switch continues a thread on a fresh native session; coop now remembers

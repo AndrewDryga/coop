@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
@@ -193,6 +195,31 @@ func TestRemoveProfile(t *testing.T) {
 	}
 }
 
+func TestRemoveGeminiProfileAlsoRemovesHostCredential(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	gemini, _ := agents.Get("gemini")
+	if err := box.SaveHostCredential(cfg, gemini, "personal", []byte("personal-key")); err != nil {
+		t.Fatal(err)
+	}
+	if err := box.SaveHostCredential(cfg, gemini, "work", []byte("work-key")); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SetDefaultProfile("gemini", "personal"); err != nil {
+		t.Fatal(err)
+	}
+	captureStdout(t, func() {
+		if code, err := (&app{cfg: cfg}).removeProfile("gemini", "work", true); code != 0 || err != nil {
+			t.Fatalf("remove Gemini work profile = (%d, %v)", code, err)
+		}
+	})
+	if _, _, found, err := box.LoadHostCredential(cfg, gemini, "work"); err != nil || found {
+		t.Fatalf("removed Gemini key = (%v, %v)", found, err)
+	}
+	if _, value, found, err := box.LoadHostCredential(cfg, gemini, "personal"); err != nil || !found || value != "personal-key" {
+		t.Fatalf("default Gemini key changed = (%q, %v, %v)", value, found, err)
+	}
+}
+
 // TestProfileStateRenewable: an expired access token with a refresh token reads as signed in
 // (claude renews it on use), not "token expired" — the false alarm that read as blocked. Only an
 // expired token with no refresh token, a genuinely dead OAuth login, needs a re-login.
@@ -249,7 +276,7 @@ func TestProfileStateEnvOnlyDoesNotRequireRelogin(t *testing.T) {
 	}
 }
 
-func TestGeminiNamedNativeAPIKeyIsAvailable(t *testing.T) {
+func TestGeminiNamedNativeAPIKeyRequiresPortableLogin(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	dir := cfg.AgentProfileDir("gemini", "personal2")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -263,16 +290,16 @@ func TestGeminiNamedNativeAPIKeyIsAvailable(t *testing.T) {
 	}
 
 	a := &app{cfg: cfg}
-	if issue := a.profileIssue("gemini", "personal2"); issue != "" {
-		t.Fatalf("native stored Gemini API key issue = %q, want usable", issue)
+	if issue := a.profileIssue("gemini", "personal2"); issue != "Sign in again" {
+		t.Fatalf("native stored Gemini API key issue = %q, want Sign in again", issue)
 	}
 	out := captureStdout(t, func() {
 		if code, err := a.cmdCredentials([]string{"gemini"}); code != 0 || err != nil {
 			t.Fatalf("cmdCredentials = (%d, %v)", code, err)
 		}
 	})
-	if !strings.Contains(out, "personal2") || strings.Contains(out, "Not signed in") || strings.Contains(out, "coop login gemini@personal2") {
-		t.Fatalf("stored Gemini API key was not listed as available:\n%s", out)
+	if !strings.Contains(out, "personal2") || !strings.Contains(out, "Sign in again") || !strings.Contains(out, "coop login gemini@personal2") {
+		t.Fatalf("host-bound Gemini API key did not ask for portable login:\n%s", out)
 	}
 }
 

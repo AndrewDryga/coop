@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
@@ -23,6 +24,12 @@ func signInCred(t *testing.T, cfg *config.Config, agent, name string) {
 	ag, ok := agents.Get(agent)
 	if !ok {
 		t.Fatalf("unknown agent %q", agent)
+	}
+	if agent == "gemini" {
+		if err := box.SaveHostCredential(cfg, ag, name, []byte("gemini-fixture-key")); err != nil {
+			t.Fatal(err)
+		}
+		return
 	}
 	file, _ := ag.AuthMarker()
 	body := map[string]string{

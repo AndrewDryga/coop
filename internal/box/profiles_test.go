@@ -171,8 +171,15 @@ func TestProfileCredentialReady(t *testing.T) {
 		t.Fatal("refreshable Claude credential was not runnable")
 	}
 	write("gemini", "opaque", "gemini-credentials.json", `{"encrypted":"opaque"}`)
+	if ProfileCredentialReady(cfg, "gemini", "opaque", now) {
+		t.Fatal("host-bound Gemini marker was treated as runnable")
+	}
+	gemini, _ := agents.Get("gemini")
+	if err := SaveHostCredential(cfg, gemini, "opaque", []byte("portable-key")); err != nil {
+		t.Fatal(err)
+	}
 	if !ProfileCredentialReady(cfg, "gemini", "opaque", now) {
-		t.Fatal("adapter-opaque credential lost presence-based behavior")
+		t.Fatal("Coop-owned Gemini key was not runnable")
 	}
 	if err := os.WriteFile(cfg.EnvFile(), []byte("ANTHROPIC_API_KEY=token\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -192,13 +199,13 @@ func TestGeminiProfileAuthFollowsSelectedAuthority(t *testing.T) {
 		want       bool
 	}{
 		{name: "Gemini key selected and present", profile: "default", selected: "gemini-api-key", env: "GEMINI_API_KEY=token\n", want: true},
-		{name: "Gemini native key selected and marker present", profile: "default", selected: "gemini-api-key", env: "GOOGLE_API_KEY=token\n", withMarker: true, want: true},
+		{name: "Gemini native key selected and marker present", profile: "default", selected: "gemini-api-key", env: "GOOGLE_API_KEY=token\n", withMarker: true},
 		{name: "Gemini key selected without marker or key", profile: "default", selected: "gemini-api-key", env: "GOOGLE_API_KEY=token\n"},
 		{name: "Vertex key selected and present", profile: "default", selected: "vertex-ai", env: "GOOGLE_API_KEY=token\n", want: true},
 		{name: "Vertex key selected but only Gemini key present", profile: "default", selected: "vertex-ai", env: "GEMINI_API_KEY=token\n", withMarker: true},
 		{name: "OAuth marker selected and present", profile: "default", selected: "oauth-personal", env: "GEMINI_API_KEY=token\nGOOGLE_API_KEY=token\n", withMarker: true, want: true},
 		{name: "OAuth selected without marker", profile: "default", selected: "oauth-personal", env: "GEMINI_API_KEY=token\nGOOGLE_API_KEY=token\n"},
-		{name: "named account accepts native stored Gemini key", profile: "work", selected: "gemini-api-key", withMarker: true, want: true},
+		{name: "named account rejects host-bound native Gemini key", profile: "work", selected: "gemini-api-key", withMarker: true},
 		{name: "named account cannot use provider env", profile: "work", selected: "gemini-api-key", env: "GEMINI_API_KEY=token\n"},
 	}
 	for _, tt := range tests {

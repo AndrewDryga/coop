@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -264,6 +265,30 @@ type MarkerCredentialSelector interface {
 	MarkerProvidesSelectedCredential(profileDir string) bool
 }
 
+// HostCredentialSpec is one adapter-owned API-key login that Coop can persist outside the
+// provider home mounted into boxes. The adapter owns the human wording and the profile mutation
+// that selects this credential family; shared code owns hidden input, private storage and scoped
+// env-file delivery. A zero value means the provider keeps its native login flow.
+type HostCredentialSpec struct {
+	Prompt       string
+	Instructions string
+	File         string
+	EnvKey       string
+	Activate     func(profileDir string) error
+}
+
+// Declared reports whether an adapter opted into host-owned credential storage at all.
+func (s HostCredentialSpec) Declared() bool {
+	return s.Prompt != "" || s.Instructions != "" || s.File != "" || s.EnvKey != "" || s.Activate != nil
+}
+
+// Valid rejects partial declarations and path-shaped storage names. EnvKey must already belong to
+// the adapter's CredentialEnvKeys; the registry test enforces that relationship.
+func (s HostCredentialSpec) Valid() bool {
+	return s.Declared() && s.Prompt != "" && s.File != "" && filepath.Base(s.File) == s.File &&
+		!strings.ContainsAny(s.File, `/\\`) && s.EnvKey != "" && s.Activate != nil
+}
+
 // CredentialBrokerSpec is the adapter-owned native HTTP contract Coop may protect without
 // placing the reusable credential in a filtered agent container. A zero value means unsupported.
 // It describes one deliberately narrow first-party API, never a generic forward proxy.
@@ -414,6 +439,9 @@ type Agent interface {
 	// its canonical primary env-file key. Presence checks use CredentialEnvKeys so alternate
 	// tokens are first-class too.
 	AuthMarker() (file, envKey string)
+	// HostCredential declares an optional Coop-owned API-key login and scoped environment
+	// projection. Its file lives outside the mounted provider profile; a zero value uses Login.
+	HostCredential() HostCredentialSpec
 	// CredentialEnvKeys is every env-file key this agent reads a token from — the
 	// AuthMarker key plus any alternates it honors (e.g. claude also reads
 	// ANTHROPIC_AUTH_TOKEN and CLAUDE_CODE_OAUTH_TOKEN). A scoped run strips all of an
