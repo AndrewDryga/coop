@@ -257,6 +257,13 @@ type CredentialArtifact struct {
 	Project func([]byte) ([]byte, error)
 }
 
+// MarkerCredentialSelector is the optional capability for an adapter whose native marker can
+// hold the same selected credential as an environment key. Returning false does not veto the
+// existing marker fallback for selectors that declare no environment authority.
+type MarkerCredentialSelector interface {
+	MarkerProvidesSelectedCredential(profileDir string) bool
+}
+
 // CredentialBrokerSpec is the adapter-owned native HTTP contract Coop may protect without
 // placing the reusable credential in a filtered agent container. A zero value means unsupported.
 // It describes one deliberately narrow first-party API, never a generic forward proxy.
@@ -516,6 +523,17 @@ type Agent interface {
 	// InstallScript is a non-npm box-image install command (e.g. an install-script
 	// download); "" means this agent installs via Packages() on the npm layer.
 	InstallScript() string
+}
+
+// MarkerProvidesActiveCredential reports whether a present native marker can satisfy this
+// profile. Adapters with no selected environment family retain the historical marker behavior;
+// an optional selector may additionally recognize a native form of an env-backed credential.
+func MarkerProvidesActiveCredential(ag Agent, profileDir string, activeEnvKeys []string) bool {
+	if len(activeEnvKeys) == 0 {
+		return true
+	}
+	selector, ok := ag.(MarkerCredentialSelector)
+	return ok && selector.MarkerProvidesSelectedCredential(profileDir)
 }
 
 // projectJSONLeaf emits one scalar nested field and drops sibling auth settings.

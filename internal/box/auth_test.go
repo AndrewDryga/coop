@@ -345,7 +345,7 @@ func TestEnvKeysOutsideScopeHonorsGeminiAPIKeySelection(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "gemini-credentials.json"), []byte("stale-keychain"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "gemini-credentials.json"), []byte("opaque-native-store"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	settings := filepath.Join(dir, "settings.json")
@@ -370,6 +370,26 @@ func TestEnvKeysOutsideScopeHonorsGeminiAPIKeySelection(t *testing.T) {
 		if drop := envKeysOutsideScope(cfg, []string{"gemini"}); !drop[key] {
 			t.Errorf("Gemini OAuth selection kept provider-wide %s: %v", key, drop)
 		}
+	}
+}
+
+func TestEnvKeysOutsideScopeStripsGeminiKeysForNamedNativeAccount(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	cfg.SetActiveProfile("gemini", "work")
+	dir := cfg.AgentProfileDir("gemini", "work")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "gemini-credentials.json"), []byte("opaque-native-store"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"security":{"auth":{"selectedType":"gemini-api-key"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	drop := envKeysOutsideScope(cfg, []string{"gemini"})
+	if !drop["GEMINI_API_KEY"] || !drop["GOOGLE_API_KEY"] {
+		t.Errorf("named Gemini native account kept provider-wide keys: %v", drop)
 	}
 }
 

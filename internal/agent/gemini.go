@@ -305,12 +305,39 @@ func (geminiAgent) LiveCredentials() LiveCredentialSpec {
 // marker or selector, Gemini may auto-detect either supported key; a marker without a selector is
 // file-backed and receives no env authority.
 func (a geminiAgent) ActiveCredentialEnvKeys(profileDir string, markerPresent bool) []string {
-	data, err := os.ReadFile(filepath.Join(profileDir, "settings.json"))
+	selectedType, ok, err := geminiSelectedAuthType(profileDir)
 	if err != nil {
+		return nil
+	}
+	if !ok {
 		if markerPresent {
 			return nil
 		}
 		return a.CredentialEnvKeys()
+	}
+	switch selectedType {
+	case "gemini-api-key":
+		return []string{"GEMINI_API_KEY"}
+	case "vertex-ai":
+		return []string{"GOOGLE_API_KEY"}
+	}
+	return nil
+}
+
+// MarkerProvidesSelectedCredential recognizes Gemini's encrypted native API-key and OAuth store.
+// It adds marker authority without changing the CLI's environment-key selection or precedence.
+func (geminiAgent) MarkerProvidesSelectedCredential(profileDir string) bool {
+	selectedType, ok, err := geminiSelectedAuthType(profileDir)
+	return err == nil && ok && (selectedType == "gemini-api-key" || selectedType == "oauth-personal")
+}
+
+func geminiSelectedAuthType(profileDir string) (string, bool, error) {
+	data, err := os.ReadFile(filepath.Join(profileDir, "settings.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, err
 	}
 	var settings struct {
 		Security struct {
@@ -319,16 +346,10 @@ func (a geminiAgent) ActiveCredentialEnvKeys(profileDir string, markerPresent bo
 			} `json:"auth"`
 		} `json:"security"`
 	}
-	if json.Unmarshal(data, &settings) != nil {
-		return nil
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return "", false, err
 	}
-	switch settings.Security.Auth.SelectedType {
-	case "gemini-api-key":
-		return []string{"GEMINI_API_KEY"}
-	case "vertex-ai":
-		return []string{"GOOGLE_API_KEY"}
-	}
-	return nil
+	return settings.Security.Auth.SelectedType, true, nil
 }
 
 func (geminiAgent) StoredCredentialStatus(string, time.Time) StoredCredentialStatus {

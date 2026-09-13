@@ -200,6 +200,7 @@ func Prepare(sourceDir, destination string, selections []Selection) (*Prepared, 
 
 	primaryPresent := map[string]bool{}
 	activeEnvKeys := map[string][]string{}
+	markerBacked := map[string]bool{}
 	allowedEnvKeys := map[string][]string{}
 	for _, selection := range ordered {
 		ag, live, err := liveCredentialsFor(selection.Provider)
@@ -234,8 +235,9 @@ func Prepare(sourceDir, destination string, selections []Selection) (*Prepared, 
 				return nil, credentialError(selection.Provider, ordinal, err.Error())
 			}
 		}
+		activeEnvKeys[key] = ag.ActiveCredentialEnvKeys(profileDir, primaryPresent[key])
+		markerBacked[key] = primaryPresent[key] && agents.MarkerProvidesActiveCredential(ag, profileDir, activeEnvKeys[key])
 		if selection.SourceDefault {
-			activeEnvKeys[key] = ag.ActiveCredentialEnvKeys(profileDir, primaryPresent[key])
 			allowedEnvKeys[selection.Provider] = activeEnvKeys[key]
 		}
 		p.profileDirs[key] = filepath.Join(destination, selection.Provider, "profiles", selection.Account)
@@ -247,8 +249,7 @@ func Prepare(sourceDir, destination string, selections []Selection) (*Prepared, 
 	for _, selection := range ordered {
 		key := selectionKey(selection.Provider, selection.Account)
 		envBacked := selection.SourceDefault && envProviders[selection.Provider]
-		fileBacked := primaryPresent[key] && len(activeEnvKeys[key]) == 0
-		p.configured[key] = fileBacked || envBacked
+		p.configured[key] = markerBacked[key] || envBacked
 		p.envBacked[key] = envBacked
 	}
 	if len(envLines) > 0 {

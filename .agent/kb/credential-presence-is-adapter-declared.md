@@ -3,7 +3,7 @@ name: credential-presence-is-adapter-declared
 description: adapters own credential presence, selected env authority, and inspectable stored readiness
 subsystem: credentials
 sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/control.go, internal/box/auth.go, internal/box/profiles.go, internal/cli/rotation.go, internal/cli/profiles.go, internal/testutil/liveprovider/credentials.go]
-updated: 2026-09-03
+updated: 2026-09-13
 ---
 
 Adapters own four credential facts: `AuthMarker` names their login file and canonical primary env
@@ -24,10 +24,16 @@ other named profiles require their own marker file. Read, completion, and runnab
 `EffectiveProfiles`; default-setting and removal keep using physical `Config.Profiles` entries. A
 run on a marker-backed profile strips that provider's env keys before passing the env file, so the
 provider-wide token cannot shadow the account-specific marker mounted into the box. A marker owns
-presence only when the adapter selects no env authority. This matters for Gemini: `gemini-api-key`
-accepts only `GEMINI_API_KEY`, `vertex-ai` accepts only `GOOGLE_API_KEY`, and `oauth-personal`
-requires the marker. A stale OAuth marker cannot make a mismatched API-key selection look signed in.
-The live credential isolator uses the same rule before it decides whether a real prompt may run.
+presence when the adapter selects no env authority; the optional `MarkerCredentialSelector`
+capability can additionally declare that a native marker stores the same credential as a selected
+env family. Environment selection and filtering remain independent. This matters for Gemini:
+`gemini-api-key` accepts either `GEMINI_API_KEY` for the default account or the encrypted native
+marker for that exact account, `vertex-ai` accepts only `GOOGLE_API_KEY`, and `oauth-personal`
+requires the marker. Named accounts never consume provider-wide env keys, while a default env key
+retains the Gemini CLI's environment-first behavior. Because Gemini's shared encrypted marker is
+opaque, presence remains a best-effort heuristic rather than proof that its selected entry is
+usable. The live credential isolator uses the same adapter-declared rule before it decides whether
+a real prompt may run, and classifies Gemini's encrypted marker as host-bound rather than portable.
 
 After presence succeeds, `ProfileCredentialReady` asks the adapter for marker readiness only when
 that exact profile has a marker. Claude, Codex, and Grok distinguish usable or refreshable OAuth
@@ -49,6 +55,9 @@ and the default MCP file are `0600`. Coop does not recursively chmod provider tr
 the private ancestors protect those descendants without taking ownership of their formats.
 
 ## Changelog
+- 2026-09-13 - allowed adapters to declare a native marker alongside selected env authority;
+  verified Gemini native API-key presence, default env precedence, named-account isolation,
+  Vertex denial, credential listing, and host-bound live preflight
 - 2026-09-03 - documented and re-verified the owner-only host ancestor boundary and the deliberate
   decision not to rewrite provider-owned descendants
 - 2026-08-25 - removed Fleet from the current consumer inventory; direct fork launches reuse the

@@ -64,10 +64,10 @@ func ProfileMarkerPresent(cfg *config.Config, agent, profile string) bool {
 }
 
 // profileCredentialPresent is the canonical presence heuristic for one adapter profile. Adapters
-// declare the active token keys for this account; AuthMarker owns the file shape only when no env
-// family is selected. Callers may share a parsed env key set when scanning providers, but they never
-// reconstruct provider-specific precedence. A provider-wide env token represents one effective
-// default account, never every named profile.
+// declare the active token keys for this account and may additionally declare that their native
+// marker can satisfy the selected mode. Callers may share a parsed env key set when scanning
+// providers, but they never reconstruct provider-specific precedence. A provider-wide env token
+// represents one effective default account, never every named profile.
 func profileCredentialPresent(ag agents.Agent, profileDir string, envKeys map[string]bool, allowEnv bool) bool {
 	markerPresent := profileMarkerPresent(ag, profileDir)
 	activeEnvKeys := ag.ActiveCredentialEnvKeys(profileDir, markerPresent)
@@ -78,7 +78,7 @@ func profileCredentialPresent(ag agents.Agent, profileDir string, envKeys map[st
 			}
 		}
 	}
-	return markerPresent && len(activeEnvKeys) == 0
+	return markerPresent && agents.MarkerProvidesActiveCredential(ag, profileDir, activeEnvKeys)
 }
 
 func profileMarkerPresent(ag agents.Agent, profileDir string) bool {

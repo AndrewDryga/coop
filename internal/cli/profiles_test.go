@@ -249,6 +249,33 @@ func TestProfileStateEnvOnlyDoesNotRequireRelogin(t *testing.T) {
 	}
 }
 
+func TestGeminiNamedNativeAPIKeyIsAvailable(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	dir := cfg.AgentProfileDir("gemini", "personal2")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"security":{"auth":{"selectedType":"gemini-api-key"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "gemini-credentials.json"), []byte("opaque-native-store"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &app{cfg: cfg}
+	if issue := a.profileIssue("gemini", "personal2"); issue != "" {
+		t.Fatalf("native stored Gemini API key issue = %q, want usable", issue)
+	}
+	out := captureStdout(t, func() {
+		if code, err := a.cmdCredentials([]string{"gemini"}); code != 0 || err != nil {
+			t.Fatalf("cmdCredentials = (%d, %v)", code, err)
+		}
+	})
+	if !strings.Contains(out, "personal2") || strings.Contains(out, "Not signed in") || strings.Contains(out, "coop login gemini@personal2") {
+		t.Fatalf("stored Gemini API key was not listed as available:\n%s", out)
+	}
+}
+
 func TestProfileStateExpiredGrok(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	dir := cfg.AgentProfileDir("grok", "default")

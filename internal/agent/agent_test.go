@@ -1478,6 +1478,9 @@ func TestGeminiCredentialEnvPrecedence(t *testing.T) {
 	if got := gemini.ActiveCredentialEnvKeys(dir, true); got != nil {
 		t.Fatalf("malformed settings selected env keys %v", got)
 	}
+	if got := gemini.ActiveCredentialEnvKeys(dir, false); got != nil {
+		t.Fatalf("malformed settings without marker selected env keys %v", got)
+	}
 	if err := os.Remove(filepath.Join(dir, "settings.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -1486,6 +1489,40 @@ func TestGeminiCredentialEnvPrecedence(t *testing.T) {
 	}
 	if got := gemini.ActiveCredentialEnvKeys(dir, false); !slices.Equal(got, gemini.CredentialEnvKeys()) {
 		t.Fatalf("missing marker and selector env keys = %v, want %v", got, gemini.CredentialEnvKeys())
+	}
+}
+
+func TestGeminiMarkerCredentialSelection(t *testing.T) {
+	gemini, _ := Get("gemini")
+	selector, ok := gemini.(MarkerCredentialSelector)
+	if !ok {
+		t.Fatal("Gemini does not declare native marker selection")
+	}
+	dir := t.TempDir()
+	for authType, want := range map[string]bool{
+		"gemini-api-key": true,
+		"oauth-personal": true,
+		"vertex-ai":      false,
+		"unknown":        false,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"security":{"auth":{"selectedType":"`+authType+`"}}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := selector.MarkerProvidesSelectedCredential(dir); got != want {
+			t.Errorf("selectedType %q marker authority = %v, want %v", authType, got, want)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if selector.MarkerProvidesSelectedCredential(dir) {
+		t.Error("malformed settings granted marker authority")
+	}
+	if err := os.Remove(filepath.Join(dir, "settings.json")); err != nil {
+		t.Fatal(err)
+	}
+	if selector.MarkerProvidesSelectedCredential(dir) {
+		t.Error("missing settings granted marker authority")
 	}
 }
 
