@@ -546,7 +546,9 @@ func TestRelativizeRoot(t *testing.T) {
 	}
 
 	input := []byte(`{"command":"cd /home/u/proj && cat /home/u/proj/a /home/u/proj/b\nignored"}`)
-	_, displayName, label, outside := toolDisplay(root, "Bash", input)
+	var in toolInput
+	_ = json.Unmarshal(input, &in)
+	_, displayName, label, outside := toolDisplay(root, "Bash", in)
 	if displayName != "Bash" || label != "cat a b" || outside {
 		t.Errorf("toolDisplay(Bash) = (%q, %q, outside=%v), want (Bash, cat a b, false)", displayName, label, outside)
 	}

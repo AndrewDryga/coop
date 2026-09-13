@@ -39,6 +39,10 @@ updated: 2026-09-13
   cause. Long commands must not consume the whole live row. Skip generic leading exit-code
   boilerplate when a useful failure follows; preserve meaningful MCP errors and never replace
   a generic error with unrelated trailing metadata. Raw provider evidence stays unchanged.
+- Ordinary shell activity may use a useful provider-supplied purpose with a reserved command
+  preview, never invented narration. Missing/generic descriptions and very narrow terminals
+  keep the command-only fallback. Role/task classifications and matched failure command identity
+  take precedence; display shortening does not alter the full provider event.
 - Give reviews compact thin-rule stage/result banners, with their own reviewer and affected
   work. A valid review or verification reopen continues automatically within the shared round
   budget; only a real stop, cap, ownership boundary or error justifies a stopping remedy.
@@ -70,6 +74,11 @@ card. The full transcript and failure matrix are in queued task
 `2026-09-12-polish-loop-output-with-task-banners-and-grouped`.
 
 ## Changelog
+- 2026-09-13 — swept ordinary Bash, role/task classifications and matched failure history;
+  preserved real command identity while rendering supplied purposes with width-aware budgets.
+  Focused event tests cover control/multiline/generic fallback, resize and unchanged success/
+  failure behavior. Real installed terminal qualification and full gate deferred by explicit
+  user batching; these deterministic examples alone are not the installed-command proof.
 - 2026-09-13 — reproduced Claude's missing-log-directory result displaying only Exit code 1,
   and long labels hiding the diagnostic at 38/80 columns. Swept Claude, Codex and Gemini failure
   paths: Claude now skips generic boilerplate, text blocks retain boundaries, and the shared

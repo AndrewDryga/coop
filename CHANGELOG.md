@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Claude loop shell rows show useful supplied descriptions alongside a compact command
+  preview. Narrow/fallback rows and failed-tool identity keep the original command view.
+
 - Peer-review guidance preserves unresolved source-access limits and unrun checks in
   final reports and task notes; a usable partial reply is not treated as verified approval.
 

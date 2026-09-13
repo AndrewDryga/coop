@@ -412,6 +412,32 @@ func (d *ndjsonDecoder) streamNamedToolLine(glyph, name, label string, outside b
 	return prefix + d.palette.Dim(shown)
 }
 
+// The purpose is provider-supplied, not a success claim. Keep a real command
+// preview visible, and leave the command-only history intact for matched failures.
+func (d *ndjsonDecoder) streamBashToolLine(command, description string) string {
+	command = cleanDiagnosticLine(command)
+	description = cleanDiagnosticLine(firstLine(description))
+	generic := strings.ToLower(strings.TrimSuffix(description, "."))
+	switch generic {
+	case "", "bash", "run command", "execute command", "run shell command", "execute shell command":
+		return d.streamNamedToolLine("⚙", "Bash", command, false)
+	}
+	if strings.EqualFold(command, description) || command == "" {
+		return d.streamNamedToolLine("⚙", "Bash", command, false)
+	}
+	const prefix = "⚙ Bash "
+	budget := streamToolTextWidth
+	if d.displayWidth != nil {
+		budget = d.displayWidth() - 1 - len([]rune(prefix))
+	}
+	if budget < 32 {
+		return d.streamNamedToolLine("⚙", "Bash", command, false)
+	}
+	commandBudget := min(24, budget/3, len([]rune(command)))
+	label := truncate(description, budget-commandBudget-3) + " — " + truncate(command, commandBudget)
+	return prefix + d.palette.Dim(label)
+}
+
 // streamFailureLine preserves the failure marker and caller-supplied structural suffix. In live
 // output the label yields to that suffix and a share of the diagnostic; redirected
 // output preserves the old per-field caps (labelFallback=0 means the label was uncapped).
@@ -611,9 +637,15 @@ func (d *streamDecoder) assistant(msg json.RawMessage) {
 			}
 		case "tool_use":
 			d.terminalLimitNotice = ""
-			glyph, displayName, label, outside := toolDisplay(d.root, b.Name, b.Input)
+			var input toolInput
+			_ = json.Unmarshal(b.Input, &input)
+			glyph, displayName, label, outside := toolDisplay(d.root, b.Name, input)
 			// An outside path keeps its warning and yellow treatment; ordinary detail is dim.
-			d.emit(d.streamNamedToolLine(glyph, displayName, label, outside))
+			if b.Name == "Bash" && displayName == "Bash" {
+				d.emit(d.streamBashToolLine(label, input.Description))
+			} else {
+				d.emit(d.streamNamedToolLine(glyph, displayName, label, outside))
+			}
 			d.tool.set(b.ID, strings.TrimSpace(displayName+" "+label))
 			// A tool the watchdog can supervise needs both halves: the name it is calling, and the
 			// id its result will arrive under. Missing either, the block is shown but suspends no
@@ -821,9 +853,7 @@ func blockingLimitStatus(s string) bool {
 // toolDisplay picks a glyph, display verb, and one-line summary for a tool call from its input. For
 // file tools it shows the path repo-relative (against root) and reports outside=true when the path
 // escapes the repo tree, so the caller can flag it. Non-path tools are never "outside".
-func toolDisplay(root, name string, input json.RawMessage) (glyph, displayName, label string, outside bool) {
-	var in toolInput
-	_ = json.Unmarshal(input, &in)
+func toolDisplay(root, name string, in toolInput) (glyph, displayName, label string, outside bool) {
 	switch name {
 	case "Bash":
 		command := stripLeadingCD(in.Command)
