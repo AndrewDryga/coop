@@ -125,6 +125,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [scaffold-config-reads-well](scaffold-config-reads-well.md) — scaffolded config leads every field with its comment and works as-is
 
 **Security**
+- [eval-oracles-outside-agent-authority](eval-oracles-outside-agent-authority.md) — hidden eval material stays outside mounts, Git history, images, caches and every candidate tool path
 - [project-edits-request-access](project-edits-request-access.md) — one host approval grants requested access; check before execution and enforce agent/service permissions without approving ordinary edits
 - [coopignore-read-only-in-boxes](coopignore-read-only-in-boxes.md) — keep .coopignore readable but read-only in every box, with ordinary host editing and no policy-approval workflow
 - [hidden-files-are-not-scanner-exceptions](hidden-files-are-not-scanner-exceptions.md) — .coopignore hides files from agents; only exact reviewed .coopsecretsignore findings dismiss scanner warnings
