@@ -80,6 +80,7 @@ func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stder
 		// that needs it. Say it on every start, not just the first — the service that needed the file
 		// fails in its own way ("missing BEGIN PRIVATE KEY"), and this is the only line that names the
 		// cause and the fix.
+		ui.Note("")
 		ui.Warn("services get an empty file in place of %s (looks like a secret) — to let them read the real file, run `coop up` in a terminal and approve %s; the approval lasts until that file changes",
 			strings.Join(hidden, ", "), filepath.Base(file))
 	}

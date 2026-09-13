@@ -4,7 +4,7 @@ description: "Unprefixed human output, truthful progress, useful results, and re
 scope: cli-output
 sources: [internal/ui/ui.go, internal/ui/usage.go, internal/ui/section.go, internal/box/launch_sections.go, internal/box/run.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/session_cmd.go]
 check: "none"
-updated: 2026-09-11
+updated: 2026-09-13
 ---
 
 # Command output: no prefixes, useful results, truthful progress
@@ -24,6 +24,9 @@ updated: 2026-09-11
   Show a nondefault image/fallback when it materially affects the operation or its evidence.
 - Use blank lines between sections, two-space nesting, and six-space error causes. Standalone
   footer actions start at column zero. Indentation must mean actual nesting, not decoration.
+  Independent service warnings are separate paragraphs too: a network summary, hidden-file
+  notice and service-start failure each need a blank line between them. Keep loop warnings
+  nested in their existing service section, without changing provider or protocol bytes.
 - Rejected input is data, not a sentence a parser writes: build a `ui.UsageError` (the command
   path, the offending token, a usage line) and let it render — a leading blank line, one red `✗`
   headline naming the full command, an optional six-space cause stating the actual constraint,
@@ -65,6 +68,11 @@ is not proof the live helpers conform; regression tests must exercise all output
 See also [[help-output-style]] and [[no-color-in-width-fields]].
 
 ## Changelog
+- 2026-09-13 — user showed adjacent network/hidden-key/start-failure text without separators.
+  Swept services.go and launch_sections.go: fixed the hidden-file notice and interactive failed/
+  skipped paths; loop service warnings already have their own nested section and stay unchanged.
+  TestHiddenServiceFileNoticeGoesToTheUserNotTheComposeWriter reproduces the exact combined
+  sequence; TestInteractiveServiceWarningsAreSeparateParagraphs pins the sibling skipped case.
 - 2026-09-11 — the shared shapes this card describes now EXIST, so a slice stops hand-rolling them:
   `ui.Failure` is a runtime failure in the `ui.UsageError` block (headline, six-space cause that may
   be several lines, two-space rows; an empty label renders as plain prose); `ui.Warning` is the same

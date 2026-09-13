@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
@@ -239,7 +240,10 @@ func TestHiddenServiceFileNoticeGoesToTheUserNotTheComposeWriter(t *testing.T) {
 	}
 	os.Stderr = w
 	var composeWriter bytes.Buffer
+	sections := newLaunchSections(RunSpec{Agent: "gemini"})
+	sections.internet(&config.Config{Egress: "open"}, RunSpec{Agent: "gemini"}, nil)
 	_, runErr := startServicesFile(runtime.Runtime{Name: shim}, repo, compose, io.Discard, &composeWriter, false, true)
+	sections.servicesFailed("Container project-db Running\nContainer project-keycloak Waiting")
 	os.Stderr = old
 	w.Close()
 	var seen bytes.Buffer
@@ -254,6 +258,13 @@ func TestHiddenServiceFileNoticeGoesToTheUserNotTheComposeWriter(t *testing.T) {
 	}
 	if strings.Contains(composeWriter.String(), "empty file in place of") {
 		t.Fatalf("the notice went to the compose writer, which a box start discards: %q", composeWriter.String())
+	}
+	want := "Configuring network access\n  ⚠ Unrestricted — nothing is blocked\n\n" +
+		"⚠ services get an empty file in place of tls.key (looks like a secret) — to let them read the real file, run `coop up` in a terminal and approve compose.yml; the approval lasts until that file changes\n\n" +
+		"⚠ Project services could not start\n\n" +
+		"      Container project-db Running\n      Container project-keycloak Waiting\n\n  Run coop up to retry.\n"
+	if seen.String() != want {
+		t.Fatalf("service warnings lost their separating paragraphs:\ngot %q\nwant %q", seen.String(), want)
 	}
 }
 

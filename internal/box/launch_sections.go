@@ -472,6 +472,7 @@ func (s *launchSections) servicesFailed(cause string) {
 		return
 	}
 	if !s.loop {
+		ui.Note("")
 		ui.Warning("Project services could not start", cause, "Run coop up to retry.")
 		return
 	}
@@ -493,6 +494,7 @@ func (s *launchSections) servicesSkipped(cause string) {
 		return
 	}
 	if !s.loop {
+		ui.Note("")
 		ui.Warning("Project services were not started", cause, "Stop that box, then run coop up.")
 		return
 	}

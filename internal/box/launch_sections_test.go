@@ -247,6 +247,25 @@ func TestLoopServiceWarningsStayNestedAndSanitized(t *testing.T) {
 	}
 }
 
+func TestInteractiveServiceWarningsAreSeparateParagraphs(t *testing.T) {
+	for _, report := range []func(*launchSections){
+		func(s *launchSections) { s.servicesFailed("compose failed") },
+		func(s *launchSections) { s.servicesSkipped("inspection unavailable") },
+	} {
+		got := captureStderr(t, func() {
+			s := newLaunchSections(RunSpec{Agent: "gemini"})
+			s.internet(&config.Config{Egress: "open"}, RunSpec{Agent: "gemini"}, nil)
+			report(s)
+		})
+		if !strings.HasPrefix(got, "Configuring network access\n  ⚠ Unrestricted — nothing is blocked\n\n⚠ Project services") {
+			t.Fatalf("service warning is not separated from network results: %q", got)
+		}
+		if strings.Contains(got, "\n\n\n") {
+			t.Fatalf("service warning has repeated separators: %q", got)
+		}
+	}
+}
+
 func TestLoopServiceStartupHeldByLiveBoxHasNoUnsafeRetry(t *testing.T) {
 	got := captureStderr(t, func() {
 		newLaunchSections(RunSpec{Batch: true, LoopPresentation: true}).servicesHeldByLiveBox(
