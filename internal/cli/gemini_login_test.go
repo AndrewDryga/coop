@@ -9,7 +9,35 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/runtime"
 )
+
+func TestGeminiLoginBypassesRetiredGoogleFlow(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	oldRead, oldTTY := readLoginSecret, loginInputIsTerminal
+	readLoginSecret = func(string) ([]byte, error) { return []byte("supported-api-key"), nil }
+	loginInputIsTerminal = func() bool { return true }
+	defer func() {
+		readLoginSecret = oldRead
+		loginInputIsTerminal = oldTTY
+	}()
+
+	// /bin/false is a tripwire: if loginTo regresses to Gemini's native Google menu,
+	// the runtime path fails instead of opening a real provider box from this test.
+	a := &app{cfg: cfg, rtSet: true, rt: runtime.Runtime{Name: "/bin/false"}}
+	out := captureStderr(t, func() {
+		if code, err := a.loginTo("gemini", "personal"); code != 0 || err != nil {
+			t.Fatalf("Gemini API-key login = (%d, %v)", code, err)
+		}
+	})
+	if !strings.Contains(out, "aistudio.google.com/apikey") || strings.Contains(out, "Follow Gemini's sign-in instructions") {
+		t.Fatalf("Gemini login exposed the retired Google flow:\n%s", out)
+	}
+	gemini, _ := agents.Get("gemini")
+	if _, value, found, err := box.LoadHostCredential(cfg, gemini, "personal"); err != nil || !found || value != "supported-api-key" {
+		t.Fatalf("supported Gemini credential = (%q, %v, %v)", value, found, err)
+	}
+}
 
 func TestGeminiHostLoginStoresWithoutEchoOrNativeCredentialMutation(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}

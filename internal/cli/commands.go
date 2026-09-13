@@ -645,7 +645,10 @@ func validProfileName(name string) bool {
 	return !strings.ContainsAny(name, "/\\")
 }
 
-var readLoginSecret = ui.ReadSecret
+var (
+	readLoginSecret      = ui.ReadSecret
+	loginInputIsTerminal = func() bool { return ui.IsTerminal(os.Stdin) }
+)
 
 // loginTo runs an agent's sign-in flow in the box; its token persists in the agent's
 // config dir for the chosen credential. Shared by `coop login <provider>[@<account>]` and
@@ -671,9 +674,9 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 			Rows:     [][2]string{{"Help:", "coop help login"}},
 		}
 	}
-	// Login is interactive — it prompts for a paste code (reading the tty directly). Refuse a
+	// Login is interactive — it prompts for a paste code or API key (reading the tty directly). Refuse a
 	// non-terminal stdin up front rather than blocking forever on a piped/redirected run.
-	if !ui.IsTerminal(os.Stdin) {
+	if !loginInputIsTerminal() {
 		return 2, &ui.UsageError{
 			Headline: `"coop login" needs an interactive terminal`,
 			Cause:    "Run it directly in your terminal to complete sign-in.",
