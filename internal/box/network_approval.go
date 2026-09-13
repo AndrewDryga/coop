@@ -266,8 +266,8 @@ func networkProjectInputs(cfg *config.Config, repo string) (string, *project.Pro
 }
 
 // requestedServiceDigests is the reviewed identity of every Compose service the
-// project's rules name — part of the exact request, so a `service:` rule
-// approved by name alone cannot follow whatever that name later points at.
+// project's rules name and its required dependencies. Dependencies are pinned
+// for startup but do not become direct network grants.
 func requestedServiceDigests(repo string, p *project.Project, repoReadOnly bool) (map[string]string, error) {
 	return composeServiceDigests(ComposeFileAt(repo, p.ComposeRel()), repo, repoReadOnly, requestedServices(p.Box.EgressRules))
 }

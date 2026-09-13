@@ -427,6 +427,10 @@ func composeServiceDigests(composeFile, repoRoot string, repoReadOnly bool, name
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, err
 	}
+	names, err = composeServiceClosure(doc.Services, names)
+	if err != nil {
+		return nil, err
+	}
 	out := make(map[string]string, len(names))
 	for _, name := range names {
 		service, ok := doc.Services[name]
@@ -440,5 +444,45 @@ func composeServiceDigests(composeFile, repoRoot string, repoReadOnly bool, name
 		sum := sha256.Sum256(append([]byte("coop-compose-service-v1\x00"+name+"\x00"), definition...))
 		out[name] = hex.EncodeToString(sum[:])
 	}
+	return out, nil
+}
+
+func composeServiceClosure(services map[string]serviceSpec, names []string) ([]string, error) {
+	selected := make(map[string]bool, len(names))
+	queue := append([]string(nil), names...)
+	for len(queue) > 0 {
+		name := queue[0]
+		queue = queue[1:]
+		if selected[name] {
+			continue
+		}
+		service, ok := services[name]
+		if !ok {
+			return nil, fmt.Errorf("%s declares no service %q", project.DefaultCompose, name)
+		}
+		selected[name] = true
+		switch dependencies := service.DependsOn.(type) {
+		case nil:
+		case []any:
+			for _, value := range dependencies {
+				dependency, ok := value.(string)
+				if !ok {
+					return nil, fmt.Errorf("service %q has an invalid depends_on entry", name)
+				}
+				queue = append(queue, dependency)
+			}
+		case map[string]any:
+			for dependency := range dependencies {
+				queue = append(queue, dependency)
+			}
+		default:
+			return nil, fmt.Errorf("service %q has invalid depends_on", name)
+		}
+	}
+	out := make([]string, 0, len(selected))
+	for name := range selected {
+		out = append(out, name)
+	}
+	slices.Sort(out)
 	return out, nil
 }

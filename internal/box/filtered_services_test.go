@@ -195,6 +195,65 @@ func TestApprovedServiceDefinitionChangeRefusesTheLaunch(t *testing.T) {
 	}
 }
 
+func TestFilteredStartupScopesComposeToGrantedServices(t *testing.T) {
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	body := `services:
+  db:
+    image: app:1
+    depends_on: [cache]
+  cache:
+    image: redis:8
+    depends_on:
+      queue:
+        condition: service_started
+  queue:
+    image: queue:1
+  admin:
+    image: admin:1
+`
+	if err := os.WriteFile(compose, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	digests, err := composeServiceDigests(compose, repo, false, []string{"db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(digests) != 3 || digests["db"] == "" || digests["cache"] == "" || digests["queue"] == "" {
+		t.Fatalf("approved service digests = %v, want db and its transitive dependencies", digests)
+	}
+	id := strings.Repeat("a", 64)
+	docker := &filteredDaemonFixture{
+		networkMembers:  map[string]netip.Addr{id: netip.MustParseAddr("172.31.0.2")},
+		composeServices: map[string]string{"db": id},
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	if _, _, err := resolveServiceBindings(t.Context(), docker, recorderRuntime(t, recorder), RunSpec{Repo: repo}, compose,
+		&networkstate.Approval{Services: digests}, serviceGrants(servicePolicy(t, "db")), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var up string
+	for _, call := range strings.Split(string(data), "\n") {
+		if strings.Contains(call, " up ") {
+			up = call
+		}
+	}
+	if !strings.HasSuffix(up, " up -d --wait --remove-orphans db") {
+		t.Fatalf("filtered startup was not scoped to the directly granted service: %q", up)
+	}
+	changed := strings.Replace(body, "redis:8", "redis:9", 1)
+	if err := os.WriteFile(compose, []byte(changed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkApprovedServices(&networkstate.Approval{Services: digests}, compose, repo, false); err == nil || !strings.Contains(err.Error(), `service "cache" changed`) {
+		t.Fatalf("changed dependency kept the parent service approval: %v", err)
+	}
+}
+
 func TestFilteredServiceStartSkipsComposeWhileAnotherBoxRuns(t *testing.T) {
 	repo := t.TempDir()
 	compose := filepath.Join(repo, "compose.yml")

@@ -33,6 +33,9 @@
 - Exact `.coopignore` paths keep their final name protected after a parent directory is renamed,
   including on later box launches and project builds.
 
+- Filtered runs now start only directly approved Compose services and their required dependencies.
+  Dependency definitions are pinned by approval without becoming direct agent network grants.
+
 - Claude image tool results now keep their matching watchdog lifecycle within a bounded,
   provider-specific stream envelope. Large base64 bodies remain hidden, while malformed or
   over-limit events cannot close tools or manufacture activity. Unknown, unnamed-start, and

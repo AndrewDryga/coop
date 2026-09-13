@@ -61,10 +61,10 @@ type startedServices struct {
 }
 
 func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer, repoReadOnly, noticeHidden bool, exposedRoots ...string) (startedServices, error) {
-	return startServicesFileContext(context.Background(), rt, workspace, file, "", stdout, stderr, repoReadOnly, noticeHidden, exposedRoots...)
+	return startServicesFileContext(context.Background(), rt, workspace, file, "", stdout, stderr, repoReadOnly, noticeHidden, nil, exposedRoots...)
 }
 
-func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace, file, network string, stdout, stderr io.Writer, repoReadOnly, noticeHidden bool, exposedRoots ...string) (startedServices, error) {
+func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace, file, network string, stdout, stderr io.Writer, repoReadOnly, noticeHidden bool, selected []string, exposedRoots ...string) (startedServices, error) {
 	if file == "" {
 		return startedServices{}, nil
 	}
@@ -103,14 +103,18 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 	if err != nil {
 		return started, err
 	}
+	started.names = services
+	if len(selected) > 0 {
+		started.names = append([]string(nil), selected...)
+	}
 	upArgs := append(append([]string(nil), args...), "up", "-d", "--wait", "--remove-orphans")
+	upArgs = append(upArgs, selected...)
 	if err := runCompose(rt, stdout, stderr, "up", upArgs); err != nil {
-		started.names = services
 		observed, observeErr := observedServicePorts(ctx, rt, workspace, file, network, ports)
 		started.ports = observed
 		return started, errors.Join(err, observeErr)
 	}
-	started.names, started.ports = services, ports
+	started.ports = ports
 	return started, nil
 }
 

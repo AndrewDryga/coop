@@ -21,9 +21,8 @@ type Admission struct {
 	ProjectMode    *egress.Mode
 	PolicyMode     *egress.Mode
 	Requests       []egress.Rule
-	// Services is the reviewed identity of each Compose service Requests name, keyed by name. It
-	// is part of the exact request an approval covers: a `service:` grant names a definition, not
-	// a name, so the same rule over a rewritten stanza is a different request.
+	// Services is the reviewed identity of each Compose service Requests name and its startup
+	// dependencies, keyed by name. Only Requests are network grants.
 	Services map[string]string
 	Operator []egress.Input
 	Bundles  []egress.Bundle

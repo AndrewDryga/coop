@@ -28,8 +28,8 @@ type ApprovalReview struct {
 
 // ReviewApproval publishes nothing. Its arguments must be the same snapshot the
 // operator sees; never re-read repository YAML between review and Approve.
-// services carries the digest of each `service:` grant's reviewed Compose
-// definition, so the approval names a container, not just a service name.
+// services carries each `service:` grant's reviewed Compose definition plus its
+// startup dependencies. Only the rules grant network access.
 func (s *Store) ReviewApproval(project string, mode egress.Mode, requests []egress.Rule, bundles []egress.Bundle, services map[string]string) (ApprovalReview, error) {
 	review, _, err := s.reviewApproval(project, mode, requests, bundles, services)
 	return review, err
@@ -167,22 +167,29 @@ func (s *Store) Approve(ctx context.Context, project string, mode egress.Mode, r
 	})
 }
 
-// approvedServices keeps exactly one digest per approved `service:` rule. A
-// grant bound only to a NAME is a grant to whatever the repository later
-// declares under that name, so the reviewed definition is part of the decision.
+// approvedServices keeps the reviewed definitions of direct services and their
+// dependencies whenever at least one service rule exists. The extra definitions
+// pin startup only; the rules remain the complete network grant set.
 func approvedServices(rules []egress.Rule, digests map[string]string) (map[string]string, error) {
-	var out map[string]string
+	hasServiceRule := false
 	for _, rule := range rules {
 		name := rule.To.Service
 		if name == "" {
 			continue
 		}
+		hasServiceRule = true
 		digest := digests[name]
 		if !lowerHex(digest, 64) {
 			return nil, errors.New("approving the Compose service " + name + " requires the digest of its reviewed definition")
 		}
-		if out == nil {
-			out = map[string]string{}
+	}
+	if !hasServiceRule {
+		return nil, nil
+	}
+	out := make(map[string]string, len(digests))
+	for name, digest := range digests {
+		if !lowerHex(digest, 64) {
+			return nil, errors.New("approving the Compose service " + name + " requires the digest of its reviewed definition")
 		}
 		out[name] = digest
 	}

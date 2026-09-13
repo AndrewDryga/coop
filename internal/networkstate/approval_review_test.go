@@ -45,6 +45,15 @@ func approvalServiceDigests(requests []egress.Rule) (map[string]string, error) {
 	return out, nil
 }
 
+func TestApprovedServicesKeepsReviewedDependenciesWithoutGrantingThem(t *testing.T) {
+	db := egress.Rule{To: egress.Destination{Service: "db"}, Protocol: "tcp", Ports: []int{5432}}
+	digests := map[string]string{"db": strings.Repeat("a", 64), "cache": strings.Repeat("b", 64)}
+	got, err := approvedServices([]egress.Rule{db}, digests)
+	if err != nil || !reflect.DeepEqual(got, digests) {
+		t.Fatalf("approved services = %v, %v; want direct service and reviewed dependency", got, err)
+	}
+}
+
 func TestApprovalReviewPublishesOnlyReviewedRules(t *testing.T) {
 	s, project := openStore(t), t.TempDir()
 	requests := []egress.Rule{rule("reviewed.example.com")}

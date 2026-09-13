@@ -81,7 +81,14 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 	noticeHidden := sections == nil || !sections.loop
 	var started startedServices
 	if startServices {
-		started, err = startServicesFile(rt, spec.Repo, composeFile, io.Discard, &composeErr, spec.RepoReadOnly, noticeHidden, exposedRoots...)
+		selected := make([]string, 0, len(grants))
+		for _, grant := range grants {
+			if name := grant.Rule.To.Service; !slices.Contains(selected, name) {
+				selected = append(selected, name)
+			}
+		}
+		slices.Sort(selected)
+		started, err = startServicesFileContext(ctx, rt, spec.Repo, composeFile, "", io.Discard, &composeErr, spec.RepoReadOnly, noticeHidden, selected, exposedRoots...)
 		if sections != nil {
 			sections.serviceSecrets(started.hidden, composeFile)
 		}
