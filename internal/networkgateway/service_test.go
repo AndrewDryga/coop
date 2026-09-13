@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"strings"
@@ -57,6 +58,34 @@ func TestGatewayLaunchConfigurationIsBoundedAndConcrete(t *testing.T) {
 	config.Policy.Grants[0].Rule.To.Domain = "API.EXAMPLE.COM"
 	if config.Validate() == nil {
 		t.Fatal("noncanonical launch grant accepted")
+	}
+}
+
+func TestGatewayLaunchConfigurationKeepsBrokerSeparateAndReserved(t *testing.T) {
+	config := testLaunch(t)
+	config.Broker = &CredentialBrokerRoute{Provider: "claude", Upstream: "api.anthropic.com", Header: "x-api-key", Method: "POST", Path: "/v1/messages", Port: 443}
+	if err := config.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*LaunchConfig){
+		"wildcard upstream": func(c *LaunchConfig) { c.Broker.Upstream = "*.anthropic.com" },
+		"arbitrary method":  func(c *LaunchConfig) { c.Broker.Method = "CONNECT" },
+		"arbitrary path":    func(c *LaunchConfig) { c.Broker.Path = "/v1/messages?next=elsewhere" },
+		"other port":        func(c *LaunchConfig) { c.Broker.Port = 8443 },
+		"serve collision": func(c *LaunchConfig) {
+			c.Serve = []int{CredentialBrokerPort}
+			c.Ingress = netip.MustParseAddr("172.17.0.1")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := config
+			route := *config.Broker
+			changed.Broker = &route
+			mutate(&changed)
+			if changed.Validate() == nil {
+				t.Fatal("invalid broker route accepted")
+			}
+		})
 	}
 }
 

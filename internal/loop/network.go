@@ -37,6 +37,7 @@ func networkAdmissionSpec(cfg *config.Config, repo, img, agent string, p *preset
 	return box.RunSpec{
 		Image: img, Repo: repo, Agent: agent, Peers: scope, Preset: p,
 		Homes: cfg.Homes, Network: cfg.Network, Cache: cfg.Cache,
+		NetworkAdmission: true, CredentialBrokerLoop: p == nil && len(peers) == 0,
 	}
 }
 

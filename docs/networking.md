@@ -4,8 +4,10 @@
 destinations you approved and nothing else. This page is the support matrix — what the runtime
 enforces today, what it refuses and why, what it measures, and how to ask for more.
 
-Nothing here is a proxy setting. Every tool in the box — the provider CLI, `curl`, an SDK, a
-subprocess — hits the same boundary, with no `HTTPS_PROXY` to set or forget.
+Network enforcement is not a proxy setting. Every tool in the box — the provider CLI, `curl`, an
+SDK, a subprocess — hits the same packet boundary, with no `HTTPS_PROXY` to set or forget. The
+narrow Claude API-key credential broker described below runs behind that boundary; it does not
+replace it.
 
 `coop net` says what a new run in this project can reach and why; `coop net runs` lists what
 recorded runs did; `coop net --help` has the verbs.
@@ -73,6 +75,21 @@ the client's own controls, in the box only: Claude runs with
 a prompt records no refusals — and if an agent or your project later does reach for one of those
 hosts on purpose, that refusal is recorded, shown and approvable like any other; nothing is
 filtered out of the report.
+
+**A Claude API key stays outside a direct filtered box.** With the locked Claude CLI 2.1.260, the
+default profile, and `ANTHROPIC_API_KEY` as the only active Claude credential, Coop automatically
+replaces the reusable key with a random credential valid for this gateway generation and points
+the client at a loopback broker. The capless guard injects the real key only for
+`POST /v1/messages` to `api.anthropic.com`; the agent policy itself does not grant that domain.
+The broker uses the same guarded Envoy path, so its provider connection keeps normal traffic
+attribution. Stopping the box revokes the substitute and cancels open streams.
+
+This first slice is deliberately narrow. Ordinary Claude OAuth runs retain their existing
+credential handling and are not broker-protected; restricted and session projections keep their
+existing access-only copies. ACP, login, read-only/bare, peer, preset, and remote-session API-key
+runs are refused instead of silently receiving the reusable key. A configured custom
+`ANTHROPIC_BASE_URL` is refused rather than silently redirected to Anthropic. Other providers need
+their own pinned client and protocol qualification before they can use this boundary.
 
 A `service:` grant is a request like any other: it is approved by a human, it names one service, and
 it opens that container's address and ports only. Joining the services network does not grant

@@ -235,6 +235,8 @@ func (codexAgent) CredentialEnvKeys() []string {
 	return []string{"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"}
 }
 
+func (codexAgent) CredentialBroker() CredentialBrokerSpec { return CredentialBrokerSpec{} }
+
 func (codexAgent) LiveCredentials() LiveCredentialSpec {
 	return LiveCredentialSpec{
 		Artifacts: []CredentialArtifact{{

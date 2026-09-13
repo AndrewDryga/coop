@@ -94,7 +94,23 @@ func credentialScope(cfg *config.Config, spec RunSpec) []string {
 // keeps its env token only when it is in scope and running the default account that token represents;
 // a named file-backed account must not be shadowed by the provider-wide token. Non-agent runtime
 // variables are never in this set, so they always pass through.
+func profileMarkerSnapshot(cfg *config.Config) map[string]bool {
+	markers := make(map[string]bool, len(agents.Names()))
+	for _, name := range agents.Names() {
+		ag, ok := agents.Get(name)
+		if !ok {
+			continue
+		}
+		markers[name] = profileMarkerPresent(ag, cfg.AgentProfileDir(name, cfg.ActiveProfile(name)))
+	}
+	return markers
+}
+
 func envKeysOutsideScope(cfg *config.Config, scope []string) map[string]bool {
+	return envKeysOutsideScopeWithMarkers(cfg, scope, nil)
+}
+
+func envKeysOutsideScopeWithMarkers(cfg *config.Config, scope []string, markers map[string]bool) map[string]bool {
 	in := map[string]bool{}
 	for _, a := range scope {
 		in[a] = true
@@ -115,7 +131,11 @@ func envKeysOutsideScope(cfg *config.Config, scope []string) map[string]bool {
 		if !in[name] || active != cfg.DefaultProfileOf(name) {
 			continue
 		}
-		keep := ag.ActiveCredentialEnvKeys(profileDir, profileMarkerPresent(ag, profileDir))
+		markerPresent := profileMarkerPresent(ag, profileDir)
+		if markers != nil {
+			markerPresent = markers[name]
+		}
+		keep := ag.ActiveCredentialEnvKeys(profileDir, markerPresent)
 		for _, envKey := range keep {
 			delete(drop, envKey)
 		}

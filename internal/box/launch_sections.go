@@ -154,7 +154,7 @@ func (s *launchSections) secrets(hidden int) {
 // internet is the one stable section every mode shares. A filtered run lists what the frozen
 // policy allows and only then claims the rest is blocked; an open run and an offline run get a
 // warning under the same heading, never a green row.
-func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egress.Snapshot) {
+func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egress.Snapshot, brokerProvider ...string) {
 	if !s.on {
 		return
 	}
@@ -163,6 +163,13 @@ func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egre
 	s.section("Configuring network access")
 	switch {
 	case policy != nil:
+		if len(brokerProvider) == 1 && brokerProvider[0] != "" {
+			name := brokerProvider[0]
+			if agent, ok := agents.Get(name); ok {
+				name = agent.Vendor()
+			}
+			ui.Pass("%s through the credential broker — reusable key stays outside the box", name)
+		}
 		for _, row := range networkAllowances(*policy) {
 			ui.Pass("%s", row)
 		}

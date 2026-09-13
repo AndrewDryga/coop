@@ -79,7 +79,9 @@ type filteredExecution struct {
 	// It is coop-owned, holds only the coop socket, and is mounted read-only, so it is exempt from
 	// the workload volume-exposure check the same way this run's generated files are — its backing
 	// mountpoint lives inside the daemon VM and is not a host path an agent could redirect.
-	taskVolume string
+	taskVolume  string
+	broker      *credentialBrokerRun
+	authMarkers map[string]bool // frozen before admission; agent-writable profile state cannot widen env authority
 }
 
 func (f *filteredExecution) workloadOutcome(code int, err error, cancelled bool) string {
@@ -153,6 +155,14 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	if err := policy.RequireSupported(); err != nil {
 		return nil, err
 	}
+	authMarkers := profileMarkerSnapshot(cfg)
+	brokerCandidate, err := selectCredentialBrokerWithMarkers(cfg, spec, authMarkers)
+	if err != nil {
+		return nil, err
+	}
+	if brokerCandidate != nil && policy.Domain(brokerCandidate.spec.Upstream, brokerCandidate.spec.Port).Allowed {
+		return nil, errors.New("the credential broker upstream is also present in the agent's network policy; remove that direct grant before starting this protected run")
+	}
 	// The captured policy decides which ports this run captures, so the serve
 	// check needs it — and it still runs before anything is created.
 	if spec.Serve {
@@ -201,7 +211,10 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 			ui.Detail("waiting for Docker to start this box (%s so far)", elapsed.Round(time.Second))
 		}
 	}
-	f := &filteredExecution{store: capture.Store, docker: docker, policy: policy, attempted: map[string]bool{}, taskVolume: spec.taskVolume}
+	f := &filteredExecution{store: capture.Store, docker: docker, policy: policy, attempted: map[string]bool{}, taskVolume: spec.taskVolume, authMarkers: authMarkers}
+	if brokerCandidate != nil {
+		f.broker = &credentialBrokerRun{candidate: brokerCandidate}
+	}
 	f.unsafeRoots = []string{spec.Repo, project}
 	if roots := ConfigExposureRoots(cfg); len(roots) > 1 {
 		f.unsafeRoots = append(f.unsafeRoots, roots[1:]...)
@@ -288,7 +301,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 		smoke.registered(f.record)
 	}
 	launch := networkgateway.LaunchConfig{Version: 1, RunID: f.record.ID, Epoch: f.record.Epoch, Policy: policy, Protected: protected,
-		Services: f.services, Serve: servePorts, Ingress: ingress}
+		Services: f.services, Serve: servePorts, Ingress: ingress, Broker: brokerCandidate.route()}
 	if err := launch.Validate(); err != nil {
 		return f, err
 	}

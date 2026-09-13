@@ -283,6 +283,8 @@ func (geminiAgent) CredentialEnvKeys() []string {
 	return []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}
 }
 
+func (geminiAgent) CredentialBroker() CredentialBrokerSpec { return CredentialBrokerSpec{} }
+
 func (geminiAgent) LiveCredentials() LiveCredentialSpec {
 	return LiveCredentialSpec{
 		Artifacts: []CredentialArtifact{

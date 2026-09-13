@@ -177,7 +177,7 @@ func (c *Controller) controlConnections(ctx context.Context, listener *net.UnixL
 					}
 					sample.EnforcerReady = c.Ready()
 					reply.Ready, reply.Reason, reply.Kernel = true, "", &sample
-				case endpoint == "lease" && request.Operation == "lease" && request.Lease != nil && request.AfterBoot == 0:
+				case endpoint == "lease" && (request.Operation == "lease" || request.Operation == "broker_lease") && request.Lease != nil && request.AfterBoot == 0:
 					select {
 					case updates <- struct{}{}:
 					default:
@@ -185,7 +185,13 @@ func (c *Controller) controlConnections(ctx context.Context, listener *net.UnixL
 						_ = json.NewEncoder(conn).Encode(reply)
 						return
 					}
-					until, err := c.Admit(requestCtx, *request.Lease)
+					var until BootInstant
+					var err error
+					if request.Operation == "broker_lease" {
+						until, err = c.AdmitBroker(requestCtx, *request.Lease)
+					} else {
+						until, err = c.Admit(requestCtx, *request.Lease)
+					}
 					<-updates // only the kernel transaction owns the slot, not reply I/O
 					if err != nil {
 						var reason Failure
@@ -213,6 +219,10 @@ type ControllerClient struct {
 
 func (c ControllerClient) Admit(ctx context.Context, lease Lease) (BootInstant, error) {
 	return c.call(ctx, controlRequest{Version: 1, Operation: "lease", Lease: &lease})
+}
+
+func (c ControllerClient) AdmitBroker(ctx context.Context, lease Lease) (BootInstant, error) {
+	return c.call(ctx, controlRequest{Version: 1, Operation: "broker_lease", Lease: &lease})
 }
 
 func (c ControllerClient) Ready(ctx context.Context) error {
@@ -309,7 +319,7 @@ func (c ControllerClient) exchange(ctx context.Context, request controlRequest, 
 	if !completed.Valid() || completed.Before(started) || completed.Sub(started) > ControlTimeout {
 		return empty, Failure("enforcement_unavailable")
 	}
-	if request.Operation == "lease" && (!completed.Before(reply.ValidUntil) || reply.ValidUntil.After(request.Lease.Expires)) {
+	if (request.Operation == "lease" || request.Operation == "broker_lease") && (!completed.Before(reply.ValidUntil) || reply.ValidUntil.After(request.Lease.Expires)) {
 		return empty, Failure("dns_ttl_expired")
 	}
 	return reply, nil

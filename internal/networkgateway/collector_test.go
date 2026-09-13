@@ -3,6 +3,7 @@ package networkgateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/netip"
 	"slices"
@@ -82,6 +83,28 @@ func TestCollectorCumulativeReplayAndUnknownMeters(t *testing.T) {
 	c.ingest(nil, GuardTotals{Sequence: 1}, []EnvoyEvent{end}, EnvoyTotals{Sequence: 5})
 	if uint64(c.sent) != 1<<53+3 || !c.proxyPartial {
 		t.Fatal("evicted flow resurrected totals")
+	}
+}
+
+func TestCollectorIncludesBrokerOnlyResolverFailures(t *testing.T) {
+	c, now := collectorFixture(t)
+	brokerResolver, err := NewResolver(c.resolvers[0].policy, nil, nil, c.clock,
+		func(context.Context, []byte) ([]byte, error) { return nil, errors.New("broker dns failed") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.resolvers = append(c.resolvers, brokerResolver)
+	if _, err := brokerResolver.Resolve(context.Background(), "api.example.com"); err == nil {
+		t.Fatal("broker resolver unexpectedly succeeded")
+	}
+	publishFixture(c, *now, nil)
+	snapshot := c.Snapshot()
+	if snapshot.Counters == nil || snapshot.Counters.MaintenanceQueries == nil || *snapshot.Counters.MaintenanceQueries != 1 ||
+		snapshot.Counters.MaintenanceFailures == nil || *snapshot.Counters.MaintenanceFailures != 1 {
+		t.Fatalf("broker resolver accounting = %#v", snapshot.Counters)
+	}
+	if snapshot.Health.Resolver.Status != "degraded" {
+		t.Fatalf("broker resolver failure was reported as healthy: %#v", snapshot.Health.Resolver)
 	}
 }
 

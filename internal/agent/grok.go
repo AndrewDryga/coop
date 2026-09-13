@@ -227,6 +227,8 @@ func (grokAgent) AuthMarker() (file, envKey string) { return "auth.json", "XAI_A
 // mechanism, not a token coop scopes).
 func (grokAgent) CredentialEnvKeys() []string { return []string{"XAI_API_KEY"} }
 
+func (grokAgent) CredentialBroker() CredentialBrokerSpec { return CredentialBrokerSpec{} }
+
 func (grokAgent) LiveCredentials() LiveCredentialSpec {
 	return LiveCredentialSpec{
 		Artifacts: []CredentialArtifact{{

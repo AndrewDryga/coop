@@ -319,6 +319,18 @@ func (claudeAgent) CredentialEnvKeys() []string {
 	return []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"}
 }
 
+func (claudeAgent) CredentialBroker() CredentialBrokerSpec {
+	return CredentialBrokerSpec{
+		CredentialEnv: "ANTHROPIC_API_KEY",
+		BaseURLEnv:    "ANTHROPIC_BASE_URL",
+		Upstream:      "api.anthropic.com",
+		Header:        "x-api-key",
+		Method:        "POST",
+		Path:          "/v1/messages",
+		Port:          443,
+	}
+}
+
 func (claudeAgent) LiveCredentials() LiveCredentialSpec {
 	return LiveCredentialSpec{
 		Artifacts: []CredentialArtifact{{

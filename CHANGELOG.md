@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Direct filtered Claude API-key runs keep the reusable `ANTHROPIC_API_KEY` outside the agent
+  container. A per-run loopback broker in the capless network guard accepts only the pinned
+  Messages route, uses separate helper-only network authority, and preserves normal traffic
+  attribution, streaming, cancellation, and fail-closed teardown.
+
 - Provider adapters now declare model discovery, review-output handling, plain quota detection,
   skills and project scaffolding. Existing behavior is preserved, with a source check that
   prevents new provider selectors from being hard-coded in shared code.

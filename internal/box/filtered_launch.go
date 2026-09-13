@@ -111,6 +111,11 @@ func (f *filteredExecution) verifyContainer(ctx context.Context, role, image str
 }
 
 func (f *filteredExecution) startHelper(ctx context.Context, role string) error {
+	if role == "guard" {
+		if err := f.checkCredentialBrokerBinding(); err != nil {
+			return err
+		}
+	}
 	ctx, cancel := context.WithTimeout(ctx, filteredControlTimeout)
 	defer cancel()
 	if err := f.transition(ctx, role, "starting"); err != nil {
@@ -134,10 +139,14 @@ func (f *filteredExecution) helperOptions(role string) []string {
 			"--mount", networkMount("volume", f.ref("ipc").Name, "/ipc", false))
 		return append(options, f.publish...)
 	}
-	return append(options, "--user", "65532:65532", "--network", "container:"+f.ref("controller").ID,
+	options = append(options, "--user", "65532:65532", "--network", "container:"+f.ref("controller").ID,
 		"--mount", networkMount("volume", f.ref("ipc").Name, "/ipc", true),
 		"--mount", networkMount("volume", f.ref("observations").Name, networkgateway.ObservationDirectory, false),
 		"--tmpfs", "/private:rw,nosuid,nodev,noexec,uid=65532,gid=65532,mode=0700,size=16m")
+	if f.broker != nil {
+		options = append(options, "--mount", networkMount("bind", f.broker.configPath, networkgateway.CredentialBrokerPath, true))
+	}
+	return options
 }
 
 func (f *filteredExecution) observe(ctx context.Context) (networkview.Snapshot, error) {

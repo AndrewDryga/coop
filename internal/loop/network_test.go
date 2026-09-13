@@ -47,6 +47,27 @@ func TestNetworkAdmissionSpecCoversEveryLadderRung(t *testing.T) {
 	}
 }
 
+func TestDirectLoopAdmissionRecognizesBrokeredClaudeLadder(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Homes: true, Egress: "filtered"}
+	if err := os.MkdirAll(filepath.Dir(cfg.EnvFile()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg.EnvFile(), []byte("ANTHROPIC_API_KEY=raw-provider-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	work := ladder.NewRotation([]agents.Target{target("claude", "default")})
+	spec := networkAdmissionSpec(cfg, "/repo", "img", "claude", nil, nil, work)
+	bundles, err := box.NetworkProviderBundles(cfg, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bundle := range bundles {
+		if bundle.Provider == "claude" {
+			t.Fatalf("brokered loop admitted Claude directly: %#v", bundles)
+		}
+	}
+}
+
 // The report arrives from inside the launch, while the live bar owns the
 // terminal. Nothing may print there: the block belongs between iterations.
 func TestNetworkLogPrintsBetweenIterationsNotDuringOne(t *testing.T) {

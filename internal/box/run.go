@@ -151,6 +151,13 @@ type RunSpec struct {
 	// asks each provider for the endpoints that client actually needs. Empty is
 	// the ordinary CLI; an ACP launch sets it explicitly.
 	NetworkClient egress.Client
+	// NetworkAdmission marks the synthetic whole-loop spec used only to freeze one
+	// policy before any iteration starts. CredentialBrokerLoop says that loop has no
+	// peer or preset execution shape, so its provider ladder may use the direct-run
+	// broker qualification instead of being mistaken for an executable peer run.
+	NetworkAdmission     bool `json:"-"`
+	CredentialBrokerLoop bool `json:"-"`
+	projectEnv           map[string]string
 	// networkSmoke is the host preflight permit. Unexported on purpose: only the
 	// in-package setup workflow can drive a smoke through this same engine, so
 	// what it proves is exactly what a workload later gets.
@@ -353,6 +360,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	cfg = applyProjectPolicy(cfg, p, &spec)
 	projectEnv := p.Box.Env
+	spec.projectEnv = projectEnv
 	composeFile := ComposeFileAt(spec.Repo, p.ComposeRel())
 	spec.servePorts = p.Serve.Ports
 	if spec.Login {
@@ -569,18 +577,28 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		// The workload runs the qualified client image, never a repo image.
 		spec.Image = filtered.image
 		artifacts.parent = filtered.runfiles
+		if err := filtered.prepareCredentialBroker(artifacts); err != nil {
+			return -1, err
+		}
 	}
 	var policy *egress.Snapshot
 	if filtered != nil {
 		policy = &filtered.policy
 	}
-	sections.internet(cfg, spec, policy)
+	brokerProvider := ""
+	if filtered != nil && filtered.broker != nil {
+		brokerProvider = filtered.broker.candidate.provider
+	}
+	sections.internet(cfg, spec, policy, brokerProvider)
 	// Whatever a box may reach is fully known before it starts, so the launch
 	// instructions say it. An agent that learns its own boundary by being
 	// refused burns a turn and reports policy as a broken tool or a dead host.
 	networkNote := ""
 	if filtered != nil {
 		networkNote = networkInstructionNote(filtered.policy)
+		if brokerProvider != "" {
+			networkNote += "\nYour provider API is available only through Coop's session-bound credential broker; the reusable key is not in this box."
+		}
 	}
 
 	// A single empty read-only file shadows every secret file; a single empty read-only
@@ -869,12 +887,24 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 	}
 
-	envFile, envTmp, err := prepareBoxEnvFile(cfg, spec, artifacts, projectEnv)
+	var authMarkers map[string]bool
+	if filtered != nil {
+		authMarkers = filtered.authMarkers
+	}
+	envFile, envTmp, err := prepareBoxEnvFileWithMarkers(cfg, spec, artifacts, projectEnv, authMarkers)
 	if err != nil {
 		return -1, err
 	}
 	if envTmp != "" {
 		tmpFiles = append(tmpFiles, envTmp)
+	}
+	if filtered != nil && filtered.broker != nil {
+		brokerEnv, err := filtered.credentialBrokerEnv(artifacts, envFile)
+		if err != nil {
+			return -1, err
+		}
+		envFile = brokerEnv
+		tmpFiles = append(tmpFiles, brokerEnv)
 	}
 
 	if err := ctxStep(spec.Ctx, "sibling services"); err != nil {
@@ -1133,11 +1163,15 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 // the home mounts. tmp is the generated file the caller removes after the run ("" when the shared
 // file is used as is, or none applies).
 func prepareBoxEnvFile(cfg *config.Config, spec RunSpec, artifacts compositionArtifactOps, projectEnv map[string]string) (envFile, tmp string, err error) {
+	return prepareBoxEnvFileWithMarkers(cfg, spec, artifacts, projectEnv, nil)
+}
+
+func prepareBoxEnvFileWithMarkers(cfg *config.Config, spec RunSpec, artifacts compositionArtifactOps, projectEnv map[string]string, markers map[string]bool) (envFile, tmp string, err error) {
 	userEnvFile := ""
 	drop := map[string]bool{}
 	if spec.Homes && fileExists(cfg.EnvFile()) {
 		userEnvFile = cfg.EnvFile()
-		drop = envKeysOutsideScope(cfg, credentialScope(cfg, spec))
+		drop = envKeysOutsideScopeWithMarkers(cfg, credentialScope(cfg, spec), markers)
 	}
 	switch {
 	case len(projectEnv) > 0:

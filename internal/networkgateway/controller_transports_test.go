@@ -47,7 +47,7 @@ func transportController(t *testing.T, policy egress.Snapshot, services []Servic
 		ingress = serveIngress
 	}
 	c, err := NewController(Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32),
-		PolicyFingerprint: policy.Fingerprint}, policy, nil, services, serve, ingress, clock, func(context.Context, string) error { return nil })
+		PolicyFingerprint: policy.Fingerprint}, policy, nil, services, serve, ingress, nil, clock, func(context.Context, string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,11 +221,11 @@ func TestServePortsCannotCollideWithACapturedTLSPort(t *testing.T) {
 	clock := testBootClock()
 	identity := Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32), PolicyFingerprint: policy.Fingerprint}
 	for _, port := range []int{443, 53, 8443} {
-		if _, err := NewController(identity, policy, nil, nil, []int{port}, serveIngress, clock, func(context.Context, string) error { return nil }); err == nil {
+		if _, err := NewController(identity, policy, nil, nil, []int{port}, serveIngress, nil, clock, func(context.Context, string) error { return nil }); err == nil {
 			t.Errorf("serve port %d was accepted alongside the capture", port)
 		}
 	}
-	if _, err := NewController(identity, policy, nil, nil, []int{8000}, serveIngress, clock, func(context.Context, string) error { return nil }); err != nil {
+	if _, err := NewController(identity, policy, nil, nil, []int{8000}, serveIngress, nil, clock, func(context.Context, string) error { return nil }); err != nil {
 		t.Fatal("an uncaptured serve port was refused", err)
 	}
 }
@@ -237,7 +237,7 @@ func TestGrantedCIDRCannotBeatAProtectedAddress(t *testing.T) {
 	host := netip.MustParsePrefix("10.7.7.7/32")
 	clock := testBootClock()
 	c, err := NewController(Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32),
-		PolicyFingerprint: policy.Fingerprint}, policy, []netip.Prefix{host}, nil, nil, netip.Addr{}, clock, func(context.Context, string) error { return nil })
+		PolicyFingerprint: policy.Fingerprint}, policy, []netip.Prefix{host}, nil, nil, netip.Addr{}, nil, clock, func(context.Context, string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}

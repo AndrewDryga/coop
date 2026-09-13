@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,6 +33,9 @@ const (
 	MaxLaunchConfigBytes    = 4 << 20
 	MaintenanceResolver     = "1.1.1.1"
 	MaintenanceResolverName = "cloudflare-dns.com"
+	CredentialBrokerPort    = 15580
+	CredentialBrokerAddress = "127.0.0.1:15580"
+	CredentialBrokerPath    = "/run/coop-credential-broker.json"
 )
 
 // LaunchConfig contains a previously verified host capture, never an owner key,
@@ -55,6 +59,28 @@ type LaunchConfig struct {
 	// container on the same bridge could reach a port the host published on
 	// loopback only.
 	Ingress netip.Addr `json:"ingress,omitempty"`
+	// Broker is non-secret helper-only authority derived from the selected adapter. The reusable
+	// credential lives in a separate guard-only mount and never in this controller-readable file.
+	Broker *CredentialBrokerRoute `json:"credential_broker,omitempty"`
+}
+
+// CredentialBrokerRoute is one exact provider endpoint, not a user policy or forward-proxy rule.
+type CredentialBrokerRoute struct {
+	Provider string `json:"provider"`
+	Upstream string `json:"upstream"`
+	Header   string `json:"header"`
+	Method   string `json:"method"`
+	Path     string `json:"path"`
+	Port     int    `json:"port"`
+}
+
+func (r CredentialBrokerRoute) valid() bool {
+	name, err := egress.NormalizeDomain(r.Upstream, false)
+	return err == nil && name == r.Upstream && r.Provider != "" && len(r.Provider) <= 32 &&
+		strings.Trim(r.Provider, "abcdefghijklmnopqrstuvwxyz0123456789-") == "" &&
+		r.Header != "" && strings.ToLower(r.Header) == r.Header &&
+		r.Method == "POST" && strings.HasPrefix(r.Path, "/") &&
+		!strings.ContainsAny(r.Path, "?#\x00\r\n") && r.Port == 443
 }
 
 type ServiceBinding struct {
@@ -114,6 +140,9 @@ func (c LaunchConfig) Validate() error {
 	if len(c.Serve) != 0 && (!c.Ingress.Is4() || !c.Ingress.IsValid()) {
 		return Failure("gateway_configuration_invalid")
 	}
+	if c.Broker != nil && (!c.Broker.valid() || slices.Contains(c.Serve, CredentialBrokerPort) || slices.Contains(c.Policy.TLSPorts(), CredentialBrokerPort)) {
+		return Failure("gateway_configuration_invalid")
+	}
 	// One construction, one meaning: the same grant/binding/port checks the
 	// controller applies decide whether this configuration is launchable.
 	if _, err := addressGrants(c.Policy, c.Services); err != nil {
@@ -139,7 +168,7 @@ func RunController(ctx context.Context, config LaunchConfig) error {
 	if err := os.Mkdir("/ipc/controller", 0710); err != nil {
 		return Failure("controller_socket_unavailable")
 	}
-	c, err := NewController(config.identity(clock), config.Policy, config.Protected, config.Services, config.Serve, config.Ingress, clock, applyKernelRules)
+	c, err := NewController(config.identity(clock), config.Policy, config.Protected, config.Services, config.Serve, config.Ingress, config.Broker, clock, applyKernelRules)
 	if err != nil {
 		return err
 	}
@@ -169,6 +198,7 @@ type GuardRuntime struct {
 	GuardEvents *GuardEvents
 	EnvoyEvents *EnvoyEvents
 	guard       *Guard
+	broker      *credentialBroker
 	doh         *DoH
 	collector   *Collector
 	phase       atomic.Uint32
@@ -203,18 +233,43 @@ func NewGuardRuntime(config LaunchConfig) (*GuardRuntime, error) {
 	}
 	events := NewGuardEvents(clock)
 	identity := config.identity(clock)
-	guard, err := NewGuard(config.Policy, clock, r, ControllerClient{Path: ControllerSocket, Identity: identity, Clock: clock}, events)
+	controller := ControllerClient{Path: ControllerSocket, Identity: identity, Clock: clock}
+	guard, err := NewGuard(config.Policy, clock, r, controller, events)
 	if err != nil {
 		doh.Close()
 		return nil, err
 	}
 	envoyEvents := NewEnvoyEvents(clock)
-	collector, err := NewCollector(guard, envoyEvents, doh)
+	var broker *credentialBroker
+	if config.Broker != nil {
+		file, openErr := os.Open(CredentialBrokerPath)
+		if openErr != nil {
+			doh.Close()
+			return nil, Failure("credential_broker_configuration_invalid")
+		}
+		info, statErr := file.Stat()
+		secret, readErr := ReadCredentialBrokerSecret(file, config)
+		_ = file.Close()
+		if statErr != nil || !info.Mode().IsRegular() || readErr != nil {
+			doh.Close()
+			return nil, Failure("credential_broker_configuration_invalid")
+		}
+		broker, err = newCredentialBroker(config, secret, clock, doh, events, controller)
+		if err != nil {
+			doh.Close()
+			return nil, err
+		}
+	}
+	var brokerResolvers []*Resolver
+	if broker != nil {
+		brokerResolvers = append(brokerResolvers, broker.resolver)
+	}
+	collector, err := NewCollector(guard, envoyEvents, doh, brokerResolvers...)
 	if err != nil {
 		doh.Close()
 		return nil, err
 	}
-	return &GuardRuntime{Identity: identity, GuardEvents: events, EnvoyEvents: envoyEvents, guard: guard, doh: doh, collector: collector}, nil
+	return &GuardRuntime{Identity: identity, GuardEvents: events, EnvoyEvents: envoyEvents, guard: guard, broker: broker, doh: doh, collector: collector}, nil
 }
 
 func (g *GuardRuntime) Run(ctx context.Context) (result error) {
@@ -302,8 +357,21 @@ func (g *GuardRuntime) Run(ctx context.Context) (result error) {
 	}
 	var workers sync.WaitGroup
 	defer func() { g.stopReady(); cancel(); workers.Wait() }()
-	failures := make(chan error, 3)
-	workers.Go(func() { failures <- g.guard.Serve(ctx, g.markReady) })
+	failures := make(chan error, 4)
+	needed := int32(1)
+	if g.broker != nil {
+		needed++
+	}
+	var readyParts atomic.Int32
+	partReady := func() {
+		if readyParts.Add(1) == needed {
+			g.markReady()
+		}
+	}
+	workers.Go(func() { failures <- g.guard.Serve(ctx, partReady) })
+	if g.broker != nil {
+		workers.Go(func() { failures <- g.broker.Serve(ctx, partReady) })
+	}
 	workers.Go(func() { failures <- health.watch(ctx) })
 	workers.Go(func() { failures <- g.serveReadiness(ctx) })
 	select {

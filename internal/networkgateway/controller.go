@@ -46,6 +46,7 @@ func (l Lease) destination() netip.AddrPort {
 type Controller struct {
 	identity    Identity
 	policy      egress.Snapshot
+	broker      *CredentialBrokerRoute
 	protected   []netip.Prefix
 	apply       ApplyRules
 	now         func() BootInstant
@@ -62,7 +63,7 @@ type Controller struct {
 	kernel      kernelEvents
 }
 
-func NewController(identity Identity, policy egress.Snapshot, protected []netip.Prefix, services []ServiceBinding, serve []int, ingress netip.Addr, clock *BootClock, apply ApplyRules) (*Controller, error) {
+func NewController(identity Identity, policy egress.Snapshot, protected []netip.Prefix, services []ServiceBinding, serve []int, ingress netip.Addr, broker *CredentialBrokerRoute, clock *BootClock, apply ApplyRules) (*Controller, error) {
 	if err := policy.RequireSupported(); err != nil {
 		return nil, err
 	}
@@ -76,7 +77,10 @@ func NewController(identity Identity, policy egress.Snapshot, protected []netip.
 	if len(serve) != 0 && !ingress.Is4() {
 		return nil, errors.New("published serve ports require the bridge gateway address host traffic arrives from")
 	}
-	if apply == nil || len(protected) > MaxProtectedRanges || !identity.Valid() || identity.PolicyFingerprint != policy.Fingerprint || clock.Domain() != identity.Clock || !clock.instant().Valid() {
+	if broker != nil && (slices.Contains(serve, CredentialBrokerPort) || slices.Contains(policy.TLSPorts(), CredentialBrokerPort)) {
+		return nil, errors.New("credential broker port collides with the agent network contract")
+	}
+	if apply == nil || len(protected) > MaxProtectedRanges || !identity.Valid() || identity.PolicyFingerprint != policy.Fingerprint || clock.Domain() != identity.Clock || !clock.instant().Valid() || broker != nil && !broker.valid() {
 		return nil, errors.New("invalid gateway controller configuration")
 	}
 	for _, prefix := range protected {
@@ -84,7 +88,12 @@ func NewController(identity Identity, policy egress.Snapshot, protected []netip.
 			return nil, errors.New("invalid protected namespace prefix")
 		}
 	}
-	return &Controller{identity: identity, policy: policy.Clone(), protected: slices.Clone(protected), grants: grants, serve: slices.Clone(serve),
+	var brokerCopy *CredentialBrokerRoute
+	if broker != nil {
+		value := *broker
+		brokerCopy = &value
+	}
+	return &Controller{identity: identity, policy: policy.Clone(), broker: brokerCopy, protected: slices.Clone(protected), grants: grants, serve: slices.Clone(serve),
 		ingress: ingress, apply: apply, now: clock.instant, clock: clock, leases: map[string]Lease{}}, nil
 }
 
@@ -198,6 +207,22 @@ func (c *Controller) Admit(ctx context.Context, lease Lease) (BootInstant, error
 	if err != nil || name != lease.Name || !c.policy.Domain(name, lease.Port).Allowed || !lease.Peer.Is4() || !egress.PublicAnswer(lease.Peer, c.protected) {
 		return 0, Failure("gateway_lease_refused")
 	}
+	return c.installLease(ctx, lease)
+}
+
+// AdmitBroker is a separate helper-only authority path. The agent cannot reach the private
+// controller socket, and the controller checks the immutable launch route rather than trusting a
+// caller-supplied label or unioning the provider into the agent policy.
+func (c *Controller) AdmitBroker(ctx context.Context, lease Lease) (BootInstant, error) {
+	name, err := egress.NormalizeDomain(lease.Name, false)
+	if err != nil || name != lease.Name || c.broker == nil || name != c.broker.Upstream || lease.Port != c.broker.Port ||
+		!lease.Peer.Is4() || !egress.PublicAnswer(lease.Peer, c.protected) {
+		return 0, Failure("gateway_lease_refused")
+	}
+	return c.installLease(ctx, lease)
+}
+
+func (c *Controller) installLease(ctx context.Context, lease Lease) (BootInstant, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.ready.Load() || c.closed.Load() || ctx.Err() != nil {
@@ -215,7 +240,7 @@ func (c *Controller) Admit(ctx context.Context, lease Lease) (BootInstant, error
 	if remaining <= ControllerUpdateTimeout+KernelTickAllowance+time.Millisecond || remaining > MaxDNSTTL {
 		return 0, Failure("dns_ttl_expired")
 	}
-	key := name + "\x00" + lease.destination().String()
+	key := lease.Name + "\x00" + lease.destination().String()
 	if prior, ok := c.leases[key]; ok && !prior.Expires.Before(lease.Expires) && c.installed[lease.destination()].After(now) {
 		return minTime(lease.Expires, c.installed[lease.destination()]), nil
 	}
@@ -235,7 +260,7 @@ func (c *Controller) Admit(ctx context.Context, lease Lease) (BootInstant, error
 	updateCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ControllerUpdateTimeout)
 	defer cancel()
 	rules, installed := leaseRules(updated, now)
-	err = c.apply(updateCtx, rules)
+	err := c.apply(updateCtx, rules)
 	completed := c.now()
 	if err != nil || !completed.Valid() || completed.Before(now) || completed.Sub(now) > ControllerUpdateTimeout {
 		// No caller may mistake an uncertain kernel update for an installed

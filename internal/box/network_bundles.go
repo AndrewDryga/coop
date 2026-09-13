@@ -2,7 +2,9 @@ package box
 
 import (
 	"errors"
+	"fmt"
 	"net/url"
+	"slices"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -27,8 +29,27 @@ func (s RunSpec) networkClient() egress.Client {
 // An unsupported provider fails admission here. Launching it under a policy
 // that cannot reach its API would only produce a confusing mid-session denial.
 func NetworkProviderBundles(cfg *config.Config, spec RunSpec) ([]egress.Bundle, error) {
+	brokered := map[string]bool{}
+	if spec.NetworkAdmission {
+		var err error
+		brokered, err = networkAdmissionBrokerProviders(cfg, spec)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		broker, err := selectCredentialBroker(cfg, spec)
+		if err != nil {
+			return nil, err
+		}
+		if broker != nil {
+			brokered[broker.provider] = true
+		}
+	}
 	var bundles []egress.Bundle
 	for _, name := range credentialScope(cfg, spec) {
+		if brokered[name] {
+			continue // broker helper authority is distinct from the agent's captured policy
+		}
 		ag, ok := agents.Get(name)
 		if !ok {
 			return nil, errors.New("unknown provider in the restricted credential scope")
@@ -40,6 +61,45 @@ func NetworkProviderBundles(cfg *config.Config, spec RunSpec) ([]egress.Bundle, 
 		bundles = append(bundles, bundle)
 	}
 	return egress.SelectedBundles(bundles)
+}
+
+func networkAdmissionBrokerProviders(cfg *config.Config, spec RunSpec) (map[string]bool, error) {
+	result := map[string]bool{}
+	accounts := map[string][]string{spec.Agent: {cfg.ActiveProfile(spec.Agent)}}
+	for _, target := range spec.Peers {
+		account := target.Account()
+		if account == "" {
+			account = cfg.ActiveProfile(target.Provider)
+		}
+		if !slices.Contains(accounts[target.Provider], account) {
+			accounts[target.Provider] = append(accounts[target.Provider], account)
+		}
+	}
+	for _, name := range credentialScope(cfg, spec) {
+		brokered, plain := false, false
+		for _, account := range accounts[name] {
+			candidate, err := credentialBrokerCandidateFor(cfg, spec, name, account, nil)
+			if err != nil {
+				return nil, err
+			}
+			if candidate != nil {
+				brokered = true
+			} else {
+				plain = true
+			}
+		}
+		if !brokered {
+			continue
+		}
+		if !spec.CredentialBrokerLoop {
+			return nil, fmt.Errorf("%s API-key brokering does not support a loop with peers or a preset; run a direct loop without them", credentialBrokerAgentName(name))
+		}
+		if plain {
+			return nil, fmt.Errorf("%s cannot mix brokered API-key and stored-credential accounts in one filtered loop", credentialBrokerAgentName(name))
+		}
+		result[name] = true
+	}
+	return result, nil
 }
 
 // NetworkMCPDependencies returns the automatic HTTP destinations of the trusted

@@ -82,7 +82,8 @@ type Collector struct {
 	started                     BootInstant
 	guard                       *GuardEvents
 	envoy                       *EnvoyEvents
-	resolver                    *Resolver
+	resolver                    *Resolver // agent-policy resolver; candidate attribution remains bound to it
+	resolvers                   []*Resolver
 	doh                         *DoH
 	controller                  ControllerClient
 	inventory                   func() ([]SocketRow, error)
@@ -123,12 +124,19 @@ type Collector struct {
 	snapshot                    networkview.Snapshot
 }
 
-func NewCollector(g *Guard, e *EnvoyEvents, doh *DoH) (*Collector, error) {
+func NewCollector(g *Guard, e *EnvoyEvents, doh *DoH, extraResolvers ...*Resolver) (*Collector, error) {
 	if g == nil || e == nil || doh == nil || e.clock.Domain() != g.clock.Domain() {
 		return nil, Failure("collector_configuration_invalid")
 	}
+	resolvers := []*Resolver{g.resolver}
+	for _, resolver := range extraResolvers {
+		if resolver == nil || resolver.domain != g.clock.Domain() {
+			return nil, Failure("collector_configuration_invalid")
+		}
+		resolvers = append(resolvers, resolver)
+	}
 	c := &Collector{identity: g.controller.Identity, clock: g.clock, started: g.clock.instant(), guard: g.events,
-		envoy: e, resolver: g.resolver, doh: doh, controller: g.controller, boundary: g.boundary(),
+		envoy: e, resolver: g.resolver, resolvers: resolvers, doh: doh, controller: g.controller, boundary: g.boundary(),
 		inventory: func() ([]SocketRow, error) { return readSocketInventory(g.boundary()) }, flows: make(map[string]*collectedFlow)}
 	if _, err := rand.Read(c.key[:]); err != nil || !c.started.Valid() {
 		return nil, Failure("collector_unavailable")
@@ -708,13 +716,27 @@ func (c *Collector) publish(kernel KernelSample, kernelErr error, rows []SocketR
 		KernelPackets: missingCoverage("kernel_counters_unavailable"), MaintenanceQueries: exactCoverage(), MaintenanceBytes: exactCoverage(), SocketInventory: exactCoverage(), BoundaryAttribution: exactCoverage()}
 	s.Counters = &networkview.Counters{SentBytes: networkview.Value(uint64(c.sent)), ReceivedBytes: networkview.Value(uint64(c.received)),
 		Connections: networkview.Value(uint64(c.connections)), UpstreamFailures: networkview.Value(uint64(c.upstreamFailures)), DeniedDNSQueries: networkview.Value(c.guardTotals.DeniedDNS), DeniedTLS: networkview.Value(c.guardTotals.DeniedTLS)}
-	queries, failures := c.resolver.MaintenanceCounts()
-	s.Health.Resolver.Status, s.Health.Resolver.Reason = c.resolver.health()
+	var queries, failures uint64
+	s.Health.Resolver.Status, s.Health.Resolver.Reason = "ready", "resolver_initialized"
+	resolverSaturated := false
+	for _, resolver := range c.resolvers {
+		q, f := resolver.MaintenanceCounts()
+		if ^uint64(0)-queries < q || ^uint64(0)-failures < f {
+			queries, failures, resolverSaturated = ^uint64(0), ^uint64(0), true
+		} else {
+			queries, failures = queries+q, failures+f
+		}
+		status, reason := resolver.health()
+		if status != "ready" {
+			s.Health.Resolver.Status, s.Health.Resolver.Reason = status, reason
+		}
+		resolverSaturated = resolverSaturated || resolver.counterSaturated.Load()
+	}
 	if s.Health.Resolver.Status != "ready" {
 		s.Availability = "degraded"
 	}
 	s.Counters.MaintenanceQueries, s.Counters.MaintenanceFailures = networkview.Value(queries), networkview.Value(failures)
-	if c.resolver.counterSaturated.Load() {
+	if resolverSaturated {
 		s.Coverage.MaintenanceQueries = partialCoverage("counter_saturated")
 	}
 	s.Counters.MaintenanceSentBytes = networkview.Value(c.doh.sockets.sent.Load())

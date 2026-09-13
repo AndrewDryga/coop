@@ -257,6 +257,27 @@ type CredentialArtifact struct {
 	Project func([]byte) ([]byte, error)
 }
 
+// CredentialBrokerSpec is the adapter-owned native HTTP contract Coop may protect without
+// placing the reusable credential in a filtered agent container. A zero value means unsupported.
+// It describes one deliberately narrow first-party API, never a generic forward proxy.
+type CredentialBrokerSpec struct {
+	CredentialEnv string
+	BaseURLEnv    string
+	Upstream      string
+	Header        string
+	Method        string
+	Path          string
+	Port          int
+}
+
+// Valid rejects partially declared broker shapes. Exact provider support is still qualified by
+// the adapter's locked-client tests; this only keeps malformed declarations out of launch plans.
+func (s CredentialBrokerSpec) Valid() bool {
+	return s.CredentialEnv != "" && s.BaseURLEnv != "" && s.Upstream != "" &&
+		s.Header != "" && s.Method != "" && strings.HasPrefix(s.Path, "/") &&
+		!strings.ContainsAny(s.Path, "?#\x00\r\n") && s.Port >= 1 && s.Port <= 65535
+}
+
 // LiveCredentialSpec is the complete adapter-owned boundary for opt-in live compatibility tests.
 // Portability inspects only the isolated projected profile, never the source credential.
 type LiveCredentialSpec struct {
@@ -403,6 +424,9 @@ type Agent interface {
 	// diagnostics for this adapter. It is consumed only by opt-in live tests, but compiler-required
 	// so a registered provider cannot silently evade the registry-generated suite.
 	LiveCredentials() LiveCredentialSpec
+	// CredentialBroker declares one qualified API-key transport whose reusable key can stay in
+	// the trusted filtered gateway. Unsupported adapters return the zero value.
+	CredentialBroker() CredentialBrokerSpec
 	// Models is a short, curated list of model names this agent's CLI accepts — the menu
 	// `coop models` shows. Illustrative, not authoritative: model ids churn faster than
 	// coop releases, so ANY id the CLI accepts works with --model; coop never validates

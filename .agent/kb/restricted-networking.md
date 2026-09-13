@@ -2,8 +2,8 @@
 name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
-sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/filtered_mounts.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/agent/network_bundle.go, internal/agent/claude.go, docs/networking.md]
-updated: 2026-09-10
+sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/agent/network_bundle.go, internal/agent/claude.go, docs/networking.md]
+updated: 2026-09-13
 ---
 
 `coop <agent> --egress filtered` runs the box behind a per-run gateway. Five boring layers stand
@@ -140,11 +140,23 @@ Traps:
   (`networkstate/bundles.go:18`): changing a bundle without bumping the version is refused as
   integrity drift, so the version moves with the content (`2026-09-10.1` added the proxy). The
   rule is [[provider-bundles-carry-function-not-chatter]].
+- A direct filtered Claude CLI 2.1.260 run using only `ANTHROPIC_API_KEY` takes the narrower
+  credential-broker path. The API key is removed from the agent environment and replaced with a
+  per-execution substitute plus a loopback `ANTHROPIC_BASE_URL`. The capless guard alone receives
+  an exact read-only secret file; the privileged controller and agent never do. Its helper-only
+  resolver and typed controller lease keep `api.anthropic.com` out of the agent policy, while the
+  existing Envoy data plane retains exact socket/byte attribution. ACP, login, restricted-
+  filesystem, peer/preset, and remote-session forms refuse this first slice rather than exposing
+  the key. Ordinary OAuth/file runs keep their existing credential handling and are not broker-
+  protected; restricted and session projections retain their existing access-only copies.
 
 [[network-gateway]] is the runtime that enforces the capture; [[network-consumers]] is how the loop,
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-13 — added the locked Claude API-key credential-broker first slice: guard-only secret,
+  helper-only route admission, Envoy-attributed upstream, session substitute, and fail-closed
+  unsupported-mode boundary. Re-verified against the listed adapter, box, and gateway sources.
 - 2026-09-10 — a filtered launch qualifies the host itself (`ensureNetworkQualification`, images
   must still exist, serialized on `LockSetup`); `coop net setup` keeps the same transcript: two
   sentences, one line per proved check, one verdict. Approval is an exact snapshot of the project

@@ -68,6 +68,7 @@ func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	if err != nil {
 		return nil, err
 	}
+	spec.projectEnv = p.Box.Env
 	root, err := NetworkStatePath()
 	if err != nil {
 		return nil, err

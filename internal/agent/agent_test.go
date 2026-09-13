@@ -775,6 +775,15 @@ func TestMetadata(t *testing.T) {
 		if primaryEnvCount != 1 {
 			t.Errorf("%s primary AuthMarker key %q appears %d times in CredentialEnvKeys", name, authEnv, primaryEnvCount)
 		}
+		broker := a.CredentialBroker()
+		if broker != (CredentialBrokerSpec{}) {
+			if !broker.Valid() || !seen[broker.CredentialEnv] {
+				t.Errorf("%s CredentialBroker is malformed or uses an undeclared credential key: %#v", name, broker)
+			}
+			if name != "claude" {
+				t.Errorf("%s unexpectedly declares an unqualified credential broker", name)
+			}
+		}
 		live := a.LiveCredentials()
 		if live.Portability == nil {
 			t.Errorf("%s live credentials have no portability check", name)
