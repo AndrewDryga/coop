@@ -13,7 +13,7 @@ import (
 
 func TestCheckSecretsCoopignoreCommitCandidates(t *testing.T) {
 	pinGitConfig(t)
-	for _, scope := range []string{"root", "nested"} {
+	for _, scope := range []string{"root", "nested", "root directory", "nested directory"} {
 		for _, state := range []string{"untracked", "tracked", "tracked then ignored"} {
 			t.Run(scope+"/"+state, func(t *testing.T) {
 				repo, git := gitrepo.New(t)
@@ -27,23 +27,32 @@ func TestCheckSecretsCoopignoreCommitCandidates(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				const candidate = "config/client.go"
+				const candidate = "config/private/client.go"
 				write(candidate, openAIKeyFile())
 				if state != "untracked" {
 					git("add", "--", candidate)
 					git("commit", "-qm", "synthetic scan fixture")
 				}
-				ignore := "local-only.txt\n"
+				ignore := "local-only/\nconfig/private/ignored.txt\n"
 				if state == "tracked then ignored" {
 					ignore += candidate + "\n"
 				}
 				write(".gitignore", ignore)
-				write("local-only.txt", openAIKeyFile())
-				rootRules := "local-only.txt\n"
-				if scope == "root" {
+				write("local-only/sub/notes.txt", openAIKeyFile())
+				write("config/private/ignored.txt", openAIKeyFile())
+				rootRules := "local-only/\nconfig/private/ignored.txt\n"
+				shadowTarget, shadowKind := candidate, box.Decoy
+				switch scope {
+				case "root":
 					rootRules += candidate + "\n"
-				} else {
-					write("config/.coopignore", "client.go\n")
+				case "nested":
+					write("config/.coopignore", "private/client.go\n")
+				case "root directory":
+					rootRules += "config/private/\n"
+					shadowTarget, shadowKind = "config/private", box.DirDecoy
+				case "nested directory":
+					write("config/.coopignore", "private/\n")
+					shadowTarget, shadowKind = "config/private", box.DirDecoy
 				}
 				write(".coopignore", rootRules)
 				mounts, err := box.ComputeMounts(repo, "/workspace")
@@ -52,12 +61,15 @@ func TestCheckSecretsCoopignoreCommitCandidates(t *testing.T) {
 				}
 				hidden := false
 				for _, mount := range mounts {
-					if mount.Target == "/workspace/"+candidate && mount.Kind == box.Decoy && mount.RO {
+					if mount.Target == "/workspace/"+shadowTarget && mount.Kind == shadowKind && mount.RO {
 						hidden = true
 					}
 				}
 				if !hidden {
 					t.Fatal("candidate is not protected by the box mount plan")
+				}
+				if count := unscannedIgnoredCount(repo); count != 0 {
+					t.Errorf("hidden ignored descendants counted as visible: %d", count)
 				}
 				for _, includeIgnored := range []bool{false, true} {
 					scan, err := scanVisibleTree(repo, includeIgnored)

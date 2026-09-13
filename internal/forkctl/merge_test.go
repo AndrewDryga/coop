@@ -1205,6 +1205,23 @@ func TestPolicyScanFlagsInteractionFiles(t *testing.T) {
 	}
 }
 
+func TestPolicyScanHiddenAncestors(t *testing.T) {
+	repo := initRepo(t)
+	writeTaskFile(t, filepath.Join(repo, ".coopignore"), "private/\n")
+	git(t, repo, "add", ".coopignore")
+	git(t, repo, "commit", "-qm", "hidden directory policy")
+	git(t, repo, "checkout", "-q", "-b", "candidate")
+	for _, rel := range []string{"private/ordinary.go", "public/ordinary.go"} {
+		writeTaskFile(t, filepath.Join(repo, rel), "package fixture\n")
+	}
+	git(t, repo, "add", "private/ordinary.go", "public/ordinary.go")
+	git(t, repo, "commit", "-qm", "public synthetic files")
+	git(t, repo, "checkout", "-q", "main")
+	if got := strings.Join(PolicyScan(repo, "candidate"), "\n"); got != "secret-like file: private/ordinary.go" {
+		t.Fatalf("PolicyScan = %q; want only the descendant of the hidden directory", got)
+	}
+}
+
 // A fork's in-tree .gitattributes + a fork-local smudge filter must not run on the land rebase's
 // checkout. Includes a positive control (a raw re-checkout fires the smudge) so a green test means
 // the neutralizer worked, not that the filter is dead.

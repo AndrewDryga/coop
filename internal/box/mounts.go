@@ -82,7 +82,8 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 // override an explicit .coopignore — it's the user's final say). Each directory's .coopignore
 // is loaded once into the closure's cache. ComputeMounts and check-secrets share this
 // visibility decision; the scanner still checks hidden commit candidates because
-// hiding a file from the box does not prevent committing it.
+// hiding a file from the box does not prevent committing it. A hidden directory
+// hides every descendant, including names an allow rule would otherwise rescue.
 func NewShadowDecider(repo string) func(relSlash string) bool {
 	cache := map[string]UserGlobs{} // dir (slash-rel, "" = root) → its .coopignore, loaded once
 	loadDir := func(dirRel string) UserGlobs {
@@ -93,7 +94,7 @@ func NewShadowDecider(repo string) func(relSlash string) bool {
 		cache[dirRel] = g
 		return g
 	}
-	return func(relSlash string) bool {
+	shadowedHere := func(relSlash string) bool {
 		name := relSlash
 		if i := strings.LastIndexByte(relSlash, '/'); i >= 0 {
 			name = relSlash[i+1:]
@@ -111,6 +112,16 @@ func NewShadowDecider(repo string) func(relSlash string) bool {
 			(matchesAny(lname, allowTemplateGlobs) && !matchesAny(lname, hardSecretGlobs))
 		byDefault := matchesAny(lname, SecretGlobs) && !allowed
 		return byDefault || shadowedByCoopignore(relSlash, loadDir)
+	}
+	return func(relSlash string) bool {
+		// Direct file queries (scanner and service binds) must agree with a tree
+		// walk that prunes a hidden parent before ever visiting the child.
+		for i := 0; i < len(relSlash); i++ {
+			if relSlash[i] == '/' && shadowedHere(relSlash[:i]) {
+				return true
+			}
+		}
+		return shadowedHere(relSlash)
 	}
 }
 

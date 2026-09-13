@@ -3,7 +3,7 @@ name: compose-host-authority
 description: sibling Compose execution uses a validated private snapshot and explicit values rather than ambient host imports
 subsystem: box/services
 sources: [internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/serviceapproval.go, internal/box/sweep.go]
-updated: 2026-09-06
+updated: 2026-09-13
 ---
 
 Sibling service definitions are agent-writable but execute on the host daemon. `readValidatedCompose`
@@ -40,6 +40,13 @@ entry. `snapshotComposeArgs` appends it to EVERY compose invocation (start, port
 teardown), so the project definition never differs between them. Sources that do not exist yet,
 named volumes, tmpfs, and public files are untouched.
 
+The shared decision checks ancestor prefixes as well as the leaf. A direct bind
+of `private/notes.txt` or a directory below `private/` remains hidden when that
+parent matches a rule, even though the leaf name is ordinary or allowed. This
+matches primary mount/build pruning; resolved service symlink sources use the
+same rule. `TestRuntimeComposeHiddenAncestors` verifies real direct-file,
+directory and alias decoys plus public sibling writeback using synthetic files.
+
 Sidecar binds get the box's secret shadowing (`serviceShadowPlan` → decoys over every hidden
 source). The one exemption is a human approval of the compose file's exact CONTENT
 (`serviceapproval.go`: sha256 of the validated bytes → `~/.local/state/coop/service-approvals`,
@@ -65,6 +72,8 @@ like coop's (`^coop-…-<8hex>$`) — never a human's compose project. "Unused" 
 containers as users (`ps -a --filter network=`), because they reconnect on the next start.
 
 ## Changelog
+- 2026-09-13: fixed direct descendant queries that missed hidden ancestor directories;
+  native Compose fixtures reproduced the exposure before and mutation denial after.
 - 2026-09-07: repo-side `services.require_real_files` request labels the approval prompt.
 - 2026-09-06: session teardown removes unused project networks; orphan coop networks swept.
 - 2026-09-07: hidden-file notice moved off the compose writer onto ui.Warn.

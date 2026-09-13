@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Files beneath hidden directories stay hidden when bound directly into project
+  services, including through symlink aliases. Secret scans and fork checks now
+  recognize the same inherited hiding rules without skipping commit candidates.
+
 - The main help menu names all four providers in its start command, restoring
   `coop <claude|codex|gemini|grok>` for signed-in and first-run users alike.
 

@@ -35,6 +35,10 @@ shared shadow decision only to label hidden candidates and exclude hidden files
 outside the commit-candidate set. Root/nested hide rules, tracked files also matched
 by `.gitignore`, and untracked non-ignored files follow the same selection rule.
 Box hiding remains independent of reviewed exact-finding exceptions.
+The shared shadow decision includes hidden ancestor directories: their committable
+descendants are still scanned and labeled, while ignored noncandidates are skipped
+and do not inflate the visible-ignored count. Fork policy also warns on changed
+files below a hidden parent, without changing content detection or exceptions.
 
 Traps:
 - A file coop could not READ is not a skip. `readScannable` separates `scanSkipped` (binary,
@@ -46,6 +50,8 @@ Traps:
 - The exception file is scanned like any other project file; its comments are not a hiding place.
 
 ## Changelog
+- 2026-09-13: verified ancestor-directory hiding across scanner modes and ignored
+  counts, with a fork policy regression for hidden and public siblings.
 - 2026-09-13: removed the scanner's unconditional .coopignore exemption; verified
   hidden candidate selection, unchanged mount protection and exact exceptions.
 - 2026-09-11: created with the fingerprint contract, the ScanSecrets/ScanFile split, and the
