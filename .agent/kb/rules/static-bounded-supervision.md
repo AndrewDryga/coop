@@ -4,7 +4,7 @@ description: "supervised long commands keep output static and only a bounded exc
 scope: agent-workflow
 sources: [AGENTS.md, internal/loop/bar.go, internal/loop/iteration.go, internal/ui/live.go, internal/loop/prompts.go, internal/loop/shell_recipe_test.go]
 check: "go test ./internal/loop -run 'TestLoopBarSupported|TestLoopCheckScript|TestLoopShellGuidance'"
-updated: 2026-09-13
+updated: 2026-09-14
 ---
 
 # Agent-supervised long commands use static, bounded output
@@ -24,8 +24,10 @@ frames, consumes context without adding evidence, and can obscure the final exit
 - Redirect complete stdout and stderr to the task's `tmp/` directory or `/tmp`; preserve and
   report the command's real exit status. Establish the check's explicit cwd, create scratch
   before redirection, and use a unique log per invocation so concurrent checks retain evidence.
-- While it runs, poll for completion without streaming the log. Inspect only a bounded `tail`
-  or a targeted `rg` filter, expanding narrowly when a failure needs more evidence.
+- Run final checks in the foreground by default. Background a check only when there is
+  independent work to do; a returned running-job identifier is waited on through the runtime's
+  completion tool, not a guessed shell sleep. If that wait times out, wait on the same job again.
+  Inspect only a bounded `tail` or targeted `rg` filter, expanding when a failure needs evidence.
 - Use the runtime's supported completion mechanism, not long blind sleeps. Cleanup targets only
   verified owned resources through their lifecycle command or exact identity, then checks the
   stopped/absent postcondition; a cleanup failure remains a failure, not a successful tail.
@@ -37,6 +39,10 @@ frames, consumes context without adding evidence, and can obscure the final exit
 See also [[command-output-tiers]] and [[fix-the-bug-not-the-feature]].
 
 ## Changelog
+- 2026-09-14 — the user approved foreground-first checks after the Opus run kept using
+  guessed sleeps despite generic wait guidance. Swept the work prompt, shell guidance tests,
+  and supervision rule; replaced the existing wording and pinned both normal/rework prompts.
+  This is prompt guidance, not runtime enforcement or proof of model compliance.
 - 2026-09-13 — swept the work prompt, loop bar/iteration and shared spinner: retained human UI,
   repaired missing setup/status/owned-job guidance with one executable POSIX check recipe.
   Focused tests cover cwd/setup refusal, argv boundaries, complete unique logs and producer failure
