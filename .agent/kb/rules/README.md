@@ -118,6 +118,7 @@ updated: <YYYY-MM-DD>                # last edit
 
 **The loop**
 - [loop-completion-refusals-keep-work-moving](loop-completion-refusals-keep-work-moving.md) — immediate completion feedback and bounded safe repair keep unattended work moving without weakening acceptance
+- [workers-run-tests-reviewers-request](workers-run-tests-reviewers-request.md) — loop workers execute verification once; reviewers inspect the handoff and request missing checks through rework
 - [provider-reset-timezones-preserve-iana](provider-reset-timezones-preserve-iana.md) — preserve exact provider reset zones; parse safe IANA names and reject ambiguous abbreviations
 
 **Scaffolding**

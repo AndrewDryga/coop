@@ -1221,10 +1221,12 @@ iteration command if you need something custom. When the queue empties, a fresh,
 signoff** pass (a senior reviewer's bar) re-checks each shipped task: goal met (every acceptance
 criterion and subtask), standards followed (`AGENTS.md` + `.agent/kb/rules`, no scope creep),
 the failure path tested, the change polished (docs/CHANGELOG updated), plus bookkeeping.
-Coop atomically finalizes each completed `state.md` before review. Reviewers never mutate an
-archived task in place; an unexpected lifecycle defect is reopened and reported like any other
-completion-integrity failure. The reviewer then runs the repo's gate once across the whole repo and reopens anything short of "merge with no
-changes". If the signoff reopened work, the loop drains and signs off again — repeating
+Coop atomically finalizes each completed `state.md` before review. The worker records its final
+checks in that state as a compact handoff. Reviewers inspect the implementation and test coverage,
+trust the reported execution, and never repeat tests themselves; a missing, failed, or stale check
+reopens the task with an exact request for the worker. Reviewers never mutate an archived task in
+place; an unexpected lifecycle defect is reopened and reported like any other
+completion-integrity failure. If the signoff reopened work, the loop drains and signs off again — repeating
 until a signoff reopens nothing (verified done) or it hits the round cap, at which point the
 task it keeps reopening is blocked for a human rather than reported as done. The cap
 scales with the batch: half the tasks worked this run, clamped to

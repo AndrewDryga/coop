@@ -268,8 +268,8 @@ func TestLoopWorkPromptEvidenceFirstProposals(t *testing.T) {
 // TestLoopPreflightAndReviewFolder: the preflight prompt frames only the CUSTOM cleanup — the
 // built-in unblock runs host-side (unblockResolved), never in a box — bounded by the guardrails
 // (no task work, no code, no commits); the default review does bookkeeping + ONE whole-repo gate
-// and reports host-applied reopens, and the fixed context footer carries the queue paths + verdict
-// mechanics.
+// and reports host-applied reopens without executing tests, and the fixed context footer carries
+// the queue paths + verdict mechanics.
 func TestLoopPreflightAndReviewFolder(t *testing.T) {
 	pre := loopPreflightPrompt("/repo", []string{".agent/tasks"}, "Drop stale screenshots.\n")
 	for _, want := range []string{
@@ -289,20 +289,22 @@ func TestLoopPreflightAndReviewFolder(t *testing.T) {
 	rev := loopSignoffPrompt("/repo", []string{".agent/tasks"}, "", []string{"t1 — /repo/.agent/tasks/99_done/t1"})
 	// The demanding default prompt: a header scoping the review to what THIS RUN completed (never
 	// all of 99_done/, which holds prior runs' history), then a senior reviewer's bar — every
-	// acceptance criterion met, the repo's rules obeyed, the FAILURE path tested, the change
-	// polished (docs updated), a SINGLE whole-repo gate, host-applied reopens, and no self-fix/commits.
+	// acceptance criterion met, the repo's rules obeyed, the FAILURE path covered, the change
+	// polished (docs updated), worker-reported verification inspected, host-applied reopens,
+	// and no self-fix/commits.
 	for _, want := range []string{
 		"the ONLY tasks to review this pass", "t1 — /repo/.agent/tasks/99_done/t1", // scoped subjects lead
 		"project contract is normally already loaded", "`coop` is not installed in this review box",
 		"Do not probe a service merely to reconfirm an explicitly reported unavailable dependency",
 		"For EVERY task listed above", // the directive binds to the header, not the done/ dir
 		"SENIOR REVIEWER", "99_done/",
-		"acceptance criterion",               // 1. meets its goal
-		".agent/kb/rules",                    // 2. follows the standards
-		"FAILURE/edge path",                  // 3. tested for real
-		"docs/README/CHANGELOG",              // 4. polished
-		"Coop-owned exact-tree gate receipt", // broad gate is host-owned and reused
-		"Do not rerun that matching broad gate",
+		"acceptance criterion",  // 1. meets its goal
+		".agent/kb/rules",       // 2. follows the standards
+		"FAILURE/edge path",     // 3. tested for real
+		"docs/README/CHANGELOG", // 4. polished
+		"Trust the worker-reported execution handoff",
+		"Do not run tests, gates, services",
+		"exact check the worker must run",
 		"tmp/ was disposable", "evidence that needed to survive completion belongs in artifacts/",
 		"never edit a task in place under 99_done/", "report a completion-integrity defect",
 		"exactly one reachable commit",
@@ -402,14 +404,16 @@ func TestBetweenAuditSetPrompt(t *testing.T) {
 	}
 }
 
-func TestReviewPromptRequiresExactReceipt(t *testing.T) {
+func TestReviewPromptForbidsTestExecution(t *testing.T) {
 	prompt := reviewContextFooter("/repo", []string{".agent/tasks"})
 	for _, want := range []string{
 		"REVIEW COMPLETE — PASS — reopened: none",
 		"REVIEW COMPLETE — FAIL — reopened: <id1>,<id2>",
 		"sorted by task ID", "exact IDs", "named review subjects",
 		"authoritative review", "do NOT invoke the review-board skill or spawn another review board",
-		"focused read-only investigation",
+		"Do not execute tests, gates, services",
+		"worker-reported verification",
+		"exact check the worker must run",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("review prompt missing %q:\n%s", want, prompt)

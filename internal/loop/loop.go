@@ -1241,14 +1241,13 @@ reviewAgain:
 							reviewHeader("Reviewing task: "+assignedCompletion.Item.Title, betweenRot.Active().String())
 						}
 						projectPolicy, _ := project.Load(repo)
-						gateReceipt := c.reviewGateReceipt(iterCtx, repo, img, loopStartHead)
 						prompt := seedReviewPrompt(
 							loopBetweenPrompt(repo, queues, substituteLoopVars(setPrompt, stepChanges, health), finishedDirs, auditGateFiles),
-							stepChanges.reviewBlock(health), reviewPacket(repo, projectPolicy, finishedDirs, stepChanges), gateReceipt.promptBlock(),
+							stepChanges.reviewBlock(health), reviewPacket(repo, projectPolicy, finishedDirs, stepChanges),
 						)
 						// An ordinary configured audit preserves its historical warn-and-continue behavior.
-						// A protected audit is mandatory: failure or a missing/mismatched receipt stops
-						// before another task can trust the changed gate.
+						// A protected audit is mandatory: failure stops before another task can trust
+						// the changed gate.
 						stage := "between audit"
 						if protectedAudit {
 							stage = "protected audit"
@@ -1459,11 +1458,10 @@ reviewAgain:
 		// round because the range (loopStartHead..HEAD) grows as reopened work lands.
 		soHead := gitOut(repo, "rev-parse", "HEAD")
 		cs := loopChanges(repo, loopStartHead, soHead)
-		gateReceipt := c.reviewGateReceipt(iterCtx, repo, img, loopStartHead)
 		projectPolicy, _ := project.Load(repo)
 		signoff := seedReviewPrompt(
 			loopSignoffPrompt(repo, queues, substituteLoopVars(lc.Signoff.Prompt, cs, health), subjects),
-			audits.signoffBlock(subjectIDs), cs.reviewBlock(health), reviewPacket(repo, projectPolicy, subjects, cs), gateReceipt.promptBlock(),
+			audits.signoffBlock(subjectIDs), cs.reviewBlock(health), reviewPacket(repo, projectPolicy, subjects, cs),
 		)
 		observe := func(run reviewRunResult, start time.Time, headBefore string) {
 			c.recordStage(repo, runid, "signoff", run.outcome, run.target, start, run.exit, run.retries, len(run.reopened), headBefore, hosts, nil, nil, run.usage)
@@ -1627,10 +1625,9 @@ reviewAgain:
 			}
 			verifyIDs := pendingReviewIDs(pendingVerify, tasks.PendingReviewVerify)
 			projectPolicy, _ := project.Load(repo)
-			gateReceipt := c.reviewGateReceipt(iterCtx, repo, img, loopStartHead)
 			vPrompt := seedReviewPrompt(
 				substituteLoopVars(lc.Verify.Prompt, cs, health)+"\n\n"+auditEvidencePrompt(verifyIDs)+"\n\n"+reviewContextFooter(repo, queues),
-				cs.reviewBlock(health), reviewPacket(repo, projectPolicy, nil, cs), gateReceipt.promptBlock(),
+				cs.reviewBlock(health), reviewPacket(repo, projectPolicy, nil, cs),
 			)
 			verifyRecords, selectErr := pendingReviewRecordsForIDs(pendingVerify, verifyIDs)
 			if selectErr != nil {

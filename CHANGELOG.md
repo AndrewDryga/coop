@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Loop workers now record a compact final verification handoff in task state. Between-task,
+  signoff, and final-verification reviewers inspect that report and request missing checks through
+  rework instead of automatically repeating worker tests.
+
 - Interactive forks, fork ACP sessions, and fork review/merge gates now use the same approved
   network admission as direct runs and loops. A project-requested filtered run without a captured
   approval fails before mounts or runtime execution.
