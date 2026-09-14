@@ -15,6 +15,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/networkgateway"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/project"
@@ -121,13 +122,11 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 	if projectRepo == "" {
 		projectRepo = spec.Repo
 	}
-	live, err := LiveBoxes(projectRepo, spec.activityID)
+	unlockLaunch, err := forkspace.LockServiceLaunch(ctx, projectRepo, true)
 	if err != nil {
-		return "", nil, nil, nil, err
+		return "", nil, nil, nil, fmt.Errorf("wait for a safe service launch: %w", err)
 	}
-	if len(live) != 0 {
-		return "", nil, nil, nil, fmt.Errorf("another box is already using this project's filtered services (%s) — stop it before starting another filtered service box", DescribeLiveBoxes(live))
-	}
+	defer unlockLaunch()
 	selected := make([]string, 0, len(grants))
 	for _, grant := range grants {
 		if name := grant.Rule.To.Service; !slices.Contains(selected, name) {
@@ -148,7 +147,8 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 		return "", nil, nil, nil, err
 	}
 	noticeHidden := sections == nil || !sections.loop
-	args, cleanupSnapshot, hidden, err := snapshotComposeArgsForStart(spec.Repo, composeFile, spec.RepoReadOnly, true, exposedRoots...)
+	owner := runServiceOwner(spec)
+	args, cleanupSnapshot, hidden, err := snapshotComposeArgsForStart(spec.Repo, composeFile, owner, spec.RepoReadOnly, true, exposedRoots...)
 	if err != nil {
 		var refused *ComposeRefused
 		if sections != nil && sections.loop && errors.As(err, &refused) {
@@ -171,7 +171,7 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 			cleanupSnapshot()
 		}
 	}()
-	network := ComposeProject(spec.Repo) + "_filtered"
+	network := ComposeProjectFor(spec.Repo, owner) + "_filtered"
 	seed, err := filteredServiceOverride(network, closure, netip.Prefix{}, nil)
 	if err != nil {
 		return "", nil, nil, nil, err

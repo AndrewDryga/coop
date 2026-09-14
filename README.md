@@ -1554,9 +1554,11 @@ coop init --services         # add another service to a project that already has
 
 Services run as their own containers on a private network the box joins — connect with
 e.g. `DATABASE_URL=postgres://postgres:dev-password@db:5432/app_dev` (put it in `agents/env`).
-When an editor session ends, coop removes its workspace's service containers and the network
-they used; a leftover network of any coop project that nothing is attached to is swept on the
-next loop, fork, or build start, since Docker hands out only about thirty of them.
+The development stack keeps the same workspace identity and data it has always used. A loop gets
+its own Compose project, network, volumes, and published ports for the whole logical run, reused
+across task and provider retries and removed when that run ends. The two stacks can run in
+one checkout without sharing service data or ports. Their source tree is still intentionally
+shared: an ordinary file edit remains visible through either stack's live bind mount.
 Before startup, `coop up` asks Compose for the resolved service list; it ends with
 `✓ Services ready: db, redis` — those exact names, in Compose order — and the URL of any port it
 really published. If discovery fails, Coop does not start the project or claim a ready result.
@@ -1606,14 +1608,13 @@ services:
       coop.service.scheme: https         # scheme for COOP_SERVICE_*_URL (default http)
 ```
 
-coop assigns a stable host port per workspace (so parallel forks never collide — the port is
-keyed on the service *and* the port, so two sidecars, or a sidecar and a `serve.port`, don't clash),
+coop assigns a stable host port per development workspace or logical loop run (so concurrent
+stacks never collide — the port is keyed on the owner, service, and port),
 publishes it loopback-only, and runs a tiny raw-TCP forwarder inside the box so
 `https://localhost:<port>` resolves to Keycloak from *both* sides — the issuer string matches, no
 `host.docker.internal`, no weakened isolation. The box gets
 `COOP_SERVICE_KEYCLOAK_URL=https://localhost:<port>` (scheme from the label); `coop fork ls --json`
-lists every workspace's service URLs for host tooling. (Compose project + network names are
-per-workspace too, so a fork's services and volumes are its own.)
+lists every workspace's service URLs for host tooling.
 
 The agent never installs or hosts a database, so it can't corrupt one, and `coop down -v`
 resets to a clean slate. A shared `coop-cache` volume at `~/.cache` keeps disposable runs
@@ -1621,11 +1622,11 @@ from re-downloading the world.
 
 `.agent/compose.yml` runs on your host daemon (that's how a service becomes a real
 container), so coop validates it before every run — `coop up` and each networked launch
-alike. Services start only when no agent box is running in the project: a running agent could
-swap a validated bind folder for a link to somewhere else on your machine in the instant between
-coop's check and Docker opening it, and a start that happens while it runs (a peer or consult
-box mid-task, a `coop up` typed alongside it) is the only launch it could race. Services already
-up stay up and reachable; `coop up` says which box to stop or wait for. Only plain sibling-service directives pass: an `image`, inline `environment`, named
+alike. A running agent could replace a validated bind folder with a link to somewhere else on
+your machine before Docker opens it. Coop therefore holds a short exclusive launch barrier around
+validation and daemon startup; a box that can edit the checkout holds the matching shared side.
+`coop up` waits for that safe boundary instead of refusing the whole workspace, then starts the
+independent development stack. Only plain sibling-service directives pass: an `image`, inline `environment`, named
 volumes or repo-relative binds, `healthcheck`, `depends_on`, and loopback-only published
 ports. Anything that would reach past a repo-scoped container is refused with the exact reason —
 `privileged`, `cap_add`, a host bind like `/:/host` or `/var/run/docker.sock`, `network_mode:
@@ -1770,7 +1771,7 @@ controls and cannot be set inside `coop.conf`.
 | `COOP_EGRESS` | `open` | `none` cuts the box off the network (`--network none`) — no outbound, so a prompt-injected agent can't exfiltrate the repo, secrets, or its credentials. Breaks installs / the model API, so it's opt-in; the default keeps full outbound. |
 | `COOP_NO_ASDF` | (off) | skip runtime `.tool-versions` provisioning; stale Node shim repair still runs. Read in the box — set it in `agents/env` (forwarded into the box), not your host shell |
 | `COOP_NETWORK` · `COOP_CACHE` | `1` | join the services network · mount the cache volume |
-| `COOP_AUTO_UP` | `1` | auto-start sibling services (`compose up`) before every box when a `.agent/compose.yml` is present, so any mode (agent, acp, loop, fork) can reach them; `0` to manage them with `coop up`/`coop down` yourself |
+| `COOP_AUTO_UP` | `1` | auto-start sibling services (`compose up`) for working boxes when a `.agent/compose.yml` is present; loop runs use their own reusable stack and reviewers use the worker's reported checks; `0` to manage development services with `coop up`/`coop down` yourself |
 | `COOP_SERVICES_NET` | (auto) | services network to join (let parallel forks share one db) |
 
 The resource/privilege caps (`COOP_PIDS` / `COOP_MEMORY` / `COOP_CPUS` /

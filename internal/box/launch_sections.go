@@ -539,22 +539,6 @@ func (s *launchSections) servicesSkipped(cause string) {
 	ui.Note("    To retry: coop up")
 }
 
-// servicesHeldByLiveBox is the deliberate no-start path: another box owns the project lifecycle.
-// It does not claim the services are healthy, unavailable, or safe to restart under that owner.
-func (s *launchSections) servicesHeldByLiveBox(cause string) {
-	if !s.on {
-		return
-	}
-	if !s.loop {
-		ui.Warning("Project service startup was skipped", cause, "Stop that box, then run coop up.")
-		return
-	}
-	s.section("Starting services")
-	ui.Note("  %s Service startup skipped", ui.Yellow("⚠"))
-	loopLaunchDetail(cause, 4)
-	loopLaunchDetail("Coop will not restart services while that box is active; only services it can observe as running will be made available.", 4)
-}
-
 func loopLaunchDetail(text string, indent int) {
 	width := loopLaunchWidth() - indent
 	for _, line := range ui.WrapLines(cleanLaunchText(text), width) {

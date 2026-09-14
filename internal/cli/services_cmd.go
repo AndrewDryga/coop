@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -41,17 +43,14 @@ func (a *app) cmdUp(args []string) (int, error) {
 			fmt.Sprintf("%s does not exist.", p.ComposeRel()),
 			"Add services with coop init --services.")
 	}
-	// Sidecars start only when no agent box is running in this project: a running agent could
-	// swap a validated bind source for a link to a host path between coop's check and Docker
-	// opening it, and this start is exactly the launch it would race.
+	// A running box now holds the shared side of the mount-launch barrier. Name the wait before
+	// taking the exclusive side so an interactive command never looks hung.
 	live, err := box.LiveBoxes(repo, "")
 	if err != nil {
 		return -1, err
 	}
 	if len(live) > 0 {
-		return 1, reported("Could not start services",
-			fmt.Sprintf("An agent box is running in this project: %s.", box.DescribeLiveBoxes(live)),
-			"Stop it or wait for it to finish, then run coop up again.")
+		ui.Note("Waiting for a safe service-launch window (%s).", box.DescribeLiveBoxes(live))
 	}
 	rel, _ := filepath.Rel(repo, file)
 	// A service that legitimately needs a secret-looking file (a generated dev TLS key) gets it
@@ -70,6 +69,11 @@ func (a *app) cmdUp(args []string) (int, error) {
 	if err := box.CheckServiceTempDir(repo, box.ConfigExposureRoots(a.cfg)...); err != nil {
 		return 1, composeRefusal("Could not start services from "+rel, rel, err, "coop up")
 	}
+	unlockLaunch, err := forkspace.LockServiceLaunch(context.Background(), repo, true)
+	if err != nil {
+		return 1, reported("Could not start services", sentence(firstLine(err)), "Run coop up again.")
+	}
+	defer unlockLaunch()
 	ui.Note("Starting services from %s", rel)
 	ui.Note("  Waiting for services to be ready.")
 	ui.Note("")

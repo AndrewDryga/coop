@@ -50,6 +50,25 @@ func ComposeProject(workspacePath string) string {
 	return ServicesProject(canon) + "-" + hex.EncodeToString(sum[:])[:8]
 }
 
+// ComposeProjectFor returns the development project's historical name when owner is empty, and
+// a private Compose project for one logical loop/session otherwise. The owner is hashed rather
+// than embedded because run identifiers are host bookkeeping, not public Docker names.
+func ComposeProjectFor(workspacePath, owner string) string {
+	base := ComposeProject(workspacePath)
+	if owner == "" {
+		return base
+	}
+	sum := sha256.Sum256([]byte(owner))
+	return base + "-run-" + hex.EncodeToString(sum[:])[:8]
+}
+
+func servicePortScope(workspacePath, owner string) string {
+	if owner == "" {
+		return canonicalWorkspace(workspacePath)
+	}
+	return canonicalWorkspace(workspacePath) + "#coop-service-owner:" + owner
+}
+
 // canonicalWorkspace resolves a workspace path to a stable canonical form (symlinks followed,
 // cleaned) so the same physical checkout always hashes identically — the invariant behind stable
 // per-workspace ports AND stable sidecar volumes. Falls back to a plain clean if the path can't be

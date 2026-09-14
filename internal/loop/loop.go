@@ -3,6 +3,7 @@ package loop
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -666,6 +667,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	reviewCapped := false
 	verificationFailed := false
 	reuseWorkServices := make(map[string]bool)
+	preparedServices := ""
 reviewAgain:
 	for ; ; signoffRound++ {
 		for {
@@ -795,9 +797,15 @@ reviewAgain:
 			iterStart := time.Now()
 			c.net.setStage(fmt.Sprintf("Task attempt %d", attempt))
 			cmd, streaming, agentCommand := iterCmd(agent, iterWork)
+			serviceFingerprint := loopServiceFingerprint(repo, c.activityRepo)
+			c.reuseServices = serviceFingerprint != "" && serviceFingerprint == preparedServices
 			recovery := iterationRecovery{reuseServices: reuseWorkServices[assigned.Item.ID]}
 			delete(reuseWorkServices, assigned.Item.ID)
 			code, _, res, classification, windows, runErr := c.runIterationWithMode(iterCtx, repo, img, agent, forkName, cmd, streaming, agentCommand, hosts, completionWindowWork, []string{assigned.Item.ID}, nil, false, sink, peers, active, assigned.Item.ID, taskTools, recovery)
+			c.reuseServices = false
+			if runErr == nil && serviceFingerprint != "" {
+				preparedServices = serviceFingerprint
+			}
 			if errors.Is(runErr, tasks.ErrCompletionWindowSetup) {
 				return 1, errors.Join(runErr, lease.Release())
 			}
@@ -1846,6 +1854,13 @@ reviewAgain:
 	if err != nil {
 		return 1, err
 	}
+	if preparedServices != "" || loopServiceFingerprint(repo, c.activityRepo) != "" {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if cleanupErr := box.StopServicesForOwner(cleanupCtx, c.rt, repo, c.activityRepo, runid, true); cleanupErr != nil {
+			ui.Warn("could not clean up this loop's private services: %v", cleanupErr)
+		}
+		cancel()
+	}
 	c.closeWith(func() {
 		if verificationFailed && cf.Todo+cf.Doing+cf.Blocked == 0 {
 			printFailedVerificationVerdict(cf)
@@ -1862,6 +1877,27 @@ func cleanCredentialRetryCanReuseServices(repo, beforeHead, afterHead, outcome s
 	}
 	status, err := gitOutErr(repo, "status", "--porcelain=v1", "--untracked-files=all")
 	return err == nil && status == ""
+}
+
+func loopServiceFingerprint(workspace, policyRepo string) string {
+	if policyRepo == "" {
+		policyRepo = workspace
+	}
+	p, err := project.Load(policyRepo)
+	if err != nil {
+		return ""
+	}
+	file := box.ComposeFileAt(workspace, p.ComposeRel())
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return ""
+	}
+	approved := byte(0)
+	if _, ok := box.ApprovedServiceSecrets(data); ok {
+		approved = 1
+	}
+	sum := sha256.Sum256(append(data, approved))
+	return hex.EncodeToString(sum[:])
 }
 
 // closeWith prints the run's final banner, flushing the networking summary first

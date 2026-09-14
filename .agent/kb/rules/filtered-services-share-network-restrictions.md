@@ -2,7 +2,7 @@
 name: filtered-services-share-network-restrictions
 description: agent-controlled services must obey approved network restrictions without freezing live code or approving every image update
 scope: security
-sources: [internal/box/filtered.go, internal/box/filtered_services.go, internal/box/filtered_launch.go, internal/networkgateway/controller.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go]
+sources: [internal/box/filtered.go, internal/box/filtered_services.go, internal/box/filtered_launch.go, internal/box/repo.go, internal/networkgateway/controller.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go]
 check: none
 updated: 2026-09-14
 ---
@@ -31,6 +31,9 @@ Use the separately approved unified permission flow in [[project-edits-request-a
 not expose new credentials or grant extra direct agent-to-service connections.
 
 ## Changelog
+
+- 2026-09-15 — filtered services now use the owning run's private Compose project and network;
+  the same run identity continues to attribute their external traffic.
 
 - 2026-09-14 — added source attribution to existing network views after the user asked to observe
   and approve service traffic through the same CLI UX. The exact prepared service/IP binding is the

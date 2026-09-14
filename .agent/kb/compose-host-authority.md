@@ -2,8 +2,8 @@
 name: compose-host-authority
 description: sibling Compose execution uses a validated private snapshot and explicit values rather than ambient host imports
 subsystem: box/services
-sources: [internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/serviceapproval.go, internal/box/sweep.go]
-updated: 2026-09-13
+sources: [internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/serviceapproval.go, internal/box/sweep.go, internal/forkspace/execution.go]
+updated: 2026-09-15
 ---
 
 Sibling service definitions are agent-writable but execute on the host daemon. `readValidatedCompose`
@@ -29,8 +29,11 @@ also bounded, cancellable and strict; malformed or unavailable config cannot bec
 claim. Unknown, duplicate, unhealthy or mismatched observations stay absent; the original startup
 error remains the diagnostic. Teardown and independent port inspection also validate a snapshot.
 
-This freezes configuration bytes, not bind-source filesystem identity: changing a bind path after
-validation is a separate boundary. Do not describe snapshots as freezing mounted directory contents.
+This freezes configuration bytes, not bind-source filesystem identity. `LockServiceLaunch` closes
+that separate boundary: service startup owns the exclusive side from validation through Docker
+opening the mounts, while a writable sandbox holds the shared side for the time it can replace
+paths. This may delay a new start, but never serializes already-running independent stacks. Live
+source contents remain live; do not describe the snapshot or barrier as freezing directory contents.
 
 ## Sidecars get the box's secret shadowing
 
@@ -70,14 +73,17 @@ and unrequested/new files sort to the top where a human cannot miss them. `lastA
 approvals by workspace+compose path so "new since your last yes" survives a compose edit, which
 voids the content-keyed approval.
 
-Networks: one compose project (and `_default` network) per canonical workspace path, so every
-worktree/fork session is a new project. `StopSessionServices` removes the containers by
+Networks: the development Compose project keeps its canonical-workspace identity. A logical loop
+adds a hashed run owner to its project and port scope, so its network, volumes, and loopback ports
+are private but stable across that run's iterations. `StopSessionServices` removes containers by
 ownership label AND the project's unused networks (`RemoveProjectNetworks`); `ReapOrphanNetworks`
 (hooked into the orphan box sweep, once per process) removes unused networks of any project named
 like coop's (`^coop-…-<8hex>$`) — never a human's compose project. "Unused" counts stopped
 containers as users (`ps -a --filter network=`), because they reconnect on the next start.
 
 ## Changelog
+- 2026-09-15: added logical-run Compose/port ownership and the shared/exclusive mount-launch
+  barrier; development keeps its historical project and live source mounts.
 - 2026-09-13: partial and skipped starts now expose only exact-owned observed running service
   bindings on the selected network while retaining the original Compose failure; skipped discovery
   is bounded and strict.

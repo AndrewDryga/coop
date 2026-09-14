@@ -285,29 +285,6 @@ func TestInteractiveServiceWarningsAreSeparateParagraphs(t *testing.T) {
 	}
 }
 
-func TestLoopServiceStartupHeldByLiveBoxHasNoUnsafeRetry(t *testing.T) {
-	got := captureStderr(t, func() {
-		newLaunchSections(RunSpec{Batch: true, LoopPresentation: true}).servicesHeldByLiveBox(
-			"Another box is running in this project (agent\x1b[31m).")
-	})
-	for _, want := range []string{
-		"Preparing task environment\n  Starting services",
-		"  ⚠ Service startup skipped",
-		"    Another box is running in this project (agent).",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("live-box service narration missing %q:\n%s", want, got)
-		}
-	}
-	visible := strings.Join(strings.Fields(got), " ")
-	if !strings.Contains(visible, "Coop will not restart services while that box is active; only services it can observe as running will be made available.") {
-		t.Errorf("live-box service narration lost its wrapped availability caveat:\n%s", got)
-	}
-	if strings.Contains(got, "To retry: coop up") || strings.Contains(got, "\x1b") {
-		t.Fatalf("live-box service narration offered an unsafe retry or retained controls: %q", got)
-	}
-}
-
 func TestLoopServiceDetailsWrapBeforeStyling(t *testing.T) {
 	long := "dev/" + strings.Repeat("generated-secret-path/", 6) + "tls.key"
 	got := captureStderr(t, func() {

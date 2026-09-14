@@ -5,6 +5,7 @@ package box
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -117,4 +118,80 @@ func TestRuntimeComposeShadowsRepoSecretsIntoSidecars(t *testing.T) {
 	if src := byTarget["/repo"]; !fromRepo(src) {
 		t.Errorf("/repo is bound from %q; want the repo itself", src)
 	}
+}
+
+func TestRuntimeComposeLogicalOwnersShareSourceButNotServices(t *testing.T) {
+	rt, err := runtime.Detect(os.Getenv("COOP_RUNTIME"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, source := writeCompose(t, `services:
+  probe:
+    image: alpine:3.21
+    command: ["sh", "-c", "sleep 300"]
+    expose: ["8080"]
+    volumes:
+      - data:/data
+      - ../live.txt:/workspace/live.txt:ro
+volumes:
+  data: {}
+`)
+	live := filepath.Join(repo, "live.txt")
+	if err := os.WriteFile(live, []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const loopOwner = "runtime-loop"
+	t.Cleanup(func() {
+		_ = StopServicesForOwner(t.Context(), rt, repo, repo, loopOwner, true)
+		_ = StopServicesForOwner(t.Context(), rt, repo, repo, "", true)
+	})
+
+	dev, err := UpServicesForOwner(rt, repo, source, "", io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop, err := UpServicesForOwner(rt, repo, source, loopOwner, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dev.Ports) != 1 || len(loop.Ports) != 1 || dev.Ports[0].HostPort == loop.Ports[0].HostPort {
+		t.Fatalf("dev/loop ports are not distinct: dev=%+v loop=%+v", dev.Ports, loop.Ports)
+	}
+
+	composeExec(t, rt, repo, source, "", "echo dev > /data/owner")
+	composeExec(t, rt, repo, source, loopOwner, "echo loop > /data/owner")
+	if got := composeExec(t, rt, repo, source, "", "cat /data/owner"); got != "dev" {
+		t.Fatalf("development data = %q", got)
+	}
+	if got := composeExec(t, rt, repo, source, loopOwner, "cat /data/owner"); got != "loop" {
+		t.Fatalf("loop data = %q", got)
+	}
+	if err := os.WriteFile(live, []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, owner := range []string{"", loopOwner} {
+		if got := composeExec(t, rt, repo, source, owner, "cat /workspace/live.txt"); got != "two" {
+			t.Fatalf("owner %q live source = %q", owner, got)
+		}
+	}
+	if err := StopServicesForOwner(t.Context(), rt, repo, repo, "", true); err != nil {
+		t.Fatal(err)
+	}
+	if got := composeExec(t, rt, repo, source, loopOwner, "cat /data/owner"); got != "loop" {
+		t.Fatalf("stopping development disturbed loop data: %q", got)
+	}
+}
+
+func composeExec(t *testing.T, rt runtime.Runtime, repo, source, owner, command string) string {
+	t.Helper()
+	args := []string{
+		"compose", "-p", ComposeProjectFor(repo, owner),
+		"--project-directory", filepath.Dir(source), "--env-file", os.DevNull, "-f", source,
+		"exec", "-T", "probe", "sh", "-c", command,
+	}
+	var stdout, stderr bytes.Buffer
+	if err := runCompose(rt, &stdout, &stderr, "exec", args); err != nil {
+		t.Fatalf("compose exec for owner %q: %v: %s", owner, err, stderr.String())
+	}
+	return strings.TrimSpace(stdout.String())
 }

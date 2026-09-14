@@ -19,7 +19,7 @@ const composeOneoffLabel = "com.docker.compose.oneoff"
 // container is currently running, unpaused and healthy when it has a healthcheck, with the exact
 // loopback binding Coop requested. An observation failure withholds only that service and remains
 // available to supplement the original startup error.
-func observedServicePorts(ctx context.Context, rt runtime.Runtime, workspace, composeFile, network string, candidates []ServicePort) ([]ServicePort, error) {
+func observedServicePorts(ctx context.Context, rt runtime.Runtime, workspace, composeFile, owner, network string, candidates []ServicePort) ([]ServicePort, error) {
 	if len(candidates) == 0 {
 		return nil, nil
 	}
@@ -35,7 +35,7 @@ func observedServicePorts(ctx context.Context, rt runtime.Runtime, workspace, co
 	if err != nil {
 		return nil, err
 	}
-	projectName := ComposeProject(workspace)
+	projectName := ComposeProjectFor(workspace, owner)
 	workingDir := filepath.Clean(filepath.Dir(abs))
 	byService := make(map[string][]ServicePort)
 	var order []string
@@ -87,22 +87,22 @@ func eligibleObservedServicePorts(container runtime.ServiceContainerObservation,
 	return observed
 }
 
-func discoverObservedServicePorts(ctx context.Context, rt runtime.Runtime, workspace, composeFile, network string, repoReadOnly bool, exposedRoots ...string) ([]ServicePort, error) {
+func discoverObservedServicePorts(ctx context.Context, rt runtime.Runtime, workspace, composeFile, owner, network string, repoReadOnly bool, exposedRoots ...string) ([]ServicePort, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	args, cleanup, _, err := snapshotComposeArgs(workspace, composeFile, repoReadOnly, exposedRoots...)
+	args, cleanup, _, err := snapshotComposeArgsForStart(workspace, composeFile, owner, repoReadOnly, true, exposedRoots...)
 	if err != nil {
 		return nil, err
 	}
 	defer cleanup()
-	candidates, err := servicePortsWithArgsContext(ctx, rt, workspace, args)
+	candidates, err := servicePortsWithArgsContext(ctx, rt, servicePortScope(workspace, owner), args)
 	if err != nil {
 		return nil, err
 	}
-	return observedServicePorts(ctx, rt, workspace, composeFile, network, candidates)
+	return observedServicePorts(ctx, rt, workspace, composeFile, owner, network, candidates)
 }
 
 func servicePortNames(ports []ServicePort) []string {

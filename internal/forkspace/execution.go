@@ -2,6 +2,7 @@ package forkspace
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -23,6 +24,7 @@ const (
 	executionRecordLimit   = 64 << 10
 	executionRecordCount   = 4096
 	executionRegistryV1    = "v1"
+	serviceLaunchLockName  = ".service-launch.lock"
 )
 
 // TestExecutionRegistryRootEnv isolates the user-state fallback in tests. Production ignores it.
@@ -251,6 +253,59 @@ func newExecutionID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(raw[:]), nil
+}
+
+// LockServiceLaunch coordinates the short daemon-mount boundary with running sandboxes. A service
+// launch takes the exclusive lock while Docker opens live bind sources; every sandbox holds the
+// shared lock only while its agent process can replace those paths. This serializes the dangerous
+// instant, not the users or their independently owned service stacks.
+func LockServiceLaunch(ctx context.Context, repo string, exclusive bool) (func(), error) {
+	registry, err := fallbackExecutionDir(repo)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureFallbackExecutionDir(registry); err != nil {
+		return nil, err
+	}
+	path := filepath.Join(registry, serviceLaunchLockName)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	current, pathErr := os.Lstat(path)
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if err != nil || pathErr != nil || !ok || !info.Mode().IsRegular() || stat.Nlink != 1 || !os.SameFile(info, current) {
+		_ = f.Close()
+		return nil, errors.New("service launch authority changed while opening")
+	}
+	how := syscall.LOCK_SH
+	if exclusive {
+		how = syscall.LOCK_EX
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for {
+		err = syscall.Flock(int(f.Fd()), how|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+			_ = f.Close()
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			_ = f.Close()
+			return nil, ctx.Err()
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
 }
 
 // BeginExecution publishes one execution before its sandbox starts. The caller must EndExecution
@@ -511,6 +566,9 @@ func executionsInRegistry(registry string) ([]ExecutionObservation, []error) {
 	var observations []ExecutionObservation
 	var problems []error
 	for _, entry := range entries {
+		if entry.Name() == serviceLaunchLockName {
+			continue
+		}
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			problems = append(problems, fmt.Errorf("%s: unsupported project execution registry entry", entry.Name()))
 			continue

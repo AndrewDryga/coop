@@ -27,20 +27,22 @@ func TestAutoUpServices(t *testing.T) {
 		egress  string
 		rtName  string
 		reuse   bool
+		review  bool
 		want    bool
 	}{
-		{"defaults: on, networked, online, docker", true, true, "open", "docker", false, true},
-		{"podman too", true, true, "open", "podman", false, true},
-		{"COOP_AUTO_UP=0 opts out", false, true, "open", "docker", false, false},
-		{"no services network (COOP_NETWORK=0)", true, false, "open", "docker", false, false},
-		{"offline box (COOP_EGRESS=none)", true, true, "none", "docker", false, false},
-		{"Apple container has no compose", true, true, "open", "container", false, false},
-		{"read-only retry reuses prepared services", true, true, "open", "docker", true, false},
+		{"defaults: on, networked, online, docker", true, true, "open", "docker", false, false, true},
+		{"podman too", true, true, "open", "podman", false, false, true},
+		{"COOP_AUTO_UP=0 opts out", false, true, "open", "docker", false, false, false},
+		{"no services network (COOP_NETWORK=0)", true, false, "open", "docker", false, false, false},
+		{"offline box (COOP_EGRESS=none)", true, true, "none", "docker", false, false, false},
+		{"Apple container has no compose", true, true, "open", "container", false, false, false},
+		{"read-only retry reuses prepared services", true, true, "open", "docker", true, false, false},
+		{"reviewer inspects worker evidence without starting services", true, true, "open", "docker", false, true, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			cfg := &config.Config{AutoUp: c.autoUp, Egress: c.egress}
-			spec := RunSpec{Network: c.network, ReuseServices: c.reuse}
+			spec := RunSpec{Network: c.network, ReuseServices: c.reuse, Review: c.review}
 			if got := autoUpServices(cfg, spec, c.rtName); got != c.want {
 				t.Errorf("autoUpServices = %v, want %v", got, c.want)
 			}
@@ -105,6 +107,43 @@ func TestStopSessionServicesUsesImmutableOwnershipLabels(t *testing.T) {
 		"network rm net-1\n"
 	if got := string(data); got != want {
 		t.Fatalf("service cleanup calls = %q, want %q", got, want)
+	}
+}
+
+func TestStopServicesForOwnerRemovesOnlyThatRunsData(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	owner := "loop-one"
+	projectName := ComposeProjectFor(repo, owner)
+	volume := projectName + "_pgdata"
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	shim := filepath.Join(t.TempDir(), "runtime")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> " + strconv.Quote(recorder) + "\n" +
+		"if [ \"$1 $2\" = \"volume ls\" ]; then echo " + strconv.Quote(volume) + "; fi\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := StopServicesForOwner(context.Background(), runtime.Runtime{Name: shim}, repo, repo, owner, true); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"label=com.docker.compose.project=" + projectName,
+		"volume rm " + volume,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("owner cleanup missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "label=com.docker.compose.project="+ComposeProject(repo)+" ") {
+		t.Fatalf("owner cleanup selected the development project:\n%s", got)
 	}
 }
 
@@ -187,6 +226,58 @@ func TestAutomaticServiceStartRefusesExternalVolumes(t *testing.T) {
 	}
 	if _, err := EnsureServicesFile(rt, repo, compose, io.Discard, io.Discard); err != nil {
 		t.Fatalf("automatic startup refused ordinary project-owned storage: %v", err)
+	}
+}
+
+func TestServiceLaunchRevalidatesBindAfterSandboxWindow(t *testing.T) {
+	t.Setenv(forkspace.TestExecutionRegistryRootEnv, t.TempDir())
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	live := filepath.Join(repo, "live.txt")
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(live, []byte("inside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outside, []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(compose, []byte("services:\n  app:\n    image: alpine\n    volumes: [\"./live.txt:/app/live.txt:ro\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sandbox, err := forkspace.LockServiceLaunch(context.Background(), repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	rt := recorderRuntime(t, recorder)
+	done := make(chan error, 1)
+	go func() {
+		launch, err := forkspace.LockServiceLaunch(context.Background(), repo, true)
+		if err == nil {
+			_, err = startServicesFileContext(context.Background(), rt, repo, compose, "loop-one", "", io.Discard, io.Discard, false, false, false, nil)
+			launch()
+		}
+		done <- err
+	}()
+	if err := os.Remove(live); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, live); err != nil {
+		sandbox()
+		<-done
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	sandbox()
+
+	err = <-done
+	if err == nil || !strings.Contains(err.Error(), "outside the repo") {
+		t.Fatalf("replaced bind source reached service launch: %v", err)
+	}
+	if data, readErr := os.ReadFile(recorder); readErr == nil && len(data) > 0 {
+		t.Fatalf("runtime ran after bind source escaped:\n%s", data)
+	} else if readErr != nil && !os.IsNotExist(readErr) {
+		t.Fatal(readErr)
 	}
 }
 

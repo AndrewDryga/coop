@@ -34,6 +34,17 @@ func TestComposeProject(t *testing.T) {
 	}
 }
 
+func TestComposeProjectForSeparatesLogicalOwnersWithoutRenamingDevelopment(t *testing.T) {
+	repo := t.TempDir()
+	if got := ComposeProjectFor(repo, ""); got != ComposeProject(repo) {
+		t.Fatalf("development project changed from %q to %q", ComposeProject(repo), got)
+	}
+	first := ComposeProjectFor(repo, "loop-one")
+	if first == ComposeProject(repo) || first == ComposeProjectFor(repo, "loop-two") || first != ComposeProjectFor(repo, "loop-one") {
+		t.Fatalf("logical owner project names are not stable and distinct: dev=%q first=%q second=%q", ComposeProject(repo), first, ComposeProjectFor(repo, "loop-two"))
+	}
+}
+
 func TestServicesProject(t *testing.T) {
 	cases := map[string]string{
 		"/tmp/My_Repo.Name": "coop-my_reponame",

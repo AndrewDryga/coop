@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/networkgateway"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/networkview"
@@ -247,10 +248,22 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 	if err := f.waitReady(ctx); err != nil {
 		return -1, err
 	}
-	if err := f.preparedServices.start(); err != nil {
-		return -1, err
+	projectRepo := spec.ActivityRepo
+	if projectRepo == "" {
+		projectRepo = spec.Repo
 	}
-	if err := f.preparedServices.check(ctx, f.docker, f.servicesNet, ComposeProject(spec.Repo)); err != nil {
+	if f.preparedServices != nil {
+		unlock, err := forkspace.LockServiceLaunch(ctx, projectRepo, true)
+		if err != nil {
+			return -1, fmt.Errorf("wait for a safe service launch: %w", err)
+		}
+		err = f.preparedServices.start()
+		unlock()
+		if err != nil {
+			return -1, err
+		}
+	}
+	if err := f.preparedServices.check(ctx, f.docker, f.servicesNet, ComposeProjectFor(spec.Repo, runServiceOwner(spec))); err != nil {
 		return -1, err
 	}
 	if err := f.reconcileTopology(ctx); err != nil {
@@ -259,6 +272,11 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 	if err := f.checkBindings(); err != nil {
 		return -1, err
 	}
+	unlockMounts, err := forkspace.LockServiceLaunch(ctx, projectRepo, false)
+	if err != nil {
+		return -1, fmt.Errorf("enter the sandbox mount window: %w", err)
+	}
+	defer unlockMounts()
 	options = append(slices.Clone(options), "--user", "1000:1000", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
 		"--network", "container:"+f.ref("controller").ID)
 	options = append(options, f.serveEnv...)

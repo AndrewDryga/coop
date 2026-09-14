@@ -2,9 +2,9 @@
 name: design-for-shared-checkout-not-forks
 description: "the primary workflow is outside agents and `coop loop` sharing one checkout; forks are an optional isolation tool, never the precondition a design or recommendation assumes"
 scope: architecture
-sources: [AGENTS.md, README.md, internal/cli/help.go, .agent/kb/task-authority-model.md]
+sources: [AGENTS.md, README.md, internal/cli/help.go, internal/box/repo.go, internal/box/run.go, .agent/kb/task-authority-model.md]
 check: "none"
-updated: 2026-09-05
+updated: 2026-09-15
 ---
 
 # Design for outside agents and `coop loop` sharing one checkout; forks are optional
@@ -30,8 +30,12 @@ have to be mitigated there too, not delegated to a workflow the human does not r
 - A design note that says "use a fork" for the common path is a smell. Say instead what the loop
   and an outside agent each need to do in one tree: claim before work, hold the lease while working,
   stage exact files, commit small and often.
+- Stateful development and loop services must coexist in that same tree. Isolate their runtime
+  identity, volumes, networks, and ports; keep shared source edits live and document that service
+  isolation is not source isolation.
 
 ## Changelog
+- 2026-09-15 — extended the shared-checkout rule to development and loop service stacks.
 - 2026-09-05 — created from the human's correction during the pre-release audit. Swept AGENTS.md,
   README, site, and help: forks appear as an option (the parallel-forks sections, `coop fork … --loop`)
   and nothing presumes them; the violation was the audit's own recommendation text, and the two

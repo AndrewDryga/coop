@@ -1,12 +1,55 @@
 package forkspace
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestServiceLaunchWaitsForSandboxMountWindow(t *testing.T) {
+	t.Setenv(TestExecutionRegistryRootEnv, t.TempDir())
+	repo := t.TempDir()
+	shared, err := LockServiceLaunch(context.Background(), repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	acquired := make(chan func(), 1)
+	go func() {
+		unlock, err := LockServiceLaunch(ctx, repo, true)
+		if err != nil {
+			acquired <- nil
+			return
+		}
+		acquired <- unlock
+	}()
+	select {
+	case unlock := <-acquired:
+		if unlock != nil {
+			unlock()
+		}
+		t.Fatal("exclusive service launch entered while a sandbox held the shared mount window")
+	case <-time.After(50 * time.Millisecond):
+	}
+	shared()
+	select {
+	case unlock := <-acquired:
+		if unlock == nil {
+			t.Fatal("exclusive service launch failed after the sandbox left")
+		}
+		unlock()
+	case <-ctx.Done():
+		t.Fatal("exclusive service launch did not resume after the sandbox left")
+	}
+	if observations, problems := Executions(repo); len(observations) != 0 || len(problems) != 0 {
+		t.Fatalf("service launch authority polluted execution observations: %+v, %v", observations, problems)
+	}
+}
 
 func TestExecutionRegistryTracksAllBoundIdentityAndExactCleanup(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "repo")

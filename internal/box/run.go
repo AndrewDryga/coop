@@ -84,9 +84,8 @@ type RunSpec struct {
 	// provider credential and native session under the same in-box cwd, but overlays that cwd with
 	// an empty read-only directory and omits project MCP, preset peers, and sibling services.
 	FormatCorrection bool `json:"-"`
-	// ReuseServices is set by a read-only review retry, or by a work credential/rate-limit fallback
-	// whose attempt left a clean identical HEAD, after the first attempt prepared the unchanged
-	// sibling stack. The new provider box still joins and inspects it.
+	// ReuseServices is set after the same logical run prepared an unchanged sibling stack, including
+	// read-only review and credential/rate-limit retries. The new box still joins and inspects it.
 	ReuseServices bool `json:"-"`
 	// CompanionRepositories are policy-pinned snapshots mounted read-only at
 	// /coop/repositories/<name>. The remote request surface cannot populate this field.
@@ -223,6 +222,18 @@ type RunSpec struct {
 	// plus its per-role contracts and env. The cli loads and applies the preset's
 	// model/credential selections before calling Run.
 	Preset *preset.Preset
+}
+
+func runServiceOwner(spec RunSpec) string {
+	// A remote session already owns a dedicated reserved fork workspace. Its workspace-scoped
+	// project is therefore private and, unlike the per-turn RunID, stable across the session.
+	if spec.ActivityKind == forkspace.ExecutionRemoteSession {
+		return ""
+	}
+	if spec.RunID != "" {
+		return spec.RunID
+	}
+	return spec.ActivitySource
 }
 
 type CompanionRepository struct {
@@ -364,6 +375,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	projectEnv := p.Box.Env
 	spec.projectEnv = projectEnv
 	composeFile := ComposeFileAt(spec.Repo, p.ComposeRel())
+	serviceOwner := runServiceOwner(spec)
 	spec.servePorts = p.Serve.Ports
 	if spec.Login {
 		// Apply after project policy so a project's network toggle cannot turn services back on.
@@ -951,7 +963,6 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// Publish before any sibling service or runtime side effect. Fork-bound publication takes the
 	// same lifecycle lock as rm/fresh/merge and validates the exact workspace generation, so either
 	// the reservation wins and mutation refuses, or mutation wins and this launch fails closed.
-	reviewServicesAttempted := false
 	finish := func(code int, runErr error) (int, error) {
 		// A filtered run ends its activity only after exact runtime cleanup has
 		// confirmed the workload is gone.
@@ -961,10 +972,6 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 					"Inspect what was recorded with coop tasks watch --json.")
 			}
 			execution = forkspace.ExecutionRecord{}
-		}
-		if reviewServicesAttempted {
-			cleanupErr := DownServicesFile(rt, spec.Repo, composeFile, true, io.Discard, io.Discard, privateRoots...)
-			runErr = errors.Join(runErr, cleanupErr)
 		}
 		return code, runErr
 	}
@@ -1028,45 +1035,16 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		services.state = servicesUnknown
 	}
 	serviceNetwork := cfg.ServicesNet
-	if serviceNetwork == "" || spec.Review && composeFile != "" {
-		serviceNetwork = ComposeProject(spec.Repo) + "_default"
+	if serviceNetwork == "" || serviceOwner != "" || spec.Review && composeFile != "" {
+		serviceNetwork = ComposeProjectFor(spec.Repo, serviceOwner) + "_default"
 	}
 	servicesInspected := false
 	if composeFile != "" && autoUpServices(cfg, spec, rt.Name) {
-		// Only when no other box is running in this project: a running agent could swap a validated
-		// bind source for a link to a host path between coop's check and Docker opening it, and a
-		// launch that happens while it runs (a peer or consult box mid-iteration) is the only one
-		// it could race. Services already up stay up; live binds stay live.
 		projectRepo := spec.ActivityRepo
 		if projectRepo == "" {
 			projectRepo = spec.Repo
 		}
-		startServices := true
-		if live, err := LiveBoxes(projectRepo, spec.activityID); err != nil {
-			if spec.Review {
-				return finish(-1, fmt.Errorf("start review services: %w", err))
-			}
-			sections.servicesSkipped(err.Error())
-			services = serviceLaunchOutcome{state: servicesSkipped, err: err}
-			if !sections.on {
-				ui.Note("services: %v — not starting them (run 'coop up' to retry)", err)
-			}
-			startServices = false
-		} else if len(live) > 0 {
-			if spec.Review {
-				return finish(-1, fmt.Errorf("start review services: an agent box is running in this project (%s) — sidecars start only when none is", DescribeLiveBoxes(live)))
-			}
-			// Do not race a running agent's filesystem access by starting services. Read-only discovery
-			// below configures only forwarders backed by an exact owned running-service observation.
-			sections.servicesHeldByLiveBox("Another box is running in this project (" + DescribeLiveBoxes(live) + ").")
-			services = serviceLaunchOutcome{state: servicesSkipped, err: fmt.Errorf("another box is running in this project (%s)", DescribeLiveBoxes(live))}
-			if !sections.on && !spec.Quiet {
-				ui.Note("sidecars not started: an agent box is running in this project (%s) — they start when none is; only observed running services will be made available", DescribeLiveBoxes(live))
-			}
-			startServices = false
-		}
-		if cf := composeFile; startServices {
-			reviewServicesAttempted = spec.Review
+		if cf := composeFile; cf != "" {
 			sections.servicesPreparing()
 			if !sections.on && !spec.Quiet {
 				ui.Note("starting sibling services (%s)", filepath.Base(cf))
@@ -1079,7 +1057,12 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			// continue-without-services behavior.
 			var composeStderr bytes.Buffer
 			servicesInspected = true
-			started, err := startServicesFileContext(serviceCtx, rt, spec.Repo, cf, serviceNetwork, io.Discard, &composeStderr, spec.RepoReadOnly, !sections.loop, false, nil, privateRoots...)
+			unlock, lockErr := forkspace.LockServiceLaunch(serviceCtx, projectRepo, true)
+			if lockErr != nil {
+				return finish(-1, fmt.Errorf("wait for a safe service launch: %w", lockErr))
+			}
+			started, err := startServicesFileContext(serviceCtx, rt, spec.Repo, cf, serviceOwner, serviceNetwork, io.Discard, &composeStderr, spec.RepoReadOnly, !sections.loop, false, nil, privateRoots...)
+			unlock()
 			sections.serviceSecrets(started.hidden, cf)
 			servicePorts = started.ports
 			if err != nil {
@@ -1129,7 +1112,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		if cf := composeFile; cf != "" {
 			if !servicesInspected {
 				var observeErr error
-				servicePorts, observeErr = discoverObservedServicePorts(serviceCtx, rt, spec.Repo, cf, serviceNetwork, spec.RepoReadOnly, privateRoots...)
+				servicePorts, observeErr = discoverObservedServicePorts(serviceCtx, rt, spec.Repo, cf, serviceOwner, serviceNetwork, spec.RepoReadOnly, privateRoots...)
 				if observeErr != nil {
 					services.err = errors.Join(services.err, observeErr)
 				}
@@ -1174,6 +1157,15 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		tmpFiles = append(tmpFiles, capturedEnv)
 	}
 	args = append(options, args[optionEnd:]...)
+	activityRepo := spec.ActivityRepo
+	if activityRepo == "" {
+		activityRepo = spec.Repo
+	}
+	unlockMounts, err := forkspace.LockServiceLaunch(spec.Ctx, activityRepo, false)
+	if err != nil {
+		return finish(-1, fmt.Errorf("enter the sandbox mount window: %w", err))
+	}
+	defer unlockMounts()
 	// The launch boundary: everything above is host work, everything below is the provider's.
 	// A caller that clocks the provider starts counting HERE, never from Run's entry — an early
 	// return above launched nothing, so it signals nothing.

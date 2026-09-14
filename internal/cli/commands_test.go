@@ -1521,9 +1521,9 @@ func TestLoopReportsUsageBeforeRuntimeDiscovery(t *testing.T) {
 	}
 }
 
-// coop up refuses while an agent box is running in the project: that start is the launch a
-// running agent could race by swapping a validated bind source for a link to a host path.
-func TestCmdUpRefusesWhileABoxRuns(t *testing.T) {
+// A stale/activity observation is no longer a workspace-wide refusal. The mount-launch barrier,
+// held by actual boxes, owns the dangerous start window instead.
+func TestCmdUpAllowsAnIndependentStackBesideARecordedBox(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1545,9 +1545,9 @@ func TestCmdUpRefusesWhileABoxRuns(t *testing.T) {
 	var code int
 	var runErr error
 	out := captureStderr(t, func() { code, runErr = a.cmdUp(nil) })
-	if code != 1 || runErr == nil || !strings.Contains(out, "An agent box is running in this project") ||
+	if code != 0 || runErr != nil || !strings.Contains(out, "Waiting for a safe service-launch window") ||
 		!strings.Contains(out, "local-loop") {
-		t.Fatalf("cmdUp beside a running box = (%d, %v); want a refusal naming the box\n%s", code, runErr, out)
+		t.Fatalf("cmdUp beside a recorded box = (%d, %v); want a named wait and success\n%s", code, runErr, out)
 	}
 	if err := forkspace.EndExecution(repo, running); err != nil {
 		t.Fatal(err)

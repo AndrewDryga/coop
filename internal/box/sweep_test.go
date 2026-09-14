@@ -344,14 +344,15 @@ func TestAssembleArgsSupervisorLabel(t *testing.T) {
 func TestReapOrphanNetworksRemovesOnlyUnusedCoopNetworks(t *testing.T) {
 	rt, boxes := fakeRuntime(t)
 	addFakeNetwork(t, "unused", "coop-emisar-a922f3c5_default", "coop-emisar-a922f3c5")
+	addFakeNetwork(t, "unused-run", "coop-emisar-a922f3c5-run-c4d5e6f7_default", "coop-emisar-a922f3c5-run-c4d5e6f7")
 	addFakeNetwork(t, "used", "coop-emisar-b1c2d3e4_default", "coop-emisar-b1c2d3e4")
 	addFakeNetwork(t, "theirs", "responder-kernel_default", "responder-kernel")
 	addFakeNetwork(t, "plain", "bridge", "")
 	addFakeBox(t, boxes, "stopped-db", map[string]string{"network": "used"})
 
 	n, err := ReapOrphanNetworks(context.Background(), rt)
-	if err != nil || n != 1 {
-		t.Fatalf("ReapOrphanNetworks = (%d, %v), want (1, nil)", n, err)
+	if err != nil || n != 2 {
+		t.Fatalf("ReapOrphanNetworks = (%d, %v), want (2, nil)", n, err)
 	}
 	if got, want := remainingFakeNetworks(t), []string{"plain", "theirs", "used"}; !slices.Equal(got, want) {
 		t.Fatalf("remaining networks = %v, want %v", got, want)

@@ -212,12 +212,15 @@ func TestEveryLoopLaunchCarriesTheRunsCapture(t *testing.T) {
 // a nil capture, and a hook that is safe to call.
 func TestLoopWithoutFilteredEgressLaunchesUnchanged(t *testing.T) {
 	var spec box.RunSpec
-	c := &Control{cfg: &config.Config{}, boxRun: func(s box.RunSpec) (int, error) { spec = s; return 0, nil }}
+	c := &Control{cfg: &config.Config{}, reuseServices: true, boxRun: func(s box.RunSpec) (int, error) { spec = s; return 0, nil }}
 	if _, err := c.runBox(box.RunSpec{Image: "img"}); err != nil {
 		t.Fatal(err)
 	}
 	if spec.CapturedEgress != nil {
 		t.Errorf("an open run carried a capture: %#v", spec.CapturedEgress)
+	}
+	if !spec.ReuseServices {
+		t.Error("the loop did not pass its unchanged service setup to the work box")
 	}
 	spec.OnNetworkReport(box.NetworkReport{RunID: "r"}) // a nil log must not panic
 }

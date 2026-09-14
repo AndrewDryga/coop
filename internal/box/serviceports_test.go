@@ -106,6 +106,18 @@ func TestServicePortNoCollision(t *testing.T) {
 	}
 }
 
+func TestServicePortsArePrivateToLogicalOwner(t *testing.T) {
+	repo := t.TempDir()
+	config := []byte(`{"services":{"db":{"expose":["5432"]}}}`)
+	dev := parseServicePorts(config, servicePortScope(repo, ""))
+	first := parseServicePorts(config, servicePortScope(repo, "loop-one"))
+	second := parseServicePorts(config, servicePortScope(repo, "loop-two"))
+	if len(dev) != 1 || len(first) != 1 || len(second) != 1 ||
+		dev[0].HostPort == first[0].HostPort || first[0].HostPort == second[0].HostPort {
+		t.Fatalf("owner ports collide: dev=%+v first=%+v second=%+v", dev, first, second)
+	}
+}
+
 // writeServiceOverride emits a compose override that publishes each port to its loopback host port.
 func TestWriteServiceOverride(t *testing.T) {
 	path, cleanup, err := writeServiceOverride([]ServicePort{{Service: "keycloak", ContainerPort: 8443, HostPort: 28443}}, t.TempDir())

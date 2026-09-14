@@ -31,6 +31,28 @@ func TestPruneNudge(t *testing.T) {
 	}
 }
 
+func TestLoopServiceFingerprintChangesWithDefinition(t *testing.T) {
+	t.Setenv(box.ServiceStateRootEnv, t.TempDir())
+	repo := t.TempDir()
+	compose := filepath.Join(repo, ".agent", "compose.yml")
+	if err := os.MkdirAll(filepath.Dir(compose), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(compose, []byte("services:\n  db:\n    image: postgres:18\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	first := loopServiceFingerprint(repo, repo)
+	if first == "" || first != loopServiceFingerprint(repo, repo) {
+		t.Fatalf("service fingerprint is empty or unstable: %q", first)
+	}
+	if err := os.WriteFile(compose, []byte("services:\n  db:\n    image: postgres:19\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if second := loopServiceFingerprint(repo, repo); second == "" || second == first {
+		t.Fatalf("changed service definition kept fingerprint %q", second)
+	}
+}
+
 // TestAdvanceStallHeadRead: the stall bookkeeping reads HEAD to tell a committing iteration from a
 // stalled one, so a HEAD that cannot be read stops the loop — it must never be counted as "no new
 // commit", which would spend the stall budget on a broken repo and hide the real failure.

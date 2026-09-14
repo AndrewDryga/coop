@@ -105,6 +105,7 @@ type Control struct {
 	runID          string // COOP_RUN_ID, so a consult peer's usage lands in this run's cost digest
 	streamSeq      int    // streaming box attempt sequence within runID
 	streamOff      bool   // an open failure disables best-effort tracing for the rest of the run
+	reuseServices  bool   // the current work box may inspect the unchanged run-owned stack without another Compose up
 
 	// capture is the run's frozen network policy, admitted ONCE at the top of Run
 	// (nil outside filtered mode); net accumulates what each box could not reach.
@@ -121,6 +122,7 @@ type Control struct {
 func (c *Control) runBox(spec box.RunSpec) (int, error) {
 	spec.CapturedEgress = c.capture
 	spec.OnNetworkReport = c.net.record
+	spec.ReuseServices = spec.ReuseServices || c.reuseServices
 	if c.boxRun != nil {
 		return c.boxRun(spec)
 	}

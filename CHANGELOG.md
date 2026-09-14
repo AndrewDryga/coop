@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Development services keep their existing workspace identity and data, while each loop uses a
+  private Compose project, network, volumes, and host ports across its worker retries. A safe
+  launch barrier replaces the old workspace-wide refusal, so development and loop stacks can
+  coexist without freezing their intentionally shared source files.
+
 - Loop workers now record a compact final verification handoff in task state. Between-task,
   signoff, and final-verification reviewers inspect that report and request missing checks through
   rework instead of automatically repeating worker tests.

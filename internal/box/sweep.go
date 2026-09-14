@@ -176,8 +176,9 @@ func workspaceScope(workspace string) string {
 }
 
 // coopComposeProjectName matches the compose project names coop itself creates (ComposeProject:
-// "coop-<basename>-<8 hex>"), so the network sweep can never reach a project a human composed.
-var coopComposeProjectName = regexp.MustCompile(`^coop-[a-z0-9_-]*-[0-9a-f]{8}$`)
+// "coop-<basename>-<8 hex>", optionally with ComposeProjectFor's run suffix), so the network
+// sweep can never reach a project a human composed.
+var coopComposeProjectName = regexp.MustCompile(`^coop-[a-z0-9_-]*-[0-9a-f]{8}(-run-[0-9a-f]{8})?$`)
 
 // ReapOrphanNetworks removes every network of a coop compose project that no container — running
 // or stopped — is attached to, across all workspaces, and reports how many. These are what a

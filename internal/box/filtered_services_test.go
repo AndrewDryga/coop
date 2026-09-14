@@ -360,7 +360,7 @@ func TestApprovedServiceBindsExternalVolumeIdentity(t *testing.T) {
 	}
 }
 
-func TestFilteredServiceStartRefusesASecondLiveBox(t *testing.T) {
+func TestFilteredServiceStartUsesPrivateOwnershipBesideAnotherBox(t *testing.T) {
 	repo := t.TempDir()
 	compose := filepath.Join(repo, "compose.yml")
 	if err := os.WriteFile(compose, []byte("services:\n  db:\n    image: postgres:18\n"), 0o644); err != nil {
@@ -377,14 +377,19 @@ func TestFilteredServiceStartRefusesASecondLiveBox(t *testing.T) {
 	t.Cleanup(func() { _ = forkspace.EndExecution(repo, other) })
 
 	recorder := filepath.Join(t.TempDir(), "runtime.log")
-	_, _, _, _, err = resolveServiceBindings(t.Context(), &filteredDaemonFixture{}, recorderRuntime(t, recorder), RunSpec{Repo: repo}, compose,
+	owner := "run-two"
+	docker := &filteredDaemonFixture{extraNetworks: []runtime.DockerNetwork{{
+		Name: ComposeProjectFor(repo, owner) + "_filtered", Internal: true,
+		Subnets: []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.31.0.1")},
+	}}}
+	_, _, _, prepared, err := resolveServiceBindings(t.Context(), docker, recorderRuntime(t, recorder), RunSpec{Repo: repo, RunID: owner}, compose,
 		&networkstate.Approval{Services: digests}, serviceGrants(servicePolicy(t, "db")), nil, nil)
-	if err == nil || !strings.Contains(err.Error(), "another box is already using") {
-		t.Fatalf("second filtered service box was accepted: %v", err)
+	if err != nil {
+		t.Fatalf("private filtered service preparation beside another box: %v", err)
 	}
-	if data, readErr := os.ReadFile(recorder); readErr == nil && len(data) != 0 {
-		t.Fatalf("filtered launch executed Compose beside a live box:\n%s", data)
-	} else if readErr != nil && !os.IsNotExist(readErr) {
-		t.Fatal(readErr)
+	t.Cleanup(prepared.cleanup)
+	data, readErr := os.ReadFile(recorder)
+	if readErr != nil || !strings.Contains(string(data), "compose -p "+ComposeProjectFor(repo, owner)) {
+		t.Fatalf("filtered launch did not use its private Compose project: %v\n%s", readErr, data)
 	}
 }

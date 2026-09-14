@@ -2,9 +2,9 @@
 name: isolate-state-dont-serialize
 description: "when shared state breaks concurrency, isolate the state; never lock the users of it"
 scope: box
-sources: [internal/box/profiles.go, internal/box/run.go, internal/agent/codex.go]
+sources: [internal/box/profiles.go, internal/box/run.go, internal/box/repo.go, internal/box/services.go, internal/forkspace/execution.go, internal/agent/codex.go]
 check: "none"
-updated: 2026-09-03
+updated: 2026-09-15
 ---
 
 # Isolate the state, don't serialize the users of it
@@ -41,8 +41,13 @@ left to lock.
 - A guard that can fire on a respawn/retry path multiplies: fail-fast checks at spawn time
   interact with supervisor respawn loops (rapid-fail caps). If a guard is ever needed, it
   must be idempotent across generations of the same logical session.
+- Apply the same split to project services: development and each logical loop own distinct
+  Compose state, ports, and data while intentionally sharing live source edits. A lock may protect
+  the short host-daemon mount boundary; it must not become ownership of the running stack.
 
 ## Changelog
+- 2026-09-15 — applied the rule to sibling services: isolated Compose ownership replaced the
+  workspace-wide start refusal; only the unsafe daemon mount boundary is coordinated.
 - 2026-09-03 — re-verified after credential-root permission hardening: owner-only ancestors protect
   shared credentials and transcripts without adding a per-account or per-session serialization lock
 - 2026-07-12 — created

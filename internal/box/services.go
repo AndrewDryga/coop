@@ -50,7 +50,13 @@ type ServiceStart struct {
 // names, and leaves the hidden-file notice to the caller — `coop up` puts those files in front of
 // a human before starting, so the lower-level warning would be the second copy of one sentence.
 func UpServices(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer, exposedRoots ...string) (ServiceStart, error) {
-	started, err := startServicesFileContext(context.Background(), rt, workspace, file, "", stdout, stderr, false, false, true, nil, exposedRoots...)
+	return UpServicesForOwner(rt, workspace, file, "", stdout, stderr, exposedRoots...)
+}
+
+// UpServicesForOwner starts the development stack when owner is empty or one logical run's
+// private stack otherwise.
+func UpServicesForOwner(rt runtime.Runtime, workspace, file, owner string, stdout, stderr io.Writer, exposedRoots ...string) (ServiceStart, error) {
+	started, err := startServicesFileContext(context.Background(), rt, workspace, file, owner, "", stdout, stderr, false, false, true, nil, exposedRoots...)
 	return ServiceStart{Names: started.names, Ports: started.ports}, err
 }
 
@@ -61,10 +67,10 @@ type startedServices struct {
 }
 
 func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer, repoReadOnly, noticeHidden bool, exposedRoots ...string) (startedServices, error) {
-	return startServicesFileContext(context.Background(), rt, workspace, file, "", stdout, stderr, repoReadOnly, noticeHidden, false, nil, exposedRoots...)
+	return startServicesFileContext(context.Background(), rt, workspace, file, "", "", stdout, stderr, repoReadOnly, noticeHidden, false, nil, exposedRoots...)
 }
 
-func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace, file, network string, stdout, stderr io.Writer, repoReadOnly, noticeHidden, allowOutsideData bool, selected []string, exposedRoots ...string) (startedServices, error) {
+func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace, file, owner, network string, stdout, stderr io.Writer, repoReadOnly, noticeHidden, allowOutsideData bool, selected []string, exposedRoots ...string) (startedServices, error) {
 	if file == "" {
 		return startedServices{}, nil
 	}
@@ -72,7 +78,7 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 	// (the compose path is no longer shadowed), but the host refuses anything that reaches outside a
 	// repo-scoped, loopback-only container. The specific violation rides out to `coop up` / the
 	// auto-up warning, so a refused file names exactly why.
-	args, cleanup, hidden, err := snapshotComposeArgsForStart(workspace, file, repoReadOnly, allowOutsideData, exposedRoots...)
+	args, cleanup, hidden, err := snapshotComposeArgsForStart(workspace, file, owner, repoReadOnly, allowOutsideData, exposedRoots...)
 	if err != nil {
 		return startedServices{}, &ComposeRefused{Verb: "run", File: filepath.Base(file), Err: err}
 	}
@@ -90,7 +96,7 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 	}
 	// Publish each `expose`d sidecar port to its stable per-workspace host port via a merged
 	// override (the base file's `expose` publishes nothing, so this adds the only host mapping).
-	ports := servicePortsWithArgs(rt, workspace, args)
+	ports := servicePortsWithArgs(rt, servicePortScope(workspace, owner), args)
 	if sp := ports; len(sp) > 0 {
 		override, cleanup, err := writeServiceOverride(sp, workspace, exposedRoots...)
 		if err != nil {
@@ -113,7 +119,7 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 	}
 	upArgs = append(upArgs, selected...)
 	if err := runCompose(rt, stdout, stderr, "up", upArgs); err != nil {
-		observed, observeErr := observedServicePorts(ctx, rt, workspace, file, network, ports)
+		observed, observeErr := observedServicePorts(ctx, rt, workspace, file, owner, network, ports)
 		started.ports = observed
 		return started, errors.Join(err, observeErr)
 	}
@@ -126,10 +132,10 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 // hidden names the repo-relative secret-looking bind sources the services get decoys for — empty
 // when there are none or when a human approved this exact file (ReviewServiceSecrets).
 func snapshotComposeArgs(workspace, file string, repoReadOnly bool, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
-	return snapshotComposeArgsForStart(workspace, file, repoReadOnly, true, exposedRoots...)
+	return snapshotComposeArgsForStart(workspace, file, "", repoReadOnly, true, exposedRoots...)
 }
 
-func snapshotComposeArgsForStart(workspace, file string, repoReadOnly, allowOutsideData bool, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
+func snapshotComposeArgsForStart(workspace, file, owner string, repoReadOnly, allowOutsideData bool, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
 	data, err := readValidatedCompose(file, workspace, repoReadOnly)
 	if err != nil {
 		return nil, nil, nil, err
@@ -157,7 +163,7 @@ func snapshotComposeArgsForStart(workspace, file string, repoReadOnly, allowOuts
 		cleanup()
 		return nil, nil, nil, err
 	}
-	args = []string{"compose", "-p", ComposeProject(workspace),
+	args = []string{"compose", "-p", ComposeProjectFor(workspace, owner),
 		"--project-directory", filepath.Dir(abs), "--env-file", os.DevNull, "-f", path}
 	// The sidecars get the box's secret shadowing too: a decoy over every hidden path a repo bind
 	// would otherwise hand them raw (see serviceShadowOverride) — unless a human approved this
@@ -360,7 +366,12 @@ var ErrVolumesUnknown = errors.New("the runtime did not return the project's vol
 // It reports what the runtime actually answered. An unreadable answer is an error, not an empty
 // list: "nothing to delete" has to be evidence, since it is printed right before a deletion.
 func ServiceVolumes(rt runtime.Runtime, workspace string, stderr io.Writer) ([]ServiceVolume, error) {
-	project := ComposeProject(workspace)
+	return ServiceVolumesForOwner(rt, workspace, "", stderr)
+}
+
+// ServiceVolumesForOwner lists only one development or logical-run stack's volumes.
+func ServiceVolumesForOwner(rt runtime.Runtime, workspace, owner string, stderr io.Writer) ([]ServiceVolume, error) {
+	project := ComposeProjectFor(workspace, owner)
 	var out bytes.Buffer
 	// The runtime's own complaint goes straight to the terminal, where every other runtime
 	// diagnostic appears; the error below is what coop can say about it.
@@ -384,11 +395,17 @@ func ServiceVolumes(rt runtime.Runtime, workspace string, stderr io.Writer) ([]S
 // Compose file, so interrupted agent edits cannot prevent cleanup. The next turn starts services
 // again through EnsureServices.
 func StopSessionServices(ctx context.Context, rt runtime.Runtime, workspace, policyRepo string) error {
+	return StopServicesForOwner(ctx, rt, workspace, policyRepo, "", false)
+}
+
+// StopServicesForOwner removes only one Compose owner. Development remains the empty owner and
+// cannot be selected by cleanup for a logical run.
+func StopServicesForOwner(ctx context.Context, rt runtime.Runtime, workspace, policyRepo, owner string, volumes bool) error {
 	// Cleanup must survive a policy typo introduced after the services started. ComposePath's
 	// default-on-error behavior preserves the existing immutable-label cleanup path; launch and
 	// ordinary service control still reject the invalid policy before touching the runtime.
 	composeDir := filepath.Dir(filepath.Join(workspace, filepath.FromSlash(project.ComposePath(policyRepo))))
-	project := ComposeProject(workspace)
+	project := ComposeProjectFor(workspace, owner)
 	_, err := rt.RemoveByLabels(ctx, map[string]string{
 		composeProjectLabel:    project,
 		composeWorkingDirLabel: filepath.Clean(composeDir),
@@ -401,6 +418,25 @@ func StopSessionServices(ctx context.Context, rt runtime.Runtime, workspace, pol
 	// behind per session exhausts the pool ("address pools fully subnetted") in a day's work.
 	if _, err := RemoveProjectNetworks(ctx, rt, project); err != nil {
 		return fmt.Errorf("stop session services: %w", err)
+	}
+	if volumes {
+		owned, err := ServiceVolumesForOwner(rt, workspace, owner, io.Discard)
+		if err != nil {
+			return fmt.Errorf("stop session services: %w", err)
+		}
+		if len(owned) > 0 {
+			args := []string{"volume", "rm"}
+			for _, volume := range owned {
+				args = append(args, volume.Name)
+			}
+			code, err := rt.Run(nil, io.Discard, io.Discard, args...)
+			if err != nil {
+				return fmt.Errorf("stop session services: remove owned volumes: %w", err)
+			}
+			if code != 0 {
+				return fmt.Errorf("stop session services: remove owned volumes: exit %d", code)
+			}
+		}
 	}
 	return nil
 }
@@ -492,5 +528,5 @@ func DescribeLiveBoxes(live []forkspace.ExecutionObservation) string {
 }
 
 func autoUpServices(cfg *config.Config, spec RunSpec, rtName string) bool {
-	return cfg.AutoUp && spec.Network && cfg.Egress == "open" && rtName != "container" && !spec.ReuseServices
+	return cfg.AutoUp && spec.Network && cfg.Egress == "open" && rtName != "container" && !spec.ReuseServices && !spec.Review
 }
