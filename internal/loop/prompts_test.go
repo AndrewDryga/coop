@@ -52,7 +52,7 @@ func TestLoopWorkPromptSpeaksTaskToolsNotFoldersOrOutboxJSON(t *testing.T) {
 		for _, want := range []string{
 			"`coop-tasks` MCP server", "tasks_list, tasks_get, tasks_update_state, tasks_append_log, tasks_set_subtasks, tasks_complete, tasks_block, and tasks_propose",
 			"Change task state ONLY through those tools", "never by moving a task folder yourself",
-			"Read it with tasks_get", "keep that task's state.md current with tasks_update_state", "record your reasoning with tasks_append_log",
+			"Read it with tasks_get", "keep that task's state.md current with tasks_update_state", "Send only the fields that changed; omitted fields are preserved", "record your reasoning with tasks_append_log",
 			"tasks_set_subtasks (send the whole list", "then call tasks_complete on your task as the final action",
 			"call tasks_block on your task with the question, the options, and your recommendation",
 			"file it with tasks_propose as kind task", "filed as kind backlog instead", "Never create a task folder or a proposal file by hand",

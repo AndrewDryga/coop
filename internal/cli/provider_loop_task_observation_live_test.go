@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
@@ -86,7 +87,7 @@ func (s *providerLoopLiveTaskServer) observeReply(name, text string, refused boo
 			counts.Repairs++
 			*needsRepair = false
 		}
-	} else if strings.HasPrefix(text, "missing required fields: ") {
+	} else if strings.HasPrefix(text, "missing required fields: ") || strings.HasPrefix(text, "no state fields supplied: ") {
 		counts.MissingFields++
 		*needsRepair = true
 	} else {
@@ -191,11 +192,16 @@ func TestProviderLoopLiveContractCountsOnlyMatchedInputRepairs(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeTaskFile(t, filepath.Join(s.root, "10_in_progress", s.id, "task.md"), "# Task\n\n## Subtasks\n- [ ] check\n")
+	if err := tasks.WriteTaskState(filepath.Join(s.root, tasks.StateInProgress, s.id), "Task", tasks.TaskStateFields{
+		Status: "in progress", DoneSoFar: "not started", NextAction: "Run check", Traps: "none",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	var requests strings.Builder
 	encoder := json.NewEncoder(&requests)
 	for i, args := range []map[string]any{
-		{"id": s.id, "status": "in progress", "done_so_far": "—"},
-		{"id": s.id, "status": "in progress", "done_so_far": "—", "next_action": "Run check", "traps": "—"},
+		{"id": s.id},
+		{"id": s.id, "next_action": "Run focused check"},
 	} {
 		if err := encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": i + 1, "method": "tools/call", "params": map[string]any{"name": "tasks_update_state", "arguments": args}}); err != nil {
 			t.Fatal(err)

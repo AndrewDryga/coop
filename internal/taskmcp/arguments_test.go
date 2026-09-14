@@ -65,10 +65,10 @@ func TestTaskArgumentSchemasDescribeRuntimeBoundsAndExamples(t *testing.T) {
 			}
 		case "tasks_update_state":
 			if len(examples(schema)) != 1 {
-				t.Fatal("state tool needs one complete example")
+				t.Fatal("state tool needs one partial example")
 			}
-			if !strings.Contains(descriptor["description"].(string), "EVERY call") {
-				t.Fatal("snapshot replacement semantics absent")
+			if schema["minProperties"] != float64(2) || !strings.Contains(descriptor["description"].(string), "Omitted fields keep") {
+				t.Fatal("patch semantics absent")
 			}
 			for _, field := range []string{"status", "done_so_far", "next_action", "traps"} {
 				p := properties[field].(map[string]any)
@@ -338,9 +338,13 @@ func TestMissingArgumentsReportEveryFieldWithoutMutation(t *testing.T) {
 				args    map[string]any
 				missing string
 			}{
-				{"tasks_update_state", map[string]any{"id": "t1", "status": "in progress", "done_so_far": "private argument text"}, "next_action, traps"},
 				{"tasks_propose", map[string]any{"kind": "task", "title": "Follow-up", "context": "private argument text"}, "acceptance, approach, subtasks"},
 				{"tasks_block", map[string]any{"id": "t1"}, "decision, options, recommendation"},
+			}
+			beforeState := taskFiles(t, root)
+			text := sess.mustRefuse("tasks_update_state", map[string]any{"id": "t1"})
+			if !strings.Contains(text, "at least one") || !maps.Equal(beforeState, taskFiles(t, root)) {
+				t.Fatalf("id-only state update was not a non-mutating refusal: %s", text)
 			}
 			for _, tc := range cases {
 				first := sess.mustRefuse(tc.name, tc.args)

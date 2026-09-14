@@ -303,10 +303,13 @@ func TestStateLogAndSubtasksOnTheAssignedTask(t *testing.T) {
 	sess := newSession(t, newServer(t, root, "t1"))
 	dir := filepath.Join(root, tasks.StateInProgress, "t1")
 	sess.mustCall("tasks_update_state", map[string]any{"id": "t1", "status": "in progress — step 2", "done_so_far": "one\ntwo", "next_action": "three", "traps": "—"})
+	sess.mustCall("tasks_update_state", map[string]any{"id": "t1", "next_action": "four"})
 	state, _ := os.ReadFile(filepath.Join(dir, "state.md"))
-	if want := "# State — Title of t1\n\n**Status:** in progress — step 2\n**Done so far:** one\ntwo\n**Next action:** three\n**Traps:** —\n"; string(state) != want {
+	if want := "# State — Title of t1\n\n**Status:** in progress — step 2\n**Done so far:** one\ntwo\n**Next action:** four\n**Traps:** —\n"; string(state) != want {
 		t.Fatalf("state.md = %q", state)
 	}
+	sess.mustRefuse("tasks_update_state", map[string]any{"id": "t1"})
+	sess.mustRefuse("tasks_update_state", map[string]any{"id": "t1", "traps": nil})
 	sess.mustRefuse("tasks_update_state", map[string]any{"id": "t1", "status": "a\nb", "done_so_far": "x", "next_action": "y", "traps": "z"})
 	sess.mustRefuse("tasks_update_state", map[string]any{"id": "t1", "status": "esc\x1b[31m", "done_so_far": "x", "next_action": "y", "traps": "z"})
 	sess.mustCall("tasks_append_log", map[string]any{"id": "t1", "entry": "## 2026-09-10 — did a thing\n- because"})

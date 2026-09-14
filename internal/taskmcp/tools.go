@@ -51,15 +51,15 @@ var toolTable = []tool{
 	},
 	{
 		name:        "tasks_update_state",
-		description: "Replace state.md, not patch it: send id AND all four fields (status, done_so_far, next_action, traps) on EVERY call. Refresh before each commit and before pausing.",
-		schema: withExample(object(map[string]any{
+		description: "Patch state.md: send id and one or more fields to change. Omitted fields keep their saved values. Refresh before each commit and before pausing.",
+		schema: withExample(withMinProperties(object(map[string]any{
 			"id":          idProp(),
 			"status":      textProp("Where the task stands, e.g. in progress — tests next.", false, blockLimit),
 			"done_so_far": textProp("What is finished and verified. Use the literal string \"—\" if nothing is finished.", true, blockLimit),
-			"next_action": textProp("The next concrete step. If there is no next action, send the literal string \"none\"; never omit it or send null/empty.", false, blockLimit),
-			"traps":       textProp("Gotchas for the next agent. If there are none, send the literal string \"—\"; never omit it or send null/empty.", true, blockLimit),
-		}, "id", "status", "done_so_far", "next_action", "traps"), map[string]any{
-			"id": "<exact task id>", "status": "not started", "done_so_far": "—", "next_action": "Read the task", "traps": "—",
+			"next_action": textProp("The next concrete step. If changing it to no next action, send the literal string \"none\"; never send null/empty.", false, blockLimit),
+			"traps":       textProp("Gotchas for the next agent. If changing it when there are none, send the literal string \"—\"; never send null/empty.", true, blockLimit),
+		}, "id"), 2), map[string]any{
+			"id": "<exact task id>", "next_action": "Run the focused regression",
 		}),
 		run: (*Server).updateState,
 	},
@@ -171,6 +171,11 @@ func withExample(schema, example map[string]any) map[string]any {
 	return schema
 }
 
+func withMinProperties(schema map[string]any, count int) map[string]any {
+	schema["minProperties"] = count
+	return schema
+}
+
 // ToolNames lists the tool set in presentation order — the fixed contract doctor asserts.
 func ToolNames() []string {
 	names := make([]string, len(toolTable))
@@ -254,6 +259,21 @@ func (s *nonNullString) UnmarshalJSON(raw []byte) error {
 		return &json.UnmarshalTypeError{Value: "null", Type: reflect.TypeFor[string]()}
 	}
 	return json.Unmarshal(raw, (*string)(s))
+}
+
+type optionalString struct {
+	present bool
+	value   string
+}
+
+func (s *optionalString) UnmarshalJSON(raw []byte) error {
+	var value nonNullString
+	if err := value.UnmarshalJSON(raw); err != nil {
+		return err
+	}
+	s.present = true
+	s.value = string(value)
+	return nil
 }
 
 type nonNullBool bool
@@ -464,20 +484,27 @@ func (s *Server) get(_ context.Context, args json.RawMessage) *toolResult {
 
 func (s *Server) updateState(_ context.Context, args json.RawMessage) *toolResult {
 	var in struct {
-		ID         string `json:"id"`
-		Status     string `json:"status"`
-		DoneSoFar  string `json:"done_so_far"`
-		NextAction string `json:"next_action"`
-		Traps      string `json:"traps"`
+		ID         string         `json:"id"`
+		Status     optionalString `json:"status"`
+		DoneSoFar  optionalString `json:"done_so_far"`
+		NextAction optionalString `json:"next_action"`
+		Traps      optionalString `json:"traps"`
 	}
 	if r := decodeArgs(args, &in); r != nil {
 		return r
 	}
+	if !in.Status.present && !in.DoneSoFar.present && !in.NextAction.present && !in.Traps.present {
+		return refusal("no state fields supplied: send at least one of status, done_so_far, next_action, or traps")
+	}
 	for _, f := range []struct {
-		name, value string
-		multiline   bool
+		name      string
+		value     optionalString
+		multiline bool
 	}{{"status", in.Status, false}, {"done_so_far", in.DoneSoFar, true}, {"next_action", in.NextAction, false}, {"traps", in.Traps, true}} {
-		if r := checkText(f.name, f.value, f.multiline, blockLimit); r != nil {
+		if !f.value.present {
+			continue
+		}
+		if r := checkText(f.name, f.value.value, f.multiline, blockLimit); r != nil {
 			return r
 		}
 	}
@@ -486,13 +513,27 @@ func (s *Server) updateState(_ context.Context, args json.RawMessage) *toolResul
 		return r
 	}
 	if r := s.underLease(loc, "update state of", func() error {
-		return tasks.WriteTaskState(loc.item.Dir, loc.item.Title, tasks.TaskStateFields{
-			Status: in.Status, DoneSoFar: in.DoneSoFar, NextAction: in.NextAction, Traps: in.Traps,
-		})
+		fields, err := tasks.ReadTaskState(loc.item.Dir)
+		if err != nil {
+			return err
+		}
+		if in.Status.present {
+			fields.Status = in.Status.value
+		}
+		if in.DoneSoFar.present {
+			fields.DoneSoFar = in.DoneSoFar.value
+		}
+		if in.NextAction.present {
+			fields.NextAction = in.NextAction.value
+		}
+		if in.Traps.present {
+			fields.Traps = in.Traps.value
+		}
+		return tasks.WriteTaskState(loc.item.Dir, loc.item.Title, fields)
 	}); r != nil {
 		return r
 	}
-	return textResult(fmt.Sprintf("state.md of %s rewritten", loc.item.ID))
+	return textResult(fmt.Sprintf("state.md of %s updated", loc.item.ID))
 }
 
 func (s *Server) appendLog(_ context.Context, args json.RawMessage) *toolResult {

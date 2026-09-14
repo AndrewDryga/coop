@@ -154,6 +154,39 @@ type TaskStateFields struct {
 	Status, DoneSoFar, NextAction, Traps string
 }
 
+// ReadTaskState reads the canonical snapshot written by WriteTaskState. It preserves multiline
+// Done so far and Traps values so a partial tool update cannot erase an omitted field.
+func ReadTaskState(taskDir string) (TaskStateFields, error) {
+	root, err := OpenTaskMetadataRoot(taskDir)
+	if err != nil {
+		return TaskStateFields{}, err
+	}
+	defer root.Close()
+	body, err := ReadTaskMetadataFile(root, "state.md")
+	if err != nil {
+		return TaskStateFields{}, fmt.Errorf("read state.md: %w", err)
+	}
+	lines := strings.Split(string(body), "\n")
+	labels := []string{taskStateStatus, taskStateDone, taskStateNext, taskStateTraps}
+	indexes := make([]int, len(labels))
+	for i, label := range labels {
+		found := labeledLineIndexes(lines, label)
+		if len(found) != 1 || i > 0 && found[0] <= indexes[i-1] {
+			return TaskStateFields{}, fmt.Errorf("state.md must contain one ordered %s field", label)
+		}
+		indexes[i] = found[0]
+	}
+	value := func(i int) string {
+		end := len(lines)
+		if i+1 < len(indexes) {
+			end = indexes[i+1]
+		}
+		parts := append([]string{strings.TrimPrefix(strings.TrimPrefix(lines[indexes[i]], labels[i]), " ")}, lines[indexes[i]+1:end]...)
+		return strings.TrimSuffix(strings.Join(parts, "\n"), "\n")
+	}
+	return TaskStateFields{Status: value(0), DoneSoFar: value(1), NextAction: value(2), Traps: value(3)}, nil
+}
+
 // WriteTaskState overwrites state.md with the canonical snapshot shape `coop tasks add` seeds, so
 // the file stays parseable by completion normalization (one line per label) whatever the agent
 // wrote before.
