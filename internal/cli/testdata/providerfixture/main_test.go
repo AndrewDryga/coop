@@ -699,8 +699,8 @@ func TestParseConsultInvocationPinsEveryAdapterGrammar(t *testing.T) {
 		args     []string
 		want     consultInvocation
 	}{
-		{"claude", []string{"-p", "--permission-mode", "plan", "--session-id", "session-1", "--output-format", "json", "--model", "opus", "--effort", "high", "question"}, consultInvocation{Delivery: "fresh", Session: "session-1", Model: "opus", Effort: "high", Prompt: "question"}},
-		{"claude", []string{"-p", "--permission-mode", "plan", "--resume", "session-1", "--output-format", "json", "follow-up"}, consultInvocation{Delivery: "resume", Session: "session-1", Prompt: "follow-up"}},
+		{"claude", []string{"-p", "--permission-mode", "plan", "--session-id", "session-1", "--output-format", "json", "--model", "opus", "--effort", "high", "--", "question"}, consultInvocation{Delivery: "fresh", Session: "session-1", Model: "opus", Effort: "high", Prompt: "question"}},
+		{"claude", []string{"-p", "--permission-mode", "plan", "--resume", "session-1", "--output-format", "json", "--", "follow-up"}, consultInvocation{Delivery: "resume", Session: "session-1", Prompt: "follow-up"}},
 		{"gemini", []string{"--approval-mode", "plan", "--resume", "session-2", "-o", "stream-json", "--model", "flash", "-p", "follow-up"}, consultInvocation{Delivery: "resume", Session: "session-2", Model: "flash", Prompt: "follow-up"}},
 		{"gemini", []string{"--approval-mode", "plan", "--session-id", "session-2", "-o", "stream-json", "-p", "question"}, consultInvocation{Delivery: "fresh", Session: "session-2", Prompt: "question"}},
 		{"grok", []string{"--tools", "Read,Grep", "--session-id", "session-3", "--output-format", "streaming-json", "--model", "grok-model", "--reasoning-effort", "xhigh", "-p", "question"}, consultInvocation{Delivery: "fresh", Session: "session-3", Model: "grok-model", Effort: "xhigh", Prompt: "question"}},
@@ -815,7 +815,7 @@ func TestParseDelegateInvocationPinsEveryAdapterGrammar(t *testing.T) {
 		args     []string
 		want     delegateInvocation
 	}{
-		{"claude", []string{"-p", "--dangerously-skip-permissions", "--model", "opus", "--effort", "high", "question"}, delegateInvocation{Prompt: "question", Model: "opus", Effort: "high"}},
+		{"claude", []string{"-p", "--dangerously-skip-permissions", "--model", "opus", "--effort", "high", "--", "question"}, delegateInvocation{Prompt: "question", Model: "opus", Effort: "high"}},
 		{"codex", []string{"exec", "--dangerously-bypass-approvals-and-sandbox", "--model", "codex-model", "-c", "model_reasoning_effort=high", "question"}, delegateInvocation{Prompt: "question", Model: "codex-model", Effort: "high"}},
 		{"gemini", []string{"--yolo", "--model", "flash", "-p", "question"}, delegateInvocation{Prompt: "question", Model: "flash"}},
 		{"grok", []string{"--permission-mode", "bypassPermissions", "--model", "grok-model", "--reasoning-effort", "xhigh", "-p", "question"}, delegateInvocation{Prompt: "question", Model: "grok-model", Effort: "xhigh"}},

@@ -347,7 +347,7 @@ func consumeDelegateStep(root, provider string, invocation delegateInvocation, s
 func parseDelegateInvocation(provider string, args []string) (delegateInvocation, error) {
 	switch provider {
 	case "claude":
-		return parsePlainDelegateArgs(args, []string{"-p", "--dangerously-skip-permissions"}, "--effort", "")
+		return parsePlainDelegateArgs(args, []string{"-p", "--dangerously-skip-permissions"}, "--effort", "--")
 	case "gemini":
 		return parsePlainDelegateArgs(args, []string{"--yolo"}, "", "-p")
 	case "grok":

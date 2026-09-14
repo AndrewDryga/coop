@@ -428,7 +428,7 @@ func parseConsultInvocation(provider string, args []string) (consultInvocation, 
 			return consultInvocation{}, errors.New("claude consult requires exact JSON output after its session id")
 		}
 		plainArgs := append(append([]string{}, args[:5]...), args[7:]...)
-		return parsePlainConsultArgs(plainArgs, []string{"-p", "--permission-mode", "plan"}, "--session-id", "--resume", "--effort", "")
+		return parsePlainConsultArgs(plainArgs, []string{"-p", "--permission-mode", "plan"}, "--session-id", "--resume", "--effort", "--")
 	case "gemini":
 		if len(args) < 8 || args[4] != "-o" || args[5] != "stream-json" {
 			return consultInvocation{}, errors.New("gemini consult requires exact stream-json output after its session id")

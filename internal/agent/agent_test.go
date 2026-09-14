@@ -431,6 +431,10 @@ func TestClaudeMCPConfig(t *testing.T) {
 				t.Errorf("claude %s command missing nested MCP wiring %q: %s", name, want, command)
 			}
 		}
+		// Claude's --mcp-config accepts multiple values, so terminate options before the prompt.
+		if !strings.Contains(command, claudeNestedMCPArgs+` -- "$prompt"`) {
+			t.Errorf("claude %s command does not protect prompt from variadic MCP config: %s", name, command)
+		}
 	}
 }
 

@@ -908,15 +908,15 @@ const claudeConsultUsage = `select(length==1) | .[0]
 
 func (claudeAgent) ConsultFresh() string {
 	return "printf '%s' \"$id\" >\"$candidate_idfile\"\n" +
-		`claude_run claude -p --permission-mode plan --session-id "$id" --output-format json ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` "$prompt"`
+		`claude_run claude -p --permission-mode plan --session-id "$id" --output-format json ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` -- "$prompt"`
 }
 
 func (claudeAgent) ConsultResume() string {
-	return `claude_run claude -p --permission-mode plan --resume "$id" --output-format json ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` "$prompt"`
+	return `claude_run claude -p --permission-mode plan --resume "$id" --output-format json ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` -- "$prompt"`
 }
 
 func (claudeAgent) DelegateExec() string {
-	return `claude -p --dangerously-skip-permissions ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` "$prompt"`
+	return `claude -p --dangerously-skip-permissions ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` -- "$prompt"`
 }
 
 func (claudeAgent) ShellPrelude() string {

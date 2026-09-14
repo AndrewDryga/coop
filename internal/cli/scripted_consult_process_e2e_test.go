@@ -1095,7 +1095,7 @@ func consultFreshTraceArgv(provider, model, effort, prompt, sessionHash string) 
 	value := processTraceValue
 	switch provider {
 	case "claude":
-		return []string{"claude", "-p", "--permission-mode", value("plan"), "--session-id", sessionHash, "--output-format", value("json"), "--model", value(model), "--effort", value(effort), value(prompt)}
+		return []string{"claude", "-p", "--permission-mode", value("plan"), "--session-id", sessionHash, "--output-format", value("json"), "--model", value(model), "--effort", value(effort), "--", value(prompt)}
 	case "codex":
 		return []string{"codex", value("exec"), "--enable", value("use_legacy_landlock"), "-s", value("read-only"), "--model", value(model), "-c", value("model_reasoning_effort=" + effort), "--json", value(prompt)}
 	case "gemini":
