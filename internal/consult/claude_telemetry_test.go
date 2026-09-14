@@ -32,7 +32,7 @@ func TestConsultWrapperClaudeJSONReplyAndTelemetry(t *testing.T) {
 				t.Fatalf("lead did not receive only decoded reply: %s", out)
 			}
 			if tc.row {
-				for _, want := range []string{`"provider":"claude"`, `"role":"claude-json"`, `"in":21`, `"out":5`} {
+				for _, want := range []string{`"provider":"claude"`, `"role":"claude-json"`, `"in":21`, `"out":5`, `"fresh_in":11`, `"cache_write":3`, `"cache_read":7`, `"reported_out":5`} {
 					if !strings.Contains(row, want) {
 						t.Errorf("row missing %s: %s", want, row)
 					}

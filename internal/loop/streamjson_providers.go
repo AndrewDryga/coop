@@ -8,6 +8,8 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	agents "github.com/AndrewDryga/coop/internal/agent"
 )
 
 const (
@@ -126,14 +128,16 @@ func (f *stderrLineFilter) writeLine(line []byte, newline bool) error {
 // codexStreamDecoder renders `codex exec --json` events into the loop's common activity view.
 type codexStreamDecoder struct {
 	*ndjsonDecoder
-	agent   string
-	profile string
-	root    string
-	model   string
-	tool    boundedLabels
-	shown   boundedLabels
-	last    *iterResult
-	failed  bool
+	agent            string
+	profile          string
+	root             string
+	model            string
+	tool             boundedLabels
+	shown            boundedLabels
+	last             *iterResult
+	failed           bool
+	sessionID        string
+	blindWaitSeconds int
 }
 
 func newCodexStreamDecoder(out, tail io.Writer, agent, profile, root, model string) *codexStreamDecoder {
@@ -150,6 +154,9 @@ func (d *codexStreamDecoder) event(raw json.RawMessage) {
 	}
 	switch ev.Type {
 	case "thread.started":
+		if agents.ValidSessionID(ev.ThreadID) {
+			d.sessionID = ev.ThreadID
+		}
 		d.noteBootstrap()
 		d.showModel()
 	case "turn.started":
@@ -167,10 +174,14 @@ func (d *codexStreamDecoder) event(raw json.RawMessage) {
 	case "turn.completed":
 		d.noteTerminal()
 		d.last = &iterResult{
-			InTok:  ev.Usage.InputTokens,
-			OutTok: ev.Usage.OutputTokens + ev.Usage.ReasoningOutputTokens,
+			InTok:            ev.Usage.InputTokens,
+			OutTok:           ev.Usage.OutputTokens + ev.Usage.ReasoningOutputTokens,
+			CacheReadTok:     ev.Usage.CachedInputTokens,
+			ReportedOutTok:   intPtr(ev.Usage.OutputTokens + ev.Usage.ReasoningOutputTokens),
+			SessionID:        d.sessionID,
+			BlindWaitSeconds: d.blindWaitSeconds,
 		}
-		d.emit(d.palette.Dim("· " + tokenUsage(d.last.InTok, d.last.OutTok)))
+		d.emit(d.palette.Dim("· " + tokenUsageBreakdown(d.last)))
 	case "turn.failed":
 		d.noteTerminal()
 		d.failed = true
@@ -242,6 +253,7 @@ func (d *codexStreamDecoder) noteItemActivity(item codexStreamItem, started bool
 func (d *codexStreamDecoder) itemStarted(item codexStreamItem) {
 	switch item.Type {
 	case "command_execution":
+		recordBlindWait(d.ndjsonDecoder, &d.blindWaitSeconds, item.Command)
 		label := streamCommandLabel(item.Command)
 		d.emit(d.streamToolLine("⚙", label, false))
 		d.tool.set(item.ID, label)
@@ -363,7 +375,8 @@ type codexStreamEvent struct {
 	Error   struct {
 		Message string `json:"message"`
 	} `json:"error"`
-	Usage codexStreamUsage `json:"usage"`
+	Usage    codexStreamUsage `json:"usage"`
+	ThreadID string           `json:"thread_id"`
 }
 
 type codexStreamItem struct {
@@ -382,24 +395,26 @@ type codexStreamItem struct {
 }
 
 type codexStreamUsage struct {
-	InputTokens           int `json:"input_tokens"`
-	CachedInputTokens     int `json:"cached_input_tokens"`
-	OutputTokens          int `json:"output_tokens"`
-	ReasoningOutputTokens int `json:"reasoning_output_tokens"`
+	InputTokens           int  `json:"input_tokens"`
+	CachedInputTokens     *int `json:"cached_input_tokens"`
+	OutputTokens          int  `json:"output_tokens"`
+	ReasoningOutputTokens int  `json:"reasoning_output_tokens"`
 }
 
 // geminiStreamDecoder renders `gemini -o stream-json` events. Gemini emits assistant text as
 // deltas, so the decoder holds one narration line until the next non-assistant event.
 type geminiStreamDecoder struct {
 	*ndjsonDecoder
-	agent     string
-	profile   string
-	root      string
-	model     string
-	assistant boundedNarration
-	tool      boundedLabels
-	last      *iterResult
-	failed    bool
+	agent            string
+	profile          string
+	root             string
+	model            string
+	assistant        boundedNarration
+	tool             boundedLabels
+	last             *iterResult
+	failed           bool
+	sessionID        string
+	blindWaitSeconds int
 }
 
 func newGeminiStreamDecoder(out, tail io.Writer, agent, profile, root, model string) *geminiStreamDecoder {
@@ -420,6 +435,9 @@ func (d *geminiStreamDecoder) event(raw json.RawMessage) {
 	}
 	switch ev.Type {
 	case "init":
+		if agents.ValidSessionID(ev.SessionID) {
+			d.sessionID = ev.SessionID
+		}
 		d.noteBootstrap()
 		d.announceIdentity(d.agent, d.model, d.profile)
 	case "message":
@@ -495,6 +513,7 @@ func (d *geminiStreamDecoder) toolUse(ev *geminiStreamEvent) {
 	case "write_file", "replace", "edit":
 		label, line = d.fileToolLine("✎", ev.Parameters.FilePath)
 	case "run_shell_command":
+		recordBlindWait(d.ndjsonDecoder, &d.blindWaitSeconds, ev.Parameters.Command)
 		label = firstLine(stripLeadingCD(ev.Parameters.Command))
 		line = d.streamToolLine("⚙", label, false)
 	default:
@@ -524,12 +543,18 @@ func (d *geminiStreamDecoder) toolResult(ev *geminiStreamEvent) {
 
 func (d *geminiStreamDecoder) result(ev *geminiStreamEvent) {
 	d.last = &iterResult{
-		DurationMS: ev.Stats.DurationMS,
-		InTok:      ev.Stats.InputTokens,
-		OutTok:     ev.Stats.OutputTokens,
+		DurationMS:         ev.Stats.DurationMS,
+		InTok:              ev.Stats.InputTokens,
+		OutTok:             ev.Stats.OutputTokens,
+		SessionID:          d.sessionID,
+		FreshInTok:         ev.Stats.FreshInputTokens,
+		CacheReadTok:       ev.Stats.CachedInputTokens,
+		ReportedOutTok:     intPtr(ev.Stats.OutputTokens),
+		ReportedDurationMS: intPtr(ev.Stats.DurationMS),
+		BlindWaitSeconds:   d.blindWaitSeconds,
 	}
 	dur := (time.Duration(ev.Stats.DurationMS) * time.Millisecond).Round(time.Second)
-	d.emit(d.palette.Dim(fmt.Sprintf("· %s · %s", dur, tokenUsage(d.last.InTok, d.last.OutTok))))
+	d.emit(d.palette.Dim(fmt.Sprintf("· %s · %s", dur, tokenUsageBreakdown(d.last))))
 	if ev.Status == "success" {
 		return
 	}
@@ -577,15 +602,18 @@ type geminiStreamEvent struct {
 	Output     string          `json:"output"`
 	Message    string          `json:"message"`
 	Error      json.RawMessage `json:"error"`
+	SessionID  string          `json:"session_id"`
 	Parameters struct {
 		FilePath    string `json:"file_path"`
 		Command     string `json:"command"`
 		Description string `json:"description"`
 	} `json:"parameters"`
 	Stats struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
-		DurationMS   int `json:"duration_ms"`
+		InputTokens       int  `json:"input_tokens"`
+		OutputTokens      int  `json:"output_tokens"`
+		DurationMS        int  `json:"duration_ms"`
+		FreshInputTokens  *int `json:"input"`
+		CachedInputTokens *int `json:"cached"`
 	} `json:"stats"`
 }
 
@@ -600,6 +628,7 @@ type grokStreamDecoder struct {
 	text       boundedNarration
 	last       *iterResult
 	failed     bool
+	sessionID  string
 }
 
 func newGrokStreamDecoder(out, tail io.Writer, agent, profile, _ string, model string) *grokStreamDecoder {
@@ -632,25 +661,43 @@ func (d *grokStreamDecoder) event(raw json.RawMessage) {
 		}
 		d.text.WriteString(ev.Data)
 	case "end":
+		if agents.ValidSessionID(ev.SessionID) {
+			d.sessionID = ev.SessionID
+		}
 		d.noteTerminal()
-		input := ev.Usage.InputTokens + ev.Usage.CacheReadInputTokens + ev.Usage.CacheCreationInputTokens
-		output := ev.Usage.OutputTokens
+		input := intValue(ev.Usage.InputTokens) + intValue(ev.Usage.CacheReadInputTokens) + intValue(ev.Usage.CacheCreationInputTokens)
+		output := intValue(ev.Usage.OutputTokens)
 		// Current Grok includes reasoning in output; older streams report it
 		// separately. The native total distinguishes the two without a CLI guess.
 		if ev.Usage.TotalTokens <= 0 || ev.Usage.TotalTokens != input+output {
 			output += ev.Usage.ReasoningTokens
 		}
+		var reportedOutput *int
+		if ev.Usage.OutputTokens != nil {
+			reportedOutput = intPtr(output)
+		}
 		var cost float64
-		if json.Unmarshal(ev.CostUSD, &cost) != nil || cost < 0 || math.IsInf(cost, 0) || math.IsNaN(cost) {
+		costReported := json.Unmarshal(ev.CostUSD, &cost) == nil && cost >= 0 && !math.IsInf(cost, 0) && !math.IsNaN(cost)
+		if !costReported {
 			cost = 0
 		}
-		d.last = &iterResult{
-			Turns:   ev.NumTurns,
-			InTok:   input,
-			OutTok:  output,
-			CostUSD: cost,
+		var reportedCost *float64
+		if costReported {
+			reportedCost = &cost
 		}
-		d.emit(d.palette.Dim(fmt.Sprintf("· %d turns · %s", d.last.Turns, tokenUsage(d.last.InTok, d.last.OutTok))))
+		d.last = &iterResult{
+			Turns:           ev.NumTurns,
+			InTok:           input,
+			OutTok:          output,
+			CostUSD:         cost,
+			FreshInTok:      ev.Usage.InputTokens,
+			CacheReadTok:    ev.Usage.CacheReadInputTokens,
+			CacheWriteTok:   ev.Usage.CacheCreationInputTokens,
+			ReportedOutTok:  reportedOutput,
+			ReportedCostUSD: reportedCost,
+			SessionID:       d.sessionID,
+		}
+		d.emit(d.palette.Dim(fmt.Sprintf("· %d turns · %s", d.last.Turns, tokenUsageBreakdown(d.last))))
 	default:
 		if strings.Contains(strings.ToLower(ev.Type), "error") {
 			d.failed = true
@@ -702,18 +749,26 @@ func (d *grokStreamDecoder) streamOutcome() providerStreamOutcome {
 }
 
 type grokStreamEvent struct {
-	Type     string          `json:"type"`
-	Data     string          `json:"data"`
-	NumTurns int             `json:"num_turns"`
-	CostUSD  json.RawMessage `json:"total_cost_usd"`
-	Usage    struct {
-		InputTokens              int `json:"input_tokens"`
-		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-		OutputTokens             int `json:"output_tokens"`
-		ReasoningTokens          int `json:"reasoning_tokens"`
-		TotalTokens              int `json:"total_tokens"`
+	Type      string          `json:"type"`
+	Data      string          `json:"data"`
+	NumTurns  int             `json:"num_turns"`
+	CostUSD   json.RawMessage `json:"total_cost_usd"`
+	SessionID string          `json:"sessionId"`
+	Usage     struct {
+		InputTokens              *int `json:"input_tokens"`
+		CacheReadInputTokens     *int `json:"cache_read_input_tokens"`
+		CacheCreationInputTokens *int `json:"cache_creation_input_tokens"`
+		OutputTokens             *int `json:"output_tokens"`
+		ReasoningTokens          int  `json:"reasoning_tokens"`
+		TotalTokens              int  `json:"total_tokens"`
 	} `json:"usage"`
+}
+
+func intValue(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 func jsonEventMessage(raw json.RawMessage) string {

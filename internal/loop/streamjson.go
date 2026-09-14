@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,6 +43,8 @@ type streamDecoder struct {
 	// Claude can end an exhausted model-credit run with only this exact assistant notice and a
 	// nonzero exit. Keep it provisional until runIteration proves the stream ended incomplete.
 	terminalLimitNotice string
+	sessionID           string
+	blindWaitSeconds    int
 }
 
 func newStreamDecoder(out, tail io.Writer, agent, profile, root string) *streamDecoder {
@@ -565,6 +568,9 @@ func (d *streamDecoder) event(raw json.RawMessage) {
 		d.passthrough(raw)
 		return
 	}
+	if agents.ValidSessionID(ev.SessionID) {
+		d.sessionID = ev.SessionID
+	}
 	switch ev.Type {
 	case "assistant":
 		d.assistant(ev.Message)
@@ -658,6 +664,9 @@ func (d *streamDecoder) assistant(msg json.RawMessage) {
 			d.terminalLimitNotice = ""
 			var input toolInput
 			_ = json.Unmarshal(b.Input, &input)
+			if b.Name == "Bash" {
+				recordBlindWait(d.ndjsonDecoder, &d.blindWaitSeconds, input.Command)
+			}
 			glyph, displayName, label, outside := toolDisplay(d.root, b.Name, input)
 			// An outside path keeps its warning and yellow treatment; ordinary detail is dim.
 			if b.Name == "Bash" && displayName == "Bash" {
@@ -811,11 +820,20 @@ func (d *streamDecoder) result(ev *streamEvent) {
 		return
 	}
 	dur := (time.Duration(ev.DurationMS) * time.Millisecond).Round(time.Second)
-	res := &iterResult{CostUSD: ev.TotalCostUSD, Turns: ev.NumTurns, DurationMS: ev.DurationMS}
-	line := fmt.Sprintf("· %d turns · %s · $%.2f", ev.NumTurns, dur, ev.TotalCostUSD)
+	res := &iterResult{Turns: ev.NumTurns, DurationMS: ev.DurationMS, SessionID: d.sessionID, BlindWaitSeconds: d.blindWaitSeconds}
+	res.ReportedDurationMS = intPtr(ev.DurationMS)
+	line := fmt.Sprintf("· %d turns · %s", ev.NumTurns, dur)
+	if ev.TotalCostUSD != nil {
+		res.CostUSD, res.ReportedCostUSD = *ev.TotalCostUSD, ev.TotalCostUSD
+		line += fmt.Sprintf(" · $%.2f", *ev.TotalCostUSD)
+	}
 	if ev.Usage != nil {
 		res.InTok, res.OutTok = ev.Usage.inputTotal(), ev.Usage.OutputTokens
-		line += " · " + tokenUsage(res.InTok, res.OutTok)
+		res.FreshInTok = intPtr(ev.Usage.InputTokens)
+		res.CacheWriteTok = intPtr(ev.Usage.CacheCreationInputTokens)
+		res.CacheReadTok = intPtr(ev.Usage.CacheReadInputTokens)
+		res.ReportedOutTok = intPtr(ev.Usage.OutputTokens)
+		line += " · " + tokenUsageBreakdown(res)
 	}
 	d.last = res
 	d.emit(d.palette.Dim(cleanDiagnosticLine(line)))
@@ -838,6 +856,51 @@ func humanTokens(n int) string {
 
 func tokenUsage(input, output int) string {
 	return fmt.Sprintf("%s input / %s output", humanTokens(input), humanTokens(output))
+}
+
+func intPtr(value int) *int { return &value }
+
+// fixedSleepSeconds intentionally recognizes only the obvious waste seen in real runs. This is a
+// diagnostic, not a shell parser or policy engine.
+func fixedSleepSeconds(command string) int {
+	command = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(command), "/bin/bash -lc "))
+	fields := strings.Fields(stripLeadingCD(command))
+	if len(fields) < 2 || fields[0] != "sleep" {
+		return 0
+	}
+	seconds, err := strconv.Atoi(strings.TrimSuffix(fields[1], "s"))
+	if err != nil || seconds < 60 {
+		return 0
+	}
+	return seconds
+}
+
+func recordBlindWait(decoder *ndjsonDecoder, longest *int, command string) {
+	seconds := fixedSleepSeconds(command)
+	if seconds == 0 || *longest != 0 {
+		return
+	}
+	*longest = seconds
+	decoder.emit(decoder.palette.Yellow(fmt.Sprintf("⚠ fixed sleep %ds — collect the background process instead", seconds)))
+}
+
+func tokenUsageBreakdown(result *iterResult) string {
+	parts := []string{tokenUsage(result.InTok, result.OutTok)}
+	for _, field := range []struct {
+		name  string
+		value *int
+	}{
+		{"fresh", result.FreshInTok},
+		{"cache write", result.CacheWriteTok},
+		{"cache read", result.CacheReadTok},
+	} {
+		if field.value == nil {
+			parts = append(parts, field.name+" not reported")
+		} else {
+			parts = append(parts, field.name+" "+humanTokens(*field.value))
+		}
+	}
+	return strings.Join(parts, " · ")
 }
 
 // blockingLimitStatus reports whether a rate_limit_event status means the agent is actually
@@ -1339,8 +1402,9 @@ type streamEvent struct {
 	Result       string          `json:"result"`
 	NumTurns     int             `json:"num_turns"`
 	DurationMS   int             `json:"duration_ms"`
-	TotalCostUSD float64         `json:"total_cost_usd"`
+	TotalCostUSD *float64        `json:"total_cost_usd"`
 	Usage        *usageInfo      `json:"usage"`
+	SessionID    string          `json:"session_id"`
 }
 
 type rateLimitInfo struct {
@@ -1369,11 +1433,15 @@ func (u usageInfo) inputTotal() int {
 // event's cost, turns, and token totals — so it can attribute cost to the task in telemetry. nil
 // until a (non-error) result event lands; an interrupted run leaves it nil.
 type iterResult struct {
-	CostUSD    float64
-	Turns      int
-	DurationMS int
-	InTok      int
-	OutTok     int
+	CostUSD                                                                     float64
+	Turns                                                                       int
+	DurationMS                                                                  int
+	InTok                                                                       int
+	OutTok                                                                      int
+	SessionID                                                                   string
+	FreshInTok, CacheWriteTok, CacheReadTok, ReportedOutTok, ReportedDurationMS *int
+	ReportedCostUSD                                                             *float64
+	BlindWaitSeconds                                                            int
 }
 
 type streamMessage struct {

@@ -4,7 +4,7 @@ description: loop output groups startup and environment work around dim task ban
 scope: cli-output
 sources: [internal/loop/report.go, internal/loop/loop.go, internal/loop/iteration.go, internal/loop/streamjson.go, internal/loop/streamjson_providers.go, internal/loop/banners.go, internal/box/launch_sections.go, internal/box/run.go, internal/box/filtered_services.go, internal/box/services_note.go, internal/cli/acp_cmd.go, internal/cli/commands.go, internal/cli/boxsweep.go, internal/cli/loop_cmd.go, internal/tasks/dir.go, internal/tasks/cmd.go, internal/cli/help.go, internal/ui/ui.go, internal/ui/wrap.go]
 check: make check
-updated: 2026-09-13
+updated: 2026-09-14
 ---
 
 # Center loop output on the task and the actual attempt
@@ -23,6 +23,9 @@ updated: 2026-09-13
 - Nest secret protection, network access and service startup under
   `Preparing task environment`. Reuse existing proof and narration helpers. Preserve every
   actionable warning, including masked service secrets; show only facts the launch established.
+  A credential or rate-limit fallback from a clean, unchanged worktree reuses the prepared service
+  stack and does not print the same environment block again. A changed or dirty attempt prepares
+  services normally rather than trusting stale setup.
 - Loop work/preflight/review sessions do not automatically publish project `serve.ports`, so
   they have no Publishing ports section. Remove generated host bindings and false host-access
   notes/environment, not just the displayed URLs. Preserve ACP/interactive publication and
@@ -77,6 +80,9 @@ card. The full transcript and failure matrix are in queued task
 `2026-09-12-polish-loop-output-with-task-banners-and-grouped`.
 
 ## Changelog
+- 2026-09-14 — a real Emisar Frontier recovery printed and ran the same service preparation twice
+  when the first credential was already rate limited. Swept work and review retries: both now reuse
+  the stack only across a clean identical HEAD, while changed/dirty work remains a fresh setup.
 - 2026-09-13 — made failed enabled final verification part of the terminal verdict and exit
   contract while preserving completed task state, original diagnostics and queue-specific exits.
 - 2026-09-13 — swept ordinary Bash, role/task classifications and matched failure history;

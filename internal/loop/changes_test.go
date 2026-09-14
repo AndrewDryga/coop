@@ -380,6 +380,13 @@ func TestRunSummary(t *testing.T) {
 	if !strings.Contains(got, "Reported cost: not reported") || strings.Contains(got, "$0.00") {
 		t.Errorf("unreported cost = %q", got)
 	}
+
+	zero := 0.0
+	reportedFree := costFromRecords([]StageRecord{{Provider: "claude", Model: "fixture", ReportedCost: &zero}}, nil)
+	got = captureStderr(t, func() { printRunSummary(nil, reportedFree, newLoopHealth()) })
+	if !strings.Contains(got, "Reported cost: $0.00") || strings.Contains(got, "Reported cost: not reported") {
+		t.Errorf("explicitly reported zero cost = %q", got)
+	}
 }
 
 func TestCompletionProgressRefreshesWithoutDuplicates(t *testing.T) {

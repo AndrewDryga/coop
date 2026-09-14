@@ -748,6 +748,35 @@ func TestStartSessionAndPreset(t *testing.T) {
 	}
 }
 
+func TestHeadlessSessionCommands(t *testing.T) {
+	cleanCmdEnv(t)
+	cfg := &config.Config{}
+	id := "11111111-2222-4333-8444-555555555555"
+	tests := []struct {
+		name        string
+		fresh, next []string
+	}{
+		{"claude", []string{"claude", "--dangerously-skip-permissions", "--session-id", id, "-p", "review"}, []string{"claude", "--dangerously-skip-permissions", "--resume", id, "-p", "correct"}},
+		{"codex", []string{"codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "review"}, []string{"codex", "exec", "resume", id, "--dangerously-bypass-approvals-and-sandbox", "correct"}},
+		{"gemini", []string{"gemini", "--yolo", "--session-id", id, "-p", "review"}, []string{"gemini", "--yolo", "--resume", id, "-p", "correct"}},
+		{"grok", []string{"grok", "--permission-mode", "bypassPermissions", "--session-id", id, "-p", "review"}, []string{"grok", "--permission-mode", "bypassPermissions", "--resume", id, "-p", "correct"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			a, _ := Get(test.name)
+			if got, ok := a.HeadlessSession(cfg, "review", id, false); !ok || !slices.Equal(got, test.fresh) {
+				t.Fatalf("fresh = %v/%v, want %v/true", got, ok, test.fresh)
+			}
+			if got, ok := a.HeadlessSession(cfg, "correct", id, true); !ok || !slices.Equal(got, test.next) {
+				t.Fatalf("resume = %v/%v, want %v/true", got, ok, test.next)
+			}
+			if got, ok := a.HeadlessSession(cfg, "correct", "--last", true); ok || got != nil {
+				t.Fatalf("unsafe resume = %v/%v, want nil/false", got, ok)
+			}
+		})
+	}
+}
+
 func TestMetadata(t *testing.T) {
 	owners := map[string]string{}
 	for _, name := range Names() {

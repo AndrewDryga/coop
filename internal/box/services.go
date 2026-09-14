@@ -448,8 +448,8 @@ func runCompose(rt runtime.Runtime, stdout, stderr io.Writer, action string, arg
 // autoUpServices reports whether box.Run should auto-start sibling services before launching a
 // box: the COOP_AUTO_UP toggle is on (default), the box joins the services network (so it could
 // reach them), it isn't offline (COOP_EGRESS=none, where there's nothing to reach), and the
-// runtime supports compose — Apple `container` does not. Whether a compose file actually exists
-// is checked separately, by EnsureServices.
+// runtime supports compose — Apple `container` does not — and this is not a retry explicitly
+// reusing its already-prepared stack. Whether a compose file exists is checked by EnsureServices.
 // LiveBoxes lists the coop boxes running in repo's project right now, other than except (a box
 // may pass its own execution id). Sibling services start only when this is empty: a running
 // agent can edit the compose file and swap a validated bind source for a link to a host path in
@@ -492,5 +492,5 @@ func DescribeLiveBoxes(live []forkspace.ExecutionObservation) string {
 }
 
 func autoUpServices(cfg *config.Config, spec RunSpec, rtName string) bool {
-	return cfg.AutoUp && spec.Network && cfg.Egress == "open" && rtName != "container"
+	return cfg.AutoUp && spec.Network && cfg.Egress == "open" && rtName != "container" && !spec.ReuseServices
 }

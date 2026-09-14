@@ -26,19 +26,21 @@ func TestAutoUpServices(t *testing.T) {
 		network bool
 		egress  string
 		rtName  string
+		reuse   bool
 		want    bool
 	}{
-		{"defaults: on, networked, online, docker", true, true, "open", "docker", true},
-		{"podman too", true, true, "open", "podman", true},
-		{"COOP_AUTO_UP=0 opts out", false, true, "open", "docker", false},
-		{"no services network (COOP_NETWORK=0)", true, false, "open", "docker", false},
-		{"offline box (COOP_EGRESS=none)", true, true, "none", "docker", false},
-		{"Apple container has no compose", true, true, "open", "container", false},
+		{"defaults: on, networked, online, docker", true, true, "open", "docker", false, true},
+		{"podman too", true, true, "open", "podman", false, true},
+		{"COOP_AUTO_UP=0 opts out", false, true, "open", "docker", false, false},
+		{"no services network (COOP_NETWORK=0)", true, false, "open", "docker", false, false},
+		{"offline box (COOP_EGRESS=none)", true, true, "none", "docker", false, false},
+		{"Apple container has no compose", true, true, "open", "container", false, false},
+		{"read-only retry reuses prepared services", true, true, "open", "docker", true, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			cfg := &config.Config{AutoUp: c.autoUp, Egress: c.egress}
-			spec := RunSpec{Network: c.network}
+			spec := RunSpec{Network: c.network, ReuseServices: c.reuse}
 			if got := autoUpServices(cfg, spec, c.rtName); got != c.want {
 				t.Errorf("autoUpServices = %v, want %v", got, c.want)
 			}

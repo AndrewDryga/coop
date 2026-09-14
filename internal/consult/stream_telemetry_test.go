@@ -49,6 +49,11 @@ func TestConsultWrapperStreamingReplyAndTelemetry(t *testing.T) {
 						if tc.peer == "grok" && !strings.Contains(row, `"cost":0.25`) {
 							t.Fatalf("Grok reported cost lost: %s", row)
 						}
+						for _, want := range []string{`"fresh_in":14`, `"cache_read":7`, `"reported_out":5`} {
+							if !strings.Contains(row, want) {
+								t.Fatalf("%s split usage missing %s: %s", tc.peer, want, row)
+							}
+						}
 					}
 				})
 			}

@@ -635,6 +635,170 @@ func TestPendingReviewSigningRebindIsExplicitAndExact(t *testing.T) {
 	}
 }
 
+func pendingReviewRewrittenLaterCohort(t *testing.T) (string, string, Item, Item, string, string, AuditReopenRecord) {
+	t.Helper()
+	repo := initRepo(t)
+	root := filepath.Join(repo, TasksRoot)
+	earlier := taskWithCompletedChecklist(t, root, StateTodo, "review-earlier")
+	later := taskWithCompletedChecklist(t, root, StateTodo, "review-later")
+	base := gitOut(repo, "rev-parse", "HEAD")
+
+	writeTaskFile(t, filepath.Join(repo, "earlier.txt"), "earlier\n")
+	git(t, repo, "add", "earlier.txt")
+	git(t, repo, "commit", "-qm", "earlier implementation\n\nCoop-Task: "+earlier.ID)
+	if err := CompleteTrustedTask(root, earlier); err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFile(t, filepath.Join(repo, "later.txt"), "later\n")
+	git(t, repo, "add", "later.txt")
+	git(t, repo, "commit", "-qm", "later implementation\n\nCoop-Task: "+later.ID)
+	if err := CompleteTrustedTask(root, later); err != nil {
+		t.Fatal(err)
+	}
+	plan := pendingReviewTestPlan(t, repo, root, base)
+	if err := EnrollExistingPendingReviews(repo, []string{root}, []string{earlier.ID, later.ID}, plan); err != nil {
+		t.Fatal(err)
+	}
+
+	oldHead := gitOut(repo, "rev-parse", "HEAD")
+	authority, err := CaptureAuditReopen(repo, later.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFile(t, filepath.Join(repo, "later.txt"), "later repaired\n")
+	git(t, repo, "add", "later.txt")
+	git(t, repo, "commit", "--amend", "--no-edit", "--no-gpg-sign", "--quiet")
+	newHead := gitOut(repo, "rev-parse", "HEAD")
+	return repo, root, earlier, later, oldHead, newHead, authority
+}
+
+func TestPendingReviewRebindAllowsAuthorizedRewriteOfLaterCohortTask(t *testing.T) {
+	repo, root, earlier, later, oldHead, newHead, authority := pendingReviewRewrittenLaterCohort(t)
+	if err := RebindPendingReviewAfterAuditRewrite(repo, root, earlier.ID, oldHead, newHead, later.ID, authority); err != nil {
+		t.Fatal(err)
+	}
+	record, ok, err := readPendingReviewRecord(root, earlier.ID)
+	if err != nil || !ok || record.Binding.Head != newHead || len(record.Binding.History) != 1 ||
+		record.Binding.History[0].TaskID != later.ID || record.Binding.History[0] == authority.Subject {
+		t.Fatalf("rebound earlier review = %+v, ok=%v, err=%v", record, ok, err)
+	}
+}
+
+func TestPendingReviewRecoversAuthorizedRewriteOfLaterCohortTask(t *testing.T) {
+	repo, root, _, later, _, newHead, authority := pendingReviewRewrittenLaterCohort(t)
+	if err := WriteAuditReopenRecord(root, authority); err != nil {
+		t.Fatal(err)
+	}
+
+	cohort, err := LoadPendingReviews(repo, []string{root})
+	if err != nil || len(cohort.Subjects) != 2 {
+		t.Fatalf("recovered cohort = %+v, %v", cohort, err)
+	}
+	for _, subject := range cohort.Subjects {
+		if subject.Binding.Head != newHead {
+			t.Fatalf("recovered %s at %s, want %s", subject.Task.Ref.ID, subject.Binding.Head, newHead)
+		}
+	}
+	reopen, ok, err := ReadAuditReopenRecord(root, later.ID)
+	if err != nil || !ok || reopen.BaselineHead != newHead || !AuditReopenCurrentValid(repo, newHead, later.ID, reopen) {
+		t.Fatalf("recovered audit authority = %+v, ok=%v, err=%v", reopen, ok, err)
+	}
+}
+
+func TestPendingReviewRebindsReopenedSiblingAuditAuthority(t *testing.T) {
+	repo := initRepo(t)
+	root := filepath.Join(repo, TasksRoot)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	authority, err := OpenLeaseAuthority(root, "task-b", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := authority.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	writeTaskFile(t, filepath.Join(repo, "a.txt"), "A\n")
+	git(t, repo, "add", "a.txt")
+	git(t, repo, "commit", "-qm", "A implementation\n\nCoop-Task: task-a")
+	actor := gitOut(repo, "rev-parse", "HEAD")
+	writeTaskFile(t, filepath.Join(repo, "b.txt"), "B\n")
+	git(t, repo, "add", "b.txt")
+	git(t, repo, "commit", "-qm", "B implementation\n\nCoop-Task: task-b")
+	sibling := gitOut(repo, "rev-parse", "HEAD")
+	reopen, err := CaptureAuditReopen(repo, "task-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAuditReopenRecord(root, reopen); err != nil {
+		t.Fatal(err)
+	}
+	gitConfig := filepath.Join(t.TempDir(), "gitconfig")
+	writeTaskFile(t, gitConfig, "")
+	amend := func(date string) {
+		t.Helper()
+		cmd := exec.Command("git", "-C", repo, "commit", "--amend", "--no-edit", "--no-gpg-sign", "--quiet")
+		cmd.Env = append(os.Environ(),
+			"GIT_CONFIG_GLOBAL="+gitConfig, "GIT_CONFIG_SYSTEM="+gitConfig,
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t", "GIT_COMMITTER_DATE="+date)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("amend sibling metadata: %v\n%s", err, out)
+		}
+	}
+
+	git(t, repo, "reset", "--hard", actor+"^")
+	writeTaskFile(t, filepath.Join(repo, "a.txt"), "A repaired\n")
+	git(t, repo, "add", "a.txt")
+	git(t, repo, "commit", "-qm", "A implementation\n\nCoop-Task: task-a")
+	git(t, repo, "cherry-pick", sibling)
+	rewrittenHead := gitOut(repo, "rev-parse", "HEAD")
+	binding, err := capturePendingReviewBinding(repo, "task-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding.Subject != reopen.Subject {
+		t.Fatal("test rewrite changed the sibling task semantics")
+	}
+	if err := rebindAuditReopenToPendingBinding(repo, root, "task-b", binding); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := ReadAuditReopenRecord(root, "task-b")
+	if err != nil || !ok || got.Generation != reopen.Generation || got.BaselineHead != rewrittenHead ||
+		!AuditReopenCurrentValid(repo, rewrittenHead, "task-b", got) {
+		t.Fatalf("rebound sibling authority = %+v, ok=%v, err=%v", got, ok, err)
+	}
+
+	amend("2032-03-04T05:06:07Z")
+	signedHead := gitOut(repo, "rev-parse", "HEAD")
+	signedBinding, err := capturePendingReviewBinding(repo, "task-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rebindAuditReopenToPendingBinding(repo, root, "task-b", signedBinding); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err = ReadAuditReopenRecord(root, "task-b")
+	if err != nil || !ok || got.Generation != reopen.Generation || got.BaselineHead != signedHead ||
+		!AuditReopenCurrentValid(repo, signedHead, "task-b", got) {
+		t.Fatalf("signed sibling authority = %+v, ok=%v, err=%v", got, ok, err)
+	}
+
+	amend("2033-04-05T06:07:08Z")
+	bad, err := capturePendingReviewBinding(repo, "task-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad.Subject.ChangeTree = "changed"
+	if err := rebindAuditReopenToPendingBinding(repo, root, "task-b", bad); err == nil {
+		t.Fatal("changed sibling semantics acquired audit authority")
+	}
+	unchanged, ok, err := ReadAuditReopenRecord(root, "task-b")
+	if err != nil || !ok || !AuditReopenRecordsEqual(unchanged, got) {
+		t.Fatalf("denied rebind changed authority = %+v, ok=%v, err=%v", unchanged, ok, err)
+	}
+}
+
 func TestPendingReviewSigningJournalRecoversCrashAfterRefUpdate(t *testing.T) {
 	repo, root, base, assignment, done, plan := pendingReviewTestCompletion(t)
 	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
@@ -663,6 +827,116 @@ func TestPendingReviewSigningJournalRecoversCrashAfterRefUpdate(t *testing.T) {
 	cohort, err := LoadPendingReviews(repo, []string{root})
 	if err != nil || len(cohort.Subjects) != 1 || cohort.Subjects[0].Binding.Head != newHead {
 		t.Fatalf("journal recovery = %+v, %v", cohort, err)
+	}
+}
+
+func TestPendingReviewSigningJournalRecoversReopenedAuditAuthority(t *testing.T) {
+	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
+	writeTaskFile(t, filepath.Join(repo, "descendant.txt"), "descendant\n")
+	git(t, repo, "add", "descendant.txt")
+	git(t, repo, "commit", "-qm", "descendant implementation\n\nCoop-Task: descendant")
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+		t.Fatal(err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if err := MarkPendingReviewReopened([]string{root}, []string{done.ID}); err != nil {
+		t.Fatal(err)
+	}
+	reopen, err := CaptureAuditReopen(repo, done.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAuditReopenRecord(root, reopen); err != nil {
+		t.Fatal(err)
+	}
+	if err := MoveTaskDir(root, done, StateTodo); err != nil {
+		t.Fatal(err)
+	}
+
+	oldHead := gitOut(repo, "rev-parse", "HEAD")
+	gitConfig := filepath.Join(t.TempDir(), "gitconfig")
+	writeTaskFile(t, gitConfig, "")
+	cmd := exec.Command("git", "-C", repo, "commit", "--amend", "--no-edit", "--no-gpg-sign", "--quiet")
+	cmd.Env = append(os.Environ(),
+		"GIT_CONFIG_GLOBAL="+gitConfig, "GIT_CONFIG_SYSTEM="+gitConfig,
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t", "GIT_COMMITTER_DATE=2034-05-06T07:08:09Z")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("amend: %v\n%s", err, out)
+	}
+	newHead := gitOut(repo, "rev-parse", "HEAD")
+	git(t, repo, "reset", "--hard", oldHead)
+	branch := gitOut(repo, "symbolic-ref", "--quiet", "HEAD")
+	if err := RecordPendingReviewSigning(repo, branch, oldHead, newHead, []string{oldHead}, []string{newHead}); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "reset", "--hard", newHead)
+
+	cohort, err := LoadPendingReviews(repo, []string{root})
+	if err != nil || len(cohort.Subjects) != 1 || cohort.Subjects[0].Binding.Head != newHead {
+		t.Fatalf("reopened journal recovery = %+v, %v", cohort, err)
+	}
+	got, ok, err := ReadAuditReopenRecord(root, done.ID)
+	if err != nil || !ok || got.Generation != reopen.Generation || got.BaselineHead != newHead ||
+		!AuditReopenCurrentValid(repo, newHead, done.ID, got) {
+		t.Fatalf("recovered reopened authority = %+v, ok=%v, err=%v", got, ok, err)
+	}
+}
+
+func TestPendingReviewRecoversCompletedAuditRewriteAfterControllerFailure(t *testing.T) {
+	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
+	writeTaskFile(t, filepath.Join(repo, "descendant.txt"), "descendant\n")
+	git(t, repo, "add", "descendant.txt")
+	git(t, repo, "commit", "-qm", "descendant implementation\n\nCoop-Task: descendant")
+	descendant := gitOut(repo, "rev-parse", "HEAD")
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+		t.Fatal(err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if err := MarkPendingReviewReopened([]string{root}, []string{done.ID}); err != nil {
+		t.Fatal(err)
+	}
+	reopen, err := CaptureAuditReopen(repo, done.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAuditReopenRecord(root, reopen); err != nil {
+		t.Fatal(err)
+	}
+	stale, ok, err := readPendingReviewRecord(root, done.ID)
+	if err != nil || !ok {
+		t.Fatalf("stale pending record = %+v, ok=%v, err=%v", stale, ok, err)
+	}
+	if err := MoveTaskDir(root, done, StateInProgress); err != nil {
+		t.Fatal(err)
+	}
+
+	git(t, repo, "reset", "--hard", reopen.BaselineHead+"~2")
+	writeTaskFile(t, filepath.Join(repo, "change.txt"), "review repaired\n")
+	git(t, repo, "add", "change.txt")
+	git(t, repo, "commit", "-qm", "implement review subject\n\nCoop-Task: "+done.ID)
+	git(t, repo, "cherry-pick", descendant)
+	head := gitOut(repo, "rev-parse", "HEAD")
+
+	cohort, err := LoadPendingReviews(repo, []string{root})
+	if err != nil || len(cohort.Subjects) != 1 || cohort.Subjects[0].Binding.Head != head ||
+		cohort.Subjects[0].Binding.Subject == reopen.Subject {
+		t.Fatalf("audit rewrite recovery = %+v, %v", cohort, err)
+	}
+	got, ok, err := ReadAuditReopenRecord(root, done.ID)
+	if err != nil || !ok || got.Generation != reopen.Generation || got.BaselineHead != head ||
+		!AuditReopenCurrentValid(repo, head, done.ID, got) {
+		t.Fatalf("recovered audit authority = %+v, ok=%v, err=%v", got, ok, err)
+	}
+	if err := writePendingReviewRecord(root, stale); err != nil {
+		t.Fatal(err)
+	}
+	cohort, err = LoadPendingReviews(repo, []string{root})
+	if err != nil || len(cohort.Subjects) != 1 || cohort.Subjects[0].Binding.Head != head {
+		t.Fatalf("audit-first crash recovery = %+v, %v", cohort, err)
 	}
 }
 

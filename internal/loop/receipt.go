@@ -260,9 +260,12 @@ func applyReviewVerdictInRepo(repo string, hosts, subjects []string, output stri
 		}
 		return nil, nil
 	}
-	evidence, ok := auditEvidenceFrom(output)
-	if !ok || len(evidence) != len(subjects) {
-		return nil, fmt.Errorf("%w: %w: expected exactly one structured audit record for each review subject", errReviewVerdict, errReviewVerdictMalformed)
+	evidence, evidenceErr := parseAuditEvidence(output)
+	if evidenceErr != nil {
+		return nil, fmt.Errorf("%w: %w: %v", errReviewVerdict, errReviewVerdictMalformed, evidenceErr)
+	}
+	if err := validateAuditEvidenceSubjects(subjects, evidence); err != nil {
+		return nil, fmt.Errorf("%w: %w: %v", errReviewVerdict, errReviewVerdictMalformed, err)
 	}
 	reopenSet := make(map[string]bool, len(receipt.reopened))
 	for _, id := range receipt.reopened {
@@ -345,9 +348,12 @@ func candidateReviewVerdict(subjects []string, output string) ([]string, error) 
 	if len(subjects) == 0 {
 		return nil, fmt.Errorf("%w: %w: candidate review has no task subjects", errReviewVerdict, errReviewVerdictMalformed)
 	}
-	evidence, ok := auditEvidenceFrom(output)
-	if !ok || len(evidence) != len(subjects) {
-		return nil, fmt.Errorf("%w: %w: expected exactly one structured audit record for each candidate review subject", errReviewVerdict, errReviewVerdictMalformed)
+	evidence, evidenceErr := parseAuditEvidence(output)
+	if evidenceErr != nil {
+		return nil, fmt.Errorf("%w: %w: %v", errReviewVerdict, errReviewVerdictMalformed, evidenceErr)
+	}
+	if err := validateAuditEvidenceSubjects(subjects, evidence); err != nil {
+		return nil, fmt.Errorf("%w: %w: %v", errReviewVerdict, errReviewVerdictMalformed, err)
 	}
 	reopenSet := make(map[string]bool, len(receipt.reopened))
 	for _, id := range receipt.reopened {
@@ -366,6 +372,33 @@ func candidateReviewVerdict(subjects []string, output string) ([]string, error) 
 		}
 	}
 	return slices.Clone(receipt.reopened), nil
+}
+
+func validateAuditEvidenceSubjects(subjects []string, evidence map[string]auditEvidence) error {
+	var missing, unknown []string
+	for _, id := range subjects {
+		if _, ok := evidence[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+	for id := range evidence {
+		if !slices.Contains(subjects, id) {
+			unknown = append(unknown, id)
+		}
+	}
+	slices.Sort(missing)
+	slices.Sort(unknown)
+	parts := make([]string, 0, 2)
+	if len(missing) > 0 {
+		parts = append(parts, "missing audit evidence for "+strings.Join(missing, ","))
+	}
+	if len(unknown) > 0 {
+		parts = append(parts, "audit evidence names unknown subjects "+strings.Join(unknown, ","))
+	}
+	if len(parts) > 0 {
+		return errors.New(strings.Join(parts, "; "))
+	}
+	return nil
 }
 
 func encodeUntrustedReviewField(value string) string {

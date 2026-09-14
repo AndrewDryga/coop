@@ -34,6 +34,8 @@ func TestCostPipelineE2E(t *testing.T) {
 	work := buildStageRecord(run, "work", "success", "test", agents.Target{Provider: "claude", Model: "claude-fable-5"},
 		time.Now(), time.Now(), 0, 0, 0, "h0", "h1", tasks.TaskCounts{}, []string{"my-task"}, nil)
 	work.CostUSD, work.InTok, work.OutTok = dec.last.CostUSD, dec.last.InTok, dec.last.OutTok
+	work.FreshInTok, work.CacheWriteTok, work.CacheReadTok = dec.last.FreshInTok, dec.last.CacheWriteTok, dec.last.CacheReadTok
+	work.ReportedOutTok, work.ProviderMS, work.ReportedCost = dec.last.ReportedOutTok, dec.last.ReportedDurationMS, dec.last.ReportedCostUSD
 	if err := appendStageRecord(repo, run, work); err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +50,8 @@ func TestCostPipelineE2E(t *testing.T) {
 
 	// 3. An in-turn consult peer (a grok critic) — tokens only, no cost, exactly as the wrapper
 	//    appends it to <run>.peers.jsonl during a work turn.
-	peerLine, _ := json.Marshal(PeerRecord{Run: run, Role: "critic", Provider: "grok", Model: "grok-4.5", In: 50000, Out: 800})
+	peerLine, _ := json.Marshal(PeerRecord{Run: run, Role: "critic", Provider: "grok", Model: "grok-4.5", In: 50000, Out: 800,
+		FreshInTok: intPtr(10000), CacheReadTok: intPtr(40000), ReportedOutTok: intPtr(800)})
 	if err := os.WriteFile(filepath.Join(repo, ".agent", "runs", run+".peers.jsonl"), append(peerLine, '\n'), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -67,6 +70,8 @@ func TestCostPipelineE2E(t *testing.T) {
 		"claude:claude-fable-5", "$12.31 · 1,240,000 in · 48,000 out",
 		"codex:gpt-5.6-terra", "$4.20 · 90,000 in · 3,000 out",
 		"grok:grok-4.5", "not reported · 50,000 in · 800 out",
+		"fresh 40,000 · cache write 200,000 · cache read 1,000,000 · output 48,000 · provider time 10m0s",
+		"fresh 10,000 · cache write not reported · cache read 40,000 · output 800",
 	} {
 		if !strings.Contains(d, want) {
 			t.Errorf("closing report missing %q:\n%s", want, d)

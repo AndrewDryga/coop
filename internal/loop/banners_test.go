@@ -300,6 +300,10 @@ func TestReviewBannersAreCompactBoundedAndGrammatical(t *testing.T) {
 			t.Errorf("review banner missing %q:\n%s", want, got)
 		}
 	}
+	afterDecision := captureStderr(t, func() { printFinalReview(4, 3, "codex:test", 1) })
+	if !strings.Contains(afterDecision, "Final review · After decision") || strings.Contains(afterDecision, "Round 4 of 3") {
+		t.Fatalf("post-decision review banner = %q", afterDecision)
+	}
 
 	one := captureStderr(t, func() { printReopened("Final review", []string{"a"}, []string{"Fix login retries"}) })
 	if !strings.Contains(one, "Final review · 1 task needs more work") || !strings.Contains(one, "Continuing the task queue") {

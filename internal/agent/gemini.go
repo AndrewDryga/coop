@@ -71,6 +71,17 @@ func (a geminiAgent) Headless(cfg *config.Config, prompt string) []string {
 	return append(a.base(cfg), "-p", prompt)
 }
 
+func (a geminiAgent) HeadlessSession(cfg *config.Config, prompt, id string, resume bool) ([]string, bool) {
+	if !ValidSessionID(id) {
+		return nil, false
+	}
+	flag := "--session-id"
+	if resume {
+		flag = "--resume"
+	}
+	return append(a.base(cfg), flag, id, "-p", prompt), true
+}
+
 // ACP is gemini's own binary, so the resolved model rides along as its normal --model flag.
 func (geminiAgent) ACP(cfg *config.Config) []string {
 	return withModel([]string{"gemini", "--acp"}, cfg.ModelFor("gemini"))
@@ -517,8 +528,11 @@ const geminiConsultText = `gemini_text() {
 const geminiConsultUsage = `select(.[-1].type=="result" and .[-1].status=="success")
 		| select([.[] | select(.type=="result")]|length==1)
 		| .[-1].stats | select(type=="object")
-		| {input:.input_tokens, output:.output_tokens}
-		| select(.input|token) | select(.output|token)`
+		| {input:.input_tokens, fresh:.input, read:.cached, output:.output_tokens, duration:.duration_ms}
+		| select(.input|token) | select(.output|token)
+		| if (.fresh|token) then . else del(.fresh) end
+		| if (.read|token) then . else del(.read) end
+		| if (.duration|token) then . else del(.duration) end`
 
 func (geminiAgent) ConsultFresh() string {
 	return "printf '%s' \"$id\" >\"$candidate_idfile\"\n" +

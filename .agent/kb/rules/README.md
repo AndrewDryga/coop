@@ -151,7 +151,7 @@ updated: <YYYY-MM-DD>                # last edit
 **Agent workflow** — how an agent works here, not what it ships
 - [audit-findings-need-practical-impact](audit-findings-need-practical-impact.md) — audit realistic agent access and practical impact; avoid speculative machinery and unproven product-defect claims
 - [batch-delegated-editorial-decisions](batch-delegated-editorial-decisions.md) — finish delegated editorial work in coherent batches; ask only about material choices
-- [batch-slow-gates-when-requested](batch-slow-gates-when-requested.md) — explicitly requested sweep batching keeps focused checks per task and one final slow qualification
+- [batch-slow-gates-when-requested](batch-slow-gates-when-requested.md) — explicit quick-iteration requests use focused checks and defer unrelated slow suites to final qualification
 - [requested-outcome-controls-stopping](requested-outcome-controls-stopping.md) — full implementation requests continue past verified slices through the requested final acceptance criteria
 - [run-the-real-invocation-last](run-the-real-invocation-last.md) — a green gate is not proof a feature works; the last check is the user’s own command, in a real repo, after the last commit
 - [fix-the-bug-not-the-feature](fix-the-bug-not-the-feature.md) — root-cause the misbehavior; deleting the feature is never the fix without the human

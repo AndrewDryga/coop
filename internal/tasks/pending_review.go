@@ -492,13 +492,12 @@ func rebindPendingReviewFromSigningJournal(repo string, record PendingReviewReco
 		if headIndex < 0 {
 			continue
 		}
-		mapped := make([]string, len(binding.Raw))
+		mapped := slices.Clone(binding.Raw)
 		for i, raw := range binding.Raw {
 			index := slices.Index(step.OldCommits, raw)
-			if index < 0 {
-				return record, false, fmt.Errorf("pending-review signing journal does not map the full binding for task %s", record.Task.Ref.ID)
+			if index >= 0 {
+				mapped[i] = step.NewCommits[index]
 			}
-			mapped[i] = step.NewCommits[index]
 		}
 		binding.Head = step.NewCommits[headIndex]
 		binding.Raw = mapped
@@ -1250,17 +1249,49 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 				}
 			}
 		}
-		if current.State != StateDone {
-			instance, instanceErr := ReadTaskInstance(root, current)
-			if instanceErr != nil || !sameTaskInstance(instance, record.Task) {
-				return PendingReviewCohort{}, errors.Join(instanceErr, fmt.Errorf("pending-review task %s changed generation", current.ID))
+		instance, instanceErr := ReadTaskInstance(root, current)
+		if instanceErr != nil || !sameTaskInstance(instance, record.Task) {
+			return PendingReviewCohort{}, errors.Join(instanceErr, fmt.Errorf("pending-review task %s changed generation", current.ID))
+		}
+		head := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
+		bindingRecord := bindingAsAuditRecord(current.ID, record.Binding)
+		if !pendingReviewRawBindingValid(repo, record.Binding) || !AuditReopenCurrentValid(repo, head, current.ID, bindingRecord) {
+			rebound, changed, rebindErr := rebindPendingReviewFromSigningJournal(repo, record)
+			if rebindErr != nil {
+				return PendingReviewCohort{}, rebindErr
 			}
+			if !changed {
+				rebound, changed, rebindErr = rebindPendingReviewFromCohortAuditRewrite(repo, record)
+				if rebindErr != nil {
+					return PendingReviewCohort{}, rebindErr
+				}
+			}
+			if !changed && current.State != StateDone {
+				rebound, changed, rebindErr = rebindPendingReviewFromAuditReopen(repo, root, record)
+				if rebindErr != nil {
+					return PendingReviewCohort{}, rebindErr
+				}
+			}
+			if !changed {
+				return PendingReviewCohort{}, fmt.Errorf("pending-review task %s Git history changed outside an acknowledged host signing rewrite", current.ID)
+			}
+			record = rebound
+			if err := writePendingReviewRecord(root, record); err != nil {
+				return PendingReviewCohort{}, err
+			}
+		}
+		if current.State != StateDone {
 			audit, active, auditErr := ReadAuditReopenRecord(root, current.ID)
 			if auditErr != nil {
 				return PendingReviewCohort{}, auditErr
 			}
 			if !active || !auditReopenRecordActive(audit) {
 				return PendingReviewCohort{}, errors.Join(auditErr, fmt.Errorf("pending-review task %s left the archive without host review authority", current.ID))
+			}
+			if !AuditReopenCurrentValid(repo, head, current.ID, audit) {
+				if err := rebindAuditReopenToPendingBinding(repo, root, current.ID, record.Binding); err != nil {
+					return PendingReviewCohort{}, fmt.Errorf("recover pending-review task %s audit authority: %w", current.ID, err)
+				}
 			}
 			record.Phase = PendingReviewReopened
 			record.Prepared = false
@@ -1272,28 +1303,9 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 			cohort.Subjects = append(cohort.Subjects, record)
 			continue
 		}
-		instance, err := ReadTaskInstance(root, current)
-		if err != nil || !sameTaskInstance(instance, record.Task) {
-			return PendingReviewCohort{}, errors.Join(err, fmt.Errorf("pending-review task %s changed generation", current.ID))
-		}
 		fingerprint, err := CompletionFingerprintFor(root, current)
 		if err != nil || fingerprint != record.Fingerprint {
 			return PendingReviewCohort{}, errors.Join(err, fmt.Errorf("pending-review task %s completion receipt or archive changed", current.ID))
-		}
-		head := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
-		bindingRecord := bindingAsAuditRecord(current.ID, record.Binding)
-		if !pendingReviewRawBindingValid(repo, record.Binding) || !AuditReopenCurrentValid(repo, head, current.ID, bindingRecord) {
-			rebound, changed, rebindErr := rebindPendingReviewFromSigningJournal(repo, record)
-			if rebindErr != nil {
-				return PendingReviewCohort{}, rebindErr
-			}
-			if !changed {
-				return PendingReviewCohort{}, fmt.Errorf("pending-review task %s Git history changed outside an acknowledged host signing rewrite", current.ID)
-			}
-			record = rebound
-			if err := writePendingReviewRecord(root, record); err != nil {
-				return PendingReviewCohort{}, err
-			}
 		}
 		cohort.Plan = record.Plan
 		cohort.Subjects = append(cohort.Subjects, record)
@@ -1311,24 +1323,194 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 	return cohort, nil
 }
 
+func rebindPendingReviewFromAuditReopen(repo, root string, record PendingReviewRecord) (PendingReviewRecord, bool, error) {
+	id := record.Task.Ref.ID
+	reopen, ok, err := ReadAuditReopenRecord(root, id)
+	if err != nil || !ok || !auditReopenRecordActive(reopen) {
+		return record, false, err
+	}
+	head := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
+	binding, err := capturePendingReviewBinding(repo, id)
+	if err != nil {
+		return record, false, err
+	}
+	expected := bindingAsAuditRecord(id, binding)
+	expected.Generation = reopen.Generation
+	if AuditReopenCurrentValid(repo, head, id, reopen) {
+		if !AuditReopenRecordsEqual(reopen, expected) {
+			return record, false, fmt.Errorf("current audit authority does not match pending-review history for task %s", id)
+		}
+		record.Binding = binding
+		record.UpdatedAt = time.Now().UTC()
+		return record, true, nil
+	}
+	if reopen.BaselineHead != record.Binding.Head || !pendingReviewRawBindingValid(repo, record.Binding) ||
+		!AuditReopenCurrentValid(repo, record.Binding.Head, id, bindingAsAuditRecord(id, record.Binding)) {
+		return record, false, nil
+	}
+	rebased, err := rebasedAuditReopenRecord(repo, reopen.BaselineHead, head, id, reopen)
+	if err != nil {
+		return record, false, fmt.Errorf("pending-review audit rewrite does not validate for task %s: %w", id, err)
+	}
+	if !AuditReopenRecordsEqual(rebased, expected) {
+		return record, false, fmt.Errorf("pending-review audit rewrite does not match current history for task %s", id)
+	}
+	if err := replaceAuditReopenRecordIfMatches(root, reopen, rebased); err != nil {
+		return record, false, err
+	}
+	record.Binding = binding
+	record.UpdatedAt = time.Now().UTC()
+	return record, true, nil
+}
+
+func rebindPendingReviewFromCohortAuditRewrite(repo string, record PendingReviewRecord) (PendingReviewRecord, bool, error) {
+	current, err := capturePendingReviewBinding(repo, record.Task.Ref.ID)
+	if err != nil {
+		return record, false, err
+	}
+	auditID, changed := pendingReviewAuditRewriteID(record.Binding, current)
+	if !changed {
+		return record, false, nil
+	}
+	roots := make([]string, 0, len(record.Plan.Queues))
+	for _, queue := range record.Plan.Queues {
+		roots = append(roots, queue.Root)
+	}
+	auditTask, err := uniqueTaskAcrossRoots(roots, auditID)
+	if err != nil {
+		return record, false, nil
+	}
+	authority, ok, err := ReadAuditReopenRecord(auditTask.Root, auditID)
+	if err != nil || !ok || !auditReopenRecordActive(authority) {
+		return record, false, err
+	}
+	oldAudit, ok := pendingReviewBindingTask(record.Binding, auditID)
+	if !ok {
+		return record, false, nil
+	}
+	rebased := authority
+	if authority.BaselineHead == record.Binding.Head {
+		rebased, err = rebasedAuditReopenRecord(repo, record.Binding.Head, current.Head, auditID, authority)
+	} else if authority.BaselineHead != current.Head || !AuditReopenCurrentValid(repo, current.Head, auditID, authority) {
+		return record, false, nil
+	}
+	if err != nil || !pendingReviewBindingExtendsAuditRewrite(record.Binding, current, auditID, oldAudit, rebased.Subject) {
+		return record, false, errors.Join(err, fmt.Errorf("pending-review audit rewrite changed cohort semantics for task %s", record.Task.Ref.ID))
+	}
+	if record.Task.Ref.ID == auditID && !AuditReopenRecordsEqual(authority, rebased) {
+		if err := replaceAuditReopenRecordIfMatches(auditTask.Root, authority, rebased); err != nil {
+			return record, false, err
+		}
+	}
+	record.Binding = current
+	record.UpdatedAt = time.Now().UTC()
+	return record, true, nil
+}
+
+func pendingReviewAuditRewriteID(prior, current PendingReviewBinding) (string, bool) {
+	if len(current.History) < len(prior.History) {
+		return "", false
+	}
+	changed := ""
+	if prior.Subject != current.Subject {
+		if prior.Subject.TaskID == "" || prior.Subject.TaskID != current.Subject.TaskID {
+			return "", false
+		}
+		changed = prior.Subject.TaskID
+	}
+	for i, commit := range prior.History {
+		if commit == current.History[i] {
+			continue
+		}
+		if commit.TaskID == "" || commit.TaskID != current.History[i].TaskID || changed != "" {
+			return "", false
+		}
+		changed = commit.TaskID
+	}
+	return changed, changed != ""
+}
+
+func pendingReviewBindingTask(binding PendingReviewBinding, id string) (AuditReopenCommit, bool) {
+	if binding.Subject.TaskID == id {
+		return binding.Subject, true
+	}
+	for _, commit := range binding.History {
+		if commit.TaskID == id {
+			return commit, true
+		}
+	}
+	return AuditReopenCommit{}, false
+}
+
 // RebindPendingReviewAfterSigning is the explicit post-signing authority transition. The old raw
 // binding must still validate at oldHead, the signed result must be the current newHead, and the
 // complete semantic prefix must be preserved. Ordinary startup never infers this transition from
 // tree equality, so an unrelated rewrite cannot silently acquire review authority.
 func RebindPendingReviewAfterSigning(repo, root, id, oldHead, newHead string) error {
-	return rebindPendingReviewAfterAuthorizedRewrite(repo, root, id, oldHead, newHead)
+	if err := rebindPendingReviewAfterAuthorizedRewrite(repo, root, id, oldHead, newHead); err != nil {
+		return err
+	}
+	record, ok, err := readPendingReviewRecord(root, id)
+	if err != nil || !ok {
+		return errors.Join(err, fmt.Errorf("pending-review record for %s is missing after signing", id))
+	}
+	return rebindAuditReopenToPendingBinding(repo, root, id, record.Binding)
 }
 
 // RebindPendingReviewAfterAuditRewrite preserves another completed task's review debt when a
 // host-authorized audit repair rewrites an older commit and faithfully replays its descendants.
 func RebindPendingReviewAfterAuditRewrite(repo, root, id, oldHead, newHead, auditID string, authority AuditReopenRecord) error {
-	if _, err := rebasedAuditReopenRecord(repo, oldHead, newHead, auditID, authority); err != nil {
+	rebased, err := rebasedAuditReopenRecord(repo, oldHead, newHead, auditID, authority)
+	if err != nil {
 		return err
 	}
-	return rebindPendingReviewAfterAuthorizedRewrite(repo, root, id, oldHead, newHead)
+	if err := rebindPendingReviewAfterAuthorizedRewriteWith(repo, root, id, oldHead, newHead,
+		func(prior, current PendingReviewBinding) bool {
+			return pendingReviewBindingExtendsAuditRewrite(prior, current, auditID, authority.Subject, rebased.Subject)
+		}); err != nil {
+		return err
+	}
+	record, ok, err := readPendingReviewRecord(root, id)
+	if err != nil || !ok {
+		return errors.Join(err, fmt.Errorf("pending-review record for %s is missing after audit rewrite", id))
+	}
+	return rebindAuditReopenToPendingBinding(repo, root, id, record.Binding)
+}
+
+func rebindAuditReopenToPendingBinding(repo, root, id string, binding PendingReviewBinding) (err error) {
+	authority, err := lockLeaseAuthority(root, id, false, syscall.LOCK_EX|syscall.LOCK_NB)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, unlockLeaseFile(authority)) }()
+	reopen, ok, err := ReadAuditReopenRecord(root, id)
+	if err != nil || !ok {
+		return err
+	}
+	head := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
+	if AuditReopenCurrentValid(repo, head, id, reopen) {
+		return nil
+	}
+	if !auditReopenRecordActive(reopen) || !AuditReopenCurrentValid(repo, reopen.BaselineHead, id, reopen) ||
+		!pendingReviewRawBindingValid(repo, binding) || binding.Subject != reopen.Subject {
+		return fmt.Errorf("pending-review binding does not authorize rebasing task %s", id)
+	}
+	replacement := bindingAsAuditRecord(id, binding)
+	replacement.Generation = reopen.Generation
+	if !AuditReopenCurrentValid(repo, head, id, replacement) {
+		return fmt.Errorf("rebound pending-review history does not match task %s", id)
+	}
+	return replaceAuditReopenRecordIfMatches(root, reopen, replacement)
 }
 
 func rebindPendingReviewAfterAuthorizedRewrite(repo, root, id, oldHead, newHead string) error {
+	return rebindPendingReviewAfterAuthorizedRewriteWith(repo, root, id, oldHead, newHead, pendingReviewBindingExtendsSemantics)
+}
+
+func rebindPendingReviewAfterAuthorizedRewriteWith(
+	repo, root, id, oldHead, newHead string,
+	preservesSemantics func(PendingReviewBinding, PendingReviewBinding) bool,
+) error {
 	record, ok, err := readPendingReviewRecord(root, id)
 	if err != nil || !ok {
 		return errors.Join(err, fmt.Errorf("pending-review record for %s is missing after history rewrite", id))
@@ -1343,12 +1525,48 @@ func rebindPendingReviewAfterAuthorizedRewrite(repo, root, id, oldHead, newHead 
 	if err != nil {
 		return err
 	}
-	if !pendingReviewBindingExtendsSemantics(record.Binding, current) {
+	if !preservesSemantics(record.Binding, current) {
 		return fmt.Errorf("history rewrite changed pending-review semantics for task %s", id)
 	}
 	record.Binding = current
 	record.UpdatedAt = time.Now().UTC()
 	return writePendingReviewRecord(root, record)
+}
+
+func pendingReviewBindingExtendsAuditRewrite(
+	prior, current PendingReviewBinding,
+	auditID string,
+	oldAudit, newAudit AuditReopenCommit,
+) bool {
+	if len(current.History) < len(prior.History) {
+		return false
+	}
+	foundAudit := false
+	expectedSubject := prior.Subject
+	if prior.Subject.TaskID == auditID {
+		if prior.Subject != oldAudit {
+			return false
+		}
+		expectedSubject = newAudit
+		foundAudit = true
+	}
+	if current.Subject != expectedSubject {
+		return false
+	}
+	for i, commit := range prior.History {
+		expected := commit
+		if commit.TaskID == auditID {
+			if foundAudit || commit != oldAudit {
+				return false
+			}
+			expected = newAudit
+			foundAudit = true
+		}
+		if current.History[i] != expected {
+			return false
+		}
+	}
+	return true
 }
 
 // EnrollExistingPendingReviews binds receipt-valid host completions discovered by

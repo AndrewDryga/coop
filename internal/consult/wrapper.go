@@ -444,6 +444,7 @@ else
 fi
 `)
 	b.WriteString(agents.ShellRateLimitDetector())
+	b.WriteString(agents.RoleHealthShell())
 	if p := preludes(as); p != "" {
 		b.WriteString(p + "\n")
 	}
@@ -454,6 +455,10 @@ publish_candidate_telemetry() {
 		"${peer}_peer_row" "${role:-$name}" "$model" <"$candidate_telemetry_raw" || true
 	fi
 	candidate_telemetry_raw=
+}
+
+publish_role_health() {
+	coop_role_health "${role:-$name}" consult "$peer" "$model" "$target" "$1" "$2" "$3" "$4"
 }
 
 # Consults are UNBOUNDED by default: a peer that is still working is still working, and cutting it
@@ -680,9 +685,19 @@ if [ "$mode" = --continue ] && [ -n "$resume_id" ]; then
 fi
 
 index=$start
+retried_target=
 while [ "$index" -le "$total" ]; do
 	load_rung "$index" || die "cannot resolve rung $index for $name"
 	resolve_defaults
+	if coop_role_quarantined "$target"; then
+		echo "[$peer: skipping $target — this exact target already failed permanently in this run]" >&2
+		if [ "$index" -ge "$total" ]; then exit 1; fi
+		index=$((index + 1))
+		dispatch=fresh
+		continue
+	fi
+	attempts_on_target=1
+	[ "$retried_target" = "$target" ] && attempts_on_target=2
 	if [ "$dispatch" = resume ]; then
 		echo "[$peer: resuming on $target — the native session should recall the earlier consult]"
 	elif [ "$mode" = --continue ] && [ "$index" -eq "$start" ]; then
@@ -702,18 +717,21 @@ while [ "$index" -le "$total" ]; do
 	if [ "$attempt_capture_status" -ne 0 ]; then
 		rm -f "$candidate_idfile"
 		clear_failed_resume
+		publish_role_health failed "$attempts_on_target" false "failed to capture provider output safely"
 		echo "[$peer: failed to capture provider output safely — retry with: $fresh_retry]" >&2
 		exit 1
 	fi
 	if [ "$st" -eq 124 ] || [ "$st" -eq 137 ]; then
 		rm -f "$candidate_idfile"
 		clear_failed_resume
+		publish_role_health failed "$attempts_on_target" false "no reply within ${consult_timeout}s"
 		echo "[$peer: no reply within ${consult_timeout}s (COOP_CONSULT_TIMEOUT) — skipped; synthesize without it]" >&2
 		exit "$st"
 	fi
 	if [ -f "$reply_overflow" ] || [ -f "$diagnostics_overflow" ]; then
 		rm -f "$candidate_idfile"
 		clear_failed_resume
+		publish_role_health failed "$attempts_on_target" false "provider output exceeded its bound"
 		if [ -f "$reply_overflow" ] && [ -f "$diagnostics_overflow" ]; then
 			echo "[$peer: reply and diagnostic streams each exceeded ${consult_stream_limit} bytes — no partial output was accepted; retry with: $fresh_retry]" >&2
 		elif [ -f "$reply_overflow" ]; then
@@ -731,11 +749,13 @@ while [ "$index" -le "$total" ]; do
 		if ! grep -q '[^[:space:]]' "$out"; then
 			rm -f "$candidate_idfile"
 			clear_failed_resume
+			publish_role_health failed "$attempts_on_target" false "provider returned no usable reply"
 			echo "[$peer: provider returned no usable reply — retry with: $fresh_retry; if it repeats, check the provider diagnostics]" >&2
 			exit 1
 		fi
 			if ! record_turn; then
 				publish_candidate_telemetry
+				publish_role_health success "$attempts_on_target" false ""
 				cat "$out"
 			rm -f "$candidate_idfile" "$statefile"
 			echo "[$peer: reply delivered, but continuity exceeded ${consult_context_limit} bytes — next request must use: $fresh_retry]" >&2
@@ -757,6 +777,7 @@ while [ "$index" -le "$total" ]; do
 			publish_state "$published_id" "$contextfile" || die "cannot atomically publish successful consult continuation"
 			rm -f "$candidate_idfile"
 			publish_candidate_telemetry
+			publish_role_health success "$attempts_on_target" false ""
 			cat "$out"
 		if [ "$missing_session" -eq 1 ]; then
 			echo "[$peer: reply delivered without a resumable session id — $continue_retry will restart fresh from the saved transcript]" >&2
@@ -771,13 +792,39 @@ while [ "$index" -le "$total" ]; do
 		echo "[$peer: resume failed; uncertain native session cleared and saved transcript retained]" >&2
 	fi
 	if ! coop_rate_limited "$out" && ! coop_rate_limited "$diagnostics"; then
+		failure_cause=$(coop_failure_cause "$diagnostics" "$out")
+		if coop_failure_permanent "$st" "$diagnostics"; then
+			publish_role_health failed "$attempts_on_target" true "$failure_cause"
+			if [ "$index" -lt "$total" ]; then
+				echo "[$peer: $target failed permanently — trying fallback $((index + 1))/$total]" >&2
+				index=$((index + 1))
+				dispatch=fresh
+				continue
+			fi
+			exit "$st"
+		fi
+		if [ "$dispatch" != resume ] && [ "$retried_target" != "$target" ]; then
+			retried_target=$target
+			dispatch=fresh
+			echo "[$peer: $target failed — retrying this target once]" >&2
+			continue
+		fi
+		publish_role_health failed "$attempts_on_target" false "$failure_cause"
+		if [ "$dispatch" != resume ] && [ "$index" -lt "$total" ]; then
+			echo "[$peer: $target failed after $attempts_on_target attempts — trying fallback $((index + 1))/$total]" >&2
+			index=$((index + 1))
+			dispatch=fresh
+			continue
+		fi
 		exit "$st"
 	fi
 	if [ "$dispatch" = resume ] && [ ! -s "$contextfile" ]; then
+		publish_role_health failed "$attempts_on_target" false "rate limited without a saved transcript"
 		echo "[$peer: rate limited, but no saved transcript can seed a fresh fallback; retry with: $fresh_retry]" >&2
 		exit "$st"
 	fi
 	if [ "$index" -ge "$total" ]; then
+		publish_role_health failed "$attempts_on_target" false "rate limit exhausted the target ladder"
 		if [ -n "$role" ]; then
 			if [ "$total" -eq 1 ]; then
 				echo "[$peer: rate limited; role $name exhausted its only target]" >&2
@@ -790,6 +837,7 @@ while [ "$index" -le "$total" ]; do
 		exit "$st"
 	fi
 	echo "[$peer: $target rate limited — trying fallback $((index + 1))/$total]" >&2
+	publish_role_health failed "$attempts_on_target" false "rate limited"
 	index=$((index + 1))
 	dispatch=fresh
 done

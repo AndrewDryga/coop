@@ -3,6 +3,7 @@ package loop
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -902,6 +903,9 @@ func TestGrokStreamDecoder(t *testing.T) {
 	if d.last == nil || d.last.Turns != 1 || d.last.InTok != 27280 || d.last.OutTok != 187 {
 		t.Errorf("captured tally = %+v, want turns 1 in 27280 out 187", d.last)
 	}
+	if d.last.ReportedOutTok == nil || *d.last.ReportedOutTok != 187 {
+		t.Errorf("reported output = %v, want 187", d.last.ReportedOutTok)
+	}
 	for _, want := range []string{"hi there", "not valid json"} {
 		if !strings.Contains(tail.String(), want) {
 			t.Errorf("tail missing %q: %q", want, tail.String())
@@ -909,6 +913,49 @@ func TestGrokStreamDecoder(t *testing.T) {
 	}
 	if strings.Contains(tail.String(), "The") || strings.Contains(tail.String(), " user") {
 		t.Errorf("thought deltas leaked into tail: %q", tail.String())
+	}
+}
+
+func TestProviderDecodersCaptureExactNativeSession(t *testing.T) {
+	const id = "11111111-2222-4333-8444-555555555555"
+	tests := []struct {
+		name string
+		run  func() *iterResult
+	}{
+		{"claude", func() *iterResult {
+			d := newStreamDecoder(io.Discard, io.Discard, "claude", "", "/repo")
+			d.event([]byte(`{"type":"system","subtype":"init","session_id":"` + id + `"}`))
+			d.event([]byte(`{"type":"result","session_id":"` + id + `","num_turns":1}`))
+			return d.lastIterResult()
+		}},
+		{"codex", func() *iterResult {
+			d := newCodexStreamDecoder(io.Discard, io.Discard, "codex", "", "/repo", "")
+			d.event([]byte(`{"type":"thread.started","thread_id":"` + id + `"}`))
+			d.event([]byte(`{"type":"turn.completed","usage":{}}`))
+			return d.lastIterResult()
+		}},
+		{"gemini", func() *iterResult {
+			d := newGeminiStreamDecoder(io.Discard, io.Discard, "gemini", "", "/repo", "")
+			d.event([]byte(`{"type":"init","session_id":"` + id + `"}`))
+			d.event([]byte(`{"type":"result","status":"success","stats":{}}`))
+			return d.lastIterResult()
+		}},
+		{"grok", func() *iterResult {
+			d := newGrokStreamDecoder(io.Discard, io.Discard, "grok", "", "/repo", "")
+			d.event([]byte(`{"type":"end","sessionId":"` + id + `","usage":{}}`))
+			return d.lastIterResult()
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := test.run()
+			if got == nil || got.SessionID != id {
+				t.Fatalf("session result = %#v, want %s", got, id)
+			}
+			if test.name == "grok" && got.ReportedOutTok != nil {
+				t.Fatalf("absent Grok output was marked reported: %#v", got.ReportedOutTok)
+			}
+		})
 	}
 }
 
@@ -952,7 +999,7 @@ func TestBufferedStreamTextFlushesBeforeRawLine(t *testing.T) {
 			`{"type":"end","usage":{},"num_turns":0}`,
 		}
 		_, _ = d.Write([]byte(strings.Join(lines, "\n") + "\n"))
-		want := "· using grok model default\n✦ hi\ndiagnostic\n· 0 turns · 0 input / 0 output\n"
+		want := "· using grok model default\n✦ hi\ndiagnostic\n· 0 turns · 0 input / 0 output · fresh not reported · cache write not reported · cache read not reported\n"
 		if out.String() != want {
 			t.Errorf("Grok raw-line ordering = %q, want %q", out.String(), want)
 		}

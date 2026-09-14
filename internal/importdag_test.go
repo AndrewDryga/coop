@@ -56,7 +56,7 @@ var allowedEdges = map[string][]string{
 	"consult":               {"agent"},
 	"ladder":                {"agent"},
 	"liveprocess":           nil,
-	"loop":                  {"agent", "box", "config", "forkspace", "ladder", "loopcfg", "preset", "runtime", "taskmcp", "tasks", "ui"},
+	"loop":                  {"agent", "box", "config", "contextc", "forkspace", "ladder", "loopcfg", "preset", "project", "runtime", "taskmcp", "tasks", "ui"},
 	"loopcfg":               {"agent"},
 	"mcp":                   nil,
 	"networkgateway":        {"egress", "networkview"},

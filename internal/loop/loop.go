@@ -21,6 +21,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/loopcfg"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/taskmcp"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -398,6 +399,21 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		command, streaming := IterationCommand(iterAgent, cmd, custom)
 		return command, streaming, len(custom) == 0
 	}
+	reviewCmd := func(iterAgent, prompt, sessionID string, resume bool) ([]string, bool, bool) {
+		if cause, drifted := cfgSnap.Drift(); drifted {
+			ui.Alert("Loop settings changed", cause)
+		}
+		ag, ok := agents.Get(iterAgent)
+		if !ok || len(custom) != 0 {
+			return nil, false, false
+		}
+		cmd, ok := ag.HeadlessSession(c.cfg, prompt, sessionID, resume)
+		if !ok {
+			return nil, false, false
+		}
+		command, streaming := IterationCommand(iterAgent, cmd, nil)
+		return command, streaming, true
+	}
 	// Soft interrupt for any foreground loop that owns a terminal — a plain `coop loop` OR a
 	// foreground `coop fork <name> --loop`: the first Ctrl-C finishes the current iteration then
 	// stops before the next; a second stops now (tears the box down). TERM and HUP are always hard.
@@ -469,7 +485,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 			c.recordStage(repo, runid, "candidate-review", run.outcome, run.target, start, run.exit, run.retries, len(run.reopened), headBefore, hosts, nil, nil, run.usage)
 		}
 		run, reviewErr := c.runCandidateReviewVerdict(iterCtx, repo, img, signoffRot, forkName, prompt,
-			reviewActivity("candidate review", review.TaskIDs), iterCmd, hosts, review.TaskIDs, sink, peers, wake, observe)
+			reviewActivity("candidate review", review.TaskIDs), reviewCmd, hosts, review.TaskIDs, sink, peers, wake, observe)
 		if errors.Is(reviewErr, errReviewInterrupted) {
 			ui.Failure("Candidate review interrupted", "No review authority was recorded.", [2]string{"Continue:", continueCmd})
 			return LoopInterruptedExitCode, ui.Reported(reviewErr)
@@ -624,7 +640,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	pendingReopened := pendingReviewIDs(pendingReview, tasks.PendingReviewReopened)
 	announcePendingFinalReview(
 		pendingReviewIDs(pendingReview, tasks.PendingReviewSignoff, tasks.PendingReviewVerify),
-		reviewPlan.Continue,
+		continueCmd,
 	)
 	// The signoff reviews only what THIS RUN completed: anchoring to the pre-run done set keeps
 	// 99_done/'s history (pruned only by a human) out of every round's subject list.
@@ -649,6 +665,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	signoffRound, maxReviewRounds := pendingSignoffStartRound(pendingReview), 0
 	reviewCapped := false
 	verificationFailed := false
+	reuseWorkServices := make(map[string]bool)
 reviewAgain:
 	for ; ; signoffRound++ {
 		for {
@@ -763,7 +780,9 @@ reviewAgain:
 			iterStart := time.Now()
 			c.net.setStage(fmt.Sprintf("Task attempt %d", attempt))
 			cmd, streaming, agentCommand := iterCmd(agent, iterWork)
-			code, _, res, classification, windows, runErr := c.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, agentCommand, hosts, completionWindowWork, []string{assigned.Item.ID}, nil, false, sink, peers, active, assigned.Item.ID, taskTools)
+			recovery := iterationRecovery{reuseServices: reuseWorkServices[assigned.Item.ID]}
+			delete(reuseWorkServices, assigned.Item.ID)
+			code, _, res, classification, windows, runErr := c.runIterationWithMode(iterCtx, repo, img, agent, forkName, cmd, streaming, agentCommand, hosts, completionWindowWork, []string{assigned.Item.ID}, nil, false, sink, peers, active, assigned.Item.ID, taskTools, recovery)
 			if errors.Is(runErr, tasks.ErrCompletionWindowSetup) {
 				return 1, errors.Join(runErr, lease.Release())
 			}
@@ -875,6 +894,9 @@ reviewAgain:
 			}
 			handoffs, timeouts = 0, 0
 			headAfter := gitOut(repo, "rev-parse", "HEAD")
+			if cleanCredentialRetryCanReuseServices(repo, iterHead, headAfter, classification.outcome) {
+				reuseWorkServices[assigned.Item.ID] = true
+			}
 			// Ref authority: from here through consumeAuditReopen/windows.Close(), this worktree's
 			// HEAD is exclusive to this controller. Everything below assumes HEAD == headAfter; an
 			// interactive coop run, a host signing rewrite, a fork land, or a human commit could move
@@ -1149,8 +1171,14 @@ reviewAgain:
 				} else if signed > 0 {
 					signedHead := gitOut(repo, "rev-parse", "HEAD")
 					if assignedCompletion != nil && len(custom) == 0 {
-						if rebindErr := tasks.RebindPendingReviewAfterSigning(repo, assignedCompletion.Root, assignedCompletion.Item.ID, headAfter, signedHead); rebindErr != nil {
-							return 1, fmt.Errorf("rebind task %s final-review evidence after signing: %w", assignedCompletion.Item.ID, rebindErr)
+						for _, subject := range pendingReview.Subjects {
+							root := pendingReviewSubjectRoot(pendingReview.Plan, subject)
+							if root == "" {
+								return 1, fmt.Errorf("pending final-review task %s has no recorded queue", subject.Task.Ref.ID)
+							}
+							if rebindErr := tasks.RebindPendingReviewAfterSigning(repo, root, subject.Task.Ref.ID, headAfter, signedHead); rebindErr != nil {
+								return 1, fmt.Errorf("rebind task %s final-review evidence after signing: %w", subject.Task.Ref.ID, rebindErr)
+							}
 						}
 					}
 					ui.Note("Signed %s with your host key.", ui.Count(signed, "commit"))
@@ -1186,7 +1214,12 @@ reviewAgain:
 						} else {
 							reviewHeader("Reviewing task: "+assignedCompletion.Item.Title, betweenRot.Active().String())
 						}
-						prompt := loopBetweenPrompt(repo, queues, substituteLoopVars(setPrompt, stepChanges, health), finishedDirs, auditGateFiles) + stepChanges.reviewBlock(health)
+						projectPolicy, _ := project.Load(repo)
+						gateReceipt := c.reviewGateReceipt(iterCtx, repo, img, loopStartHead)
+						prompt := seedReviewPrompt(
+							loopBetweenPrompt(repo, queues, substituteLoopVars(setPrompt, stepChanges, health), finishedDirs, auditGateFiles),
+							stepChanges.reviewBlock(health), reviewPacket(repo, projectPolicy, finishedDirs, stepChanges), gateReceipt.promptBlock(),
+						)
 						// An ordinary configured audit preserves its historical warn-and-continue behavior.
 						// A protected audit is mandatory: failure or a missing/mismatched receipt stops
 						// before another task can trust the changed gate.
@@ -1200,7 +1233,7 @@ reviewAgain:
 						observe := func(run reviewRunResult, start time.Time, headBefore string) {
 							c.recordStage(repo, runid, "between", run.outcome, run.target, start, run.exit, run.retries, len(run.reopened), headBefore, hosts, nil, auditGateFiles, run.usage)
 						}
-						btRun, rerr := c.runReviewVerdict(iterCtx, repo, img, betweenRot, forkName, prompt, reviewActivity(stage, finishedIDs), iterCmd, hosts, finishedIDs, &reviewPlan, lc.Between.Writes, sink, peers, hardStop, observe)
+						btRun, rerr := c.runReviewVerdict(iterCtx, repo, img, betweenRot, forkName, prompt, reviewActivity(stage, finishedIDs), reviewCmd, hosts, finishedIDs, &reviewPlan, lc.Between.Writes, sink, peers, hardStop, observe)
 						reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, nil, nil, btRun.concurrent)
 						reopenedIDs := btRun.reopened
 						if len(reopenedIDs) > 0 {
@@ -1400,11 +1433,16 @@ reviewAgain:
 		// round because the range (loopStartHead..HEAD) grows as reopened work lands.
 		soHead := gitOut(repo, "rev-parse", "HEAD")
 		cs := loopChanges(repo, loopStartHead, soHead)
-		signoff := loopSignoffPrompt(repo, queues, substituteLoopVars(lc.Signoff.Prompt, cs, health), subjects) + audits.signoffBlock(subjectIDs) + cs.reviewBlock(health)
+		gateReceipt := c.reviewGateReceipt(iterCtx, repo, img, loopStartHead)
+		projectPolicy, _ := project.Load(repo)
+		signoff := seedReviewPrompt(
+			loopSignoffPrompt(repo, queues, substituteLoopVars(lc.Signoff.Prompt, cs, health), subjects),
+			audits.signoffBlock(subjectIDs), cs.reviewBlock(health), reviewPacket(repo, projectPolicy, subjects, cs), gateReceipt.promptBlock(),
+		)
 		observe := func(run reviewRunResult, start time.Time, headBefore string) {
 			c.recordStage(repo, runid, "signoff", run.outcome, run.target, start, run.exit, run.retries, len(run.reopened), headBefore, hosts, nil, nil, run.usage)
 		}
-		soRun, serr := c.runReviewVerdict(iterCtx, repo, img, signoffRot, forkName, signoff, reviewActivity("signoff", subjectIDs), iterCmd, hosts, subjectIDs, &reviewPlan, lc.Signoff.Writes, sink, peers, wake, observe)
+		soRun, serr := c.runReviewVerdict(iterCtx, repo, img, signoffRot, forkName, signoff, reviewActivity("signoff", subjectIDs), reviewCmd, hosts, subjectIDs, &reviewPlan, lc.Signoff.Writes, sink, peers, wake, observe)
 		// Preserve the exact tasks the host reopened before any early return.
 		reopenedIDs := soRun.reopened
 		if len(soRun.concurrent) > 0 {
@@ -1467,11 +1505,9 @@ reviewAgain:
 				return 1, fmt.Errorf("clear accepted final-review subjects: %w", err)
 			}
 		}
-		if len(soRun.concurrent) > 0 {
-			pendingReview, err = tasks.LoadPendingReviews(repo, hosts)
-			if err != nil {
-				return 1, fmt.Errorf("reload concurrent final-review subjects: %w", err)
-			}
+		pendingReview, err = tasks.LoadPendingReviews(repo, hosts)
+		if err != nil {
+			return 1, fmt.Errorf("reload final-review subjects: %w", err)
 		}
 		// A stop that landed during a successful signoff is honored only after its host-applied
 		// receipt and durable phase transition are complete.
@@ -1559,13 +1595,17 @@ reviewAgain:
 				return 1, fmt.Errorf("clear no-op final-verification subjects: %w", err)
 			}
 		} else {
-			vPrompt := substituteLoopVars(lc.Verify.Prompt, cs, health) + cs.reviewBlock(health) +
-				"\n\n" + auditEvidencePrompt + "\n\n" + reviewContextFooter(repo, queues)
 			pendingVerify, pendingErr := tasks.LoadPendingReviews(repo, hosts)
 			if pendingErr != nil {
 				return 1, fmt.Errorf("capture final-verification subjects: %w", pendingErr)
 			}
 			verifyIDs := pendingReviewIDs(pendingVerify, tasks.PendingReviewVerify)
+			projectPolicy, _ := project.Load(repo)
+			gateReceipt := c.reviewGateReceipt(iterCtx, repo, img, loopStartHead)
+			vPrompt := seedReviewPrompt(
+				substituteLoopVars(lc.Verify.Prompt, cs, health)+"\n\n"+auditEvidencePrompt(verifyIDs)+"\n\n"+reviewContextFooter(repo, queues),
+				cs.reviewBlock(health), reviewPacket(repo, projectPolicy, nil, cs), gateReceipt.promptBlock(),
+			)
 			verifyRecords, selectErr := pendingReviewRecordsForIDs(pendingVerify, verifyIDs)
 			if selectErr != nil {
 				return 1, selectErr
@@ -1581,7 +1621,7 @@ reviewAgain:
 			observe := func(run reviewRunResult, start time.Time, headBefore string) {
 				c.recordStage(repo, runid, "verify", run.outcome, run.target, start, run.exit, run.retries, len(run.reopened), headBefore, hosts, nil, nil, run.usage)
 			}
-			vRun, verr := c.runReviewVerdict(iterCtx, repo, img, verifyRot, forkName, vPrompt, verifyActivity, iterCmd, hosts, verifyIDs, &reviewPlan, lc.Verify.Writes, sink, peers, wake, observe)
+			vRun, verr := c.runReviewVerdict(iterCtx, repo, img, verifyRot, forkName, vPrompt, verifyActivity, reviewCmd, hosts, verifyIDs, &reviewPlan, lc.Verify.Writes, sink, peers, wake, observe)
 			reopenedIDs := vRun.reopened
 			if len(vRun.concurrent) > 0 {
 				if err := tasks.EnrollExistingPendingReviews(repo, hosts, vRun.concurrent, reviewPlan); err != nil {
@@ -1631,11 +1671,9 @@ reviewAgain:
 				if err := tasks.ClearPendingReviews(hosts, expected); err != nil {
 					return 1, fmt.Errorf("clear accepted final-verification subjects: %w", err)
 				}
-				if len(vRun.concurrent) > 0 {
-					pendingReview, err = tasks.LoadPendingReviews(repo, hosts)
-					if err != nil {
-						return 1, fmt.Errorf("reload concurrent verification subjects: %w", err)
-					}
+				pendingReview, err = tasks.LoadPendingReviews(repo, hosts)
+				if err != nil {
+					return 1, fmt.Errorf("reload final-verification subjects: %w", err)
 				}
 				audits.drop(reopenedIDs)
 				reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, nil, reopenedIDs, vRun.concurrent)
@@ -1770,8 +1808,10 @@ reviewAgain:
 	// A human-facing digest above the verdict banner: what shipped (per task + areas), what's blocked,
 	// and any task the run flagged — so you see what to review/e2e at a glance.
 	if len(custom) == 0 {
-		cost := costFromRecords(readStageRecords(repo, runid), ReadPeerRecords(repo, runid))
+		peers := ReadPeerRecords(repo, runid)
+		cost := costFromRecords(readStageRecords(repo, runid), peers)
 		printRunSummary(completedLines, cost, health)
+		printRoleHealth(c.preset, peers)
 		// Done folders accumulate until a human prunes them (agents never delete) — and a big
 		// 99_done/ taxes every future run: each iteration's box lists it, and it's the haystack a
 		// crash-resume scan walks. Past a threshold, say so once, at close.
@@ -1791,6 +1831,14 @@ reviewAgain:
 		printFinalVerdict(cf, actionable, blocked, continueCmd)
 	})
 	return loopExitCodeAfterVerification(cf, verificationFailed), nil
+}
+
+func cleanCredentialRetryCanReuseServices(repo, beforeHead, afterHead, outcome string) bool {
+	if (outcome != "authentication" && outcome != "rate_limit") || beforeHead == "" || beforeHead != afterHead {
+		return false
+	}
+	status, err := gitOutErr(repo, "status", "--porcelain=v1", "--untracked-files=all")
+	return err == nil && status == ""
 }
 
 // closeWith prints the run's final banner, flushing the networking summary first

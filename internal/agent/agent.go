@@ -369,6 +369,10 @@ type Agent interface {
 	Interactive(cfg *config.Config) []string
 	// Headless is the one-shot, non-interactive form carrying a prompt (the loop).
 	Headless(cfg *config.Config, prompt string) []string
+	// HeadlessSession starts or resumes one exact non-interactive native session. Review uses it
+	// once to repair a malformed terminal envelope without paying for a fresh review. The bool is
+	// false only when the requested session id is invalid or unsupported.
+	HeadlessSession(cfg *config.Config, prompt, id string, resume bool) ([]string, bool)
 	// Stream is the agent's structured-output schema and the flags that enable it.
 	Stream() StreamSpec
 	// ACP is the agent's ACP adapter command over stdio (for editors like Zed). It takes

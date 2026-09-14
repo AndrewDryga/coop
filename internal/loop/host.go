@@ -105,6 +105,7 @@ type Control struct {
 	runID          string // COOP_RUN_ID, so a consult peer's usage lands in this run's cost digest
 	streamSeq      int    // streaming box attempt sequence within runID
 	streamOff      bool   // an open failure disables best-effort tracing for the rest of the run
+	reviewGates    map[string]reviewGateReceipt
 
 	// capture is the run's frozen network policy, admitted ONCE at the top of Run
 	// (nil outside filtered mode); net accumulates what each box could not reach.

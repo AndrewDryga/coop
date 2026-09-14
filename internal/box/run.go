@@ -80,6 +80,14 @@ type RunSpec struct {
 	// Review selects the trusted review-only compose file and literal environment. The disposable
 	// candidate remains writable for ignored build output; callers verify source identity afterward.
 	Review bool
+	// FormatCorrection is the one exact-session review-envelope repair. It keeps the selected
+	// provider credential and native session under the same in-box cwd, but overlays that cwd with
+	// an empty read-only directory and omits project MCP, preset peers, and sibling services.
+	FormatCorrection bool `json:"-"`
+	// ReuseServices is set by a read-only review retry, or by a work credential/rate-limit fallback
+	// whose attempt left a clean identical HEAD, after the first attempt prepared the unchanged
+	// sibling stack. The new provider box still joins and inspects it.
+	ReuseServices bool `json:"-"`
 	// CompanionRepositories are policy-pinned snapshots mounted read-only at
 	// /coop/repositories/<name>. The remote request surface cannot populate this field.
 	CompanionRepositories []CompanionRepository
@@ -362,6 +370,17 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		spec.Network, spec.Serve = false, false
 		projectEnv, composeFile, spec.servePorts = nil, "", nil
 	}
+	if spec.FormatCorrection {
+		if !spec.AgentCommand || !spec.Batch || !spec.RepoReadOnly {
+			return -1, errors.New("review format correction requires a read-only batch agent command")
+		}
+		spec.Preset, spec.Peers, spec.ConsultLead = nil, nil, ""
+		spec.TaskTools, spec.AssignedTask, spec.CompanionRepositories = nil, "", nil
+		projectEnv, composeFile, spec.servePorts = nil, "", nil
+		spec.projectEnv = nil
+		spec.Network, spec.Serve, spec.Cache = false, false, false
+		spec.LoopPresentation, spec.Quiet = false, true
+	}
 	// Apply project policy before this last fail-closed check. Callers normally
 	// admit first (which marks the resolved mode explicit), but a missed caller
 	// must not turn a project's filtered request into an ordinary offline box.
@@ -374,7 +393,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			return -1, err
 		}
 	}
-	if spec.Review {
+	if spec.Review && !spec.FormatCorrection {
 		if p.Review.Compose != "" {
 			composeFile = ComposeFileAt(spec.Repo, p.Review.Compose)
 		}
@@ -392,7 +411,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	var mcpSnapshot []byte
 	mcpPresent := false
-	if spec.Homes && !spec.Login {
+	if spec.Homes && !spec.Login && !spec.FormatCorrection {
 		mcpSource := cfg.MCPFile
 		if cfg.MCPFile != "" {
 			var err error
@@ -430,7 +449,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			return -1, err
 		}
 	}
-	if spec.RepoReadOnly && len(mounts) > 0 {
+	if spec.FormatCorrection {
+		mounts = []Mount{{Kind: DirDecoy, Target: workdir, RO: true}}
+	} else if spec.RepoReadOnly && len(mounts) > 0 {
 		mounts[0].RO = true // ComputeMounts guarantees the primary repo bind is first
 	}
 	if !spec.Login && !spec.RepoReadOnly && len(spec.RepoReadOnlyPaths) > 0 {
@@ -811,7 +832,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		privateRoots = append(privateRoots, companion.HostPath)
 	}
 	workflowAgents := configAgents
-	if spec.Login {
+	if spec.Login || spec.FormatCorrection {
 		workflowAgents = nil
 	}
 	synthMounts, synthDirs, err := synthSkillsMounts(spec.Repo, cfg.HomeInBox, workflowAgents, privateRoots...)

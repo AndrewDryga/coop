@@ -34,6 +34,8 @@ type loopCursor struct {
 	Index int `json:"index"`
 }
 
+const loopCodexSessionID = "11111111-2222-4333-8444-555555555555"
+
 func validateLoopScenario(provider string, homes map[string]bool, plan loopScenario) error {
 	if !safeLoopTaskID(plan.TaskID) {
 		return fmt.Errorf("unsafe loop task id %q", plan.TaskID)
@@ -290,7 +292,8 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 				return 1, "", err
 			}
 		}
-		if !strings.HasPrefix(attempt.Result, "reopen") {
+		corrected := attempt.Result == "pass-corrected" || attempt.Result == "malformed-review-corrected"
+		if !corrected && !strings.HasPrefix(attempt.Result, "reopen") {
 			if err := verifyLoopTaskDone(root, plan.TaskID); err != nil {
 				return 1, "", err
 			}
@@ -570,7 +573,7 @@ func emitLoopNarration(provider string, argv []string, text string) error {
 	case "claude":
 		_ = encoder.Encode(map[string]any{"type": "assistant", "message": map[string]any{"content": []map[string]any{{"type": "text", "text": text}}}})
 	case "codex":
-		_ = encoder.Encode(map[string]any{"type": "thread.started", "thread_id": "fixture"})
+		_ = encoder.Encode(map[string]any{"type": "thread.started", "thread_id": loopCodexSessionID})
 		_ = encoder.Encode(map[string]any{"type": "item.completed", "item": map[string]any{"id": "fixture-narration", "type": "agent_message", "text": text}})
 	case "gemini":
 		_ = encoder.Encode(map[string]any{"type": "message", "role": "assistant", "content": text})
@@ -601,7 +604,7 @@ func emitLoopWatchdogEvent(provider string, argv []string, tool bool) error {
 		}
 		_ = encoder.Encode(map[string]any{"type": "assistant", "message": map[string]any{"content": []map[string]any{{"type": "text", "text": "fixture watchdog progress"}}}})
 	case "codex":
-		_ = encoder.Encode(map[string]any{"type": "thread.started", "thread_id": "fixture"})
+		_ = encoder.Encode(map[string]any{"type": "thread.started", "thread_id": loopCodexSessionID})
 		if tool {
 			_ = encoder.Encode(map[string]any{"type": "item.started", "item": map[string]any{"id": loopWatchdogToolID, "type": "command_execution", "command": "make check"}})
 			return nil
@@ -784,6 +787,13 @@ func loopPromptFrom(provider string, argv []string) string {
 
 func verifyLoopPrompt(stage, taskID, provider string, argv []string) error {
 	prompt := loopPromptFrom(provider, argv)
+	if strings.HasPrefix(prompt, "FORMAT CORRECTION ONLY.") {
+		if !strings.Contains(prompt, "Validation error:") ||
+			!strings.Contains(prompt, "AUDIT EVIDENCE — "+taskID) {
+			return fmt.Errorf("loop %s correction prompt for %s lacks validation detail or subject", stage, provider)
+		}
+		return nil
+	}
 	marker := map[string]string{
 		"work":    "Work task " + taskID + ", already claimed in 10_in_progress/.",
 		"between": "FIXTURE BETWEEN", "signoff": "FIXTURE SIGNOFF", "verify": "FIXTURE VERIFY",
@@ -818,8 +828,9 @@ func verifyLoopAuditResumePrompt(provider string, argv []string) error {
 	for _, want := range []string{
 		"host-authorized review rework",
 		"ZERO new commits",
-		"finding is false, do NOT create, amend, or rewrite any commit",
-		"tree actually changes",
+		"If the finding is real, add exactly one real repair commit",
+		"WITHOUT a Coop-Task or Coop-Recovery trailer",
+		"Do not rewrite reviewed commits",
 	} {
 		if !strings.Contains(prompt, want) {
 			return fmt.Errorf("audit re-close work prompt is missing %q", want)
@@ -887,23 +898,27 @@ func loopReviewReplyWithFinding(taskID, finding string) string {
 		"REVIEW COMPLETE — FAIL — reopened: " + taskID
 }
 
-const loopReviewVerdictCorrection = "\n\nREVIEW RECEIPT FORMAT CORRECTION: The previous review process succeeded, but Coop could not validate its structured verdict. Re-run the complete review over the same named subjects and return exactly one evidence line per subject followed by exactly one terminal `REVIEW COMPLETE` receipt, with nothing after that receipt."
+const loopReviewVerdictCorrection = "FORMAT CORRECTION ONLY."
 
 func verifyLoopReviewCorrection(root, taskID, stage, provider string, argv []string, corrected bool) error {
 	prompt := loopPromptFrom(provider, argv)
 	path := filepath.Join(root, "state", "loop-review-prompt-"+taskID+"-"+stage)
 	if !corrected {
-		if strings.Contains(prompt, loopReviewVerdictCorrection) {
+		if strings.HasPrefix(prompt, loopReviewVerdictCorrection) {
 			return errors.New("first malformed review unexpectedly carried the correction prompt")
 		}
-		return os.WriteFile(path, []byte(prompt), 0o600)
+		return os.WriteFile(path, []byte("REVIEW COMPLETE — MAYBE — reopened: none"), 0o600)
 	}
-	base, err := os.ReadFile(path)
+	rejected, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("read malformed review base prompt: %w", err)
+		return fmt.Errorf("read malformed review output: %w", err)
 	}
-	if prompt != string(base)+loopReviewVerdictCorrection {
-		return errors.New("corrected review did not preserve the base prompt and append the fixed correction")
+	if !strings.HasPrefix(prompt, loopReviewVerdictCorrection) ||
+		!strings.Contains(prompt, "Validation error:") ||
+		!strings.Contains(prompt, "Rejected terminal output:") ||
+		!strings.Contains(prompt, string(rejected)) ||
+		!strings.Contains(prompt, "AUDIT EVIDENCE — "+taskID) {
+		return errors.New("corrected review did not carry the precise format error, rejected output, and subject")
 	}
 	return nil
 }
@@ -1023,7 +1038,7 @@ func emitLoopReplyWithWrapper(provider string, argv []string, reply, wrapper str
 		_ = encoder.Encode(map[string]any{"type": "assistant", "message": map[string]any{"content": []map[string]any{{"type": "text", "text": reply}}}})
 		_ = encoder.Encode(map[string]any{"type": "result", "subtype": "success", "num_turns": 1, "duration_ms": 100, "total_cost_usd": 0.25, "usage": map[string]int{"input_tokens": 101, "output_tokens": 11}})
 	case "codex":
-		_ = encoder.Encode(map[string]any{"type": "thread.started", "thread_id": "fixture"})
+		_ = encoder.Encode(map[string]any{"type": "thread.started", "thread_id": loopCodexSessionID})
 		emitCodexReviewMessage := func() {
 			_ = encoder.Encode(map[string]any{"type": "item.completed", "item": map[string]any{"id": "fixture", "type": "agent_message", "text": reply}})
 		}

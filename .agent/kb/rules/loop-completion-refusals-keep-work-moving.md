@@ -2,9 +2,9 @@
 name: loop-completion-refusals-keep-work-moving
 description: ordinary completion mistakes get immediate feedback and bounded safe repair without weakening task acceptance
 scope: loop
-sources: [internal/loop/loop.go, internal/loop/completion.go, internal/loop/prompts.go, internal/taskmcp/tools.go, internal/tasks/completion_recovery.go, internal/tasks/completion_checklist.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/cli/scripted_loop_completion_process_e2e_test.go]
-check: "go test ./internal/tasks -run 'TestUncommittedCompletionCanRetry|TestParkUncommittedCompletion|TestTrustedCompletionRequiresCurrentChecklist|TestIncompleteForkCompletionRefusesAcceptanceButCanResume|TestForkChecklistCheckedAgainAtPublicationAndLanding'"
-updated: 2026-09-12
+sources: [internal/loop/loop.go, internal/loop/completion.go, internal/loop/prompts.go, internal/taskmcp/tools.go, internal/tasks/completion_recovery.go, internal/tasks/completion_checklist.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/pending_review.go, internal/tasks/pending_review_test.go, internal/cli/scripted_loop_completion_process_e2e_test.go]
+check: "go test ./internal/tasks -run 'TestUncommittedCompletionCanRetry|TestParkUncommittedCompletion|TestTrustedCompletionRequiresCurrentChecklist|TestIncompleteForkCompletionRefusesAcceptanceButCanResume|TestForkChecklistCheckedAgainAtPublicationAndLanding|TestPendingReviewRebindAllowsAuthorizedRewriteOfLaterCohortTask|TestPendingReviewRecoversAuthorizedRewriteOfLaterCohortTask'"
+updated: 2026-09-14
 ---
 
 # Recover ordinary completion mistakes without losing work or acceptance
@@ -33,6 +33,17 @@ Remember a completion attempt even when its binding precheck passes: a later che
 must not disappear after provider exit. A safe stop for unfinished committed work includes the
 current checklist count and required-check action, without claiming the task completed.
 
+Final-review repair is cohort-aware. Rewriting one reopened subject must retain every sibling's
+review debt. When the repaired subject is a descendant in an earlier sibling's recorded history,
+rebind that one entry to the host-authorized replacement and require every other recorded semantic
+entry to remain unchanged. Do not reject the valid repair merely because that authorized entry
+changed, and do not reset or silently clear the sibling's pending review.
+
+On restart, explicit review-model selections in the current loop configuration replace the
+stored models. Preserve the saved acceptance prompts, permissions, verification requirement,
+and round limit; absent model selections still use the stored targets. A model change must not
+discard pending review or silently resume an unwanted provider.
+
 **Why:** on 2026-09-12 the human's overnight Emisar run stopped when an agent completed a permitted
 log-only decision without a task-bound commit. “Run this command once and have agent work all
 night” is a core product promise, not an optional recovery flag.
@@ -44,6 +55,14 @@ code. The check above pins the conservative recovery boundary; the tagged script
 also runs in `make check` and proves continuation and both terminal modes.
 
 ## Changelog
+- 2026-09-14 — a user-requested Opus-only drain restored Codex from an older pending review
+  despite explicit Opus stage configuration. Swept signoff and verify resume selection; the
+  focused `TestPendingReviewHonorsConfiguredModelsWithoutChangingAcceptance` regression covers
+  replacement, absent selections, and preservation of the saved acceptance contract.
+- 2026-09-14 — a real Emisar Frontier review repaired the later task in a two-task pending cohort,
+  then Coop rejected the earlier task's still-valid review debt because its recorded descendant was
+  required to remain unchanged. Swept the audit-rewrite rebind path and pinned the exact authorized
+  descendant replacement while retaining all other semantic checks.
 - 2026-09-12 — live Emisar tasks completed with explicit open runtime checks. Swept assigned MCP,
   trusted host/CLI, queued finalization, and fork acceptance/publication/landing; added the shared
   fresh-checklist prerequisite. Recovery still reopens unfinished projections. Also observed

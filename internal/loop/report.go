@@ -9,6 +9,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -266,7 +267,11 @@ func printProtectedReview(target string, files []string) {
 }
 
 func printFinalReview(round, rounds int, target string, tasks int) {
-	printReviewBanner(fmt.Sprintf("Final review · Round %d of %d", round, rounds), target,
+	title := fmt.Sprintf("Final review · Round %d of %d", round, rounds)
+	if round > rounds {
+		title = "Final review · After decision"
+	}
+	printReviewBanner(title, target,
 		reviewField{label: "Tasks", values: []string{fmt.Sprintf("%d completed", tasks)}})
 }
 
@@ -479,10 +484,54 @@ func printRunSummary(completed []taskLine, cost runCost, h *loopHealth) {
 	printFlagged(completed, h)
 }
 
+// printRoleHealth says what happened to each configured preset role without making an optional,
+// unused role look like a failed run. Consult/delegate wrappers emit these rows; native roles stay
+// explicitly unobserved because their provider does not expose a reliable per-role lifecycle.
+func printRoleHealth(p *preset.Preset, records []PeerRecord) {
+	if p == nil || len(p.Roles) == 0 {
+		return
+	}
+	ui.Note("")
+	ui.Note("Preset roles")
+	for _, role := range p.Roles {
+		var successes, failures []PeerRecord
+		for _, record := range records {
+			if record.Kind != "role_health" || record.Role != role.Name {
+				continue
+			}
+			if record.Outcome == "success" {
+				successes = append(successes, record)
+			} else if record.Outcome == "failed" {
+				failures = append(failures, record)
+			}
+		}
+		switch {
+		case len(successes) > 0:
+			last := successes[len(successes)-1]
+			detail := "succeeded on " + cleanDiagnosticLine(last.Target)
+			if len(failures) > 0 {
+				detail += " after " + ui.Count(len(failures), "failed target")
+			}
+			ui.Pass("%s · %s", role.Name, detail)
+		case len(failures) > 0:
+			last := failures[len(failures)-1]
+			detail := fmt.Sprintf("failed on %s after %s", cleanDiagnosticLine(last.Target), ui.Count(last.Attempts, "attempt"))
+			if last.Cause != "" {
+				detail += " · " + cleanDiagnosticLine(last.Cause)
+			}
+			ui.Caution("%s · %s", role.Name, detail)
+		case role.Mode == preset.ModeNative:
+			ui.Note("  %s · usage not reported by the lead provider", cleanDiagnosticLine(role.Name))
+		default:
+			ui.Note("  %s · not used", cleanDiagnosticLine(role.Name))
+		}
+	}
+}
+
 // printUsage reports what the providers said this run cost. Cost the provider never reported is
 // "not reported", never $0.00; a run with no usage data at all prints no section.
 func printUsage(cost runCost) {
-	if len(cost.byModel) == 0 && cost.total.usd == 0 && cost.total.inTok == 0 && cost.total.outTok == 0 {
+	if len(cost.byModel) == 0 && !cost.total.costReported && cost.total.usd == 0 && cost.total.inTok == 0 && cost.total.outTok == 0 {
 		return
 	}
 	ui.Note("")
@@ -496,21 +545,50 @@ func printUsage(cost runCost) {
 		}
 		for _, m := range cost.byModel {
 			model := cleanDiagnosticLine(m.model)
-			ui.Note("  %s%s  %s · %s", model, strings.Repeat(" ", w-len([]rune(model))), reportedCost(m.cost.usd), tokenText(m.cost.inTok, m.cost.outTok))
+			ui.Note("  %s%s  %s · %s", model, strings.Repeat(" ", w-len([]rune(model))), reportedCost(m.cost), tokenText(m.cost.inTok, m.cost.outTok))
+			ui.Note("    %s · output %s · provider time %s", inputBreakdown(m.cost), reportedToken(m.cost.output), reportedDuration(m.cost.elapsed))
 		}
 		return
 	}
-	ui.Note("  Reported cost: %s", reportedCost(cost.total.usd))
+	ui.Note("  Reported cost: %s", reportedCost(cost.total))
 	ui.Note("  Tokens: %s", tokenText(cost.total.inTok, cost.total.outTok))
+	ui.Note("  Input: %s", inputBreakdown(cost.total))
+	ui.Note("  Output: %s", reportedToken(cost.total.output))
+	ui.Note("  Provider time: %s", reportedDuration(cost.total.elapsed))
+}
+
+func reportedToken(value reportedInt) string {
+	if !value.reported {
+		return "not reported"
+	}
+	if value.missing {
+		return humanTokenCount(value.value) + " reported; some usage not split"
+	}
+	return humanTokenCount(value.value)
+}
+
+func inputBreakdown(cost stageCost) string {
+	return "fresh " + reportedToken(cost.fresh) + " · cache write " + reportedToken(cost.cacheWrite) + " · cache read " + reportedToken(cost.cacheRead)
+}
+
+func reportedDuration(value reportedInt) string {
+	if !value.reported {
+		return "not reported"
+	}
+	duration := (time.Duration(value.value) * time.Millisecond).Round(time.Second)
+	if value.missing {
+		return duration.String() + " reported; some usage not timed"
+	}
+	return duration.String()
 }
 
 // reportedCost renders a cost the provider actually reported. An absent cost says so in words: a
 // $0.00 would read as a free run.
-func reportedCost(usd float64) string {
-	if usd <= 0 {
+func reportedCost(cost stageCost) string {
+	if !cost.costReported && cost.usd <= 0 {
 		return "not reported"
 	}
-	return fmt.Sprintf("$%.2f", usd)
+	return fmt.Sprintf("$%.2f", cost.usd)
 }
 
 func tokenText(in, out int) string {

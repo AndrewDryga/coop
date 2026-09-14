@@ -78,6 +78,15 @@ func spliceBeforeTrailing(cmd, insert []string, trailing int) []string {
 // the agent's output is funneled into the scroll history above a sticky progress bar (a
 // Docker-build-style live view). Non-terminal output goes straight to the destination unchanged.
 func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming, agentCommand bool, hosts []string, windowMode completionWindowMode, reviewSubjects []string, pendingReview *tasks.PendingReviewPlan, repoReadOnly bool, sink io.Writer, peers []agents.Target, activity, assignedTask string, taskTools box.TaskToolServer) (code int, output string, res *iterResult, classification iterationClassification, windows *tasks.CompletionWindowSet, err error) {
+	return c.runIterationWithMode(ctx, repo, img, agent, forkName, cmd, streaming, agentCommand, hosts, windowMode, reviewSubjects, pendingReview, repoReadOnly, sink, peers, activity, assignedTask, taskTools, iterationRecovery{})
+}
+
+type iterationRecovery struct {
+	formatCorrection bool
+	reuseServices    bool
+}
+
+func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming, agentCommand bool, hosts []string, windowMode completionWindowMode, reviewSubjects []string, pendingReview *tasks.PendingReviewPlan, repoReadOnly bool, sink io.Writer, peers []agents.Target, activity, assignedTask string, taskTools box.TaskToolServer, recovery iterationRecovery) (code int, output string, res *iterResult, classification iterationClassification, windows *tasks.CompletionWindowSet, err error) {
 	// Registered FIRST, so it is the LAST deferred step: a filtered box's
 	// refusals print after the live bar is torn down and the ui sink is plain
 	// stderr again, alongside the loop's other between-iteration lines.
@@ -208,8 +217,12 @@ func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName s
 	// those peers' credentials, the coop-consult wrapper, and the second-opinion directive. A
 	// preset does the same with ITS roles: the routing contract mounts via ConsultLead.
 	lead := ""
-	if len(peers) > 0 || c.preset != nil {
+	if !recovery.formatCorrection && (len(peers) > 0 || c.preset != nil) {
 		lead = agent
+	}
+	attemptPeers, attemptPreset := peers, c.preset
+	if recovery.formatCorrection {
+		attemptPeers, attemptPreset = nil, nil
 	}
 	// A structured stream gives the watchdog trustworthy activity, so only then does the
 	// attempt get a child context it may cancel on proven silence. The parent ctx stays
@@ -232,7 +245,7 @@ func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName s
 		boxCtx = childCtx
 	}
 	code, err = c.runBox(box.RunSpec{
-		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, LoopPresentation: true, ForkName: forkName, ForkOwner: c.forkOwner, ForkGeneration: c.forkGeneration, ConsultLead: lead, Peers: peers, Preset: c.preset, RunID: c.runID, AssignedTask: assignedTask, TaskTools: taskTools,
+		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, LoopPresentation: !recovery.reuseServices, Quiet: recovery.reuseServices, ForkName: forkName, ForkOwner: c.forkOwner, ForkGeneration: c.forkGeneration, ConsultLead: lead, Peers: attemptPeers, Preset: attemptPreset, RunID: c.runID, AssignedTask: assignedTask, TaskTools: taskTools, FormatCorrection: recovery.formatCorrection, ReuseServices: recovery.reuseServices,
 		ForkWorker: c.forkWorker, ActivityRepo: c.activityRepo, ActivityKind: c.activityKind,
 		ActivityTask: c.iterationActivityTask(assignedTask), ActivitySource: c.runID,
 		AgentCommand:         agentCommand,

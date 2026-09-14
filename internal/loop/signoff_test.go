@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -55,6 +56,7 @@ func TestCompletedReviewSubjectsUseHostState(t *testing.T) {
 func TestBlockReopenedTasksLeavesUnrelatedActionableWork(t *testing.T) {
 	q := filepath.Join(t.TempDir(), ".agent", "tasks")
 	writeTaskFile(t, filepath.Join(q, stateInProgress, "review-reopen", "task.md"), "# Reopen\n")
+	writeTaskFile(t, filepath.Join(q, stateInProgress, "review-reopen", "decision.md"), "# Old decision\n\n**Resolution:** already resolved\n")
 	writeTaskFile(t, filepath.Join(q, stateInProgress, "unrelated", "task.md"), "# Unrelated\n")
 
 	if err := blockReopenedTasks([]string{q}, []string{"review-reopen"}, 3); err != nil {
@@ -63,6 +65,13 @@ func TestBlockReopenedTasksLeavesUnrelatedActionableWork(t *testing.T) {
 
 	if !pathExists(filepath.Join(q, stateBlocked, "review-reopen")) {
 		t.Fatal("exact review reopen was not blocked")
+	}
+	decision, err := os.ReadFile(filepath.Join(q, stateBlocked, "review-reopen", "decision.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(decision), "review keeps reopening") || strings.Contains(string(decision), "Old decision") {
+		t.Fatalf("review cap retained stale decision:\n%s", decision)
 	}
 	if !pathExists(filepath.Join(q, stateInProgress, "unrelated")) {
 		t.Fatal("unrelated actionable task was moved by the signoff cap")

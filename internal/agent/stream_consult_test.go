@@ -114,6 +114,9 @@ func TestStreamConsultCapturedReplyAndUsage(t *testing.T) {
 					if cost, exists := row["cost"]; (tc.cost > 0 && cost != tc.cost) || (tc.cost == 0 && exists) {
 						t.Fatalf("wrong or invented cost: %s", data)
 					}
+					if cost, exists := row["reported_cost"]; (tc.cost > 0 && cost != tc.cost) || (tc.cost == 0 && exists) {
+						t.Fatalf("wrong reported-cost presence: %s", data)
+					}
 				})
 			}
 		})

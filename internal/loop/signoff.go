@@ -136,12 +136,9 @@ func blockReopenedTasks(hosts, reopened []string, rounds int) error {
 }
 
 // writeReviewBlockDecision drops a decision.md explaining that the review kept reopening this task
-// past the round cap, so a human knows why it's parked — unless one already exists (don't clobber a
-// prior note). Best-effort; mirrors the `coop tasks block` stub shape.
+// past the round cap. Replace an older resolved decision: decision.md carries the current open
+// question, not a stale action from a previous block.
 func writeReviewBlockDecision(path, id, title string, rounds int) error {
-	if fileExists(path) {
-		return nil
-	}
 	body := fmt.Sprintf("# Decision: the review keeps reopening %q after %d rounds\n\n"+
 		"**Blocks:** this task (`%s`).\n\n"+
 		"**The decision:** The unattended loop drained the queue and review reopened this "+

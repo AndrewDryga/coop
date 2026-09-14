@@ -55,6 +55,12 @@ func TestCandidateReviewVerdictRequiresExactAllSubjectEvidence(t *testing.T) {
 	if findings, err := candidateReviewVerdict([]string{"alpha", "beta"}, fail); err != nil || !slices.Equal(findings, []string{"alpha"}) {
 		t.Fatalf("candidate findings = %v, %v", findings, err)
 	}
+	spaced := "AUDIT EVIDENCE — alpha — gate: go test ./... — findings: none\n\n" +
+		"AUDIT EVIDENCE — beta — gate: go test ./... — findings: none\n\n" +
+		"REVIEW COMPLETE — PASS — reopened: none\n"
+	if findings, err := candidateReviewVerdict([]string{"alpha", "beta"}, spaced); err != nil || len(findings) != 0 {
+		t.Fatalf("candidate verdict with blank separators = %v, %v", findings, err)
+	}
 	for name, output := range map[string]string{
 		"missing subject":  "AUDIT EVIDENCE — alpha — gate: go test ./... — findings: none\nREVIEW COMPLETE — PASS — reopened: none\n",
 		"foreign reopen":   "AUDIT EVIDENCE — alpha — gate: x — findings: none\nAUDIT EVIDENCE — beta — gate: x — findings: none\nREVIEW COMPLETE — FAIL — reopened: other\n",
@@ -63,6 +69,25 @@ func TestCandidateReviewVerdictRequiresExactAllSubjectEvidence(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if _, err := candidateReviewVerdict([]string{"alpha", "beta"}, output); err == nil || !errors.Is(err, errReviewVerdictMalformed) {
 				t.Fatalf("malformed candidate verdict = %v", err)
+			}
+		})
+	}
+}
+
+func TestReviewVerdictErrorsNameTheRepair(t *testing.T) {
+	tests := []struct {
+		name, output, want string
+	}{
+		{"missing subject", "AUDIT EVIDENCE — alpha — gate: x — findings: none\nREVIEW COMPLETE — PASS — reopened: none", "missing audit evidence for beta"},
+		{"unknown subject", "AUDIT EVIDENCE — alpha — gate: x — findings: none\nAUDIT EVIDENCE — other — gate: x — findings: none\nREVIEW COMPLETE — PASS — reopened: none", "unknown subjects other"},
+		{"duplicate subject", "AUDIT EVIDENCE — alpha — gate: x — findings: none\nAUDIT EVIDENCE — alpha — gate: x — findings: none\nREVIEW COMPLETE — PASS — reopened: none", "duplicate audit evidence for alpha"},
+		{"split block", "AUDIT EVIDENCE — alpha — gate: x — findings: none\nexplanation\nREVIEW COMPLETE — PASS — reopened: none", "split by prose"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := candidateReviewVerdict([]string{"alpha", "beta"}, test.output)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
 			}
 		})
 	}

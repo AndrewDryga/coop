@@ -97,6 +97,18 @@ func (a codexAgent) Headless(cfg *config.Config, prompt string) []string {
 	return append(append([]string{b[0], "exec"}, b[1:]...), prompt)
 }
 
+func (a codexAgent) HeadlessSession(cfg *config.Config, prompt, id string, resume bool) ([]string, bool) {
+	if !resume {
+		return a.Headless(cfg, prompt), true
+	}
+	if !ValidSessionID(id) {
+		return nil, false
+	}
+	b := a.base(cfg)
+	cmd := append([]string{b[0], "exec", "resume", id}, b[1:]...)
+	return append(cmd, prompt), true
+}
+
 // ACP is a separate adapter binary whose default "agent" mode enables Codex's inner
 // bubblewrap sandbox. Coop's box is already the security boundary and cannot nest that
 // namespace, so pin the adapter's supported full-access mode to this process only.
@@ -791,8 +803,9 @@ const codexConsultText = `codex_text() {
 
 const codexConsultUsage = `[.[] | select(type=="object" and .type=="turn.completed") | .usage
 		 | select(type=="object")
-		 | {input:(.input_tokens // 0), output:(.output_tokens // 0), reasoning:(.reasoning_output_tokens // 0)}
+		 | {input:(.input_tokens // 0), read:.cached_input_tokens, output:(.output_tokens // 0), reasoning:(.reasoning_output_tokens // 0)}
 		 | select(.input|token) | select(.output|token) | select(.reasoning|token)
+		 | if (.read|token) then . else del(.read) end
 		 | .output=(.output + .reasoning) | select(.output<=1000000000)] | last // empty`
 
 func (codexAgent) ConsultFresh() string {

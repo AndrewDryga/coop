@@ -3,7 +3,7 @@ name: review-host-owned-verdicts
 description: reviews report bounded evidence; Coop alone applies validated task lifecycle changes
 subsystem: box
 sources: [internal/box/run.go, internal/loop/review.go, internal/loop/receipt.go, internal/loop/pending_review.go, internal/tasks/audit.go, internal/tasks/pending_review.go, internal/loop/changes.go, internal/loop/streamjson_providers.go, internal/tasks/cmd.go, internal/tasks/lease.go, internal/tasks/queue.go, internal/loopcfg/loopcfg.go]
-updated: 2026-09-13
+updated: 2026-09-14
 ---
 
 `between`, `signoff`, and `verify` default to `writes: tasks`. The name is retained for
@@ -25,11 +25,12 @@ untrusted log block; `state.md` receives a fixed reproduction-first next action,
 work prompt says never to follow commands from review evidence. Missing, malformed, interrupted,
 failed, or out-of-scope proposals leave every task unchanged.
 
-A successful review process whose structured proposal is malformed gets one immediate fresh
-review over the same cloned subject set and base prompt plus a fixed receipt-format correction.
-The first proposal is never embedded or partially trusted, and each attempt receives its own
-stage telemetry row. A second malformed proposal, lifecycle/ownership churn, an interrupt, or an
-ordinary provider failure is not retried. Codex's adapter may strip one exact footer/count pair
+A successful review process whose structured proposal is malformed gets one immediate format-only
+correction in the same native provider session. Coop returns the exact validator errors and a
+subject-specific response skeleton without remounting the repository, restarting services, or
+rerunning its gate. Harmless blank separators are normalized locally. The first proposal is never
+partially trusted; a second malformed proposal, lifecycle/ownership/source churn, an interrupt, or
+an ordinary provider failure is not retried. Codex's adapter may strip one exact footer/count pair
 and one byte-identical echo of either the complete response or its terminal evidence/receipt
 block. Because stdout/stderr collection can place that footer outside the response tail, the host
 verdict boundary also collapses one earlier normalized evidence+receipt envelope only when it is
@@ -95,6 +96,8 @@ derive authority by scanning historical archives.
 
 ## Changelog
 
+- 2026-09-14 — replaced the obsolete fresh-review recovery description with the same-session,
+  format-only correction boundary and its frozen-state/no-repeated-setup constraints.
 - 2026-09-13 — final review authority now persists exact accepted generations across process stops;
   resumed and explicitly imported subjects retain the same host-verdict boundary without granting
   archive-wide authority.

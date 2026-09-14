@@ -27,7 +27,7 @@ func checkAssignedCompletion(repo, base, id string, reopen *tasks.AuditReopenRec
 		return nil
 	}
 	if reopen != nil {
-		return fmt.Errorf("host-authorized audit rework needs zero new commits for verification-only completion, or a real implementation change preserving the reviewed history")
+		return fmt.Errorf("host-authorized audit rework needs zero new commits for verification-only completion, or exactly one real repair commit without a Coop-Task trailer preserving the reviewed history")
 	}
 	return fmt.Errorf("%w: exactly one new and reachable Coop-Task: %s binding is required; commit the verified work first (a permitted no-code decision uses a meaningful --allow-empty --only decision commit), or repair its missing trailer without including unrelated staged work; never add a second binding or rewrite an older task commit", errCompletionBinding, id)
 }

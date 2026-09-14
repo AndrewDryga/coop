@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-09-11
+updated: 2026-09-15
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -46,6 +46,9 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-09-15 — **+2 edges: `loop` → `contextc, project`.** The loop's compact review packet
+  resolves only the changed files' configured context routes; importing the route model and its
+  bounded file collector directly keeps review setup in the loop engine and adds no cycle.
 - 2026-09-11 — **−1 edge: `tasks -> hostsurface`.** The task-flags feature was removed outright
   (see [[host-execution-surfaces]]), and it was that edge's only consumer in `tasks`. `hostsurface`
   keeps its other two importers, `forkctl` (fork policy scan) and `cli` (check-secrets report).

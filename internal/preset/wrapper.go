@@ -83,6 +83,7 @@ func renderDelegate(as []delegateInput) string {
 		"@@SNAPSHOT_BLOCKS@@", strconv.Itoa(delegateSnapshotBlocks),
 	).Replace(delegateWrapperTmpl)
 	wrapper = strings.Replace(wrapper, "@@RATE_LIMIT@@\n", agents.ShellRateLimitDetector(), 1)
+	wrapper = strings.Replace(wrapper, "@@ROLE_HEALTH@@\n", agents.RoleHealthShell(), 1)
 	wrapper = strings.Replace(wrapper, "@@AGENTS@@\n", strings.Join(names, "|")+") ;;\n", 1)
 	return strings.Replace(wrapper, "@@ARMS@@\n", arms.String(), 1)
 }
@@ -197,6 +198,7 @@ prompt=$(cat "$prompt_file")
 exec </dev/null
 
 @@RATE_LIMIT@@
+@@ROLE_HEALTH@@
 
 load_target() {
 	target=$1
@@ -357,6 +359,10 @@ index=0
 for target do
 	index=$((index + 1))
 	load_target "$target"
+	if coop_role_quarantined "$target"; then
+		echo "[coop-delegate $role: skipping $target — this exact target already failed permanently in this run]" >&2
+		continue
+	fi
 	out=$attempt_dir/output-$index
 	status=$attempt_dir/status-$index
 	overflow=$attempt_dir/output-overflow-$index
@@ -401,14 +407,17 @@ for target do
 		exit 3
 	fi
 	if [ "$captured" -ne 0 ]; then
+		coop_role_health "$role" delegate "$agent" "$model" "$target" failed 1 false "failed to capture bounded provider output"
 		echo "[coop-delegate $role: failed to capture bounded provider output — fallback stopped]" >&2
 		exit 1
 	fi
 	if [ -f "$overflow" ]; then
+		coop_role_health "$role" delegate "$agent" "$model" "$target" failed 1 false "provider output exceeded its bound"
 		echo "[coop-delegate $role: output exceeded ${delegate_stream_limit} bytes — partial output was shown and fallback stopped]" >&2
 		exit 1
 	fi
 	if [ "$st" -eq 0 ]; then
+		coop_role_health "$role" delegate "$agent" "$model" "$target" success 1 false ""
 		# The delegate's own reply is above; this line only reports that the command returned,
 		# on the agent that actually ran. It claims nothing about what changed or whether it
 		# passed — the lead's review/gate/commit duties are in the generated contract, not
@@ -416,6 +425,10 @@ for target do
 		echo "[coop-delegate $role: finished on $target]"
 		exit 0
 	fi
+	failure_cause=$(coop_failure_cause "$out")
+	permanent=false
+	case "$st" in 126|127) permanent=true ;; esac
+	coop_role_health "$role" delegate "$agent" "$model" "$target" failed 1 "$permanent" "$failure_cause"
 	case "$st" in
 	124|125|126|127|137)
 		echo "[coop-delegate $role: bounded execution failed on $target (exit $st) — fallback stopped]" >&2

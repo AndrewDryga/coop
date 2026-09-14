@@ -4,7 +4,7 @@ description: audit realistic agent access and practical impact; avoid speculativ
 scope: agent-workflow
 sources: [AGENTS.md]
 check: none
-updated: 2026-09-12
+updated: 2026-09-14
 ---
 
 # Require a realistic actor, reachable path, and meaningful impact for audit work
@@ -18,6 +18,10 @@ Withdraw disproportionate prescriptions for harmless narrow-window cache races a
 data the actor can already delete. Reuse existing admission, read and mutation helpers before
 proposing immutable workspaces, locks across human prompts, or a new approval framework. Review
 additional access, not ordinary source-code edits.
+
+Stay on one claimed task until it is finished or genuinely blocked. Do not claim a batch of tasks
+to create the appearance of progress. For defect fixes, implement common real paths first and do
+not add machinery for rare, low-impact cases whose failure is harmless.
 
 A failed test establishes a failed test. Preserve safe evidence and find its cause before
 prescribing provider rewrites, concurrency redesigns, or claiming repository corruption. Expired
@@ -34,6 +38,10 @@ Compatibility is practical impact too: before recommending an internal-only serv
 check common runtime dependencies such as SaaS APIs, OIDC keys, object storage, email and webhooks.
 
 ## Changelog
+
+- 2026-09-14 — re-read AGENTS after the user corrected broad in-progress task claiming and
+  speculative edge-case machinery. Added the one-active-task/common-real-path rule; the current
+  task queue contract and boring-first creed already enforce it, with no sibling source change.
 
 - 2026-09-13 — added the service-compatibility correction: a security fix must preserve common
   approved outbound dependencies rather than assuming every sidecar is a database or cache.

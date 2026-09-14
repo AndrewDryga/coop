@@ -1980,9 +1980,40 @@ func AuditReopenCurrentValid(repo, head, id string, record AuditReopenRecord) bo
 	return err == nil
 }
 
+// auditReopenAppendedRepair accepts the boring rework shape: keep the reviewed history intact and
+// add one real, unbound repair commit. The host's reopen record supplies task authority, so adding
+// another Coop-Task trailer would only create a duplicate binding.
+func auditReopenAppendedRepair(repo, base, head, id string, record AuditReopenRecord) ([]semanticHistoryCommit, bool) {
+	resolvedBase := gitOut(repo, "rev-parse", "--verify", base+"^{commit}")
+	if !validAuditReopenHead(resolvedBase) {
+		return nil, false
+	}
+	raw, err := rawAuditHistoryCount(repo, head, 1)
+	if err != nil || len(raw) != 1 || raw[0].parent != resolvedBase ||
+		raw[0].taskBindingInvalid || len(raw[0].taskValues) != 0 {
+		return nil, false
+	}
+	baseTree, err := auditCommitTree(repo, resolvedBase)
+	if err != nil || raw[0].tree == baseTree {
+		return nil, false
+	}
+	baseHistory, err := auditReopenCurrentHistory(repo, resolvedBase, id, record)
+	if err != nil {
+		return nil, false
+	}
+	current, err := auditReopenCurrentHistory(repo, head, id, record)
+	if err != nil || len(current) != len(baseHistory)+1 {
+		return nil, false
+	}
+	return current, true
+}
+
 func auditReopenCompletionValid(repo, base, head, id string, record AuditReopenRecord) bool {
 	if base == head {
 		return AuditReopenCurrentValid(repo, head, id, record)
+	}
+	if _, ok := auditReopenAppendedRepair(repo, base, head, id, record); ok {
+		return true
 	}
 	// A rewrite generation authorizes a transition only from the exact semantic state the host
 	// reviewed. Without this baseline check, a raw-moved stale record could authorize a second
@@ -2023,7 +2054,18 @@ func auditReopenCompletionValid(repo, base, head, id string, record AuditReopenR
 
 func rebasedAuditReopenRecord(repo, base, head, id string, record AuditReopenRecord) (AuditReopenRecord, error) {
 	if !auditReopenCompletionValid(repo, base, head, id, record) {
-		return AuditReopenRecord{}, fmt.Errorf("audit rewrite for task %s changed its reviewed subject or descendants outside the host authority", id)
+		return AuditReopenRecord{}, fmt.Errorf("audit rework for task %s changed history outside the host authority", id)
+	}
+	if current, ok := auditReopenAppendedRepair(repo, base, head, id, record); ok {
+		history := make([]AuditReopenCommit, len(current))
+		for i := range current {
+			history[i] = current[i].semantic
+		}
+		rebased := record
+		rebased.BaselineHead = gitOut(repo, "rev-parse", "--verify", head+"^{commit}")
+		rebased.History = history
+		rebased.UnblockPending = false
+		return rebased, nil
 	}
 	baseHistory, err := auditReopenCurrentHistory(repo, base, id, record)
 	if err != nil {
@@ -2063,9 +2105,8 @@ type auditCompletionStateError struct{ message string }
 func (e *auditCompletionStateError) Error() string          { return e.message }
 func (*auditCompletionStateError) auditCompletionRecovery() {}
 
-// rebaseBlockedAuditReopen recovers a rewrite from the exact baseline recorded by the host.
-// The complete replay must be the first sequence after the rewritten subject; unrelated work that
-// landed later may remain as a suffix, but no reflog guess or task-only projection can authorize it.
+// rebaseBlockedAuditReopen recovers accepted rework from the exact baseline recorded by the host.
+// A single appended repair is preferred; the complete-rewrite path remains for older attempts.
 func rebaseBlockedAuditReopen(repo, head, id string, record AuditReopenRecord) (AuditReopenRecord, error) {
 	if validateAuditReopenRecord(record, id) != nil || !auditReopenRecordActive(record) {
 		return AuditReopenRecord{}, fmt.Errorf("invalid audit reopen authority for task %s", id)
@@ -2075,6 +2116,9 @@ func rebaseBlockedAuditReopen(repo, head, id string, record AuditReopenRecord) (
 			"blocked audit task %s recorded baseline %s is unavailable or no longer matches its host authority",
 			id, record.BaselineHead,
 		)
+	}
+	if _, ok := auditReopenAppendedRepair(repo, record.BaselineHead, head, id, record); ok {
+		return rebasedAuditReopenRecord(repo, record.BaselineHead, head, id, record)
 	}
 	reviewedParent, err := auditReviewedSubjectParent(repo, id, record)
 	if err != nil {
@@ -2698,9 +2742,9 @@ func normalizeAuditRejectedTaskState(id, taskDir string) error {
 		id,
 		taskDir,
 		"in progress — completion rejected",
-		"independently verify the audit finding, then re-close with zero commits or a real tree change, and re-run `coop loop`",
+		"independently verify the audit finding, then re-close with zero commits or one real unbound repair commit, and re-run `coop loop`",
 		"completion was rejected by the host audit authority",
-		"a message-only rewrite or a recovery-only descendant replay is rejected; never add a Coop-Recovery trailer",
+		"preserve reviewed history; never add a Coop-Task or Coop-Recovery trailer to the repair",
 	)
 }
 
@@ -2736,21 +2780,19 @@ func taskBindingRecovery(id string) string {
 // auditBindingRecovery replaces the generic trailer recipe when the host's audit-reopen authority
 // owns the completion. The case-(a) receipt (a Coop-Recovery trailer on an unchanged tree) is
 // exactly the shape audit validation rejects, so the remedy never prescribes it: either the
-// finding is false and the re-close needs zero commits, or it is real and the subject tree must
-// actually change.
+// finding is false and the re-close needs zero commits, or it is real and one unbound repair commit
+// must actually change the tree while preserving reviewed history.
 func auditBindingRecovery(id string) string {
 	return fmt.Sprintf(
 		"task %s is host-authorized review rework: independently verify the recorded finding; if it is false, "+
-			"re-close with zero new commits; if it is real, amend or rewrite the already-bound implementation "+
-			"commit so its tree actually changes, keeping exactly one reachable %s binding and semantically "+
-			"unchanged later commits, including commits with no task binding; a Coop-Recovery trailer, a message-only commit, or a recovery-only "+
-			"replay of unchanged descendants will be rejected again",
+			"re-close with zero new commits; if it is real, add one real repair commit without a %s trailer, "+
+			"preserving the reviewed history; a second repair commit, a task trailer on the repair, or a message-only commit will be rejected",
 		id, CoopTaskTrailer,
 	)
 }
 
 func AuditCompletionError(id string, restoreErr error) error {
-	msg := fmt.Sprintf("completion rejected for audit-reopened task %s: the host audit authority accepts only a zero-commit verification-only re-close or a rewrite whose subject tree actually changes with semantically unchanged descendants; task restored to in_progress — %s; then re-run `coop loop`", id, auditBindingRecovery(id))
+	msg := fmt.Sprintf("completion rejected for audit-reopened task %s: the host audit authority accepts a zero-commit verification-only re-close or one real unbound repair commit preserving reviewed history; task restored to in_progress — %s; then re-run `coop loop`", id, auditBindingRecovery(id))
 	if restoreErr != nil {
 		return fmt.Errorf("%s; recovery bookkeeping also failed: %w", msg, restoreErr)
 	}
@@ -2829,12 +2871,9 @@ func auditResumeLine(id string) string {
 		"commit is already in history — this is NOT crash recovery. Read its log.md/state.md for the recorded " +
 		"finding and independently verify it. If the finding is false, re-close with ZERO new commits: leave " +
 		"history untouched and move the task folder to 99_done/ — the host audit authority accepts a " +
-		"verification-only completion. If the finding is real, do the rework by amending or rewriting the " +
-		"already-bound implementation commit so its tree actually changes, keeping exactly one reachable " +
-		"Coop-Task binding and semantically unchanged later commits, including commits with no task binding. " +
-		"Do NOT add a Coop-Recovery trailer, " +
-		"a message-only or receipt-only commit, or a recovery-only replay of unchanged descendants — a history " +
-		"rewrite without a real tree change will be rejected."
+		"verification-only completion. If the finding is real, add exactly one real repair commit WITHOUT a " +
+		"Coop-Task or Coop-Recovery trailer, preserving the reviewed history. The host audit authority binds " +
+		"that repair to this task. Do not rewrite reviewed commits or add a receipt-only commit."
 }
 
 // ResumePrefixFor builds the informed-resume preamble for the assigned task. A lease carrying the

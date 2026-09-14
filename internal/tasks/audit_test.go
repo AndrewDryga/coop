@@ -2208,13 +2208,13 @@ func TestReconcileInterruptedCompletions(t *testing.T) {
 		dir := filepath.Join(host, StateInProgress, id)
 		log := readFileString(filepath.Join(dir, "log.md"))
 		state := readFileString(filepath.Join(dir, "state.md"))
-		for _, want := range []string{"host-authorized review rework", "zero new commits", "tree actually changes"} {
+		for _, want := range []string{"host-authorized review rework", "zero new commits", "one real repair commit", "without a Coop-Task trailer"} {
 			if !strings.Contains(log, want) {
 				t.Errorf("reconciled audit log missing %q:\n%s", want, log)
 			}
 		}
 		if strings.Contains(log, "Coop-Recovery: <current UTC timestamp>") ||
-			!strings.Contains(state, "never add a Coop-Recovery trailer") {
+			!strings.Contains(state, "never add a Coop-Task or Coop-Recovery trailer") {
 			t.Errorf("reconciled audit completion received ordinary recovery guidance:\nlog:\n%s\nstate:\n%s", log, state)
 		}
 	})
@@ -2562,13 +2562,13 @@ func TestTaskBindingRecoveryNeverPrescribesDeepRewrite(t *testing.T) {
 
 func TestAuditResumeLine(t *testing.T) {
 	l := auditResumeLine("my-task")
-	// Host-authorized rework: verify the finding, then either a zero-commit re-close or a real
-	// tree change — with the recovery-only shapes forbidden by name.
+	// Host-authorized rework: verify the finding, then either a zero-commit re-close or one real,
+	// unbound repair commit preserving reviewed history.
 	for _, want := range []string{
 		"my-task", "host-authorized review rework", "NOT crash recovery", "log.md",
 		"independently verify", "ZERO new commits", "99_done/", "verification-only",
-		"tree actually changes", "exactly one reachable", "semantically unchanged",
-		"Do NOT add a Coop-Recovery trailer", "message-only", "recovery-only replay",
+		"exactly one real repair commit", "WITHOUT a Coop-Task or Coop-Recovery trailer",
+		"preserving the reviewed history", "host audit authority binds",
 	} {
 		if !strings.Contains(l, want) {
 			t.Errorf("audit resume line missing %q:\n%s", want, l)
@@ -4058,6 +4058,61 @@ func TestAuditReopenCompletionAcceptsRootSubjectReplay(t *testing.T) {
 	}
 }
 
+func TestAuditReopenCompletionAcceptsOneAppendedRepair(t *testing.T) {
+	repo, git := gitRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "A implementation\n\nCoop-Task: task-a")
+	git("commit", "-q", "--allow-empty", "-m", "later reviewed work\n\nCoop-Task: task-b")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	record, err := CaptureAuditReopen(repo, "task-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A repaired\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "Repair the audit finding")
+	head := gitOut(repo, "rev-parse", "HEAD")
+	if !auditReopenCompletionValid(repo, base, head, "task-a", record) {
+		t.Fatal("one unbound repair commit preserving reviewed history was rejected")
+	}
+	if missing, _ := CompletionUnbindableTasks(repo, base, head, []string{"task-a"}, &record, nil); len(missing) != 0 {
+		t.Fatalf("appended repair reported unbindable task: %v", missing)
+	}
+	rebased, err := rebaseBlockedAuditReopen(repo, head, "task-a", record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebased.BaselineHead != head || !AuditReopenCurrentValid(repo, head, "task-a", rebased) {
+		t.Fatal("appended repair produced invalid rebased authority")
+	}
+
+	t.Run("rejects duplicate task binding", func(t *testing.T) {
+		git("reset", "--hard", "-q", base)
+		if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A repaired again\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		git("add", "a.txt")
+		git("commit", "-q", "-m", "Bad repair\n\nCoop-Task: task-a")
+		if auditReopenCompletionValid(repo, base, gitOut(repo, "rev-parse", "HEAD"), "task-a", record) {
+			t.Fatal("repair with a duplicate task binding was accepted")
+		}
+	})
+
+	t.Run("rejects empty repair", func(t *testing.T) {
+		git("reset", "--hard", "-q", base)
+		git("commit", "-q", "--allow-empty", "-m", "Receipt only")
+		if auditReopenCompletionValid(repo, base, gitOut(repo, "rev-parse", "HEAD"), "task-a", record) {
+			t.Fatal("empty repair was accepted")
+		}
+	})
+}
+
 func TestAuditReopenCompletionProtectsUnboundHistory(t *testing.T) {
 	type fixture struct {
 		repo                     string
@@ -5154,7 +5209,7 @@ func TestRestoreAuditRejectedCompletion(t *testing.T) {
 		t.Fatalf("rejected audit completion was not restored: in_progress=%v done=%v", pathExists(inProgressDir), pathExists(doneDir))
 	}
 	log := readFileString(filepath.Join(inProgressDir, "log.md"))
-	for _, want := range []string{"completion rejected", "host-authorized review rework", "zero new commits", "tree actually changes", "semantically", "rejected again", id} {
+	for _, want := range []string{"completion rejected", "host-authorized review rework", "zero new commits", "one real repair commit", "without a Coop-Task trailer", "preserving the reviewed history", id} {
 		if !strings.Contains(log, want) {
 			t.Errorf("audit rejection log missing %q:\n%s", want, log)
 		}
@@ -5166,7 +5221,7 @@ func TestRestoreAuditRejectedCompletion(t *testing.T) {
 		}
 	}
 	state := readFileString(filepath.Join(inProgressDir, "state.md"))
-	for _, want := range []string{"**Status:** in progress", "rejected by the host audit authority", "**Next action:** independently verify the audit finding, then re-close with zero commits or a real tree change"} {
+	for _, want := range []string{"**Status:** in progress", "rejected by the host audit authority", "**Next action:** independently verify the audit finding, then re-close with zero commits or one real unbound repair commit"} {
 		if !strings.Contains(state, want) {
 			t.Errorf("audit rejection state missing %q:\n%s", want, state)
 		}
@@ -5176,7 +5231,7 @@ func TestRestoreAuditRejectedCompletion(t *testing.T) {
 	if rejectErr == nil {
 		t.Fatal("audit-invalid completion must stop the controller")
 	}
-	for _, want := range []string{"completion rejected", "restored to in_progress", "host-authorized review rework", "zero-commit verification-only re-close", "semantically unchanged descendants", "then re-run `coop loop`", id} {
+	for _, want := range []string{"completion rejected", "restored to in_progress", "host-authorized review rework", "zero-commit verification-only re-close", "one real unbound repair commit", "preserving reviewed history", "then re-run `coop loop`", id} {
 		if !strings.Contains(rejectErr.Error(), want) {
 			t.Errorf("audit controller error missing %q: %v", want, rejectErr)
 		}

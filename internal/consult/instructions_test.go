@@ -648,7 +648,17 @@ func runConsultWrapperStub(t *testing.T, role, peer, providerBody, timeoutBody, 
 	telemetry, _ := os.ReadFile(filepath.Join(dir, ".agent", "runs", runID+".peers.jsonl"))
 	state, stateErr := os.ReadFile(statefile)
 	resumable := stateErr == nil && !bytes.Contains(state, []byte("\nid=\n"))
-	return string(out), code, strings.TrimSpace(string(telemetry)), resumable
+	return string(out), code, peerUsageRows(telemetry), resumable
+}
+
+func peerUsageRows(data []byte) string {
+	var rows []string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line != "" && !strings.Contains(line, `"kind":"role_health"`) {
+			rows = append(rows, line)
+		}
+	}
+	return strings.Join(rows, "\n")
 }
 
 func TestConsultWrapperCodexReplyContract(t *testing.T) {
@@ -1684,6 +1694,7 @@ func TestConsultWrapperFallbackDecisionMatrix(t *testing.T) {
 		geminiBody string
 		wantCode   int
 		wantGemini bool
+		wantClaude int
 		wantText   string
 	}{
 		{
@@ -1691,18 +1702,23 @@ func TestConsultWrapperFallbackDecisionMatrix(t *testing.T) {
 			claudeBody: `echo "claude $*" >>"$CALLS"; echo '{"type":"result","is_error":false,"result":"rate limit handling documented"}'`,
 			geminiBody: `echo "gemini $*" >>"$CALLS"`,
 			wantCode:   0,
+			wantClaude: 1,
 		},
 		{
 			name:       "ordinary failure",
 			claudeBody: `echo "claude $*" >>"$CALLS"; echo "bad request while task text mentions rate limit handling" >&2; exit 7`,
-			geminiBody: `echo "gemini $*" >>"$CALLS"`,
-			wantCode:   7,
+			geminiBody: `echo "gemini $*" >>"$CALLS"; printf '%s\n' '{"type":"message","role":"assistant","content":"FALLBACK_OK"}' '{"type":"result","status":"success"}'`,
+			wantCode:   0,
+			wantGemini: true,
+			wantClaude: 2,
+			wantText:   "failed after 2 attempts — trying fallback 2/2",
 		},
 		{
 			name:       "timeout after marker",
 			claudeBody: `echo "claude $*" >>"$CALLS"; echo "rate limit exceeded" >&2; exit 124`,
 			geminiBody: `echo "gemini $*" >>"$CALLS"`,
 			wantCode:   124,
+			wantClaude: 1,
 		},
 		{
 			name:       "all rungs limited once",
@@ -1710,6 +1726,7 @@ func TestConsultWrapperFallbackDecisionMatrix(t *testing.T) {
 			geminiBody: `echo "gemini $*" >>"$CALLS"; echo "RESOURCE_EXHAUSTED" >&2; exit 8`,
 			wantCode:   8,
 			wantGemini: true,
+			wantClaude: 1,
 			wantText:   "exhausted all 2 targets",
 		},
 	}
@@ -1753,13 +1770,74 @@ func TestConsultWrapperFallbackDecisionMatrix(t *testing.T) {
 			if hasGemini != tc.wantGemini {
 				t.Errorf("Gemini called = %v, want %v:\n%s", hasGemini, tc.wantGemini, gotCalls)
 			}
-			if strings.Count(string(gotCalls), "claude ") != 1 || strings.Count(string(gotCalls), "gemini ") > 1 {
-				t.Errorf("each rung must run at most once:\n%s", gotCalls)
+			if strings.Count(string(gotCalls), "claude ") != tc.wantClaude || strings.Count(string(gotCalls), "gemini ") > 1 {
+				t.Errorf("unexpected bounded attempt count:\n%s", gotCalls)
 			}
 			if tc.wantText != "" && !strings.Contains(string(out), tc.wantText) {
 				t.Errorf("output missing %q:\n%s", tc.wantText, out)
 			}
 		})
+	}
+}
+
+func TestConsultWrapperQuarantinesPermanentTargetForRun(t *testing.T) {
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "coop-consult")
+	if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	calls := filepath.Join(dir, "calls")
+	for name, body := range map[string]string{
+		"claude":  `echo "claude $*" >>"$CALLS"; echo "File name too long" >&2; exit 7`,
+		"gemini":  `echo "gemini $*" >>"$CALLS"; printf '%s\n' '{"type":"message","role":"assistant","content":"FALLBACK_OK"}' '{"type":"result","status":"success","stats":{"input_tokens":2,"output_tokens":1}}'`,
+		"timeout": `shift 3; exec "$@"`,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".agent", "runs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	peerFile := filepath.Join(dir, ".agent", "runs", "quarantine.peers.jsonl")
+	if err := os.WriteFile(peerFile, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := func() string {
+		t.Helper()
+		cmd := exec.Command(wrapper, "critic", "--fresh", "question")
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir, "CALLS="+calls,
+			"COOP_PEERS=claude gemini", "COOP_RUN_ID=quarantine",
+			"COOP_CONSULT_CRITIC_TARGETS=claude:bad gemini:good",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("wrapper: %v\n%s", err, out)
+		}
+		return string(out)
+	}
+	first := run()
+	second := run()
+	if !strings.Contains(first, "failed permanently — trying fallback") || !strings.Contains(second, "already failed permanently in this run") {
+		t.Fatalf("permanent failure was not quarantined:\nFIRST:\n%s\nSECOND:\n%s", first, second)
+	}
+	gotCalls, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(gotCalls), "claude ") != 1 || strings.Count(string(gotCalls), "gemini ") != 2 {
+		t.Fatalf("quarantine calls = %q, want claude once and fallback twice", gotCalls)
+	}
+	health, err := os.ReadFile(peerFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"outcome":"failed"`, `"permanent":true`, `"outcome":"success"`} {
+		if !strings.Contains(string(health), want) {
+			t.Errorf("health ledger missing %s:\n%s", want, health)
+		}
 	}
 }
 

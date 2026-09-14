@@ -72,6 +72,17 @@ func (a grokAgent) Headless(cfg *config.Config, prompt string) []string {
 	return append(a.base(cfg), "-p", prompt)
 }
 
+func (a grokAgent) HeadlessSession(cfg *config.Config, prompt, id string, resume bool) ([]string, bool) {
+	if !ValidSessionID(id) {
+		return nil, false
+	}
+	flag := "--session-id"
+	if resume {
+		flag = "--resume"
+	}
+	return append(a.base(cfg), flag, id, "-p", prompt), true
+}
+
 // ACP is grok's own binary running an ACP (JSON-RPC-over-stdio) server. The model flag
 // belongs to `grok agent` and must come BEFORE the `stdio` mode (the stdio subcommand takes
 // no options — artifacts/doc-15-agent-mode-ACP.md), so it's `grok agent [--model <m>] stdio`.
@@ -417,7 +428,7 @@ const grokConsultText = `grok_text() {
 const grokConsultUsage = `select(.[-1].type=="end")
 		| select([.[] | select(.type=="end")]|length==1) | .[-1]
 		| select((.usage|type)=="object")
-		| {input:.usage.input_tokens, output:.usage.output_tokens,
+		| {input:.usage.input_tokens, fresh:.usage.input_tokens, output:.usage.output_tokens,
 		   read:(.usage.cache_read_input_tokens // 0), write:(.usage.cache_creation_input_tokens // 0),
 		   reasoning:(.usage.reasoning_tokens // 0), total:.usage.total_tokens, cost:.total_cost_usd}
 		| select(.input|token) | select(.output|token) | select(.read|token) | select(.write|token)

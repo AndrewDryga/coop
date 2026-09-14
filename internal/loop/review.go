@@ -2,6 +2,7 @@ package loop
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -51,8 +52,7 @@ func (c *Control) reviewRotation(rungs []string, workAgent string, def *ladder.R
 	return c.host.buildRotation(workAgent, targets)
 }
 
-// iterationCmdBuilder builds one attempt's argv for a stage, given the rotation's active agent.
-type iterationCmdBuilder func(agent, prompt string) (cmd []string, streaming, agentCommand bool)
+type reviewCmdBuilder func(agent, prompt, sessionID string, resume bool) (cmd []string, streaming, agentCommand bool)
 
 var (
 	errReviewInterrupted      = errors.New("review interrupted")
@@ -69,13 +69,14 @@ const (
 )
 
 type reviewRunResult struct {
-	output   string
-	usage    *iterResult
-	outcome  string
-	exit     int
-	retries  int
-	target   agents.Target
-	reopened []string
+	output    string
+	usage     *iterResult
+	outcome   string
+	exit      int
+	retries   int
+	target    agents.Target
+	reopened  []string
+	sessionID string
 	// concurrent holds non-subject tasks a parallel host controller completed while a review
 	// window was open. They must enter later signoff bookkeeping rather than be absorbed.
 	concurrent []string
@@ -145,7 +146,7 @@ func reviewReadOnlyPaths(mode completionWindowMode, repoReadOnly bool, hosts []s
 // stage's completion window, while a non-subject task a parallel host session completes during the
 // window is reported as concurrent activity instead of killing the run.
 // Local counters keep review trouble out of the work loop's stop accounting.
-func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.Rotation, forkName, prompt, activity string, iterCmd iterationCmdBuilder, hosts, subjects []string, pendingReview *tasks.PendingReviewPlan, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}, observeHandoff reviewAttemptObserver) (reviewRunResult, error) {
+func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.Rotation, forkName, prompt, activity string, reviewCmd reviewCmdBuilder, hosts, subjects []string, pendingReview *tasks.PendingReviewPlan, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}, observeHandoff reviewAttemptObserver) (reviewRunResult, error) {
 	var fails, waits, outputRetries, totalRetries, handoffs, timeouts int
 	var concurrent []string
 	last := reviewRunResult{target: rev.Active()}
@@ -155,11 +156,22 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 		}
 		agent := c.applyTarget(rev)
 		target := rev.Active()
-		cmd, streaming, agentCommand := iterCmd(agent, prompt) // build after rotation so argv matches this provider
+		sessionID := newReviewSessionID()
+		cmd, streaming, agentCommand := reviewCmd(agent, prompt, sessionID, false) // build after rotation so argv matches this provider
+		if len(cmd) == 0 {
+			return last, fmt.Errorf("%s cannot start an exact review session", agents.DisplayTarget(target.String()))
+		}
 		c.net.setStage(fmt.Sprintf("Review attempt %d", totalRetries+1))
 		start, headBefore := time.Now(), gitOut(repo, "rev-parse", "HEAD")
-		code, out, usage, classification, windows, runErr := c.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, agentCommand, hosts, completionWindowReview, subjects, pendingReview, reviewRepoReadOnly(writes), sink, peers, activity, "", nil)
-		last = reviewRunResult{output: out, usage: usage, outcome: classification.outcome, exit: code, retries: totalRetries, target: target, concurrent: concurrent}
+		repoReadOnly := reviewRepoReadOnly(writes)
+		recovery := iterationRecovery{reuseServices: totalRetries > 0 && repoReadOnly}
+		code, out, usage, classification, windows, runErr := c.runIterationWithMode(ctx, repo, img, agent, forkName, cmd, streaming, agentCommand, hosts, completionWindowReview, subjects, pendingReview, repoReadOnly, sink, peers, activity, "", nil, recovery)
+		if usage != nil && usage.SessionID != "" {
+			sessionID = usage.SessionID
+		} else if adapter, ok := agents.Get(agent); !ok || !adapter.PresetSessionID() {
+			sessionID = ""
+		}
+		last = reviewRunResult{output: out, usage: usage, outcome: classification.outcome, exit: code, retries: totalRetries, target: target, concurrent: concurrent, sessionID: sessionID}
 		if errors.Is(runErr, tasks.ErrCompletionWindowSetup) {
 			return last, runErr
 		}
@@ -266,7 +278,33 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 	}
 }
 
-const reviewVerdictCorrection = "\n\nREVIEW RECEIPT FORMAT CORRECTION: The previous review process succeeded, but Coop could not validate its structured verdict. Re-run the complete review over the same named subjects and return exactly one evidence line per subject followed by exactly one terminal `REVIEW COMPLETE` receipt, with nothing after that receipt."
+func newReviewSessionID() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return ""
+	}
+	raw[6] = raw[6]&0x0f | 0x40
+	raw[8] = raw[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", raw[:4], raw[4:6], raw[6:8], raw[8:10], raw[10:])
+}
+
+func reviewVerdictCorrection(verdictErr error, output string, subjects []string) string {
+	return "FORMAT CORRECTION ONLY. Your review is complete; keep its findings. Do not inspect files, invoke tools or services, rerun tests, or repeat analysis. Return only a corrected terminal envelope.\n" +
+		"Validation error: " + truncate(cleanDiagnosticLine(verdictErr.Error()), 600) + "\n" +
+		"Rejected terminal output:\n" + reviewEnvelopeTail(output) + "\n\n" + auditEvidencePrompt(subjects)
+}
+
+func reviewEnvelopeTail(output string) string {
+	const maxLines, maxRunes = 16, 512
+	lines := strings.Split(output, "\n")
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	for i := range lines {
+		lines[i] = truncate(cleanDiagnosticLine(lines[i]), maxRunes)
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
 
 type reviewAttemptObserver func(reviewRunResult, time.Time, string)
 
@@ -275,6 +313,39 @@ type reviewSubjectSnapshot struct {
 	dir         string
 	id          string
 	fingerprint tasks.CompletionFingerprint
+}
+
+type reviewSourceSnapshot struct {
+	head, trackedState string
+}
+
+func snapshotReviewSource(repo string) (reviewSourceSnapshot, error) {
+	head, err := gitOutErr(repo, "rev-parse", "HEAD")
+	if err != nil || head == "" {
+		return reviewSourceSnapshot{}, errors.New("could not resolve review source HEAD")
+	}
+	state, err := gitOutErr(repo, "status", "--porcelain=v1", "--untracked-files=no")
+	if err != nil {
+		return reviewSourceSnapshot{}, fmt.Errorf("could not inspect review source: %w", err)
+	}
+	return reviewSourceSnapshot{head: head, trackedState: state}, nil
+}
+
+func validateReviewSource(repo string, snapshot reviewSourceSnapshot) error {
+	return validateReviewSourceAfterConcurrent(repo, snapshot, false)
+}
+
+func validateReviewSourceAfterConcurrent(repo string, snapshot reviewSourceSnapshot, concurrent bool) error {
+	current, err := snapshotReviewSource(repo)
+	if err != nil {
+		return err
+	}
+	// A completion observed by the host-owned review window may advance HEAD. The loop enrolls
+	// that task into the next review round; uncommitted tracked changes are never accepted.
+	if current.trackedState != snapshot.trackedState || (!concurrent && current.head != snapshot.head) {
+		return errors.New("review source changed after the reviewer returned")
+	}
+	return nil
 }
 
 func snapshotReviewSubjects(hosts, subjects []string) ([]reviewSubjectSnapshot, error) {
@@ -315,111 +386,201 @@ func validateReviewSubjects(hosts []string, snapshots []reviewSubjectSnapshot) e
 	return nil
 }
 
+func addIterResults(first, second *iterResult) *iterResult {
+	if first == nil {
+		return second
+	}
+	if second == nil {
+		return first
+	}
+	return &iterResult{
+		CostUSD: first.CostUSD + second.CostUSD, Turns: first.Turns + second.Turns,
+		DurationMS: first.DurationMS + second.DurationMS, InTok: first.InTok + second.InTok,
+		OutTok: first.OutTok + second.OutTok, SessionID: second.SessionID,
+		FreshInTok:         sumReportedInt(first.FreshInTok, second.FreshInTok),
+		CacheWriteTok:      sumReportedInt(first.CacheWriteTok, second.CacheWriteTok),
+		CacheReadTok:       sumReportedInt(first.CacheReadTok, second.CacheReadTok),
+		ReportedOutTok:     sumReportedInt(first.ReportedOutTok, second.ReportedOutTok),
+		ReportedDurationMS: sumReportedInt(first.ReportedDurationMS, second.ReportedDurationMS),
+		ReportedCostUSD:    sumReportedFloat(first.ReportedCostUSD, second.ReportedCostUSD),
+		BlindWaitSeconds:   max(first.BlindWaitSeconds, second.BlindWaitSeconds),
+	}
+}
+
+func sumReportedInt(first, second *int) *int {
+	if first == nil || second == nil {
+		return nil
+	}
+	return intPtr(*first + *second)
+}
+
+func sumReportedFloat(first, second *float64) *float64 {
+	if first == nil || second == nil {
+		return nil
+	}
+	total := *first + *second
+	return &total
+}
+
+// runReviewCorrection performs one exact-session continuation. It deliberately has no ladder,
+// retry, or fresh-prompt path: a correction either returns one valid envelope or fails closed.
+func (c *Control) runReviewCorrection(ctx context.Context, repo, img string, rev *ladder.Rotation, forkName, prompt, activity string, reviewCmd reviewCmdBuilder, previous reviewRunResult, hosts, subjects []string, pendingReview *tasks.PendingReviewPlan, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target) (reviewRunResult, error) {
+	if previous.sessionID == "" || rev.Active().String() != previous.target.String() {
+		return previous, errors.New("review format correction cannot resume the exact reviewer session")
+	}
+	agent := c.applyTarget(rev)
+	cmd, streaming, agentCommand := reviewCmd(agent, prompt, previous.sessionID, true)
+	if len(cmd) == 0 {
+		return previous, errors.New("review format correction is unsupported for this reviewer session")
+	}
+	c.net.setStage("Review format correction")
+	code, output, usage, classification, windows, runErr := c.runIterationWithMode(ctx, repo, img, agent, forkName, cmd, streaming, agentCommand, hosts, completionWindowReview, subjects, pendingReview, reviewRepoReadOnly(writes), sink, peers, activity+": format correction", "", nil, iterationRecovery{formatCorrection: true})
+	result := reviewRunResult{
+		output: normalizeReviewVerdictOutput(output), usage: addIterResults(previous.usage, usage),
+		outcome: classification.outcome, exit: code, retries: previous.retries + 1,
+		target: previous.target, sessionID: previous.sessionID, concurrent: slices.Clone(previous.concurrent),
+	}
+	if errors.Is(runErr, tasks.ErrCompletionWindowSetup) {
+		return result, runErr
+	}
+	observed, completionErr := windows.FinishReview()
+	result.concurrent = slices.Compact(slices.Sorted(slices.Values(append(result.concurrent, observed...))))
+	if completionErr != nil {
+		return result, fmt.Errorf("%w: review correction changed task completion ownership: %v", tasks.ErrCompletionWindowAudit, completionErr)
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return interruptedReviewResult(result, result.retries), errReviewInterrupted
+	}
+	if runErr != nil || code != 0 || classification.outcome != "success" {
+		if runErr == nil {
+			runErr = errors.New("provider did not complete successfully")
+		}
+		return result, fmt.Errorf("review format correction failed (%s, exit %d): %w", classification.outcome, code, runErr)
+	}
+	return result, nil
+}
+
 // runReviewVerdict owns the complete review under its configured writes policy and the host-side
-// verdict transaction. A successful process with malformed structured output gets one fresh full
-// review over cloned inputs; every other failure keeps runReview/applyReviewVerdict's existing
-// fail-closed behavior.
-func (c *Control) runReviewVerdict(ctx context.Context, repo, img string, rev *ladder.Rotation, forkName, prompt, activity string, iterCmd iterationCmdBuilder, hosts, subjects []string, pendingReview *tasks.PendingReviewPlan, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}, observe reviewAttemptObserver) (reviewRunResult, error) {
+// verdict transaction. A successful process with malformed structured output gets one format-only
+// continuation in that exact native session; every other failure remains fail closed.
+func (c *Control) runReviewVerdict(ctx context.Context, repo, img string, rev *ladder.Rotation, forkName, prompt, activity string, reviewCmd reviewCmdBuilder, hosts, subjects []string, pendingReview *tasks.PendingReviewPlan, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}, observe reviewAttemptObserver) (reviewRunResult, error) {
 	hosts = slices.Clone(hosts)
 	subjects = slices.Clone(subjects)
 	subjectSnapshots, err := snapshotReviewSubjects(hosts, subjects)
 	if err != nil {
 		return reviewRunResult{target: rev.Active()}, fmt.Errorf("%w: snapshot review subjects: %v", tasks.ErrCompletionWindowSetup, err)
 	}
-	var concurrent []string
-	var last reviewRunResult
-	for attempt := 0; attempt < 2; attempt++ {
-		if attempt > 0 {
-			if err := validateReviewSubjects(hosts, subjectSnapshots); err != nil {
-				return last, fmt.Errorf("%w: review subjects changed before the corrected attempt: %v", tasks.ErrCompletionWindowAudit, err)
-			}
+	sourceSnapshot, err := snapshotReviewSource(repo)
+	if err != nil {
+		return reviewRunResult{target: rev.Active()}, fmt.Errorf("%w: snapshot review source: %v", tasks.ErrCompletionWindowSetup, err)
+	}
+	start, headBefore := time.Now(), gitOut(repo, "rev-parse", "HEAD")
+	run, runErr := c.runReview(ctx, repo, img, rev, forkName, prompt, activity, reviewCmd, hosts, subjects, pendingReview, writes, sink, peers, wake, observe)
+	run.output = normalizeReviewVerdictOutput(run.output)
+	if runErr == nil {
+		if snapshotErr := validateReviewSourceAfterConcurrent(repo, sourceSnapshot, len(run.concurrent) > 0); snapshotErr != nil {
+			runErr = fmt.Errorf("%w: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
+		} else if snapshotErr := validateReviewSubjects(hosts, subjectSnapshots); snapshotErr != nil {
+			runErr = fmt.Errorf("%w: review subjects changed before verdict application: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
+		} else {
+			run.reopened, runErr = applyReviewVerdictInRepo(repo, hosts, subjects, run.output)
 		}
-		attemptPrompt := prompt
-		if attempt > 0 {
-			attemptPrompt += reviewVerdictCorrection
-		}
-		start, headBefore := time.Now(), gitOut(repo, "rev-parse", "HEAD")
-		run, err := c.runReview(ctx, repo, img, rev, forkName, attemptPrompt, activity, iterCmd, hosts, subjects, pendingReview, writes, sink, peers, wake, observe)
-		run.output = normalizeReviewVerdictOutput(run.output)
-		concurrent = slices.Compact(slices.Sorted(slices.Values(append(concurrent, run.concurrent...))))
-		run.concurrent = slices.Clone(concurrent)
-		if err == nil {
-			if snapshotErr := validateReviewSubjects(hosts, subjectSnapshots); snapshotErr != nil {
-				err = fmt.Errorf("%w: review subjects changed before verdict application: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
-			} else {
-				run.reopened, err = applyReviewVerdictInRepo(repo, hosts, subjects, run.output)
-			}
-		}
+	}
+	if runErr == nil || !errors.Is(runErr, errReviewVerdictMalformed) {
 		if observe != nil {
 			observe(run, start, headBefore)
 		}
-		last = run
-		if err == nil || !errors.Is(err, errReviewVerdictMalformed) || attempt > 0 {
-			return run, err
-		}
-		if reviewStopRequested(ctx, wake) {
-			return interruptedReviewResult(last, last.retries), errReviewInterrupted
-		}
-		// Carry the parse failure into the warning. The retry usually rescues this, and when it does
-		// the error is discarded here and the run reports nothing — so a fault that costs a whole
-		// extra review stays invisible for as long as it keeps being rescued. That is exactly how
-		// this one hid: seen repeatedly, diagnosable never. The error carries a bounded output tail.
-		ui.Alert("The review result could not be read",
-			fmt.Sprintf("%v\nRepeating the full review once with the required response format.", err))
+		return run, runErr
 	}
-	return last, nil
+	if reviewStopRequested(ctx, wake) {
+		return interruptedReviewResult(run, run.retries), errReviewInterrupted
+	}
+	if snapshotErr := validateReviewSubjects(hosts, subjectSnapshots); snapshotErr != nil {
+		return run, fmt.Errorf("%w: review subjects changed before format correction: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
+	}
+	if snapshotErr := validateReviewSourceAfterConcurrent(repo, sourceSnapshot, len(run.concurrent) > 0); snapshotErr != nil {
+		return run, fmt.Errorf("%w: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
+	}
+	ui.Alert("The review result could not be read", fmt.Sprintf("%v\nRequesting one format-only correction in the same reviewer session.", runErr))
+	correction := reviewVerdictCorrection(runErr, run.output, subjects)
+	run, runErr = c.runReviewCorrection(ctx, repo, img, rev, forkName, correction, activity, reviewCmd, run, hosts, subjects, pendingReview, writes, sink, peers)
+	if runErr == nil {
+		if snapshotErr := validateReviewSourceAfterConcurrent(repo, sourceSnapshot, len(run.concurrent) > 0); snapshotErr != nil {
+			runErr = fmt.Errorf("%w: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
+		} else if snapshotErr := validateReviewSubjects(hosts, subjectSnapshots); snapshotErr != nil {
+			runErr = fmt.Errorf("%w: review subjects changed before corrected verdict application: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
+		} else {
+			run.reopened, runErr = applyReviewVerdictInRepo(repo, hosts, subjects, run.output)
+		}
+	}
+	if observe != nil {
+		observe(run, start, headBefore)
+	}
+	return run, runErr
 }
 
 // runCandidateReviewVerdict runs the same provider/error/receipt boundary as final review without
 // importing generic pending-review authority. Candidate review never moves task folders: findings
 // leave the frozen manifest in reviewing, while only an exact all-subject pass returns success.
-func (c *Control) runCandidateReviewVerdict(ctx context.Context, repo, img string, rev *ladder.Rotation, forkName, prompt, activity string, iterCmd iterationCmdBuilder, hosts, subjects []string, sink io.Writer, peers []agents.Target, wake <-chan struct{}, observe reviewAttemptObserver) (reviewRunResult, error) {
+func (c *Control) runCandidateReviewVerdict(ctx context.Context, repo, img string, rev *ladder.Rotation, forkName, prompt, activity string, reviewCmd reviewCmdBuilder, hosts, subjects []string, sink io.Writer, peers []agents.Target, wake <-chan struct{}, observe reviewAttemptObserver) (reviewRunResult, error) {
 	hosts = slices.Clone(hosts)
 	subjects = slices.Clone(subjects)
 	subjectSnapshots, err := snapshotReviewSubjects(hosts, subjects)
 	if err != nil {
 		return reviewRunResult{target: rev.Active()}, fmt.Errorf("%w: snapshot candidate review subjects: %v", tasks.ErrCompletionWindowSetup, err)
 	}
-	var last reviewRunResult
-	for attempt := 0; attempt < 2; attempt++ {
-		if attempt > 0 {
-			if err := validateReviewSubjects(hosts, subjectSnapshots); err != nil {
-				return last, fmt.Errorf("%w: candidate review subjects changed before the corrected attempt: %v", tasks.ErrCompletionWindowAudit, err)
-			}
+	sourceSnapshot, err := snapshotReviewSource(repo)
+	if err != nil {
+		return reviewRunResult{target: rev.Active()}, fmt.Errorf("%w: snapshot candidate review source: %v", tasks.ErrCompletionWindowSetup, err)
+	}
+	start, headBefore := time.Now(), gitOut(repo, "rev-parse", "HEAD")
+	run, runErr := c.runReview(ctx, repo, img, rev, forkName, prompt, activity, reviewCmd, hosts, subjects, nil, loopcfg.ReviewWritesTasks, sink, peers, wake, observe)
+	run.output = normalizeReviewVerdictOutput(run.output)
+	apply := func() error {
+		if len(run.concurrent) > 0 {
+			return fmt.Errorf("%w: candidate review observed concurrent task completion", tasks.ErrCompletionWindowAudit)
 		}
-		attemptPrompt := prompt
-		if attempt > 0 {
-			attemptPrompt += reviewVerdictCorrection
+		if snapshotErr := validateReviewSource(repo, sourceSnapshot); snapshotErr != nil {
+			return fmt.Errorf("%w: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
 		}
-		start, headBefore := time.Now(), gitOut(repo, "rev-parse", "HEAD")
-		run, err := c.runReview(ctx, repo, img, rev, forkName, attemptPrompt, activity, iterCmd, hosts, subjects, nil, loopcfg.ReviewWritesTasks, sink, peers, wake, observe)
-		run.output = normalizeReviewVerdictOutput(run.output)
-		if err == nil {
-			if len(run.concurrent) > 0 {
-				err = fmt.Errorf("%w: candidate review observed concurrent task completion", tasks.ErrCompletionWindowAudit)
-			} else if snapshotErr := validateReviewSubjects(hosts, subjectSnapshots); snapshotErr != nil {
-				err = fmt.Errorf("%w: candidate review subjects changed before verdict acceptance: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
-			} else {
-				run.reopened, err = candidateReviewVerdict(subjects, run.output)
-				if err == nil && len(run.reopened) > 0 {
-					err = fmt.Errorf("candidate review found unresolved issues in %s", strings.Join(run.reopened, ", "))
-				}
-			}
+		if snapshotErr := validateReviewSubjects(hosts, subjectSnapshots); snapshotErr != nil {
+			return fmt.Errorf("%w: candidate review subjects changed before verdict acceptance: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
 		}
+		var err error
+		run.reopened, err = candidateReviewVerdict(subjects, run.output)
+		if err == nil && len(run.reopened) > 0 {
+			err = fmt.Errorf("candidate review found unresolved issues in %s", strings.Join(run.reopened, ", "))
+		}
+		return err
+	}
+	if runErr == nil {
+		runErr = apply()
+	}
+	if runErr == nil || !errors.Is(runErr, errReviewVerdictMalformed) {
 		if observe != nil {
 			observe(run, start, headBefore)
 		}
-		last = run
-		if err == nil || !errors.Is(err, errReviewVerdictMalformed) || attempt > 0 {
-			return run, err
-		}
-		if reviewStopRequested(ctx, wake) {
-			return interruptedReviewResult(last, last.retries), errReviewInterrupted
-		}
-		ui.Alert("The candidate review result could not be read",
-			fmt.Sprintf("%v\nRepeating the complete review once with the required response format.", err))
+		return run, runErr
 	}
-	return last, nil
+	if reviewStopRequested(ctx, wake) {
+		return interruptedReviewResult(run, run.retries), errReviewInterrupted
+	}
+	if snapshotErr := validateReviewSubjects(hosts, subjectSnapshots); snapshotErr != nil {
+		return run, fmt.Errorf("%w: candidate review subjects changed before format correction: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
+	}
+	if snapshotErr := validateReviewSource(repo, sourceSnapshot); snapshotErr != nil {
+		return run, fmt.Errorf("%w: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
+	}
+	ui.Alert("The candidate review result could not be read", fmt.Sprintf("%v\nRequesting one format-only correction in the same reviewer session.", runErr))
+	correction := reviewVerdictCorrection(runErr, run.output, subjects)
+	run, runErr = c.runReviewCorrection(ctx, repo, img, rev, forkName, correction, activity, reviewCmd, run, hosts, subjects, nil, loopcfg.ReviewWritesTasks, sink, peers)
+	if runErr == nil {
+		runErr = apply()
+	}
+	if observe != nil {
+		observe(run, start, headBefore)
+	}
+	return run, runErr
 }
 
 func reviewStopRequested(ctx context.Context, wake <-chan struct{}) bool {

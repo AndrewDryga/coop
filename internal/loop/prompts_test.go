@@ -29,6 +29,9 @@ func TestLoopPromptsUseAbsolutePaths(t *testing.T) {
 	if !strings.Contains(multi, "/home/node/proj/portal/.agent/tasks/10_in_progress/task-42") {
 		t.Errorf("work prompt should name the assigned task's own folder:\n%s", multi)
 	}
+	if !strings.Contains(multi, "assigned project directory is /home/node/proj/portal") {
+		t.Errorf("work prompt should name the assigned project working directory:\n%s", multi)
+	}
 	if strings.Contains(multi, "runner/.agent/tasks") || strings.Contains(multi, "work the queue") {
 		t.Errorf("work prompt should not point at other queues or tell the agent to work the queue:\n%s", multi)
 	}
@@ -141,6 +144,14 @@ func TestLoopWorkPromptFolderWorkflow(t *testing.T) {
 		// The contract is auto-loaded as the agent's instruction file — the prompt must not force a
 		// re-read of ~2K tokens already in context, only offer the path as a fallback.
 		"already loaded in your context", "only if its content is not",
+		"assigned project directory is /repo",
+		"never add the subproject name again",
+		"stop surveying sibling code just in case", "smallest acceptance-complete change",
+		"Treat a detailed state.md as the handoff", "instead of repeating completed research",
+		"Before starting a consult or delegate", "Reuse a completed result for the same question on the unchanged diff",
+		"inspect or wait for that output before launching a replacement", "failed, missing, or stale peer job",
+		"If a background wait times out", "call its completion tool again until the job exits",
+		"do not repeat the full investigation in the terminal", "optional services/connectors that the task did not need",
 	} {
 		if !strings.Contains(work, want) {
 			t.Errorf("folder work prompt missing %q:\n%s", want, work)
@@ -160,14 +171,16 @@ func TestLoopWorkPromptAuditFinalization(t *testing.T) {
 		"finding is false, do NOT create, amend, or rewrite any commit",
 		"zero new commits",
 		"finding is real",
-		"real tree change",
-		"after rewriting the existing implementation commit only when a real fix was required",
+		"exactly one real repair commit",
+		"WITHOUT a Coop-Task or Coop-Recovery trailer",
+		"preserving the reviewed history",
+		"after the one unbound repair commit only when a real fix was required",
 	} {
 		if !strings.Contains(work, want) {
 			t.Errorf("audit work prompt missing %q:\n%s", want, work)
 		}
 	}
-	for _, forbidden := range []string{"then commit your work", "AFTER the commit", "git commit --allow-empty --only"} {
+	for _, forbidden := range []string{"then commit your work", "AFTER the commit", "git commit --allow-empty --only", "amend or rewrite"} {
 		if strings.Contains(work, forbidden) {
 			t.Errorf("audit work prompt retained unconditional commit guidance %q:\n%s", forbidden, work)
 		}
@@ -280,19 +293,23 @@ func TestLoopPreflightAndReviewFolder(t *testing.T) {
 	// polished (docs updated), a SINGLE whole-repo gate, host-applied reopens, and no self-fix/commits.
 	for _, want := range []string{
 		"the ONLY tasks to review this pass", "t1 — /repo/.agent/tasks/99_done/t1", // scoped subjects lead
+		"project contract is normally already loaded", "`coop` is not installed in this review box",
+		"Do not probe a service merely to reconfirm an explicitly reported unavailable dependency",
 		"For EVERY task listed above", // the directive binds to the header, not the done/ dir
 		"SENIOR REVIEWER", "99_done/",
-		"acceptance criterion",                      // 1. meets its goal
-		".agent/kb/rules",                           // 2. follows the standards
-		"FAILURE/edge path",                         // 3. tested for real
-		"docs/README/CHANGELOG",                     // 4. polished
-		"ONCE across the WHOLE repo (not per task)", // single whole-repo gate
+		"acceptance criterion",               // 1. meets its goal
+		".agent/kb/rules",                    // 2. follows the standards
+		"FAILURE/edge path",                  // 3. tested for real
+		"docs/README/CHANGELOG",              // 4. polished
+		"Coop-owned exact-tree gate receipt", // broad gate is host-owned and reused
+		"Do not rerun that matching broad gate",
 		"tmp/ was disposable", "evidence that needed to survive completion belongs in artifacts/",
 		"never edit a task in place under 99_done/", "report a completion-integrity defect",
 		"exactly one reachable commit",
 		"Do not modify task folders or source",
 		"performs the exact task reopen on the host",
-		"AUDIT EVIDENCE — <id> — gate:",
+		"AUDIT EVIDENCE — t1 — gate:",
+		"Do not use a Markdown fence, bullets, headings, blank lines",
 		"make no commits",
 	} {
 		if !strings.Contains(rev, want) {
@@ -325,7 +342,7 @@ func TestLoopReviewPromptAppend(t *testing.T) {
 	if !strings.Contains(rev, "project-specific checks") || !strings.Contains(rev, "Verify CHANGELOG.md gained an entry.") {
 		t.Errorf("signoff.prompt text should be appended:\n%s", rev)
 	}
-	if !strings.Contains(rev, "Task lifecycle is report-only") || !strings.Contains(rev, "AUDIT EVIDENCE — <id> — gate:") {
+	if !strings.Contains(rev, "Task lifecycle is report-only") || !strings.Contains(rev, "AUDIT EVIDENCE — t1 — gate:") {
 		t.Errorf("the fixed context footer must trail:\n%s", rev)
 	}
 }
@@ -345,8 +362,11 @@ func TestLoopBetweenPrompt(t *testing.T) {
 	if !strings.Contains(p, "Task lifecycle is report-only") {
 		t.Errorf("the fixed context footer must trail the between prompt:\n%s", p)
 	}
-	if !strings.Contains(p, "AUDIT EVIDENCE — <id> — gate:") {
+	if !strings.Contains(p, "AUDIT EVIDENCE — 2026-07-11-fix-timer — gate:") {
 		t.Errorf("the between prompt must request structured audit evidence:\n%s", p)
+	}
+	if strings.Contains(p, "AUDIT EVIDENCE — <id>") {
+		t.Errorf("the between prompt must render the actual subject id:\n%s", p)
 	}
 	// A gate-defining change adds a PROTECTED CHANGE note naming the file.
 	if pg := loopBetweenPrompt("/repo", []string{".agent/tasks"}, "Audit.", finished, []string{"Makefile"}); !strings.Contains(pg, "PROTECTED CHANGE") || !strings.Contains(pg, "Makefile") {

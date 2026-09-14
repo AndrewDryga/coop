@@ -1,10 +1,46 @@
 package loop
 
 import (
+	"reflect"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/loopcfg"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
+
+func TestPendingReviewHonorsConfiguredModelsWithoutChangingAcceptance(t *testing.T) {
+	plan := tasks.PendingReviewPlan{
+		Signoff:       tasks.PendingReviewStage{Targets: []string{"codex:old"}, Prompt: "saved review", Writes: "tasks"},
+		SignoffRounds: 3,
+		VerifyEnabled: true,
+		Verify:        tasks.PendingReviewStage{Targets: []string{"codex:old"}, Prompt: "saved verification", Writes: "tasks"},
+	}
+	for _, configured := range []bool{false, true} {
+		lc := loopcfg.Config{
+			Signoff: loopcfg.Signoff{Prompt: "different review", Writes: loopcfg.ReviewWritesRepo, Rounds: 20},
+			Verify:  loopcfg.Verify{Enabled: false, Prompt: "different verification", Writes: loopcfg.ReviewWritesRepo},
+		}
+		wantModels := []string{"codex:old"}
+		if configured {
+			wantModels = []string{"claude:claude-opus-5/high"}
+			lc.Signoff.Agent = []string{"claude:claude-opus-5/high"}
+			lc.Verify.Agent = []string{"claude:claude-opus-5/high"}
+		}
+		applyStoredReviewPlan(&lc, plan)
+		if !reflect.DeepEqual(lc.Signoff.Agent, wantModels) || !reflect.DeepEqual(lc.Verify.Agent, wantModels) {
+			t.Fatalf("configured=%t: models = %v / %v, want %v", configured, lc.Signoff.Agent, lc.Verify.Agent, wantModels)
+		}
+		if lc.Signoff.Prompt != plan.Signoff.Prompt || lc.Signoff.Writes != loopcfg.ReviewWritesTasks || lc.Signoff.Rounds != 3 ||
+			!lc.Verify.Enabled || lc.Verify.Prompt != plan.Verify.Prompt || lc.Verify.Writes != loopcfg.ReviewWritesTasks {
+			t.Fatalf("configured=%t: saved acceptance changed: %+v", configured, lc)
+		}
+		lc.Signoff.Agent[0] = "mutated"
+		lc.Verify.Agent[0] = "mutated"
+		if plan.Signoff.Targets[0] != "codex:old" || plan.Verify.Targets[0] != "codex:old" {
+			t.Fatal("runtime selection mutated the original review plan")
+		}
+	}
+}
 
 func TestPendingSignoffStartRoundPreservesPersistedProgress(t *testing.T) {
 	for _, tc := range []struct {

@@ -8,7 +8,8 @@ func consultPeerRowShell(provider, usageFilter string) string {
 	return strings.NewReplacer("__PROVIDER__", provider, "__USAGE_FILTER__", usageFilter).Replace(`__PROVIDER___peer_row() {
 	[ -n "${COOP_RUN_ID:-}" ] || return 0
 	case "$COOP_RUN_ID" in *[!a-zA-Z0-9._-]*) return 0 ;; esac
-	peer_dir=.agent/runs
+	peer_repo=$(git rev-parse --show-toplevel 2>/dev/null || printf '.')
+	peer_dir=$peer_repo/.agent/runs
 	peer_file=$peer_dir/$COOP_RUN_ID.peers.jsonl
 	[ ! -L "$peer_dir" ] && [ -d "$peer_dir" ] || return 0
 	[ ! -L "$peer_file" ] && [ -f "$peer_file" ] || return 0
@@ -34,8 +35,12 @@ func consultPeerRowShell(provider, usageFilter string) string {
 	row=$(jq -sc --arg run "$COOP_RUN_ID" --arg role "$1" --arg model "$2" '
 		def token: type=="number" and isfinite and floor==. and .>=0 and .<=1000000000;
 		__USAGE_FILTER__
-		| {run:$run,role:$role,provider:"__PROVIDER__",model:$model,in:.input,out:.output}
-		  + (if has("cost") then {cost:.cost} else {} end)' 2>/dev/null) || { exec 9>&-; return 0; }
+		| {run:$run,role:$role,provider:"__PROVIDER__",model:$model,in:.input,out:.output,reported_out:.output}
+		  + (if has("fresh") then {fresh_in:.fresh} else {} end)
+		  + (if has("write") then {cache_write:.write} else {} end)
+		  + (if has("read") then {cache_read:.read} else {} end)
+		  + (if has("duration") then {provider_ms:.duration} else {} end)
+		  + (if has("cost") then {cost:.cost,reported_cost:.cost} else {} end)' 2>/dev/null) || { exec 9>&-; return 0; }
 	[ -n "$row" ] || { exec 9>&-; return 0; }
 	[ "$(printf '%s' "$row" | wc -c | tr -d '[:space:]')" -le 4096 ] || { exec 9>&-; return 0; }
 	printf '%s\n' "$row" >&9 2>/dev/null || true

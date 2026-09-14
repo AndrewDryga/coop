@@ -10,11 +10,6 @@ import (
 // internal/sessionsvc already make, and for the same reason: a `pathExists` or a `truncate` is not
 // an API, and an export would make internal/cli a dependency of everything that formats a line.
 
-func fileExists(path string) bool {
-	fi, err := os.Stat(path)
-	return err == nil && !fi.IsDir()
-}
-
 func pathExists(path string) bool {
 	_, err := os.Lstat(path)
 	return err == nil

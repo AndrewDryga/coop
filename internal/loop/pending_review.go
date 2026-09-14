@@ -95,12 +95,18 @@ func pendingSignoffStartRound(cohort tasks.PendingReviewCohort) int {
 }
 
 func applyStoredReviewPlan(lc *loopcfg.Config, plan tasks.PendingReviewPlan) {
-	lc.Signoff.Agent = slices.Clone(plan.Signoff.Targets)
+	// A restart may deliberately replace an unavailable or unwanted reviewer. Keep
+	// the original acceptance contract, but honor explicitly configured models.
+	if len(lc.Signoff.Agent) == 0 {
+		lc.Signoff.Agent = slices.Clone(plan.Signoff.Targets)
+	}
 	lc.Signoff.Prompt = plan.Signoff.Prompt
 	lc.Signoff.Writes = loopcfg.ReviewWrites(plan.Signoff.Writes)
 	lc.Signoff.Rounds = plan.SignoffRounds
 	lc.Verify.Enabled = plan.VerifyEnabled
-	lc.Verify.Agent = slices.Clone(plan.Verify.Targets)
+	if len(lc.Verify.Agent) == 0 {
+		lc.Verify.Agent = slices.Clone(plan.Verify.Targets)
+	}
 	lc.Verify.Prompt = plan.Verify.Prompt
 	lc.Verify.Writes = loopcfg.ReviewWrites(plan.Verify.Writes)
 }

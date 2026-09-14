@@ -27,29 +27,36 @@ import (
 // blocks or fails an iteration. This is phase 1 (emit) — a replay/canary set over the archive is a
 // separate follow-on.
 type StageRecord struct {
-	Run        string   `json:"run"`
-	Stage      string   `json:"stage"`    // preflight | work | between | signoff | verify
-	Outcome    string   `json:"outcome"`  // success | authentication | rate_limit | output_limit | process_failure | malformed_stream | interrupted | provider_{start,idle,tool,attempt}_timeout | background_{drained,timeout}
-	Provider   string   `json:"provider"` // the EFFECTIVE target, after any rate-limit rotation
-	Model      string   `json:"model,omitempty"`
-	Effort     string   `json:"effort,omitempty"`
-	Account    string   `json:"account,omitempty"`
-	Coop       string   `json:"coop"`
-	Start      string   `json:"start"`
-	End        string   `json:"end"`
-	Exit       int      `json:"exit"`
-	Retries    int      `json:"retries,omitempty"`
-	CostUSD    float64  `json:"cost_usd,omitempty"` // the stage's result-event cost (lead + its native subagents)
-	InTok      int      `json:"in_tok,omitempty"`   // input tokens (fresh + cache write + cache read)
-	OutTok     int      `json:"out_tok,omitempty"`  // output tokens
-	HeadBefore string   `json:"head_before,omitempty"`
-	HeadAfter  string   `json:"head_after,omitempty"`
-	Reopened   int      `json:"reopened,omitempty"`   // review stages: host-applied task reopens
-	Finished   []string `json:"finished,omitempty"`   // work stage: task ids this iteration moved to done
-	GateFiles  []string `json:"gate_files,omitempty"` // host-detected gate-defining paths touched by the stage
-	QueueTodo  int      `json:"queue_todo"`
-	QueueDoing int      `json:"queue_doing"`
-	QueueDone  int      `json:"queue_done"`
+	Run              string   `json:"run"`
+	Stage            string   `json:"stage"`    // preflight | work | between | signoff | verify
+	Outcome          string   `json:"outcome"`  // success | authentication | rate_limit | output_limit | process_failure | malformed_stream | interrupted | provider_{start,idle,tool,attempt}_timeout | background_{drained,timeout}
+	Provider         string   `json:"provider"` // the EFFECTIVE target, after any rate-limit rotation
+	Model            string   `json:"model,omitempty"`
+	Effort           string   `json:"effort,omitempty"`
+	Account          string   `json:"account,omitempty"`
+	Coop             string   `json:"coop"`
+	Start            string   `json:"start"`
+	End              string   `json:"end"`
+	Exit             int      `json:"exit"`
+	Retries          int      `json:"retries,omitempty"`
+	CostUSD          float64  `json:"cost_usd,omitempty"` // the stage's result-event cost (lead + its native subagents)
+	InTok            int      `json:"in_tok,omitempty"`   // input tokens (fresh + cache write + cache read)
+	OutTok           int      `json:"out_tok,omitempty"`  // output tokens
+	FreshInTok       *int     `json:"fresh_in_tok,omitempty"`
+	CacheWriteTok    *int     `json:"cache_write_tok,omitempty"`
+	CacheReadTok     *int     `json:"cache_read_tok,omitempty"`
+	ReportedOutTok   *int     `json:"reported_out_tok,omitempty"`
+	ProviderMS       *int     `json:"provider_ms,omitempty"`
+	ReportedCost     *float64 `json:"reported_cost_usd,omitempty"`
+	BlindWaitSeconds int      `json:"blind_wait_seconds,omitempty"`
+	HeadBefore       string   `json:"head_before,omitempty"`
+	HeadAfter        string   `json:"head_after,omitempty"`
+	Reopened         int      `json:"reopened,omitempty"`   // review stages: host-applied task reopens
+	Finished         []string `json:"finished,omitempty"`   // work stage: task ids this iteration moved to done
+	GateFiles        []string `json:"gate_files,omitempty"` // host-detected gate-defining paths touched by the stage
+	QueueTodo        int      `json:"queue_todo"`
+	QueueDoing       int      `json:"queue_doing"`
+	QueueDone        int      `json:"queue_done"`
 	// NetworkRunID is the filtered run this stage's box was, so its receipt in
 	// `coop net runs` and this row name the same thing. Empty outside filtered mode.
 	NetworkRunID string `json:"network_run_id,omitempty"`
@@ -182,6 +189,9 @@ func (c *Control) recordStage(repo, run, stage, outcome string, tgt agents.Targe
 	rec.NetworkRunID = c.net.runID()
 	if res != nil { // the box run's result-event tally (nil for stages that had no stream-json result)
 		rec.CostUSD, rec.InTok, rec.OutTok = res.CostUSD, res.InTok, res.OutTok
+		rec.FreshInTok, rec.CacheWriteTok, rec.CacheReadTok = res.FreshInTok, res.CacheWriteTok, res.CacheReadTok
+		rec.ReportedOutTok, rec.ProviderMS, rec.ReportedCost = res.ReportedOutTok, res.ReportedDurationMS, res.ReportedCostUSD
+		rec.BlindWaitSeconds = res.BlindWaitSeconds
 	}
 	if err := appendStageRecord(repo, run, rec); err != nil {
 		ui.Warn("telemetry: could not record the %s stage: %v", stage, err)
@@ -190,9 +200,33 @@ func (c *Control) recordStage(repo, run, stage, outcome string, tgt agents.Targe
 
 // stageCost is a cost/token tally — for one task or a whole run.
 type stageCost struct {
-	usd    float64
-	inTok  int
-	outTok int
+	usd                                           float64
+	inTok                                         int
+	outTok                                        int
+	costReported                                  bool
+	fresh, cacheWrite, cacheRead, output, elapsed reportedInt
+}
+
+type reportedInt struct {
+	value             int
+	reported, missing bool
+}
+
+func (r *reportedInt) add(value *int) {
+	if value == nil {
+		r.missing = true
+		return
+	}
+	r.reported = true
+	r.value += *value
+}
+
+func addReportedUsage(cost *stageCost, record StageRecord) {
+	cost.fresh.add(record.FreshInTok)
+	cost.cacheWrite.add(record.CacheWriteTok)
+	cost.cacheRead.add(record.CacheReadTok)
+	cost.output.add(record.ReportedOutTok)
+	cost.elapsed.add(record.ProviderMS)
 }
 
 // runCost is a run's cost broken out per task (a work stage's cost, keyed by the task it finished),
@@ -238,13 +272,26 @@ func readStageRecords(repo, run string) []StageRecord {
 // .agent/runs/<run>.peers.jsonl. Cost is optional and always provider-reported, never estimated
 // from tokens. Older token-only rows remain readable.
 type PeerRecord struct {
-	Run      string  `json:"run"`
-	Role     string  `json:"role"`
-	Provider string  `json:"provider"`
-	Model    string  `json:"model"`
-	In       int     `json:"in"`
-	Out      int     `json:"out"`
-	Cost     float64 `json:"cost,omitempty"`
+	Kind           string   `json:"kind,omitempty"`
+	Run            string   `json:"run"`
+	Role           string   `json:"role"`
+	Mode           string   `json:"mode,omitempty"`
+	Provider       string   `json:"provider"`
+	Model          string   `json:"model"`
+	Target         string   `json:"target,omitempty"`
+	Outcome        string   `json:"outcome,omitempty"`
+	Attempts       int      `json:"attempts,omitempty"`
+	Permanent      bool     `json:"permanent,omitempty"`
+	Cause          string   `json:"cause,omitempty"`
+	In             int      `json:"in"`
+	Out            int      `json:"out"`
+	FreshInTok     *int     `json:"fresh_in,omitempty"`
+	CacheWriteTok  *int     `json:"cache_write,omitempty"`
+	CacheReadTok   *int     `json:"cache_read,omitempty"`
+	ReportedOutTok *int     `json:"reported_out,omitempty"`
+	ProviderMS     *int     `json:"provider_ms,omitempty"`
+	Cost           float64  `json:"cost,omitempty"`
+	ReportedCost   *float64 `json:"reported_cost,omitempty"`
 }
 
 // preparePeerRecordFile creates the one append target a consult wrapper may use for this run.
@@ -409,16 +456,20 @@ func costFromRecords(recs []StageRecord, peers []PeerRecord) runCost {
 	models := map[string]stageCost{}
 	for _, r := range recs {
 		rc.total.usd += r.CostUSD
+		rc.total.costReported = rc.total.costReported || validReportedCost(r.ReportedCost) || r.CostUSD > 0
 		rc.total.inTok += r.InTok
 		rc.total.outTok += r.OutTok
-		if r.CostUSD == 0 && r.InTok == 0 && r.OutTok == 0 {
+		if r.CostUSD == 0 && r.InTok == 0 && r.OutTok == 0 && r.FreshInTok == nil && r.CacheWriteTok == nil && r.CacheReadTok == nil && r.ReportedOutTok == nil && r.ProviderMS == nil && r.ReportedCost == nil {
 			continue
 		}
+		addReportedUsage(&rc.total, r)
 		k := modelKey(r.Provider, r.Model)
 		mc := models[k]
 		mc.usd += r.CostUSD
+		mc.costReported = mc.costReported || validReportedCost(r.ReportedCost) || r.CostUSD > 0
 		mc.inTok += r.InTok
 		mc.outTok += r.OutTok
+		addReportedUsage(&mc, r)
 		models[k] = mc
 		n := len(r.Finished)
 		if n == 0 {
@@ -427,6 +478,7 @@ func costFromRecords(recs []StageRecord, peers []PeerRecord) runCost {
 		for _, id := range r.Finished {
 			c := rc.byTask[id]
 			c.usd += r.CostUSD / float64(n)
+			c.costReported = c.costReported || validReportedCost(r.ReportedCost) || r.CostUSD > 0
 			c.inTok += r.InTok / n
 			c.outTok += r.OutTok / n
 			rc.byTask[id] = c
@@ -434,20 +486,50 @@ func costFromRecords(recs []StageRecord, peers []PeerRecord) runCost {
 	}
 	// Peers carry no task assignment, so their spend belongs only to the model and run totals.
 	for _, p := range peers {
+		if p.Kind == "role_health" {
+			continue
+		}
 		k := modelKey(p.Provider, p.Model)
 		mc := models[k]
-		if p.Cost >= 0 && !math.IsInf(p.Cost, 0) && !math.IsNaN(p.Cost) {
-			mc.usd += p.Cost
-			rc.total.usd += p.Cost
+		peerCost, reported := p.Cost, p.Cost > 0 && !math.IsInf(p.Cost, 0) && !math.IsNaN(p.Cost)
+		if validReportedCost(p.ReportedCost) {
+			peerCost, reported = *p.ReportedCost, true
+		}
+		if reported {
+			mc.usd += peerCost
+			mc.costReported = true
+			rc.total.usd += peerCost
+			rc.total.costReported = true
 		}
 		mc.inTok += p.In
 		mc.outTok += p.Out
+		mc.fresh.add(p.FreshInTok)
+		mc.cacheWrite.add(p.CacheWriteTok)
+		mc.cacheRead.add(p.CacheReadTok)
+		mc.output.add(peerReportedOutput(p))
+		mc.elapsed.add(p.ProviderMS)
 		models[k] = mc
 		rc.total.inTok += p.In
 		rc.total.outTok += p.Out
+		rc.total.fresh.add(p.FreshInTok)
+		rc.total.cacheWrite.add(p.CacheWriteTok)
+		rc.total.cacheRead.add(p.CacheReadTok)
+		rc.total.output.add(peerReportedOutput(p))
+		rc.total.elapsed.add(p.ProviderMS)
 	}
 	rc.byModel = sortedSpend(models)
 	return rc
+}
+
+func validReportedCost(cost *float64) bool {
+	return cost != nil && *cost >= 0 && !math.IsInf(*cost, 0) && !math.IsNaN(*cost)
+}
+
+func peerReportedOutput(record PeerRecord) *int {
+	if record.ReportedOutTok != nil {
+		return record.ReportedOutTok
+	}
+	return intPtr(record.Out) // old peer rows stored provider-reported output directly as out
 }
 
 // modelKey is the by-model bucket key: "provider:model", or just "provider" when the model is blank.

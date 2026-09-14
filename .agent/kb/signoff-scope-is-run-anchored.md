@@ -3,7 +3,7 @@ name: signoff-scope-is-run-anchored
 description: the signoff reviews a run-anchored folder-diff subject list — re-anchor the baseline ONLY on a receipt-consistent round, or reworked reopens silently escape the next review
 subsystem: loop
 sources: [internal/loop/loop.go, internal/loop/signoff.go, internal/loop/pending_review.go, internal/tasks/pending_review.go, internal/tasks/completion.go, internal/cli/sign.go, internal/loop/changes.go, internal/tasks/cmd.go]
-updated: 2026-09-13
+updated: 2026-09-14
 ---
 
 The signoff pass does NOT review all of `99_done/` (that dir holds every prior run's history until a
@@ -45,6 +45,25 @@ debt and fail closed. Receipt-consistent acceptance writes a reviewed-generation
 clearing the active record, so an explicit historical import cannot repeatedly review and bless the
 same generation. Pre-ledger archives remain unknown unless the operator names an exact receipt-valid
 task with `coop loop --review-task <id>`.
+
+A batch review may reopen several tasks whose commits depend on one another. Repairing an older
+task replays a later sibling commit under a new SHA even when that sibling's reviewed change is
+identical. Coop rebinds both the sibling's pending-review binding and its active audit-reopen record
+from the same host-validated rewrite. Host signing does the same for every subject in the cohort,
+and startup can finish both updates from the signing journal. After a review or verification phase
+transition, the loop reloads the cohort before more work; otherwise an accepted task whose record
+was cleared remains a stale rebind target. Updating only one authority—or only the persisted state
+without its in-memory view—leaves valid sibling work unable to resume.
+
+If the controller stops after an audit-reopened task rewrites its commit but before completion
+bookkeeping refreshes that task's pending binding, startup may recover only when the still-active
+audit generation validates the exact changed subject and complete descendant replay. It advances
+the audit record first; a second startup can then repair a still-old pending binding from that
+host-owned current authority.
+
+When the review round cap parks a task, its `decision.md` describes that current cap. A resolved
+decision from an earlier block is replaced rather than shown as the action for a different block;
+prior reasoning belongs in the task log.
 
 Completed between audits add a second, separate run-scoped handoff: `auditEvidenceStore` keeps only
 receipt-consistent per-task summaries, caps their prompt size, and drops them when signoff reopens a
@@ -91,6 +110,11 @@ actionable integrity error names mutated archives, and the next startup is clean
 Related: [[task-state-is-the-folder]].
 
 ## Changelog
+- 2026-09-14 — documented cohort-wide pending and audit-authority rebinding across an older task
+  repair and the following host signing rewrite, plus mandatory reload after review phase changes;
+  added the audit-authorized crash boundary after live Emisar rework exposed it. Verified against
+  the loop call sites and focused sibling, signing, two-phase startup recovery, and current review
+  cap decision tests.
 - 2026-09-13 — replaced the process-local crash tradeoff with exact host-private pending cohorts,
   signing-rewrite recovery, reviewed-generation tombstones and explicit bounded legacy import.
 - 2026-08-10 — sources repointed: `completionwindow.go`/`taskcmd.go` moved to

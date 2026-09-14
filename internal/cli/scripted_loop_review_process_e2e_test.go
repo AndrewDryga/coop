@@ -182,8 +182,8 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatal("malformed final verification disturbed the completed task")
 		}
 		records := readLoopStageRecords(t, suite)
-		if len(records) != len(attempts) || records[2].Stage != "verify" || records[3].Stage != "verify" ||
-			records[2].Outcome != "success" || records[3].Outcome != "success" {
+		if len(records) != 3 || records[2].Stage != "verify" || records[2].Outcome != "success" ||
+			records[2].Retries != 1 {
 			t.Fatalf("malformed verification telemetry = %#v", records)
 		}
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
@@ -305,7 +305,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatal("corrected verification reopen did not finish its automatic repair lifecycle")
 		}
 		records := readLoopStageRecords(t, suite)
-		if len(records) != len(attempts) {
+		if len(records) != 8 {
 			t.Fatalf("corrected review telemetry = %#v", records)
 		}
 		want := []struct {
@@ -315,12 +315,9 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			reopened    int
 		}{
 			{"work", 101, 11, 0, 1, 0},
-			{"between", 202, 22, 0, 1, 0},
-			{"between", 202, 22, 0, 1, 0},
-			{"signoff", 303, 33, 0, 1, 0},
-			{"signoff", 303, 33, 0, 1, 0},
-			{"verify", 408, 48, 0, 1, 0},
-			{"verify", 408, 48, 1, 0, 1},
+			{"between", 404, 44, 0, 1, 0},
+			{"signoff", 606, 66, 0, 1, 0},
+			{"verify", 816, 96, 1, 0, 1},
 			{"work", 101, 11, 0, 1, 0},
 			{"between", 202, 22, 0, 1, 0},
 			{"signoff", 303, 33, 0, 1, 0},
@@ -361,8 +358,8 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatal("double-malformed verdict changed the review subject")
 		}
 		records := readLoopStageRecords(t, suite)
-		if len(records) != len(attempts) || records[1].Stage != "signoff" || records[2].Stage != "signoff" ||
-			records[1].Reopened != 0 || records[2].Reopened != 0 {
+		if len(records) != 2 || records[1].Stage != "signoff" || records[1].Retries != 1 ||
+			records[1].Reopened != 0 {
 			t.Fatalf("double-malformed telemetry = %#v", records)
 		}
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
@@ -1164,7 +1161,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReview(t, suite, work, 20*time.Second)
 		if result.Err != nil || result.ExitCode != 1 ||
-			!strings.Contains(result.Stderr, "host audit authority accepts only") {
+			!strings.Contains(result.Stderr, "host audit authority accepts a zero-commit") {
 			t.Fatalf("second binding = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID)) ||
@@ -1178,18 +1175,10 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 
 		traceBeforeRetry := readProcessTrace(t, suite.layout.Trace)
 		retry := runLoopReview(t, suite, work, 5*time.Second)
-		for _, want := range []string{
-			"host audit-reopen authority no longer matches current HEAD",
-			"no provider started",
-			"task parked in blocked",
-			"restore the exact audited pre-attempt baseline",
-			"git rev-parse HEAD",
-			"blocking and unblocking alone cannot repair Git history",
-		} {
-			if retry.Err != nil || retry.ExitCode != 1 || !strings.Contains(retry.Stderr, want) {
-				t.Fatalf("second binding retry = exit %d err %v, missing %q\nstdout:\n%s\nstderr:\n%s",
-					retry.ExitCode, retry.Err, want, retry.Stdout, retry.Stderr)
-			}
+		if retry.Err != nil || retry.ExitCode != 1 ||
+			!strings.Contains(retry.Stderr, "needs exactly one reachable Coop-Task binding before reopen") {
+			t.Fatalf("second binding retry = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
+				retry.ExitCode, retry.Err, retry.Stdout, retry.Stderr)
 		}
 		traceAfterRetry := readProcessTrace(t, suite.layout.Trace)
 		if len(traceAfterRetry) < len(traceBeforeRetry) {
@@ -1201,13 +1190,8 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			}
 		}
 		current, ok := currentTask(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
-		if !ok || current.State != stateBlocked {
-			t.Fatalf("second binding retry task = %+v/%v, want blocked", current, ok)
-		}
-		decision, err := os.ReadFile(filepath.Join(current.Dir, "decision.md"))
-		if err != nil || !strings.Contains(string(decision), "restore the exact pre-attempt baseline") ||
-			!strings.Contains(string(decision), "git rev-parse HEAD") {
-			t.Fatalf("second binding retry decision = %q, %v", decision, err)
+		if !ok || current.State != stateInProgress {
+			t.Fatalf("second binding retry task = %+v/%v, want in progress", current, ok)
 		}
 	})
 
@@ -1668,20 +1652,43 @@ func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []
 			argv = loopWorkArgv(target.Provider, argv)
 		}
 		wantArgv := processTraceArgv(argv)
+		startArgv := starts[i].Argv
+		var runArgv []string
+		if runs[i].Run != nil {
+			runArgv = runs[i].Run.ProviderArgv
+		}
+		correction := attempt.Stage != "work" && i > 0 && attempts[i-1].Stage == attempt.Stage &&
+			attempts[i-1].Target == attempt.Target && attempts[i-1].Result == "malformed-review"
+		if attempt.Stage != "work" {
+			var startSession, runSession string
+			startArgv, startSession = normalizeLoopReviewSessionArgv(t, target.Provider, startArgv, correction)
+			runArgv, runSession = normalizeLoopReviewSessionArgv(t, target.Provider, runArgv, correction)
+			if startSession != runSession {
+				t.Fatalf("review attempt %d runtime/start session = %q/%q", i, runSession, startSession)
+			}
+			if correction && target.Provider != "codex" {
+				_, previousSession := normalizeLoopReviewSessionArgv(t, target.Provider, starts[i-1].Argv, false)
+				if startSession != previousSession {
+					t.Fatalf("review attempt %d resumed session %q, want %q", i, startSession, previousSession)
+				}
+			}
+		}
 		promptIndex, ok := loopPromptIndex(target.Provider, argv)
-		if !ok || promptIndex >= len(starts[i].Argv) {
-			t.Fatalf("review attempt %d has no provider prompt position in %q", i, starts[i].Argv)
+		if !ok || promptIndex >= len(startArgv) {
+			t.Fatalf("review attempt %d has no provider prompt position in %q", i, startArgv)
 		}
 		// Prompt contents are independently stage-checked inside the provider fixture. The trace
 		// stores only their digest, so retain that one value while independently deriving every
 		// native executable/model/effort/streaming argument around it.
-		wantArgv[promptIndex] = starts[i].Argv[promptIndex]
+		wantArgv[promptIndex] = startArgv[promptIndex]
 		run := runs[i].Run
-		if run == nil || run.Provider != target.Provider || !reflect.DeepEqual(run.ProviderArgv, wantArgv) || !reflect.DeepEqual(starts[i].Argv, wantArgv) {
+		if run == nil || run.Provider != target.Provider || !reflect.DeepEqual(runArgv, wantArgv) || !reflect.DeepEqual(startArgv, wantArgv) {
 			t.Fatalf("review attempt %d runtime/start argv = %#v / %q, want %q", i, run, starts[i].Argv, wantArgv)
 		}
 		if attempt.Stage == "work" {
 			assertProcessMounts(t, suite.layout, target.Provider, target.Account(), run.Mounts)
+		} else if correction {
+			assertLoopCorrectionMounts(t, suite.layout, target.Provider, target.Account(), run.Mounts)
 		} else {
 			assertLoopReviewMounts(t, suite.layout, target.Provider, target.Account(), run.Mounts)
 		}
@@ -1722,6 +1729,55 @@ func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []
 			t.Fatalf("review attempt %d provider exit = %#v, want %d", i, exits[i], wantExit)
 		}
 	}
+}
+
+func assertLoopCorrectionMounts(t *testing.T, layout procharness.Layout, provider, account string, mounts []processMount) {
+	t.Helper()
+	repo := processTracePath(layout.Root, layout.Repo)
+	profile := processTracePath(layout.Root, filepath.Join(layout.Config, provider, "profiles", account))
+	profileTarget := "<container>/home/node/." + provider
+	foundProfile := false
+	for _, mount := range mounts {
+		if mount.Source == repo {
+			t.Fatalf("format correction retained repository mount %#v", mount)
+		}
+		if mount.Source == profile && mount.Target == profileTarget && !mount.ReadOnly {
+			foundProfile = true
+		}
+	}
+	if !foundProfile {
+		t.Fatalf("format correction missing writable %s profile mount in %#v", provider, mounts)
+	}
+}
+
+// Review commands carry an exact native session in addition to the ordinary headless argv.
+// Strip only that dynamic pair so the contract assertion can keep comparing every stable arg.
+func normalizeLoopReviewSessionArgv(t *testing.T, provider string, argv []string, resume bool) ([]string, string) {
+	t.Helper()
+	out := slices.Clone(argv)
+	if provider == "codex" {
+		if !resume {
+			return out, ""
+		}
+		execHash := processTraceArgv([]string{"codex", "exec"})[1]
+		resumeHash := processTraceArgv([]string{"codex", "resume"})[1]
+		if len(out) < 4 || out[1] != execHash || out[2] != resumeHash {
+			t.Fatalf("codex review correction has no exact resume argv: %q", argv)
+		}
+		session := out[3]
+		return append(out[:2], out[4:]...), session
+	}
+
+	flag := "--session-id"
+	if resume {
+		flag = "--resume"
+	}
+	i := slices.Index(out, flag)
+	if i < 0 || i+1 >= len(out) {
+		t.Fatalf("%s review argv is missing %s and its session: %q", provider, flag, argv)
+	}
+	session := out[i+1]
+	return append(out[:i], out[i+2:]...), session
 }
 
 func loopPromptIndex(provider string, argv []string) (int, bool) {

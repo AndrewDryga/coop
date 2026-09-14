@@ -2,7 +2,7 @@
 name: provider-consult-e2e
 description: Verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring
 subsystem: testing
-sources: [Makefile, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/consult_shell.go, internal/loop/telemetry.go, internal/loop/streamjson_providers.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go]
+sources: [Makefile, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/consult_shell.go, internal/agent/role_health.go, internal/loop/telemetry.go, internal/loop/streamjson_providers.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go]
 updated: 2026-09-13
 ---
 
@@ -43,6 +43,14 @@ Same-target calls serialize on a private lock. The Coop image uses `flock`, so t
 ownership after an unclean exit. A custom image without `flock` uses a fail-closed `mkdir` fallback;
 after confirming no consult is active, remove its private `.lock.d` directory.
 
+Preset role health shares the host-created private `<run>.peers.jsonl` ledger with usage rows.
+Wrappers resolve the Git top level when they append, so a consult launched from a monorepo
+subproject still reaches the run ledger. Quarantine is exact-target and run-scoped, and only a
+recorded permanent failure activates it. The empty ledger must therefore decode to an explicit
+false: jq 1.6 can exit zero for `jq -e select(...)` over an empty stream, which otherwise makes
+every advisor look already quarantined before its first call. `coop_role_quarantined` slurps the
+bounded ledger and tests the explicit boolean returned by `any(...)` instead.
+
 `make provider-consult-live-e2e COOP_LIVE_TARGETS='claude,codex,gemini,grok'` is the permissive
 upstream ring; `make provider-consult-live-e2e-all` is strict. The clean child directly invokes each
 mounted peer role once, so a complete ring starts four peer CLI sessions and zero lead sessions.
@@ -70,6 +78,8 @@ in final/state/log. Wrapper fixtures preserve a partial reply at exit0; they do 
 native lead carries its caveats through synthesis. No prose-to-verdict parser is involved.
 
 ## Changelog
+- 2026-09-14 — documented the shared role-health ledger, repository-root resolution, and the
+  jq 1.6 empty-stream trap found during a real Frontier run.
 - 2026-09-13 — Grok native captures also reproduced a lead-decoder accounting bug:
   preserved older separate-reasoning streams while honoring current inclusive totals
   and provider-reported cost; focused lead/consult fixtures cover both formats.

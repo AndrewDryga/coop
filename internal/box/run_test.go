@@ -689,6 +689,52 @@ func TestRunAppliesTrustedReviewEnvironment(t *testing.T) {
 	}
 }
 
+func TestFormatCorrectionOmitsReviewSetupAndRepository(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	projectFile := "review:\n  compose: review-compose.yml\n  env:\n    CORRECTION_MUST_NOT_SEE: project\n"
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte(projectFile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "review-compose.yml"), []byte("services:\n  db:\n    image: postgres:18\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	cfg := &config.Config{
+		ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "open", AutoUp: true,
+		Cache: true, ServicesNet: "ordinary-shared-network",
+	}
+	spec := RunSpec{
+		Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"claude", "-p", "correct"},
+		Agent: "claude", AgentCommand: true, Homes: true, Batch: true, Review: true,
+		RepoReadOnly: true, Network: true, Cache: true, LoopPresentation: true, FormatCorrection: true,
+	}
+	if code, err := Run(cfg, recorderRuntime(t, recorder), spec); err != nil || code != 0 {
+		t.Fatalf("Run = %d, %v; want 0, nil", code, err)
+	}
+	data, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := string(data)
+	for _, forbidden := range []string{repo + ":/workspace", "up -d", "COOP_REVIEW=1", "CORRECTION_MUST_NOT_SEE", "coop-cache", "ordinary-shared-network"} {
+		if strings.Contains(args, forbidden) {
+			t.Fatalf("format correction retained %q:\n%s", forbidden, args)
+		}
+	}
+	foundEmptyWorkspace := false
+	for _, field := range strings.Fields(args) {
+		if strings.HasSuffix(field, ":/workspace:ro") {
+			foundEmptyWorkspace = true
+		}
+	}
+	if !foundEmptyWorkspace || runInvocations(args) != 1 {
+		t.Fatalf("format correction did not launch once with an empty read-only workspace:\n%s", args)
+	}
+}
+
 func TestRunCleansUpTrustedReviewServices(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {

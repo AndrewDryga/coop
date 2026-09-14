@@ -132,6 +132,17 @@ func (a claudeAgent) Headless(cfg *config.Config, prompt string) []string {
 	return append(a.base(cfg), "-p", prompt)
 }
 
+func (a claudeAgent) HeadlessSession(cfg *config.Config, prompt, id string, resume bool) ([]string, bool) {
+	if !ValidSessionID(id) {
+		return nil, false
+	}
+	flag := "--session-id"
+	if resume {
+		flag = "--resume"
+	}
+	return append(a.base(cfg), flag, id, "-p", prompt), true
+}
+
 // ACP is a separate adapter binary that takes no agent flags — the chosen model reaches
 // the claude it spawns via ModelEnv (ANTHROPIC_MODEL), which box.Run exports.
 func (claudeAgent) ACP(*config.Config) []string { return []string{"claude-agent-acp"} }
@@ -900,9 +911,11 @@ const claudeConsultText = `claude_text() {
 const claudeConsultUsage = `select(length==1) | .[0]
 		| select(type=="object" and .type=="result" and .is_error!=true)
 		| select((.usage|type)=="object")
-		| {input:(.usage.input_tokens // 0), output:(.usage.output_tokens // 0),
-		   write:(.usage.cache_creation_input_tokens // 0), read:(.usage.cache_read_input_tokens // 0), cost:.total_cost_usd}
+		| {input:(.usage.input_tokens // 0), fresh:(.usage.input_tokens // 0), output:(.usage.output_tokens // 0),
+		   write:(.usage.cache_creation_input_tokens // 0), read:(.usage.cache_read_input_tokens // 0),
+		   duration:.duration_ms, cost:.total_cost_usd}
 		| select(.input|token) | select(.output|token) | select(.write|token) | select(.read|token)
+		| if (.duration|token) then . else del(.duration) end
 		| .input=(.input + .write + .read) | select(.input<=1000000000)
 		| if (.cost|type=="number" and isfinite and .>=0) then . else del(.cost) end`
 
