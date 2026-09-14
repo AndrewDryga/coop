@@ -81,6 +81,17 @@ func TestNetworkProviderBundlesRefusesMissingRequiredPresetRole(t *testing.T) {
 	}
 }
 
+func TestNetworkProviderBundlesAllowLoginWithoutAnExistingCredential(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	bundles, err := NetworkProviderBundles(cfg, RunSpec{Agent: "grok", Homes: true, Login: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundles) != 1 || bundles[0].Provider != "grok" || bundles[0].AuthMode != "access-file" {
+		t.Fatalf("Grok login bundle = %+v", bundles)
+	}
+}
+
 func TestNetworkTargetBundleBindsPortableAccountAuthentication(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	gemini, _ := agents.Get("gemini")
@@ -141,7 +152,7 @@ func TestNetworkTargetBundleRequiresPortableGrokAccessFile(t *testing.T) {
 	write(time.Now().Add(2 * time.Hour))
 	target := agents.Target{Provider: "grok", Accounts: []string{"personal"}}
 	bundle, err := NetworkTargetBundle(cfg, target, egress.ClientACP)
-	if err != nil || bundle.AuthMode != "access-file" || len(bundle.Core) != 2 {
+	if err != nil || bundle.AuthMode != "access-file" || len(bundle.Core) != 3 {
 		t.Fatalf("portable Grok access file was not qualified: %+v, %v", bundle, err)
 	}
 	write(time.Now().Add(30 * time.Minute))

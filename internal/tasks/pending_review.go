@@ -1316,22 +1316,35 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 // complete semantic prefix must be preserved. Ordinary startup never infers this transition from
 // tree equality, so an unrelated rewrite cannot silently acquire review authority.
 func RebindPendingReviewAfterSigning(repo, root, id, oldHead, newHead string) error {
+	return rebindPendingReviewAfterAuthorizedRewrite(repo, root, id, oldHead, newHead)
+}
+
+// RebindPendingReviewAfterAuditRewrite preserves another completed task's review debt when a
+// host-authorized audit repair rewrites an older commit and faithfully replays its descendants.
+func RebindPendingReviewAfterAuditRewrite(repo, root, id, oldHead, newHead, auditID string, authority AuditReopenRecord) error {
+	if _, err := rebasedAuditReopenRecord(repo, oldHead, newHead, auditID, authority); err != nil {
+		return err
+	}
+	return rebindPendingReviewAfterAuthorizedRewrite(repo, root, id, oldHead, newHead)
+}
+
+func rebindPendingReviewAfterAuthorizedRewrite(repo, root, id, oldHead, newHead string) error {
 	record, ok, err := readPendingReviewRecord(root, id)
 	if err != nil || !ok {
-		return errors.Join(err, fmt.Errorf("pending-review record for %s is missing after signing", id))
+		return errors.Join(err, fmt.Errorf("pending-review record for %s is missing after history rewrite", id))
 	}
 	if !validAuditReopenHead(oldHead) || !validAuditReopenHead(newHead) || oldHead == newHead ||
 		gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}") != newHead ||
 		!pendingReviewRawBindingValid(repo, record.Binding) ||
 		!AuditReopenCurrentValid(repo, oldHead, id, bindingAsAuditRecord(id, record.Binding)) {
-		return fmt.Errorf("signed history transition for task %s does not start at its recorded raw binding", id)
+		return fmt.Errorf("history transition for task %s does not start at its recorded raw binding", id)
 	}
 	current, err := capturePendingReviewBinding(repo, id)
 	if err != nil {
 		return err
 	}
 	if !pendingReviewBindingExtendsSemantics(record.Binding, current) {
-		return fmt.Errorf("signed history changed pending-review semantics for task %s", id)
+		return fmt.Errorf("history rewrite changed pending-review semantics for task %s", id)
 	}
 	record.Binding = current
 	record.UpdatedAt = time.Now().UTC()

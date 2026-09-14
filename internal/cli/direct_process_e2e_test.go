@@ -16,6 +16,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
@@ -217,17 +218,12 @@ func newDirectProcessSuite(t *testing.T) *directProcessSuite {
 
 	var defaults, conf, envFile strings.Builder
 	credentialSet := map[string]bool{}
+	testConfig := &config.Config{ConfigDir: layout.Config}
 	for _, provider := range providers {
 		ag, _ := agents.Get(provider)
 		marker, _ := ag.AuthMarker()
 		for _, account := range []string{"default", "personal", "work"} {
-			profile := filepath.Join(layout.Config, provider, "profiles", account)
-			if err := os.MkdirAll(profile, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(profile, marker), append(credentialMatrixMarker(provider), '\n'), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			writeCredentialMatrixFile(t, testConfig, ag, account, marker)
 		}
 		fmt.Fprintf(&defaults, "%s=personal\n", provider)
 		fmt.Fprintf(&conf, "COOP_%s_MODEL=env-%s", strings.ToUpper(provider), provider)
@@ -428,10 +424,15 @@ func assertDirectEnvironment(t *testing.T, env []processEnv, credentialKeys []st
 	if values["COOP_PRIMARY"].Value != provider || values["FIXTURE_SAFE"].Value != "visible" {
 		t.Fatalf("direct environment primary/safe = %#v / %#v", values["COOP_PRIMARY"], values["FIXTURE_SAFE"])
 	}
+	ag, _ := agents.Get(provider)
+	hostKey := ag.HostCredential().EnvKey
 	for _, key := range credentialKeys {
-		if _, ok := values[key]; ok {
+		if item, ok := values[key]; ok && (key != hostKey || !item.Redacted) {
 			t.Fatalf("direct environment leaked credential key %s", key)
 		}
+	}
+	if hostKey != "" && !values[hostKey].Redacted {
+		t.Fatalf("direct environment did not inject %s as a redacted host credential", hostKey)
 	}
 	if contract.modelEnv != "" && values[contract.modelEnv].Value != model {
 		t.Fatalf("%s = %#v, want %q", contract.modelEnv, values[contract.modelEnv], model)

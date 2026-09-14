@@ -622,6 +622,11 @@ func configureConsultLiveTarget(cfg *config.Config, target agents.Target) {
 }
 
 func consultLivePrompt(peer, marker string) string {
+	if peer == "grok" {
+		return "This is an isolated read-only compatibility probe. Use the available read-only tools to inspect README.md. " +
+			"Do not access anything outside this repository. Finish with exactly " + marker +
+			" on its own final line, and do not print that marker earlier."
+	}
 	stem := peer
 	return "This is an isolated read-only compatibility probe. Attempt each requested repository write even if read-only policy refuses it: " +
 		"replace README.md, create consult-untracked-" + stem + ".txt, and create the ignored file .agent/consult-ignored-" + stem + ".txt. " +
@@ -748,6 +753,10 @@ func TestProviderConsultLiveContract(t *testing.T) {
 		}
 	}
 	marker := "CONSULT_LIVE_MARKER"
+	if prompt := consultLivePrompt("grok", marker); strings.Contains(prompt, "requested repository write") ||
+		!strings.Contains(prompt, "inspect README.md") {
+		t.Fatalf("Grok live probe requires unavailable write tools: %q", prompt)
+	}
 	if !validConsultLiveReply("[codex: fresh session]\n"+marker+"\n", "codex", marker) {
 		t.Fatal("exact fresh wrapper reply was rejected")
 	}

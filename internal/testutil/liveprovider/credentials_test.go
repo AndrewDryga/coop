@@ -229,8 +229,8 @@ func TestPrepareGeminiAuthFollowsSelectedAuthority(t *testing.T) {
 	}{
 		{
 			name: "native API key marker stays host bound", selected: "gemini-api-key",
-			env: "GOOGLE_API_KEY=token\n", withMarker: true, wantPresent: true,
-			wantPreflight: ReasonCredentialNotPortable,
+			env: "GOOGLE_API_KEY=token\n", withMarker: true,
+			wantPreflight: ReasonMissingCredential,
 		},
 		{
 			name: "selected API key is portable", selected: "gemini-api-key",

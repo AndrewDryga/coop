@@ -91,6 +91,22 @@ func TestSummaryContract(t *testing.T) {
 	if failed.Success() {
 		t.Fatal("attempted provider failure produced a successful summary")
 	}
+	for _, phase := range []string{"resume", "mcp", "receipt", "chatter"} {
+		if _, err := NewSummary(false, requested[:1], []ProviderResult{{
+			Provider: "claude", Attempted: true, Status: StatusFailed, ReasonCode: ReasonPromptExit,
+			Phase: phase, ErrorClass: "provider",
+		}}); err != nil {
+			t.Errorf("network phase %q failure was rejected: %v", phase, err)
+		}
+	}
+	for _, result := range []ProviderResult{
+		{Provider: "claude", Attempted: true, Status: StatusFailed, ReasonCode: ReasonPromptTimeout, Phase: "resume", TimedOut: true, ErrorClass: "timeout"},
+		{Provider: "claude", Attempted: true, Status: StatusFailed, ReasonCode: ReasonMarkerMismatch, Phase: "resume", ErrorClass: "marker"},
+	} {
+		if _, err := NewSummary(false, requested[:1], []ProviderResult{result}); err != nil {
+			t.Errorf("network resume failure was rejected: %v", err)
+		}
+	}
 
 	all, _, err := ParseTargets("all")
 	if err != nil {

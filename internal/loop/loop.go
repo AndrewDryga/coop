@@ -1064,6 +1064,28 @@ reviewAgain:
 				refRelease()
 				return 1, errors.Join(tasks.UnownedCompletionError(unowned, restoreErr), releaseErr)
 			}
+			if lease.Reopen != nil && iterHead != headAfter {
+				var rebindErr error
+				for _, subject := range pendingReview.Subjects {
+					if subject.Task.Ref.ID == assigned.Item.ID {
+						continue
+					}
+					root := pendingReviewSubjectRoot(pendingReview.Plan, subject)
+					if root == "" {
+						rebindErr = fmt.Errorf("pending final-review task %s has no recorded queue", subject.Task.Ref.ID)
+						break
+					}
+					if err := tasks.RebindPendingReviewAfterAuditRewrite(repo, root, subject.Task.Ref.ID, iterHead, headAfter, assigned.Item.ID, *lease.Reopen); err != nil {
+						rebindErr = fmt.Errorf("rebind pending final-review task %s after audit rewrite: %w", subject.Task.Ref.ID, err)
+						break
+					}
+				}
+				if rebindErr != nil {
+					releaseErr := errors.Join(lease.Release(), windows.Close())
+					refRelease()
+					return 1, errors.Join(rebindErr, releaseErr)
+				}
+			}
 			if err := lease.PreserveBlockedAuditReopen(repo, iterHead, headAfter); err != nil {
 				releaseErr := errors.Join(lease.Release(), windows.Close())
 				refRelease()
@@ -1150,6 +1172,15 @@ reviewAgain:
 					protectedAudit := len(auditGateFiles) > 0
 					runAudit := shouldRunBetweenAudit(action == actContinue, auditAvailable, protectedAudit)
 					if runAudit {
+						betweenCohort, loadErr := tasks.LoadPendingReviews(repo, hosts)
+						if loadErr != nil {
+							return 1, fmt.Errorf("capture between-review subjects: %w", loadErr)
+						}
+						betweenRecords, selectErr := pendingReviewRecordsForIDs(betweenCohort, finishedIDs)
+						if selectErr != nil {
+							return 1, selectErr
+						}
+						pendingReview = betweenCohort
 						if protectedAudit {
 							printProtectedReview(betweenRot.Active().String(), auditGateFiles)
 						} else {
@@ -1172,6 +1203,21 @@ reviewAgain:
 						btRun, rerr := c.runReviewVerdict(iterCtx, repo, img, betweenRot, forkName, prompt, reviewActivity(stage, finishedIDs), iterCmd, hosts, finishedIDs, &reviewPlan, lc.Between.Writes, sink, peers, hardStop, observe)
 						reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, nil, nil, btRun.concurrent)
 						reopenedIDs := btRun.reopened
+						if len(reopenedIDs) > 0 {
+							reopenedRecords, selectErr := pendingReviewRecordsForIDs(tasks.PendingReviewCohort{Subjects: betweenRecords}, reopenedIDs)
+							if selectErr != nil {
+								return 1, selectErr
+							}
+							if err := tasks.MarkExpectedPendingReviewsReopened(hosts, reopenedRecords); err != nil {
+								return 1, fmt.Errorf("record between-review reopens: %w", err)
+							}
+						}
+						if len(btRun.concurrent) > 0 {
+							pendingReview, err = tasks.LoadPendingReviews(repo, hosts)
+							if err != nil {
+								return 1, fmt.Errorf("reload concurrent between-review subjects: %w", err)
+							}
+						}
 						if errors.Is(rerr, errReviewInterrupted) {
 							break
 						}
@@ -1421,6 +1467,12 @@ reviewAgain:
 				return 1, fmt.Errorf("clear accepted final-review subjects: %w", err)
 			}
 		}
+		if len(soRun.concurrent) > 0 {
+			pendingReview, err = tasks.LoadPendingReviews(repo, hosts)
+			if err != nil {
+				return 1, fmt.Errorf("reload concurrent final-review subjects: %w", err)
+			}
+		}
 		// A stop that landed during a successful signoff is honored only after its host-applied
 		// receipt and durable phase transition are complete.
 		if softStop.Load() || iterCtx.Err() != nil {
@@ -1578,6 +1630,12 @@ reviewAgain:
 				}
 				if err := tasks.ClearPendingReviews(hosts, expected); err != nil {
 					return 1, fmt.Errorf("clear accepted final-verification subjects: %w", err)
+				}
+				if len(vRun.concurrent) > 0 {
+					pendingReview, err = tasks.LoadPendingReviews(repo, hosts)
+					if err != nil {
+						return 1, fmt.Errorf("reload concurrent verification subjects: %w", err)
+					}
 				}
 				audits.drop(reopenedIDs)
 				reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, nil, reopenedIDs, vRun.concurrent)

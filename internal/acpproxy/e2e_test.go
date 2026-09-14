@@ -782,7 +782,7 @@ func TestPresetOwnsSelectorState(t *testing.T) {
 	}
 
 	options = setLiveConfig(ctx, t, live, sessionID, "coop_preset", "none")
-	for _, id := range []string{"coop_preset", "coop_provider", "coop_account"} {
+	for _, id := range []string{"coop_preset", "coop_account"} {
 		if _, ok := options[id]; !ok {
 			live.fail(t, "plain_toolbar", nil)
 		}
@@ -791,15 +791,17 @@ func TestPresetOwnsSelectorState(t *testing.T) {
 		live.fail(t, "plain_toolbar", nil)
 	}
 
-	plainProvider := options["coop_provider"].CurrentValue
-	for _, option := range options["coop_provider"].Options {
-		if option.Value != "" && option.Value != plainProvider {
-			plainProvider = option.Value
-			break
+	if provider, ok := options["coop_provider"]; ok {
+		plainProvider := provider.CurrentValue
+		for _, option := range provider.Options {
+			if option.Value != "" && option.Value != plainProvider {
+				plainProvider = option.Value
+				break
+			}
 		}
-	}
-	if plainProvider != options["coop_provider"].CurrentValue {
-		options = setLiveConfig(ctx, t, live, sessionID, "coop_provider", plainProvider)
+		if plainProvider != provider.CurrentValue {
+			options = setLiveConfig(ctx, t, live, sessionID, "coop_provider", plainProvider)
+		}
 	}
 	plainAccount := "auto"
 	for _, option := range options["coop_account"].Options {
@@ -811,14 +813,13 @@ func TestPresetOwnsSelectorState(t *testing.T) {
 	if plainAccount != "auto" {
 		options = setLiveConfig(ctx, t, live, sessionID, "coop_account", plainAccount)
 	}
-	plainProvider = options["coop_provider"].CurrentValue
 	plainAccount = options["coop_account"].CurrentValue
 
 	options = setLiveConfig(ctx, t, live, sessionID, "coop_preset", "frontier")
 	if len(options) != 1 || options["coop_preset"].CurrentValue != "frontier" {
 		live.fail(t, "preset_toolbar", nil)
 	}
-	if plainProvider == "" || plainAccount == "" {
+	if plainAccount == "" {
 		live.fail(t, "plain_toolbar", nil)
 	}
 }

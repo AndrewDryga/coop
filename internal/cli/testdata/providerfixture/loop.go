@@ -100,7 +100,7 @@ func validateLoopResult(index int, stage, result string) error {
 			return nil
 		}
 	case "between", "signoff", "verify":
-		if common || result == "pass" || result == "pass-gated" || result == "pass-host-completion" || result == "pass-with-host" || result == "pass-with-descendant" ||
+		if common || result == "pass" || result == "pass-gated" || result == "pass-host-completion" || result == "pass-with-host" || result == "pass-with-subject-and-host" || result == "pass-with-descendant" ||
 			result == "pass-corrected" || result == "reopen" || result == "reopen-gated" || result == "reopen-injection" ||
 			result == "reopen-authentication" || result == "reopen-ordinary" || result == "reopen-wait" ||
 			result == "reopen-corrected" || result == "malformed-review" || result == "malformed-review-corrected" ||
@@ -276,7 +276,7 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			return 190, "", nil
 		}
 		return 191, "", nil
-	case "pass", "pass-gated", "pass-host-completion", "pass-with-host", "pass-with-descendant", "pass-corrected", "reopen", "reopen-gated", "reopen-injection", "reopen-authentication", "reopen-ordinary", "reopen-wait", "reopen-corrected", "malformed-review", "malformed-review-corrected", "complete-extra",
+	case "pass", "pass-gated", "pass-host-completion", "pass-with-host", "pass-with-subject-and-host", "pass-with-descendant", "pass-corrected", "reopen", "reopen-gated", "reopen-injection", "reopen-authentication", "reopen-ordinary", "reopen-wait", "reopen-corrected", "malformed-review", "malformed-review-corrected", "complete-extra",
 		"pass-codex-footer", "reopen-codex-footer", "pass-codex-footer-echo", "reopen-codex-footer-echo", "pass-codex-echo-footer", "reopen-codex-echo-footer",
 		"pass-codex-split-footer-echo",
 		"background-drained-review", "background-drained-review-host-completion", "background-timeout-review":
@@ -321,6 +321,19 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 				return 1, "", fmt.Errorf("loop review prompt does not name concurrent subject %s", hostID)
 			}
 			reply = "AUDIT EVIDENCE — " + hostID + " — gate: fixture gate — findings: none\n" +
+				"REVIEW COMPLETE — PASS — reopened: none"
+		}
+		if attempt.Result == "pass-with-subject-and-host" {
+			hostID := plan.TaskID + "-host"
+			if err := verifyLoopTaskDone(root, hostID); err != nil {
+				return 1, "", err
+			}
+			prompt := loopPromptFrom(provider, providerArgv)
+			if !strings.Contains(prompt, plan.TaskID) || !strings.Contains(prompt, hostID) {
+				return 1, "", errors.New("loop review prompt omitted the subject or host completion")
+			}
+			reply = "AUDIT EVIDENCE — " + plan.TaskID + " — gate: fixture gate — findings: none\n" +
+				"AUDIT EVIDENCE — " + hostID + " — gate: fixture gate — findings: none\n" +
 				"REVIEW COMPLETE — PASS — reopened: none"
 		}
 		if attempt.Result == "pass-with-descendant" {
@@ -658,6 +671,9 @@ func hostCompleteLoopTask(root, taskID string) error {
 	repo, err := loopRepo(root)
 	if err != nil {
 		return err
+	}
+	if err := runLoopGit(repo, "commit", "--allow-empty", "-q", "-m", "fixture: host completion", "-m", "Coop-Task: "+taskID); err != nil {
+		return fmt.Errorf("commit host-completed task %s: %w", taskID, err)
 	}
 	conf := filepath.Join(root, "config", "coop.conf")
 	if err := os.WriteFile(conf, nil, 0o600); err != nil {

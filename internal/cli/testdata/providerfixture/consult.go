@@ -492,12 +492,12 @@ func parsePlainConsultArgs(args, prefix []string, freshFlag, resumeFlag, effortF
 func parseCodexConsultArgs(args []string) (consultInvocation, error) {
 	var invocation consultInvocation
 	switch {
-	case len(args) >= 3 && slices.Equal(args[:3], []string{"exec", "-s", "read-only"}):
+	case len(args) >= 5 && slices.Equal(args[:5], []string{"exec", "--enable", "use_legacy_landlock", "-s", "read-only"}):
 		invocation.Delivery = "fresh"
-		args = args[3:]
-	case len(args) >= 5 && args[0] == "exec" && args[1] == "resume" && safeConsultValue(args[2], 256) && args[3] == "-c" && args[4] == "sandbox_mode=read-only":
-		invocation.Delivery, invocation.Session = "resume", args[2]
 		args = args[5:]
+	case len(args) >= 7 && slices.Equal(args[:4], []string{"exec", "resume", "--enable", "use_legacy_landlock"}) && safeConsultValue(args[4], 256) && args[5] == "-c" && args[6] == "sandbox_mode=read-only":
+		invocation.Delivery, invocation.Session = "resume", args[4]
+		args = args[7:]
 	default:
 		return consultInvocation{}, errors.New("codex consult argv has no exact read-only fresh/resume prefix")
 	}

@@ -48,6 +48,9 @@ func (a *app) resolveImage() (repo, img string, err error) {
 		return "", "", err
 	}
 	img = box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
+	if a.loginProvider != "" && a.cfg.ImageOverride == "" {
+		img = a.cfg.BaseImage // authentication must not depend on the project's toolchain image
+	}
 	if !box.ImageExists(a.rt, img) {
 		// `image inspect` fails the same way whether the image is missing or the daemon is gone, so
 		// probe the daemon before blaming the image — a Docker restart otherwise tells every box

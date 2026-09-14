@@ -53,12 +53,20 @@ func NetworkProviderBundles(cfg *config.Config, spec RunSpec) ([]egress.Bundle, 
 		if brokered[name] {
 			continue // broker helper authority is distinct from the agent's captured policy
 		}
-		if _, ok := agents.Get(name); !ok {
+		ag, ok := agents.Get(name)
+		if !ok {
 			return nil, errors.New("unknown provider in the restricted credential scope")
 		}
 		targets := networkTargetsForProvider(cfg, spec, name)
 		for _, target := range targets {
-			bundle, err := NetworkTargetBundle(cfg, target, spec.networkClient())
+			var bundle egress.Bundle
+			var err error
+			if spec.Login {
+				// Login creates the credential, so it cannot require that credential first.
+				bundle, err = ag.NetworkBundle(agents.NetworkBundleInput{Client: spec.networkClient()})
+			} else {
+				bundle, err = NetworkTargetBundle(cfg, target, spec.networkClient())
+			}
 			if err != nil {
 				return nil, err
 			}

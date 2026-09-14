@@ -2,9 +2,9 @@
 name: provider-bundles-carry-function-not-chatter
 description: a provider bundle grants what the client needs to function; the client's own update/telemetry chatter is switched off in the box, never granted and never hidden
 scope: security
-sources: [internal/agent/network_bundle.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/mcp/mcp.go, internal/cli/provider_network_live_e2e_test.go]
+sources: [internal/agent/network_bundle.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/locked_clients_test.go, internal/mcp/mcp.go, internal/cli/provider_network_live_e2e_test.go]
 check: "go test ./internal/agent -run 'TestProviderBundlesCarryFunctionNotChatter|TestManagedClientDefaultsAreBoxOnly'"
-updated: 2026-09-13
+updated: 2026-09-14
 ---
 
 # A provider bundle carries function; a managed client's chatter is switched off, not granted or hidden
@@ -54,6 +54,8 @@ Background: [[restricted-networking]] (bundles are one of five layers),
 [[mcp-authority-projection]] (the overlays are projections of the host profile, never edits).
 
 ## Changelog
+- 2026-09-14 — observed Grok's device login request to `auth.x.ai` denied by the filtered gateway,
+  added that required token endpoint under a new bundle version, and pinned Grok's exact core set.
 - 2026-09-13 — updated the current approval path to the top-level `coop approve` command.
 - 2026-09-10 — created with the fix. Swept every `NetworkBundle` (claude, codex; gemini/grok
   refuse) against the chatter list: 0 violations after adding the connector proxy under

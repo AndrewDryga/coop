@@ -480,7 +480,7 @@ func (grokAgent) LockedClients(platform ClientPlatform) []LockedClient {
 
 func (a grokAgent) NetworkBundle(input NetworkBundleInput) (egress.Bundle, error) {
 	return directNetworkBundle(a.Name(), "access-file", input,
-		[]string{"cli-chat-proxy.grok.com", "code.grok.com"},
+		[]string{"auth.x.ai", "cli-chat-proxy.grok.com", "code.grok.com"},
 		[]string{"https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.25-linux-aarch64.gz"})
 }
 

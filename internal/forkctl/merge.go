@@ -1047,13 +1047,6 @@ func anyForkHasServices(repo string, names []string) bool {
 	return false
 }
 
-func pluralFolder(n int) string {
-	if n == 1 {
-		return "folder"
-	}
-	return "folders"
-}
-
 // mergedList names what actually landed before a failure, so a halted batch reports durable
 // results rather than a bare count.
 func mergedList(landed []string) string {

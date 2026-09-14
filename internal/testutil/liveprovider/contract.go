@@ -231,15 +231,24 @@ func validFailedResult(result ProviderResult) bool {
 	case ReasonVersionProbe:
 		return !result.Attempted && result.Phase == "version"
 	case ReasonPromptExit:
-		return result.Attempted && result.Phase == "prompt" && !result.TimedOut
+		return result.Attempted && validPromptExitPhase(result.Phase) && !result.TimedOut
 	case ReasonPromptTimeout:
-		return result.Attempted && result.Phase == "prompt" && result.TimedOut && result.ErrorClass == "timeout"
+		return result.Attempted && (result.Phase == "prompt" || result.Phase == "resume") && result.TimedOut && result.ErrorClass == "timeout"
 	case ReasonMarkerMismatch:
-		return result.Attempted && result.Phase == "prompt" && !result.TimedOut
+		return result.Attempted && (result.Phase == "prompt" || result.Phase == "resume") && !result.TimedOut
 	case ReasonRepositoryChanged, ReasonSourceChanged, ReasonCleanupFailed:
 		return result.Phase == "verification" && result.ErrorClass == "harness"
 	case ReasonHarnessFailed:
 		return result.Phase == "harness" && result.ErrorClass == "harness"
+	default:
+		return false
+	}
+}
+
+func validPromptExitPhase(phase string) bool {
+	switch phase {
+	case "prompt", "resume", "mcp", "receipt", "chatter":
+		return true
 	default:
 		return false
 	}

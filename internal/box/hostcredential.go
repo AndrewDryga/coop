@@ -188,7 +188,7 @@ func validateHostCredentialSecret(secret []byte) error {
 	if len(secret) > hostCredentialSizeLimit {
 		return errors.New("API key is too large")
 	}
-	if bytes.IndexAny(secret, "\x00\r\n") >= 0 {
+	if bytes.ContainsAny(secret, "\x00\r\n") {
 		return errors.New("API key cannot contain a line break")
 	}
 	return nil

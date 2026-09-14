@@ -599,7 +599,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: signoff, Stage: "signoff", Result: "pass"},
 			{Target: verify, Stage: "verify", Result: "pass-host-completion"},
 			{Target: signoff, Stage: "signoff", Result: "pass-with-host"},
-			{Target: verify, Stage: "verify", Result: "pass"},
+			{Target: verify, Stage: "verify", Result: "pass-with-host"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReview(t, suite, work, 20*time.Second)
@@ -638,7 +638,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: verify, Stage: "verify", Result: "background-timeout-review"},
 			{Target: verify, Stage: "verify", Result: "background-drained-review-host-completion"},
 			{Target: signoff, Stage: "signoff", Result: "pass-with-host"},
-			{Target: verify, Stage: "verify", Result: "pass"},
+			{Target: verify, Stage: "verify", Result: "pass-with-subject-and-host"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReview(t, suite, work, 20*time.Second)
@@ -861,8 +861,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 
 		recloseAttempts := []loopProcessAttempt{
 			{Target: work, Stage: "work", Result: "verify-only-after-block"},
-			{Target: between, Stage: "between", Result: "pass"},
-			{Target: signoff, Stage: "signoff", Result: "pass"},
+			{Target: signoff, Stage: "signoff", Result: "pass-with-descendant"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, recloseAttempts))
 		recloseHead := loopProcessGit(t, suite, "rev-parse", "HEAD")
@@ -1705,7 +1704,7 @@ func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []
 			attempt.Result != "repair-older-binding-changed-descendant" && attempt.Result != "verify-only" &&
 			attempt.Result != "verify-only-after-block" &&
 			attempt.Result != "second-binding" && attempt.Result != "pass" && attempt.Result != "pass-gated" && attempt.Result != "pass-host-completion" &&
-			attempt.Result != "pass-with-host" && attempt.Result != "pass-with-descendant" &&
+			attempt.Result != "pass-with-host" && attempt.Result != "pass-with-subject-and-host" && attempt.Result != "pass-with-descendant" &&
 			attempt.Result != "pass-corrected" && attempt.Result != "reopen" && attempt.Result != "reopen-gated" &&
 			attempt.Result != "reopen-injection" && attempt.Result != "reopen-corrected" &&
 			attempt.Result != "malformed-review" && attempt.Result != "malformed-review-corrected" &&

@@ -11,7 +11,7 @@ import (
 // adapter or CLI version. Changing any bundle's contents requires a new value:
 // the same version with different content is integrity drift, never an update
 // (networkstate.checkBundles pins each version's content on first admission).
-const NetworkBundleVersion = "2026-09-13.1"
+const NetworkBundleVersion = "2026-09-14.1"
 
 // NetworkBundleInput names an ALREADY SELECTED target: the client this run
 // launches plus, when the operator was explicit, the backend and auth variant.

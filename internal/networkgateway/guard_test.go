@@ -50,7 +50,7 @@ func TestServiceProxyRoutesOnlyAnApprovedMatchingTLSName(t *testing.T) {
 		t.Fatalf("CONNECT response = %q, %v", response, err)
 	}
 	hello := clientHello(t, "api.example.com")
-	if _, err := io.WriteString(client, string(hello)); err != nil {
+	if _, err := client.Write(hello); err != nil {
 		t.Fatal(err)
 	}
 	_ = fixture.private.SetDeadline(time.Now().Add(wait.Deadline))

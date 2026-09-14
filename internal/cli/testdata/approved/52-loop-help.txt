@@ -15,6 +15,7 @@ EXAMPLES
 OPTIONS
   --tasks <path>         choose a task queue; repeat for more queues
   --peer <target>        start with read-only peer agents; repeat for more peers
+  --review-task <id>     import one receipt-valid archived task into final review; repeatable
   --max-tasks <n>        pause after N tasks finish or become blocked
   --preflight            resolve answered decisions and release stale claims first
   --no-preflight         skip that preparation

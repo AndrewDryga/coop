@@ -26,3 +26,6 @@ Verify the sandbox
 Start working
   → coop tasks add "Describe your first task"
   → coop loop codex
+⚠ New runs need your approval
+  .agent/project.yaml requests changes to network access.
+  Review changes: coop approve

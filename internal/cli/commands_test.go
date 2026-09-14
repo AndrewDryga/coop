@@ -1398,6 +1398,29 @@ func TestResolveImageBlamesTheDaemonNotTheImage(t *testing.T) {
 	}
 }
 
+func TestResolveImageUsesTheBaseImageForLogin(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{
+		cfg:           &config.Config{BaseImage: "coop-box", RepoOverride: repo},
+		rt:            recordingRuntime(t, filepath.Join(t.TempDir(), "runtime-args")),
+		rtSet:         true,
+		loginProvider: "grok",
+	}
+	_, image, err := a.resolveImage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if image != "coop-box" {
+		t.Fatalf("login image = %q, want the shared base image", image)
+	}
+}
+
 func TestRepoCommandsRejectInvalidProjectBeforeRuntimeDetection(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
@@ -1587,6 +1610,14 @@ func TestACPParsesTheNetworkFlagsAndAdmitsInTheSupervisor(t *testing.T) {
 	cfg := &config.Config{
 		ConfigDir: t.TempDir(), RepoOverride: repo, HomeInBox: "/home/node", BoxHome: t.TempDir(),
 		BaseImage: "test-base", Homes: true, Egress: "open",
+	}
+	profileDir := cfg.AgentProfileDir("claude", "default")
+	if err := os.MkdirAll(profileDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	credential := `{"claudeAiOauth":{"accessToken":"access","expiresAt":4102444800000,"scopes":["user:inference"]}}`
+	if err := os.WriteFile(filepath.Join(profileDir, ".credentials.json"), []byte(credential), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	supervised := false
 	a := &app{cfg: cfg, rt: recordingRuntime(t, filepath.Join(t.TempDir(), "runtime-args")), rtSet: true,

@@ -139,16 +139,3 @@ func netModeDescription(mode egress.Mode) string {
 		return "Filtered — only approved network traffic is allowed."
 	}
 }
-
-// netModeWord is the same mode as a noun phrase, for a sentence that names what
-// was approved rather than describing it.
-func netModeWord(mode egress.Mode) string {
-	switch mode {
-	case egress.Open:
-		return "Unrestricted internet"
-	case egress.None:
-		return "Offline"
-	default:
-		return "Filtered"
-	}
-}

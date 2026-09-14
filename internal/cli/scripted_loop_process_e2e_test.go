@@ -507,6 +507,9 @@ func assertNoLoopServePublication(t *testing.T, trace []*processTrace) {
 
 func resetLoopProcessRepo(t *testing.T, suite *directProcessSuite) {
 	t.Helper()
+	if err := os.RemoveAll(processLeaseAuthorityRoot(suite.layout)); err != nil {
+		t.Fatal(err)
+	}
 	loopProcessGit(t, suite, "reset", "--hard", suite.repoHead)
 	loopProcessGit(t, suite, "clean", "-fdx")
 }

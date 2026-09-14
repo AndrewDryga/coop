@@ -5,7 +5,6 @@ import (
 	"slices"
 	"strings"
 
-	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/loopcfg"
 	"github.com/AndrewDryga/coop/internal/tasks"
@@ -95,32 +94,6 @@ func pendingSignoffStartRound(cohort tasks.PendingReviewCohort) int {
 	return round
 }
 
-func storedReviewTargets(stage tasks.PendingReviewStage) ([]agents.Target, error) {
-	targets := make([]agents.Target, 0, len(stage.Targets))
-	for _, raw := range stage.Targets {
-		target, err := agents.ParseTarget(raw)
-		if err != nil {
-			return nil, err
-		}
-		if len(target.Accounts) > 1 {
-			return nil, fmt.Errorf("stored pending-review target %q is not one resolved rung", raw)
-		}
-		targets = append(targets, target)
-	}
-	if len(targets) == 0 {
-		return nil, fmt.Errorf("stored pending-review stage has no targets")
-	}
-	return targets, nil
-}
-
-func (c *Control) storedReviewRotation(stage tasks.PendingReviewStage, agent string) (*ladder.Rotation, error) {
-	targets, err := storedReviewTargets(stage)
-	if err != nil {
-		return nil, err
-	}
-	return c.host.buildRotation(agent, targets)
-}
-
 func applyStoredReviewPlan(lc *loopcfg.Config, plan tasks.PendingReviewPlan) {
 	lc.Signoff.Agent = slices.Clone(plan.Signoff.Targets)
 	lc.Signoff.Prompt = plan.Signoff.Prompt
@@ -141,19 +114,6 @@ func pendingReviewPlanForRun(repo string, hosts []string, baseHead, configDigest
 		tasks.PendingReviewStage{Targets: verifyRot.Members(), Prompt: lc.Verify.Prompt, Writes: string(lc.Verify.Writes)},
 		mcpDisabled,
 	)
-}
-
-func pendingFinishedSubjects(hosts, ids []string) ([]string, error) {
-	finished := make([]string, 0, len(ids))
-	for _, id := range ids {
-		subject, err := reviewSubject(hosts, id)
-		if err != nil {
-			return nil, err
-		}
-		finished = append(finished, id+" — "+subject.Item.Dir)
-	}
-	slices.Sort(finished)
-	return finished, nil
 }
 
 func withoutReviewIDs(all, excluded []string) []string {

@@ -82,8 +82,6 @@ func (f networkFlags) admission() box.NetworkAdmission {
 	return box.NetworkAdmission{InvocationMode: f.Mode, Domains: f.Domains, RulesFile: f.RulesFile}
 }
 
-func (f networkFlags) set() bool { return f.Mode != nil || len(f.Domains) != 0 || f.RulesFile != "" }
-
 // args re-renders the flags in the exact spelling a re-executed worker parses, so
 // a detached fork loop admits what its foreground twin would have. The rules file
 // is absolutized: the worker starts in the parent repository, and a path that

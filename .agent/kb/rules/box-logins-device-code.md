@@ -2,9 +2,9 @@
 name: box-logins-device-code
 description: "boxed agent logins use device-code/paste flows; browser OAuth hangs in a container"
 scope: box
-sources: [internal/agent/codex.go, internal/agent/claude.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/run.go, internal/box/login_test.go, internal/box/filtered.go, internal/box/derived_image.go, internal/cli/launch_box.go]
+sources: [internal/agent/codex.go, internal/agent/claude.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/run.go, internal/box/login_test.go, internal/box/filtered.go, internal/box/derived_image.go, internal/box/network_bundles.go, internal/box/network_bundles_test.go, internal/cli/commands.go, internal/cli/commands_test.go, internal/cli/launch_box.go]
 check: "none"
-updated: 2026-09-13
+updated: 2026-09-14
 ---
 
 # Agent logins in the box use device-code flows, not browser OAuth
@@ -42,6 +42,10 @@ runtime setup rather than starting services or silently changing the admitted po
 can sign in from a project with a service-free policy; never change network posture automatically.
 
 ## Changelog
+- 2026-09-14 — fixed the ordinary-network login path to select the shared client image instead of
+  a project's toolchain image. Reproduced with Blitz Infra's image, which had Claude and Gemini
+  but no Grok. Also stopped filtered admission from requiring Grok's old credential before its
+  login can replace it. Focused CLI and network-bundle regressions cover both failures.
 - 2026-09-13 — reproduced Gemini 0.59's failed-save/relaunch loop and rejected MCP field. Swept all
   four login adapters and the shared launch path: isolated login from project setup, retained
   managed defaults and native manual auth, and pinned the selected writable home without repo mounts.

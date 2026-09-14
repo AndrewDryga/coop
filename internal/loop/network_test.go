@@ -229,7 +229,11 @@ func TestLoopRefusesAnUnqualifiedNetworkBeforeAnyBox(t *testing.T) {
 	repo := t.TempDir()
 	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-x", "task.md"), "# x\n")
 	writeTaskFile(t, filepath.Join(repo, ".agent", "project.yaml"), "box:\n  egress: filtered\n")
-	c := New(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true}, runtime.Runtime{Name: "true"}, "test", Host{})
+	cfg := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true}
+	profileDir := cfg.AgentProfileDir("claude", "default")
+	writeTaskFile(t, filepath.Join(profileDir, ".credentials.json"),
+		`{"claudeAiOauth":{"accessToken":"access","expiresAt":4102444800000,"scopes":["user:inference"]}}`)
+	c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
 	c.boxRun = func(box.RunSpec) (int, error) {
 		t.Error("a box launched under a network the host never qualified")
 		return 0, nil

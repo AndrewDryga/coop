@@ -705,7 +705,7 @@ func TestParseConsultInvocationPinsEveryAdapterGrammar(t *testing.T) {
 		{"gemini", []string{"--approval-mode", "plan", "--session-id", "session-2", "-o", "stream-json", "-p", "question"}, consultInvocation{Delivery: "fresh", Session: "session-2", Prompt: "question"}},
 		{"grok", []string{"--tools", "Read,Grep", "--session-id", "session-3", "--output-format", "streaming-json", "--model", "grok-model", "--reasoning-effort", "xhigh", "-p", "question"}, consultInvocation{Delivery: "fresh", Session: "session-3", Model: "grok-model", Effort: "xhigh", Prompt: "question"}},
 		{"grok", []string{"--tools", "Read,Grep", "--resume", "session-3", "--output-format", "streaming-json", "-p", "follow-up"}, consultInvocation{Delivery: "resume", Session: "session-3", Prompt: "follow-up"}},
-		{"codex", []string{"exec", "resume", "session-4", "-c", "sandbox_mode=read-only", "--model", "codex-model", "-c", "model_reasoning_effort=high", "--json", "follow-up"}, consultInvocation{Delivery: "resume", Session: "session-4", Model: "codex-model", Effort: "high", Prompt: "follow-up"}},
+		{"codex", []string{"exec", "resume", "--enable", "use_legacy_landlock", "session-4", "-c", "sandbox_mode=read-only", "--model", "codex-model", "-c", "model_reasoning_effort=high", "--json", "follow-up"}, consultInvocation{Delivery: "resume", Session: "session-4", Model: "codex-model", Effort: "high", Prompt: "follow-up"}},
 	}
 	for _, tc := range cases {
 		got, err := parseConsultInvocation(tc.provider, tc.args)
@@ -729,7 +729,7 @@ func TestParseConsultInvocationPinsEveryAdapterGrammar(t *testing.T) {
 		{"grok", []string{"--tools", "Read,Grep", "--session-id", "session", "-p", "question"}},
 		{"grok", []string{"--tools", "Read,Grep", "--session-id", "session", "--output-format", "text", "-p", "question"}},
 		{"grok", []string{"--tools", "Read,Grep", "--output-format", "streaming-json", "--session-id", "session", "-p", "question"}},
-		{"codex", []string{"exec", "resume", "session", "--json", "question", "-c", "sandbox_mode=read-only"}},
+		{"codex", []string{"exec", "resume", "--enable", "use_legacy_landlock", "session", "--json", "question", "-c", "sandbox_mode=read-only"}},
 	} {
 		if _, err := parseConsultInvocation(tc.provider, tc.args); err == nil {
 			t.Errorf("parseConsultInvocation(%s, %q) accepted reordered/unsafe argv", tc.provider, tc.args)

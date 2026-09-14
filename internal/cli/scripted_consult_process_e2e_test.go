@@ -16,9 +16,12 @@ import (
 	"testing"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/consult"
 	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/preset"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/liveprovider"
 )
 
@@ -628,12 +631,6 @@ func disableProcessCredential(t *testing.T, suite *directProcessSuite, provider 
 	if !ok {
 		t.Fatalf("provider %q is not registered", provider)
 	}
-	marker, _ := ag.AuthMarker()
-	markerPath := filepath.Join(suite.layout.Config, provider, "profiles", "personal", marker)
-	markerBody, err := os.ReadFile(markerPath)
-	if err != nil {
-		t.Fatal(err)
-	}
 	envPath := filepath.Join(suite.layout.Config, "env")
 	envBody, err := os.ReadFile(envPath)
 	if err != nil {
@@ -650,14 +647,36 @@ func disableProcessCredential(t *testing.T, suite *directProcessSuite, provider 
 			filtered = append(filtered, line)
 		}
 	}
-	if err := os.Remove(markerPath); err != nil {
+	cfg := &config.Config{ConfigDir: suite.layout.Config}
+	_, hostSecret, hostFound, err := box.LoadHostCredential(cfg, ag, "personal")
+	if err != nil {
 		t.Fatal(err)
+	}
+	marker, _ := ag.AuthMarker()
+	markerPath := filepath.Join(suite.layout.Config, provider, "profiles", "personal", marker)
+	var markerBody []byte
+	if hostFound {
+		if err := box.RemoveHostCredential(cfg, ag, "personal"); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		markerBody, err = os.ReadFile(markerPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(markerPath); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(envPath, []byte(strings.Join(filtered, "\n")), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_ = os.WriteFile(markerPath, markerBody, 0o600)
+		if hostFound {
+			_ = box.SaveHostCredential(cfg, ag, "personal", []byte(hostSecret))
+		} else {
+			_ = os.WriteFile(markerPath, markerBody, 0o600)
+		}
 		_ = os.WriteFile(envPath, envBody, 0o600)
 	})
 }
@@ -681,6 +700,9 @@ func prepareConsultLoopTask(t *testing.T, repo, id string) {
 		if err := os.MkdirAll(filepath.Join(root, state), 0o755); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if _, err := tasks.EnsureQueueIdentity(root); err != nil {
+		t.Fatal(err)
 	}
 	task := filepath.Join(root, "00_todo", id)
 	if err := os.Mkdir(task, 0o755); err != nil {
@@ -1075,7 +1097,7 @@ func consultFreshTraceArgv(provider, model, effort, prompt, sessionHash string) 
 	case "claude":
 		return []string{"claude", "-p", "--permission-mode", value("plan"), "--session-id", sessionHash, "--output-format", value("json"), "--model", value(model), "--effort", value(effort), value(prompt)}
 	case "codex":
-		return []string{"codex", value("exec"), "-s", value("read-only"), "--model", value(model), "-c", value("model_reasoning_effort=" + effort), "--json", value(prompt)}
+		return []string{"codex", value("exec"), "--enable", value("use_legacy_landlock"), "-s", value("read-only"), "--model", value(model), "-c", value("model_reasoning_effort=" + effort), "--json", value(prompt)}
 	case "gemini":
 		return []string{"gemini", "--approval-mode", value("plan"), "--session-id", sessionHash, "-o", value("stream-json"), "--model", value(model), "-p", value(prompt)}
 	case "grok":

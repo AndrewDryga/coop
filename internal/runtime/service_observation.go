@@ -40,7 +40,7 @@ const serviceContainerFormat = `{"ID":{{json .Id}},"Labels":{{json .Config.Label
 // Both runtime calls are time-bounded and retain at most the declared output cap.
 func (r Runtime) ObserveServiceContainer(ctx context.Context, labels map[string]string) (ServiceContainerObservation, bool, error) {
 	if r.kind() == runtimeAppleContainer {
-		return ServiceContainerObservation{}, false, errors.New("Compose service observation is unsupported by Apple container")
+		return ServiceContainerObservation{}, false, errors.New("compose service observation is unsupported by Apple container")
 	}
 	if ctx == nil || len(labels) == 0 || len(labels) > 8 {
 		return ServiceContainerObservation{}, false, errors.New("invalid Compose service observation")

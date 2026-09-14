@@ -223,11 +223,11 @@ func verifyProviderNetworkLiveSilence(capture *box.CapturedEgress) (string, erro
 		return "evidence", err
 	}
 	defer evidence.Close()
-	page, err := evidence.Executions("")
+	executions, err := providerNetworkLiveExecutions(evidence)
 	if err != nil {
 		return "executions", err
 	}
-	for _, summary := range page.Executions {
+	for _, summary := range executions {
 		record, err := evidence.Execution(summary.ID)
 		if err != nil || record.Snapshot.PolicyFingerprint != capture.Fingerprint {
 			continue
@@ -304,12 +304,12 @@ func providerNetworkLiveDestinations(capture *box.CapturedEgress) ([]string, err
 		return nil, err
 	}
 	defer evidence.Close()
-	page, err := evidence.Executions("")
+	executions, err := providerNetworkLiveExecutions(evidence)
 	if err != nil {
 		return nil, err
 	}
 	var names []string
-	for _, summary := range page.Executions {
+	for _, summary := range executions {
 		record, err := evidence.Execution(summary.ID)
 		if err != nil || record.Snapshot.PolicyFingerprint != capture.Fingerprint || record.Receipt == nil {
 			continue
@@ -328,6 +328,21 @@ func providerNetworkLiveDestinations(capture *box.CapturedEgress) ([]string, err
 		}
 	}
 	return names, nil
+}
+
+func providerNetworkLiveExecutions(evidence *networkstate.Evidence) ([]networkstate.ExecutionSummary, error) {
+	var executions []networkstate.ExecutionSummary
+	for cursor := ""; ; {
+		page, err := evidence.Executions(cursor)
+		if err != nil {
+			return nil, err
+		}
+		executions = append(executions, page.Executions...)
+		if page.Next == "" {
+			return executions, nil
+		}
+		cursor = page.Next
+	}
 }
 
 // verifyProviderNetworkLiveReached requires at least one of hosts to appear as an observed

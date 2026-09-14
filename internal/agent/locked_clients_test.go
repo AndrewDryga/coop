@@ -188,6 +188,17 @@ func TestProviderBundlesCarryFunctionNotChatter(t *testing.T) {
 	if want := []string{"api.anthropic.com", "platform.claude.com", "mcp-proxy.anthropic.com"}; !slices.Equal(domains, want) || claude.Version != NetworkBundleVersion {
 		t.Fatalf("claude core = %v under %s; want %v under %s (a different set needs its own NetworkBundleVersion)", domains, claude.Version, want, NetworkBundleVersion)
 	}
+	grok, err := grokAgent{}.NetworkBundle(NetworkBundleInput{Client: egress.ClientCLI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	domains = domains[:0]
+	for _, rule := range grok.Core {
+		domains = append(domains, rule.To.Domain)
+	}
+	if want := []string{"auth.x.ai", "cli-chat-proxy.grok.com", "code.grok.com"}; !slices.Equal(domains, want) || grok.Version != NetworkBundleVersion {
+		t.Fatalf("grok core = %v under %s; want %v under %s (a different set needs its own NetworkBundleVersion)", domains, grok.Version, want, NetworkBundleVersion)
+	}
 }
 
 func TestNetworkBundleAndLockedClientSupportAgree(t *testing.T) {
