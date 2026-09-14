@@ -74,9 +74,14 @@ var toolTable = []tool{
 	},
 	{
 		name:        "tasks_complete",
-		description: "Move the task into 99_done/ — the final action after its commit landed and required verification passed — normalizing state.md's Status to complete and Next action to none. Before calling, promote any promised logs from tmp/ to artifacts/ and verify their durable paths, not links back into tmp/. Requires a nonempty, fully checked checklist. Failed, unavailable, and never-attempted required checks stay open. The loop checks the assigned commit before moving: fix any refusal and retry this tool in the same turn. Refused when another live process holds the task.",
-		schema:      object(map[string]any{"id": idProp()}, "id"),
-		run:         (*Server).complete,
+		description: "Move the task into 99_done/ after required verification passed. Normal implementation needs its task-bound commit. If the task is already satisfied or an investigation reasonably could not reproduce the issue, send outcome plus concrete reason and evidence to close without a fake commit. Human decisions use tasks_block. Before calling, promote any promised logs from tmp/ to artifacts/ and verify their durable paths, not links back into tmp/. Requires a nonempty, fully checked checklist. Refused when another live process holds the task.",
+		schema: object(map[string]any{
+			"id":       idProp(),
+			"outcome":  enumProp("Omit for normal implementation completion. No-change choices require reason and evidence.", "already_satisfied", "could_not_reproduce", "wont_fix"),
+			"reason":   textProp("Why this truthful no-change outcome satisfies the task; required with outcome.", true, blockLimit),
+			"evidence": textProp("Existing implementation and verification evidence, or exact reproduction attempts and retained logs; required with outcome.", true, blockLimit),
+		}, "id"),
+		run: (*Server).complete,
 	},
 	{
 		name:        "tasks_block",
@@ -563,10 +568,33 @@ const completionEvidenceHandoff = " — write nothing more inside that folder. H
 
 func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 	var in struct {
-		ID string `json:"id"`
+		ID       string         `json:"id"`
+		Outcome  optionalString `json:"outcome"`
+		Reason   optionalString `json:"reason"`
+		Evidence optionalString `json:"evidence"`
 	}
 	if r := decodeArgs(args, &in); r != nil {
 		return r
+	}
+	claim := CompletionClaim{Outcome: "implemented"}
+	if in.Outcome.present {
+		claim.Outcome, claim.Reason, claim.Evidence = in.Outcome.value, in.Reason.value, in.Evidence.value
+		switch claim.Outcome {
+		case "already_satisfied", "could_not_reproduce", "wont_fix":
+		default:
+			return refusal("invalid outcome: use already_satisfied, could_not_reproduce, or wont_fix")
+		}
+		if !in.Reason.present || !in.Evidence.present {
+			return refusal("no-change completion requires both reason and evidence")
+		}
+		if r := checkText("reason", claim.Reason, true, blockLimit); r != nil {
+			return r
+		}
+		if r := checkText("evidence", claim.Evidence, true, blockLimit); r != nil {
+			return r
+		}
+	} else if in.Reason.present || in.Evidence.present {
+		return refusal("reason and evidence require a no-change outcome")
 	}
 	loc, r := s.locate(in.ID)
 	if r != nil {
@@ -579,6 +607,9 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 		return textResult(fmt.Sprintf("%s is already done", loc.item.ID) + completionEvidenceHandoff)
 	}
 	if loc.item.ID != s.authority.Assigned {
+		if claim.NoChange() {
+			return refusal("no-change completion is available only for the assigned task")
+		}
 		// Another task: the host's own trusted completion — its lease, receipt, and normalization —
 		// so the loop's completion audit sees a controller-owned move, not an unowned one.
 		if err := tasks.CompleteTrustedTask(loc.root, loc.item); err != nil {
@@ -592,8 +623,11 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 	// The assigned task moves under the launching iteration's lease; the host finalizes it after
 	// the box exits (commit binding, receipt, tmp/ removal). Normalizing here keeps state.md's
 	// lifecycle fields truthful the moment the folder lands in done.
+	if err := tasks.RequireCompletedChecklist(loc.item); err != nil {
+		return refusal(err.Error())
+	}
 	if check := s.authority.ValidateAssignedCompletion; check != nil {
-		if err := check(); err != nil {
+		if err := check(claim); err != nil {
 			return refusal(fmt.Sprintf("complete %s: %v; the task has not moved — repair the problem and retry tasks_complete in this turn", loc.item.ID, err))
 		}
 	}
@@ -606,14 +640,24 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 	if err := tasks.RequireCompletedChecklist(loc.item); err != nil {
 		return refusal(err.Error())
 	}
-	if err := tasks.MoveTaskDir(loc.root, loc.item, tasks.StateDone); err != nil {
-		return refusal(fmt.Sprintf("complete %s: %v", loc.item.ID, err))
+	if claim.NoChange() {
+		if err := tasks.CompleteTaskWithClosure(loc.root, loc.item, tasks.TaskClosure(claim)); err != nil {
+			return refusal(fmt.Sprintf("complete %s: %v", loc.item.ID, err))
+		}
+	} else {
+		if err := tasks.MoveTaskDir(loc.root, loc.item, tasks.StateDone); err != nil {
+			return refusal(fmt.Sprintf("complete %s: %v", loc.item.ID, err))
+		}
+		dir := filepath.Join(loc.root, tasks.StateDone, loc.item.ID)
+		if err := tasks.NormalizeTaskState(loc.item.ID, dir, "complete", "none", "—", "—"); err != nil {
+			return refusal(fmt.Sprintf("%s moved to %s/ but its state.md could not be normalized: %v", loc.item.ID, tasks.StateDone, err))
+		}
 	}
-	dir := filepath.Join(loc.root, tasks.StateDone, loc.item.ID)
-	if err := tasks.NormalizeTaskState(loc.item.ID, dir, "complete", "none", "—", "—"); err != nil {
-		return refusal(fmt.Sprintf("%s moved to %s/ but its state.md could not be normalized: %v", loc.item.ID, tasks.StateDone, err))
+	result := fmt.Sprintf("%s moved to %s/", loc.item.ID, tasks.StateDone)
+	if claim.NoChange() {
+		result = fmt.Sprintf("%s closed as %s", loc.item.ID, strings.ReplaceAll(claim.Outcome, "_", " "))
 	}
-	return textResult(fmt.Sprintf("%s moved to %s/", loc.item.ID, tasks.StateDone) + completionEvidenceHandoff)
+	return textResult(result + completionEvidenceHandoff)
 }
 
 func (s *Server) block(_ context.Context, args json.RawMessage) *toolResult {

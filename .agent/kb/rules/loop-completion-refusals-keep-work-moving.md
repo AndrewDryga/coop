@@ -4,7 +4,7 @@ description: ordinary completion mistakes get immediate feedback and bounded saf
 scope: loop
 sources: [internal/loop/loop.go, internal/loop/completion.go, internal/loop/prompts.go, internal/taskmcp/tools.go, internal/tasks/completion_recovery.go, internal/tasks/completion_checklist.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/pending_review.go, internal/tasks/pending_review_test.go, internal/cli/scripted_loop_completion_process_e2e_test.go]
 check: "go test ./internal/tasks -run 'TestUncommittedCompletionCanRetry|TestParkUncommittedCompletion|TestTrustedCompletionRequiresCurrentChecklist|TestIncompleteForkCompletionRefusesAcceptanceButCanResume|TestForkChecklistCheckedAgainAtPublicationAndLanding|TestPendingReviewRebindAllowsAuthorizedRewriteOfLaterCohortTask|TestPendingReviewRecoversAuthorizedRewriteOfLaterCohortTask'"
-updated: 2026-09-14
+updated: 2026-09-15
 ---
 
 # Recover ordinary completion mistakes without losing work or acceptance
@@ -26,9 +26,10 @@ has no existing binding. Park a repeated clean refusal with an unanswered decisi
 the remaining queue. A blocked task is unfinished, including in telemetry and the final verdict.
 
 Never advance the audit base over unbound code, hide dirty work from the next task, loosen task
-ownership or raw-history checks, or accept failed/unrun required gates. A legitimate no-code
-decision uses one meaningful decision commit only when the task's acceptance permits that outcome;
-it is not a shortcut for incomplete implementation. Audit rework retains its separate authority.
+ownership or raw-history checks, or accept failed/unrun required gates. An already-satisfied task
+or an inconclusive investigation records an explicit no-change outcome with reason and evidence;
+it never fabricates an empty commit or calls unfinished implementation complete. Human choices use
+the existing blocked state. Audit rework retains its separate authority.
 Remember a completion attempt even when its binding precheck passes: a later checklist refusal
 must not disappear after provider exit. A safe stop for unfinished committed work includes the
 current checklist count and required-check action, without claiming the task completed.
@@ -55,6 +56,9 @@ code. The check above pins the conservative recovery boundary; the tagged script
 also runs in `make check` and proves continuation and both terminal modes.
 
 ## Changelog
+- 2026-09-15 — replaced fake decision commits with explicit evidence-backed already-satisfied,
+  could-not-reproduce and won't-fix completion outcomes. The host requires unchanged iteration
+  history and checkout state; normal implementation still requires one task-bound commit.
 - 2026-09-14 — a user-requested Opus-only drain restored Codex from an older pending review
   despite explicit Opus stage configuration. Swept signoff and verify resume selection; the
   focused `TestPendingReviewHonorsConfiguredModelsWithoutChangingAcceptance` regression covers

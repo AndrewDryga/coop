@@ -154,6 +154,12 @@ type TaskStateFields struct {
 	Status, DoneSoFar, NextAction, Traps string
 }
 
+type TaskClosure struct {
+	Outcome  string
+	Reason   string
+	Evidence string
+}
+
 // ReadTaskState reads the canonical snapshot written by WriteTaskState. It preserves multiline
 // Done so far and Traps values so a partial tool update cannot erase an omitted field.
 func ReadTaskState(taskDir string) (TaskStateFields, error) {
@@ -200,6 +206,43 @@ func WriteTaskState(taskDir, title string, fields TaskStateFields) error {
 		title, taskStateStatus, fields.Status, taskStateDone, fields.DoneSoFar,
 		taskStateNext, fields.NextAction, taskStateTraps, fields.Traps)
 	return AtomicWriteTaskFile(root, "state.md", []byte(body))
+}
+
+// CompleteTaskWithClosure records a truthful no-change conclusion while moving the task. A failed
+// record or move restores the original task metadata and lifecycle location.
+func CompleteTaskWithClosure(root string, item Item, closure TaskClosure) error {
+	fields, err := ReadTaskState(item.Dir)
+	if err != nil {
+		return err
+	}
+	metadata, err := snapshotTaskMetadata(item.Dir, "log.md", "state.md")
+	if err != nil {
+		return err
+	}
+	if err := MoveTaskDir(root, item, StateDone); err != nil {
+		return err
+	}
+	dir := filepath.Join(root, StateDone, item.ID)
+	rollback := func(cause error) error {
+		current := item
+		current.State, current.Dir = StateDone, dir
+		moveErr := MoveTaskDir(root, current, StateInProgress)
+		if moveErr == nil {
+			moveErr = restoreTaskMetadata(item.Dir, metadata)
+		}
+		return errors.Join(cause, moveErr)
+	}
+	entry := fmt.Sprintf("## Closure — %s\n\n**Reason:** %s\n\n**Evidence:** %s", strings.ReplaceAll(closure.Outcome, "_", " "), closure.Reason, closure.Evidence)
+	if err := AppendTaskLogEntry(dir, entry); err != nil {
+		return rollback(err)
+	}
+	fields.Status = "complete — " + strings.ReplaceAll(closure.Outcome, "_", " ")
+	fields.DoneSoFar = closure.Reason + "\nEvidence: " + closure.Evidence
+	fields.NextAction = "none"
+	if err := WriteTaskState(dir, item.Title, fields); err != nil {
+		return rollback(err)
+	}
+	return nil
 }
 
 // Subtask is one checklist item of a task's `## Subtasks` section.

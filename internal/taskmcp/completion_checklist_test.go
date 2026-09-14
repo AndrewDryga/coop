@@ -61,7 +61,7 @@ func TestAssignedCompletionRereadsChecklistAfterBindingValidation(t *testing.T) 
 	root := queue(t, map[string]string{"t1": tasks.StateInProgress})
 	finishChecklist(t, root, "t1")
 	s := newServer(t, root, "t1")
-	s.authority.ValidateAssignedCompletion = func() error {
+	s.authority.ValidateAssignedCompletion = func(CompletionClaim) error {
 		return tasks.RewriteSubtasks(filepath.Join(root, tasks.StateInProgress, "t1"), []tasks.Subtask{{Text: "new required check"}})
 	}
 	sess := newSession(t, s)

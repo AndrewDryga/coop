@@ -31,3 +31,11 @@ func checkAssignedCompletion(repo, base, id string, reopen *tasks.AuditReopenRec
 	}
 	return fmt.Errorf("%w: exactly one new and reachable Coop-Task: %s binding is required; commit the verified work first (a permitted no-code decision uses a meaningful --allow-empty --only decision commit), or repair its missing trailer without including unrelated staged work; never add a second binding or rewrite an older task commit", errCompletionBinding, id)
 }
+
+func checkNoChangeCompletion(repo, base, id, baselineStatus string) error {
+	head, err := gitOutErr(repo, "rev-parse", "HEAD")
+	if err != nil {
+		return fmt.Errorf("read completion HEAD: %w", err)
+	}
+	return tasks.NoChangeCompletionAllowed(repo, base, head, id, baselineStatus)
+}

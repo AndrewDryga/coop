@@ -24,7 +24,7 @@ import (
 func TestLoopCompletionMCPRepair(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
-	for _, scenario := range []string{"same session", "next attempt", "unconfirmed commit", "failed move", "unfinished checklist"} {
+	for _, scenario := range []string{"same session", "explicit no change", "next attempt", "unconfirmed commit", "failed move", "unfinished checklist"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Setenv("XDG_STATE_HOME", t.TempDir())
 			repo, git := gitrepo.New(t)
@@ -33,6 +33,7 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 			git("commit", "-m", "base")
 			id := "decision"
 			writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, id, "task.md"), "# Decision\n- [x] verified no source change is required\n")
+			writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, id, "state.md"), "# State — Decision\n\n**Status:** in progress\n**Done so far:** verified\n**Next action:** complete\n**Traps:** none\n")
 			if scenario == "unfinished checklist" {
 				writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, id, "task.md"), "# Decision\n- [ ] required verification is still pending\n")
 			}
@@ -82,9 +83,15 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 				}
 				request("initialize", map[string]any{"protocolVersion": "2024-11-05", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "test", "version": "0"}})
 				complete := func() map[string]any {
-					return request("tools/call", map[string]any{"name": "tasks_complete", "arguments": map[string]any{"id": id}})
+					args := map[string]any{"id": id}
+					if scenario == "explicit no change" {
+						args["outcome"] = "already_satisfied"
+						args["reason"] = "The existing base implementation meets the task."
+						args["evidence"] = "The required checklist and focused inspection passed."
+					}
+					return request("tools/call", map[string]any{"name": "tasks_complete", "arguments": args})
 				}
-				if attempts == 1 && scenario != "unfinished checklist" {
+				if attempts == 1 && scenario != "unfinished checklist" && scenario != "explicit no change" {
 					if reply := complete(); reply["isError"] != true {
 						t.Fatalf("no-commit completion accepted: %v", reply)
 					}
@@ -92,7 +99,11 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 						t.Fatalf("refusal changed task: %v, %v, %v", current, ok, err)
 					}
 				}
-				if scenario != "next attempt" || attempts == 2 {
+				if scenario == "explicit no change" {
+					if reply := complete(); reply["isError"] == true {
+						t.Fatalf("explicit no-change completion refused: %v", reply)
+					}
+				} else if scenario != "next attempt" || attempts == 2 {
 					git("commit", "--allow-empty", "--only", "-m", "Keep the existing contract\n\nVerified acceptance; no source change required.\n\nCoop-Task: "+id)
 					if scenario == "failed move" {
 						writeTaskFile(t, filepath.Join(repo, tasksRoot, tasks.StateDone, id), "obstruct the folder move\n")
@@ -138,7 +149,7 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 				return
 			}
 			wantAttempts := 2
-			if scenario == "same session" {
+			if scenario == "same session" || scenario == "explicit no change" {
 				wantAttempts = 1
 			}
 			if code != 0 || err != nil || attempts != wantAttempts {

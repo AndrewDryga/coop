@@ -187,13 +187,13 @@ func TestLoopWorkPromptAuditFinalization(t *testing.T) {
 	}
 }
 
-func TestLoopWorkPromptDecisionOnlyCompletion(t *testing.T) {
+func TestLoopWorkPromptNoChangeCompletion(t *testing.T) {
 	work := LoopWorkPrompt("/repo", ".agent/tasks", "decision", "claude", nil, nil, false)
 	for _, want := range []string{
-		"acceptance permits a decision", "no existing Coop-Task binding",
-		"git commit --allow-empty --only", "conclusion, acceptance evidence, and actual verification",
-		"do not invent source edits or include unrelated staged files",
-		"Never use it to claim unfinished work or an unrun required gate is complete",
+		"already fully satisfied by existing implementation", "do not fabricate edits or an empty commit",
+		"outcome `already_satisfied`", "a concrete reason", "evidence naming the existing task/commit plus verification",
+		"`could_not_reproduce` or `wont_fix`", "never say fixed", "human choice always uses tasks_block",
+		"incidental flaky failure", "reasonable focused reproduction attempts", "file exactly one",
 		"never treat the exit status of tail/grep as the gate's result",
 		"Failed, unavailable, and never-attempted required checks stay unchecked",
 		"Proposed tasks must preserve the project's required verification",

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"os"
 	"path/filepath"
@@ -389,7 +390,7 @@ func TestAssignedCompletionRefusalCanBeRepairedInTheSameSession(t *testing.T) {
 	s := newServer(t, root, "t1")
 	var ready atomic.Bool
 	var checks atomic.Int32
-	s.authority.ValidateAssignedCompletion = func() error {
+	s.authority.ValidateAssignedCompletion = func(CompletionClaim) error {
 		checks.Add(1)
 		if !ready.Load() {
 			return fmt.Errorf("missing Coop-Task binding")
@@ -420,6 +421,48 @@ func TestAssignedCompletionRefusalCanBeRepairedInTheSameSession(t *testing.T) {
 	sess.mustCall("tasks_complete", map[string]any{"id": "t1"})
 	if checks.Load() != 2 {
 		t.Fatal("idempotent completion revalidated an already-moved task")
+	}
+}
+
+func TestAssignedTaskCanCloseWithAnExplicitNoChangeOutcome(t *testing.T) {
+	root := queue(t, map[string]string{"t1": tasks.StateInProgress})
+	finishChecklist(t, root, "t1")
+	s := newServer(t, root, "t1")
+	s.authority.ValidateAssignedCompletion = func(claim CompletionClaim) error {
+		if claim.Outcome != "already_satisfied" || claim.Reason != "Existing implementation covers the task." || claim.Evidence != "Commit for task-old; focused check passed." {
+			t.Fatalf("claim = %+v", claim)
+		}
+		return nil
+	}
+	sess := newSession(t, s)
+	before := taskFiles(t, root)
+	for _, args := range []map[string]any{
+		{"id": "t1", "outcome": "already_satisfied"},
+		{"id": "t1", "outcome": "already_satisfied", "reason": "why", "evidence": nil},
+		{"id": "t1", "reason": "why", "evidence": "proof"},
+	} {
+		sess.mustRefuse("tasks_complete", args)
+	}
+	if !maps.Equal(before, taskFiles(t, root)) {
+		t.Fatal("invalid no-change completion mutated task files")
+	}
+	text := sess.mustCall("tasks_complete", map[string]any{
+		"id": "t1", "outcome": "already_satisfied",
+		"reason": "Existing implementation covers the task.", "evidence": "Commit for task-old; focused check passed.",
+	})
+	if !strings.Contains(text, "closed as already satisfied") {
+		t.Fatalf("completion = %s", text)
+	}
+	dir := filepath.Join(root, tasks.StateDone, "t1")
+	state, _ := os.ReadFile(filepath.Join(dir, "state.md"))
+	log, _ := os.ReadFile(filepath.Join(dir, "log.md"))
+	for _, want := range []string{"**Status:** complete — already satisfied", "Existing implementation covers the task.", "Commit for task-old; focused check passed."} {
+		if !strings.Contains(string(state), want) {
+			t.Fatalf("state lacks %q: %s", want, state)
+		}
+	}
+	if !strings.Contains(string(log), "## Closure — already satisfied") {
+		t.Fatalf("log = %s", log)
 	}
 }
 

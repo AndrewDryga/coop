@@ -54,7 +54,7 @@ type Authority struct {
 	// before the assigned folder moves. It gives the live agent a chance to repair a missing
 	// commit; the host's complete post-exit audit still decides whether completion is accepted.
 	// Nil for standalone task-channel probes with no Git completion contract.
-	ValidateAssignedCompletion func() error
+	ValidateAssignedCompletion func(CompletionClaim) error
 	// ProposalOutbox, when set, is where tasks_propose writes validated proposals instead of
 	// creating queue folders: a fork's one-task projection has no canonical todo/backlog, so the
 	// host imports the outbox when the fork lands (tasks.ImportForkProposals).
@@ -62,6 +62,16 @@ type Authority struct {
 	// Owner identifies the leases the server takes on tasks other than Assigned.
 	Owner tasks.TaskLeaseOwner
 }
+
+// CompletionClaim tells the host whether normal implementation work or an explicit no-change
+// conclusion is being completed. The host still validates Git and task authority after exit.
+type CompletionClaim struct {
+	Outcome  string
+	Reason   string
+	Evidence string
+}
+
+func (c CompletionClaim) NoChange() bool { return c.Outcome != "implemented" }
 
 // Server serves task tools for one Authority to any number of sessions.
 type Server struct {

@@ -739,6 +739,10 @@ reviewAgain:
 			// Coop-Recovery receipt); otherwise a landed Coop-Task commit (a crash after commit before
 			// the folder-move) gets the crash/reopen disambiguation line. Empty prefix → prompt unchanged.
 			iterHead := gitOut(repo, "rev-parse", "HEAD")
+			iterStatus, statusErr := gitOutErr(repo, "status", "--porcelain", "--untracked-files=all")
+			if statusErr != nil {
+				return 1, errors.Join(fmt.Errorf("capture task %s checkout state: %w", assigned.Item.ID, statusErr), lease.Release())
+			}
 			if authorityErr := tasks.ValidateLeasedAuditReopen(repo, iterHead, assigned.Item.ID, lease.Reopen); authorityErr != nil {
 				baseline := lease.Reopen.BaselineHead
 				parkErr := tasks.ParkStaleAuditReopen(assigned, baseline)
@@ -765,12 +769,23 @@ reviewAgain:
 			// box only carries the server.
 			// A successful binding precheck is not completion: a later checklist
 			// refusal or failed move must not advance the next attempt's base.
-			var completionAttempted atomic.Bool
+			var completionClaim atomic.Pointer[taskmcp.CompletionClaim]
 			taskTools, toolsErr := taskmcp.New(taskmcp.Authority{
 				QueueRoots: hosts, Assigned: assigned.Item.ID, ProposalOutbox: c.proposalOutboxPath(repo),
 				Owner: tasks.TaskLeaseOwner{RunID: c.runID, PID: os.Getpid(), Provider: agent, Target: target.String()},
-				ValidateAssignedCompletion: func() error {
-					completionAttempted.Store(true)
+				ValidateAssignedCompletion: func(claim taskmcp.CompletionClaim) error {
+					completionClaim.Store(nil)
+					if claim.NoChange() {
+						if lease.Reopen != nil {
+							return errors.New("audit rework already has a task binding; use normal verification-only completion")
+						}
+						if err := checkNoChangeCompletion(repo, iterHead, assigned.Item.ID, iterStatus); err != nil {
+							return err
+						}
+						copy := claim
+						completionClaim.Store(&copy)
+						return nil
+					}
 					return checkAssignedCompletion(repo, iterHead, assigned.Item.ID, lease.Reopen, snapshot)
 				},
 			})
@@ -977,7 +992,7 @@ reviewAgain:
 			completionCandidate := assignedCompletion
 			// A tool refusal leaves the task in progress. If the worker exits successfully instead
 			// of repairing it in-session, give the same bounded recovery as a rejected folder move.
-			if completionCandidate == nil && completionAttempted.Load() && classification.outcome == "success" && lease.Reopen == nil {
+			if completionCandidate == nil && classification.outcome == "success" && lease.Reopen == nil {
 				current, ok, scanErr := tasks.CurrentTask(assigned.Root, assigned.Item.ID)
 				if scanErr != nil {
 					refRelease()
@@ -985,6 +1000,9 @@ reviewAgain:
 				}
 				if ok && current.State == tasks.StateInProgress {
 					checkErr := checkAssignedCompletion(repo, iterHead, assigned.Item.ID, nil, snapshot)
+					if claim := completionClaim.Load(); claim != nil && claim.NoChange() {
+						checkErr = checkNoChangeCompletion(repo, iterHead, assigned.Item.ID, iterStatus)
+					}
 					if !errors.Is(checkErr, errCompletionBinding) {
 						// A repaired commit without a successful final tool call is not completion.
 						// Do not advance the iteration base and lose its gate/signoff attribution.
@@ -1010,8 +1028,13 @@ reviewAgain:
 					missing = []string{assigned.Item.ID}
 				}
 			}
+			noChangeAccepted := false
 			if assignedCompletion != nil {
 				missing, tolerated = tasks.CompletionUnbindableTasks(repo, iterHead, headAfter, finished, lease.Reopen, touched)
+				if claim := completionClaim.Load(); claim != nil && claim.NoChange() && checkNoChangeCompletion(repo, iterHead, assigned.Item.ID, iterStatus) == nil {
+					missing = slices.DeleteFunc(missing, func(id string) bool { return id == assigned.Item.ID })
+					noChangeAccepted = true
+				}
 			}
 			if reportErr := tasks.ReportToleratedForeignBindings(repo, hosts, iterHead, headAfter, assigned.Item.ID, tolerated); reportErr != nil {
 				if assignedCompletion != nil {
@@ -1122,7 +1145,7 @@ reviewAgain:
 					return 1, errors.Join(fmt.Errorf("%w — completion was not accepted; fix the obstruction and re-run `coop loop`", cleanupErr), releaseErr)
 				}
 				var receiptErr error
-				if len(custom) == 0 {
+				if len(custom) == 0 && !noChangeAccepted {
 					receiptErr = lease.MarkCompletedForReview(repo, assignedCompletion.Item, reviewPlan)
 				} else {
 					receiptErr = lease.MarkCompleted(assignedCompletion.Item.Dir)
@@ -1146,6 +1169,9 @@ reviewAgain:
 			}
 			if assignedCompletion != nil {
 				completedThisRun[assignedCompletion.Item.ID] = true
+				if noChangeAccepted {
+					reviewBaseline[assignedCompletion.Item.ID] = assignedCompletion.Item.Dir
+				}
 				pendingReopened = slices.DeleteFunc(pendingReopened, func(id string) bool {
 					return id == assignedCompletion.Item.ID
 				})
@@ -1191,7 +1217,7 @@ reviewAgain:
 			// is checked even when the worker exited nonzero, so a retry cannot hand a changed checker
 			// to the next task before the mandatory audit runs.
 			if len(custom) == 0 {
-				if assignedCompletion != nil {
+				if assignedCompletion != nil && !noChangeAccepted {
 					finishedDirs := []string{assignedCompletion.Item.ID + " — " + assignedCompletion.Item.Dir}
 					finishedIDs := taskIDsOf(finishedDirs)
 					stepChanges := loopChanges(repo, loopStartHead, headAfter).forTasks(finishedIDs)

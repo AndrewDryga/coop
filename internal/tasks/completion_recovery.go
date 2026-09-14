@@ -35,6 +35,36 @@ func UncommittedCompletionCanRetry(repo, base, head, id string) bool {
 	return true
 }
 
+// NoChangeCompletionAllowed proves that a no-change conclusion did not smuggle code or history
+// changes into completion. Pre-existing unrelated checkout state is allowed when unchanged.
+func NoChangeCompletionAllowed(repo, base, head, id, baselineStatus string) error {
+	if base == "" || base != head {
+		return errors.New("no-change completion changed Git history")
+	}
+	status, err := gitOutErr(repo, "status", "--porcelain", "--untracked-files=all")
+	if err != nil {
+		return fmt.Errorf("inspect no-change completion: %w", err)
+	}
+	if status != baselineStatus {
+		return errors.New("no-change completion changed the working tree or index")
+	}
+	commits, err := rawReachableAuditCommits(repo, head)
+	if err != nil {
+		return fmt.Errorf("inspect no-change history: %w", err)
+	}
+	for _, commit := range commits {
+		if commit.taskBindingInvalid {
+			return errors.New("no-change completion found invalid task history")
+		}
+		for _, value := range commit.taskValues {
+			if value == id || strings.HasPrefix(value, id+" ") || strings.HasPrefix(value, id+"\t") {
+				return errors.New("task already has a commit binding; use normal completion")
+			}
+		}
+	}
+	return nil
+}
+
 // ParkUncommittedCompletion runs under the controller's existing task lease and ref window,
 // after a repeated clean no-change refusal. It never blesses the task's claimed completion.
 func ParkUncommittedCompletion(task QueuedTask) error {
