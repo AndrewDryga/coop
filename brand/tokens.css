@@ -1,0 +1,56 @@
+/* co:op website v1. Reference values; not loaded by the published website. */
+@font-face {
+  font-family: "InterVariable";
+  src: url("assets/fonts/InterVariable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+  --coop-bg: #0e1014;
+  --coop-surface: #15191f;
+  --coop-raised: #1c222b;
+  --coop-inset: #0a0c10;
+  --coop-logo-tile: #111315;
+  --coop-text: #ece7de;
+  --coop-body: #bec5ce;
+  --coop-muted: #9aa2af;
+  --coop-amber: #e6a95c;
+  --coop-amber-hover: #f0ba77;
+  --coop-amber-active: #cf8f43;
+  --coop-cyan: #62d3f0;
+  --coop-link-hover: #a2e7f7;
+  --coop-on-accent: #0e1014;
+  --coop-success: #36e6a5;
+  --coop-warning: #fcd34d;
+  --coop-danger: #fda4af;
+  --coop-edge: rgb(255 255 255 / 8%);
+  --coop-divider: rgb(255 255 255 / 6%);
+  --coop-hover: rgb(255 255 255 / 4%);
+  --coop-control-border: #667181;
+  --coop-top-light: inset 0 1px 0 rgb(255 255 255 / 5%);
+  --coop-floating-shadow: 0 16px 48px rgb(0 0 0 / 45%);
+  --coop-font-sans: "InterVariable", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --coop-font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --coop-type-hero: clamp(2.5rem, 1.45rem + 4.3vw, 4.5rem);
+  --coop-type-section: clamp(2rem, 1.25rem + 3vw, 3rem);
+  --coop-radius-control: 8px;
+  --coop-radius-panel: 16px;
+  --coop-space-1: 4px;
+  --coop-space-2: 8px;
+  --coop-space-3: 12px;
+  --coop-space-4: 16px;
+  --coop-space-6: 24px;
+  --coop-space-8: 32px;
+  --coop-space-12: 48px;
+  --coop-space-16: 64px;
+  --coop-space-24: 96px;
+  --coop-space-32: 128px;
+  --coop-content-width: 1200px;
+  --coop-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --coop-duration-hover: 160ms;
+  --coop-duration-state: 200ms;
+  --coop-duration-assembly: 480ms;
+}

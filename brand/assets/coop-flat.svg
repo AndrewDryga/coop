@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-labelledby="title">
+  <title id="title">co:op</title>
+  <rect width="32" height="32" rx="7.2" fill="#111315"/>
+  <path d="M15.44 4.58Q16 4.1 16.56 4.58L26.88 13.18Q27.4 13.62 27.4 14.3V24.92Q27.4 27.1 25.22 27.1H6.78Q4.6 27.1 4.6 24.92V14.3Q4.6 13.62 5.12 13.18Z" fill="#E6A95C"/>
+  <circle cx="16" cy="18.3" r="4.9" fill="#111315" stroke="#62D3F0" stroke-width="1.85"/>
+</svg>
