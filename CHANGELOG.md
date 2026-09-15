@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A loop worker that exits normally after a rejected or missing final task action now receives the
+  exact validation error in the same native session. Coop keeps the original task boundary and
+  services, allows at most two terminal-only corrections, and never substitutes a fresh worker.
+
 - Projects can name exact wrapper scripts or source files that implement their test gate under
   `gate_sources` in `.agent/project.yaml`. Loops freeze the list before work starts and give those
   files the same mandatory protected review as built-in Makefiles, CI, hooks, and Coop config.

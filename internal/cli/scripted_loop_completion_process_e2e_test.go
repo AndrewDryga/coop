@@ -59,6 +59,40 @@ func TestProviderScriptedLoopUnfinishedChecklist(t *testing.T) {
 	}
 }
 
+func TestProviderScriptedLoopResumesTerminalCorrectionInPlace(t *testing.T) {
+	suite := newDirectProcessSuite(t)
+	resetLoopProcessRepo(t, suite)
+	t.Cleanup(func() { logLoopProcessFailure(t, suite) })
+	id := "terminal-correction"
+	seedLoopProcessTask(t, suite.layout.Repo, id)
+	target := "claude:loop-model@work"
+	suite.reset(t, loopProcessScenario{
+		Version: 6, Provider: "claude", ProviderHomes: agents.Names(),
+		Loop: loopProcessPlan{TaskID: id, Attempts: []loopProcessAttempt{
+			{Target: target, Stage: "work", Result: "terminal-omission"},
+			{Target: target, Stage: "work", Result: "decision-complete"},
+		}},
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	result := procharness.Run(ctx, procharness.Command{
+		Path: suite.coopBin, Args: []string{"loop", target, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
+		Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
+	})
+	output := result.Stdout + result.Stderr
+	if result.ExitCode != 0 || result.Err != nil || !strings.Contains(output, "Returning its terminal validation error to the same worker session") {
+		t.Fatalf("terminal correction = %+v\n%s", result, output)
+	}
+	if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, id)) {
+		t.Fatal("same-session terminal correction did not complete the task")
+	}
+	records := readLoopStageRecords(t, suite)
+	if len(records) != 1 || records[0].Outcome != "success" {
+		t.Fatalf("terminal correction split one work attempt into extra telemetry: %#v", records)
+	}
+	assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+}
+
 func TestProviderScriptedLoopCompletionRepair(t *testing.T) {
 	suite := newDirectProcessSuite(t)
 	for _, scenario := range []string{"repairs decision", "parks and continues", "preserves dirty source", "static terminal", "static quota wait", "human terminal"} {

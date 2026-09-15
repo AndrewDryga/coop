@@ -35,6 +35,7 @@ type loopCursor struct {
 }
 
 const loopCodexSessionID = "11111111-2222-4333-8444-555555555555"
+const loopClaudeSessionID = "22222222-3333-4444-8555-666666666666"
 
 func validateLoopScenario(provider string, homes map[string]bool, plan loopScenario) error {
 	if !safeLoopTaskID(plan.TaskID) {
@@ -64,6 +65,9 @@ func validateLoopScenario(provider string, homes map[string]bool, plan loopScena
 		if (attempt.Result == "claude-credit-limit" || attempt.Result == "complete-tool-failure") && target.Provider != "claude" {
 			return fmt.Errorf("loop attempt %d result %q requires provider claude", i, attempt.Result)
 		}
+		if attempt.Result == "terminal-omission" && target.Provider != "claude" {
+			return fmt.Errorf("loop attempt %d result %q requires provider claude", i, attempt.Result)
+		}
 		if (attempt.Result == "tool-wait" || attempt.Result == "tool-gated-complete" || attempt.Result == "forged-flood-wait") &&
 			target.Provider == "grok" {
 			return fmt.Errorf("loop attempt %d result %q requires a provider with streamed tool events", i, attempt.Result)
@@ -90,7 +94,7 @@ func validateLoopResult(index int, stage, result string) error {
 		result == "progress-wait"
 	switch stage {
 	case "work":
-		if common || result == "complete" || result == "complete-tool-failure" || result == "complete-delay" || result == "complete-gated" || result == "complete-reopen-archive" || result == "reopen-archive-wait" || result == "complete-host-reopen-archive" || result == "complete-forged-archive-binding" || result == "complete-extra-unbound" || result == "complete-extra-bound" || result == "complete-extra-finalized" || result == "complete-wait" || result == "unbound" || result == "unbound-extra-finalized" || result == "unbound-wait" ||
+		if common || result == "terminal-omission" || result == "complete" || result == "complete-tool-failure" || result == "complete-delay" || result == "complete-gated" || result == "complete-reopen-archive" || result == "reopen-archive-wait" || result == "complete-host-reopen-archive" || result == "complete-forged-archive-binding" || result == "complete-extra-unbound" || result == "complete-extra-bound" || result == "complete-extra-finalized" || result == "complete-wait" || result == "unbound" || result == "unbound-extra-finalized" || result == "unbound-wait" ||
 			result == "unbound-log-symlink" || result == "unbound-state-symlink" || result == "repair-binding" || result == "repair-review-binding" ||
 			result == "repair-older-binding" || result == "repair-older-binding-blocked" ||
 			result == "repair-older-binding-changed-descendant" || result == "verify-only" ||
@@ -188,6 +192,9 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 		plan.TaskID = attempt.TaskID
 	}
 	switch attempt.Result {
+	case "terminal-omission":
+		emitLoopReplyWithSession(provider, providerArgv, "fixture worker omitted its terminal task action")
+		return 0, "", nil
 	case "reopen-archive-wait":
 		if err := reopenLoopTask(root, plan.TaskID+"-archive", attempt.Stage); err != nil {
 			return 1, "", err
@@ -787,6 +794,15 @@ func loopPromptFrom(provider string, argv []string) string {
 
 func verifyLoopPrompt(stage, taskID, provider string, argv []string) error {
 	prompt := loopPromptFrom(provider, argv)
+	if strings.HasPrefix(prompt, "TERMINAL TASK CORRECTION ONLY") {
+		if stage != "work" || !strings.Contains(prompt, "Validation error:") || !strings.Contains(prompt, taskID+" is still in progress") {
+			return fmt.Errorf("loop terminal correction prompt for %s lacks bounded task validation detail", provider)
+		}
+		if provider != "claude" || !hasLoopArgPair(argv, "--resume", loopClaudeSessionID) {
+			return fmt.Errorf("loop terminal correction did not resume the exact %s session", provider)
+		}
+		return nil
+	}
 	if strings.HasPrefix(prompt, "FORMAT CORRECTION ONLY.") {
 		if !strings.Contains(prompt, "Validation error:") ||
 			!strings.Contains(prompt, "AUDIT EVIDENCE — "+taskID) {
@@ -807,6 +823,15 @@ func verifyLoopPrompt(stage, taskID, provider string, argv []string) error {
 		return errors.New("loop work prompt is missing the untrusted review evidence guard")
 	}
 	return nil
+}
+
+func hasLoopArgPair(argv []string, flag, value string) bool {
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] == flag && argv[i+1] == value {
+			return true
+		}
+	}
+	return false
 }
 
 // verifyLoopAuditResumePrompt fails a host-audit-authorized re-close attempt whose work prompt
@@ -1015,6 +1040,17 @@ func completeExtraLoopTask(root, taskID, stage string) error {
 
 func emitLoopReply(provider string, argv []string, reply string) {
 	emitLoopReplyWithWrapper(provider, argv, reply, "")
+}
+
+func emitLoopReplyWithSession(provider string, argv []string, reply string) {
+	if provider != "claude" || !loopStreaming(provider, argv) {
+		fmt.Fprintln(os.Stdout, reply)
+		return
+	}
+	encoder := json.NewEncoder(os.Stdout)
+	_ = encoder.Encode(map[string]any{"type": "system", "subtype": "init", "model": loopModelArg(argv), "session_id": loopClaudeSessionID})
+	_ = encoder.Encode(map[string]any{"type": "assistant", "message": map[string]any{"content": []map[string]any{{"type": "text", "text": reply}}}})
+	_ = encoder.Encode(map[string]any{"type": "result", "subtype": "success", "session_id": loopClaudeSessionID, "num_turns": 1, "duration_ms": 100, "total_cost_usd": 0.25, "usage": map[string]int{"input_tokens": 101, "output_tokens": 11}})
 }
 
 func emitLoopReplyWithWrapper(provider string, argv []string, reply, wrapper string) {

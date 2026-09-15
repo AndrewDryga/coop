@@ -82,8 +82,10 @@ func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName s
 }
 
 type iterationRecovery struct {
-	formatCorrection bool
-	reuseServices    bool
+	formatCorrection   bool
+	terminalCorrection bool
+	reuseServices      bool
+	completionWindows  *tasks.CompletionWindowSet
 }
 
 func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming, agentCommand bool, hosts []string, windowMode completionWindowMode, reviewSubjects []string, pendingReview *tasks.PendingReviewPlan, repoReadOnly bool, sink io.Writer, peers []agents.Target, activity, assignedTask string, taskTools box.TaskToolServer, recovery iterationRecovery) (code int, output string, res *iterResult, classification iterationClassification, windows *tasks.CompletionWindowSet, err error) {
@@ -91,7 +93,9 @@ func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, fo
 	// refusals print after the live bar is torn down and the ui sink is plain
 	// stderr again, alongside the loop's other between-iteration lines.
 	defer c.net.finishIteration()
-	if windowMode == completionWindowReview {
+	if recovery.completionWindows != nil {
+		windows = recovery.completionWindows
+	} else if windowMode == completionWindowReview {
 		if pendingReview != nil {
 			windows, err = tasks.BeginReviewCompletionWindowsWithPending(hosts, reviewSubjects, *pendingReview)
 		} else {
@@ -217,11 +221,12 @@ func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, fo
 	// those peers' credentials, the coop-consult wrapper, and the second-opinion directive. A
 	// preset does the same with ITS roles: the routing contract mounts via ConsultLead.
 	lead := ""
-	if !recovery.formatCorrection && (len(peers) > 0 || c.preset != nil) {
+	correctionOnly := recovery.formatCorrection || recovery.terminalCorrection
+	if !correctionOnly && (len(peers) > 0 || c.preset != nil) {
 		lead = agent
 	}
 	attemptPeers, attemptPreset := peers, c.preset
-	if recovery.formatCorrection {
+	if correctionOnly {
 		attemptPeers, attemptPreset = nil, nil
 	}
 	// A structured stream gives the watchdog trustworthy activity, so only then does the

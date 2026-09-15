@@ -3,11 +3,37 @@ package loop
 import (
 	"errors"
 	"fmt"
+	"strings"
 
+	"github.com/AndrewDryga/coop/internal/taskmcp"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
 var errCompletionBinding = errors.New("completion needs a task-bound commit")
+
+const maxWorkerTerminalCorrections = 2
+
+func workerTerminalCorrectionPrompt(id string, correction int, refusal taskmcp.AssignedTerminalRefusal) string {
+	detail := refusal.Detail
+	if detail == "" {
+		detail = fmt.Sprintf("task %s is still in progress: finish it with tasks_complete, or use tasks_block only when a human decision is genuinely required", id)
+	}
+	action := refusal.Action
+	if action == "" {
+		action = "terminal task action"
+	}
+	return fmt.Sprintf("TERMINAL TASK CORRECTION ONLY (%d of %d). Do not inspect or re-analyze source, invoke delegates or reviewers, rerun tests, or restart services. Keep the work and context already in this session. Repair only the rejected %s action described below, update the task record only if that repair requires it, then call tasks_complete or tasks_block.\n\nValidation error:\n%s",
+		correction, maxWorkerTerminalCorrections, action, boundedCorrectionDetail(detail))
+}
+
+func boundedCorrectionDetail(detail string) string {
+	const maxRunes = 2048
+	detail = strings.TrimSpace(detail)
+	if len([]rune(detail)) <= maxRunes {
+		return detail
+	}
+	return truncate(detail, maxRunes)
+}
 
 // checkAssignedCompletion is early feedback, not completion authority. The box is still running,
 // so the full post-exit ref/lease/window audit must recheck everything before accepting the move.

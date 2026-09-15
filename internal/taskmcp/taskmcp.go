@@ -78,7 +78,23 @@ type Server struct {
 	authority Authority
 	// mu serializes tool execution across sessions: the lead and its peers share one queue, and
 	// every mutation is a read-check-write on the filesystem.
-	mu sync.Mutex
+	mu              sync.Mutex
+	terminalRefusal AssignedTerminalRefusal
+}
+
+// AssignedTerminalRefusal is the latest tasks_complete or tasks_block refusal for the task this
+// server was created to run. The loop can return it to the same provider session if the provider
+// exits instead of repairing the terminal action in place.
+type AssignedTerminalRefusal struct {
+	Action string
+	Detail string
+}
+
+// LatestAssignedTerminalRefusal returns the last rejected terminal action for the assigned task.
+func (s *Server) LatestAssignedTerminalRefusal() (AssignedTerminalRefusal, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.terminalRefusal, s.terminalRefusal.Detail != ""
 }
 
 // New validates the authority and returns a server for it.
@@ -328,7 +344,23 @@ func (s *Server) call(ctx context.Context, params json.RawMessage) (*toolResult,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if r := missingRequiredArguments(t, call.Arguments); r != nil {
+		s.rememberTerminalRefusal(call.Name, call.Arguments, r)
 		return r, nil
 	}
-	return t.run(s, ctx, call.Arguments), nil
+	result := t.run(s, ctx, call.Arguments)
+	s.rememberTerminalRefusal(call.Name, call.Arguments, result)
+	return result, nil
+}
+
+func (s *Server) rememberTerminalRefusal(name string, args json.RawMessage, result *toolResult) {
+	if result == nil || !result.IsError || (name != "tasks_complete" && name != "tasks_block") {
+		return
+	}
+	var in struct {
+		ID string `json:"id"`
+	}
+	if json.Unmarshal(args, &in) != nil || in.ID == "" || in.ID != s.authority.Assigned || len(result.Content) == 0 {
+		return
+	}
+	s.terminalRefusal = AssignedTerminalRefusal{Action: name, Detail: result.Content[0].Text}
 }

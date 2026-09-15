@@ -816,6 +816,72 @@ reviewAgain:
 			if errors.Is(runErr, tasks.ErrCompletionWindowSetup) {
 				return 1, errors.Join(runErr, lease.Release())
 			}
+			// A normal provider exit with its task still in progress is usually a missed or
+			// rejected terminal tool call, not a reason to discard its context and start another
+			// worker. Return the precise refusal to that native session, at most twice. The task
+			// lease, completion window, source boundary, and already-started services stay in place.
+			var terminalCorrectionErr error
+			if runErr == nil && code == 0 && classification.outcome == "success" && lease.Reopen == nil {
+				current, ok, currentErr := tasks.CurrentTask(assigned.Root, assigned.Item.ID)
+				if currentErr != nil {
+					terminalCorrectionErr = currentErr
+				} else if ok && current.State == tasks.StateInProgress {
+					sessionID := ""
+					if res != nil {
+						sessionID = res.SessionID
+					}
+					for correction := 1; correction <= maxWorkerTerminalCorrections; correction++ {
+						if sessionID == "" || rot.Active().String() != target.String() {
+							terminalCorrectionErr = errors.New("cannot resume the exact worker session for terminal task correction")
+							break
+						}
+						refusal, _ := taskTools.LatestAssignedTerminalRefusal()
+						correctionPrompt := workerTerminalCorrectionPrompt(assigned.Item.ID, correction, refusal)
+						correctionCmd, correctionStreaming, correctionAgentCommand := reviewCmd(agent, correctionPrompt, sessionID, true)
+						if len(correctionCmd) == 0 {
+							terminalCorrectionErr = errors.New("this provider cannot resume the exact worker session for terminal task correction")
+							break
+						}
+						ui.Alert("The task is still in progress",
+							fmt.Sprintf("Returning its terminal validation error to the same worker session (correction %d of %d).", correction, maxWorkerTerminalCorrections))
+						c.net.setStage(fmt.Sprintf("Task terminal correction %d", correction))
+						correctionCode, _, correctionUsage, correctionClass, correctionWindows, correctionRunErr := c.runIterationWithMode(
+							iterCtx, repo, img, agent, forkName, correctionCmd, correctionStreaming, correctionAgentCommand,
+							hosts, completionWindowWork, []string{assigned.Item.ID}, nil, false, sink, peers,
+							active+": terminal correction", assigned.Item.ID, taskTools,
+							iterationRecovery{terminalCorrection: true, reuseServices: true, completionWindows: windows},
+						)
+						windows = correctionWindows
+						if correctionUsage != nil && correctionUsage.SessionID != "" && correctionUsage.SessionID != sessionID {
+							terminalCorrectionErr = errors.New("terminal task correction returned a different worker session")
+							break
+						}
+						res = addIterResults(res, correctionUsage)
+						if res != nil {
+							res.SessionID = sessionID
+						}
+						code, classification, runErr = correctionCode, correctionClass, correctionRunErr
+						if runErr != nil || code != 0 || classification.outcome != "success" {
+							if runErr == nil {
+								runErr = errors.New("provider did not complete successfully")
+							}
+							terminalCorrectionErr = fmt.Errorf("terminal task correction failed (%s, exit %d): %w", classification.outcome, code, runErr)
+							break
+						}
+						current, ok, currentErr = tasks.CurrentTask(assigned.Root, assigned.Item.ID)
+						if currentErr != nil {
+							terminalCorrectionErr = currentErr
+							break
+						}
+						if !ok || current.State != tasks.StateInProgress {
+							break
+						}
+						if correction == maxWorkerTerminalCorrections {
+							terminalCorrectionErr = fmt.Errorf("task %s remained in progress after %d terminal corrections", assigned.Item.ID, maxWorkerTerminalCorrections)
+						}
+					}
+				}
+			}
 			// Stop metadata writes but keep the flock while validating and finalizing this exact task.
 			lease.Quiesce()
 			// Completion integrity is a hard boundary. Fresh work must bind inside this iteration's
@@ -837,6 +903,41 @@ reviewAgain:
 					finished = []string{completedTasks[i].Item.ID}
 					break
 				}
+			}
+			if terminalCorrectionErr != nil {
+				headAfter := gitOut(repo, "rev-parse", "HEAD")
+				refRelease, liveHead, refErr := tasks.EnterRefAuthorityWindow(c.cfg, repo, headAfter, nil)
+				if refErr != nil {
+					reason := refErr.Error()
+					if errors.Is(refErr, tasks.ErrRefAuthorityMoved) {
+						reason = fmt.Sprintf("HEAD moved from %s to %s before terminal correction cleanup", headAfter, liveHead)
+					}
+					return 1, errors.Join(terminalCorrectionErr, errors.New(reason), lease.Release(), windows.Abandon())
+				}
+				var restoreErr error
+				if assignedCompletion != nil {
+					restoreErr = tasks.RestoreQueuedCompletion(*assignedCompletion, false)
+				}
+				departed, departureErr := windows.Departures()
+				if len(departed) > 0 {
+					departureErr = errors.Join(departureErr, fmt.Errorf("work stage reopened unowned archived task(s) %s", strings.Join(departed, ", ")))
+				}
+				var unownedErr error
+				if len(unowned) > 0 {
+					unownedErr = tasks.UnownedCompletionError(unowned, nil)
+				}
+				var windowErr error
+				if restoreErr != nil {
+					windowErr = windows.Abandon()
+				} else {
+					windowErr = windows.Close()
+				}
+				releaseErr := lease.Release()
+				refRelease()
+				ui.Failure("Task terminal correction stopped",
+					fmt.Sprintf("%s is still preserved in progress. Coop did not start a fresh worker.", active),
+					[2]string{"Continue:", continueCmd})
+				return 1, ui.Reported(errors.Join(terminalCorrectionErr, restoreErr, departureErr, unownedErr, windowErr, releaseErr))
 			}
 			// coop-entry returns this only after a successful provider left live agent-owned
 			// descendants and it drained or forcibly terminated them. Any completion is premature:

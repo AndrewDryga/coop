@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -421,6 +422,33 @@ func TestAssignedCompletionRefusalCanBeRepairedInTheSameSession(t *testing.T) {
 	sess.mustCall("tasks_complete", map[string]any{"id": "t1"})
 	if checks.Load() != 2 {
 		t.Fatal("idempotent completion revalidated an already-moved task")
+	}
+}
+
+func TestServerRetainsOnlyTheAssignedTerminalRefusal(t *testing.T) {
+	root := queue(t, map[string]string{"t1": tasks.StateInProgress, "t2": tasks.StateInProgress})
+	finishChecklist(t, root, "t1")
+	s := newServer(t, root, "t1")
+	s.authority.ValidateAssignedCompletion = func(CompletionClaim) error { return errors.New("missing task binding") }
+	sess := newSession(t, s)
+
+	completeRefusal := sess.mustRefuse("tasks_complete", map[string]any{"id": "t1"})
+	got, ok := s.LatestAssignedTerminalRefusal()
+	if !ok || got.Action != "tasks_complete" || got.Detail != completeRefusal {
+		t.Fatalf("completion refusal = %+v, %v; want exact %q", got, ok, completeRefusal)
+	}
+
+	// An ordinary tool error and another task's terminal error are not worker-exit guidance.
+	sess.mustRefuse("tasks_update_state", map[string]any{"id": "t1"})
+	sess.mustRefuse("tasks_block", map[string]any{"id": "t2"})
+	if after, _ := s.LatestAssignedTerminalRefusal(); after != got {
+		t.Fatalf("unrelated refusal replaced assigned terminal refusal: %+v", after)
+	}
+
+	blockRefusal := sess.mustRefuse("tasks_block", map[string]any{"id": "t1"})
+	got, ok = s.LatestAssignedTerminalRefusal()
+	if !ok || got.Action != "tasks_block" || got.Detail != blockRefusal || !strings.Contains(got.Detail, "decision, options, recommendation") {
+		t.Fatalf("block refusal = %+v, %v; want exact %q", got, ok, blockRefusal)
 	}
 }
 
