@@ -136,6 +136,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [renew-before-access-only-projection](renew-before-access-only-projection.md) — refreshable credentials renew in trusted host storage before an access-only box projection
 - [network-authority-is-proven-not-passed](network-authority-is-proven-not-passed.md) — a filtered launch proves its network authority against the owner-private store; a boundary crossing carries a name, never a grant
 - [provider-bundles-carry-function-not-chatter](provider-bundles-carry-function-not-chatter.md) — a provider bundle grants what the client needs to function; its update/telemetry chatter is switched off in the box, never granted and never hidden
+- [run-teammates-share-credential-boundary](run-teammates-share-credential-boundary.md) — protect credentials at the run boundary; teammates share selected routes, while mutually untrusted agents use separate boxes
 - [secret-scan-literals-not-refs](secret-scan-literals-not-refs.md) — the scanner flags literal credentials and never references to them; precision is the product
 
 **Architecture**
@@ -152,7 +153,7 @@ updated: <YYYY-MM-DD>                # last edit
 **Agent workflow** — how an agent works here, not what it ships
 - [audit-findings-need-practical-impact](audit-findings-need-practical-impact.md) — audit realistic agent access and practical impact; avoid speculative machinery and unproven product-defect claims
 - [batch-delegated-editorial-decisions](batch-delegated-editorial-decisions.md) — finish delegated editorial work in coherent batches; ask only about material choices
-- [batch-slow-gates-when-requested](batch-slow-gates-when-requested.md) — explicit quick-iteration requests use focused checks and defer unrelated slow suites to final qualification
+- [batch-slow-gates-when-requested](batch-slow-gates-when-requested.md) — validation matches the changed surface; unrelated slow suites run only when the requested outcome needs them
 - [requested-outcome-controls-stopping](requested-outcome-controls-stopping.md) — full implementation requests continue past verified slices through the requested final acceptance criteria
 - [run-the-real-invocation-last](run-the-real-invocation-last.md) — a green gate is not proof a feature works; the last check is the user’s own command, in a real repo, after the last commit
 - [fix-the-bug-not-the-feature](fix-the-bug-not-the-feature.md) — root-cause the misbehavior; deleting the feature is never the fix without the human
