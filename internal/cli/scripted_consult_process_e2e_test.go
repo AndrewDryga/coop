@@ -229,16 +229,20 @@ func TestProviderScriptedConsultFailureMatrix(t *testing.T) {
 				{Target: peer, Mode: "fresh", Prompt: "empty question", ExitCode: 1},
 				{Target: peer, Mode: "fresh", Prompt: "stderr-only question", ExitCode: 1},
 			}
+			empty := consultDirectStep(peer, "fresh", "empty", "empty question", "")
+			stderrOnly := consultDirectDiagnosticStep(peer, "stderr-only", "stderr-only question", "fixture stderr diagnostic")
 			steps := []consultStepSpec{
-				consultDirectStep(peer, "fresh", "empty", "empty question", ""),
-				consultDirectDiagnosticStep(peer, "stderr-only", "stderr-only question", "fixture stderr diagnostic"),
+				empty, empty,
+				stderrOnly, stderrOnly,
 			}
 			if peer == "codex" {
 				calls = append(calls, consultCallSpec{Target: peer, Mode: "fresh", Prompt: "malformed question", ExitCode: 1})
-				steps = append(steps, consultDirectStep(peer, "fresh", "malformed", "malformed question", ""))
+				malformed := consultDirectStep(peer, "fresh", "malformed", "malformed question", "")
+				steps = append(steps, malformed, malformed)
 			}
 			calls = append(calls, consultCallSpec{Target: peer, Mode: "fresh", Prompt: "ordinary failure question", ExitCode: 23})
-			steps = append(steps, consultDirectDiagnosticStep(peer, "ordinary", "ordinary failure question", "fixture ordinary diagnostic"))
+			ordinary := consultDirectDiagnosticStep(peer, "ordinary", "ordinary failure question", "fixture ordinary diagnostic")
+			steps = append(steps, ordinary, ordinary)
 			result, trace := suite.run(t, []string{lead, "--peer", peer}, consultProcessScenario(lead, providers, calls, steps))
 			if result.Err != nil || result.ExitCode != 23 || strings.Contains(result.Stdout, "fixture stderr diagnostic") || !strings.Contains(result.Stderr, "fixture stderr diagnostic") {
 				t.Fatalf("failure matrix for %s = exit %d err %v\nstdout:\n%s\nstderr:\n%s", peer, result.ExitCode, result.Err, result.Stdout, result.Stderr)
@@ -324,8 +328,9 @@ func TestProviderScriptedConsultTimeoutAndOverflowMatrix(t *testing.T) {
 					{Target: peer, Mode: "fresh", Prompt: "overflow question", ExitCode: 1},
 					{Target: peer, Mode: "fresh", Prompt: "diagnostic overflow question", ExitCode: 1},
 				}
+				overflow := consultDirectStep(peer, "fresh", "overflow", "overflow question", "")
 				steps := []consultStepSpec{
-					consultDirectStep(peer, "fresh", "overflow", "overflow question", ""),
+					overflow, overflow,
 					consultDirectStep(peer, "fresh", "diagnostic-overflow", "diagnostic overflow question", ""),
 				}
 				result, trace := suite.run(t, []string{lead, "--peer", peer}, consultProcessScenario(lead, providers, calls, steps))
@@ -345,8 +350,8 @@ func TestProviderScriptedConsultTimeoutAndOverflowMatrix(t *testing.T) {
 				if strings.Contains(result.Stderr, strings.Repeat("d", 1024)) {
 					t.Fatalf("diagnostic overflow leaked a partial provider stream for %s", peer)
 				}
-				if len(processEvents(trace, "peer", "ready")) != 0 || len(processEvents(trace, "timeout", "exit")) != 2 {
-					t.Fatalf("overflow trace for %s did not own both provider processes:\n%s", peer, readProcessFile(t, suite.layout.Trace))
+				if len(processEvents(trace, "peer", "ready")) != 0 || len(processEvents(trace, "timeout", "exit")) != len(steps) {
+					t.Fatalf("overflow trace for %s did not own all provider attempts:\n%s", peer, readProcessFile(t, suite.layout.Trace))
 				}
 				assertConsultStateSecure(t, suite, peer, false)
 				assertProcessesGone(t, trace)
@@ -419,12 +424,14 @@ func TestProviderScriptedConsultLoopTelemetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	codexTarget := providerPairTarget("codex")
+	geminiTarget := providerPairTarget("gemini")
 
 	cases := []struct {
-		name    string
-		calls   []consultCallSpec
-		steps   []consultStepSpec
-		wantRow bool
+		name       string
+		calls      []consultCallSpec
+		steps      []consultStepSpec
+		wantUsage  bool
+		wantHealth []loop.PeerRecord
 	}{
 		{
 			name: "valid codex usage",
@@ -434,7 +441,11 @@ func TestProviderScriptedConsultLoopTelemetry(t *testing.T) {
 			steps: []consultStepSpec{
 				consultPairStep(codexTarget, "fresh", "usable", consultPersonaPrompt(persona, "usage question"), "usage reply"),
 			},
-			wantRow: true,
+			wantUsage: true,
+			wantHealth: []loop.PeerRecord{{
+				Role: "advisor", Provider: "codex", Model: codexTarget.Model,
+				Outcome: "success", Attempts: 1,
+			}},
 		},
 		{
 			name: "codex without usage event",
@@ -448,6 +459,10 @@ func TestProviderScriptedConsultLoopTelemetry(t *testing.T) {
 					Model: codexTarget.Model, Effort: codexTarget.Effort,
 				},
 			},
+			wantHealth: []loop.PeerRecord{{
+				Role: "advisor", Provider: "codex", Model: codexTarget.Model,
+				Outcome: "success", Attempts: 1,
+			}},
 		},
 		{
 			name: "failed codex and provider without usage metadata",
@@ -455,9 +470,20 @@ func TestProviderScriptedConsultLoopTelemetry(t *testing.T) {
 				{Target: "advisor", Mode: "fresh", Prompt: "failed usage question", ExitCode: 23},
 				{Target: "gemini", Mode: "fresh", Prompt: "plain usage question", ExitCode: 0},
 			},
-			steps: []consultStepSpec{
-				consultPairStep(codexTarget, "fresh", "ordinary", consultPersonaPrompt(persona, "failed usage question"), ""),
-				consultDirectStep("gemini", "fresh", "usable", "plain usage question", "plain reply"),
+			steps: func() []consultStepSpec {
+				prompt := consultPersonaPrompt(persona, "failed usage question")
+				codexFailure := consultPairStep(codexTarget, "fresh", "ordinary", prompt, "")
+				geminiFailure := consultPairStep(geminiTarget, "fresh", "ordinary", prompt, "")
+				return []consultStepSpec{
+					codexFailure, codexFailure,
+					geminiFailure, geminiFailure,
+					consultDirectStep("gemini", "fresh", "usable", "plain usage question", "plain reply"),
+				}
+			}(),
+			wantHealth: []loop.PeerRecord{
+				{Role: "advisor", Provider: "codex", Model: codexTarget.Model, Outcome: "failed", Attempts: 2},
+				{Role: "advisor", Provider: "gemini", Model: geminiTarget.Model, Outcome: "failed", Attempts: 2},
+				{Role: "gemini", Provider: "gemini", Model: "env-gemini", Outcome: "success", Attempts: 1},
 			},
 		},
 	}
@@ -488,35 +514,54 @@ func TestProviderScriptedConsultLoopTelemetry(t *testing.T) {
 			}
 			peerPath := filepath.Join(suite.layout.Repo, ".agent", "runs", runID+".peers.jsonl")
 			rows := loop.ReadPeerRecords(suite.layout.Repo, runID)
-			if tc.wantRow {
-				info, err := os.Lstat(peerPath)
-				if err != nil {
-					t.Fatal(err)
+			info, err := os.Lstat(peerPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stat, ok := info.Sys().(*syscall.Stat_t)
+			if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || !ok || stat.Nlink != 1 {
+				t.Fatalf("peer telemetry target = mode %s stat %#v", info.Mode(), stat)
+			}
+			var usage, health []loop.PeerRecord
+			for _, row := range rows {
+				if row.Kind == "role_health" {
+					health = append(health, row)
+				} else {
+					usage = append(usage, row)
 				}
-				stat, ok := info.Sys().(*syscall.Stat_t)
-				if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || !ok || stat.Nlink != 1 {
-					t.Fatalf("peer telemetry target = mode %s stat %#v", info.Mode(), stat)
+			}
+			if tc.wantUsage {
+				if len(usage) != 1 || usage[0].Run != runID || usage[0].Role != "advisor" ||
+					usage[0].Provider != "codex" || usage[0].Model != codexTarget.Model ||
+					usage[0].In != 7 || usage[0].Out != 3 || usage[0].ReportedOutTok == nil || *usage[0].ReportedOutTok != 3 {
+					t.Fatalf("peer usage rows = %#v", usage)
 				}
-				if len(rows) != 1 || rows[0] != (loop.PeerRecord{Run: runID, Role: "advisor", Provider: "codex", Model: codexTarget.Model, In: 7, Out: 3}) {
-					t.Fatalf("peer telemetry rows = %#v", rows)
+			} else if len(usage) != 0 {
+				t.Fatalf("no-usage case wrote usage telemetry: %#v", usage)
+			}
+			if len(health) != len(tc.wantHealth) {
+				t.Fatalf("peer role-health rows = %#v, want %d rows", health, len(tc.wantHealth))
+			}
+			for i, want := range tc.wantHealth {
+				got := health[i]
+				if got.Run != runID || got.Kind != "role_health" || got.Mode != "consult" || got.Role != want.Role ||
+					got.Provider != want.Provider || got.Model != want.Model || got.Outcome != want.Outcome ||
+					got.Attempts != want.Attempts || got.Target == "" {
+					t.Errorf("peer role-health row %d = %#v, want core fields %#v", i, got, want)
 				}
-				data, err := os.ReadFile(peerPath)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if len(strings.Split(strings.TrimSpace(string(data)), "\n")) != 1 {
-					t.Fatalf("peer telemetry is not exactly one JSONL row: %q", data)
-				}
+			}
+			data, err := os.ReadFile(peerPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+			if len(lines) != len(rows) {
+				t.Fatalf("peer telemetry has %d JSONL lines for %d decoded rows", len(lines), len(rows))
+			}
+			for _, line := range lines {
 				var decoded loop.PeerRecord
-				if err := json.Unmarshal(data, &decoded); err != nil {
+				if err := json.Unmarshal([]byte(line), &decoded); err != nil {
 					t.Fatalf("peer telemetry is not valid JSON: %v", err)
-				}
-			} else {
-				if len(rows) != 0 {
-					t.Fatalf("no-usage case wrote peer telemetry: %#v", rows)
-				}
-				if _, err := os.Lstat(peerPath); !os.IsNotExist(err) {
-					t.Fatalf("empty peer telemetry file was not removed: %v", err)
 				}
 			}
 			restoreConsultLoopTask(t, suite.layout.Repo, taskID)

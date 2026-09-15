@@ -815,10 +815,10 @@ func TestParseDelegateInvocationPinsEveryAdapterGrammar(t *testing.T) {
 		args     []string
 		want     delegateInvocation
 	}{
-		{"claude", []string{"-p", "--dangerously-skip-permissions", "--model", "opus", "--effort", "high", "--", "question"}, delegateInvocation{Prompt: "question", Model: "opus", Effort: "high"}},
-		{"codex", []string{"exec", "--dangerously-bypass-approvals-and-sandbox", "--model", "codex-model", "-c", "model_reasoning_effort=high", "question"}, delegateInvocation{Prompt: "question", Model: "codex-model", Effort: "high"}},
-		{"gemini", []string{"--yolo", "--model", "flash", "-p", "question"}, delegateInvocation{Prompt: "question", Model: "flash"}},
-		{"grok", []string{"--permission-mode", "bypassPermissions", "--model", "grok-model", "--reasoning-effort", "xhigh", "-p", "question"}, delegateInvocation{Prompt: "question", Model: "grok-model", Effort: "xhigh"}},
+		{"claude", []string{"-p", "--dangerously-skip-permissions", "--output-format", "json", "--model", "opus", "--effort", "high", "--", "question"}, delegateInvocation{Prompt: "question", Model: "opus", Effort: "high"}},
+		{"codex", []string{"exec", "--dangerously-bypass-approvals-and-sandbox", "--model", "codex-model", "-c", "model_reasoning_effort=high", "--json", "question"}, delegateInvocation{Prompt: "question", Model: "codex-model", Effort: "high"}},
+		{"gemini", []string{"--yolo", "--model", "flash", "-o", "stream-json", "-p", "question"}, delegateInvocation{Prompt: "question", Model: "flash"}},
+		{"grok", []string{"--permission-mode", "bypassPermissions", "--output-format", "streaming-json", "--model", "grok-model", "--reasoning-effort", "xhigh", "-p", "question"}, delegateInvocation{Prompt: "question", Model: "grok-model", Effort: "xhigh"}},
 	}
 	for _, tc := range cases {
 		got, err := parseDelegateInvocation(tc.provider, tc.args)

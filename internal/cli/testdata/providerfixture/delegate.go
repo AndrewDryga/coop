@@ -347,11 +347,11 @@ func consumeDelegateStep(root, provider string, invocation delegateInvocation, s
 func parseDelegateInvocation(provider string, args []string) (delegateInvocation, error) {
 	switch provider {
 	case "claude":
-		return parsePlainDelegateArgs(args, []string{"-p", "--dangerously-skip-permissions"}, "--effort", "--")
+		return parsePlainDelegateArgs(args, []string{"-p", "--dangerously-skip-permissions", "--output-format", "json"}, "--effort", nil, "--")
 	case "gemini":
-		return parsePlainDelegateArgs(args, []string{"--yolo"}, "", "-p")
+		return parsePlainDelegateArgs(args, []string{"--yolo"}, "", []string{"-o", "stream-json"}, "-p")
 	case "grok":
-		return parsePlainDelegateArgs(args, []string{"--permission-mode", "bypassPermissions"}, "--reasoning-effort", "-p")
+		return parsePlainDelegateArgs(args, []string{"--permission-mode", "bypassPermissions", "--output-format", "streaming-json"}, "--reasoning-effort", nil, "-p")
 	case "codex":
 		if len(args) < 2 || !slices.Equal(args[:2], []string{"exec", "--dangerously-bypass-approvals-and-sandbox"}) {
 			return delegateInvocation{}, errors.New("codex delegate argv has an unexpected prefix")
@@ -363,6 +363,10 @@ func parseDelegateInvocation(provider string, args []string) (delegateInvocation
 		if len(rest) >= 2 && rest[0] == "-c" && strings.HasPrefix(rest[1], "model_reasoning_effort=") {
 			invocation.Effort, rest = strings.TrimPrefix(rest[1], "model_reasoning_effort="), rest[2:]
 		}
+		if len(rest) < 1 || rest[0] != "--json" {
+			return delegateInvocation{}, errors.New("codex delegate argv has no exact JSON output flag")
+		}
+		rest = rest[1:]
 		if len(rest) != 1 || !safeConsultValue(rest[0], 96<<10) {
 			return delegateInvocation{}, errors.New("codex delegate argv has unexpected trailing values")
 		}
@@ -373,7 +377,7 @@ func parseDelegateInvocation(provider string, args []string) (delegateInvocation
 	}
 }
 
-func parsePlainDelegateArgs(args, prefix []string, effortFlag, promptFlag string) (delegateInvocation, error) {
+func parsePlainDelegateArgs(args, prefix []string, effortFlag string, beforePrompt []string, promptFlag string) (delegateInvocation, error) {
 	if len(args) < len(prefix)+1 || !slices.Equal(args[:len(prefix)], prefix) {
 		return delegateInvocation{}, errors.New("plain delegate argv has an unexpected prefix")
 	}
@@ -384,6 +388,10 @@ func parsePlainDelegateArgs(args, prefix []string, effortFlag, promptFlag string
 	if effortFlag != "" && len(rest) >= 2 && rest[0] == effortFlag {
 		invocation.Effort, rest = rest[1], rest[2:]
 	}
+	if len(rest) < len(beforePrompt) || !slices.Equal(rest[:len(beforePrompt)], beforePrompt) {
+		return delegateInvocation{}, errors.New("plain delegate argv has no exact structured output flag")
+	}
+	rest = rest[len(beforePrompt):]
 	if promptFlag != "" {
 		if len(rest) < 1 || rest[0] != promptFlag {
 			return delegateInvocation{}, errors.New("plain delegate argv has no exact prompt flag")
@@ -400,15 +408,13 @@ func parsePlainDelegateArgs(args, prefix []string, effortFlag, promptFlag string
 func renderDelegateStep(root string, step delegateStep, delegate delegateScenario) (int, string, error) {
 	switch step.Result {
 	case "success":
-		fmt.Printf("fixture delegate success %s\n", step.Provider)
-		return 0, "", nil
+		return 0, "", renderDelegateSuccess(step.Provider, "fixture delegate success "+step.Provider)
 	case "edit":
 		name := "delegate-edit-" + step.Provider + ".txt"
 		if err := os.WriteFile(name, []byte("fixture delegate edit "+step.Provider+"\n"), 0o600); err != nil {
 			return 1, "", err
 		}
-		fmt.Printf("fixture delegate edit %s\n", step.Provider)
-		return 0, "", nil
+		return 0, "", renderDelegateSuccess(step.Provider, "fixture delegate edit "+step.Provider)
 	case "ordinary":
 		fmt.Fprintln(os.Stderr, "fixture ordinary delegate failure")
 		return defaultDelegateExit(step.ExitCode, 23), "", nil
@@ -456,6 +462,32 @@ func renderDelegateStep(root string, step delegateStep, delegate delegateScenari
 		return 0, "", nil
 	}
 	return 1, "", fmt.Errorf("unsupported delegate result %q", step.Result)
+}
+
+func renderDelegateSuccess(provider, reply string) error {
+	encoder := json.NewEncoder(os.Stdout)
+	switch provider {
+	case "claude":
+		return encoder.Encode(map[string]any{"type": "result", "is_error": false, "result": reply,
+			"usage": map[string]int{"input_tokens": 7, "output_tokens": 3}})
+	case "codex":
+		if err := encoder.Encode(map[string]any{"type": "item.completed", "item": map[string]any{"type": "agent_message", "text": reply}}); err != nil {
+			return err
+		}
+		return encoder.Encode(map[string]any{"type": "turn.completed", "usage": map[string]int{"input_tokens": 7, "output_tokens": 3, "reasoning_output_tokens": 0}})
+	case "gemini":
+		if err := encoder.Encode(map[string]any{"type": "message", "role": "assistant", "content": reply}); err != nil {
+			return err
+		}
+		return encoder.Encode(map[string]any{"type": "result", "status": "success", "stats": map[string]int{"input_tokens": 7, "input": 7, "cached": 0, "output_tokens": 3}})
+	case "grok":
+		if err := encoder.Encode(map[string]any{"type": "text", "data": reply}); err != nil {
+			return err
+		}
+		return encoder.Encode(map[string]any{"type": "end", "usage": map[string]int{"input_tokens": 7, "output_tokens": 3, "total_tokens": 10}})
+	default:
+		return fmt.Errorf("unsupported delegate provider %q", provider)
+	}
 }
 
 func applyDelegateMutation(result string) error {
