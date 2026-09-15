@@ -81,7 +81,7 @@ func executeProviderNetworkLiveChild(target agents.Target, marker, attemptFile, 
 	// changed between them would be a different experiment.
 	filtered := egress.Filtered
 	spec := box.RunSpec{
-		Repo: cfg.RepoOverride, Agent: target.Provider, Homes: true,
+		Repo: cfg.RepoOverride, Agent: target.Provider, AgentCommand: true, Homes: true,
 	}
 	capture, err := box.AdmitNetwork(cfg, rt, spec, box.NetworkAdmission{InvocationMode: &filtered})
 	if err != nil {
@@ -185,7 +185,7 @@ func executeProviderNetworkLiveChild(target agents.Target, marker, attemptFile, 
 		}
 	}
 	// The receipts are the evidence: what the boxes reached has to be what the policy granted.
-	if detail, err := verifyProviderNetworkLiveReceipts(capture); err != nil {
+	if detail, err := verifyProviderNetworkLiveReceipts(capture, ag.CredentialBroker().Upstream); err != nil {
 		failed := fail(liveprovider.ReasonPromptExit, "receipt", "network", 0)
 		failed.DetailCode = detail
 		return failed
@@ -271,7 +271,7 @@ func runProviderNetworkLiveBox(cfg *config.Config, rt runtime.Runtime, capture *
 // verifyProviderNetworkLiveReceipts requires every observed destination of this capture's runs to
 // be one the frozen policy allows. A provider that quietly needed a host nobody granted would
 // otherwise pass on the strength of a retry succeeding somewhere else.
-func verifyProviderNetworkLiveReceipts(capture *box.CapturedEgress) (string, error) {
+func verifyProviderNetworkLiveReceipts(capture *box.CapturedEgress, brokerUpstream string) (string, error) {
 	policy, err := capture.Store.LoadSnapshot(capture.Project, capture.Fingerprint)
 	if err != nil {
 		return "snapshot", err
@@ -284,7 +284,10 @@ func verifyProviderNetworkLiveReceipts(capture *box.CapturedEgress) (string, err
 		return "no_receipt", errors.New("no sealed receipt retained a reached destination for this capture")
 	}
 	for _, name := range names {
-		if !policy.Domain(name, 443).Allowed {
+		// A broker upstream is intentionally absent from the agent policy: only the
+		// gateway's session-bound route may reach it. Every other reached name must
+		// still be an ordinary frozen-policy grant.
+		if !policy.Domain(name, 443).Allowed && name != brokerUpstream {
 			return "ungranted_destination", errors.New("a filtered run reached " + name + ", which this policy never granted")
 		}
 	}

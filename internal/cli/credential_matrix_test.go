@@ -151,6 +151,8 @@ func credentialMatrixMarker(provider string) []byte {
 		return []byte(`{"claudeAiOauth":{"accessToken":"access","expiresAt":4102444800000,"scopes":["user:inference"]}}`)
 	case "codex":
 		return []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"identity","access_token":"access","refresh_token":"refresh"},"last_refresh":"2026-08-06T00:00:00Z"}`)
+	case "gemini":
+		return []byte(`{"encrypted":"opaque"}`)
 	case "grok":
 		return []byte(grokProfileCredential("2099-01-01T00:00:00Z", ""))
 	default:
@@ -160,15 +162,14 @@ func credentialMatrixMarker(provider string) []byte {
 
 func writeCredentialMatrixFile(t *testing.T, cfg *config.Config, ag agents.Agent, profile, marker string) {
 	t.Helper()
-	if ag.Name() == "gemini" {
-		if err := box.SaveHostCredential(cfg, ag, profile, []byte("gemini-fixture-key")); err != nil {
-			t.Fatal(err)
-		}
-		return
-	}
 	dir := cfg.AgentProfileDir(ag.Name(), profile)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
+	}
+	if ag.Name() == "gemini" {
+		if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"security":{"auth":{"selectedType":"oauth-personal"}}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(filepath.Join(dir, marker), credentialMatrixMarker(ag.Name()), 0o600); err != nil {
 		t.Fatal(err)

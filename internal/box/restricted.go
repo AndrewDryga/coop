@@ -428,6 +428,9 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	if spec.ExtraArgs, err = restrictedRuntimeArgs(spec.ExtraArgs, mode, "its own runtime arguments"); err != nil {
 		return -1, err
 	}
+	if _, err := selectCredentialBroker(cfg, spec); err != nil {
+		return -1, err
+	}
 	workdir := BareWorkdir
 	if mode == agents.ModeReadOnly {
 		workdir = resolveWorkdir(spec, cfg)

@@ -846,12 +846,9 @@ func TestMetadata(t *testing.T) {
 			}
 		}
 		broker := a.CredentialBroker()
-		if broker != (CredentialBrokerSpec{}) {
+		if broker.Declared() {
 			if !broker.Valid() || !seen[broker.CredentialEnv] {
 				t.Errorf("%s CredentialBroker is malformed or uses an undeclared credential key: %#v", name, broker)
-			}
-			if name != "claude" {
-				t.Errorf("%s unexpectedly declares an unqualified credential broker", name)
 			}
 		}
 		live := a.LiveCredentials()

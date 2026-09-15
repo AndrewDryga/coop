@@ -2,14 +2,17 @@
 name: credential-presence-is-adapter-declared
 description: adapters own credential presence, selected env authority, and inspectable stored readiness
 subsystem: credentials
-sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/control.go, internal/box/auth.go, internal/box/profiles.go, internal/cli/rotation.go, internal/cli/profiles.go, internal/testutil/liveprovider/credentials.go]
-updated: 2026-09-13
+sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/control.go, internal/box/auth.go, internal/box/credential_broker.go, internal/box/profiles.go, internal/cli/rotation.go, internal/cli/profiles.go, internal/testutil/liveprovider/credentials.go]
+updated: 2026-09-15
 ---
 
-Adapters own four credential facts: `AuthMarker` names their login file and canonical primary env
+Adapters own six credential facts: `AuthMarker` names their login file and canonical primary env
 key; `CredentialEnvKeys` is the complete set of token keys they accept;
 `ActiveCredentialEnvKeys` selects the env family authoritative for one profile; and
-`StoredCredentialStatus` validates a native marker when its shape is safely inspectable. Presence
+`StoredCredentialStatus` validates a native marker when its shape is safely inspectable.
+`CredentialBroker` declares the one pinned API-key route Coop has actually qualified, while the
+optional `StoredAPIKeyDetector` identifies a reusable API key hidden in a native marker so launch
+can refuse it instead of mounting it. Presence
 callers never reconstruct provider-specific precedence or OAuth schemas. `ProfileAuthed` and
 `AuthedAgents` are the public profile and provider views over the shared presence predicate.
 
@@ -57,6 +60,9 @@ and the default MCP file are `0600`. Coop does not recursively chmod provider tr
 the private ancestors protect those descendants without taking ownership of their formats.
 
 ## Changelog
+- 2026-09-15 - added adapter-owned API-key broker contracts and native reusable-key detection;
+  verified every recognized env key is either brokered in its qualified direct filtered shape or
+  refused before runtime, while OAuth/access-token projection remains separate
 - 2026-09-13 - corrected the native Gemini API-key assumption after fresh-box reproduction and
   documented exact-account filtered admission for Coop-owned/API-key authority
 - 2026-09-13 - allowed adapters to declare a native marker alongside selected env authority;

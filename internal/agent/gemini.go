@@ -330,7 +330,24 @@ func (geminiAgent) CredentialEnvKeys() []string {
 	return []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}
 }
 
-func (geminiAgent) CredentialBroker() CredentialBrokerSpec { return CredentialBrokerSpec{} }
+func (geminiAgent) CredentialBroker() CredentialBrokerSpec {
+	return CredentialBrokerSpec{
+		CredentialEnv: "GEMINI_API_KEY",
+		BaseURLEnv:    "GOOGLE_GEMINI_BASE_URL",
+		Upstream:      "generativelanguage.googleapis.com",
+		Header:        "x-goog-api-key",
+		Method:        "POST",
+		Path:          "/v1beta/models/",
+		PathPrefix:    true,
+		AllowQuery:    true,
+		Port:          443,
+	}
+}
+
+func (geminiAgent) StoredAPIKey(profileDir string) (bool, error) {
+	selected, ok, err := geminiSelectedAuthType(profileDir)
+	return ok && selected == "gemini-api-key", err
+}
 
 func (geminiAgent) LiveCredentials() LiveCredentialSpec {
 	return LiveCredentialSpec{

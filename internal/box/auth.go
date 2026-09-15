@@ -164,9 +164,9 @@ func writeMergedEnvFile(parent string, projectEnv map[string]string, userPath st
 }
 
 // writeComposedEnvFile renders project defaults, then the selected account's Coop-owned key,
-// then the trusted user env. The last layer preserves the established rule that an explicit
-// default-account environment credential wins over stored state. Named-account keys are removed
-// from the user layer by drop, so they cannot be shadowed by another account.
+// then the trusted user env. Provider credentials outside this box's scope are removed from both
+// configurable environment layers; project defaults must not bypass the same boundary as the
+// user's env file. The selected account's host key is handled separately by the broker.
 func writeComposedEnvFile(parent string, projectEnv, profileEnv map[string]string, userPath string, drop map[string]bool) (string, error) {
 	keys := make([]string, 0, len(projectEnv))
 	for key := range projectEnv {
@@ -175,6 +175,9 @@ func writeComposedEnvFile(parent string, projectEnv, profileEnv map[string]strin
 	sort.Strings(keys)
 	var b strings.Builder
 	for _, key := range keys {
+		if drop[key] {
+			continue
+		}
 		b.WriteString(key)
 		b.WriteByte('=')
 		b.WriteString(projectEnv[key])
@@ -206,6 +209,9 @@ func writeComposedEnvFile(parent string, projectEnv, profileEnv map[string]strin
 // precedence; named profiles always use their own stored key.
 func scopedHostCredentialEnv(cfg *config.Config, spec RunSpec, userEnv map[string]string) (map[string]string, error) {
 	values := map[string]string{}
+	if spec.Login {
+		return values, nil
+	}
 	for _, name := range credentialScope(cfg, spec) {
 		ag, ok := agents.Get(name)
 		if !ok {

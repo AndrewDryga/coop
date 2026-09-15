@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
-	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
@@ -25,12 +24,6 @@ func signInCred(t *testing.T, cfg *config.Config, agent, name string) {
 	if !ok {
 		t.Fatalf("unknown agent %q", agent)
 	}
-	if agent == "gemini" {
-		if err := box.SaveHostCredential(cfg, ag, name, []byte("gemini-fixture-key")); err != nil {
-			t.Fatal(err)
-		}
-		return
-	}
 	file, _ := ag.AuthMarker()
 	body := map[string]string{
 		"claude": `{"claudeAiOauth":{"refreshToken":"refresh","scopes":["user:inference"]}}`,
@@ -38,6 +31,11 @@ func signInCred(t *testing.T, cfg *config.Config, agent, name string) {
 		"gemini": `{"encrypted":"opaque"}`,
 		"grok":   `{"issuer::id":{"key":"access","refresh_token":"refresh","expires_at":"2000-01-01T00:00:00Z","auth_mode":"oauth","oidc_issuer":"issuer","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team","create_time":"2000-01-01T00:00:00Z"}}`,
 	}[agent]
+	if agent == "gemini" {
+		if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"security":{"auth":{"selectedType":"oauth-personal"}}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}

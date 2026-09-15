@@ -18,8 +18,19 @@ import (
 // Core dependencies follow the credential scope this run actually mounts, not
 // every installed provider. A raw run mounts none and therefore gets none.
 func TestNetworkProviderBundlesFollowTheMountedCredentialScope(t *testing.T) {
-	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node"}
-	if err := os.WriteFile(cfg.EnvFile(), []byte("ANTHROPIC_AUTH_TOKEN=claude-test\nOPENAI_API_KEY=codex-test\n"), 0o600); err != nil {
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "filtered"}
+	claudeDir := cfg.AgentProfileDir("claude", "default")
+	codexDir := cfg.AgentProfileDir("codex", "default")
+	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(codexDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(claudeDir, ".credentials.json"), []byte(`{"claudeAiOauth":{"refreshToken":"r","scopes":["user:inference"]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(codexDir, "auth.json"), []byte(`{"auth_mode":"chatgpt","tokens":{"refresh_token":"r"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	repo := t.TempDir()
@@ -67,8 +78,12 @@ func TestNetworkProviderBundlesFollowTheMountedCredentialScope(t *testing.T) {
 }
 
 func TestNetworkProviderBundlesRefusesMissingRequiredPresetRole(t *testing.T) {
-	cfg := &config.Config{ConfigDir: t.TempDir()}
-	if err := os.WriteFile(cfg.EnvFile(), []byte("OPENAI_API_KEY=codex-test\n"), 0o600); err != nil {
+	cfg := &config.Config{ConfigDir: t.TempDir(), Egress: "filtered"}
+	dir := cfg.AgentProfileDir("codex", "default")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(`{"auth_mode":"chatgpt","tokens":{"refresh_token":"r"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	p := &preset.Preset{LeadTargets: []agents.Target{{Provider: "codex"}}, Roles: []preset.Role{{
@@ -92,16 +107,19 @@ func TestNetworkProviderBundlesAllowLoginWithoutAnExistingCredential(t *testing.
 	}
 }
 
-func TestNetworkTargetBundleBindsPortableAccountAuthentication(t *testing.T) {
+func TestNetworkTargetBundleBindsAuthenticationAndRefusesAPIKeysForACP(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	gemini, _ := agents.Get("gemini")
 	if err := SaveHostCredential(cfg, gemini, "key", []byte("portable-key")); err != nil {
 		t.Fatal(err)
 	}
 	key := agents.Target{Provider: "gemini", Accounts: []string{"key"}}
-	bundle, err := NetworkTargetBundle(cfg, key, egress.ClientACP)
+	bundle, err := NetworkTargetBundle(cfg, key, egress.ClientCLI)
 	if err != nil || bundle.AuthMode != "api-key" || len(bundle.Core) != 1 || bundle.Core[0].To.Domain != "generativelanguage.googleapis.com" {
 		t.Fatalf("portable Gemini key was not qualified exactly: %+v, %v", bundle, err)
+	}
+	if _, err := NetworkTargetBundle(cfg, key, egress.ClientACP); err == nil || !strings.Contains(err.Error(), "reusable GEMINI_API_KEY") {
+		t.Fatal("Gemini API key was offered to ACP", err)
 	}
 
 	oauthDir := cfg.AgentProfileDir("gemini", "oauth")

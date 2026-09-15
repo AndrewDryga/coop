@@ -52,11 +52,11 @@ func TestACPNetworkScope(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || len(bundles) != 3 {
+			if err != nil || len(bundles) != 2 {
 				t.Fatalf("supported ACP startup blocked by optional providers: %v, %v", bundles, err)
 			}
 			for _, bundle := range bundles {
-				if bundle.Client != egress.ClientACP || bundle.Provider != "codex" && bundle.Provider != "claude" && bundle.Provider != "gemini" {
+				if bundle.Client != egress.ClientACP || bundle.Provider != "codex" && bundle.Provider != "claude" {
 					t.Fatalf("unexpected ACP bundle: %+v", bundle)
 				}
 			}
@@ -64,10 +64,13 @@ func TestACPNetworkScope(t *testing.T) {
 	}
 }
 
-func TestACPNetworkScopeOffersPortableGeminiAccountOnly(t *testing.T) {
+func TestACPNetworkScopeExcludesGeminiAPIKeyAccounts(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
 	signInCred(t, cfg, "codex", "default")
-	signInCred(t, cfg, "gemini", "portable")
+	gemini, _ := agents.Get("gemini")
+	if err := box.SaveHostCredential(cfg, gemini, "portable", []byte("fixture-key")); err != nil {
+		t.Fatal(err)
+	}
 	oauth := cfg.AgentProfileDir("gemini", "oauth")
 	if err := os.MkdirAll(oauth, 0o700); err != nil {
 		t.Fatal(err)
@@ -89,8 +92,8 @@ func TestACPNetworkScopeOffersPortableGeminiAccountOnly(t *testing.T) {
 			geminiAccounts = append(geminiAccounts, target.Account())
 		}
 	}
-	if len(geminiAccounts) != 1 || geminiAccounts[0] != "portable" {
-		t.Fatalf("filtered Gemini accounts = %v, want portable only", geminiAccounts)
+	if len(geminiAccounts) != 0 {
+		t.Fatalf("filtered ACP offered Gemini API-key accounts: %v", geminiAccounts)
 	}
 }
 

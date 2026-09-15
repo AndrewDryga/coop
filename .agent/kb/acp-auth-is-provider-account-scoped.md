@@ -3,7 +3,7 @@ name: acp-auth-is-provider-account-scoped
 description: ACP initialize capability truth and successful authentication belong to one provider account
 subsystem: acp
 sources: [internal/acpproxy/proxy.go, internal/acpctl/control.go, internal/acpctl/network.go, internal/agent/agent.go, internal/agent/target.go, internal/box/network_bundles.go, internal/box/profiles.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/commands.go, internal/cli/rotation.go, internal/acpproxy/scripted_e2e_test.go]
-updated: 2026-09-13
+updated: 2026-09-15
 ---
 
 An editor's `initialize` request can be reused when a child is replaced, but its response is fresh
@@ -40,12 +40,14 @@ bytes; the host separately proves that exact account's credential authority. The
 account rotation, warm/model probes, preset spawns and restored targets all use the frozen account
 set. After any rate-limit wait the complete preset closure and each authentication family are
 revalidated; the supervisor then passes exact role/peer account bindings to the re-exec, which
-applies them before the child validates its required credential scope and creates any mount. A
-portable Gemini API-key account can therefore appear while a sibling OAuth account stays absent;
-changing settings, defaults, or deleting a role credential after capture refuses the next child
-rather than reusing the API-key grant for another account or silently dropping the role.
+applies them before the child validates its required credential scope and creates any mount.
+Reusable API-key accounts are not ACP-eligible because the broker supports direct CLI/loop shapes
+only; changing settings, defaults, or deleting a role credential after capture refuses the next
+child rather than reusing one account's grant for a sibling or silently dropping the role.
 
 ## Changelog
+- 2026-09-15 - removed reusable API-key accounts from filtered ACP eligibility; their direct
+  CLI/loop broker never falls back to mounting a key in an ACP child
 - 2026-09-13 - froze filtered ACP admission at provider/account granularity, pinned role/peer
   accounts across the supervisor re-exec, and added post-wait plus pre-mount validation so one
   portable account cannot admit a host-bound sibling or hide a deleted role

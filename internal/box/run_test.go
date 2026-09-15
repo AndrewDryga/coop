@@ -2245,7 +2245,11 @@ func TestLeadInstructionMount(t *testing.T) {
 func TestRunPresetRoleMountsConsultWrapperAndRoleEnv(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{ConfigDir: dir, HomeInBox: "/home/node", Egress: "none"}
-	if err := os.WriteFile(cfg.EnvFile(), []byte("OPENAI_API_KEY=test\n"), 0o600); err != nil {
+	codexDir := cfg.AgentProfileDir("codex", "default")
+	if err := os.MkdirAll(codexDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(codexDir, "auth.json"), []byte(`{"auth_mode":"chatgpt","tokens":{"refresh_token":"r"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	p := &preset.Preset{Name: "council", LeadTargets: []agents.Target{{Provider: "claude"}}, Roles: []preset.Role{

@@ -137,12 +137,16 @@ func NetworkTargetBundle(cfg *config.Config, target agents.Target, client egress
 	if !ProfileCredentialReady(cfg, target.Provider, account, time.Now()) {
 		return egress.Bundle{}, fmt.Errorf("%s account %q is not ready for restricted networking", target.Provider, account)
 	}
+	profileDir := cfg.AgentProfileDir(target.Provider, account)
+	markerPresent := ProfileMarkerPresent(cfg, target.Provider, account)
 	input := agents.NetworkBundleInput{Client: client}
 	if selector, ok := ag.(agents.NetworkAuthSelector); ok {
-		profileDir := cfg.AgentProfileDir(target.Provider, account)
-		selection, err := selector.NetworkAuthSelection(profileDir, ProfileMarkerPresent(cfg, target.Provider, account))
+		selection, err := selector.NetworkAuthSelection(profileDir, markerPresent)
 		if err != nil {
 			return egress.Bundle{}, err
+		}
+		if client == egress.ClientACP && selection.EnvKey != "" {
+			return egress.Bundle{}, fmt.Errorf("%s account %q uses reusable %s authentication, which ACP sessions do not support", target.Provider, account, selection.EnvKey)
 		}
 		if selection.EnvKey != "" {
 			available := ProfileHostCredentialPresent(cfg, target.Provider, account)
@@ -162,6 +166,24 @@ func NetworkTargetBundle(cfg *config.Config, target agents.Target, client egress
 		input.AuthMode = strings.TrimSpace(selection.AuthMode)
 		if input.AuthMode == "" {
 			return egress.Bundle{}, fmt.Errorf("%s account %q has no qualified authentication family", target.Provider, account)
+		}
+	}
+	if client == egress.ClientACP {
+		activeEnv := ag.ActiveCredentialEnvKeys(profileDir, markerPresent)
+		if account == cfg.DefaultProfileOf(target.Provider) && anyCredentialEnvPresent(activeEnv, envFileKeys(cfg.EnvFile())) {
+			return egress.Bundle{}, fmt.Errorf("%s account %q uses a reusable environment credential, which ACP sessions do not support", target.Provider, account)
+		}
+		if ProfileHostCredentialPresent(cfg, target.Provider, account) {
+			return egress.Bundle{}, fmt.Errorf("%s account %q uses a reusable host credential, which ACP sessions do not support", target.Provider, account)
+		}
+		if detector, ok := ag.(agents.StoredAPIKeyDetector); ok && markerPresent {
+			stored, err := detector.StoredAPIKey(profileDir)
+			if err != nil {
+				return egress.Bundle{}, fmt.Errorf("inspect %s account %q credential: %w", target.Provider, account, err)
+			}
+			if stored {
+				return egress.Bundle{}, fmt.Errorf("%s account %q uses a reusable API key in its native credential file, which ACP sessions do not support", target.Provider, account)
+			}
 		}
 	}
 	return ag.NetworkBundle(input)

@@ -267,8 +267,9 @@ type MarkerCredentialSelector interface {
 
 // HostCredentialSpec is one adapter-owned API-key login that Coop can persist outside the
 // provider home mounted into boxes. The adapter owns the human wording and the profile mutation
-// that selects this credential family; shared code owns hidden input, private storage and scoped
-// env-file delivery. A zero value means the provider keeps its native login flow.
+// that selects this credential family; shared code owns hidden input and private storage. A
+// qualified broker consumes the key without exposing it to the box. A zero value means the
+// provider keeps its native login flow.
 type HostCredentialSpec struct {
 	Prompt       string
 	Instructions string
@@ -293,21 +294,43 @@ func (s HostCredentialSpec) Valid() bool {
 // placing the reusable credential in a filtered agent container. A zero value means unsupported.
 // It describes one deliberately narrow first-party API, never a generic forward proxy.
 type CredentialBrokerSpec struct {
-	CredentialEnv string
-	BaseURLEnv    string
-	Upstream      string
-	Header        string
-	Method        string
-	Path          string
-	Port          int
+	CredentialEnv  string
+	BaseURLEnv     string
+	Upstream       string
+	Header         string
+	HeaderPrefix   string
+	Method         string
+	Path           string
+	PathPrefix     bool
+	AllowQuery     bool
+	ClientBasePath string
+	CommandArgs    func(baseURL string) []string
+	Port           int
+}
+
+// Declared reports whether an adapter opted into credential brokering at all.
+func (s CredentialBrokerSpec) Declared() bool {
+	return s.CredentialEnv != "" || s.BaseURLEnv != "" || s.Upstream != "" || s.Header != "" ||
+		s.HeaderPrefix != "" || s.Method != "" || s.Path != "" || s.PathPrefix || s.AllowQuery ||
+		s.ClientBasePath != "" || s.CommandArgs != nil || s.Port != 0
 }
 
 // Valid rejects partially declared broker shapes. Exact provider support is still qualified by
 // the adapter's locked-client tests; this only keeps malformed declarations out of launch plans.
 func (s CredentialBrokerSpec) Valid() bool {
-	return s.CredentialEnv != "" && s.BaseURLEnv != "" && s.Upstream != "" &&
+	return s.Declared() && s.CredentialEnv != "" && s.BaseURLEnv != "" && s.Upstream != "" &&
 		s.Header != "" && s.Method != "" && strings.HasPrefix(s.Path, "/") &&
-		!strings.ContainsAny(s.Path, "?#\x00\r\n") && s.Port >= 1 && s.Port <= 65535
+		!strings.ContainsAny(s.Path, "?#\x00\r\n") &&
+		(s.ClientBasePath == "" || strings.HasPrefix(s.ClientBasePath, "/") &&
+			!strings.HasSuffix(s.ClientBasePath, "/") && !strings.ContainsAny(s.ClientBasePath, "?#\x00\r\n")) &&
+		!strings.ContainsAny(s.HeaderPrefix, "\x00\r\n") && s.Port >= 1 && s.Port <= 65535
+}
+
+// StoredAPIKeyDetector is implemented only by adapters whose native marker can contain a
+// reusable API key. Coop uses it to refuse that marker before mounting it when the broker cannot
+// safely extract and replace it. OAuth/access-token markers deliberately return false.
+type StoredAPIKeyDetector interface {
+	StoredAPIKey(profileDir string) (bool, error)
 }
 
 // LiveCredentialSpec is the complete adapter-owned boundary for opt-in live compatibility tests.
@@ -443,8 +466,8 @@ type Agent interface {
 	// its canonical primary env-file key. Presence checks use CredentialEnvKeys so alternate
 	// tokens are first-class too.
 	AuthMarker() (file, envKey string)
-	// HostCredential declares an optional Coop-owned API-key login and scoped environment
-	// projection. Its file lives outside the mounted provider profile; a zero value uses Login.
+	// HostCredential declares an optional Coop-owned API-key login. Its file lives outside the
+	// mounted provider profile; a zero value uses Login.
 	HostCredential() HostCredentialSpec
 	// CredentialEnvKeys is every env-file key this agent reads a token from — the
 	// AuthMarker key plus any alternates it honors (e.g. claude also reads

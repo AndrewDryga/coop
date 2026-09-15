@@ -17,9 +17,10 @@ import (
 )
 
 type credentialBrokerCandidate struct {
-	provider   string
-	spec       agents.CredentialBrokerSpec
-	credential string
+	provider     string
+	spec         agents.CredentialBrokerSpec
+	credential   string
+	shadowMarker string
 }
 
 type credentialBrokerRun struct {
@@ -29,15 +30,51 @@ type credentialBrokerRun struct {
 	configInfo os.FileInfo
 }
 
-// selectCredentialBroker recognizes only the exact first qualified flow. Once an API key would
-// otherwise enter a filtered Claude box, an unsupported launch shape is refused rather than
-// silently falling back to raw credential exposure.
+// selectCredentialBroker recognizes reusable credentials before a box is assembled. A supported
+// direct filtered run gets a broker; every other shape refuses instead of falling back to putting
+// the credential in the container.
 func selectCredentialBroker(cfg *config.Config, spec RunSpec) (*credentialBrokerCandidate, error) {
 	return selectCredentialBrokerWithMarkers(cfg, spec, nil)
 }
 
 func selectCredentialBrokerWithMarkers(cfg *config.Config, spec RunSpec, markers map[string]bool) (*credentialBrokerCandidate, error) {
-	if cfg == nil || cfg.Egress != string(egress.Filtered) || !spec.Homes || spec.Agent == "" {
+	if cfg == nil {
+		return nil, nil
+	}
+	if key := extraProviderCredential(spec, cfg.ExtraRunArgs, spec.ExtraArgs); key != "" {
+		if spec.Login {
+			return nil, fmt.Errorf("sign-in does not accept %s through -e; Coop keeps existing reusable credentials outside the login box", key)
+		}
+		return nil, fmt.Errorf("%s cannot enter an agent box through -e; put the selected provider's supported key in Coop's agent env file for a filtered brokered run", key)
+	}
+	if spec.Agent == "" {
+		return nil, nil
+	}
+	if !spec.Homes {
+		if agent, ok := agents.Get(spec.Agent); ok {
+			for _, key := range agent.CredentialEnvKeys() {
+				if strings.TrimSpace(spec.projectEnv[key]) != "" {
+					return nil, fmt.Errorf("%s cannot enter an agent box with credential homes disabled; remove %s or enable homes for a filtered brokered run", agent.DisplayName(), key)
+				}
+			}
+		}
+		return nil, nil
+	}
+	if spec.Login {
+		agent, ok := agents.Get(spec.Agent)
+		if !ok {
+			return nil, nil
+		}
+		profileDir := cfg.AgentProfileDir(spec.Agent, cfg.ActiveProfile(spec.Agent))
+		if detector, ok := agent.(agents.StoredAPIKeyDetector); ok && profileMarkerPresent(agent, profileDir) {
+			stored, err := detector.StoredAPIKey(profileDir)
+			if err != nil {
+				return nil, fmt.Errorf("inspect %s stored credential: %w", agent.DisplayName(), err)
+			}
+			if stored {
+				return nil, fmt.Errorf("%s sign-in cannot mount its existing reusable API key; remove that account with 'coop credentials %s %s rm' before signing in again", agent.DisplayName(), spec.Agent, cfg.ActiveProfile(spec.Agent))
+			}
+		}
 		return nil, nil
 	}
 	var selected *credentialBrokerCandidate
@@ -60,6 +97,9 @@ func selectCredentialBrokerWithMarkers(cfg *config.Config, spec RunSpec, markers
 	if conflict := credentialBrokerConflict(spec); conflict != "" {
 		return nil, fmt.Errorf("%s API-key brokering does not support %s; run %s directly without peers or a preset", credentialBrokerAgentName(selected.provider), conflict, selected.provider)
 	}
+	if cfg.Egress != string(egress.Filtered) {
+		return nil, fmt.Errorf("%s %s requires filtered networking so Coop can keep it outside the box; use --egress filtered or sign in with the provider instead", credentialBrokerAgentName(selected.provider), selected.spec.CredentialEnv)
+	}
 	return selected, nil
 }
 
@@ -76,46 +116,89 @@ func credentialBrokerCandidateFor(cfg *config.Config, spec RunSpec, name, profil
 		return nil, nil
 	}
 	broker := agent.CredentialBroker()
-	if !broker.Valid() || profile != cfg.DefaultProfileOf(name) {
-		return nil, nil
-	}
+	profileDir := cfg.AgentProfileDir(name, profile)
 	markerPresent := profileMarkerPresent(agent, cfg.AgentProfileDir(name, profile))
 	if markers != nil {
 		markerPresent = markers[name]
 	}
-	if markerPresent {
-		return nil, nil
+	active := agent.ActiveCredentialEnvKeys(profileDir, markerPresent)
+	values, err := effectiveCredentialEnv(cfg, spec, agent, name, profile, markerPresent)
+	if err != nil {
+		return nil, err
 	}
-	values := effectiveRunEnv(cfg, spec.projectEnv)
-	credential := values[broker.CredentialEnv]
-	if strings.TrimSpace(credential) == "" {
-		return nil, nil
-	}
-	for _, key := range agent.CredentialEnvKeys() {
-		if key != broker.CredentialEnv && strings.TrimSpace(values[key]) != "" {
-			return nil, fmt.Errorf("%s has more than one active environment credential; a filtered credential broker needs only %s", agent.DisplayName(), broker.CredentialEnv)
+	var credentialKey, credential string
+	for _, key := range active {
+		if value := strings.TrimSpace(values[key]); value != "" {
+			if credentialKey != "" {
+				return nil, fmt.Errorf("%s has more than one active environment credential; keep only one", agent.DisplayName())
+			}
+			credentialKey, credential = key, value
 		}
 	}
+	if credentialKey == "" && markerPresent {
+		if detector, ok := agent.(agents.StoredAPIKeyDetector); ok {
+			stored, err := detector.StoredAPIKey(profileDir)
+			if err != nil {
+				return nil, fmt.Errorf("inspect %s stored credential: %w", agent.DisplayName(), err)
+			}
+			if stored {
+				if broker.Valid() {
+					return nil, fmt.Errorf("%s has a reusable API key in its native credential file; remove it and use %s with --egress filtered instead", agent.DisplayName(), broker.CredentialEnv)
+				}
+				return nil, fmt.Errorf("%s has a reusable API key in its native credential file; remove it and sign in with the provider instead", agent.DisplayName())
+			}
+		}
+	}
+	if credentialKey == "" {
+		return nil, nil
+	}
+	if !broker.Valid() {
+		return nil, fmt.Errorf("%s %s cannot be brokered yet; sign in with the provider instead", agent.DisplayName(), credentialKey)
+	}
+	if credentialKey != broker.CredentialEnv {
+		return nil, fmt.Errorf("%s %s cannot be brokered yet; use %s with --egress filtered or sign in with the provider instead", agent.DisplayName(), credentialKey, broker.CredentialEnv)
+	}
 	if base := strings.TrimSpace(values[broker.BaseURLEnv]); base != "" && base != "https://"+broker.Upstream && base != "https://"+broker.Upstream+"/" {
-		return nil, fmt.Errorf("%s uses a custom %s; the filtered credential broker is qualified only for https://%s", agent.DisplayName(), broker.BaseURLEnv, broker.Upstream)
+		defaultBase := "https://" + broker.Upstream + broker.ClientBasePath
+		if base != defaultBase && base != defaultBase+"/" {
+			return nil, fmt.Errorf("%s uses a custom %s; the filtered credential broker is qualified only for %s", agent.DisplayName(), broker.BaseURLEnv, defaultBase)
+		}
 	}
 	for _, key := range append(append([]string{}, agent.CredentialEnvKeys()...), broker.BaseURLEnv) {
 		if extraEnvAssigns(cfg.ExtraRunArgs, key) || extraEnvAssigns(spec.ExtraArgs, key) {
 			return nil, fmt.Errorf("a filtered credential broker owns %s; remove its override from COOP_RUN_ARGS or this run", key)
 		}
 	}
-	return &credentialBrokerCandidate{provider: name, spec: broker, credential: credential}, nil
+	shadowMarker := ""
+	if markerPresent {
+		shadowMarker, _ = agent.AuthMarker()
+	}
+	return &credentialBrokerCandidate{provider: name, spec: broker, credential: credential, shadowMarker: shadowMarker}, nil
 }
 
-func effectiveRunEnv(cfg *config.Config, projectEnv map[string]string) map[string]string {
-	values := make(map[string]string, len(projectEnv))
-	for key, value := range projectEnv {
+// effectiveCredentialEnv mirrors prepareBoxEnvFile's order for one account: project defaults,
+// then its Coop-owned host credential, then the default account's explicit user env.
+func effectiveCredentialEnv(cfg *config.Config, spec RunSpec, agent agents.Agent, name, profile string, markerPresent bool) (map[string]string, error) {
+	values := make(map[string]string, len(spec.projectEnv)+1)
+	for key, value := range spec.projectEnv {
 		values[key] = value
 	}
-	for key, value := range EnvFileValues(cfg.EnvFile()) {
-		values[key] = value
+	profileDir := cfg.AgentProfileDir(name, profile)
+	if hostCredentialSelected(agent, profileDir, markerPresent) {
+		key, value, found, err := LoadHostCredential(cfg, agent, profile)
+		if err != nil {
+			return nil, fmt.Errorf("load %s account %q credential: %w", agent.DisplayName(), profile, err)
+		}
+		if found {
+			values[key] = value
+		}
 	}
-	return values
+	if profile == cfg.DefaultProfileOf(name) {
+		for key, value := range EnvFileValues(cfg.EnvFile()) {
+			values[key] = value
+		}
+	}
+	return values, nil
 }
 
 func credentialBrokerConflict(spec RunSpec) string {
@@ -160,12 +243,39 @@ func extraEnvAssigns(args []string, key string) bool {
 	return false
 }
 
+func extraProviderCredential(spec RunSpec, argSets ...[]string) string {
+	for _, name := range agents.Names() {
+		agent, _ := agents.Get(name)
+		for _, key := range agent.CredentialEnvKeys() {
+			for _, args := range argSets {
+				if extraEnvAssigns(args, key) {
+					return key
+				}
+			}
+		}
+	}
+	return ""
+}
+
 func (c *credentialBrokerCandidate) route() *networkgateway.CredentialBrokerRoute {
 	if c == nil {
 		return nil
 	}
 	return &networkgateway.CredentialBrokerRoute{Provider: c.provider, Upstream: c.spec.Upstream,
-		Header: c.spec.Header, Method: c.spec.Method, Path: c.spec.Path, Port: c.spec.Port}
+		Header: c.spec.Header, HeaderPrefix: c.spec.HeaderPrefix, Method: c.spec.Method,
+		Path: c.spec.Path, PathPrefix: c.spec.PathPrefix, AllowQuery: c.spec.AllowQuery, Port: c.spec.Port}
+}
+
+func (c *credentialBrokerCandidate) command(cmd []string) []string {
+	if c == nil || c.spec.CommandArgs == nil || len(cmd) == 0 {
+		return cmd
+	}
+	baseURL := "http://" + networkgateway.CredentialBrokerAddress + c.spec.ClientBasePath
+	args := c.spec.CommandArgs(baseURL)
+	out := make([]string, 0, len(cmd)+len(args))
+	out = append(out, cmd[0])
+	out = append(out, args...)
+	return append(out, cmd[1:]...)
 }
 
 func (f *filteredExecution) prepareCredentialBroker(artifacts compositionArtifactOps) error {
@@ -250,10 +360,22 @@ func (f *filteredExecution) credentialBrokerEnv(artifacts compositionArtifactOps
 		content += "\n"
 	}
 	content += f.broker.candidate.spec.CredentialEnv + "=" + f.broker.substitute + "\n"
-	content += f.broker.candidate.spec.BaseURLEnv + "=http://" + networkgateway.CredentialBrokerAddress + "\n"
+	content += f.broker.candidate.spec.BaseURLEnv + "=http://" + networkgateway.CredentialBrokerAddress + f.broker.candidate.spec.ClientBasePath + "\n"
 	path, err := artifacts.writeFile(artifacts.parent, content)
 	if err != nil {
 		return "", fmt.Errorf("prepare credential broker environment: %w", err)
 	}
 	return path, nil
+}
+
+func (f *filteredExecution) credentialBrokerMarkerMount(artifacts compositionArtifactOps, homeInBox string) (extraMount, string, error) {
+	if f.broker == nil || f.broker.candidate == nil || f.broker.candidate.shadowMarker == "" {
+		return extraMount{}, "", nil
+	}
+	path, err := artifacts.writeFile(artifacts.parent, "{}\n")
+	if err != nil {
+		return extraMount{}, "", fmt.Errorf("prepare credential marker shadow: %w", err)
+	}
+	target := filepath.Join(homeInBox, "."+f.broker.candidate.provider, f.broker.candidate.shadowMarker)
+	return extraMount{path, target}, path, nil
 }

@@ -69,12 +69,15 @@ type LaunchConfig struct {
 
 // CredentialBrokerRoute is one exact provider endpoint, not a user policy or forward-proxy rule.
 type CredentialBrokerRoute struct {
-	Provider string `json:"provider"`
-	Upstream string `json:"upstream"`
-	Header   string `json:"header"`
-	Method   string `json:"method"`
-	Path     string `json:"path"`
-	Port     int    `json:"port"`
+	Provider     string `json:"provider"`
+	Upstream     string `json:"upstream"`
+	Header       string `json:"header"`
+	HeaderPrefix string `json:"header_prefix,omitempty"`
+	Method       string `json:"method"`
+	Path         string `json:"path"`
+	PathPrefix   bool   `json:"path_prefix,omitempty"`
+	AllowQuery   bool   `json:"allow_query,omitempty"`
+	Port         int    `json:"port"`
 }
 
 func (r CredentialBrokerRoute) valid() bool {
@@ -83,7 +86,7 @@ func (r CredentialBrokerRoute) valid() bool {
 		strings.Trim(r.Provider, "abcdefghijklmnopqrstuvwxyz0123456789-") == "" &&
 		r.Header != "" && strings.ToLower(r.Header) == r.Header &&
 		r.Method == "POST" && strings.HasPrefix(r.Path, "/") &&
-		!strings.ContainsAny(r.Path, "?#\x00\r\n") && r.Port == 443
+		!strings.ContainsAny(r.Path, "?#\x00\r\n") && !strings.ContainsAny(r.HeaderPrefix, "\x00\r\n") && r.Port == 443
 }
 
 type ServiceBinding struct {

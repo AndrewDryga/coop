@@ -6,7 +6,7 @@ enforces today, what it refuses and why, what it measures, and how to ask for mo
 
 Network enforcement is not a proxy setting. Every tool in the box — the provider CLI, `curl`, an
 SDK, a subprocess — hits the same packet boundary, with no `HTTPS_PROXY` to set or forget. The
-narrow Claude API-key credential broker described below runs behind that boundary; it does not
+provider API-key credential broker described below runs behind that boundary; it does not
 replace it.
 
 `coop net` says what a new run in this project can reach and why; `coop net runs` lists what
@@ -79,20 +79,25 @@ a prompt records no refusals — and if an agent or your project later does reac
 hosts on purpose, that refusal is recorded, shown and approvable like any other; nothing is
 filtered out of the report.
 
-**A Claude API key stays outside a direct filtered box.** With the locked Claude CLI 2.1.260, the
-default profile, and `ANTHROPIC_API_KEY` as the only active Claude credential, Coop automatically
-replaces the reusable key with a random credential valid for this gateway generation and points
-the client at a loopback broker. The capless guard injects the real key only for
-`POST /v1/messages` to `api.anthropic.com`; the agent policy itself does not grant that domain.
-The broker uses the same guarded Envoy path, so its provider connection keeps normal traffic
-attribution. Stopping the box revokes the substitute and cancels open streams.
+**Supported API keys stay outside a direct filtered box.** Coop replaces the reusable key with a
+random credential valid only for this gateway generation and points the pinned provider client at
+a loopback broker. The capless guard injects the real key only for that provider's qualified API
+route; the agent policy itself does not grant the API domain. The broker uses the same guarded
+Envoy path, so provider traffic keeps normal attribution. Stopping the box revokes the substitute
+and cancels open streams.
 
-This first slice is deliberately narrow. Ordinary Claude OAuth runs retain their existing
-credential handling and are not broker-protected; restricted and session projections keep their
-existing access-only copies. ACP, login, read-only/bare, peer, preset, and remote-session API-key
-runs are refused instead of silently receiving the reusable key. A configured custom
-`ANTHROPIC_BASE_URL` is refused rather than silently redirected to Anthropic. Other providers need
-their own pinned client and protocol qualification before they can use this boundary.
+The qualified direct CLI routes are Claude `ANTHROPIC_API_KEY` to
+`api.anthropic.com/v1/messages`, Gemini `GEMINI_API_KEY` to
+`generativelanguage.googleapis.com/v1beta/models/`, and Codex `OPENAI_API_KEY` to
+`api.openai.com/v1/responses`. A single loop worker uses that same direct launch shape. The pinned
+Grok client has no qualified API base override, so `XAI_API_KEY` is refused. Claude's alternate
+token variables, Gemini's Vertex `GOOGLE_API_KEY`, and Codex's alternate key/access-token variables
+are also refused rather than entering a box.
+
+API-key runs using open/offline networking, ACP, login, read-only/bare mode, peers, presets, or a
+remote session stop before launch. Configured custom provider base URLs stop as well. Ordinary
+provider-native OAuth/access-token files keep their existing handling and are not broker-protected;
+restricted and session projections retain their existing access-only copies.
 
 A `service:` grant is a request like any other: it is approved by a human and names one service.
 For a filtered run, Coop recreates that service and its dependencies on a project-owned internal

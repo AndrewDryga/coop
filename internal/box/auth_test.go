@@ -426,7 +426,7 @@ func TestWriteMergedEnvFileProjectDefaultsBeforeUserOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err := writeMergedEnvFile("",
-		map[string]string{"PGPORT": "5432", "PGHOST": "db"},
+		map[string]string{"PGPORT": "5432", "PGHOST": "db", "OPENAI_API_KEY": "project-drop"},
 		user,
 		map[string]bool{"OPENAI_API_KEY": true},
 	)

@@ -424,15 +424,10 @@ func assertDirectEnvironment(t *testing.T, env []processEnv, credentialKeys []st
 	if values["COOP_PRIMARY"].Value != provider || values["FIXTURE_SAFE"].Value != "visible" {
 		t.Fatalf("direct environment primary/safe = %#v / %#v", values["COOP_PRIMARY"], values["FIXTURE_SAFE"])
 	}
-	ag, _ := agents.Get(provider)
-	hostKey := ag.HostCredential().EnvKey
 	for _, key := range credentialKeys {
-		if item, ok := values[key]; ok && (key != hostKey || !item.Redacted) {
+		if _, ok := values[key]; ok {
 			t.Fatalf("direct environment leaked credential key %s", key)
 		}
-	}
-	if hostKey != "" && !values[hostKey].Redacted {
-		t.Fatalf("direct environment did not inject %s as a redacted host credential", hostKey)
 	}
 	if contract.modelEnv != "" && values[contract.modelEnv].Value != model {
 		t.Fatalf("%s = %#v, want %q", contract.modelEnv, values[contract.modelEnv], model)

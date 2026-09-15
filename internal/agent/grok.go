@@ -242,6 +242,29 @@ func (grokAgent) CredentialEnvKeys() []string { return []string{"XAI_API_KEY"} }
 
 func (grokAgent) CredentialBroker() CredentialBrokerSpec { return CredentialBrokerSpec{} }
 
+func (grokAgent) StoredAPIKey(profileDir string) (bool, error) {
+	data, present, err := readDefaultsFile(filepath.Join(profileDir, "auth.json"))
+	if err != nil {
+		return false, err
+	}
+	if !present {
+		return false, nil
+	}
+	var credentials map[string]struct {
+		Key      string `json:"key"`
+		AuthMode string `json:"auth_mode"`
+	}
+	if err := json.Unmarshal(data, &credentials); err != nil {
+		return false, err
+	}
+	for _, credential := range credentials {
+		if credential.AuthMode == "api_key" && credential.Key != "" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (grokAgent) LiveCredentials() LiveCredentialSpec {
 	return LiveCredentialSpec{
 		Artifacts: []CredentialArtifact{{

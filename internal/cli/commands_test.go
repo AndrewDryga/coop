@@ -211,9 +211,7 @@ roles:
 		ConfigDir: configDir, RepoOverride: repo, HomeInBox: "/home/node", BoxHome: t.TempDir(),
 		BaseImage: "test-base", ImageOverride: "test-image", Homes: true, Egress: "none",
 	}
-	if err := os.WriteFile(cfg.EnvFile(), []byte("GEMINI_API_KEY=test\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	signInCred(t, cfg, "gemini", "default")
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
 	a := &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
 	p, err := a.loadRunPreset("duo")
@@ -432,9 +430,7 @@ func TestACPInnerEmptyPresetSelectionClearsPositionalPreset(t *testing.T) {
 		ConfigDir: configDir, RepoOverride: t.TempDir(), HomeInBox: "/home/node", BoxHome: t.TempDir(),
 		BaseImage: "test-base", ImageOverride: "test-image", Homes: true, Egress: "none",
 	}
-	if err := os.WriteFile(cfg.EnvFile(), []byte("GEMINI_API_KEY=test\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	signInCred(t, cfg, "gemini", "default")
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
 	a := &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
 	code, err := a.cmdACP([]string{"missing-positional-preset", "--peer", "gemini"})

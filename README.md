@@ -542,17 +542,17 @@ One box, four agents. Each reads its settings and session state from
 `~/.config/coop/agents/<name>/`, with the active profile mounted into the box at `~/.claude`,
 `~/.codex`, `~/.gemini`, or `~/.grok`. That directory lives outside any repo, so credentials never
 land in git. Gemini API keys entered through `coop login` are kept in a private sibling vault
-outside the mounted profile and projected into only the selected account's box environment. The
+outside the mounted profile. On a supported direct filtered run, Coop's network gateway uses the
+key without mounting it or placing it in the box environment. The
 folders appear on first run, and each tool's normal user-level config works there as-is —
 `claude/settings.json`, `codex/config.toml`, `gemini/settings.json`,
-`grok/config.toml`. Only the *active*
-credential is mounted, so a running agent sees just the account it's using, not the
-whole vault.
+`grok/config.toml`. Provider-owned OAuth and access-token files remain a separate credential
+family: only the active account is mounted or projected, never the whole credential store.
 
-Each run receives only the launched agent's credentials: `coop claude` mounts
-`~/.claude` (and that agent's API key from the env file), never the Codex or Gemini ones. A Gemini
-key saved by `coop login` is not mounted as a file; Coop adds it to the private per-run environment
-file for that exact account.
+Each run receives only the launched agent's credential scope: `coop claude` may mount
+`~/.claude`, never the Codex or Gemini homes. A supported direct API-key run must use
+`--egress filtered`; the box gets a random, run-scoped substitute while the reusable key stays in
+the gateway. Unsupported keys and launch shapes stop before a box starts.
 The exceptions are runs where the lead is explicitly told to call peers —
 `coop <target> --peer <target>...` (including loops and forks) — which
 also mount the named peers so they can be consulted read-only (only those you
@@ -562,8 +562,9 @@ skipped. Raw runs (`coop run`,
 `coop shell`) and maintenance runs (the merge gate, `coop doctor`) mount no agent
 credentials at all. `coop login <agent>` mounts only the agent being signed in.
 
-> **Blast radius.** The selected provider receives its own credential through its mounted home or
-> environment, and its credential dir is generally mounted read-write — the agent must write its
+> **Blast radius.** Provider-native OAuth and access-token state is still available through the
+> selected account's mounted or projected home, and its credential dir is generally mounted
+> read-write — the agent must write its
 > session history, and OAuth refresh rewrites the token in place. So a prompt-injected
 > agent can (a) read its own credentials and try to exfiltrate them — set
 > `COOP_EGRESS=none` to cut the box off the network — and (b) write config its CLI
@@ -580,8 +581,7 @@ coop login codex      # device-code login (the box has no browser for an OAuth r
 coop login gemini     # hidden API-key prompt; stored outside the mounted Gemini home
 ```
 
-…or use a token in Coop's env file. Coop recognizes every key the adapter accepts and exposes it
-only to boxes whose credential scope includes that provider:
+…or use one of the API keys Coop can broker in a direct filtered run:
 
 ```bash
 install -d -m 700 ~/.config/coop/agents
@@ -590,18 +590,23 @@ chmod 600 ~/.config/coop/agents/env
 echo 'ANTHROPIC_API_KEY=sk-…'  >> ~/.config/coop/agents/env
 echo 'OPENAI_API_KEY=sk-…'      >> ~/.config/coop/agents/env
 echo 'GEMINI_API_KEY=AIza…'    >> ~/.config/coop/agents/env
-echo 'XAI_API_KEY=xai-…'        >> ~/.config/coop/agents/env
 ```
 
 Coop also tightens the credential root to `0700` and this shared secret file to `0600` before
 using them, including installations created by older versions.
 
-| Agent | Accepted token keys |
-| --- | --- |
-| Claude | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` |
-| Codex | `OPENAI_API_KEY` |
-| Gemini | `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
-| Grok | `XAI_API_KEY` |
+| Agent | Recognized token keys | API-key box behavior |
+| --- | --- | --- |
+| Claude | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` | `ANTHROPIC_API_KEY` is brokered; the alternates are refused |
+| Codex | `OPENAI_API_KEY`, `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN` | `OPENAI_API_KEY` is brokered; the alternates are refused |
+| Gemini | `GEMINI_API_KEY`, `GOOGLE_API_KEY` | `GEMINI_API_KEY` is brokered; Vertex `GOOGLE_API_KEY` is refused |
+| Grok | `XAI_API_KEY` | refused because the pinned Grok client has no qualified API base override |
+
+The brokered cases above support a direct CLI or one loop worker using that provider with
+`--egress filtered`. API-key runs through ACP, remote sessions, read-only/bare mode, peers, or
+presets are refused before launch. Open and offline API-key runs are also refused: Coop never falls
+back to putting the reusable key in a box. Provider-native OAuth/access-token files keep their
+existing behavior and are not claimed as API-key brokered.
 
 `KEY=value` stores a value in the file; a bare `KEY` imports its value when it exists in Coop's
 ambient environment. An unset bare import is omitted, while a set import or assignment wins over
@@ -611,9 +616,11 @@ credential; additional named accounts need their own account-scoped stored login
 account runs, Coop removes that provider's env-token keys so they cannot override the selected
 account's credential, including when that stored account is marked as the default.
 
-A run only sees the token keys of the agents in its credential scope (above): a `coop
-claude` box gets Claude's accepted keys but not the Codex, Gemini, or Grok keys, which
-are filtered out before the env file is passed in. Any other variable in the file (a
+A supported brokered run sees only a random substitute under the provider's canonical key name;
+the reusable key and every other provider token are filtered out of both user and project box
+environment before launch. Passing a provider credential through runtime `-e` is refused because
+it would bypass that boundary. Sign-in boxes likewise receive none of the existing API keys from
+the shared env file or Gemini's host vault. Any non-credential variable in the file (a
 `DATABASE_URL`, `COOP_NO_ASDF`, …) is a shared runtime var and reaches every box.
 
 On first run the box pre-answers each agent's setup prompts — Claude's
@@ -666,8 +673,9 @@ coop credentials claude personal default  # `coop claude` now runs on the person
 
 Credentials live in the vault under `~/.config/coop/agents/<agent>/`, never in the repo. Provider
 homes live in `profiles/<name>/`; Coop-managed Gemini keys live in the separate private
-`host-credentials/<name>/` tree. Only the active home is mounted and only its selected key is
-projected into the box — so a running agent sees just the account it's using, not your whole vault.
+`host-credentials/<name>/` tree. Only the active provider home is mounted. A supported direct
+filtered API-key run receives a temporary substitute; the selected reusable key stays outside the
+box — so a running agent sees neither another account nor the whole vault.
 Switching accounts loses no work: each loop iteration is a fresh run, and the queue plus git carry
 the progress.
 
@@ -1144,9 +1152,10 @@ lines up: a thread you started with `coop loop` is there to resume in Zed.
 
 coop's proxy sits between the editor and the box and owns the session:
 
-- Filtered networking offers only compatible providers and complete presets. Claude and Codex,
-  Gemini with a portable AI Studio API key, and Grok with a portable access file support filtered
-  ACP. Gemini OAuth and Vertex AI credentials require open networking. Switching providers
+- Filtered networking offers only compatible providers and complete presets. Claude and Codex
+  with their supported provider-native credentials, plus Grok with a portable access file, support
+  filtered ACP. Gemini API keys are brokered only for direct CLI/loop launches; Gemini OAuth and
+  Vertex AI credentials require open networking. Switching providers
   never widens the session's network access, and explicitly requesting an unsupported provider
   or preset still fails before launch.
 
@@ -1962,7 +1971,7 @@ live quota.
 |---|---|
 | `missing_runtime`, `missing_image`, `missing_cli`, `missing_credential` | Install/build/sign in, then rerun. No paid request started. |
 | `credential_refresh_required` | Re-authenticate the selected account; its projected access token cannot outlive the deadline. |
-| `credential_not_portable` | Select an env-backed key (for Gemini, `GEMINI_API_KEY`; Vertex `GOOGLE_API_KEY` works only with open networking). |
+| `credential_not_portable` | Select a portable provider credential. For a Gemini API key, use `provider-network-live-e2e`; Vertex `GOOGLE_API_KEY` works only with open networking. |
 | `ring_prerequisite` | Repair the named prerequisite. The consult ring admitted zero paid calls. |
 | `failed` with `attempted=true` | Treat as an upstream CLI/provider compatibility failure; reproduce syntax/policy with the deterministic fixture. |
 | `repository_changed`, `source_changed`, `cleanup_failed`, `harness_failed` | Treat as a local isolation/harness defect; these override provider success. |

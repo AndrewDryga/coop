@@ -613,6 +613,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		if err := filtered.prepareCredentialBroker(artifacts); err != nil {
 			return -1, err
 		}
+		if filtered.broker != nil {
+			spec.Cmd = filtered.broker.candidate.command(spec.Cmd)
+		}
 	}
 	var policy *egress.Snapshot
 	if filtered != nil {
@@ -691,6 +694,14 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 	}
 	var mcpMounts []extraMount
+	if filtered != nil {
+		if mount, path, err := filtered.credentialBrokerMarkerMount(artifacts, cfg.HomeInBox); err != nil {
+			return -1, err
+		} else if path != "" {
+			tmpFiles = append(tmpFiles, path)
+			mcpMounts = append(mcpMounts, mount)
+		}
+	}
 	rawMCP := false
 	if mcpPresent {
 		path, err := artifacts.writeFile(artifacts.parent, string(mcpSnapshot))
@@ -901,6 +912,11 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// All required host artifacts now exist. Only after the whole set succeeds may the runtime or
 	// first-run defaults have side effects; a broken selected-provider file must never start Docker
 	// or leave an earlier provider home partially initialized.
+	if filtered == nil {
+		if _, err := selectCredentialBroker(cfg, spec); err != nil {
+			return -1, err
+		}
+	}
 	if err := rt.EnsureDaemon(); err != nil {
 		return -1, err
 	}
@@ -1209,12 +1225,20 @@ func prepareBoxEnvFile(cfg *config.Config, spec RunSpec, artifacts compositionAr
 
 func prepareBoxEnvFileWithMarkers(cfg *config.Config, spec RunSpec, artifacts compositionArtifactOps, projectEnv map[string]string, markers map[string]bool) (envFile, tmp string, err error) {
 	userEnvFile := ""
-	drop := map[string]bool{}
+	drop := envKeysOutsideScopeWithMarkers(cfg, credentialScope(cfg, spec), markers)
 	userEnv := map[string]string{}
 	if spec.Homes && fileExists(cfg.EnvFile()) {
 		userEnvFile = cfg.EnvFile()
 		userEnv = EnvFileValues(userEnvFile)
-		drop = envKeysOutsideScopeWithMarkers(cfg, credentialScope(cfg, spec), markers)
+	}
+	if spec.Login {
+		for _, name := range agents.Names() {
+			if agent, ok := agents.Get(name); ok {
+				for _, key := range agent.CredentialEnvKeys() {
+					drop[key] = true
+				}
+			}
+		}
 	}
 	profileEnv, err := scopedHostCredentialEnv(cfg, spec, userEnv)
 	if err != nil {

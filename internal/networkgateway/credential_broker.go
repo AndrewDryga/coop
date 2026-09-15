@@ -119,9 +119,11 @@ func (b *credentialBroker) setProxy(transport http.RoundTripper) {
 			request.URL.Host = b.route.Upstream
 			request.Host = b.route.Upstream
 			request.Header.Del("Authorization")
+			request.Header.Del("X-Api-Key")
+			request.Header.Del("X-Goog-Api-Key")
 			request.Header.Del("Proxy-Authorization")
 			request.Header.Del("Cookie")
-			request.Header.Set(b.route.Header, b.secret.Credential)
+			request.Header.Set(b.route.Header, b.route.HeaderPrefix+b.secret.Credential)
 		},
 		ModifyResponse: func(response *http.Response) error {
 			response.Header.Del("Set-Cookie")
@@ -150,14 +152,21 @@ func (b *credentialBroker) setProxy(transport http.RoundTripper) {
 
 func (b *credentialBroker) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		if request.Method != b.route.Method || request.URL.Path != b.route.Path || request.URL.RawQuery != "" || request.URL.IsAbs() ||
-			request.Host != CredentialBrokerAddress || request.Header.Get("Authorization") != "" ||
+		pathMatches := request.URL.Path == b.route.Path
+		if b.route.PathPrefix {
+			prefix := strings.TrimSuffix(b.route.Path, "/") + "/"
+			pathMatches = pathMatches || strings.HasPrefix(request.URL.Path, prefix)
+		}
+		if request.Method != b.route.Method || !pathMatches || !b.route.AllowQuery && request.URL.RawQuery != "" || request.URL.IsAbs() ||
+			request.Host != CredentialBrokerAddress || request.Header.Get("Authorization") != "" && b.route.Header != "authorization" ||
+			request.Header.Get("X-Api-Key") != "" && b.route.Header != "x-api-key" ||
+			request.Header.Get("X-Goog-Api-Key") != "" && b.route.Header != "x-goog-api-key" ||
 			request.Header.Get("Proxy-Authorization") != "" || request.Header.Get("Cookie") != "" || request.Header.Get("Upgrade") != "" {
 			http.Error(w, "credential broker request refused", http.StatusForbidden)
 			return
 		}
 		values := request.Header.Values(b.route.Header)
-		if len(values) != 1 || subtle.ConstantTimeCompare([]byte(values[0]), []byte(b.secret.Substitute)) != 1 {
+		if len(values) != 1 || subtle.ConstantTimeCompare([]byte(values[0]), []byte(b.route.HeaderPrefix+b.secret.Substitute)) != 1 {
 			http.Error(w, "credential broker authentication refused", http.StatusUnauthorized)
 			return
 		}

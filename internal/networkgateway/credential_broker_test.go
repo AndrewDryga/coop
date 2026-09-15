@@ -62,6 +62,67 @@ func TestCredentialBrokerReplacesOnlyTheQualifiedCredentialAndStreams(t *testing
 	}
 }
 
+func TestCredentialBrokerSupportsBearerAndNarrowProviderPathPrefixes(t *testing.T) {
+	b, _ := testCredentialBroker(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path != "/v1/responses/compact" || request.Header.Get("Authorization") != "Bearer real-secret-key" ||
+			request.Header.Get("X-Api-Key") != "" || request.Header.Get("X-Goog-Api-Key") != "" {
+			t.Fatalf("brokered bearer request = %#v", request)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("ok"))}, nil
+	}))
+	b.route = CredentialBrokerRoute{Provider: "codex", Upstream: "api.openai.com", Header: "authorization",
+		HeaderPrefix: "Bearer ", Method: "POST", Path: "/v1/responses", PathPrefix: true, Port: 443}
+	b.setProxy(b.proxy.Transport)
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader("{}"))
+	request.Host = CredentialBrokerAddress
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("s", 64))
+	recorder := httptest.NewRecorder()
+	b.handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "ok" {
+		t.Fatalf("bearer response = %d %q", recorder.Code, recorder.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader("{}"))
+	request.Host = CredentialBrokerAddress
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("s", 64))
+	recorder = httptest.NewRecorder()
+	b.handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("unrelated path returned %d", recorder.Code)
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/v1/responses_other", strings.NewReader("{}"))
+	request.Host = CredentialBrokerAddress
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("s", 64))
+	recorder = httptest.NewRecorder()
+	b.handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("sibling path returned %d", recorder.Code)
+	}
+}
+
+func TestCredentialBrokerAllowsQueryOnlyWhenAdapterDeclaresIt(t *testing.T) {
+	b, _ := testCredentialBroker(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.RawQuery != "alt=sse" || request.Header.Get("X-Goog-Api-Key") != "real-secret-key" {
+			t.Fatalf("brokered Gemini request = %#v", request)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("ok"))}, nil
+	}))
+	b.route = CredentialBrokerRoute{Provider: "gemini", Upstream: "generativelanguage.googleapis.com", Header: "x-goog-api-key",
+		Method: "POST", Path: "/v1beta/models/", PathPrefix: true, AllowQuery: true, Port: 443}
+	b.setProxy(b.proxy.Transport)
+
+	request := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini:streamGenerateContent?alt=sse", strings.NewReader("{}"))
+	request.Host = CredentialBrokerAddress
+	request.Header.Set("X-Goog-Api-Key", strings.Repeat("s", 64))
+	recorder := httptest.NewRecorder()
+	b.handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("Gemini query returned %d", recorder.Code)
+	}
+}
+
 func TestCredentialBrokerRefusesUpstreamRedirects(t *testing.T) {
 	b, _ := testCredentialBroker(t, roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusTemporaryRedirect, Header: http.Header{"Location": {"https://attacker.example/"}}, Body: io.NopCloser(strings.NewReader("redirect"))}, nil

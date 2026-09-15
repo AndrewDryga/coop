@@ -2,8 +2,8 @@
 name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
-sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, docs/networking.md]
-updated: 2026-09-14
+sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, docs/networking.md]
+updated: 2026-09-15
 ---
 
 `coop <agent> --egress filtered` runs the box behind a per-run gateway. Five boring layers stand
@@ -147,15 +147,17 @@ Traps:
   (`networkstate/bundles.go:18`): changing a bundle without bumping the version is refused as
   integrity drift, so the version moves with the content (`2026-09-10.1` added the proxy). The
   rule is [[provider-bundles-carry-function-not-chatter]].
-- A direct filtered Claude CLI 2.1.260 run using only `ANTHROPIC_API_KEY` takes the narrower
-  credential-broker path. The API key is removed from the agent environment and replaced with a
-  per-execution substitute plus a loopback `ANTHROPIC_BASE_URL`. The capless guard alone receives
-  an exact read-only secret file; the privileged controller and agent never do. Its helper-only
-  resolver and typed controller lease keep `api.anthropic.com` out of the agent policy, while the
-  existing Envoy data plane retains exact socket/byte attribution. ACP, login, restricted-
-  filesystem, peer/preset, and remote-session forms refuse this first slice rather than exposing
-  the key. Ordinary OAuth/file runs keep their existing credential handling and are not broker-
-  protected; restricted and session projections retain their existing access-only copies.
+- A direct filtered CLI run (including one loop worker) brokers the one API-key route its pinned
+  adapter declares: Claude `ANTHROPIC_API_KEY`, Gemini `GEMINI_API_KEY`, or Codex
+  `OPENAI_API_KEY`. The key is removed from the agent environment and replaced with a per-execution
+  substitute plus a loopback provider base URL; Codex also receives an adapter-owned custom
+  provider selection because its built-in provider ignores `OPENAI_BASE_URL`. The capless guard
+  alone receives an exact read-only secret file; the privileged controller and agent never do.
+  Its helper-only resolver and typed controller lease keep the provider API out of agent policy,
+  while Envoy retains exact socket/byte attribution. Grok's pinned client has no qualified API base
+  override, and every alternate API-key variable or unsupported launch shape refuses before the
+  runtime. Ordinary OAuth/access-token files keep their existing handling and are not called
+  broker-protected; restricted and session projections retain their existing access-only copies.
 - A selected Compose service and its dependency closure use fixed prepared addresses on an internal
   network. The guard maps accepted proxy peers back to those exact service names. Approved and
   denied external TLS therefore carry `service` through the existing event, receipt, human view,
@@ -166,6 +168,9 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-15 — extended the API-key boundary to the pinned Gemini and Codex clients, made every
+  recognized but unqualified key and launch shape refuse before runtime, and retained Grok OAuth
+  while refusing its unredirectable API key
 - 2026-09-14 — external TLS from filtered Compose services now retains the exact prepared service
   name in the existing network evidence and views; internal service traffic remains direct and
   unreported as external traffic.

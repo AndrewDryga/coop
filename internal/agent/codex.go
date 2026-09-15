@@ -251,7 +251,42 @@ func (codexAgent) CredentialEnvKeys() []string {
 	return []string{"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"}
 }
 
-func (codexAgent) CredentialBroker() CredentialBrokerSpec { return CredentialBrokerSpec{} }
+func (codexAgent) CredentialBroker() CredentialBrokerSpec {
+	return CredentialBrokerSpec{
+		CredentialEnv:  "OPENAI_API_KEY",
+		BaseURLEnv:     "OPENAI_BASE_URL",
+		Upstream:       "api.openai.com",
+		Header:         "authorization",
+		HeaderPrefix:   "Bearer ",
+		Method:         "POST",
+		Path:           "/v1/responses",
+		PathPrefix:     true,
+		ClientBasePath: "/v1",
+		CommandArgs: func(baseURL string) []string {
+			return []string{
+				"-c", `model_provider="coop-broker"`,
+				"-c", `model_providers.coop-broker.name="Coop credential broker"`,
+				"-c", `model_providers.coop-broker.base_url="` + baseURL + `"`,
+				"-c", `model_providers.coop-broker.env_key="OPENAI_API_KEY"`,
+				"-c", `model_providers.coop-broker.wire_api="responses"`,
+				"-c", `features.responses_websockets=false`,
+			}
+		},
+		Port: 443,
+	}
+}
+
+func (codexAgent) StoredAPIKey(profileDir string) (bool, error) {
+	data, err := readCodexCredential(filepath.Join(profileDir, "auth.json"))
+	if err != nil {
+		return false, err
+	}
+	var source codexSourceCredential
+	if err := json.Unmarshal(data, &source); err != nil {
+		return false, fmt.Errorf("decode Codex credential: %w", err)
+	}
+	return source.OpenAIAPIKey != "" && (source.AuthMode == "" || source.AuthMode == "apikey"), nil
+}
 
 func (codexAgent) LiveCredentials() LiveCredentialSpec {
 	return LiveCredentialSpec{
