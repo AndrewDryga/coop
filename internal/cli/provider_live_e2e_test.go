@@ -481,7 +481,7 @@ func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, 
 		command = ag.Headless(cfg, prompt)
 	case liveWorkflowResume:
 		if stage == liveResumeContinue {
-			prompt = "Respond with exactly the text of your immediately preceding assistant response and no other text."
+			prompt = providerResumeRecallPrompt(target.Provider)
 		}
 		var ok bool
 		command, ok = providerResumeLiveCommand(ag, cfg, stage, sessionID, prompt)

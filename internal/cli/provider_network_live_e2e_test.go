@@ -154,7 +154,7 @@ func executeProviderNetworkLiveChild(target agents.Target, marker, attemptFile, 
 	// Stage two: continue THAT conversation. A resume is where a provider reaches for a second
 	// host — a session store, a different API edge — so it is the case a bundle most often misses.
 	command, ok = providerResumeLiveCommand(ag, cfg, liveResumeContinue, resolvedID,
-		"Respond with exactly the text of your immediately preceding assistant response and no other text.")
+		providerResumeRecallPrompt(target.Provider))
 	if !ok {
 		return harnessFail("session_lookup")
 	}

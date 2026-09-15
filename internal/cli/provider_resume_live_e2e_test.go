@@ -278,6 +278,16 @@ func providerResumeLiveCommand(ag agents.Agent, cfg *config.Config, stage, sessi
 	return resumed, true
 }
 
+func providerResumeRecallPrompt(provider string) string {
+	if provider == "grok" {
+		// xAI's data-leakage check rejects requests to repeat an assistant response. The
+		// marker originated in the user's prior request, so recalling that still proves
+		// conversation continuity without asking the model to disclose assistant content.
+		return "Respond with exactly the harmless test marker from my previous user request and no other text."
+	}
+	return "Respond with exactly the text of your immediately preceding assistant response and no other text."
+}
+
 func providerResumeLiveOutput(ag agents.Agent, expectedID, output string) (sessionID, reply string, err error) {
 	if ag.PresetSessionID() {
 		if !agents.ValidSessionID(expectedID) {
@@ -365,6 +375,13 @@ func TestProviderResumeLiveContract(t *testing.T) {
 		id     = "018f6352-6281-7ae1-a1d5-07c3399de43d"
 		marker = "COOP_LIVE_RESUME_0123456789abcdef0123456789abcdef"
 	)
+	grokRecall := providerResumeRecallPrompt("grok")
+	if strings.Contains(grokRecall, "assistant response") || !strings.Contains(grokRecall, "previous user request") {
+		t.Fatalf("Grok resume probe can trigger its data-leakage check: %q", grokRecall)
+	}
+	if generic := providerResumeRecallPrompt("claude"); !strings.Contains(generic, "assistant response") {
+		t.Fatalf("generic resume probe unexpectedly changed: %q", generic)
+	}
 	thread := `{"type":"thread.started","thread_id":"` + id + `"}` + "\n" +
 		`{"type":"item.completed","item":{"type":"agent_message","text":"` + marker + `"}}` + "\n" +
 		`{"type":"turn.completed"}` + "\n"
