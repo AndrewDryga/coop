@@ -393,19 +393,21 @@ func grokCredentialPortability(profileDir string, deadline time.Time) Credential
 	return CredentialRefreshRequired
 }
 
-// MCP: grok reads [mcp_servers.*] TOML from ~/.grok/config.toml — the same schema codex
-// uses (artifacts/doc-05-configuration.md), so reuse that TOML shape (without codex's managed
-// defaults, which grok's CLI does not know), preserving the user's other config.toml settings
-// and mounting the result at grok's config path.
+// MCP: Grok reads [mcp_servers.*] TOML from ~/.grok/config.toml. Its HTTP servers accept headers
+// with ${VAR} expansion, so GenerateGrok translates shared bearer references and returns the names
+// whose values the box must capture. The user's other settings are preserved and never rewritten.
 func (grokAgent) MCP(cfg *config.Config, _ string) (MCPConfig, error) {
 	if cfg.MCPFile == "" {
 		return MCPConfig{}, nil
 	}
-	gx, err := mcp.GenerateGrok(cfg.MCPFile, filepath.Join(cfg.AgentDir("grok"), "config.toml"))
+	gx, requiredEnv, err := mcp.GenerateGrok(cfg.MCPFile, filepath.Join(cfg.AgentDir("grok"), "config.toml"))
 	if err != nil {
 		return MCPConfig{}, err
 	}
-	return MCPConfig{Mounts: []MCPMount{{Content: gx, BoxPath: cfg.HomeInBox + "/.grok/config.toml"}}}, nil
+	return MCPConfig{
+		Mounts:      []MCPMount{{Content: gx, BoxPath: cfg.HomeInBox + "/.grok/config.toml"}},
+		RequiredEnv: requiredEnv,
+	}, nil
 }
 
 // ACPMCPServers is nil: this agent's ACP adapter reads the config.toml MCP mounts,

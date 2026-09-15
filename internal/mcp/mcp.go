@@ -2,7 +2,7 @@
 // shape) into each agent's native MCP configuration:
 //
 //   - Gemini: merge the servers into its settings.json (same JSON shape).
-//   - Codex:  emit [mcp_servers.*] tables in its config.toml.
+//   - Codex/Grok: emit their provider-specific [mcp_servers.*] tables in config.toml.
 //   - ACP:    pass the servers to session/new, which takes them as a parameter.
 //
 // An ACP adapter takes no flags, so a file it could be pointed at is no use to it. The claude
@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"os"
 	"reflect"
@@ -50,11 +51,11 @@ const (
 	TaskToolsServer = "coop-tasks"
 )
 
-// server is the typed view of one entry, sufficient to emit Codex TOML and the ACP parameter.
-// Headers is the canonical HTTP-auth field claude + gemini read directly; codex can't use it (it
-// has no inline-header support, only bearer_token_env_var / OAuth), so for codex it's kept here
-// only to flag that gap, not to emit. Type distinguishes "sse" from the "http" default; it is
-// absent on a stdio server and must stay absent in the ACP shape (see acpServer).
+// server is the typed view of one entry, sufficient to emit native TOML and the ACP parameter.
+// Headers is the canonical HTTP-auth field Claude, Gemini and Grok read directly. Codex cannot use
+// it (only bearer_token_env_var / OAuth), so its renderer refuses that server. Type distinguishes
+// "sse" from the "http" default; it is absent on a stdio server and must stay absent in the ACP
+// shape (see acpServer).
 type server struct {
 	Type              string         `json:"type"`
 	Command           string         `json:"command"`
@@ -161,29 +162,32 @@ var codexManaged = managedTOML{block: CodexManagedDefaults, keys: []string{"anal
 // own [mcp_servers.*] tables when shared MCP is active (mcp.json is authoritative then) — then the
 // shared servers. An empty mcpFile means no shared MCP: the native servers stay.
 func GenerateCodex(mcpFile, existing string) (string, error) {
-	return generateTOML(mcpFile, existing, codexManaged)
+	generated, _, err := generateTOML(mcpFile, existing, codexManaged, false)
+	return generated, err
 }
 
-// GenerateGrok emits the shared servers in the same [mcp_servers.*] shape for grok's config.toml.
-// No managed block: grok's update and telemetry controls are unverified, and a key its CLI does
-// not know could refuse the whole file.
-func GenerateGrok(mcpFile, existing string) (string, error) {
-	return generateTOML(mcpFile, existing, managedTOML{})
+// GenerateGrok emits the shared servers in Grok's [mcp_servers.*] shape. Grok reads HTTP headers
+// directly and expands ${VAR} references in them, so bearer_token_env_var becomes an Authorization
+// header while its value stays in the captured runtime environment. No managed block: Grok's
+// update and telemetry controls are unverified, and an unknown key could refuse the whole file.
+func GenerateGrok(mcpFile, existing string) (string, []string, error) {
+	return generateTOML(mcpFile, existing, managedTOML{}, true)
 }
 
-func generateTOML(mcpFile, existing string, managed managedTOML) (string, error) {
+func generateTOML(mcpFile, existing string, managed managedTOML, grokHeaders bool) (string, []string, error) {
 	var servers map[string]server
 	if mcpFile != "" {
 		var err error
 		if servers, err = loadServersTyped(mcpFile); err != nil {
-			return "", err
+			return "", nil, err
 		}
 	}
 	native, err := keepNative(existing, mcpFile != "", managed.keys)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	var b strings.Builder
+	var requiredEnv []string
 	b.WriteString(managed.block)
 	if native != "" {
 		separateTOMLBlock(&b)
@@ -195,9 +199,16 @@ func generateTOML(mcpFile, existing string, managed managedTOML) (string, error)
 			continue
 		}
 		separateTOMLBlock(&b)
-		writeCodexServer(&b, name, server)
+		required, err := writeTOMLServer(&b, name, server, grokHeaders)
+		if err != nil {
+			return "", nil, err
+		}
+		if required != "" {
+			requiredEnv = append(requiredEnv, required)
+		}
 	}
-	return b.String(), nil
+	sort.Strings(requiredEnv)
+	return b.String(), slices.Compact(requiredEnv), nil
 }
 
 func separateTOMLBlock(b *strings.Builder) {
@@ -292,7 +303,7 @@ func acpServer(name string, s server, lookupEnv func(string) (string, bool)) map
 		}
 		return rendered
 	}
-	// No transport — skip this malformed/empty entry, as writeCodexServer does.
+	// No transport — skip this malformed/empty entry, as the native TOML writer does.
 	return nil
 }
 
@@ -307,25 +318,36 @@ func envValueString(v any) string {
 	return fmt.Sprint(v)
 }
 
-func writeCodexServer(b *strings.Builder, name string, s server) {
+func writeTOMLServer(b *strings.Builder, name string, s server, grokHeaders bool) (string, error) {
 	if s.URL == "" && s.Command == "" {
 		// No transport — skip this malformed/empty entry rather than emit a bodyless
 		// [mcp_servers.<name>] table, which Codex may reject and so break ALL its MCP servers.
-		return
+		return "", nil
+	}
+	if s.URL != "" && len(s.Headers) > 0 && !grokHeaders {
+		return "", fmt.Errorf("MCP server %q uses headers that Codex cannot configure; use bearer_token_env_var for bearer authentication, otherwise this server is unavailable to Codex", name)
 	}
 	fmt.Fprintf(b, "[mcp_servers.%s]\n", tomlKey(name))
 	switch {
 	case s.URL != "": // streamable HTTP server
 		fmt.Fprintf(b, "url = %s\n", tomlString(s.URL))
-		switch {
-		case s.BearerTokenEnvVar != "":
+		if grokHeaders {
+			headers := maps.Clone(s.Headers)
+			if s.BearerTokenEnvVar != "" {
+				if headers == nil {
+					headers = map[string]any{}
+				}
+				headers["Authorization"] = "Bearer ${" + s.BearerTokenEnvVar + "}"
+			}
+			if len(headers) > 0 {
+				b.WriteByte('\n')
+				fmt.Fprintf(b, "[mcp_servers.%s.headers]\n", tomlKey(name))
+				for _, key := range sortedKeys(headers) {
+					fmt.Fprintf(b, "%s = %s\n", tomlKey(key), tomlString(envValueString(headers[key])))
+				}
+			}
+		} else if s.BearerTokenEnvVar != "" {
 			fmt.Fprintf(b, "bearer_token_env_var = %s\n", tomlString(s.BearerTokenEnvVar))
-		case len(s.Headers) > 0:
-			// Codex (unlike claude/gemini) has no inline-header support for HTTP MCP servers — only
-			// bearer_token_env_var / OAuth (codex 0.141.0 `mcp add --help`). It can't use the
-			// "headers" claude/gemini authenticate with, so flag the gap rather than emit a silent
-			// unauthenticated url that 401s mid-run.
-			b.WriteString("# coop: codex can't use this server's \"headers\" — set bearer_token_env_var to authenticate it\n")
 		}
 	case s.Command != "": // stdio server
 		fmt.Fprintf(b, "command = %s\n", tomlString(s.Command))
@@ -340,6 +362,10 @@ func writeCodexServer(b *strings.Builder, name string, s server) {
 			}
 		}
 	}
+	if grokHeaders {
+		return s.BearerTokenEnvVar, nil
+	}
+	return "", nil
 }
 
 // keepNative returns the user's native TOML minus the managed keys and, when stripMCP, its

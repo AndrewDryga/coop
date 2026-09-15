@@ -1811,8 +1811,7 @@ func TestMCP(t *testing.T) {
 	if wiring, err := claude.MCP(cfg, "/workspace"); err != nil || len(wiring.Mounts) != 0 || len(wiring.CommandArgs) != 2 {
 		t.Errorf("claude MCP = %v, %v; want command args only (reads mcp.json directly)", wiring, err)
 	}
-	// gemini/codex/grok generate a config file at their native path (grok reuses codex's
-	// [mcp_servers.*] TOML shape).
+	// Gemini, Codex and Grok generate a config file at their native path.
 	for name, boxPath := range map[string]string{
 		"gemini": "/home/node/.gemini/settings.json",
 		"codex":  "/home/node/.codex/config.toml",
@@ -1840,6 +1839,24 @@ func TestMCP(t *testing.T) {
 				t.Errorf("generated Gemini MCP overlay does not disable folder trust: %+v", settings)
 			}
 		}
+	}
+}
+
+func TestGrokMCPRequiresBearerEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	mcpFile := filepath.Join(dir, "mcp.json")
+	mustWrite(t, mcpFile, `{"mcpServers":{"private":{"url":"https://mcp.example","bearer_token_env_var":"MCP_TOKEN"}}}`)
+	cfg := &config.Config{MCPFile: mcpFile, ConfigDir: dir, HomeInBox: "/home/node"}
+	grok, _ := Get("grok")
+	wiring, err := grok.MCP(cfg, "/workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(wiring.RequiredEnv, []string{"MCP_TOKEN"}) {
+		t.Fatalf("Grok required MCP env = %v, want MCP_TOKEN", wiring.RequiredEnv)
+	}
+	if len(wiring.Mounts) != 1 || !strings.Contains(wiring.Mounts[0].Content, `Authorization = "Bearer ${MCP_TOKEN}"`) {
+		t.Fatalf("Grok MCP mount does not use the captured environment: %+v", wiring.Mounts)
 	}
 }
 

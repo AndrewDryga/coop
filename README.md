@@ -926,8 +926,8 @@ unsafe or unreadable input stops the affected launch instead of being ignored.
 ```
 
 `coop` wires that one file into each agent's native mechanism on launch: Claude via
-`--mcp-config`, Gemini merged into its `settings.json`, Codex — and Grok, same schema —
-converted to `[mcp_servers.*]` in its `config.toml`. The generated versions are laid
+`--mcp-config`, Gemini merged into its `settings.json`, and Codex and Grok converted to their
+provider-specific `[mcp_servers.*]` tables in `config.toml`. The generated versions are laid
 read-only on top of your existing config (pure Go, no extra tooling), and generation never
 edits the source files. With shared MCP active, Coop omits native Codex/Grok
 `[mcp_servers.*]` tables so the shared file is the only server authority. Remove or migrate other
@@ -946,9 +946,11 @@ authority stops the turn before its child starts. Nothing to configure — it is
 An `env` block on a command server (`github` above) reaches that server under every
 agent, verbatim — values are literal strings, no `$VAR` substitution. To keep a token
 out of `mcp.json`, point `bearer_token_env_var` at a variable (`sentry` above) and put
-the value in the env file: `echo 'SENTRY_TOKEN=…' >> ~/.config/coop/agents/env`. An
-HTTP server's `headers` work for Claude and Gemini; Codex and Grok authenticate only
-via `bearer_token_env_var`.
+the value in the env file: `echo 'SENTRY_TOKEN=…' >> ~/.config/coop/agents/env`. An HTTP
+server's `headers` work for Claude, Gemini and Grok. Grok also receives
+`bearer_token_env_var` as an environment-expanded Authorization header. Codex cannot use inline
+headers, so Coop refuses that server before launch; use `bearer_token_env_var` for Codex bearer
+authentication.
 
 The example's Playwright server works in the box out of the box: Chromium's system
 libraries are baked into the image, the browser binary downloads to the cache volume on

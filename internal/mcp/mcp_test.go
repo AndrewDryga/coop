@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -57,9 +58,9 @@ url = "https://mcp.sentry.dev/mcp"
 	if got != want {
 		t.Errorf("GenerateCodex mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
 	}
-	// grok gets the same shape without codex's keys, which its CLI does not know.
-	if got, err := GenerateGrok(writeTmp(t, "mcp.json", sample), ""); err != nil || got != want[len(CodexManagedDefaults)+1:] {
-		t.Errorf("GenerateGrok = (%q, %v), want the bare [mcp_servers.*] tables", got, err)
+	// Grok gets the same unauthenticated shape without Codex's keys, which its CLI does not know.
+	if got, required, err := GenerateGrok(writeTmp(t, "mcp.json", sample), ""); err != nil || got != want[len(CodexManagedDefaults)+1:] || len(required) != 0 {
+		t.Errorf("GenerateGrok = (%q, %v, %v), want the bare [mcp_servers.*] tables", got, required, err)
 	}
 }
 
@@ -543,8 +544,8 @@ func TestGenerateEmpty(t *testing.T) {
 	if err != nil || got != CodexManagedDefaults {
 		t.Errorf("empty servers -> only the managed box defaults; got %q err %v", got, err)
 	}
-	if got, err := GenerateGrok(writeTmp(t, "mcp.json", `{"mcpServers":{}}`), ""); err != nil || got != "" {
-		t.Errorf("empty servers -> empty grok output; got %q err %v", got, err)
+	if got, required, err := GenerateGrok(writeTmp(t, "mcp.json", `{"mcpServers":{}}`), ""); err != nil || got != "" || len(required) != 0 {
+		t.Errorf("empty servers -> empty grok output; got %q required %v err %v", got, required, err)
 	}
 }
 
@@ -711,23 +712,70 @@ func TestGenerateGeminiHTTPPassthrough(t *testing.T) {
 	}
 }
 
-// Codex has no inline-header support, so a url server with headers but no bearer_token_env_var would
-// authenticate nowhere — GenerateCodex flags it rather than emit a silent unauthenticated url. A
-// bearer_token_env_var (codex's real mechanism) emits cleanly, with no notice.
+// Codex has no inline-header support, so any server that needs headers must be refused before the
+// provider starts. bearer_token_env_var is Codex's supported bearer mechanism and still renders.
 func TestGenerateCodexHTTPHeaders(t *testing.T) {
-	src := `{ "mcpServers": {
-		"hdronly": { "type": "http", "url": "https://a.example/mcp", "headers": { "Authorization": "Bearer x" } },
-		"bearer":  { "type": "http", "url": "https://b.example/mcp", "bearer_token_env_var": "B_TOKEN" }
-	} }`
-	got, err := GenerateCodex(writeTmp(t, "mcp.json", src), "")
+	for name, src := range map[string]string{
+		"headers only": `{ "mcpServers": { "header-auth": {
+			"url": "https://a.example/mcp", "headers": { "Authorization": "Bearer x" }
+		} } }`,
+		"headers beside bearer auth": `{ "mcpServers": { "tenant": {
+			"url": "https://a.example/mcp", "headers": { "X-Tenant": "one" }, "bearer_token_env_var": "TOKEN"
+		} } }`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := GenerateCodex(writeTmp(t, "mcp.json", src), "")
+			if err == nil || !strings.Contains(err.Error(), "uses headers that Codex cannot configure") {
+				t.Fatalf("GenerateCodex error = %v, want actionable headers refusal", err)
+			}
+		})
+	}
+
+	got, err := GenerateCodex(writeTmp(t, "mcp.json", `{ "mcpServers": {
+		"bearer": { "url": "https://b.example/mcp", "bearer_token_env_var": "B_TOKEN" }
+	} }`), "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(got, `bearer_token_env_var = "B_TOKEN"`) {
 		t.Errorf("expected bearer_token_env_var for the bearer server:\n%s", got)
 	}
-	if n := strings.Count(got, "# coop: codex can't use"); n != 1 {
-		t.Errorf("the header-gap notice should fire exactly once (only the headers-only server), got %d:\n%s", n, got)
+	if strings.Contains(got, "headers") {
+		t.Errorf("supported bearer server unexpectedly emitted headers:\n%s", got)
+	}
+}
+
+func TestGenerateGrokHTTPHeaders(t *testing.T) {
+	src := `{ "mcpServers": {
+		"inline": { "url": "https://a.example/mcp", "headers": { "X-Tenant": "one", "Authorization": "Bearer literal" } },
+		"bearer": { "url": "https://b.example/mcp", "bearer_token_env_var": "B_TOKEN" }
+	} }`
+	path := writeTmp(t, "mcp.json", src)
+	got, required, err := GenerateGrok(path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[mcp_servers.bearer]
+url = "https://b.example/mcp"
+
+[mcp_servers.bearer.headers]
+Authorization = "Bearer ${B_TOKEN}"
+
+[mcp_servers.inline]
+url = "https://a.example/mcp"
+
+[mcp_servers.inline.headers]
+Authorization = "Bearer literal"
+X-Tenant = "one"
+`
+	if got != want {
+		t.Fatalf("GenerateGrok mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+	if !slices.Equal(required, []string{"B_TOKEN"}) {
+		t.Fatalf("GenerateGrok required env = %v, want B_TOKEN", required)
+	}
+	if after, err := os.ReadFile(path); err != nil || string(after) != src {
+		t.Fatalf("host shared MCP changed = (%q, %v)", after, err)
 	}
 }
 
@@ -776,6 +824,7 @@ func TestMCPConsumersRejectAmbiguousAuthorization(t *testing.T) {
 		run  func(string) error
 	}{
 		{"Codex", func(path string) error { _, err := GenerateCodex(path, ""); return err }},
+		{"Grok", func(path string) error { _, _, err := GenerateGrok(path, ""); return err }},
 		{"Gemini", func(path string) error { _, _, err := GenerateGemini(path, ""); return err }},
 		{"ACP", func(path string) error { _, err := ACPServers(path, os.LookupEnv); return err }},
 		{"box snapshot", func(path string) error { _, _, err := ReadValidatedSnapshot(path); return err }},

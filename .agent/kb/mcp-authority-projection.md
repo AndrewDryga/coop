@@ -3,7 +3,7 @@ name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
 sources: [internal/mcp/mcp.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
-updated: 2026-09-13
+updated: 2026-09-15
 ---
 
 `COOP_MCP_FILE` is one host authority, but a box has four different consumers. `box.Run` captures
@@ -51,8 +51,12 @@ keys the box owns (and minus native `[mcp_servers.*]` only when shared MCP is ac
 profile's own servers stay authoritative); the removal is proven by re-parse and a spelling the
 textual strip cannot remove (quoted or array table) is refused by name, like the MCP forms. Gemini's
 forces `general.enableAutoUpdate`, `general.enableAutoUpdateNotification` and
-`privacy.usageStatisticsEnabled` to false beside the file-filtering override. Grok shares the TOML
-shape through `mcp.GenerateGrok` and gets no managed block: its CLI does not know codex's keys.
+`privacy.usageStatisticsEnabled` to false beside the file-filtering override. Grok uses its own
+`mcp.GenerateGrok` server writer and gets no managed block: its CLI does not know Codex's keys.
+Grok accepts literal HTTP headers and expands `${VAR}` in header values, so the renderer translates
+`bearer_token_env_var` to Authorization while returning the required name for the same private
+environment capture Gemini uses. Codex has no arbitrary-header equivalent and refuses a shared
+server that declares `headers` before provider launch instead of emitting an unauthenticated URL.
 The mounts are read-only, so a client cannot persist a setting change from inside the box; the host
 profile is never written by a projection (`EnsureDefaults` alone writes it, for first-run prompts).
 Claude's controls are environment, not a file (`claudeAgent.BoxEnv`). Why the traffic is stopped at
@@ -90,6 +94,9 @@ adds ordinary `CommandArgs` must decide whether its nested commands need an equi
 mounting the raw snapshot for every scoped credential is not the fallback.
 
 ## Changelog
+- 2026-09-15 — split Grok's native HTTP authentication from Codex: verified Grok header and
+  `${VAR}` support against the installed CLI documentation, then recorded Codex's upfront refusal
+  and Grok's captured bearer projection.
 - 2026-09-13 — isolated native login controls from coding projections; verified Gemini 0.59 schema,
   allowlist and save/relaunch persistence; documented bearer projection and runtime capture.
 - 2026-09-10 — the codex and gemini overlays are always-on carriers of the managed-client defaults
