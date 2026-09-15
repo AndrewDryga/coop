@@ -3,7 +3,7 @@ name: provider-consult-e2e
 description: Verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring
 subsystem: testing
 sources: [Makefile, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/consult_shell.go, internal/agent/role_health.go, internal/loop/telemetry.go, internal/loop/streamjson_providers.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go]
-updated: 2026-09-13
+updated: 2026-09-15
 ---
 
 `make provider-scripted-e2e` is the blocking consult contract. A strict external Coop binary mounts
@@ -28,7 +28,9 @@ is accepted. Claude and Grok may report invocation-local dollars; Gemini and Cod
 tokens without invented prices. Claude input adds cache writes/reads, Gemini input already
 includes cached input, and current Grok output includes reasoning. Missing or invalid usage
 never invalidates an otherwise usable reply. Delegate diff-report output is unchanged and
-delegate usage is not yet captured.
+delegate calls use the same adapter-owned parser to append one usage row after a successful
+attempt. Failed or malformed attempts keep usage unknown, and a nested consult retains its own
+separate row rather than being folded into the delegate total.
 All-provider parser and generated-wrapper unit tests cover the added usage/cost paths;
 the scripted process suite's explicit telemetry scenario currently covers Codex only.
 
@@ -78,6 +80,9 @@ in final/state/log. Wrapper fixtures preserve a partial reply at exit0; they do 
 native lead carries its caveats through synthesis. No prose-to-verdict parser is involved.
 
 ## Changelog
+- 2026-09-15 — reused the four adapter-owned structured-output parsers for delegate usage;
+  success, failure, diagnostics, and nested-consult tests preserve the existing reply/report
+  contract without adding pricing guesses or a separate telemetry layer.
 - 2026-09-14 — documented the shared role-health ledger, repository-root resolution, and the
   jq 1.6 empty-stream trap found during a real Frontier run.
 - 2026-09-13 — Grok native captures also reproduced a lead-decoder accounting bug:

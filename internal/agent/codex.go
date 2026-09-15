@@ -799,6 +799,12 @@ func (codexAgent) HomeFallbacks() []HomeFallback { return nil }
 const codexConsultText = `codex_text() {
 	jq -ers '[.[] | select(.type=="item.completed" and .item.type=="agent_message") | .item.text | select(type=="string" and test("[^[:space:]]"))] | if length==0 then error("no usable agent reply") else .[] end'
 }
+codex_delegate_text() {
+	jq --unbuffered -jr '
+		if .type=="item.completed" and .item.type=="agent_message" and (.item.text|type)=="string" then .item.text, "\n"
+		elif .type=="turn.failed" and (.error.message|type)=="string" then .error.message, "\n"
+		else empty end'
+}
 `
 
 const codexConsultUsage = `[.[] | select(type=="object" and .type=="turn.completed") | .usage
@@ -824,11 +830,14 @@ func (codexAgent) ConsultResume() string {
 }
 
 func (codexAgent) DelegateExec() string {
-	return `codex exec --dangerously-bypass-approvals-and-sandbox ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} "$prompt"`
+	return `codex exec --dangerously-bypass-approvals-and-sandbox ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"`
 }
 
-func (codexAgent) ShellPrelude() string {
-	return codexConsultText + consultPeerRowShell("codex", codexConsultUsage) + consultCaptureShell("codex", "Codex")
+func (codexAgent) UsagePrelude() string {
+	return codexConsultText + consultPeerRowShell("codex", codexConsultUsage)
+}
+func (a codexAgent) ShellPrelude() string {
+	return a.UsagePrelude() + consultCaptureShell("codex", "Codex")
 }
 func (codexAgent) InstallScript() string { return "" }
 

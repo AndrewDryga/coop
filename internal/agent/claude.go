@@ -906,6 +906,10 @@ const claudeNestedMCPArgs = `${COOP_CLAUDE_MCP_CONFIG:+--mcp-config "$COOP_CLAUD
 const claudeConsultText = `claude_text() {
 	jq -ers 'select(length==1) | .[0] | select(type=="object" and .type=="result" and .is_error!=true) | .result | select(type=="string" and test("[^[:space:]]"))'
 }
+claude_delegate_text() {
+	jq --unbuffered -jr 'select(type=="object" and .type=="result")
+		| (.result | select(type=="string")), "\n"'
+}
 `
 
 const claudeConsultUsage = `select(length==1) | .[0]
@@ -929,11 +933,14 @@ func (claudeAgent) ConsultResume() string {
 }
 
 func (claudeAgent) DelegateExec() string {
-	return `claude -p --dangerously-skip-permissions ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` -- "$prompt"`
+	return `claude -p --dangerously-skip-permissions --output-format json ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` -- "$prompt"`
 }
 
-func (claudeAgent) ShellPrelude() string {
-	return claudeConsultText + consultPeerRowShell("claude", claudeConsultUsage) + consultCaptureShell("claude", "Claude")
+func (claudeAgent) UsagePrelude() string {
+	return claudeConsultText + consultPeerRowShell("claude", claudeConsultUsage)
+}
+func (a claudeAgent) ShellPrelude() string {
+	return a.UsagePrelude() + consultCaptureShell("claude", "Claude")
 }
 func (claudeAgent) InstallScript() string { return "" }
 

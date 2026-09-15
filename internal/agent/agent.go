@@ -549,6 +549,9 @@ type Agent interface {
 	// because the wrapper prefixes it with run_delegate to bound the whole provider process group.
 	// The wrapper also enforces commit:never and serialization.
 	DelegateExec() string
+	// UsagePrelude supplies the adapter's native reply decoder and provider-reported usage
+	// parser. Consult and delegate wrappers share it; neither invents provider pricing.
+	UsagePrelude() string
 	// ShellPrelude is optional helper-function shell the wrappers emit ONCE before the
 	// per-agent case (e.g. codex's output filter); "" for agents that need none.
 	ShellPrelude() string

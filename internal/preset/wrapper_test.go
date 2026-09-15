@@ -747,6 +747,92 @@ func TestDelegateWrapperRunsRole(t *testing.T) {
 	}
 }
 
+func TestDelegateWrapperRecordsProviderUsageOnce(t *testing.T) {
+	h := newDelegateHarness(t)
+	for index, entry := range h.env {
+		if strings.HasPrefix(entry, "COOP_DELEGATE_FAST_TARGETS=") {
+			h.env[index] = "COOP_DELEGATE_FAST_TARGETS=codex:gpt-5.6-terra"
+		}
+	}
+	runID := "delegate-usage"
+	runs := filepath.Join(h.repo, ".agent", "runs")
+	if err := os.MkdirAll(runs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	peerFile := filepath.Join(runs, runID+".peers.jsonl")
+	// A nested consult already reported its own model call. The delegate's structured stream
+	// carries a JSON-looking tool result too; neither may be parsed as a second delegate usage row.
+	nested := `{"run":"delegate-usage","role":"critic","provider":"claude","model":"opus","in":3,"out":2}` + "\n"
+	if err := os.WriteFile(peerFile, []byte(nested), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.env = append(h.env, "COOP_RUN_ID="+runID)
+	h.stub("codex", `echo "provider warning" >&2; printf '%s\n' \
+'{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":999,\"output_tokens\":999}}"}}' \
+'{"type":"item.completed","item":{"type":"agent_message","text":"did-the-work"}}' \
+'{"type":"turn.completed","usage":{"input_tokens":11,"cached_input_tokens":4,"output_tokens":5,"reasoning_output_tokens":2}}'`)
+
+	out, code := h.run("fast", "Implement the thing")
+	if code != 0 || !strings.Contains(out, "provider warning") || !strings.Contains(out, "did-the-work") || strings.Contains(out, `"type":"turn.completed"`) {
+		t.Fatalf("structured delegate output = exit %d:\n%s", code, out)
+	}
+	if strings.Count(out, "[coop-delegate fast: finished on codex:gpt-5.6-terra]") != 1 {
+		t.Fatalf("delegate completion report changed or repeated:\n%s", out)
+	}
+	data, err := os.ReadFile(peerFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usageRows := make([]string, 0, 2)
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line != "" && !strings.Contains(line, `"kind":"role_health"`) {
+			usageRows = append(usageRows, line)
+		}
+	}
+	if len(usageRows) != 2 || usageRows[0] != strings.TrimSpace(nested) {
+		t.Fatalf("nested consult plus delegate usage rows = %q, want two distinct calls", usageRows)
+	}
+	for _, want := range []string{`"role":"fast"`, `"mode":"delegate"`, `"target":"codex:gpt-5.6-terra"`, `"in":11`, `"out":7`} {
+		if !strings.Contains(usageRows[1], want) {
+			t.Errorf("delegate usage row missing %q: %s", want, usageRows[1])
+		}
+	}
+}
+
+func TestDelegateWrapperDoesNotRecordRejectedAttemptUsage(t *testing.T) {
+	h := newDelegateHarness(t)
+	for index, entry := range h.env {
+		if strings.HasPrefix(entry, "COOP_DELEGATE_FAST_TARGETS=") {
+			h.env[index] = "COOP_DELEGATE_FAST_TARGETS=codex:gpt-5.6-terra"
+		}
+	}
+	runID := "delegate-failed-usage"
+	runs := filepath.Join(h.repo, ".agent", "runs")
+	if err := os.MkdirAll(runs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	peerFile := filepath.Join(runs, runID+".peers.jsonl")
+	if err := os.WriteFile(peerFile, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.env = append(h.env, "COOP_RUN_ID="+runID)
+	h.stub("codex", `printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":11,"output_tokens":5}}' '{"type":"turn.failed","error":{"message":"provider failed"}}'; exit 7`)
+
+	out, code := h.run("fast", "Implement the thing")
+	if code != 7 || !strings.Contains(out, "provider failed") {
+		t.Fatalf("failed delegate = exit %d:\n%s", code, out)
+	}
+	data, err := os.ReadFile(peerFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line != "" && !strings.Contains(line, `"kind":"role_health"`) {
+			t.Fatalf("rejected delegate attempt recorded usage: %s", line)
+		}
+	}
+}
+
 func TestDelegateRoleDoesNotInheritAdHocPeerModel(t *testing.T) {
 	h := newDelegateHarness(t)
 	h.env = append(h.env,
@@ -1117,12 +1203,13 @@ func (fakeDelegate) Name() string { return "grokfake" }
 func (fakeDelegate) DelegateExec() string {
 	return `grokfake --write ${model:+--model "$model"} "$prompt"`
 }
+func (fakeDelegate) UsagePrelude() string { return "" }
 
 // TestDelegateWrapperDispatchesNewAgent: a future agent's bounded write-capable arm is generated from the
 // registry with no hand-edit, and the rendered script still shellchecks clean.
 func TestDelegateWrapperDispatchesNewAgent(t *testing.T) {
 	w := renderDelegate(append(registeredDelegates(), fakeDelegate{}))
-	if !strings.Contains(w, `grokfake) run_delegate grokfake --write`) {
+	if !strings.Contains(w, `grokfake) run_delegate_with_usage grokfake grokfake --write`) {
 		t.Fatalf("the new agent's delegate arm is missing:\n%s", w)
 	}
 	sc := shellcheckPath(t)

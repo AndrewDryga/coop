@@ -423,6 +423,13 @@ const grokConsultText = `grok_text() {
 		| [.[] | select(.type=="text") | .data | select(type=="string")]
 		| join("") | select(test("[^[:space:]]"))'
 }
+grok_delegate_text() {
+	jq --unbuffered -jr '
+		if .type=="text" and (.data|type)=="string" then .data
+		elif .type=="error" and (.message|type)=="string" then .message, "\n"
+		elif .type=="end" then "\n"
+		else empty end'
+}
 `
 
 const grokConsultUsage = `select(.[-1].type=="end")
@@ -447,11 +454,14 @@ func (grokAgent) ConsultResume() string {
 }
 
 func (grokAgent) DelegateExec() string {
-	return `grok --permission-mode bypassPermissions ${model:+--model "$model"} ${effort:+--reasoning-effort "$effort"} -p "$prompt"`
+	return `grok --permission-mode bypassPermissions --output-format streaming-json ${model:+--model "$model"} ${effort:+--reasoning-effort "$effort"} -p "$prompt"`
 }
 
-func (grokAgent) ShellPrelude() string {
-	return grokConsultText + consultPeerRowShell("grok", grokConsultUsage) + consultCaptureShell("grok", "Grok")
+func (grokAgent) UsagePrelude() string {
+	return grokConsultText + consultPeerRowShell("grok", grokConsultUsage)
+}
+func (a grokAgent) ShellPrelude() string {
+	return a.UsagePrelude() + consultCaptureShell("grok", "Grok")
 }
 
 // InstallScript bakes grok's CLI into the box image. grok ships a piped installer

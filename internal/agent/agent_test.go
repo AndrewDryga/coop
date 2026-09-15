@@ -438,6 +438,33 @@ func TestClaudeMCPConfig(t *testing.T) {
 	}
 }
 
+func TestDelegateExecRequestsStructuredUsageOutput(t *testing.T) {
+	wants := map[string][]string{
+		"claude": {"--output-format", "json"},
+		"codex":  {"--json"},
+		"gemini": {"-o", "stream-json"},
+		"grok":   {"--output-format", "streaming-json"},
+	}
+	for name, fragments := range wants {
+		agent, ok := Get(name)
+		if !ok {
+			t.Fatalf("missing registered agent %s", name)
+		}
+		command := agent.DelegateExec()
+		for _, fragment := range fragments {
+			if !strings.Contains(command, fragment) {
+				t.Errorf("%s delegate command missing %q: %s", name, fragment, command)
+			}
+		}
+		prelude := agent.UsagePrelude()
+		for _, suffix := range []string{"_text()", "_peer_row()"} {
+			if !strings.Contains(prelude, name+suffix) {
+				t.Errorf("%s usage prelude missing %s", name, name+suffix)
+			}
+		}
+	}
+}
+
 func TestResume(t *testing.T) {
 	cleanCmdEnv(t)
 	cfgDir := t.TempDir()

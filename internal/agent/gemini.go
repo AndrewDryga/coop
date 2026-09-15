@@ -523,6 +523,13 @@ const geminiConsultText = `gemini_text() {
 		| [.[] | select(.type=="message" and .role=="assistant") | .content | select(type=="string")]
 		| join("") | select(test("[^[:space:]]"))'
 }
+gemini_delegate_text() {
+	jq --unbuffered -jr '
+		if .type=="message" and .role=="assistant" and (.content|type)=="string" then .content
+		elif .type=="error" and (.message|type)=="string" then .message, "\n"
+		elif .type=="result" then "\n"
+		else empty end'
+}
 `
 
 const geminiConsultUsage = `select(.[-1].type=="result" and .[-1].status=="success")
@@ -544,11 +551,14 @@ func (geminiAgent) ConsultResume() string {
 }
 
 func (geminiAgent) DelegateExec() string {
-	return `gemini --yolo ${model:+--model "$model"} -p "$prompt"`
+	return `gemini --yolo ${model:+--model "$model"} -o stream-json -p "$prompt"`
 }
 
-func (geminiAgent) ShellPrelude() string {
-	return geminiConsultText + consultPeerRowShell("gemini", geminiConsultUsage) + consultCaptureShell("gemini", "Gemini")
+func (geminiAgent) UsagePrelude() string {
+	return geminiConsultText + consultPeerRowShell("gemini", geminiConsultUsage)
+}
+func (a geminiAgent) ShellPrelude() string {
+	return a.UsagePrelude() + consultCaptureShell("gemini", "Gemini")
 }
 func (geminiAgent) InstallScript() string { return "" }
 

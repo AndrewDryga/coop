@@ -32,10 +32,12 @@ func consultPeerRowShell(provider, usageFilter string) string {
 	case "$peer_bytes" in '' | *[!0-9]*) exec 9>&-; return 0 ;; esac
 	peer_usage_limit=1048576
 	[ "$peer_bytes" -le $((peer_usage_limit - 4096)) ] || { exec 9>&-; return 0; }
-	row=$(jq -sc --arg run "$COOP_RUN_ID" --arg role "$1" --arg model "$2" '
+	row=$(jq -sc --arg run "$COOP_RUN_ID" --arg role "$1" --arg model "$2" --arg mode "${3:-}" --arg target "${4:-}" '
 		def token: type=="number" and isfinite and floor==. and .>=0 and .<=1000000000;
 		__USAGE_FILTER__
 		| {run:$run,role:$role,provider:"__PROVIDER__",model:$model,in:.input,out:.output,reported_out:.output}
+		  + (if $mode!="" then {mode:$mode} else {} end)
+		  + (if $target!="" then {target:$target} else {} end)
 		  + (if has("fresh") then {fresh_in:.fresh} else {} end)
 		  + (if has("write") then {cache_write:.write} else {} end)
 		  + (if has("read") then {cache_read:.read} else {} end)

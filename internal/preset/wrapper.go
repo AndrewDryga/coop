@@ -29,7 +29,7 @@ func EnvKey(role string) string {
 
 // delegateArm renders one `<name>) <body> ;;` write-capable dispatch arm.
 func delegateArm(name, body string) string {
-	return name + ") run_delegate " + body + " ;;\n"
+	return name + ") run_delegate_with_usage " + name + " " + body + " ;;\n"
 }
 
 // DelegateWrapper is the `coop-delegate` script coop mounts when a preset declares a
@@ -57,6 +57,7 @@ func DelegateWrapper() string { return renderDelegate(registeredDelegates()) }
 type delegateInput interface {
 	Name() string
 	DelegateExec() string
+	UsagePrelude() string
 }
 
 func registeredDelegates() []delegateInput {
@@ -81,11 +82,24 @@ func renderDelegate(as []delegateInput) string {
 		"@@STREAM_LIMIT@@", strconv.Itoa(delegateStreamLimitBytes),
 		"@@PROMPT_LIMIT@@", strconv.Itoa(delegatePromptLimitBytes),
 		"@@SNAPSHOT_BLOCKS@@", strconv.Itoa(delegateSnapshotBlocks),
+		"@@PRELUDES@@", delegatePreludes(as),
 	).Replace(delegateWrapperTmpl)
 	wrapper = strings.Replace(wrapper, "@@RATE_LIMIT@@\n", agents.ShellRateLimitDetector(), 1)
 	wrapper = strings.Replace(wrapper, "@@ROLE_HEALTH@@\n", agents.RoleHealthShell(), 1)
 	wrapper = strings.Replace(wrapper, "@@AGENTS@@\n", strings.Join(names, "|")+") ;;\n", 1)
 	return strings.Replace(wrapper, "@@ARMS@@\n", arms.String(), 1)
+}
+
+func delegatePreludes(as []delegateInput) string {
+	seen := map[string]bool{}
+	var out []string
+	for _, a := range as {
+		if prelude := a.UsagePrelude(); prelude != "" && !seen[prelude] {
+			seen[prelude] = true
+			out = append(out, prelude)
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 const delegateWrapperTmpl = `#!/bin/sh
@@ -199,6 +213,7 @@ exec </dev/null
 
 @@RATE_LIMIT@@
 @@ROLE_HEALTH@@
+@@PRELUDES@@
 
 load_target() {
 	target=$1
@@ -267,6 +282,7 @@ bounded_capture() {
 	destination=$1
 	overflow=$2
 	chunk=$3
+	forward=${4:-true}
 	: >"$destination"
 	rm -f "$overflow" "$chunk"
 	total=0
@@ -279,7 +295,7 @@ bounded_capture() {
 		case "$got" in '' | *[!0-9]*) got=0 ;; esac
 		[ "$got" -gt 0 ] || break
 		cat "$chunk" >>"$destination" || return 1
-		cat "$chunk" || return 1
+		[ "$forward" = false ] || cat "$chunk" || return 1
 		total=$((total + got))
 	done
 	if [ "$total" -ge "$delegate_stream_limit" ]; then
@@ -292,6 +308,77 @@ bounded_capture() {
 		fi
 	fi
 	rm -f "$chunk" || return 1
+}
+
+run_delegate_with_usage() {
+	provider=$1
+	shift
+	raw=$attempt_dir/provider-stdout-$index
+	decoded=$attempt_dir/provider-decoded-$index
+	diagnostics=$attempt_dir/provider-stderr-$index
+	raw_overflow=$attempt_dir/provider-stdout-overflow-$index
+	diagnostics_overflow=$attempt_dir/provider-stderr-overflow-$index
+	raw_capture_status=$attempt_dir/provider-stdout-capture-status-$index
+	diagnostics_capture_status=$attempt_dir/provider-stderr-capture-status-$index
+	provider_status=$attempt_dir/provider-status-$index
+	decode_status=$attempt_dir/provider-decode-status-$index
+	raw_pipe=$attempt_dir/provider-stdout-pipe-$index
+	diagnostics_pipe=$attempt_dir/provider-stderr-pipe-$index
+	mkfifo "$raw_pipe" "$diagnostics_pipe" || return 1
+	{
+		bounded_capture "$raw" "$raw_overflow" "$attempt_dir/provider-stdout-chunk-$index" false
+		printf '%s\n' "$?" >"$raw_capture_status"
+	} <"$raw_pipe" &
+	raw_capture_pid=$!
+	{
+		bounded_capture "$diagnostics" "$diagnostics_overflow" "$attempt_dir/provider-stderr-chunk-$index"
+		printf '%s\n' "$?" >"$diagnostics_capture_status"
+	} <"$diagnostics_pipe" &
+	diagnostics_capture_pid=$!
+	{
+		run_delegate "$@"
+		printf '%s\n' "$?" >"$provider_status"
+	} 2>"$diagnostics_pipe" | tee "$raw_pipe" | {
+		if command -v "${provider}_delegate_text" >/dev/null 2>&1; then
+			"${provider}_delegate_text" 2>/dev/null
+			printf '%s\n' "$?" >"$decode_status"
+		else
+			cat
+			printf '%s\n' "$?" >"$decode_status"
+		fi
+	} | tee "$decoded"
+	wait "$raw_capture_pid" 2>/dev/null || :
+	wait "$diagnostics_capture_pid" 2>/dev/null || :
+	rm -f "$raw_pipe" "$diagnostics_pipe"
+	st=$(cat "$provider_status" 2>/dev/null || printf 1)
+	decoded_ok=$(cat "$decode_status" 2>/dev/null || printf 1)
+	raw_captured=$(cat "$raw_capture_status" 2>/dev/null || printf 1)
+	diagnostics_captured=$(cat "$diagnostics_capture_status" 2>/dev/null || printf 1)
+	case "$st:$decoded_ok:$raw_captured:$diagnostics_captured" in
+	*[!0-9:]*) st=1; decoded_ok=1; raw_captured=1; diagnostics_captured=1 ;;
+	esac
+	if [ "$raw_captured" -ne 0 ] || [ "$diagnostics_captured" -ne 0 ]; then
+		echo "[coop-delegate $role: failed to capture bounded provider output]" >&2
+		return 1
+	fi
+	if [ -f "$raw_overflow" ] || [ -f "$diagnostics_overflow" ]; then
+		: >"$overflow"
+		echo "[coop-delegate $role: provider output exceeded ${delegate_stream_limit} bytes]" >&2
+		return 1
+	fi
+	if [ "$st" -ne 0 ]; then
+		return "$st"
+	fi
+	if [ "$decoded_ok" -ne 0 ] || [ ! -s "$decoded" ]; then
+		# Unknown adapters still emit ordinary text. A malformed native stream remains visible
+		# for diagnosis; neither case gets guessed usage.
+		[ -s "$decoded" ] || cat "$raw"
+		return 0
+	fi
+	if command -v "${provider}_text" >/dev/null 2>&1 && "${provider}_text" <"$raw" >/dev/null 2>&1 &&
+		command -v "${provider}_peer_row" >/dev/null 2>&1; then
+		"${provider}_peer_row" "$role" "$model" delegate "$target" <"$raw" || true
+	fi
 }
 
 # Split only host-validated target tokens. Their grammar forbids whitespace and globs.

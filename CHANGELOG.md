@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Delegate calls now add provider-reported token and cost usage to the existing loop peer ledger
+  when their successful native response includes it. Failed or unparseable attempts remain unknown;
+  delegate replies and completion reports keep their existing contract.
+
 - Development services keep their existing workspace identity and data, while each loop uses a
   private Compose project, network, volumes, and host ports across its worker retries. A safe
   launch barrier replaces the old workspace-wide refusal, so development and loop stacks can
