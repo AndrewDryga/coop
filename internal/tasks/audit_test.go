@@ -5385,22 +5385,26 @@ func TestProtectedGateChanges(t *testing.T) {
 	write("code.go", "package x // edit")
 	git("add", "-A")
 	git("commit", "-q", "-m", "code edit")
-	if hits := ProtectedGateChanges(repo, base, gitOut(repo, "rev-parse", "HEAD")); len(hits) != 0 {
+	codeHead := gitOut(repo, "rev-parse", "HEAD")
+	if hits := ProtectedGateChanges(repo, base, codeHead, nil); len(hits) != 0 {
 		t.Errorf("an ordinary code change is not protected: %v", hits)
+	}
+	if hits := ProtectedGateChanges(repo, base, codeHead, []string{"code.go"}); !slices.Equal(hits, []string{"code.go"}) {
+		t.Errorf("a project-declared gate source should be protected exactly: %v", hits)
 	}
 	// A commit that weakens the Makefile → flagged.
 	mid := gitOut(repo, "rev-parse", "HEAD")
 	write("Makefile", "check:\n\ttrue\n")
 	git("add", "-A")
 	git("commit", "-q", "-m", "loosen the gate")
-	if hits := ProtectedGateChanges(repo, mid, gitOut(repo, "rev-parse", "HEAD")); len(hits) != 1 || hits[0] != "Makefile" {
+	if hits := ProtectedGateChanges(repo, mid, gitOut(repo, "rev-parse", "HEAD"), nil); len(hits) != 1 || hits[0] != "Makefile" {
 		t.Errorf("a Makefile change should be flagged, got %v", hits)
 	}
 	// Renaming a guard away must report the deleted protected path, not only its new name.
 	renameBase := gitOut(repo, "rev-parse", "HEAD")
 	git("mv", ".claude/skills/workflow-sweep/queue-guard.sh", ".claude/skills/workflow-sweep/disabled.sh")
 	git("commit", "-q", "-m", "disable the adopted guard")
-	if hits := ProtectedGateChanges(repo, renameBase, gitOut(repo, "rev-parse", "HEAD")); len(hits) != 1 || hits[0] != ".claude/skills/workflow-sweep/queue-guard.sh" {
+	if hits := ProtectedGateChanges(repo, renameBase, gitOut(repo, "rev-parse", "HEAD"), nil); len(hits) != 1 || hits[0] != ".claude/skills/workflow-sweep/queue-guard.sh" {
 		t.Errorf("renaming an adopted guard should flag its old path, got %v", hits)
 	}
 	// NUL-delimited names prevent Git from quoting paths before basename matching.
@@ -5409,7 +5413,7 @@ func TestProtectedGateChanges(t *testing.T) {
 	write(unicodeGuard, "#!/bin/sh\n")
 	git("add", "-A")
 	git("commit", "-q", "-m", "add guard below unicode directory")
-	if hits := ProtectedGateChanges(repo, unicodeBase, gitOut(repo, "rev-parse", "HEAD")); len(hits) != 1 || hits[0] != unicodeGuard {
+	if hits := ProtectedGateChanges(repo, unicodeBase, gitOut(repo, "rev-parse", "HEAD"), nil); len(hits) != 1 || hits[0] != unicodeGuard {
 		t.Errorf("a protected basename below a unicode directory should be flagged, got %v", hits)
 	}
 }
@@ -5417,8 +5421,9 @@ func TestProtectedGateChanges(t *testing.T) {
 func TestProtectedGateFiles(t *testing.T) {
 	got := ProtectedGateFiles([]string{
 		"internal/cli/commands.go", ".claude/settings.json", "Makefile", "Makefile", " .agent/skills/sweep/SKILL.md ",
-	})
-	want := []string{".agent/skills/sweep/SKILL.md", ".claude/settings.json", "Makefile"}
+		".agent/project.yaml", "run", "tools/internal/devtool/gates.go", "tools/internal/devtool/other.go",
+	}, []string{"run", "tools/internal/devtool/gates.go"})
+	want := []string{".agent/project.yaml", ".agent/skills/sweep/SKILL.md", ".claude/settings.json", "Makefile", "run", "tools/internal/devtool/gates.go"}
 	if !slices.Equal(got, want) {
 		t.Errorf("protectedGateFiles = %v, want %v", got, want)
 	}

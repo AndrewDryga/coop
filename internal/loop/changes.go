@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -35,6 +36,7 @@ type loopChangeSet struct {
 	misc                []commitInfo  // untrailered or malformed-binding commits
 	subsystems          []string      // distinct top-level areas of every changed file (internal/box, site, …)
 	stat                string        // `git diff --stat base..head` — the aggregate
+	gateSources         []string      // exact project-declared gate files frozen when the loop started
 	invalidTaskBindings bool          // Git read failed or a commit had an ambiguous/empty binding
 }
 
@@ -354,9 +356,9 @@ func subsystemsOf(files []string) []string {
 
 // loopChanges computes what changed in base..head, grouped by the Coop-Task trailer. Empty set when
 // the range is empty. The git calls live here; the parsing (parseLoopCommits/subsystemsOf) is pure.
-func loopChanges(repo, base, head string) loopChangeSet {
+func loopChanges(repo, base, head string, gateSources []string) loopChangeSet {
 	if base == "" || head == "" || base == head {
-		return loopChangeSet{}
+		return loopChangeSet{gateSources: slices.Clone(gateSources)}
 	}
 	rng := base + ".." + head
 	records, err := tasks.TaskTrailerCommits(repo, rng, true)
@@ -365,6 +367,7 @@ func loopChanges(repo, base, head string) loopChangeSet {
 		misc:                misc,
 		subsystems:          subsystemsOf(rangeFiles(repo, rng)),
 		stat:                strings.TrimSpace(gitOut(repo, "diff", "--stat", rng)),
+		gateSources:         slices.Clone(gateSources),
 		invalidTaskBindings: err != nil || invalid,
 	}
 	for _, id := range order {
@@ -377,12 +380,12 @@ func loopChanges(repo, base, head string) loopChangeSet {
 // finalVerificationChanges distinguishes a genuinely empty run range from commit context Coop
 // could not read or bind uniquely. An enabled verification cannot be silently skipped in the
 // latter case: without trustworthy subjects, an accepting provider verdict would prove nothing.
-func finalVerificationChanges(repo, base string) (loopChangeSet, error) {
+func finalVerificationChanges(repo, base string, gateSources []string) (loopChangeSet, error) {
 	head, err := gitOutErr(repo, "rev-parse", "HEAD")
 	if err != nil {
 		return loopChangeSet{}, fmt.Errorf("read final verification HEAD: %w", err)
 	}
-	cs := loopChanges(repo, base, head)
+	cs := loopChanges(repo, base, head, gateSources)
 	if cs.invalidTaskBindings {
 		return loopChangeSet{}, errors.New("the run's commits do not have one readable task binding each")
 	}
@@ -451,6 +454,7 @@ func (cs loopChangeSet) forTasks(ids []string) loopChangeSet {
 		want[id] = true
 	}
 	var out loopChangeSet
+	out.gateSources = slices.Clone(cs.gateSources)
 	var files []string
 	for _, t := range cs.tasks {
 		if want[t.id] {
@@ -467,7 +471,7 @@ func (cs loopChangeSet) gateFiles() []string {
 	for _, t := range cs.tasks {
 		files = append(files, t.files...)
 	}
-	return tasks.ProtectedGateFiles(files)
+	return tasks.ProtectedGateFiles(files, cs.gateSources)
 }
 
 // reviewBlock renders the loop's changes + health as a prompt section for the signoff/verify
@@ -489,9 +493,9 @@ func (cs loopChangeSet) reviewBlock(h *loopHealth) string {
 		}
 		fmt.Fprintf(&b, "- %s — %s\n    files: %s\n", t.id, abbrev(subs, 3), abbrev(t.files, 6))
 		th := h.byTask[t.id]
-		gateFiles := tasks.ProtectedGateFiles(t.files)
+		gateFiles := tasks.ProtectedGateFiles(t.files, cs.gateSources)
 		if th != nil {
-			gateFiles = tasks.ProtectedGateFiles(append(gateFiles, th.gateFiles...))
+			gateFiles = tasks.ProtectedGateFiles(append(gateFiles, th.gateFiles...), cs.gateSources)
 		}
 		if (th != nil && th.shaky()) || len(gateFiles) > 0 {
 			var flags []string

@@ -374,9 +374,12 @@ box:
 #     - paths: [billing/**, "**/*.sql"]
 #       include: [.agent/kb/billing.md]
 
-# Checks to run in the box before coop fork merge accepts the changes.
-# An explicit COOP_GATE setting takes priority.
+# Checks to run in the box before coop fork merge accepts the changes. If a wrapper or source file
+# implements that command, list each exact path so loop review treats edits as protected changes.
+# Built-in Makefiles, CI, hooks and Coop config remain protected automatically. Existing projects
+# need no migration; this list adds only the project-specific files Coop cannot infer safely.
 # gate: <this project's check command>
+# gate_sources: [run, tools/internal/devtool/gates.go]
 `)
 	return b.String()
 }

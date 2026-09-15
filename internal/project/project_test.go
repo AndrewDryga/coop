@@ -3,6 +3,7 @@ package project
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -155,7 +156,7 @@ func TestLoadRejectsPresentUnsafeEntries(t *testing.T) {
 
 // TestLoadParse: subprojects + serve ports both parse.
 func TestLoadParse(t *testing.T) {
-	repo := writeProject(t, "subprojects:\n  - runner\n  - packs\nserve:\n  ports:\n    - 5173\n    - 3000\n")
+	repo := writeProject(t, "subprojects:\n  - runner\n  - packs\nserve:\n  ports:\n    - 5173\n    - 3000\ngate_sources:\n  - run\n  - tools/internal/devtool/gates.go\n")
 	p, err := Load(repo)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -166,17 +167,23 @@ func TestLoadParse(t *testing.T) {
 	if len(p.Serve.Ports) != 2 || p.Serve.Ports[0] != 5173 {
 		t.Errorf("ports = %v", p.Serve.Ports)
 	}
+	if !slices.Equal(p.GateSources, []string{"run", "tools/internal/devtool/gates.go"}) {
+		t.Errorf("gate sources = %v", p.GateSources)
+	}
 }
 
 // TestLoadInvalid: a typo surfaces as an error, not a silent no-op.
 func TestLoadInvalid(t *testing.T) {
 	cases := map[string]string{
-		"bad port":        "serve:\n  ports:\n    - 70000\n",
-		"zero port":       "serve:\n  ports:\n    - 0\n",
-		"bad yaml":        "serve: [\n",
-		"second document": "---\n---\nbox:\n  egress: offline\n",
-		"absolute sub":    "subprojects:\n  - /etc\n",
-		"escaping sub":    "subprojects:\n  - ../evil\n",
+		"bad port":             "serve:\n  ports:\n    - 70000\n",
+		"zero port":            "serve:\n  ports:\n    - 0\n",
+		"bad yaml":             "serve: [\n",
+		"second document":      "---\n---\nbox:\n  egress: offline\n",
+		"absolute sub":         "subprojects:\n  - /etc\n",
+		"escaping sub":         "subprojects:\n  - ../evil\n",
+		"empty gate source":    "gate_sources:\n  - \"\"\n",
+		"absolute gate source": "gate_sources:\n  - /tmp/check.sh\n",
+		"escaping gate source": "gate_sources:\n  - ../check.sh\n",
 		// KnownFields: an unknown key (a typo'd `subproject:`) errors instead of silently doing nothing.
 		"unknown key":                    "subproject:\n  - runner\n",
 		"unknown box key":                "box:\n  egres: none\n",
@@ -219,7 +226,7 @@ func TestLoadBoxGate(t *testing.T) {
 	if p.Box.Network != nil {
 		t.Errorf("network was absent — must stay nil (absent ≠ false), got %v", *p.Box.Network)
 	}
-	if p.Gate != "make check" {
+	if p.Gate != "make check" || len(p.GateSources) != 0 {
 		t.Errorf("gate = %q", p.Gate)
 	}
 	if p.Review.Compose != "dev/review-compose.yml" || p.Review.Env["CI"] != "1" {

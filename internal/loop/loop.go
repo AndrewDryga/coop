@@ -188,6 +188,13 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		return 1, err
 	}
 	defer releaseCheckout()
+	startupProject, err := project.Load(repo)
+	if err != nil {
+		return 1, err
+	}
+	// A task may edit project.yaml, but it cannot narrow its own protected review. Legitimate
+	// gate_sources changes take effect on the next loop start, like loop.yaml changes do.
+	gateSources := slices.Clone(startupProject.GateSources)
 	// .agent/loop.yaml is the committed loop config (prompts, per-step models, settings). A bad file
 	// fails the run here, before any box work. Absent → an empty config (all built-in defaults).
 	// The snapshot pins this ONE read for the whole run — announced here so every log names the
@@ -1187,7 +1194,7 @@ reviewAgain:
 				completedLines = rememberCompletion(completedLines, completedLine)
 				printTaskCompleted(completedLine)
 			}
-			gateHits := tasks.ProtectedGateChanges(repo, iterHead, headAfter)
+			gateHits := tasks.ProtectedGateChanges(repo, iterHead, headAfter, gateSources)
 			health.noteIteration(finished, gateHits)
 			// A second Ctrl-C canceled iterCtx and tore the box down mid-iteration — stop only after
 			// completion validation and finalization closed the crash boundary above. Record the actual
@@ -1228,8 +1235,8 @@ reviewAgain:
 				if assignedCompletion != nil && !noChangeAccepted {
 					finishedDirs := []string{assignedCompletion.Item.ID + " — " + assignedCompletion.Item.Dir}
 					finishedIDs := taskIDsOf(finishedDirs)
-					stepChanges := loopChanges(repo, loopStartHead, headAfter).forTasks(finishedIDs)
-					auditGateFiles := tasks.ProtectedGateFiles(append(stepChanges.gateFiles(), gateHits...))
+					stepChanges := loopChanges(repo, loopStartHead, headAfter, gateSources).forTasks(finishedIDs)
+					auditGateFiles := tasks.ProtectedGateFiles(append(stepChanges.gateFiles(), gateHits...), gateSources)
 					setPrompt, auditAvailable := betweenAuditSetPrompt(betweenEnabled, lc.Between.Prompt, auditGateFiles)
 					protectedAudit := len(auditGateFiles) > 0
 					runAudit := shouldRunBetweenAudit(action == actContinue, auditAvailable, protectedAudit)
@@ -1465,7 +1472,7 @@ reviewAgain:
 		// so a prompt like "e2e the affected features" resolves against a concrete list. Rebuilt each
 		// round because the range (loopStartHead..HEAD) grows as reopened work lands.
 		soHead := gitOut(repo, "rev-parse", "HEAD")
-		cs := loopChanges(repo, loopStartHead, soHead)
+		cs := loopChanges(repo, loopStartHead, soHead, gateSources)
 		projectPolicy, _ := project.Load(repo)
 		signoff := seedReviewPrompt(
 			loopSignoffPrompt(repo, queues, substituteLoopVars(lc.Signoff.Prompt, cs, health), subjects),
@@ -1607,7 +1614,7 @@ reviewAgain:
 	// work.command or a requested stop. Ordinary process failures preserve completed work but make
 	// the final verdict unverified and nonzero; completion ownership setup/audit failures stop here.
 	if verifyEnabled && !reviewCapped && !softStop.Load() && iterCtx.Err() == nil {
-		cs, changeErr := finalVerificationChanges(repo, loopStartHead)
+		cs, changeErr := finalVerificationChanges(repo, loopStartHead, gateSources)
 		if changeErr != nil {
 			verificationFailed = true
 			ui.Alert("The final checks could not run",

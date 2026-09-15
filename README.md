@@ -1283,7 +1283,13 @@ each completed task and may reopen it; **`verify.prompt`** similarly sets its op
 Ordinary between review is off unless enabled + set, but a
 completed task that changed a gate-defining file always gets an immediate protected audit before
 the loop advances; it uses the configured between target/prompt or falls back to the signoff target
-and a focused built-in prompt. Coop names the just-finished task in either prompt. Each step's
+and a focused built-in prompt. Coop protects Makefiles, CI, hooks and its own config automatically.
+If the real checker is implemented by a wrapper script or ordinary source file, list each exact
+repo-relative path under `gate_sources:` in `.agent/project.yaml`. Coop freezes that list when the
+loop starts, so a task cannot remove its own protection; an intentional declaration change applies
+after restart. Existing projects keep the built-in behavior, and the list is deliberately explicit
+rather than a claim that Coop can infer the checker's complete source graph. Coop names the
+just-finished task in either prompt. Each step's
 `agent:` is a ladder of targets
 (`provider[:model][/effort][@account]`) or preset names — so **`signoff.agent`** can review on a
 stronger model than the cheaper `work.agent` loop. Settings live here too: `signoff.rounds`,
@@ -1344,7 +1350,7 @@ except the knowledge tree (`kb/`, including `kb/rules/`), workflow assets (`skil
 | `kb/` | the committed descriptive knowledge base — subsystem maps, cross-cutting traps, and gotchas the code does not carry |
 | `kb/rules/` | the normative part of the knowledge tree — corrections graduate into “do X, not Y” rules here |
 | `claude/` | fallback user-level Claude settings and hooks for repos without matching project `.claude/` artifacts (committed) |
-| `project.yaml` | the committed per-project config: a monorepo's [`subprojects:`](#monorepos), the [`serve:` ports](#see-the-dev-server-in-your-browser), the box **policy** (`box:` — egress and [`egress_rules:`](docs/networking.md), resource caps, `auto_up`/`network`), and the merge `gate:`. `box:` and `gate:` fall *below* an explicit `COOP_*` env/conf setting, and — being committed and host-read — can only ever *tighten* your posture (egress pins `filtered` or `offline`; `open` is a request a human approves with `coop approve`; `no_new_privileges` isn't settable here) |
+| `project.yaml` | the committed per-project config: a monorepo's [`subprojects:`](#monorepos), the [`serve:` ports](#see-the-dev-server-in-your-browser), the box **policy** (`box:` — egress and [`egress_rules:`](docs/networking.md), resource caps, `auto_up`/`network`), the merge `gate:`, and exact project-specific `gate_sources:` that receive protected loop review. `box:` and `gate:` fall *below* an explicit `COOP_*` env/conf setting, and — being committed and host-read — can only ever *tighten* your posture (egress pins `filtered` or `offline`; `open` is a request a human approves with `coop approve`; `no_new_privileges` isn't settable here) |
 
 Upgrading a repo that still has a single `.agent/TASKS.md`? Convert it to the folder format
 by pasting the prompt in [MIGRATING.md](MIGRATING.md) to any coding agent in the repo.

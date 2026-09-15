@@ -8,6 +8,7 @@
 //   - box: the committed box policy and literal environment defaults every run in this repo
 //     inherits — applied below explicit user/runtime settings (box.Run overlays it).
 //   - gate: the revalidation command `coop fork merge` runs in the box (an explicit COOP_GATE wins).
+//   - gate_sources: exact files that implement that gate and therefore require protected review.
 //
 // SECURITY: this file is committed and read on the HOST from a repo you may not fully trust, so it
 // must never be able to LOOSEN the user's posture. The precedence (explicit env/conf > this file >
@@ -58,11 +59,12 @@ const (
 type Project struct {
 	Subprojects []string `yaml:"subprojects"` // monorepo member dirs (repo-relative), each its own coop project
 	Serve       Serve    `yaml:"serve"`
-	Box         Box      `yaml:"box"`      // committed box policy (below an explicit COOP_* setting)
-	Review      Review   `yaml:"review"`   // publication-review-only services and literal environment
-	Context     Context  `yaml:"context"`  // path-routed instruction/rule/KB compilation (coop context)
-	Services    Services `yaml:"services"` // what the sibling services ASK for; grants nothing by itself
-	Gate        string   `yaml:"gate"`     // fork-merge revalidation command (an explicit COOP_GATE wins)
+	Box         Box      `yaml:"box"`          // committed box policy (below an explicit COOP_* setting)
+	Review      Review   `yaml:"review"`       // publication-review-only services and literal environment
+	Context     Context  `yaml:"context"`      // path-routed instruction/rule/KB compilation (coop context)
+	Services    Services `yaml:"services"`     // what the sibling services ASK for; grants nothing by itself
+	Gate        string   `yaml:"gate"`         // fork-merge revalidation command (an explicit COOP_GATE wins)
+	GateSources []string `yaml:"gate_sources"` // exact repo-relative files that define the gate
 }
 
 // Services is what the repo asks for on behalf of its sibling services. It is a REQUEST, never a
@@ -254,6 +256,13 @@ func Parse(data []byte) (*Project, error) {
 			return nil, fmt.Errorf("%s: services.require_real_files %q must be a relative path inside the repo", File, path)
 		}
 		p.Services.RequireRealFiles[i] = filepath.ToSlash(clean)
+	}
+	for i, path := range p.GateSources {
+		clean := filepath.Clean(path)
+		if path == "" || filepath.IsAbs(clean) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("%s: gate_sources[%d] %q must be an exact relative path inside the repo", File, i, path)
+		}
+		p.GateSources[i] = filepath.ToSlash(clean)
 	}
 	// The file says "offline" — the human word — and the rest of coop keeps its
 	// internal "none". This is the one place the two meet; there is no alias.

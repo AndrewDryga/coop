@@ -203,13 +203,17 @@ func isGateGuardPath(f string) bool {
 	return false
 }
 
-// protectedGateFiles filters an arbitrary file list down to the deterministic, deduplicated set
-// that defines the gate. It is shared by iteration detection and commit-bound review context, so
-// the warning and both reviewers use the same trust boundary.
-func ProtectedGateFiles(files []string) []string {
+// ProtectedGateFiles filters an arbitrary file list down to the deterministic, deduplicated set
+// that defines the gate. Project sources are exact paths from the trusted startup config; built-in
+// guards remain immutable. Iteration detection and review context pass the same list.
+func ProtectedGateFiles(files, projectSources []string) []string {
+	declared := make(map[string]bool, len(projectSources))
+	for _, path := range projectSources {
+		declared[path] = true
+	}
 	seen := map[string]bool{}
 	for _, f := range files {
-		if f = strings.TrimSpace(f); f != "" && isGateGuardPath(f) {
+		if f = strings.TrimSpace(f); f != "" && (isGateGuardPath(f) || declared[f]) {
 			seen[f] = true
 		}
 	}
@@ -225,11 +229,11 @@ func ProtectedGateFiles(files []string) []string {
 // boring first step of the verifier trust boundary: detect (host-side, deterministic) when a task
 // edited its own checker, so the review can be told to scrutinize it rather than trust it blind.
 // Empty when the range is empty or touched none.
-func ProtectedGateChanges(repo, base, head string) []string {
+func ProtectedGateChanges(repo, base, head string, projectSources []string) []string {
 	if base == "" || head == "" || base == head {
 		return nil
 	}
-	return ProtectedGateFiles(strings.Split(gitOut(repo, "diff", "--no-renames", "--name-only", "-z", base+".."+head), "\x00"))
+	return ProtectedGateFiles(strings.Split(gitOut(repo, "diff", "--no-renames", "--name-only", "-z", base+".."+head), "\x00"), projectSources)
 }
 
 // queueSnapshot maps task id → state across the hosts for UI and audit bookkeeping.

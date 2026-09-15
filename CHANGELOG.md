@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Projects can name exact wrapper scripts or source files that implement their test gate under
+  `gate_sources` in `.agent/project.yaml`. Loops freeze the list before work starts and give those
+  files the same mandatory protected review as built-in Makefiles, CI, hooks, and Coop config.
+
 - Delegate calls now add provider-reported token and cost usage to the existing loop peer ledger
   when their successful native response includes it. Failed or unparseable attempts remain unknown;
   delegate replies and completion reports keep their existing contract.

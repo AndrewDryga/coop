@@ -59,15 +59,16 @@ func TestReviewBlockAndHealth(t *testing.T) {
 			{id: "task-json", commits: []commitInfo{{"a1", "add --json"}}, files: []string{"internal/cli/output.go"}},
 			{id: "task-egress", commits: []commitInfo{{"b2", "fix egress"}}, files: []string{"internal/box/run.go", "Makefile"}},
 		},
-		subsystems: []string{"internal/box", "internal/cli"},
-		stat:       " 3 files changed, 40 insertions(+)",
+		subsystems:  []string{"internal/box", "internal/cli"},
+		stat:        " 3 files changed, 40 insertions(+)",
+		gateSources: []string{"internal/cli/output.go"},
 	}
 	h := newLoopHealth()
 	h.noteReopen([]string{"task-json"}) // no iteration health for task-egress: derive its gate flag from committed files
 	block := cs.reviewBlock(h)
 	for _, want := range []string{
 		"task-json", "add --json", "internal/cli/output.go", "Affected areas: internal/box, internal/cli",
-		"Look harder at", "signoff reopened it 1×", "edited gate file(s) Makefile",
+		"Look harder at", "signoff reopened it 1×", "edited gate file(s) internal/cli/output.go", "edited gate file(s) Makefile",
 	} {
 		if !strings.Contains(block, want) {
 			t.Errorf("reviewBlock missing %q:\n%s", want, block)
@@ -214,14 +215,17 @@ func TestAuditFindingsNone(t *testing.T) {
 func TestTaskScopedGateFiles(t *testing.T) {
 	cs := loopChangeSet{tasks: []taskChanges{
 		{id: "earlier", files: []string{".github/workflows/check.yml", "internal/cli/a.go"}},
-		{id: "current", files: []string{".claude/settings.json", "Makefile", "internal/cli/b.go"}},
-	}}
+		{id: "current", files: []string{".claude/settings.json", "Makefile", "internal/cli/b.go", "tools/gate.go"}},
+	}, gateSources: []string{"tools/gate.go"}}
 	current := cs.forTasks([]string{"current"})
 	if ids := current.taskIDs(); !slices.Equal(ids, []string{"current"}) {
 		t.Fatalf("forTasks ids = %v, want [current]", ids)
 	}
-	if got, want := current.gateFiles(), []string{".claude/settings.json", "Makefile"}; !slices.Equal(got, want) {
+	if got, want := current.gateFiles(), []string{".claude/settings.json", "Makefile", "tools/gate.go"}; !slices.Equal(got, want) {
 		t.Errorf("gateFiles = %v, want %v", got, want)
+	}
+	if prompt, run := betweenAuditSetPrompt(false, "", current.gateFiles()); !run || prompt != defaultProtectedBetweenPrompt {
+		t.Errorf("declared gate source with routine review off = (%q, %v), want mandatory built-in audit", prompt, run)
 	}
 	if slices.Contains(current.subsystems, ".github") {
 		t.Errorf("task-scoped subsystems leaked an unrelated task: %v", current.subsystems)
@@ -271,7 +275,7 @@ func TestLoopChangesFromGit(t *testing.T) {
 	commit(" affected/notes.md", "spaced notes\n", "spaced area\n\nCoop-Task: task-b")
 	commit("README.md", "changed\n", "docs tweak, no trailer")
 
-	cs := loopChanges(repo, base, gitOut(repo, "rev-parse", "HEAD"))
+	cs := loopChanges(repo, base, gitOut(repo, "rev-parse", "HEAD"), nil)
 	if len(cs.tasks) != 2 || cs.tasks[0].id != "task-a" || cs.tasks[1].id != "task-b" {
 		t.Fatalf("tasks (want task-a then task-b) = %+v", cs.tasks)
 	}
@@ -287,7 +291,7 @@ func TestLoopChangesFromGit(t *testing.T) {
 	if !slices.Equal(cs.subsystems, []string{" affected", "(root)", "internal/box", "internal/cli", "révision"}) {
 		t.Errorf("subsystems = %v", cs.subsystems)
 	}
-	if head := gitOut(repo, "rev-parse", "HEAD"); !loopChanges(repo, head, head).empty() {
+	if head := gitOut(repo, "rev-parse", "HEAD"); !loopChanges(repo, head, head, nil).empty() {
 		t.Error("an empty range must yield an empty change set")
 	}
 }
@@ -296,18 +300,18 @@ func TestFinalVerificationChangesRejectsUnreadableOrAmbiguousContext(t *testing.
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-	if _, err := finalVerificationChanges(t.TempDir(), "base"); err == nil || !strings.Contains(err.Error(), "read final verification HEAD") {
+	if _, err := finalVerificationChanges(t.TempDir(), "base", nil); err == nil || !strings.Contains(err.Error(), "read final verification HEAD") {
 		t.Fatalf("unreadable final verification context = %v", err)
 	}
 
 	repo, run := gitrepo.New(t)
 	run("commit", "-q", "--allow-empty", "-m", "base")
 	base := gitOut(repo, "rev-parse", "HEAD")
-	if cs, err := finalVerificationChanges(repo, base); err != nil || !cs.empty() {
+	if cs, err := finalVerificationChanges(repo, base, nil); err != nil || !cs.empty() {
 		t.Fatalf("genuine empty range = (%+v, %v)", cs, err)
 	}
 	run("commit", "-q", "--allow-empty", "-m", "ambiguous\n\nCoop-Task: task-a\nCoop-Task: task-b")
-	if _, err := finalVerificationChanges(repo, base); err == nil || !strings.Contains(err.Error(), "one readable task binding") {
+	if _, err := finalVerificationChanges(repo, base, nil); err == nil || !strings.Contains(err.Error(), "one readable task binding") {
 		t.Fatalf("ambiguous final verification context = %v", err)
 	}
 }
@@ -333,7 +337,7 @@ func TestCommitFilesPreservesUnicodeProtectedPath(t *testing.T) {
 	if !slices.Equal(files, []string{guard}) {
 		t.Fatalf("commitFiles = %q, want exact Git path %q", files, guard)
 	}
-	if got := tasks.ProtectedGateFiles(files); !slices.Equal(got, []string{guard}) {
+	if got := tasks.ProtectedGateFiles(files, nil); !slices.Equal(got, []string{guard}) {
 		t.Fatalf("protected attribution = %q, want %q", got, guard)
 	}
 }

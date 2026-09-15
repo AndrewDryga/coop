@@ -20,5 +20,7 @@
 #   pids: 2048          # the fork-bomb cap (default 4096; 0/unlimited turns it off)
 
 # gate: the revalidation 'coop fork merge' runs IN THE BOX before landing a fork (rolled back on
-# failure). Same shape as COOP_GATE; an explicit COOP_GATE wins.
+# failure). Same shape as COOP_GATE; an explicit COOP_GATE wins. Add exact project-specific files
+# that implement the command to gate_sources; Makefiles, CI, hooks and Coop config are built in.
 gate: make check
+# gate_sources: [run, tools/internal/devtool/gates.go]
