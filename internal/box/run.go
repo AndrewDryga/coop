@@ -399,6 +399,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if cfg.Egress == "filtered" && spec.CapturedEgress == nil {
 		return -1, errors.New("restricted networking requires host policy capture before box launch")
 	}
+	noticeUnappliedLimits(cfg, rt, spec)
 	workdir := resolveWorkdir(spec, cfg)
 	if spec.Homes {
 		if err := ensureAgentHomes(cfg, spec); err != nil {
@@ -1055,7 +1056,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		serviceNetwork = ComposeProjectFor(spec.Repo, serviceOwner) + "_default"
 	}
 	servicesInspected := false
-	if composeFile != "" && autoUpServices(cfg, spec, rt.Name) {
+	if composeFile != "" && autoUpServices(cfg, spec, rt) {
 		projectRepo := spec.ActivityRepo
 		if projectRepo == "" {
 			projectRepo = spec.Repo
@@ -2186,6 +2187,30 @@ func applyProjectPolicy(cfg *config.Config, p *project.Project, spec *RunSpec) *
 func boxPolicyEmpty(b project.Box) bool {
 	return b.Dockerfile == "" && b.Compose == "" && len(b.Env) == 0 && b.Egress == "" &&
 		b.AutoUp == nil && b.Network == nil && b.Memory == "" && b.CPUs == "" && b.Pids == ""
+}
+
+// noticeUnappliedLimits says once, before any host artifact exists, that this runtime will not
+// apply a cap the person asked for. Refusing the launch would take away Apple `container` runs that
+// work today, and staying silent hands back a box with no memory or CPU ceiling while the config
+// says there is one — so the third answer is to name it. Only explicit caps qualify: COOP_MEMORY
+// and COOP_CPUS are empty until somebody sets them (or a project policy does), unlike the pids cap,
+// which always carries a default.
+func noticeUnappliedLimits(cfg *config.Config, rt runtime.Runtime, spec RunSpec) {
+	if rt.SupportsRunLimits() || spec.Quiet || spec.Batch {
+		return
+	}
+	var asked []string
+	if cfg.Memory != "" {
+		asked = append(asked, "memory")
+	}
+	if cfg.CPUs != "" {
+		asked = append(asked, "CPU")
+	}
+	if len(asked) == 0 {
+		return
+	}
+	ui.Warning(fmt.Sprintf("%s does not apply the %s limit", filepath.Base(rt.Name), strings.Join(asked, " or ")),
+		"Those caps are Docker run flags; this runtime takes different ones.", "Run this box on docker to have them enforced.")
 }
 
 // boxLimits returns the resource + privilege caps that keep a runaway agent from

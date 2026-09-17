@@ -527,6 +527,6 @@ func DescribeLiveBoxes(live []forkspace.ExecutionObservation) string {
 	return strings.Join(parts, ", ")
 }
 
-func autoUpServices(cfg *config.Config, spec RunSpec, rtName string) bool {
-	return cfg.AutoUp && spec.Network && cfg.Egress == "open" && rtName != "container" && !spec.ReuseServices && !spec.Review
+func autoUpServices(cfg *config.Config, spec RunSpec, rt runtime.Runtime) bool {
+	return cfg.AutoUp && spec.Network && cfg.Egress == "open" && rt.SupportsCompose() && !spec.ReuseServices && !spec.Review
 }

@@ -89,6 +89,9 @@ func AdmitSessionNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, o
 	if mode != egress.Filtered {
 		return mode, nil, nil
 	}
+	if err := checkFilteredRuntime(rt); err != nil {
+		return "", nil, err
+	}
 	if err := plan.prepareFiltered(cfg, spec, options); err != nil {
 		return "", nil, err
 	}

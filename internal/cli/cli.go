@@ -8,6 +8,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os/exec"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -75,6 +76,15 @@ func (a *app) ensureRuntime() error {
 	rt, err := runtime.Detect(a.cfg.RuntimeName)
 	if err != nil {
 		return err
+	}
+	// Automatic selection prefers Docker, so landing anywhere else while Docker is installed means
+	// its daemon did not answer. Say so once: otherwise a person whose boxes and images live on
+	// Docker silently gets a different runtime — and then an "image isn't built" they cannot
+	// explain — just because they opened a terminal before Docker Desktop finished starting.
+	if a.cfg.RuntimeName == "" && rt.Name != "docker" {
+		if _, installed := exec.LookPath("docker"); installed == nil {
+			ui.Note("Docker is installed but its daemon did not answer, so this is running on %s. Start Docker to use it, or set COOP_RUNTIME to choose.", runtimeTitle(rt.Name))
+		}
 	}
 	a.rt, a.rtSet = rt, true
 	return nil

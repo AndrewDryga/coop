@@ -32,7 +32,7 @@ func (a *app) cmdUp(args []string) (int, error) {
 			fmt.Sprintf("%s is unavailable.", runtimeTitle(a.rt.Name)),
 			fmt.Sprintf("Start %s, then run coop up again.", runtimeTitle(a.rt.Name)))
 	}
-	if a.rt.Name == "container" {
+	if !a.rt.SupportsCompose() {
 		return 1, reported("Could not start services",
 			fmt.Sprintf("%s does not support Compose.", runtimeTitle(a.rt.Name)),
 			"Use Docker for this project's services.")
@@ -222,7 +222,7 @@ func (a *app) cmdDown(args []string) (int, error) {
 			fmt.Sprintf("%s is unavailable.", runtimeTitle(a.rt.Name)),
 			fmt.Sprintf("Start %s, then run coop down again.", runtimeTitle(a.rt.Name)))
 	}
-	if a.rt.Name == "container" {
+	if !a.rt.SupportsCompose() {
 		return 1, reported("Could not stop services",
 			fmt.Sprintf("%s does not support Compose.", runtimeTitle(a.rt.Name)),
 			"Use Docker for this project's services.")

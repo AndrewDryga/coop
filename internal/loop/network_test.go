@@ -246,9 +246,9 @@ func TestLoopRefusesAnUnqualifiedNetworkBeforeAnyBox(t *testing.T) {
 	if code != 1 || err == nil {
 		t.Fatalf("unadmitted filtered loop = (%d, %v), want a refusal", code, err)
 	}
-	// A filtered launch sets the host up itself; this fixture's runtime is not
-	// Docker, which is where that starts, so the refusal names Docker.
-	if !strings.Contains(err.Error(), "requires a local Docker runtime") {
+	// A filtered launch needs the qualified gateway; this fixture's runtime cannot
+	// serve it, so admission refuses at the runtime preflight and names Docker.
+	if !strings.Contains(err.Error(), "restricted networking needs docker") {
 		t.Errorf("refusal %q does not name the real reason", err)
 	}
 }

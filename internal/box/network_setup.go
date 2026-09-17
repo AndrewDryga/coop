@@ -93,6 +93,11 @@ func SetupNetwork(ctx context.Context, cfg *config.Config, rt runtime.Runtime, o
 	if ctx == nil || cfg == nil {
 		return networkstate.Qualification{}, errors.New("coop net setup needs host configuration and a cancelable context")
 	}
+	// Ask the runtime first. Setting this host up creates an owner key and an authority root, and
+	// a runtime that can never serve a filtered box would leave both behind for nothing.
+	if err := checkFilteredRuntime(rt); err != nil {
+		return networkstate.Qualification{}, err
+	}
 	if out == nil {
 		out = io.Discard
 	}

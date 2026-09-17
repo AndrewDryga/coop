@@ -42,7 +42,7 @@ func TestAutoUpServices(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			cfg := &config.Config{AutoUp: c.autoUp, Egress: c.egress}
 			spec := RunSpec{Network: c.network, ReuseServices: c.reuse, Review: c.review}
-			if got := autoUpServices(cfg, spec, c.rtName); got != c.want {
+			if got := autoUpServices(cfg, spec, runtime.Runtime{Name: c.rtName}); got != c.want {
 				t.Errorf("autoUpServices = %v, want %v", got, c.want)
 			}
 		})

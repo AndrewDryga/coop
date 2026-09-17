@@ -91,6 +91,78 @@ func TestDetectRefusesRetiredRuntime(t *testing.T) {
 	}
 }
 
+// Automatic selection is the one place Coop chooses FOR the person, so it has to choose the
+// runtime that can serve the launch. Docker wins when it can; Apple's container is picked up only
+// when Docker cannot serve, and a lone stopped Docker still wins so the advice is "start it".
+func TestDetectPrefersUsableDocker(t *testing.T) {
+	write := func(dir, name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const usable = "#!/bin/sh\nexit 0\n"
+	const deadDaemon = "#!/bin/sh\n[ \"$1\" = info ] && exit 1\nexit 0\n"
+
+	for _, tc := range []struct {
+		name          string
+		docker, apple string // "" means not installed
+		want          string
+	}{
+		{"docker only", usable, "", "docker"},
+		{"apple only", "", usable, "container"},
+		{"both, docker usable", usable, usable, "docker"},
+		{"both, docker daemon down", deadDaemon, usable, "container"},
+		// Alone and stopped, Docker is still the answer: EnsureDaemon then says to start it, which
+		// is the truth, instead of "no container runtime found", which is not.
+		{"docker only, daemon down", deadDaemon, "", "docker"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.docker != "" {
+				write(dir, "docker", tc.docker)
+			}
+			if tc.apple != "" {
+				write(dir, "container", tc.apple)
+			}
+			t.Setenv("PATH", dir)
+			got, err := Detect("")
+			if err != nil || got.Name != tc.want {
+				t.Fatalf("Detect(\"\") = (%+v, %v), want %q", got, err, tc.want)
+			}
+		})
+	}
+
+	t.Setenv("PATH", t.TempDir())
+	if got, err := Detect(""); err == nil || !strings.Contains(err.Error(), "no container runtime found") {
+		t.Fatalf("Detect with an empty PATH = (%+v, %v), want no runtime found", got, err)
+	}
+}
+
+// The launch features each runtime can actually serve. Apple's container keeps compose refused and
+// filtered networking refused; an unknown docker-compatible wrapper keeps compose, because compose
+// is a Docker CLI plugin and the wrapper may carry it — but never the gateway, which is qualified.
+func TestLaunchFeatureCapabilities(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		filtered, compose bool
+	}{
+		{"docker", true, true},
+		{"/usr/local/bin/docker", true, true},
+		{"container", false, false},
+		{"runtime-wrapper", false, true},
+		{"", false, true},
+	} {
+		rt := Runtime{Name: tc.name}
+		if rt.SupportsFilteredNetwork() != tc.filtered {
+			t.Errorf("%q SupportsFilteredNetwork = %t, want %t", tc.name, rt.SupportsFilteredNetwork(), tc.filtered)
+		}
+		if rt.SupportsCompose() != tc.compose {
+			t.Errorf("%q SupportsCompose = %t, want %t", tc.name, rt.SupportsCompose(), tc.compose)
+		}
+	}
+}
+
 func TestSupportsInit(t *testing.T) {
 	for _, name := range []string{"docker", "/usr/local/bin/docker", "/opt/homebrew/bin/docker"} {
 		if !(Runtime{Name: name}).SupportsInit() {

@@ -29,6 +29,11 @@ func admissionFixture(t *testing.T) (*config.Config, string, string) {
 	return &config.Config{ConfigDir: t.TempDir(), Egress: "open"}, repo, root
 }
 
+// filteredReachedRuntimePreflight is how these tests prove a filtered resolution SUCCEEDED without
+// a Docker host: the fixture runtime cannot serve the gateway, so admission stops at the runtime
+// preflight — after the mode was resolved, before any authority state exists.
+const filteredReachedRuntimePreflight = "restricted networking needs docker"
+
 func admitFixture(t *testing.T, cfg *config.Config, repo string, options NetworkAdmission) (*CapturedEgress, error) {
 	t.Helper()
 	capture, err := AdmitNetwork(cfg, runtime.Runtime{Name: "must-not-execute"}, RunSpec{Repo: repo}, options)
@@ -128,9 +133,9 @@ func TestAdmitNetworkResolvesThePrecedenceLadder(t *testing.T) {
 				return
 			case "filtered":
 				// Filtered resolution is proved by the refusal that follows it: this
-				// fixture's runtime is not Docker, which is where qualification starts.
-				if err == nil || !strings.Contains(err.Error(), "requires a local Docker runtime") {
-					t.Fatal("filtered resolution did not reach qualification matching", err)
+				// fixture's runtime is not Docker, so the runtime preflight stops it.
+				if err == nil || !strings.Contains(err.Error(), filteredReachedRuntimePreflight) {
+					t.Fatal("filtered resolution did not reach the runtime preflight", err)
 				}
 			default:
 				if err != nil {
@@ -196,10 +201,10 @@ func TestAdmitNetworkRefusesAnImageOverrideButNotAProjectDockerfile(t *testing.T
 			writeCopyFixture(t, filepath.Join(repo, ".agent", "Dockerfile"), "ARG COOP_BASE_IMAGE\nFROM ${COOP_BASE_IMAGE}\n")
 			filtered := egress.Filtered
 			_, err := admitFixture(t, cfg, repo, NetworkAdmission{InvocationMode: &filtered})
-			// This fixture's runtime is not Docker, so admission gets as far as
-			// qualification and stops there — the point is that the Dockerfile is
-			// not the reason.
-			if err == nil || !strings.Contains(err.Error(), "requires a local Docker runtime") {
+			// This fixture's runtime is not Docker, so admission stops at the runtime
+			// preflight — before the store, before qualification. The point is that the
+			// Dockerfile is not the reason.
+			if err == nil || !strings.Contains(err.Error(), filteredReachedRuntimePreflight) {
 				t.Fatal("a project Dockerfile was refused at admission", err)
 			}
 		})
@@ -207,12 +212,40 @@ func TestAdmitNetworkRefusesAnImageOverrideButNotAProjectDockerfile(t *testing.T
 	cfg, repo, root := admissionFixture(t)
 	cfg.ImageOverride = "someone-elses:latest"
 	filtered := egress.Filtered
-	capture, err := admitFixture(t, cfg, repo, NetworkAdmission{InvocationMode: &filtered})
+	// Named docker so the image refusal is the one under test: the runtime preflight runs first
+	// now, and nothing here reaches a runtime command.
+	capture, err := AdmitNetwork(cfg, runtime.Runtime{Name: "docker"}, RunSpec{Repo: repo},
+		NetworkAdmission{InvocationMode: &filtered})
 	if capture != nil || err == nil || !strings.Contains(err.Error(), "unset COOP_IMAGE") {
 		t.Fatal("an unqualified image override reached a filtered launch", err)
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Fatal("refused support gap created authority state", err)
+	}
+}
+
+// A runtime that cannot serve a filtered box is refused by name, with the feature and the runtime
+// that does work — and the refusal lands before the authority store exists, so asking for something
+// this host cannot do never leaves state behind for the next launch to inherit.
+func TestAdmitNetworkRefusesARuntimeThatCannotServeFiltered(t *testing.T) {
+	cfg, repo, root := admissionFixture(t)
+	filtered := egress.Filtered
+	capture, err := AdmitNetwork(cfg, runtime.Runtime{Name: "container"},
+		RunSpec{Repo: repo}, NetworkAdmission{InvocationMode: &filtered})
+	if capture != nil {
+		_ = capture.Close()
+		t.Fatal("a runtime without the gateway produced a capture")
+	}
+	if err == nil {
+		t.Fatal("a runtime without the gateway was admitted")
+	}
+	for _, want := range []string{"needs docker", "container", "--egress open or none", "COOP_RUNTIME=docker"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q does not name %q", err, want)
+		}
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatal("a refused runtime created authority state", err)
 	}
 }
 
@@ -233,7 +266,7 @@ func TestAdmitNetworkClassifiesOperatorInputBeforeCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := admitFixture(t, cfg, repo, NetworkAdmission{RulesFile: outside}); err == nil ||
-		!strings.Contains(err.Error(), "requires a local Docker runtime") {
+		!strings.Contains(err.Error(), filteredReachedRuntimePreflight) {
 		t.Fatal("an operator rules file did not grant its own authority", err)
 	}
 }

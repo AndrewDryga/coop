@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Automatic runtime detection now prefers Docker, which is the runtime every Coop feature is
+  qualified on; Apple `container` is selected only when Docker is absent or its daemon does not
+  answer. An explicit `COOP_RUNTIME` still wins, and a lone stopped Docker is still selected so
+  the advice remains "start it". A launch that asks for restricted networking on a runtime that
+  cannot serve the qualified gateway is now refused up front, naming the feature and Docker,
+  before any network authority state is created — instead of failing later inside qualification.
+  An interactive launch on a runtime that does not apply an explicitly requested memory or CPU
+  cap now says so once, rather than silently handing back an uncapped box.
+
 - **BREAKING: Podman is no longer a supported container runtime.** Auto-detection considers Docker and
   Apple `container` only, and `COOP_RUNTIME=podman` is refused by name with the reason and the
   working alternative — even when `podman` is on `PATH`, so it can never be driven with Docker's

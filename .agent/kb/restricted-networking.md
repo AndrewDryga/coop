@@ -3,7 +3,7 @@ name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
 sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, docs/networking.md]
-updated: 2026-09-15
+updated: 2026-09-18
 ---
 
 `coop <agent> --egress filtered` runs the box behind a per-run gateway. Five boring layers stand
@@ -15,9 +15,12 @@ between that flag and `docker run`:
 2. **Authority** — `internal/networkstate`: an owner-private `Store` under
    `~/.local/state/coop/network` (`box/network_admission.go:19`). `Open` refuses when that root is
    reachable from any agent mount (`networkstate/authority.go:39`), so it is never a box mount.
-3. **Admission** — `box.AdmitNetwork` (`box/network_admission.go:55`) resolves the posture and, for
-   filtered mode only, captures the frozen policy the gateway will enforce.
-4. **Launch** — `box.Run` branches once, on `spec.CapturedEgress` (`box/run.go:404`): non-nil takes
+3. **Admission** — `box.AdmitNetwork` (`box/network_admission.go:58`) resolves the posture and, for
+   filtered mode only, captures the frozen policy the gateway will enforce. Once the mode resolves
+   to filtered, `checkFilteredRuntime` is the first gate: a runtime that cannot serve the gateway is
+   refused before `networkstate.Open`, so asking for something this host cannot do leaves no
+   authority state behind. `SetupNetwork` and `AdmitSessionNetwork` ask the same question first.
+4. **Launch** — `box.Run` branches once, on `spec.CapturedEgress` (`box/run.go:399`): non-nil takes
    the `filtered*.go` family, nil takes the open path byte for byte.
 5. **Per-host qualification** — `SetupNetwork` (`box/network_setup.go`), run by the first filtered
    launch that finds no current proof (`box/network_admission.go`, `ensureNetworkQualification`)
@@ -168,6 +171,9 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-18 — the runtime question moved to the front of every filtered entry point
+  (`checkFilteredRuntime`), so a non-Docker runtime is refused by name before the authority root or
+  an owner key exists, instead of surfacing from `bindDocker` mid-qualification
 - 2026-09-15 — extended the API-key boundary to the pinned Gemini and Codex clients, made every
   recognized but unqualified key and launch shape refuse before runtime, and retained Grok OAuth
   while refusing its unredirectable API key

@@ -48,8 +48,20 @@ var retiredRuntimes = map[string]string{
 	"podman-remote": "it cannot deliver Coop's Docker feature set (restricted filesystems, resource limits, Compose services)",
 }
 
-// Detect picks the runtime: an explicit override wins; otherwise container or docker, whichever
-// is found on PATH first.
+// daemonProbeTimeout bounds every "is this runtime actually usable?" question. A wedged daemon is
+// a broken machine, not a reason for coop to hang: the probe is how detection and every launch
+// preflight tell "installed" apart from "working", so it must always come back.
+const daemonProbeTimeout = 10 * time.Second
+
+// Detect picks the runtime: an explicit override wins; otherwise Docker when it can serve the run,
+// and Apple's container only when Docker cannot.
+//
+// Docker first, because every Coop feature is qualified on it — restricted filesystems, filtered
+// networking, Compose services, the resource and privilege caps. Selecting the narrower runtime
+// just because it sorted earlier handed those launches a refusal on a machine that had Docker
+// installed all along. The daemon is probed ONLY to choose between two installed runtimes: with
+// Docker alone, a stopped daemon must still select Docker so the person is told to start it
+// instead of being told they have no runtime.
 func Detect(override string) (Runtime, error) {
 	if override != "" {
 		// A retired runtime is refused by name, before PATH: it is installed on plenty of
@@ -71,10 +83,13 @@ func Detect(override string) (Runtime, error) {
 		}
 		return Runtime{Name: override}, nil
 	}
-	for _, name := range []string{"container", "docker"} {
-		if _, err := exec.LookPath(name); err == nil {
-			return Runtime{Name: name}, nil
-		}
+	_, dockerErr := exec.LookPath("docker")
+	_, appleErr := exec.LookPath("container")
+	switch {
+	case dockerErr == nil && (appleErr != nil || (Runtime{Name: "docker"}).EnsureDaemon() == nil):
+		return Runtime{Name: "docker"}, nil
+	case appleErr == nil:
+		return Runtime{Name: "container"}, nil
 	}
 	return Runtime{}, errors.New("no container runtime found — install Docker or Apple 'container' (macOS 26)")
 }
@@ -110,10 +125,26 @@ func (r Runtime) EnsureDaemon() error {
 	if r.kind() != runtimeDocker {
 		return nil
 	}
-	if err := exec.Command(r.Name, "info").Run(); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), daemonProbeTimeout)
+	defer cancel()
+	if err := contextCommand(ctx, r.Name, "info").Run(); err != nil {
 		return fmt.Errorf("%w — start it (Docker Desktop, or `systemctl start docker` on Linux) and retry", ErrDaemonUnavailable)
 	}
 	return nil
+}
+
+// SupportsFilteredNetwork reports whether `--egress filtered` can run on this runtime. The gateway,
+// its qualification and the locked client images are all built against Docker's API (see
+// InspectDocker) — no other runtime has been proven to serve them.
+func (r Runtime) SupportsFilteredNetwork() bool {
+	return r.kind() == runtimeDocker
+}
+
+// SupportsCompose reports whether this runtime can run `compose`. Stated as a denial rather than a
+// Docker-only allow: Compose is a Docker CLI plugin, so a docker-compatible wrapper selected
+// through COOP_RUNTIME carries it too, while Apple's `container` has no compose at all.
+func (r Runtime) SupportsCompose() bool {
+	return r.kind() != runtimeAppleContainer
 }
 
 // SupportsInit reports whether the runtime's run command has Docker's --init contract: install a

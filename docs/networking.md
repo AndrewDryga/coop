@@ -177,7 +177,7 @@ on your Docker. The two proofs bind what the box RUNS, not what a build may do �
 | a project image not built on the client image | `this project's .agent/Dockerfile did not build on coop's client image — start it with ARG COOP_BASE_IMAGE and FROM ${COOP_BASE_IMAGE} …` |
 | a project image that changes a pinned client | `this project's .agent/Dockerfile changes claude's cli client at /usr/local/bin/claude — a filtered box runs the clients this host's setup qualified …` |
 | `COOP_IMAGE` | `a filtered box runs coop's own image — unset COOP_IMAGE to start one` |
-| a runtime other than Docker | `restricted networking requires a local Docker runtime` |
+| a runtime other than Docker | `restricted networking needs docker; <runtime> cannot serve the qualified gateway — run this with --egress open or none, or set COOP_RUNTIME=docker` |
 | `box.network: true` with no `service:` grant | `a filtered box does not join the shared services network — ask for the one sidecar you need with a to: {service: <name>} rule …` |
 | `-v /var/run:/x` (or any mount of `/run`, `/proc`, `/sys`, `/dev`, `/`, or the Docker socket's directory) | `a filtered box cannot mount …: it is or holds …, which reaches Docker or the kernel` |
 | a project file that asks for access nobody approved (a rule, a change to one, or `open`) | `<Agent> cannot start because this project asks for network access that has not been approved` · `Review it: coop approve` |

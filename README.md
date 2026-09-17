@@ -66,7 +66,8 @@ coop build && coop doctor
 **Requirements:** the installer needs `curl`, `tar`, and either `sha256sum` or
 `shasum`. Running Coop needs a container runtime — Docker or Apple
 [`container`](https://github.com/apple/container) (macOS 26+) — which Coop
-auto-detects. The installed `coop` binary itself is static.
+auto-detects, preferring Docker because every Coop feature is qualified on it.
+The installed `coop` binary itself is static.
 
 **Staying current:** [`coop update`](#keeping-the-box-current) self-updates the binary
 *and* rebuilds the box image fresh, pulling the latest agent CLIs and ACP adapters
@@ -1772,7 +1773,7 @@ controls and cannot be set inside `coop.conf`.
 
 | Var | Default | |
 |---|---|---|
-| `COOP_RUNTIME` | auto | `container` / `docker` |
+| `COOP_RUNTIME` | auto (Docker preferred) | `docker` / `container` |
 | `COOP_IMAGE` | (auto) | force a specific image (overrides `.agent/Dockerfile` detection) |
 | `COOP_BASE_IMAGE` | `coop-box` | the shared base image tag |
 | `COOP_AGENT_PACKAGES` | (latest) | pin the global agent + ACP npm specs for a reproducible `coop build` |

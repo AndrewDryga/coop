@@ -152,8 +152,9 @@ func TestAdmitSessionNetworkLetsTheRememberedPostureDecideWithoutAPolicyMode(t *
 	if capture != nil {
 		_ = capture.Close()
 	}
-	// Resolution reached filtered; this fixture's runtime is not Docker, where qualification starts.
-	if err == nil || !strings.Contains(err.Error(), "requires a local Docker runtime") {
+	// Resolution reached filtered; this fixture's runtime is not Docker, so the runtime preflight
+	// stops it before any authority state exists.
+	if err == nil || !strings.Contains(err.Error(), filteredReachedRuntimePreflight) {
 		t.Fatalf("silent policy under a remembered restriction = %v, want filtered resolution", err)
 	}
 }
@@ -196,11 +197,11 @@ func TestAdmitSessionNetworkHonorsTheProjectRequestedMode(t *testing.T) {
 	writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), "box:\n  egress: filtered\n")
 	workspace := sessionWorkspaceFixture(t, repo, "remote-1")
 	spec := RunSpec{Repo: workspace, PolicyRepo: repo, ForkName: "remote-1"}
-	// Resolution reached filtered; this fixture's runtime is not Docker, which is where the
-	// qualification a filtered launch needs begins, so it stops there.
+	// Resolution reached filtered; this fixture's runtime is not Docker, so the runtime preflight
+	// stops it.
 	if _, capture, err := AdmitSessionNetwork(cfg, runtime.Runtime{Name: "must-not-execute"},
 		spec, SessionNetworkAdmission{}); capture != nil || err == nil ||
-		!strings.Contains(err.Error(), "requires a local Docker runtime") {
+		!strings.Contains(err.Error(), filteredReachedRuntimePreflight) {
 		t.Fatalf("project-requested filtered = %v", err)
 	}
 	// An explicit policy posture is operator authority and outranks the repository's request.

@@ -105,6 +105,9 @@ func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	if mode != egress.Filtered {
 		return nil, nil
 	}
+	if err := checkFilteredRuntime(rt); err != nil {
+		return nil, err
+	}
 	if err := checkFilteredSupport(cfg); err != nil {
 		return nil, err
 	}
@@ -202,6 +205,19 @@ func networkAdmissionInput(cfg *config.Config, p *project.Project, options Netwo
 		return networkstate.Admission{}, err
 	}
 	return rules.apply(input)
+}
+
+// checkFilteredRuntime refuses a launch whose runtime can never serve a filtered box. Every
+// filtered entry point asks it before it opens the approval store or starts the host
+// qualification, so the refusal names the feature and Docker and leaves no authority state behind
+// — instead of surfacing much later as a gateway bind failure. It is the FIRST filtered gate:
+// unsetting COOP_IMAGE gets a person on another runtime nowhere. Only launches ask it; resolving
+// what a policy means does not.
+func checkFilteredRuntime(rt runtime.Runtime) error {
+	if rt.SupportsFilteredNetwork() {
+		return nil
+	}
+	return fmt.Errorf("restricted networking needs docker; %s cannot serve the qualified gateway — run this with --egress open or none, or set COOP_RUNTIME=docker", filepath.Base(rt.Name))
 }
 
 // checkFilteredSupport refuses a combination this release cannot enforce, before

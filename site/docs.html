@@ -194,7 +194,7 @@
                             rel="noopener"
                             >container</a
                         >
-                        (macOS 26+) — coop auto-detects whichever you have. The
+                        (macOS 26+) — coop auto-detects, preferring Docker. The
                         <code>coop</code> binary itself is fully static with no
                         other dependencies.
                     </p>
@@ -1213,8 +1213,9 @@ roles:
                         <tr>
                             <td><code>COOP_RUNTIME</code></td>
                             <td>
-                                force <code>container</code> /
-                                <code>docker</code> instead of auto-detect
+                                force <code>docker</code> /
+                                <code>container</code> instead of auto-detect
+                                (which prefers Docker)
                             </td>
                         </tr>
                         <tr>

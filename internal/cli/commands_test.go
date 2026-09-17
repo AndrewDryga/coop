@@ -1619,10 +1619,10 @@ func TestACPParsesTheNetworkFlagsAndAdmitsInTheSupervisor(t *testing.T) {
 	a := &app{cfg: cfg, rt: recordingRuntime(t, filepath.Join(t.TempDir(), "runtime-args")), rtSet: true,
 		acpSupervise: func([]string, *acpctl.Control) (int, error) { supervised = true; return 0, nil }}
 	code, err := a.cmdACP([]string{"claude", "--egress", "filtered"})
-	// This fixture's runtime is not Docker, so admission refuses where a filtered
-	// launch would qualify the host — which is the point: the flag reached
-	// admission instead of being rejected as an argument, and no child was spawned.
-	if err == nil || !strings.Contains(err.Error(), "requires a local Docker runtime") {
+	// This fixture's runtime is not Docker, so admission refuses at the runtime
+	// preflight — which is the point: the flag reached admission instead of being
+	// rejected as an argument, and no child was spawned.
+	if err == nil || !strings.Contains(err.Error(), "restricted networking needs docker") {
 		t.Fatalf("acp --egress filtered = (%d, %v), want a network admission refusal", code, err)
 	}
 	if supervised {

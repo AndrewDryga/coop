@@ -58,6 +58,12 @@ you. The same applies to a session Coop quarantines later because its workspace 
 - **`coop tasks clear` → `coop tasks rm --all-done`.** The alias 9.0.0 still accepted is gone.
 - **`coop tasks split` is gone.** Parallel forks share the canonical queue; see
   [Canonical tasks across isolated forks](#canonical-tasks-across-isolated-forks) above.
+- **Automatic runtime detection prefers Docker.** On a machine with both Docker and Apple
+  `container` installed, Coop now selects Docker — previously `container` won on name order. Your
+  box image must exist on the runtime you end up on, so run `coop build` once after upgrading if
+  your images lived on the other one. To keep Apple `container`, set `COOP_RUNTIME=container`.
+  Coop falls back to `container` only when Docker's daemon does not answer, and says so when it
+  does.
 - **Podman is no longer a container runtime.** Install Docker (or Apple `container` on macOS 26),
   then `coop build && coop doctor`. Auto-detection no longer looks for Podman, and an explicit
   `COOP_RUNTIME=podman` now stops with the reason instead of running. Coop no longer manages
