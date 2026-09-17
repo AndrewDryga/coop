@@ -4,7 +4,7 @@ description: audit realistic agent access and practical impact; avoid speculativ
 scope: agent-workflow
 sources: [AGENTS.md]
 check: none
-updated: 2026-09-14
+updated: 2026-09-15
 ---
 
 # Require a realistic actor, reachable path, and meaningful impact for audit work
@@ -37,7 +37,21 @@ Broader proposals still need approval; pruning a task is not permission to weake
 Compatibility is practical impact too: before recommending an internal-only service topology,
 check common runtime dependencies such as SaaS APIs, OIDC keys, object storage, email and webhooks.
 
+When the human scopes a batch to fixing existing behavior, treat that as a maintenance boundary:
+repair current integrations and measured performance without adding new runtimes, products or
+configuration frameworks. Reuse existing queue tasks instead of duplicating them. Record explicit
+exclusions in affected tasks and park excluded runnable work through the task CLI; preserve
+unrelated prior authorizations. Task authoring is not implementation, and a speedup claim needs
+matched before/after evidence without skipped features, safety checks or incomplete cleanup.
+
 ## Changelog
+
+- 2026-09-15 — applied the maintenance-only correction while sweeping the current 15 todo tasks
+  and two backlog items. Reused nine provider tasks and the existing Podman-removal task, parked
+  the Apple-controls task, removed Apple live-qualification scope from Docker preflight, and
+  added six source-mapped lifecycle performance tasks. No microVM task was present or added;
+  unrelated eval, quota and credential work was retained. Scope and performance-evidence
+  judgments remain review-only, so check stays none.
 
 - 2026-09-14 — re-read AGENTS after the user corrected broad in-progress task claiming and
   speculative edge-case machinery. Added the one-active-task/common-real-path rule; the current
