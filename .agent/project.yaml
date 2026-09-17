@@ -15,7 +15,7 @@
 #   egress: offline     # outbound network: "filtered" (provider + approved sites), "offline", or "open"
 #   auto_up: false      # auto-start .agent/compose.yml sibling services (default true)
 #   network: false      # join the sibling-services network (default true)
-#   memory: 4g          # docker/podman resource caps (ignored on Apple container); default unset
+#   memory: 4g          # docker resource caps (ignored on Apple container); default unset
 #   cpus: "4"
 #   pids: 2048          # the fork-bomb cap (default 4096; 0/unlimited turns it off)
 

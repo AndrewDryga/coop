@@ -1,5 +1,5 @@
-// Package runtime locates and drives the container runtime — Apple's container,
-// Docker, or Podman — behind a small surface the rest of the tool talks to.
+// Package runtime locates and drives the container runtime — Docker or Apple's
+// container — behind a small surface the rest of the tool talks to.
 package runtime
 
 import (
@@ -35,34 +35,48 @@ type runtimeKind int
 const (
 	runtimeUnknown runtimeKind = iota
 	runtimeDocker
-	runtimePodman
 	runtimeAppleContainer
 )
 
-// Detect picks the runtime: an explicit override wins; otherwise the first of
-// container, docker, podman found on PATH.
+// retiredRuntimes are runtimes Coop used to drive and no longer does, keyed by lowercase base
+// name. They are named here so an explicit COOP_RUNTIME selection fails with the reason instead of
+// falling through to the unknown-executable path, where `podman --version` would succeed and Coop
+// would silently drive Podman with Docker's flags. Matched case-insensitively because a
+// case-insensitive filesystem resolves `Podman` on PATH just as happily as `podman`.
+var retiredRuntimes = map[string]string{
+	"podman":        "it cannot deliver Coop's Docker feature set (restricted filesystems, resource limits, Compose services)",
+	"podman-remote": "it cannot deliver Coop's Docker feature set (restricted filesystems, resource limits, Compose services)",
+}
+
+// Detect picks the runtime: an explicit override wins; otherwise container or docker, whichever
+// is found on PATH first.
 func Detect(override string) (Runtime, error) {
 	if override != "" {
+		// A retired runtime is refused by name, before PATH: it is installed on plenty of
+		// machines, and being on PATH is exactly how it used to be selected.
+		if reason, retired := retiredRuntimes[strings.ToLower(filepath.Base(override))]; retired {
+			return Runtime{}, fmt.Errorf("COOP_RUNTIME=%q is not supported — %s. Use docker (or container on macOS 26)", override, reason)
+		}
 		// Validate the COOP_RUNTIME override here, not later with a misleading "image not built":
 		// it must resolve on PATH, and an UNRECOGNIZED override (a typo'd path, /bin/false) must
-		// also answer `--version`, so a non-runtime fails clearly. A known runtime (docker/podman/
+		// also answer `--version`, so a non-runtime fails clearly. A known runtime (docker or
 		// container) is trusted on PATH alone, matching the auto-detect path below.
 		if _, err := exec.LookPath(override); err != nil {
 			return Runtime{}, fmt.Errorf("runtime %q not found (from COOP_RUNTIME) — install it, or unset COOP_RUNTIME to auto-detect", override)
 		}
 		if !isKnownRuntime(override) {
 			if err := exec.Command(override, "--version").Run(); err != nil {
-				return Runtime{}, fmt.Errorf("COOP_RUNTIME=%q isn't a usable container runtime (it didn't answer --version) — set docker, podman, or container", override)
+				return Runtime{}, fmt.Errorf("COOP_RUNTIME=%q isn't a usable container runtime (it didn't answer --version) — set docker or container", override)
 			}
 		}
 		return Runtime{Name: override}, nil
 	}
-	for _, name := range []string{"container", "docker", "podman"} {
+	for _, name := range []string{"container", "docker"} {
 		if _, err := exec.LookPath(name); err == nil {
 			return Runtime{Name: name}, nil
 		}
 	}
-	return Runtime{}, errors.New("no container runtime found — install Apple 'container' (macOS 26), Docker, or Podman")
+	return Runtime{}, errors.New("no container runtime found — install Docker or Apple 'container' (macOS 26)")
 }
 
 // isKnownRuntime reports whether name is one of the container runtimes coop drives, by its base
@@ -75,8 +89,6 @@ func runtimeKindOf(name string) runtimeKind {
 	switch filepath.Base(name) {
 	case "docker":
 		return runtimeDocker
-	case "podman":
-		return runtimePodman
 	case "container":
 		return runtimeAppleContainer
 	}
@@ -87,17 +99,13 @@ func (r Runtime) kind() runtimeKind {
 	return runtimeKindOf(r.Name)
 }
 
-func (r Runtime) isDockerOrPodman() bool {
-	return r.kind() == runtimeDocker || r.kind() == runtimePodman
-}
-
 // ErrDaemonUnavailable is a container runtime that is installed but not answering. Every command
 // that needs one says the same thing about it, so they share this marker rather than each
 // matching on message text.
 var ErrDaemonUnavailable = errors.New("Docker is unavailable")
 
 // EnsureDaemon verifies the daemon is reachable. Only Docker exposes a daemon we
-// probe up front; container and podman are checked lazily by their commands.
+// probe up front; Apple's container is checked lazily by its commands.
 func (r Runtime) EnsureDaemon() error {
 	if r.kind() != runtimeDocker {
 		return nil
@@ -108,23 +116,22 @@ func (r Runtime) EnsureDaemon() error {
 	return nil
 }
 
-// SupportsInit reports whether the runtime's run command has the shared Docker/Podman
-// --init contract: install a PID 1 that forwards signals and reaps orphaned descendants.
-// Apple's container CLI is kept out until its supported-version floor carries the same contract.
+// SupportsInit reports whether the runtime's run command has Docker's --init contract: install a
+// PID 1 that forwards signals and reaps orphaned descendants. Apple's container CLI is kept out
+// until its supported-version floor carries the same contract.
 func (r Runtime) SupportsInit() bool {
-	return r.isDockerOrPodman()
+	return r.kind() == runtimeDocker
 }
 
-// SupportsRunLimits reports whether the runtime accepts Coop's shared Docker/Podman
-// resource and privilege flags.
+// SupportsRunLimits reports whether the runtime accepts Coop's Docker resource and privilege flags.
 func (r Runtime) SupportsRunLimits() bool {
-	return r.isDockerOrPodman()
+	return r.kind() == runtimeDocker
 }
 
 // SupportsRestrictedFilesystem reports whether the restricted execution modes (a read-only root
-// with owned tmpfs scratch) are qualified on this runtime. Docker documents both primitives and
-// is the one proven live; Podman accepts the same spelling but has its own mount semantics to
-// test, and Apple's container CLI takes different flags — inferred parity is not qualification.
+// with owned tmpfs scratch) are qualified on this runtime. Docker documents both primitives and is
+// the one proven live; Apple's container CLI takes different flags — inferred parity is not
+// qualification.
 func (r Runtime) SupportsRestrictedFilesystem() bool {
 	return r.kind() == runtimeDocker
 }
@@ -584,7 +591,7 @@ func (r Runtime) RemoveContainerContext(ctx context.Context, id string) error {
 	if err != nil {
 		if ctx.Err() != nil {
 			err = ctx.Err()
-		} else if r.isDockerOrPodman() && completeContainerID(id) {
+		} else if r.kind() == runtimeDocker && completeContainerID(id) {
 			// A box run with --rm is reaped by the runtime itself, so this remove routinely loses
 			// that race: the teardown succeeded and only the bookkeeping failed. Ask once, by the
 			// COMPLETE immutable id, and accept only an EMPTY answer from a query that itself
@@ -691,8 +698,8 @@ func (r Runtime) waitForContainerAbsence(ctx context.Context, id string, filters
 	}
 }
 
-// SupportsCIDFile reports whether this runtime understands `docker run --cidfile` — docker and
-// podman do; Apple's `container` CLI differs, so the supervisor falls back to labels there.
+// SupportsCIDFile reports whether this runtime understands `docker run --cidfile`. Apple's
+// `container` CLI differs, so the supervisor falls back to labels there.
 func (r Runtime) SupportsCIDFile() bool {
-	return r.isDockerOrPodman()
+	return r.kind() == runtimeDocker
 }

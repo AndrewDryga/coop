@@ -2,4 +2,4 @@
 
       Apple container does not support Compose.
 
-  Use Docker or Podman for this project's services.
+  Use Docker for this project's services.

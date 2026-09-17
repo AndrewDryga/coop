@@ -294,7 +294,7 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 				if step.ContinueOnError != nil {
 					t.Errorf("%s.%s ignores a failed step", name, id)
 				}
-				if step.If != "" && step.If != "matrix.runtime == 'podman'" {
+				if step.If != "" {
 					t.Errorf("%s.%s unexpectedly skips a step: %s", name, id, step.If)
 				}
 				if strings.HasPrefix(step.Uses, "actions/checkout@") {

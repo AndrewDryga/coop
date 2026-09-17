@@ -58,6 +58,11 @@ you. The same applies to a session Coop quarantines later because its workspace 
 - **`coop tasks clear` → `coop tasks rm --all-done`.** The alias 9.0.0 still accepted is gone.
 - **`coop tasks split` is gone.** Parallel forks share the canonical queue; see
   [Canonical tasks across isolated forks](#canonical-tasks-across-isolated-forks) above.
+- **Podman is no longer a container runtime.** Install Docker (or Apple `container` on macOS 26),
+  then `coop build && coop doctor`. Auto-detection no longer looks for Podman, and an explicit
+  `COOP_RUNTIME=podman` now stops with the reason instead of running. Coop no longer manages
+  anything on the Podman side, so stop leftover sibling stacks there first:
+  `podman compose -p <project> -f .agent/compose.yml down --remove-orphans`.
 - **Session state root schema v20.** `coop sessions serve` upgrades a 9.0.0 (v13) root in place on
   first start, and an older Coop refuses the upgraded root. Stop the daemon and copy the state root
   — or take a verified SQLite copy with `coop sessions compact --backup <path>` — before upgrading
@@ -111,10 +116,9 @@ replacement manifest or batch up/down command in v9; the smaller explicit surfac
 
 Coop also no longer inspects or removes basename-only Compose projects created before per-workspace
 hashed project names. Finish or stop sibling services before upgrading. If one of those old stacks
-remains afterward, inspect it with `docker compose ls` (or `podman compose ls`), then run
-`docker compose -p <legacy-project> -f .agent/compose.yml down --remove-orphans` (substitute
-`podman compose` when applicable). v9 manages only projects named by the current
-`ComposeProject(workspace)` scheme.
+remains afterward, inspect it with `docker compose ls`, then run
+`docker compose -p <legacy-project> -f .agent/compose.yml down --remove-orphans`. v9 manages only
+projects named by the current `ComposeProject(workspace)` scheme.
 
 Fork session re-entry also has one v9 record: `.coop/session.<provider>.<account>`. Coop ignores the
 older provider-only `.coop/session.<provider>` file and no longer adopts the latest Codex session by

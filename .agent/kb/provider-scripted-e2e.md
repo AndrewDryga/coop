@@ -3,7 +3,7 @@ name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
 sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/loop/loop.go, internal/loop/iteration.go, internal/tasks/audit.go, internal/cli/fork_cmd.go, internal/forkctl/meta.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/tasks/lease.go, internal/loop/streamjson.go, internal/loop/telemetry.go, internal/loop/review.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_loop_handoff_telemetry_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
-updated: 2026-09-13
+updated: 2026-09-17
 ---
 
 `make provider-scripted-e2e` builds fresh Coop and fixture executables inside a disposable root,
@@ -110,7 +110,7 @@ The fixture is deliberately not a container emulator. It accepts only Coop's tes
 and flags, validates every host bind/env-file/workdir before invoking its own explicit provider mode,
 and writes a versioned 0600 JSONL trace. Unknown syntax, images, commands, symlinks, and root escapes
 fail closed (`internal/cli/testdata/providerfixture/main.go`). Real runtime isolation belongs to
-`coop doctor`: CI blocks on Docker and Podman (`.github/workflows/ci.yml`) and separately exercises
+`coop doctor`: CI blocks on Docker (`.github/workflows/ci.yml`) and separately exercises
 the review-write boundary; Apple's runtime still requires a local doctor
 run because the hosted matrix cannot cover it.
 
@@ -124,6 +124,7 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-09-17 — Podman removed; CI's doctor matrix is Docker only.
 - 2026-09-13 - reproduced and fixed duplicate terminal review handoff emission; process tests
   compare all three stages with exact provider lifecycle, usage totals and successful recovery.
 - 2026-09-03 - fork provider and Coop-owned session IDs became required pre-launch writes; Codex's

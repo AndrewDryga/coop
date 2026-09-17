@@ -31,7 +31,6 @@ func TestAutoUpServices(t *testing.T) {
 		want    bool
 	}{
 		{"defaults: on, networked, online, docker", true, true, "open", "docker", false, false, true},
-		{"podman too", true, true, "open", "podman", false, false, true},
 		{"COOP_AUTO_UP=0 opts out", false, true, "open", "docker", false, false, false},
 		{"no services network (COOP_NETWORK=0)", true, false, "open", "docker", false, false, false},
 		{"offline box (COOP_EGRESS=none)", true, true, "none", "docker", false, false, false},

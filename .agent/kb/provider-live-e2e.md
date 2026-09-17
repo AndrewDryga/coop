@@ -3,7 +3,7 @@ name: provider-live-e2e
 description: Probe installed upstream CLIs with isolated read-only, native-resume, and task-completion workflows
 subsystem: testing
 sources: [Makefile, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/run.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/runtime/process_group_live.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/acpctl/process_live.go, internal/cli/provider_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_loop_task_channel_live_test.go, internal/cli/provider_loop_task_observation_live_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go]
-updated: 2026-09-13
+updated: 2026-09-17
 ---
 
 `make provider-live-e2e COOP_LIVE_TARGETS='...'` is the permissive prerequisite probe;
@@ -78,10 +78,10 @@ partial destinations.
 
 The child starts from a fresh environment map, so ambient `COOP_*` and provider keys cannot alter
 the command. Explicit Docker connection fields are retained directly; otherwise the parent resolves
-the active Docker context to endpoint/TLS fields. Podman is reduced to its selected URI/identity and
-storage fields. `DOCKER_CONFIG`, `DOCKER_CONTEXT`, `CONTAINERS_CONF`, connection selectors, and other
-behavior-bearing config are never forwarded. The narrow values reach the host runtime process, not
-the container argv/env; isolated `HOME` and XDG config roots still reach the provider. ACP's opt-in
+the active Docker context to endpoint/TLS fields. A retired or unknown runtime name captures
+nothing at all. `DOCKER_CONFIG`, `DOCKER_CONTEXT` and other behavior-bearing config are never
+forwarded. The narrow values reach the host runtime process, not the container argv/env; isolated
+`HOME` and XDG config roots still reach the provider. ACP's opt-in
 live suite copies the marked default for bare targets and every account explicitly named by a direct
 target or preset ladder.
 
@@ -152,6 +152,7 @@ isolation failures and take precedence over a provider result. Stable summaries 
 raw output; reproduce behavior in the deterministic fixture.
 
 ## Changelog
+- 2026-09-17 - Podman removed as a runtime; its connection capture is gone and a retired name yields no env
 - 2026-09-13 - separated native loop commit-message failure categories without changing
   acceptance; generated-hook commit/amend tests check scratch-message equality.
 - 2026-09-13 - added a verified unchanged 300-task archive and native search observation without

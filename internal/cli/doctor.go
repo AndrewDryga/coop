@@ -107,10 +107,11 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 	img, usingReal := doctorImage(repo, a.cfg, func(image string) bool { return box.ImageExists(a.rt, image) })
 	doctorHeader(a.rt.Name, img, a.cfg.BaseImage, usingReal)
 
-	// The OCI privilege limits (cap-drop ALL, pids, no-new-privileges) are docker/podman-only
+	// The OCI privilege limits (cap-drop ALL, pids, no-new-privileges) are Docker-only
 	// (box.boxLimits). On any other runtime they're simply not applied, so the uid/caps checks
 	// below can't vouch for them — each says so on its own line rather than passing vacuously.
-	hardened := a.rt.Name == "docker" || a.rt.Name == "podman"
+	// One predicate, asked of the runtime itself, so doctor cannot drift from what Run applies.
+	hardened := a.rt.SupportsRunLimits()
 
 	report := &doctorReport{}
 	secrets, host, offline, taskSection, credentials, cloneSection := report.doctorSections()
@@ -279,7 +280,7 @@ func doctorCheckUID(s *doctorSection, uid string, usingReal bool) {
 }
 
 // doctorCheckCaps interprets the box's effective capabilities. --cap-drop ALL is applied only on
-// docker/podman; on any other runtime the limit is simply not applied, which is a different
+// Docker; on any other runtime the limit is simply not applied, which is a different
 // statement from a limit that failed to take effect.
 func doctorCheckCaps(s *doctorSection, caps string, hardened bool) {
 	switch caps = strings.TrimSpace(caps); {
@@ -294,7 +295,7 @@ func doctorCheckCaps(s *doctorSection, caps string, hardened bool) {
 	}
 }
 
-// doctorCheckPids interprets the box's pids cgroup limit. Like capabilities it is docker/podman
+// doctorCheckPids interprets the box's pids cgroup limit. Like capabilities it is Docker
 // only, and it can be turned off deliberately — a disabled limit and an unreadable one are
 // different answers, and neither is a pass.
 func doctorCheckPids(s *doctorSection, pids string, hardened bool, configured string) {

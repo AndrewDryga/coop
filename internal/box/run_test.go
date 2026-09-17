@@ -803,7 +803,7 @@ func TestAssembleArgsInitProcess(t *testing.T) {
 			"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
 	}
 	if got := strings.Count(strings.Join(args(true), " "), "--init"); got != 1 {
-		t.Errorf("Docker/Podman run must contain one --init, got %d", got)
+		t.Errorf("Docker run must contain one --init, got %d", got)
 	}
 	if slices.Contains(args(false), "--init") {
 		t.Error("a runtime without the verified init contract received --init")
@@ -2787,9 +2787,9 @@ func TestAgentBaseInstructions(t *testing.T) {
 }
 
 func TestBoxLimits(t *testing.T) {
-	// docker/podman get the caps; values come from config.
+	// docker gets the caps; values come from config.
 	cfg := &config.Config{Pids: "4096", Memory: "4g", CPUs: "2", NoNewPrivileges: true}
-	for _, name := range []string{"docker", "podman", "/usr/local/bin/docker", "/opt/homebrew/bin/podman"} {
+	for _, name := range []string{"docker", "/usr/local/bin/docker", "/opt/homebrew/bin/docker"} {
 		rt := runtime.Runtime{Name: name}
 		got := boxLimits(cfg, rt)
 		for _, want := range [][]string{

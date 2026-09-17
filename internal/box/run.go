@@ -638,7 +638,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 
 	// A single empty read-only file shadows every secret file; a single empty read-only
-	// dir shadows every secret directory (an RO bind, not --tmpfs, so it holds on podman).
+	// dir shadows every secret directory (an RO bind, not --tmpfs, so ordering cannot re-expose it).
 	decoy, err := os.CreateTemp(artifacts.parent, "coop-decoy-")
 	if err != nil {
 		return -1, err
@@ -1194,7 +1194,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		if spec.Ctx.Err() == nil || spec.RunID == "" {
 			return finish(code, runErr)
 		}
-		// Killing a Docker/Podman client does not guarantee its daemon-owned container exits.
+		// Killing a Docker client does not guarantee its daemon-owned container exits.
 		// The loop run id owns one box at a time, so remove that exact canceled box as a backstop.
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -2190,7 +2190,7 @@ func boxPolicyEmpty(b project.Box) bool {
 
 // boxLimits returns the resource + privilege caps that keep a runaway agent from
 // harming the host: a pids cap (fork bombs), optional memory/cpu caps,
-// no-new-privileges, and dropping all Linux capabilities. These are OCI-runtime flags applied for docker and podman;
+// no-new-privileges, and dropping all Linux capabilities. These are Docker's OCI-runtime flags;
 // Apple's `container` CLI differs, so they're skipped there (its hardening is
 // tracked separately). All are config-driven (COOP_PIDS/MEMORY/CPUS,
 // COOP_NO_NEW_PRIVILEGES).
@@ -2385,8 +2385,8 @@ func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []M
 func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, rawMCP bool, mcpMounts, consultMounts, gitMounts, instructionMounts, synthMounts []extraMount, networkName, envFile string, limits ...string) []string {
 	var args []string
 	if initProcess {
-		// Docker and Podman provide the same runtime-native contract: this PID 1 forwards
-		// signals to the workload and reaps descendants orphaned by killed provider processes.
+		// Docker's runtime-native contract: this PID 1 forwards signals to the workload and
+		// reaps descendants orphaned by killed provider processes.
 		args = append(args, "--init")
 	}
 	args = append(args, "--label", LabelKey+"="+LabelBox)
@@ -2437,7 +2437,7 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 	if tz := hostTimezone(); tz != "" {
 		args = append(args, "-e", "TZ="+tz)
 	}
-	args = append(args, limits...) // resource/privilege caps (docker/podman; nil elsewhere)
+	args = append(args, limits...) // resource/privilege caps (docker; nil elsewhere)
 	args = append(args, RenderMounts(mounts, decoy, decoyDir)...)
 
 	if spec.Homes {

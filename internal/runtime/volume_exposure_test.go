@@ -96,7 +96,7 @@ func TestVolumeExposureFixtureProcess(t *testing.T) {
 }
 
 func TestNamedVolumeExposurePreservesColdAndWarmLocalVolumes(t *testing.T) {
-	for _, kind := range []string{"docker", "podman", "container"} {
+	for _, kind := range []string{"docker", "container"} {
 		for _, present := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/%t", kind, present), func(t *testing.T) {
 				definition := volumeDefinition{Name: "coop-cache", Driver: "local", Scope: "local", Mountpoint: "/runtime/volumes/coop-cache/data"}

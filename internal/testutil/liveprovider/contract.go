@@ -415,17 +415,13 @@ var runtimeConnectionKeys = map[string][]string{
 	"docker": {
 		"DOCKER_HOST", "DOCKER_TLS", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH", "SSH_AUTH_SOCK",
 	},
-	"podman": {
-		"CONTAINER_HOST", "CONTAINER_SSHKEY", "CONTAINERS_STORAGE_CONF",
-		"STORAGE_DRIVER", "STORAGE_OPTS", "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "SSH_AUTH_SOCK",
-	},
 }
 
 const runtimeQueryLimit = 256 << 10
 
 // CaptureRuntimeConnectionEnv resolves the selected host runtime's endpoint/TLS/SSH/storage
-// capability before starting a scrubbed child. It never forwards Docker or Podman behavior-bearing
-// config: those files may inject proxy env, mounts, hooks, or other defaults into the live box.
+// capability before starting a scrubbed child. It never forwards Docker's behavior-bearing config:
+// those files may inject proxy env, mounts, hooks, or other defaults into the live box.
 func CaptureRuntimeConnectionEnv(runtimeName string) (map[string]string, error) {
 	return captureRuntimeConnectionEnv(runtimeName, os.LookupEnv, pathExists, func(args ...string) ([]byte, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -451,8 +447,6 @@ func captureRuntimeConnectionEnv(
 	switch name {
 	case "docker":
 		return captureDockerConnectionEnv(lookup, exists, query)
-	case "podman":
-		return capturePodmanConnectionEnv(lookup, exists, query)
 	default:
 		return map[string]string{}, nil
 	}
@@ -510,92 +504,6 @@ func captureDockerConnectionEnv(
 		values["DOCKER_CERT_PATH"] = certDir
 		if !endpoint.SkipTLSVerify {
 			values["DOCKER_TLS_VERIFY"] = "1"
-		}
-	}
-	if err := validateConnectionEnvironment(values); err != nil {
-		return nil, err
-	}
-	return values, nil
-}
-
-func capturePodmanConnectionEnv(
-	lookup func(string) (string, bool),
-	exists func(string) bool,
-	query func(...string) ([]byte, error),
-) (map[string]string, error) {
-	values := selectedEnvironment(lookup, []string{
-		"CONTAINERS_STORAGE_CONF", "STORAGE_DRIVER", "STORAGE_OPTS",
-		"XDG_DATA_HOME", "XDG_RUNTIME_DIR", "SSH_AUTH_SOCK",
-	})
-	home, _ := lookup("HOME")
-	configRoot, _ := lookup("XDG_CONFIG_HOME")
-	if configRoot == "" && home != "" {
-		configRoot = filepath.Join(home, ".config")
-	}
-	if values["CONTAINERS_STORAGE_CONF"] == "" && configRoot != "" {
-		candidate := filepath.Join(configRoot, "containers", "storage.conf")
-		if exists(candidate) {
-			values["CONTAINERS_STORAGE_CONF"] = candidate
-		}
-	}
-	if values["XDG_DATA_HOME"] == "" && home != "" {
-		candidate := filepath.Join(home, ".local", "share")
-		if exists(candidate) {
-			values["XDG_DATA_HOME"] = candidate
-		}
-	}
-	host, _ := lookup("CONTAINER_HOST")
-	identity, _ := lookup("CONTAINER_SSHKEY")
-	if host != "" {
-		values["CONTAINER_HOST"] = host
-		if identity != "" {
-			values["CONTAINER_SSHKEY"] = identity
-		}
-		if err := validateConnectionEnvironment(values); err != nil {
-			return nil, err
-		}
-		return values, nil
-	}
-	connectionName, _ := lookup("CONTAINER_CONNECTION")
-	data, err := query("system", "connection", "list", "--format", "json")
-	if err != nil {
-		if connectionName == "" {
-			return values, validateConnectionEnvironment(values)
-		}
-		return nil, err
-	}
-	var connections []struct {
-		Name     string `json:"Name"`
-		URI      string `json:"URI"`
-		Identity string `json:"Identity"`
-		Default  bool   `json:"Default"`
-		TLSCA    string `json:"TLSCA"`
-		TLSCert  string `json:"TLSCert"`
-		TLSKey   string `json:"TLSKey"`
-	}
-	if json.Unmarshal(data, &connections) != nil {
-		return nil, errors.New("resolve live Podman connection")
-	}
-	selected := -1
-	for i, connection := range connections {
-		if (connectionName != "" && connection.Name == connectionName) || (connectionName == "" && connection.Default) {
-			selected = i
-			break
-		}
-	}
-	if connectionName != "" && selected < 0 {
-		return nil, errors.New("resolve selected live Podman connection")
-	}
-	if selected >= 0 {
-		connection := connections[selected]
-		if connection.URI == "" || connection.TLSCA != "" || connection.TLSCert != "" || connection.TLSKey != "" {
-			return nil, errors.New("selected live Podman connection is not safely portable")
-		}
-		values["CONTAINER_HOST"] = connection.URI
-		if identity != "" {
-			values["CONTAINER_SSHKEY"] = identity
-		} else if connection.Identity != "" {
-			values["CONTAINER_SSHKEY"] = connection.Identity
 		}
 	}
 	if err := validateConnectionEnvironment(values); err != nil {

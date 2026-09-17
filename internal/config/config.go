@@ -50,7 +50,7 @@ type Config struct {
 	Gate           []string // COOP_GATE — revalidation gate run in the box before a fork merge lands
 	ExtraRunArgs   []string // COOP_RUN_ARGS — extra args passed to the container runtime
 
-	// Box resource/privilege caps (docker & podman; skipped on Apple `container`).
+	// Box resource/privilege caps (docker; skipped on Apple `container`).
 	Memory          string // COOP_MEMORY — memory cap, e.g. "4g" (empty = unset)
 	CPUs            string // COOP_CPUS — cpu cap, e.g. "2" (empty = unset)
 	Pids            string // COOP_PIDS — pids-limit (fork-bomb cap), default 4096; "0"/"unlimited"/"" = off

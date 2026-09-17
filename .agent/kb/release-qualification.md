@@ -3,10 +3,10 @@ name: release-qualification
 description: "tagged releases reuse exact-commit CI, validate finalized notes and preserve tag identity"
 subsystem: release
 sources: [.github/workflows/ci.yml, .github/workflows/release.yml, .goreleaser.yaml, tools/release_preflight.py, release_test.go]
-updated: 2026-09-06
+updated: 2026-09-17
 ---
 
-Release `qualify` locally calls ci.yml from the event commit; its canonical gate, Docker/Podman
+Release `qualify` locally calls ci.yml from the event commit; its canonical gate, Docker
 doctor and Docker review-write jobs must succeed before the privileged publisher starts.
 Every checkout explicitly uses github.sha. Qualification remains contents-read only.
 
@@ -27,5 +27,6 @@ tag or protection during build/publication. Local fixture tests cannot prove hos
 or publication succeeded. Test refs/remotes are confined to temporary filesystem repositories.
 
 ## Changelog
+- 2026-09-17 — Podman removed; the qualifying doctor job is Docker only.
 - 2026-09-06 — created from M01; verified workflow dependencies, tag/notes helper fixtures and
   pinned GoReleaser pipeline ordering. No repository settings change or public tag probe.

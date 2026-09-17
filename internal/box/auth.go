@@ -158,7 +158,7 @@ func writeFilteredEnvFile(parent, path string, drop map[string]bool) (string, er
 }
 
 // writeMergedEnvFile renders deterministic project defaults followed by the trusted user env.
-// Later duplicate entries win in Docker/Podman env files, so agents/env remains authoritative.
+// Later duplicate entries win in Docker env files, so agents/env remains authoritative.
 func writeMergedEnvFile(parent string, projectEnv map[string]string, userPath string, drop map[string]bool) (string, error) {
 	return writeComposedEnvFile(parent, projectEnv, nil, userPath, drop)
 }

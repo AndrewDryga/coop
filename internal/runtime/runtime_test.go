@@ -21,7 +21,7 @@ import (
 func TestDetectOverride(t *testing.T) {
 	// A known runtime that's actually installed is accepted on PATH alone.
 	accepted := false
-	for _, rt := range []string{"docker", "podman", "container"} {
+	for _, rt := range []string{"docker", "container"} {
 		if _, err := exec.LookPath(rt); err == nil {
 			if got, err := Detect(rt); err != nil || got.Name != rt {
 				t.Errorf("Detect(%q) = (%+v, %v), want it accepted", rt, got, err)
@@ -45,7 +45,7 @@ func TestDetectOverride(t *testing.T) {
 	}
 
 	// A compatible wrapper may be selected explicitly, but its unknown executable name must
-	// not opt it into Docker/Podman-only flags without a verified dialect.
+	// not opt it into Docker-only flags without a verified dialect.
 	wrapper := filepath.Join(t.TempDir(), "runtime-wrapper")
 	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\n[ \"$1\" = --version ]\n"), 0o755); err != nil {
 		t.Fatal(err)
@@ -55,12 +55,44 @@ func TestDetectOverride(t *testing.T) {
 		t.Fatalf("Detect(wrapper) = (%+v, %v), want accepted wrapper", got, err)
 	}
 	if got.SupportsInit() || got.SupportsRunLimits() || got.SupportsCIDFile() {
-		t.Fatal("an unknown-name runtime wrapper gained unverified Docker/Podman capabilities")
+		t.Fatal("an unknown-name runtime wrapper gained unverified Docker capabilities")
+	}
+}
+
+// Podman was a supported runtime and is installed on plenty of machines, so its removal has to be
+// refused by NAME. Falling through to the unknown-executable path would accept it — `podman
+// --version` succeeds — and coop would then drive it with Docker's flags.
+func TestDetectRefusesRetiredRuntime(t *testing.T) {
+	dir := t.TempDir()
+	podman := filepath.Join(dir, "podman")
+	if err := os.WriteFile(podman, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	for _, override := range []string{"podman", "Podman", "podman-remote", podman} {
+		got, err := Detect(override)
+		if err == nil {
+			t.Fatalf("Detect(%q) = %+v, want a refusal", override, got)
+		}
+		for _, want := range []string{"not supported", "docker"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("Detect(%q) error %q does not name %q", override, err, want)
+			}
+		}
+	}
+	// Auto-detection must not pick it up either: with only podman on PATH there is no runtime.
+	if got, err := Detect(""); err == nil || !strings.Contains(err.Error(), "no container runtime found") {
+		t.Fatalf("auto-detect with only podman on PATH = (%+v, %v), want no runtime found", got, err)
+	}
+	// And it never gains a capability, however it was constructed.
+	retired := Runtime{Name: podman}
+	if retired.SupportsInit() || retired.SupportsRunLimits() || retired.SupportsCIDFile() || retired.SupportsRestrictedFilesystem() {
+		t.Fatal("a retired runtime kept Docker capabilities")
 	}
 }
 
 func TestSupportsInit(t *testing.T) {
-	for _, name := range []string{"docker", "/usr/local/bin/docker", "podman", "/opt/homebrew/bin/podman"} {
+	for _, name := range []string{"docker", "/usr/local/bin/docker", "/opt/homebrew/bin/docker"} {
 		if !(Runtime{Name: name}).SupportsInit() {
 			t.Errorf("%q should support the container init contract", name)
 		}
@@ -513,10 +545,6 @@ func TestAbsoluteRuntimePathsKeepDockerCapabilities(t *testing.T) {
 	if !rt.SupportsInit() || !rt.SupportsRunLimits() {
 		t.Fatal("absolute Docker path lost run capabilities")
 	}
-	podman := Runtime{Name: filepath.Join(dir, "podman")}
-	if !podman.SupportsCIDFile() || !podman.SupportsInit() || !podman.SupportsRunLimits() {
-		t.Fatal("absolute Podman path lost run capabilities")
-	}
 	container := Runtime{Name: filepath.Join(dir, "container")}
 	if container.SupportsCIDFile() || container.SupportsInit() || container.SupportsRunLimits() {
 		t.Fatal("Apple container path gained unsupported run capabilities")
@@ -687,7 +715,7 @@ fi
 	}
 }
 
-// The re-check is gated: it runs only for a Docker/Podman dialect AND a complete immutable id. An
+// The re-check is gated: it runs only for a Docker dialect AND a complete immutable id. An
 // abbreviated id or a container NAME could match a different container through `--filter id=`, and
 // an unknown runtime has no verified `ps --filter` dialect at all — neither may be re-checked, so
 // both keep failing loudly.

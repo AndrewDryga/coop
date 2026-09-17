@@ -64,9 +64,9 @@ coop build && coop doctor
 ```
 
 **Requirements:** the installer needs `curl`, `tar`, and either `sha256sum` or
-`shasum`. Running Coop needs a container runtime — Apple
-[`container`](https://github.com/apple/container) (macOS 26+), Docker, or Podman —
-which Coop auto-detects. The installed `coop` binary itself is static.
+`shasum`. Running Coop needs a container runtime — Docker or Apple
+[`container`](https://github.com/apple/container) (macOS 26+) — which Coop
+auto-detects. The installed `coop` binary itself is static.
 
 **Staying current:** [`coop update`](#keeping-the-box-current) self-updates the binary
 *and* rebuilds the box image fresh, pulling the latest agent CLIs and ACP adapters
@@ -1772,7 +1772,7 @@ controls and cannot be set inside `coop.conf`.
 
 | Var | Default | |
 |---|---|---|
-| `COOP_RUNTIME` | auto | `container` / `docker` / `podman` |
+| `COOP_RUNTIME` | auto | `container` / `docker` |
 | `COOP_IMAGE` | (auto) | force a specific image (overrides `.agent/Dockerfile` detection) |
 | `COOP_BASE_IMAGE` | `coop-box` | the shared base image tag |
 | `COOP_AGENT_PACKAGES` | (latest) | pin the global agent + ACP npm specs for a reproducible `coop build` |
@@ -1792,9 +1792,9 @@ controls and cannot be set inside `coop.conf`.
 | `COOP_SERVICES_NET` | (auto) | services network to join (let parallel forks share one db) |
 
 The resource/privilege caps (`COOP_PIDS` / `COOP_MEMORY` / `COOP_CPUS` /
-`COOP_NO_NEW_PRIVILEGES`) apply on docker and podman; Apple's `container` CLI differs,
-so they're skipped there for now. On docker/podman the box also runs with **all Linux
-capabilities dropped** (`--cap-drop ALL`) — the agent workloads need none, and it keeps
+`COOP_NO_NEW_PRIVILEGES`) apply on docker; Apple's `container` CLI differs,
+so they're skipped there for now. On docker the box also runs with all Linux
+capabilities dropped (`--cap-drop ALL`) — the agent workloads need none, and it keeps
 root-in-container (a repo `.agent/Dockerfile` that does `USER root`) from holding
 `CAP_DAC_OVERRIDE` / `CAP_NET_RAW` / `CAP_MKNOD` and friends.
 
@@ -1856,7 +1856,7 @@ when a tool needs current joined state.
 
 | Symptom | Fix |
 |---|---|
-| **"no container runtime found"** | Install Apple [`container`](https://github.com/apple/container) (macOS 26+), Docker, or Podman, then `coop build && coop doctor`. Force one with `COOP_RUNTIME=docker`. |
+| **"no container runtime found"** | Install Docker or Apple [`container`](https://github.com/apple/container) (macOS 26+), then `coop build && coop doctor`. Force one with `COOP_RUNTIME=docker`. |
 | **"image … isn't built — run 'coop build'"** | `coop build` (shared base), or `coop build` in a repo with a `.agent/Dockerfile` (its own image). |
 | **Login hangs or "usage limit reached"** | `coop login <agent>` re-runs the sign-in (paste-code, no browser). Hit a subscription limit? It resets on a schedule — wait, or `coop login` into another account. The unattended loop waits out the reset on its own; a [Zed session](#drive-it-from-zed-acp) rotates to your next signed-in account and re-sends by itself. |
 | **Gemini says its Google sign-in client is no longer supported** | Google retired Gemini CLI access for individual Google accounts. Run `coop login gemini[@<name>]` and paste a Gemini API key from the displayed AI Studio link; Coop does not launch that retired Google flow. Enterprise Gemini CLI and Vertex credentials remain separate provider-supported options and are not supported with `--egress filtered`. |
@@ -1898,7 +1898,7 @@ install.sh            the curl one-liner: download the prebuilt binary onto PATH
 |---|---|---|
 | Blocking | `make check` | formatting, vet, Staticcheck, ShellCheck, `go build ./...`, unit tests plain and under `-race`, deterministic provider process E2E, tagged process-control races, generated docs, casts, rules cards, maintenance tools, and comment alignment; no runtime or credentials |
 | Focused deterministic | `make provider-scripted-e2e` · `make acp-scripted-e2e` · `make live-process-control` | provider CLI/loop/fork policy, ACP switching/recovery, and live-harness ownership denials with fixtures |
-| Runtime boundary | `make doctor` · `make box-runtime-e2e` · `make review-writes-e2e` | real box isolation, process reaping/signal forwarding, and report-only review mounts; requires Docker/Podman (or Apple `container` for doctor) |
+| Runtime boundary | `make doctor` · `make box-runtime-e2e` · `make review-writes-e2e` | real box isolation, process reaping/signal forwarding, and report-only review mounts; requires Docker (or Apple `container` for doctor) |
 | Upstream compatibility | `make provider-live-e2e[-all]` · `make provider-resume-live-e2e[-all]` · `make provider-loop-live-e2e[-all]` · `make provider-consult-live-e2e[-all]` · `make acp-e2e` | installed CLIs plus isolated credentials; opt-in and quota-consuming |
 
 This table is the source-checkout reference: `make check` is the blocking no-credential gate, the

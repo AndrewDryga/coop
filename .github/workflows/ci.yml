@@ -39,15 +39,15 @@ jobs:
 
   # Exercise the real container boundary per runtime, so a change that breaks isolation,
   # process reaping, signal forwarding, or a runtime's run-args fails CI. (The fork-merge
-  # hardening test already runs in `check` via `go test`.) docker and podman (rootless on
-  # the runner) are both blocking. Apple's `container` needs macOS 26+ runners, so it isn't
-  # covered here yet.
+  # hardening test already runs in `check` via `go test`.) Docker is the one supported
+  # runtime CI can drive and is blocking. Apple's `container` needs macOS 26+ runners, so
+  # it isn't covered here yet — the matrix is where it lands when they exist.
   doctor:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        runtime: [docker, podman]
+        runtime: [docker]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -57,9 +57,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: install podman
-        if: matrix.runtime == 'podman'
-        run: sudo apt-get update && sudo apt-get install -y podman
       - name: doctor
         run: make doctor
         env:

@@ -187,16 +187,16 @@
                         class="code"
                     ><span class="k">coop</span> build <span class="t">&amp;&amp;</span> <span class="k">coop</span> doctor</pre>
                     <p>
-                        For the runtime, take your pick: Apple
+                        For the runtime, take your pick: Docker or Apple
                         <a
                             href="https://github.com/apple/container"
                             target="_blank"
                             rel="noopener"
                             >container</a
                         >
-                        (macOS 26+), Docker, or Podman — coop auto-detects
-                        whichever you have. The <code>coop</code> binary itself
-                        is fully static with no other dependencies.
+                        (macOS 26+) — coop auto-detects whichever you have. The
+                        <code>coop</code> binary itself is fully static with no
+                        other dependencies.
                     </p>
                     <div class="note">
                         The one-line command trusts GitHub and the repository's
@@ -1214,8 +1214,7 @@ roles:
                             <td><code>COOP_RUNTIME</code></td>
                             <td>
                                 force <code>container</code> /
-                                <code>docker</code> /
-                                <code>podman</code> instead of auto-detect
+                                <code>docker</code> instead of auto-detect
                             </td>
                         </tr>
                         <tr>
@@ -1279,7 +1278,7 @@ roles:
                         </tr>
                     </table>
                     <p>
-                        On Docker and Podman the box additionally runs with
+                        On Docker the box additionally runs with
                         every Linux capability dropped, no-new-privileges, and a
                         process cap. The complete list of variables lives in the
                         <a
@@ -1305,8 +1304,8 @@ roles:
                         <tr>
                             <td>"no container runtime found"</td>
                             <td>
-                                Install Apple <code>container</code>, Docker, or
-                                Podman, then
+                                Install Docker or Apple
+                                <code>container</code>, then
                                 <code>coop build &amp;&amp; coop doctor</code>.
                             </td>
                         </tr>

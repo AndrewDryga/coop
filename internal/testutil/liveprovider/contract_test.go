@@ -421,10 +421,8 @@ func TestProcessEnvironmentAddsOnlyAValidatedSupervisorLabel(t *testing.T) {
 func TestCaptureRuntimeConnectionEnvUsesExactRuntimeAllowlist(t *testing.T) {
 	ambient := map[string]string{
 		"DOCKER_HOST": "unix:///docker.sock", "DOCKER_CONFIG": "/unsafe/docker-config",
-		"DOCKER_AUTH_CONFIG": "AUTH_CANARY", "CONTAINERS_CONF": "/unsafe/containers.conf",
-		"PODMAN_CONNECTIONS_CONF": "/unsafe/connections.json",
-		"CONTAINER_HOST":          "ssh://podman.example/run/podman.sock", "CONTAINER_SSHKEY": "/safe/podman-key",
-		"CONTAINERS_STORAGE_CONF": "/safe/storage.conf", "XDG_DATA_HOME": "/safe/data",
+		"DOCKER_AUTH_CONFIG": "AUTH_CANARY", "CONTAINER_HOST": "unix:///retired.sock",
+		"XDG_DATA_HOME":   "/safe/data",
 		"XDG_RUNTIME_DIR": "/safe/run", "SSH_AUTH_SOCK": "/safe/agent.sock",
 		"HOME": "/FORBIDDEN_HOME", "OPENAI_API_KEY": "TOKEN_CANARY",
 	}
@@ -446,32 +444,17 @@ func TestCaptureRuntimeConnectionEnvUsesExactRuntimeAllowlist(t *testing.T) {
 	}; !mapsEqual(docker, want) {
 		t.Errorf("Docker connection env = %v, want %v", docker, want)
 	}
-	podman, err := captureRuntimeConnectionEnv("podman", lookup, func(string) bool { return false }, unexpectedQuery)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for key, want := range map[string]string{
-		"CONTAINER_HOST": "ssh://podman.example/run/podman.sock", "CONTAINER_SSHKEY": "/safe/podman-key",
-		"CONTAINERS_STORAGE_CONF": "/safe/storage.conf", "XDG_DATA_HOME": "/safe/data",
-		"XDG_RUNTIME_DIR": "/safe/run", "SSH_AUTH_SOCK": "/safe/agent.sock",
-	} {
-		if podman[key] != want {
-			t.Errorf("Podman connection env %s = %q, want %q", key, podman[key], want)
-		}
-	}
 	for _, forbidden := range []string{
-		"DOCKER_AUTH_CONFIG", "DOCKER_CONFIG", "DOCKER_CONTEXT", "CONTAINERS_CONF",
-		"PODMAN_CONNECTIONS_CONF", "CONTAINER_CONNECTION", "HOME", "OPENAI_API_KEY",
+		"DOCKER_AUTH_CONFIG", "DOCKER_CONFIG", "DOCKER_CONTEXT", "HOME", "OPENAI_API_KEY",
 	} {
-		if _, ok := podman[forbidden]; ok {
-			t.Errorf("Podman connection env retained %s", forbidden)
-		}
 		if _, ok := docker[forbidden]; ok {
 			t.Errorf("Docker connection env retained %s", forbidden)
 		}
 	}
-	if _, ok := podman["DOCKER_HOST"]; ok {
-		t.Error("Podman connection env retained DOCKER_HOST")
+	// Podman is retired: its ambient endpoint/storage authority is no longer captured at all, so a
+	// stray CONTAINER_HOST cannot travel into a live child as if Coop still drove it.
+	if got, err := captureRuntimeConnectionEnv("podman", lookup, func(string) bool { return false }, unexpectedQuery); err != nil || len(got) != 0 {
+		t.Errorf("retired Podman connection env = %v, %v, want empty", got, err)
 	}
 	if _, ok := docker["CONTAINER_HOST"]; ok {
 		t.Error("Docker connection env retained CONTAINER_HOST")
@@ -482,24 +465,18 @@ func TestCaptureRuntimeConnectionEnvUsesExactRuntimeAllowlist(t *testing.T) {
 
 	derivedAmbient := map[string]string{
 		"HOME": "/parent/home", "XDG_RUNTIME_DIR": "/parent/run", "SSH_AUTH_SOCK": "/parent/ssh.sock",
-		"DOCKER_CONTEXT": "remote", "CONTAINER_CONNECTION": "machine",
+		"DOCKER_CONTEXT": "remote",
 	}
 	derivedLookup := func(key string) (string, bool) {
 		value, ok := derivedAmbient[key]
 		return value, ok
 	}
-	existing := map[string]bool{
-		"/parent/docker-tls/docker":                    true,
-		"/parent/home/.config/containers/storage.conf": true,
-		"/parent/home/.local/share":                    true,
-	}
+	existing := map[string]bool{"/parent/docker-tls/docker": true}
 	exists := func(path string) bool { return existing[path] }
 	query := func(args ...string) ([]byte, error) {
 		switch strings.Join(args, " ") {
 		case "context inspect remote":
 			return []byte(`[{"Endpoints":{"docker":{"Host":"ssh://docker.example/run.sock","SkipTLSVerify":false}},"TLSMaterial":{},"Storage":{"TLSPath":""}}]`), nil
-		case "system connection list --format json":
-			return []byte(`[{"Name":"machine","URI":"ssh://core@podman.example/run/podman.sock","Identity":"/parent/podman-key","Default":true}]`), nil
 		default:
 			return nil, errors.New("unexpected runtime query")
 		}
@@ -509,16 +486,6 @@ func TestCaptureRuntimeConnectionEnvUsesExactRuntimeAllowlist(t *testing.T) {
 	}) {
 		t.Errorf("resolved Docker connection env = %v, %v", got, err)
 	}
-	if got, err := captureRuntimeConnectionEnv("podman", derivedLookup, exists, query); err != nil || !mapsEqual(got, map[string]string{
-		"CONTAINER_HOST":          "ssh://core@podman.example/run/podman.sock",
-		"CONTAINER_SSHKEY":        "/parent/podman-key",
-		"CONTAINERS_STORAGE_CONF": "/parent/home/.config/containers/storage.conf",
-		"XDG_DATA_HOME":           "/parent/home/.local/share", "XDG_RUNTIME_DIR": "/parent/run",
-		"SSH_AUTH_SOCK": "/parent/ssh.sock",
-	}) {
-		t.Errorf("resolved Podman connection env = %v, %v", got, err)
-	}
-
 	tlsLookup := func(key string) (string, bool) {
 		if key == "DOCKER_CONTEXT" {
 			return "tls", true
@@ -534,68 +501,41 @@ func TestCaptureRuntimeConnectionEnvUsesExactRuntimeAllowlist(t *testing.T) {
 	}) {
 		t.Errorf("resolved Docker TLS env = %v, %v", got, err)
 	}
-	unsafePodmanQuery := func(...string) ([]byte, error) {
-		return []byte(`[{"Name":"machine","URI":"tcp://podman.example:8443","Default":true,"TLSCA":"/secret/ca.pem"}]`), nil
-	}
-	if _, err := captureRuntimeConnectionEnv("podman", derivedLookup, exists, unsafePodmanQuery); err == nil {
-		t.Fatal("Podman TLS connection config was forwarded without a safe projection")
-	}
 }
 
 func TestRuntimeConnectionEnvReachesRuntimeButNotContainerArgs(t *testing.T) {
-	for _, runtimeName := range []string{"docker", "podman"} {
-		t.Run(runtimeName, func(t *testing.T) {
-			for _, key := range append(append([]string(nil), runtimeConnectionKeys["docker"]...), runtimeConnectionKeys["podman"]...) {
-				t.Setenv(key, "")
-			}
-			for _, key := range []string{"DOCKER_CONFIG", "DOCKER_CONTEXT", "CONTAINERS_CONF", "PODMAN_CONNECTIONS_CONF", "CONTAINER_CONNECTION"} {
-				t.Setenv(key, "")
-			}
-			layout, err := procharness.NewLayout(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			parentHome := t.TempDir()
-			parentRun := filepath.Join(t.TempDir(), "run")
-			sshSocket := filepath.Join(t.TempDir(), "ssh-agent.sock")
-			unsafeConfig := filepath.Join(t.TempDir(), "behavior-config")
-			t.Setenv("HOME", parentHome)
-			t.Setenv("XDG_RUNTIME_DIR", parentRun)
-			t.Setenv("SSH_AUTH_SOCK", sshSocket)
-			if runtimeName == "docker" {
-				if err := os.MkdirAll(unsafeConfig, 0o700); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(filepath.Join(unsafeConfig, "config.json"), []byte(`{"proxies":{"default":{"httpProxy":"http://PROXY_TOKEN_CANARY@example"}}}`), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				t.Setenv("DOCKER_CONFIG", unsafeConfig)
-				t.Setenv("DOCKER_HOST", "unix:///RUNTIME_SENTINEL.sock")
-			} else {
-				storage := filepath.Join(parentHome, ".config", "containers", "storage.conf")
-				if err := os.MkdirAll(filepath.Dir(storage), 0o700); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(storage, []byte("[storage]\n"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(unsafeConfig, []byte("[containers]\nenv=[\"PROXY_TOKEN_CANARY=value\"]\n"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				t.Setenv("CONTAINERS_CONF", unsafeConfig)
-				t.Setenv("PODMAN_CONNECTIONS_CONF", unsafeConfig)
-				t.Setenv("CONTAINER_HOST", "unix:///RUNTIME_SENTINEL.sock")
-				if err := os.MkdirAll(filepath.Join(parentHome, ".local", "share"), 0o700); err != nil {
-					t.Fatal(err)
-				}
-			}
+	for _, key := range runtimeConnectionKeys["docker"] {
+		t.Setenv(key, "")
+	}
+	for _, key := range []string{"DOCKER_CONFIG", "DOCKER_CONTEXT"} {
+		t.Setenv(key, "")
+	}
+	layout, err := procharness.NewLayout(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentHome := t.TempDir()
+	parentRun := filepath.Join(t.TempDir(), "run")
+	sshSocket := filepath.Join(t.TempDir(), "ssh-agent.sock")
+	unsafeConfig := filepath.Join(t.TempDir(), "behavior-config")
+	t.Setenv("HOME", parentHome)
+	t.Setenv("XDG_RUNTIME_DIR", parentRun)
+	t.Setenv("SSH_AUTH_SOCK", sshSocket)
+	if err := os.MkdirAll(unsafeConfig, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(unsafeConfig, "config.json"), []byte(`{"proxies":{"default":{"httpProxy":"http://PROXY_TOKEN_CANARY@example"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOCKER_CONFIG", unsafeConfig)
+	t.Setenv("DOCKER_HOST", "unix:///RUNTIME_SENTINEL.sock")
 
-			runtimePath := filepath.Join(t.TempDir(), runtimeName)
-			script := `#!/bin/sh
+	runtimePath := filepath.Join(t.TempDir(), "docker")
+	script := `#!/bin/sh
 	if [ "$1" = "run" ]; then
-	  if [ -n "$DOCKER_CONFIG$DOCKER_CONTEXT$CONTAINERS_CONF$PODMAN_CONNECTIONS_CONF$CONTAINER_CONNECTION" ]; then exit 88; fi
+	  if [ -n "$DOCKER_CONFIG$DOCKER_CONTEXT" ]; then exit 88; fi
 	  printf 'home=%s\n' "$HOME" > "$COOP_TEST_LIVE_RESULT"
-	  for key in DOCKER_HOST DOCKER_TLS DOCKER_TLS_VERIFY DOCKER_CERT_PATH CONTAINER_HOST CONTAINER_SSHKEY CONTAINERS_STORAGE_CONF XDG_DATA_HOME XDG_RUNTIME_DIR SSH_AUTH_SOCK; do
+	  for key in DOCKER_HOST DOCKER_TLS DOCKER_TLS_VERIFY DOCKER_CERT_PATH SSH_AUTH_SOCK; do
 	    eval "value=\${$key}"
 	    printf 'env_%s=%s\n' "$key" "$value" >> "$COOP_TEST_LIVE_RESULT"
   done
@@ -604,59 +544,57 @@ func TestRuntimeConnectionEnvReachesRuntimeButNotContainerArgs(t *testing.T) {
 fi
 exit 0
 `
-			if err := os.WriteFile(runtimePath, []byte(script), 0o700); err != nil {
-				t.Fatal(err)
+	if err := os.WriteFile(runtimePath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	connection, err := CaptureRuntimeConnectionEnv(runtimePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultFile := filepath.Join(layout.State, "runtime-result")
+	env, err := ChildEnvironment(layout, ChildSpec{
+		Path: os.Getenv("PATH"), Target: "codex", Marker: "marker", ResultFile: resultFile,
+		AttemptFile: filepath.Join(layout.State, "attempt"), Supervisor: "supervisor",
+		Runtime: RuntimeSettings{Name: runtimePath, ConnectionEnv: connection},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := exec.Command(os.Args[0], "-test.run=^TestRuntimeConnectionEnvChild$")
+	child.Dir, child.Env = layout.Repo, env
+	if output, err := child.CombinedOutput(); err != nil {
+		t.Fatalf("runtime environment child failed: %v (%s)", err, output)
+	}
+	data, err := os.ReadFile(resultFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "home="+layout.Home+"\n") {
+		t.Fatalf("child HOME was not isolated: %q", got)
+	}
+	for key, value := range connection {
+		if !strings.Contains(got, "env_"+key+"="+value+"\n") {
+			t.Errorf("runtime process did not receive %s", key)
+		}
+	}
+	for _, line := range strings.Split(got, "\n") {
+		if !strings.HasPrefix(line, "arg=") {
+			continue
+		}
+		for key, value := range connection {
+			if strings.Contains(line, key) || strings.Contains(line, value) {
+				t.Fatalf("runtime connection authority was forwarded into container args: %q", line)
 			}
-			connection, err := CaptureRuntimeConnectionEnv(runtimePath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			resultFile := filepath.Join(layout.State, "runtime-result")
-			env, err := ChildEnvironment(layout, ChildSpec{
-				Path: os.Getenv("PATH"), Target: "codex", Marker: "marker", ResultFile: resultFile,
-				AttemptFile: filepath.Join(layout.State, "attempt"), Supervisor: "supervisor",
-				Runtime: RuntimeSettings{Name: runtimePath, ConnectionEnv: connection},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			child := exec.Command(os.Args[0], "-test.run=^TestRuntimeConnectionEnvChild$")
-			child.Dir, child.Env = layout.Repo, env
-			if output, err := child.CombinedOutput(); err != nil {
-				t.Fatalf("runtime environment child failed: %v (%s)", err, output)
-			}
-			data, err := os.ReadFile(resultFile)
-			if err != nil {
-				t.Fatal(err)
-			}
-			got := string(data)
-			if !strings.Contains(got, "home="+layout.Home+"\n") {
-				t.Fatalf("child HOME was not isolated: %q", got)
-			}
-			for key, value := range connection {
-				if !strings.Contains(got, "env_"+key+"="+value+"\n") {
-					t.Errorf("runtime process did not receive %s", key)
-				}
-			}
-			for _, line := range strings.Split(got, "\n") {
-				if !strings.HasPrefix(line, "arg=") {
-					continue
-				}
-				for key, value := range connection {
-					if strings.Contains(line, key) || strings.Contains(line, value) {
-						t.Fatalf("runtime connection authority was forwarded into container args: %q", line)
-					}
-				}
-				if strings.Contains(line, parentHome) || strings.Contains(line, sshSocket) {
-					t.Fatalf("parent runtime path was forwarded into container args: %q", line)
-				}
-			}
-			for _, forbidden := range []string{"DOCKER_CONFIG", "DOCKER_CONTEXT", "CONTAINERS_CONF", "PODMAN_CONNECTIONS_CONF", "CONTAINER_CONNECTION", "PROXY_TOKEN_CANARY"} {
-				if strings.Contains(got, forbidden+"=") || strings.Contains(got, "env_"+forbidden) {
-					t.Fatalf("behavior-bearing runtime config reached scrubbed child: %s", forbidden)
-				}
-			}
-		})
+		}
+		if strings.Contains(line, parentHome) || strings.Contains(line, sshSocket) {
+			t.Fatalf("parent runtime path was forwarded into container args: %q", line)
+		}
+	}
+	for _, forbidden := range []string{"DOCKER_CONFIG", "DOCKER_CONTEXT", "PROXY_TOKEN_CANARY"} {
+		if strings.Contains(got, forbidden+"=") || strings.Contains(got, "env_"+forbidden) {
+			t.Fatalf("behavior-bearing runtime config reached scrubbed child: %s", forbidden)
+		}
 	}
 }
 

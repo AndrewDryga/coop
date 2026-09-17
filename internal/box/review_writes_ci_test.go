@@ -59,8 +59,8 @@ func TestDoctorE2EIsWiredThroughMake(t *testing.T) {
 	if !ok {
 		t.Fatal("ci.yml has no doctor job")
 	}
-	if runtimes := doctorJob.Strategy.Matrix["runtime"]; !slices.Equal(runtimes, []string{"docker", "podman"}) {
-		t.Errorf("ci doctor runtime matrix = %v, want [docker podman]", runtimes)
+	if runtimes := doctorJob.Strategy.Matrix["runtime"]; !slices.Equal(runtimes, []string{"docker"}) {
+		t.Errorf("ci doctor runtime matrix = %v, want [docker]", runtimes)
 	}
 	doctorRuns, initRuns := 0, 0
 	for _, step := range doctorJob.Steps {

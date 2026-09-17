@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **BREAKING: Podman is no longer a supported container runtime.** Auto-detection considers Docker and
+  Apple `container` only, and `COOP_RUNTIME=podman` is refused by name with the reason and the
+  working alternative — even when `podman` is on `PATH`, so it can never be driven with Docker's
+  flags by accident. Docker keeps every capability it had; Apple `container` keeps its existing
+  narrower behavior. Help, errors, install guidance, docs, the website, scaffold comments and the
+  CI runtime matrix all say the same thing.
+
 - A loop worker that exits normally after a rejected or missing final task action now receives the
   exact validation error in the same native session. Coop keeps the original task boundary and
   services, allows at most two terminal-only corrections, and never substitutes a fresh worker.

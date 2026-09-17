@@ -172,10 +172,10 @@ esac
 # Build the sandbox image + verify, when a container runtime is available.
 if [ "${COOP_NO_BUILD:-0}" = 1 ]; then
   echo "coop: skipped image build (COOP_NO_BUILD=1) — next: coop build && coop doctor"
-elif command -v container >/dev/null 2>&1 || command -v docker >/dev/null 2>&1 || command -v podman >/dev/null 2>&1; then
+elif command -v container >/dev/null 2>&1 || command -v docker >/dev/null 2>&1; then
   "$bindir/coop" build && "$bindir/coop" doctor
 else
-  echo "coop: no container runtime found — install Docker, Podman, or Apple 'container',"
+  echo "coop: no container runtime found — install Docker or Apple 'container',"
   echo "      then run: coop build && coop doctor"
 fi
 

@@ -1160,7 +1160,7 @@ Agents reach each service by its Compose name. Starting again is safe.
 
 If an agent is changing this checkout, Coop waits for a safe launch window.
 Running development and loop stacks remain isolated after startup.
-Requires Docker or Podman with Compose support.
+Requires Docker with Compose support.
 
 If a service asks to read a secret file, Coop asks at a terminal before
 allowing it. Otherwise the service receives an empty file. Approval applies

@@ -224,7 +224,7 @@ func runtimeInitTestRuntime(t *testing.T) runtime.Runtime {
 	t.Helper()
 	name := os.Getenv("COOP_RUNTIME")
 	if name == "" {
-		t.Skip("COOP_RUNTIME is required; run make box-runtime-e2e with Docker or Podman")
+		t.Skip("COOP_RUNTIME is required; run make box-runtime-e2e with Docker")
 	}
 	rt, err := runtime.Detect(name)
 	if err != nil {

@@ -360,7 +360,7 @@ box:
   # Join the project services' network (default: true).
   # network: false
 
-  # Resource limits for Docker/Podman; not applied by Apple container.
+  # Resource limits for Docker; not applied by Apple container.
   # memory: 4g
   # cpus: "4"
 

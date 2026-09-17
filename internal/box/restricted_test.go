@@ -365,7 +365,7 @@ func TestRunRestrictedRefusesWhatItDoesNotEnforce(t *testing.T) {
 			spec.Mode = "readonlyish"
 			return runtime.Runtime{}
 		}, "unknown execution mode"},
-		{"podman", func(cfg *config.Config, spec *RunSpec) runtime.Runtime { return runtime.Runtime{Name: "podman"} }, "docker only"},
+		{"apple container", func(cfg *config.Config, spec *RunSpec) runtime.Runtime { return runtime.Runtime{Name: "container"} }, "docker only"},
 		{"filtered egress", func(cfg *config.Config, spec *RunSpec) runtime.Runtime {
 			cfg.Egress = "filtered"
 			return runtime.Runtime{}

@@ -64,7 +64,7 @@ func reported(headline, reason string, actions ...string) error {
 	return ui.ErrReported
 }
 
-// runtimeTitle is a container runtime's name as a person writes it — "Docker", "Podman", "Apple
+// runtimeTitle is a container runtime's name as a person writes it — "Docker", "Apple
 // container" — for the prose coop speaks about it. An explicit COOP_RUNTIME pointing at something
 // else keeps its own spelling: coop does not know a nicer name for it.
 func runtimeTitle(name string) string {
@@ -73,8 +73,6 @@ func runtimeTitle(name string) string {
 	switch filepath.Base(name) {
 	case "docker":
 		return "Docker"
-	case "podman":
-		return "Podman"
 	case "container":
 		return "Apple container"
 	}

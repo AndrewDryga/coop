@@ -19,7 +19,7 @@ import (
 // (The shared base has no per-repo inputs — `coop update` keeps it fresh — so it's exempt.)
 //
 // The hash lives in a coop-config side file rather than a docker image label: it needs no
-// runtime-specific build/inspect flags (works the same on docker/podman/Apple container)
+// runtime-specific build/inspect flags (works the same on docker and Apple container)
 // and is pure to test. Worst case if it drifts (image deleted, built elsewhere) is a
 // missed or spurious *warning* — never a blocked run.
 

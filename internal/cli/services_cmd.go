@@ -35,7 +35,7 @@ func (a *app) cmdUp(args []string) (int, error) {
 	if a.rt.Name == "container" {
 		return 1, reported("Could not start services",
 			fmt.Sprintf("%s does not support Compose.", runtimeTitle(a.rt.Name)),
-			"Use Docker or Podman for this project's services.")
+			"Use Docker for this project's services.")
 	}
 	file := box.ComposeFileAt(repo, p.ComposeRel())
 	if file == "" {
@@ -225,7 +225,7 @@ func (a *app) cmdDown(args []string) (int, error) {
 	if a.rt.Name == "container" {
 		return 1, reported("Could not stop services",
 			fmt.Sprintf("%s does not support Compose.", runtimeTitle(a.rt.Name)),
-			"Use Docker or Podman for this project's services.")
+			"Use Docker for this project's services.")
 	}
 	file := box.ComposeFileAt(repo, p.ComposeRel())
 	if file == "" {

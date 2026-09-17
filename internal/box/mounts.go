@@ -186,8 +186,7 @@ func RenderMounts(mounts []Mount, decoyFile, decoyDir string) []string {
 			args = append(args, "-v", spec)
 		case DirDecoy:
 			// A read-only empty-dir bind, not --tmpfs: as a -v mount it sorts with the
-			// repo bind by destination on every runtime, so the repo bind can't re-cover
-			// it. (podman applies --tmpfs in a separate pass, which re-exposed the dir.)
+			// repo bind by destination, so the repo bind can't re-cover it.
 			args = append(args, "-v", decoyDir+":"+m.Target+":ro")
 		case Decoy:
 			args = append(args, "-v", decoyFile+":"+m.Target+":ro")
