@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A scripted provider test that ends with a process still in the launched group now names it —
+  pid, parent, group, state, elapsed and command — instead of reporting only that the group
+  survived. The straggler is usually gone by the time anyone can look, so the identity has to be
+  captured at the moment of detection.
+
 - Automatic runtime detection now prefers Docker, which is the runtime every Coop feature is
   qualified on; Apple `container` is selected only when Docker is absent or its daemon does not
   answer. An explicit `COOP_RUNTIME` still wins, and a lone stopped Docker is still selected so

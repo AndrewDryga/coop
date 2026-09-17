@@ -290,6 +290,18 @@ func TestRunRejectsSuccessfulLeaderThatLeavesAChild(t *testing.T) {
 	if result.Err == nil || !strings.Contains(result.Err.Error(), "survived leader exit") {
 		t.Fatalf("Run orphan result = exit %d, err %v", result.ExitCode, result.Err)
 	}
+	// The survivor's identity is the whole finding: a bare "the group survived" sent one real
+	// investigation home empty-handed, because the straggler is gone by the time anyone looks.
+	// The row must name the process AND its parent, so an orphan reads as one.
+	for _, want := range []string{
+		"survivors (pid ppid pgid stat elapsed command)",
+		strconv.Itoa(result.PID), // the row is filtered by group, so the leader's pid must appear in it
+		"sleep",
+	} {
+		if !strings.Contains(result.Err.Error(), want) {
+			t.Errorf("survivor diagnostic %q does not report %q", result.Err, want)
+		}
+	}
 	if _, err := os.Stat(revoked); err != nil {
 		t.Fatalf("leader-exit cleanup did not run revocation callback: %v", err)
 	}

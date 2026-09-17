@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -324,9 +325,10 @@ func (p *Process) wait(ctx context.Context) Result {
 			if p.beforeCancel != nil {
 				beforeErr = p.beforeCancel()
 			}
+			survivors := describeGroup(result.PID)
 			signalGroup(result.PID, syscall.SIGKILL)
 			cleanupErr := waitGroupGone(result.PID, 2*time.Second)
-			survivorErr := fmt.Errorf("process group %d survived leader exit", result.PID)
+			survivorErr := fmt.Errorf("process group %d survived leader exit%s", result.PID, survivors)
 			result.Err = errors.Join(result.Err, beforeErr, survivorErr, cleanupErr)
 		}
 	case <-ctx.Done():
@@ -414,6 +416,50 @@ func cancelProcessGroup(pid int, done <-chan error, grace time.Duration) error {
 		}
 	}
 }
+
+// describeGroup names who is still in pid's group, before the kill that would erase the evidence.
+// "The group survived" is a symptom nobody can act on: the survivor's identity, parent and state
+// are the finding — a reparented process in a sleeping state is one whose owner exited without
+// taking it along, which is a different bug from one that is merely slow to leave.
+//
+// Bounded twice over: one `ps`, on a deadline so a wedged process table cannot hang the test
+// instead of failing it, and at most a handful of rows, so a failure adds evidence rather than a
+// page of process table to the transcript.
+func describeGroup(pid int) string {
+	ctx, cancel := context.WithTimeout(context.Background(), describeGroupTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ps", "-A", "-o", "pid=,ppid=,pgid=,stat=,etime=,command=").Output()
+	if err != nil {
+		return fmt.Sprintf(" (the process table could not be read: %v)", err)
+	}
+	group := strconv.Itoa(pid)
+	var rows []string
+	for line := range strings.SplitSeq(string(out), "\n") {
+		// pid, ppid, pgid, stat and etime never contain spaces and all precede the command, so the
+		// group is the third field whatever the command's argv or the column padding looks like.
+		fields := strings.Fields(line)
+		if len(fields) < 5 || fields[2] != group {
+			continue
+		}
+		if len(rows) == describeGroupLimit {
+			rows = append(rows, "…")
+			break
+		}
+		rows = append(rows, strings.TrimSpace(line))
+	}
+	if len(rows) == 0 {
+		return " (nothing was left in the group by the time it was listed)"
+	}
+	return "; survivors (pid ppid pgid stat elapsed command):\n  " + strings.Join(rows, "\n  ")
+}
+
+// describeGroupLimit keeps a failure's evidence bounded. One straggler is the usual case and the
+// interesting one; a runaway group is proven by the first few rows just as well as by all of them.
+const describeGroupLimit = 8
+
+// describeGroupTimeout bounds the one `ps`. Collecting evidence must never become the reason a
+// failing test hangs to its package deadline instead of reporting.
+const describeGroupTimeout = 5 * time.Second
 
 func waitGroupGone(pid int, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
