@@ -229,10 +229,13 @@ load_target() {
 	esac
 }
 
+# .agent/runs is Coop's run ledger, which this wrapper and the run itself append to while a delegate
+# works: bookkeeping, never the delegate's change, so it must not stop a fallback.
 snapshot_tree() {
 	(
 		ulimit -f "$delegate_snapshot_blocks" || exit 1
-		timeout -k 30 30 tar --exclude='./.git' --exclude='./.git/*' -cf "$1" . 2>/dev/null
+		timeout -k 30 30 tar --exclude='./.git' --exclude='./.git/*' \
+			--exclude='./.agent/runs' --exclude='./.agent/runs/*' -cf "$1" . 2>/dev/null
 	)
 }
 
@@ -513,43 +516,57 @@ for target do
 		exit 0
 	fi
 	failure_cause=$(coop_failure_cause "$out")
+	# A target that could not start, or whose login its provider refused, fails the same way on
+	# every call: it is recorded as permanently failed, so later calls in this run skip it, and
+	# handed on like a rate limit. Only the provider's own stderr can prove a refused login — its
+	# stdout is the agent's reply, which may quote anything.
 	permanent=false
 	case "$st" in 126|127) permanent=true ;; esac
+	if coop_login_rejected "$attempt_dir/provider-stderr-$index"; then
+		permanent=true
+	fi
 	coop_role_health "$role" delegate "$agent" "$model" "$target" failed 1 "$permanent" "$failure_cause"
 	case "$st" in
-	124|125|126|127|137)
+	124|125|137)
 		echo "[coop-delegate $role: bounded execution failed on $target (exit $st) — fallback stopped]" >&2
 		exit "$st"
 		;;
 	esac
-	if ! coop_rate_limited "$out" || [ "$index" -ge "$total" ]; then
+	if [ "$permanent" = true ]; then
+		why="failed permanently"
+	elif coop_rate_limited "$out"; then
+		why="was rate limited"
+	else
+		why=
+	fi
+	if [ -z "$why" ] || [ "$index" -ge "$total" ]; then
 		echo "[coop-delegate $role: FAILED on $target (exit $st) — read its output above before retrying]" >&2
 		exit "$st"
 	fi
 	if [ "$baseline_state" = dirty ]; then
-		echo "[coop-delegate $role: $target was rate limited, but fallback is unsafe because the worktree was already dirty; inspect it before retrying]" >&2
+		echo "[coop-delegate $role: $target $why, but fallback is unsafe because the worktree was already dirty; inspect it before retrying]" >&2
 		exit "$st"
 	fi
 	if [ "$baseline_state" != clean ]; then
-		echo "[coop-delegate $role: $target was rate limited, but fallback stopped because the initial Git status or filesystem snapshot could not be verified (snapshot size/time bounds apply)]" >&2
+		echo "[coop-delegate $role: $target $why, but fallback stopped because the initial Git status or filesystem snapshot could not be verified (snapshot size/time bounds apply)]" >&2
 		exit "$st"
 	fi
 	if ! post_status=$(git status --porcelain --untracked-files=all 2>/dev/null); then
-		echo "[coop-delegate $role: $target was rate limited, but fallback stopped because Git status failed]" >&2
+		echo "[coop-delegate $role: $target $why, but fallback stopped because Git status failed]" >&2
 		exit "$st"
 	fi
 	if [ -n "$post_status" ]; then
-		echo "[coop-delegate $role: $target was rate limited after changing the worktree; fallback stopped — inspect 'git diff' before retrying]" >&2
+		echo "[coop-delegate $role: $target $why after changing the worktree; fallback stopped — inspect 'git diff' before retrying]" >&2
 		exit "$st"
 	fi
 	if ! snapshot_tree "$attempt_dir/tree-after.tar"; then
-		echo "[coop-delegate $role: $target was rate limited, but fallback stopped because the final Git/filesystem snapshot exceeded its size/time bound or could not be read]" >&2
+		echo "[coop-delegate $role: $target $why, but fallback stopped because the final Git/filesystem snapshot exceeded its size/time bound or could not be read]" >&2
 		exit "$st"
 	fi
 	if ! cmp -s "$attempt_dir/tree-before.tar" "$attempt_dir/tree-after.tar"; then
-		echo "[coop-delegate $role: $target was rate limited after changing ignored files; fallback stopped — inspect the worktree before retrying]" >&2
+		echo "[coop-delegate $role: $target $why after changing ignored files; fallback stopped — inspect the worktree before retrying]" >&2
 		exit "$st"
 	fi
-	echo "[coop-delegate $role: $target rate limited — trying fallback $((index + 1))/$total]" >&2
+	echo "[coop-delegate $role: $target ${why#was } — trying fallback $((index + 1))/$total]" >&2
 done
 `

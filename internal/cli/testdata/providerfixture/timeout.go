@@ -45,11 +45,12 @@ func serveTimeout(root, trace, scenarioPath string, args []string) error {
 		return err
 	}
 	if provider == "tar" {
-		if len(args) != 9 || args[4] != "--exclude=./.git" || args[5] != "--exclude=./.git/*" || args[6] != "-cf" || args[8] != "." {
+		if len(args) != 11 || args[4] != "--exclude=./.git" || args[5] != "--exclude=./.git/*" ||
+			args[6] != "--exclude=./.agent/runs" || args[7] != "--exclude=./.agent/runs/*" || args[8] != "-cf" || args[10] != "." {
 			return errors.New("timeout tar requires the exact delegate snapshot argv")
 		}
-		destinationDir, err := procharness.CanonicalUnderRoot(root, filepath.Dir(args[7]))
-		if err != nil || !pathAtOrBelow(filepath.Join(root, "tmp"), destinationDir) || !strings.HasPrefix(filepath.Base(args[7]), "tree-") || filepath.Ext(args[7]) != ".tar" {
+		destinationDir, err := procharness.CanonicalUnderRoot(root, filepath.Dir(args[9]))
+		if err != nil || !pathAtOrBelow(filepath.Join(root, "tmp"), destinationDir) || !strings.HasPrefix(filepath.Base(args[9]), "tree-") || filepath.Ext(args[9]) != ".tar" {
 			return errors.New("timeout tar destination is outside fixture attempt state")
 		}
 	} else {

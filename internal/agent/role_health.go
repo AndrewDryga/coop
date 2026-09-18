@@ -48,11 +48,16 @@ coop_role_quarantined() {
 	[ "$coop_role_quarantine" = true ]
 }
 
+coop_login_rejected() {
+	LC_ALL=C grep -Eiq 'not signed in|credential[^:]* (missing|unavailable|invalid)|"http_status": 401' "$@" 2>/dev/null
+}
+
 coop_failure_permanent() {
 	coop_failure_status=$1
 	shift
 	case "$coop_failure_status" in 126|127) return 0 ;; esac
-	LC_ALL=C grep -Eiq 'no such file or directory|command not found|file name too long|unknown (option|model)|unrecognized option|invalid (argument|model)|not signed in|credential[^:]* (missing|unavailable|invalid)|"http_status": 401' "$@" 2>/dev/null
+	coop_login_rejected "$@" ||
+		LC_ALL=C grep -Eiq 'no such file or directory|command not found|file name too long|unknown (option|model)|unrecognized option|invalid (argument|model)' "$@" 2>/dev/null
 }
 
 coop_failure_cause() {

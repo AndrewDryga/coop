@@ -308,30 +308,124 @@ func TestDelegateWrapperFallsBackOnRateLimit(t *testing.T) {
 	}
 }
 
-// The pinned Grok client prints a 402 — its "run out of credits" — as a structured payload on stderr,
-// and a role hands the task to its next rung on it. The same payload for a 401 is an authentication
-// failure and ends the role where it failed.
-func TestDelegateWrapperFallsBackOnGrokCreditsExhausted(t *testing.T) {
+// grokPayload is what the pinned Grok client prints on stderr when its service answers a request
+// with an HTTP error: the structured payload carrying the status (captured by replay).
+func grokPayload(status, message string) string {
+	return "cat >&2 <<'EOF'\nError: Internal error: {\n  \"message\": \"" + message + "\",\n  \"http_status\": " + status + "\n}\nEOF"
+}
+
+// A role hands its task to the next rung when the Grok client reports a 402 — its "run out of
+// credits", a limit — or a 401, a login its service refused, which no retry can fix. A server error
+// in the same shape ends the role where it failed.
+func TestDelegateWrapperFallsBackOnGrokQuotaAndRefusedLogin(t *testing.T) {
 	for _, tc := range []struct {
-		status, message string
-		wantCode        int
-		wantFallback    bool
+		status, message, want string
+		wantCode              int
 	}{
-		{"402", "API error (status 402 Payment Required): insufficient_credits: You have run out of credits.", 0, true},
-		{"401", "Auth recovery succeeded but 4 authenticated inference requests were still rejected (401); giving up after 3 retries.", 1, false},
+		{"402", "API error (status 402 Payment Required): insufficient_credits: You have run out of credits.", "grok:grok-4.5 rate limited — trying fallback", 0},
+		{"401", "Auth recovery succeeded but 4 authenticated inference requests were still rejected (401); giving up after 3 retries.", "grok:grok-4.5 failed permanently — trying fallback", 0},
+		{"500", "API error (status 500 Internal Server Error): internal_error: boom.", "FAILED on grok:grok-4.5 (exit 1)", 1},
 	} {
 		t.Run(tc.status, func(t *testing.T) {
 			h := newDelegateHarness(t)
 			calls := filepath.Join(h.dir, "calls")
 			h.env = append(h.env, "COOP_DELEGATE_FAST_TARGETS=grok:grok-4.5 gemini:gemini-3.5-flash")
-			h.stub("grok", "echo grok >>"+calls+"\ncat >&2 <<'EOF'\nError: Internal error: {\n  \"message\": \""+tc.message+"\",\n  \"http_status\": "+tc.status+"\n}\nEOF\nexit 1")
+			h.stub("grok", "echo grok >>"+calls+"\n"+grokPayload(tc.status, tc.message)+"\nexit 1")
 			h.stub("gemini", "echo gemini >>"+calls+"; echo fallback-work")
 			out, code := h.run("fast", "Implement the thing")
 			got, _ := os.ReadFile(calls)
-			if code != tc.wantCode || strings.Contains(string(got), "gemini") != tc.wantFallback {
-				t.Fatalf("exit = %d after calls %q, want exit %d and fallback %v:\n%s", code, got, tc.wantCode, tc.wantFallback, out)
+			if code != tc.wantCode || strings.Contains(string(got), "gemini") != (tc.wantCode == 0) || !strings.Contains(out, tc.want) {
+				t.Fatalf("exit = %d after calls %q, want exit %d and %q:\n%s", code, got, tc.wantCode, tc.want, out)
 			}
 		})
+	}
+}
+
+// A refused login is read only from the provider's stderr: an agent whose reply merely says "not
+// signed in" and then fails is an ordinary failure, not a reason to hand its task elsewhere.
+func TestDelegateWrapperIgnoresLoginWordsInTheReply(t *testing.T) {
+	h := newDelegateHarness(t)
+	calls := filepath.Join(h.dir, "calls")
+	h.env = append(h.env, "COOP_DELEGATE_FAST_TARGETS=gemini codex")
+	h.stub("gemini", "echo gemini >>"+calls+`; echo '{"type":"message","role":"assistant","content":"the staging user is not signed in"}'; exit 7`)
+	h.stub("codex", "echo codex >>"+calls)
+	out, code := h.run("fast", "task")
+	if got, _ := os.ReadFile(calls); code != 7 || string(got) != "gemini\n" || !strings.Contains(out, "the staging user is not signed in") {
+		t.Fatalf("reply prose = (exit %d, calls %q), want the reply shown, the original failure and no fallback:\n%s", code, got, out)
+	}
+}
+
+// A target that could not start (126/127) fails the same way every time, so the role moves on —
+// under the same checks as a rate limit: a refused login after the attempt edited the tree stops.
+func TestDelegateWrapperPermanentFailureFallbackKeepsTheTreeChecks(t *testing.T) {
+	h := newDelegateHarness(t)
+	calls := filepath.Join(h.dir, "calls")
+	h.env = append(h.env, "COOP_DELEGATE_FAST_TARGETS=codex gemini")
+	h.stub("codex", "echo codex >>"+calls+"; exit 127")
+	h.stub("gemini", "echo gemini >>"+calls+"; echo fallback-work")
+	if out, code := h.run("fast", "task"); code != 0 || !strings.Contains(out, "codex failed permanently — trying fallback") {
+		t.Fatalf("a target that could not start = exit %d, want the fallback:\n%s", code, out)
+	}
+
+	h = newDelegateHarness(t)
+	calls = filepath.Join(h.dir, "calls")
+	h.env = append(h.env, "COOP_DELEGATE_FAST_TARGETS=grok gemini")
+	h.stub("grok", "echo grok >>"+calls+"; echo partial > partial.txt\n"+grokPayload("401", "rejected (401)")+"\nexit 1")
+	h.stub("gemini", "echo gemini >>"+calls)
+	out, code := h.run("fast", "task")
+	if got, _ := os.ReadFile(calls); code != 1 || string(got) != "grok\n" || !strings.Contains(out, "failed permanently after changing the worktree; fallback stopped") {
+		t.Fatalf("a refused login after an edit = (exit %d, calls %q), want the fallback stopped:\n%s", code, got, out)
+	}
+}
+
+// runLedgerHarness is a delegate harness inside a Coop run: the run's role ledger exists in the
+// repository (.agent/runs, ignored by Git, as a loop prepares it) and COOP_RUN_ID names it.
+func runLedgerHarness(t *testing.T) *delegateHarness {
+	t.Helper()
+	h := newDelegateHarness(t)
+	for _, cmd := range [][]string{{"sh", "-c", "echo .agent/runs/ > .gitignore"}, {"git", "add", ".gitignore"}, {"git", "commit", "-qm", "ignore the ledger"}} {
+		c := exec.Command(cmd[0], cmd[1:]...)
+		c.Dir, c.Env = h.repo, h.env
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", cmd, err, out)
+		}
+	}
+	ledger := filepath.Join(h.repo, ".agent", "runs", "run1.peers.jsonl")
+	if err := os.MkdirAll(filepath.Dir(ledger), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ledger, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.env = append(h.env, "COOP_RUN_ID=run1")
+	return h
+}
+
+// The wrapper appends to the run's ledger as it goes. That bookkeeping is not the delegate changing
+// the tree: a limited target still hands over, and a target that failed permanently hands over and
+// is skipped by the run's next call.
+func TestDelegateWrapperFallsBackInsideARunLedger(t *testing.T) {
+	h := runLedgerHarness(t)
+	h.env = append(h.env, "COOP_DELEGATE_FAST_TARGETS=codex gemini")
+	h.stub("codex", "echo 'rate limit exceeded' >&2; exit 8")
+	h.stub("gemini", "echo fallback-work")
+	if out, code := h.run("fast", "task"); code != 0 || !strings.Contains(out, "codex rate limited — trying fallback") {
+		t.Fatalf("a rate limit inside a run = exit %d, want the fallback:\n%s", code, out)
+	}
+
+	h = runLedgerHarness(t)
+	calls := filepath.Join(h.dir, "calls")
+	h.env = append(h.env, "COOP_DELEGATE_FAST_TARGETS=grok gemini")
+	h.stub("grok", "echo grok >>"+calls+"\n"+grokPayload("401", "rejected (401)")+"\nexit 1")
+	h.stub("gemini", "echo gemini >>"+calls+"; echo fallback-work")
+	if out, code := h.run("fast", "task"); code != 0 || !strings.Contains(out, "grok failed permanently — trying fallback") {
+		t.Fatalf("first call in the run = exit %d, want the fallback:\n%s", code, out)
+	}
+	if out, code := h.run("fast", "task"); code != 0 || !strings.Contains(out, "skipping grok — this exact target already failed permanently in this run") {
+		t.Fatalf("second call in the run = exit %d, want the refused target skipped:\n%s", code, out)
+	}
+	if got, _ := os.ReadFile(calls); string(got) != "grok\ngemini\ngemini\n" {
+		t.Fatalf("calls = %q, want grok once and gemini on both calls", got)
 	}
 }
 

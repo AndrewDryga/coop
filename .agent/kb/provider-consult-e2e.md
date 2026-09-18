@@ -2,8 +2,8 @@
 name: provider-consult-e2e
 description: Verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring
 subsystem: testing
-sources: [Makefile, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/consult_shell.go, internal/agent/role_health.go, internal/loop/telemetry.go, internal/loop/streamjson_providers.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go]
-updated: 2026-09-15
+sources: [Makefile, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/consult_shell.go, internal/agent/role_health.go, internal/preset/wrapper.go, internal/loop/telemetry.go, internal/loop/streamjson_providers.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go]
+updated: 2026-09-19
 ---
 
 `make provider-scripted-e2e` is the blocking consult contract. A strict external Coop binary mounts
@@ -53,6 +53,13 @@ false: jq 1.6 can exit zero for `jq -e select(...)` over an empty stream, which 
 every advisor look already quarantined before its first call. `coop_role_quarantined` slurps the
 bounded ledger and tests the explicit boolean returned by `any(...)` instead.
 
+Permanence differs by wrapper. The consult's `coop_failure_permanent` reads its stderr for broken
+invocations and refused logins; the delegate records only exit 126/127 and `coop_login_rejected` on
+the provider's own stderr (`provider-stderr-<n>`), because its merged output carries the agent's reply
+and tool noise. Both hand a permanent failure to the next rung. The ledger sits in the worktree, so
+the delegate's "nothing changed" snapshot excludes `.agent/runs`: its own failure row, appended before
+the comparison, otherwise stopped every in-run fallback as "changed ignored files".
+
 `make provider-consult-live-e2e COOP_LIVE_TARGETS='claude,codex,gemini,grok'` is the permissive
 upstream ring; `make provider-consult-live-e2e-all` is strict. The clean child directly invokes each
 mounted peer role once, so a complete ring starts four peer CLI sessions and zero lead sessions.
@@ -80,6 +87,9 @@ in final/state/log. Wrapper fixtures preserve a partial reply at exit0; they do 
 native lead carries its caveats through synthesis. No prose-to-verdict parser is involved.
 
 ## Changelog
+- 2026-09-19 — the delegate hands a permanent failure (126/127, a refused login on stderr) to its next
+  rung and quarantines it; its tree snapshot now excludes the run ledger, which had stopped every
+  in-loop fallback.
 - 2026-09-15 — reused the four adapter-owned structured-output parsers for delegate usage;
   success, failure, diagnostics, and nested-consult tests preserve the existing reply/report
   contract without adding pricing guesses or a separate telemetry layer.

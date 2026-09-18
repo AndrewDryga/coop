@@ -831,13 +831,15 @@ before starting the provider instead of silently dropping a role. A native role
 generates its Claude subagent in the box — `coop-<role>`, from the role's model + `when` +
 prompt, never written to your repo (`.gitignore` keeps the overlay out of commits); set
 `subagent: <name>` to reference an existing `.claude/agents/` subagent instead. A consult
-role accepts one target or a fallback list. Its wrapper advances only after a failed command
-proves a rate limit; timeout, output overflow, and ordinary failures stay visible and never spend a
-second rung. Consult continuity follows the successful rung. A failed native resume returns that
+role accepts one target or a fallback list. Its wrapper advances to the next rung when a failed
+command proves a rate limit, when the target fails permanently — it cannot start, is misconfigured,
+or its login is refused, and is then skipped for the rest of the run — or when an ordinary failure
+repeats on one retry; a timeout or output overflow stays visible and never spends a second rung.
+Consult continuity follows the successful rung. A failed native resume returns that
 failure once, discards the uncertain session id, and preserves the last complete transcript; the
 next `--continue` starts that same rung fresh from the transcript instead of retrying a dead id or
 silently double-billing the failed call. A delegate advances
-only from a clean worktree when the limited rung changed neither files (ignored ones included)
+only from a clean worktree when the failed rung changed neither files (ignored ones included)
 nor Git history. Providers without mounted credentials are skipped. Every available rung's
 credential home is mounted for the lead box. The role's prompt (if any) is the persona the peer adopts — so
 two consult roles on one agent stay distinct. Native roles run inside the
@@ -852,8 +854,9 @@ safety/routing rules — and you edit or delete them freely.
 delegate may edit the shared worktree, runs are serialized, and it must never commit —
 the wrapper verifies `HEAD`, refs, and reflogs before and after each attempt and fails loud
 without discarding the evidence if history changed. Fallback is allowed only after a proven
-rate limit from a clean worktree whose tracked, untracked, staged, and ignored state stayed
-unchanged. Prompt and output are bounded, each attempt has a timeout, and the provider process
+rate limit, or when the target could not start or its provider refused its login (that target is
+then skipped for the rest of the run), and only from a clean worktree whose tracked, untracked,
+staged, and ignored state stayed unchanged — Coop's own run ledger in `.agent/runs` aside. Prompt and output are bounded, each attempt has a timeout, and the provider process
 group is cleaned up before the serialization lock is released. The standard image supplies
 `flock`, `setsid`, and `timeout`; a custom image missing them fails closed.
 Write-capable delegation is one level deep: the child receives `COOP_DELEGATE_DEPTH=1`,
@@ -1005,8 +1008,9 @@ the leader sends only the delta, from a plain fresh start, where the leader must
 context. A fresh session becomes resumable only after a usable
 reply. A failed resume is not retried in the same call: Coop clears the uncertain native id, keeps
 the last complete transcript, and the next `--continue` restarts that successful rung fresh with
-the transcript plus the new delta. Only a proven nonzero rate limit advances a fallback ladder;
-timeouts, ordinary failures, and output overflow are terminal for that call. It hides the per-agent session-id
+the transcript plus the new delta. A proven rate limit, a permanent failure, or an ordinary failure
+that repeats on one retry advances a fallback ladder; timeouts and output overflow are terminal for
+that call. It hides the per-agent session-id
 mechanics — claude/gemini start under a generated id, codex's is captured from its
 JSON stream. Provider stdout and diagnostics are captured separately: stderr is shown as a
 diagnostic but never accepted or persisted as the advisor reply. Native reply and diagnostic

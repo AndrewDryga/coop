@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A write-capable helper (`coop-delegate`) now hands its task to the next target in its list when the
+  current one cannot start or its provider refuses the login, the way it already did for a rate limit
+  — with the same checks that nothing was changed first — and skips that target for the rest of the
+  run. Inside `coop loop` the handover also works again for rate limits: the helper's own record of
+  the failed attempt, kept in `.agent/runs`, was mistaken for a change to your files, so every
+  handover stopped with "changed ignored files".
+
 - A Grok login that the service rejects is now handled like any other dead login. Grok reports it as
   an "Internal error" carrying the service's 401, which Coop treated as an ordinary failure: a loop
   retried the dead login until its retries ran out, and an editor session showed the raw error. A
