@@ -131,7 +131,7 @@ func (s *Store) PrepareArtifacts(ctx context.Context, id string, revision networ
 		if err := unix.Mkdirat(int(dir.Fd()), artifactFilesDir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 			return err
 		}
-		files, _, err := openPrivateDirectory(int(dir.Fd()), artifactFilesDir, 0, 0)
+		files, _, err := openPrivateDirectory(int(dir.Fd()), artifactFilesDir, 0)
 		if err != nil {
 			return err
 		}
@@ -338,7 +338,7 @@ func (s *Store) openArtifact(artifact Artifact) (*os.File, os.FileInfo, error) {
 		return nil, nil, err
 	}
 	defer dir.Close()
-	return openPrivateDirectory(int(dir.Fd()), artifact.Name, artifact.Device, artifact.Inode)
+	return openPrivateDirectory(int(dir.Fd()), artifact.Name, artifact.Inode)
 }
 
 func (s *Store) openArtifactFiles(artifact Artifact) (*os.File, error) {
@@ -347,11 +347,14 @@ func (s *Store) openArtifactFiles(artifact Artifact) (*os.File, error) {
 		return nil, err
 	}
 	defer dir.Close()
-	files, _, err := openPrivateDirectory(int(dir.Fd()), artifactFilesDir, 0, 0)
+	files, _, err := openPrivateDirectory(int(dir.Fd()), artifactFilesDir, 0)
 	return files, err
 }
 
-func openPrivateDirectory(parent int, name string, device, inode networkview.Count) (*os.File, os.FileInfo, error) {
+// openPrivateDirectory opens one private directory and, when inode is set, proves it is the one the
+// execution record named. The device is recorded there too but not compared: recovery after a
+// crash runs on the next launch, often after a reboot has renumbered the volume.
+func openPrivateDirectory(parent int, name string, inode networkview.Count) (*os.File, os.FileInfo, error) {
 	fd, err := unix.Openat(parent, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, nil, err
@@ -363,7 +366,7 @@ func openPrivateDirectory(parent int, name string, device, inode networkview.Cou
 	}
 	if err == nil {
 		stat := info.Sys().(*syscall.Stat_t)
-		if info.Mode().Perm() != 0o700 || inode != 0 && (networkview.Count(stat.Ino) != inode || networkview.Count(stat.Dev) != device) {
+		if info.Mode().Perm() != 0o700 || inode != 0 && networkview.Count(stat.Ino) != inode {
 			err = errors.New("network artifact directory identity changed")
 		}
 	}

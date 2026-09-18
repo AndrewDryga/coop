@@ -421,7 +421,7 @@ func (s *Store) projectID(project string) (string, error) {
 // canonical path, its keyed id, and the directory the kernel has at that path
 // right now. The path alone is a NAME — a directory moved aside and replaced by
 // another at the same path would inherit its grants — so callers that authorize
-// a launch compare the recorded device/inode too.
+// a launch compare the recorded inode too.
 func (s *Store) projectIdentity(project string) (string, string, os.FileInfo, error) {
 	canonical, err := canonicalPath(project)
 	if err != nil {
@@ -450,8 +450,11 @@ type Approval struct {
 	ProjectID string        `json:"project_id"`
 	Posture   egress.Mode   `json:"posture"`
 	Envelope  []egress.Rule `json:"envelope"`
-	// Device and Inode are the approved directory's kernel identity. They are
-	// recorded so a replacement at the same path cannot inherit its grants.
+	// Inode is the approved directory's kernel identity, recorded so a
+	// replacement at the same path cannot inherit its grants. Device is recorded
+	// beside it for diagnosis but never compared: a volume's device number is
+	// assigned when it is mounted, so a reboot changes it while the directory and
+	// its inode are untouched (see checkDirectory).
 	Device uint64 `json:"device"`
 	Inode  uint64 `json:"inode"`
 	// Services is the digest of each approved `service:` grant's Compose
@@ -470,7 +473,7 @@ func (a *Approval) checkDirectory(canonical string, info os.FileInfo) *PendingAp
 	if a == nil {
 		return nil
 	}
-	device, inode, ok := directoryIdentity(info)
+	_, inode, ok := directoryIdentity(info)
 	if !ok {
 		return &PendingApproval{Reason: "the project directory at " + canonical + " could not be read",
 			Cause: "This project folder could not be read, so its approval cannot be checked."}
@@ -479,7 +482,10 @@ func (a *Approval) checkDirectory(canonical string, info os.FileInfo) *PendingAp
 		return &PendingApproval{Reason: "the network approval for " + canonical + " was made by an older coop",
 			Cause: "This project's network access was approved by an older Coop."}
 	}
-	if a.Device != device || a.Inode != inode {
+	// The inode alone: a directory recreated at the path is a new inode,
+	// while a reboot renumbers the volume's device and would otherwise send
+	// every approved project back for review.
+	if a.Inode != inode {
 		return &PendingApproval{Reason: "the project directory at " + canonical + " was replaced since it was approved",
 			Cause: "This project folder was replaced after its network access was approved."}
 	}

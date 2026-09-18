@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A reboot no longer sends every filtered project back for network approval. An approval recorded
+  its project directory's device number, which a volume is given when it is mounted, so after a
+  reboot the same folder looked "replaced since it was approved". Approvals now bind the directory's
+  inode — a different folder at the same path is still refused — and a filtered run killed by the
+  reboot is cleaned up on the next launch instead of being refused as a changed directory.
+
 - A reboot no longer breaks a loop's completion evidence. Completion receipts, completion windows
   and pending final reviews recorded the volume's device number, which is reassigned at mount — so
   after a reboot an open window saw every archived task as changed, cleared its receipt and stopped

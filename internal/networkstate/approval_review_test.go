@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -188,6 +189,52 @@ func TestApprovalRefusesLostIdentityAndCancellation(t *testing.T) {
 				t.Fatal("refused approval left authority", err)
 			}
 		})
+	}
+}
+
+// A reboot renumbers the volume a project lives on, so an approval recorded before it names another
+// device for the very same directory. That directory must still be admitted without a new review;
+// a replacement at the path is still refused (TestApprovalRefusesAReplacedProjectDirectory), and an
+// approval that never recorded the directory still has to be reviewed again.
+func TestApprovalSurvivesADeviceRenumber(t *testing.T) {
+	s := openStore(t)
+	project := filepath.Join(t.TempDir(), "repo")
+	if err := os.Mkdir(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	requests := []egress.Rule{rule("example.com")}
+	if err := approve(s, project, egress.Filtered, requests, nil); err != nil {
+		t.Fatal(err)
+	}
+	id, err := s.projectID(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewrite := func(edit func(*Approval)) {
+		t.Helper()
+		approval, err := s.approval(id)
+		if err != nil || approval == nil {
+			t.Fatalf("approval = %v, %v", approval, err)
+		}
+		edit(approval)
+		data, err := json.Marshal(approval)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.publish(approvalRecord(id), data, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rewrite(func(a *Approval) { a.Device++ })
+	if _, err := s.Admit(project, Admission{Requests: requests}); err != nil {
+		t.Fatalf("an approval recorded before a reboot was refused: %v", err)
+	}
+	if preview, err := s.admissionPreview(project, Admission{Requests: requests}); err != nil || preview.Pending != nil {
+		t.Fatalf("coop net asked for a review after a reboot: %+v, %v", preview, err)
+	}
+	rewrite(func(a *Approval) { a.Inode = 0 })
+	if _, err := s.Admit(project, Admission{Requests: requests}); err == nil || !strings.Contains(err.Error(), "older coop") {
+		t.Fatalf("an approval without a recorded directory was trusted: %v", err)
 	}
 }
 

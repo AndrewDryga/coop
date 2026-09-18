@@ -44,8 +44,9 @@ same answer, so no two of them can disagree. Without an approval only a widening
 fresh `coop init` project (explicitly `filtered`) launches without a review. The file's mode counts
 only where it would decide anything: under `--egress`, `COOP_EGRESS` or a session policy the file's
 `open` is moot and is not pending. `approve` has no `--mode`: to change access you edit the file.
-An approval binds three things beyond the rules: the project directory's dev+inode (a replacement
-at the same path is pending, `networkstate/authority.go`, `checkDirectory`), the reviewed Compose
+An approval binds three things beyond the rules: the project directory's inode (a replacement
+at the same path is pending, `networkstate/authority.go`, `checkDirectory`; the device is recorded
+but not compared, since a reboot renumbers the volume), the reviewed Compose
 stanza of every `service:` grant as a digest recomputed at launch (`box/composecheck.go:415`,
 `box/network_approval.go`, `requestedServiceDigests`), and the same capability gate a launch applies
 — an unenforceable rule is refused at review, not remembered. `coop net forget` is the way back and the only caller of
@@ -176,6 +177,9 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-18 — approvals and a run's artifact directory compare the inode, not the device: a reboot
+  renumbered every approved project into "replaced" and made post-reboot recovery refuse to clean
+  up (`authority.go` `checkDirectory`, `artifact.go` `openPrivateDirectory`).
 - 2026-09-18 — MCP admission split: source isolation and parse on every launch, destinations and the
   gateway's MCP rules only on the filtered path. Deriving them first had made every launch pay the
   filtered rules, so an open box refused a `${VARIABLE}` header.

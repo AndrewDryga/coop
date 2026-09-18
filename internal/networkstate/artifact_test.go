@@ -210,6 +210,38 @@ func TestArtifactCleanupRequiresGoneConsumersAndSurvivesKeyLoss(t *testing.T) {
 	}
 }
 
+// A filtered run killed by a reboot is cleaned up on the next launch, after the volume was
+// renumbered: the execution record names another device for the very same artifact directory.
+// Cleanup must still remove it; a replaced directory is still refused
+// (TestArtifactCleanupRefusesAReplacedDirectory).
+func TestArtifactCleanupSurvivesADeviceRenumber(t *testing.T) {
+	s, record := executionFixture(t)
+	ctx := context.Background()
+	record = prepareFixtureLaunch(t, s, record)
+	evidence := fixtureEvidence(t, s)
+	for _, role := range []string{"controller", "guard", "agent"} {
+		var err error
+		if record, err = s.BeginResourceCreation(ctx, record.ID, record.Revision, role); err != nil {
+			t.Fatal(err)
+		}
+		if record, err = s.RecordResourceCreated(ctx, record.ID, record.Revision, role, strings.Repeat("a", 64)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record = confirmFixtureConsumersGone(t, evidence, record)
+	record.Artifact.Device++ // recorded before the reboot renumbered the volume
+	if err := s.writeExecution(&record, true); err != nil {
+		t.Fatal(err)
+	}
+	cleaned, err := evidence.CleanupArtifacts(ctx, record.ID, record.Revision)
+	if err != nil || cleaned.Artifact.State != "gone" {
+		t.Fatalf("cleanup after a reboot = %+v, %v", cleaned.Artifact, err)
+	}
+	if _, err := os.Lstat(filepath.Join(s.Path(), record.Artifact.Name)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the artifact subtree survived cleanup after a reboot", err)
+	}
+}
+
 func TestArtifactCleanupRefusesAReplacedDirectory(t *testing.T) {
 	s, record := executionFixture(t)
 	ctx := context.Background()
