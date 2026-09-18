@@ -320,7 +320,7 @@ func TestHelpForAgentIsTheApprovedPage(t *testing.T) {
 // Every other agent gets the SAME page generated from its own adapter: its command, its human
 // name, its argument label — and only the flags it accepts. Codex refuses restricted runs today,
 // so its page must not advertise --readonly/--bare (nor the sentence about combining them), and
-// Gemini has no reasoning effort, so its usage carries no /<effort>.
+// an effort in a page's example must be one that agent accepts.
 func TestHelpForAgentIsGeneratedPerAdapter(t *testing.T) {
 	codex := agentHelp("codex")
 	for _, want := range []string{
@@ -339,8 +339,17 @@ func TestHelpForAgentIsGeneratedPerAdapter(t *testing.T) {
 			t.Errorf("codex page advertises %q, which a codex run refuses:\n%s", unsupported, codex)
 		}
 	}
-	if gemini := agentHelp("gemini"); strings.Contains(gemini, "/<effort>") || strings.Contains(gemini, "/high") {
-		t.Errorf("gemini has no reasoning effort, so its page must not show one:\n%s", gemini)
+	gemini := agentHelp("gemini")
+	if !strings.Contains(gemini, "coop gemini[:<model>][/<effort>][@<account>]") {
+		t.Errorf("gemini takes an effort, so its usage must show one:\n%s", gemini)
+	}
+	geminiAgent, _ := agents.Get("gemini")
+	example := "coop gemini:" + geminiAgent.ExampleModel() + "/high@work"
+	if !strings.Contains(gemini, example) {
+		t.Errorf("gemini page lacks its effort example %q:\n%s", example, gemini)
+	}
+	if target, err := agents.ParseTarget(strings.TrimPrefix(example, "coop ")); err != nil {
+		t.Errorf("gemini page's example %q is refused: %v (%v)", example, err, target)
 	}
 	// The rows still line up on the widest cell, whatever the agent's name length.
 	for _, name := range agents.Names() {

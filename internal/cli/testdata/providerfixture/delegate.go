@@ -349,7 +349,12 @@ func parseDelegateInvocation(provider string, args []string) (delegateInvocation
 	case "claude":
 		return parsePlainDelegateArgs(args, []string{"-p", "--dangerously-skip-permissions", "--output-format", "json"}, "--effort", nil, "--")
 	case "gemini":
-		return parsePlainDelegateArgs(args, []string{"--yolo"}, "", []string{"-o", "stream-json"}, "-p")
+		invocation, err := parsePlainDelegateArgs(args, []string{"--yolo"}, "", []string{"-o", "stream-json"}, "-p")
+		if err != nil {
+			return delegateInvocation{}, err
+		}
+		invocation.Effort, err = geminiSettingsEffort()
+		return invocation, err
 	case "grok":
 		return parsePlainDelegateArgs(args, []string{"--permission-mode", "bypassPermissions", "--output-format", "streaming-json"}, "--reasoning-effort", nil, "-p")
 	case "codex":

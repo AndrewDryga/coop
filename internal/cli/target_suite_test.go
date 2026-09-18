@@ -13,7 +13,7 @@ import (
 )
 
 func TestEffortOnlyTargetHeadsReachTheSharedParser(t *testing.T) {
-	for _, raw := range []string{"claude/high", "codex/xhigh@work", "grok/low"} {
+	for _, raw := range []string{"claude/high", "codex/xhigh@work", "gemini/high", "grok/low"} {
 		if !isTargetHead(raw) {
 			t.Errorf("isTargetHead(%q) = false, want a direct target", raw)
 		}
@@ -22,12 +22,13 @@ func TestEffortOnlyTargetHeadsReachTheSharedParser(t *testing.T) {
 			t.Errorf("takeHeadWho(%q) = (%s, %v, %q, %q, %v)", raw, target.String(), hasTarget, presetName, rest, err)
 		}
 	}
-	// Gemini is still a target head; its shared parser owns the actionable unsupported-effort error.
-	if !isTargetHead("gemini/high") {
-		t.Fatal("gemini/high was misclassified before ParseTarget could reject unsupported effort")
+	// An effort the provider cannot express is still a target head; the shared parser owns the
+	// actionable error naming the levels that work.
+	if !isTargetHead("gemini/medium") {
+		t.Fatal("gemini/medium was misclassified before ParseTarget could reject the effort")
 	}
-	if _, _, _, _, err := takeHeadWho([]string{"gemini/high"}); err == nil ||
-		!strings.Contains(err.Error(), "does not support a reasoning-effort setting") {
+	if _, _, _, _, err := takeHeadWho([]string{"gemini/medium"}); err == nil ||
+		!strings.Contains(err.Error(), "Gemini takes effort low or high") {
 		t.Fatalf("gemini effort error = %v", err)
 	}
 }

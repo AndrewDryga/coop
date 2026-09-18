@@ -689,7 +689,7 @@ func validateGeneratedReadOnlyMount(root string, run runCommand, m mount, provid
 		// `/home/node/.mcp.json` is claude's shared-MCP mount. A loop WORK box always carries one
 		// now, even with no operator MCP file: coop binds its own task tools into the snapshot
 		// (mcp.BindTaskTools), which is how the box reaches its queue at all.
-		if !scenarioProviderHomeTarget(m.Target, providerHomes) && !scenarioProviderHomeTarget(m.Target, agents.Names()) && !peerContractTarget(m.Target) && m.Target != "/home/node/.gitconfig" && m.Target != "/home/node/.coop-gitignore" && m.Target != "/home/node/.mcp.json" {
+		if !scenarioProviderHomeTarget(m.Target, providerHomes) && !scenarioProviderHomeTarget(m.Target, agents.Names()) && !peerContractTarget(m.Target) && !geminiThinkingTarget(m.Target) && m.Target != "/home/node/.gitconfig" && m.Target != "/home/node/.coop-gitignore" && m.Target != "/home/node/.mcp.json" {
 			return fmt.Errorf("generated config mount target %q is outside the provider and git homes", m.Target)
 		}
 	case strings.HasPrefix(name, "coop-githooks-"):
@@ -704,6 +704,12 @@ func validateGeneratedReadOnlyMount(root string, run runCommand, m mount, provid
 		return fmt.Errorf("read-only mount source %q is not an allowed generated fixture class", m.Source)
 	}
 	return nil
+}
+
+// geminiThinkingTarget is where Coop mounts Gemini's per-effort thinking settings: one file per
+// level, beside the account's ~/.gemini and never inside it.
+func geminiThinkingTarget(target string) bool {
+	return target == "/home/node/.coop-gemini/thinking/low.json" || target == "/home/node/.coop-gemini/thinking/high.json"
 }
 
 func scenarioProviderHomeTarget(target string, providerHomes []string) bool {
@@ -1121,7 +1127,8 @@ func traceEnvironment(env map[string]string) []envTrace {
 
 func traceableEnvValue(key string) bool {
 	switch key {
-	case "TZ", "TERM", "COOP_PRIMARY", "COOP_PEERS", "COOP_RUN_ID", "COOP_CONSULT_TIMEOUT", "COOP_DELEGATE_TIMEOUT", "COOP_DELEGATE_DEPTH", "FIXTURE_SAFE":
+	case "TZ", "TERM", "COOP_PRIMARY", "COOP_PEERS", "COOP_RUN_ID", "COOP_CONSULT_TIMEOUT", "COOP_DELEGATE_TIMEOUT", "COOP_DELEGATE_DEPTH", "FIXTURE_SAFE",
+		"COOP_GEMINI_THINKING", "GEMINI_CLI_SYSTEM_SETTINGS_PATH":
 		return true
 	}
 	if strings.HasPrefix(key, "COOP_CONSULT_") && strings.HasSuffix(key, "_TARGETS") {

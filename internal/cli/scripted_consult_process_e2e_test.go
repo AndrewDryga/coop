@@ -37,7 +37,7 @@ func TestProviderScriptedConsultArms(t *testing.T) {
 			}
 			prompt := "fixture consult question for " + peer
 			reply := "fixture consult reply from " + peer
-			model := "env-" + peer
+			model := directProviderContracts[peer].models[0]
 			effort := directDefaultEffort(directProviderContracts[peer])
 			scenario := consultProcessScenario(lead, providers,
 				[]consultCallSpec{{Target: peer, Mode: "fresh", Prompt: prompt, ExitCode: 0}},
@@ -483,7 +483,7 @@ func TestProviderScriptedConsultLoopTelemetry(t *testing.T) {
 			wantHealth: []loop.PeerRecord{
 				{Role: "advisor", Provider: "codex", Model: codexTarget.Model, Outcome: "failed", Attempts: 2},
 				{Role: "advisor", Provider: "gemini", Model: geminiTarget.Model, Outcome: "failed", Attempts: 2},
-				{Role: "gemini", Provider: "gemini", Model: "env-gemini", Outcome: "success", Attempts: 1},
+				{Role: "gemini", Provider: "gemini", Model: directProviderContracts["gemini"].models[0], Outcome: "success", Attempts: 1},
 			},
 		},
 	}
@@ -876,7 +876,7 @@ func consultRecoveryPrompt(turns []consultTurn, current string) string {
 func consultDirectStep(provider, delivery, result, prompt, reply string) consultStepSpec {
 	step := consultStepSpec{
 		Provider: provider, Delivery: delivery, Result: result, Prompt: prompt,
-		Model: "env-" + provider, Effort: directDefaultEffort(directProviderContracts[provider]),
+		Model: directProviderContracts[provider].models[0], Effort: directDefaultEffort(directProviderContracts[provider]),
 	}
 	step.Reply = reply
 	if provider == "codex" && result == "usable" {
@@ -966,10 +966,10 @@ func assertConsultStateSecure(t *testing.T, suite *directProcessSuite, target st
 }
 
 func providerPairTarget(provider string) agents.Target {
-	model := "fixture-" + provider + "-model"
+	model, effort := directLabelTarget(provider, "fixture-"+provider+"-model")
 	raw := provider + ":" + model
-	if directProviderContracts[provider].supportsEffort {
-		raw += "/high"
+	if effort != "" {
+		raw += "/" + effort
 	}
 	target, err := agents.ParseTarget(raw)
 	if err != nil {

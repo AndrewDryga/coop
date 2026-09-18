@@ -67,7 +67,7 @@ func TestApprovedAccountInputErrors(t *testing.T) {
 		{"03i-invalid-model", launch("claude:opus:extra")},
 		{"03i-empty-effort", launch("codex/")},
 		{"03i-invalid-effort", launch("codex/HIGH")},
-		{"03i-effort-unsupported", launch("gemini/high")},
+		{"03i-effort-inexpressible", launch("gemini/medium")},
 		{"03i-empty-account", launch("claude@")},
 		{"03i-invalid-account", launch("claude@../work")},
 		{"03i-repeated-account-separator", launch("claude@work@personal")},

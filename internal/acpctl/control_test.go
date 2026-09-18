@@ -778,6 +778,28 @@ func TestACPControlLocalTargetRejectionClearsReusedRequestID(t *testing.T) {
 	}
 }
 
+// A model switch keeps the session's effort, so a model that cannot carry it is refused before the
+// adapter sees the switch — never run at the provider's default thinking.
+func TestACPControlRefusesAModelSwitchTheEffortCannotFollow(t *testing.T) {
+	c := New(&config.Config{ConfigDir: t.TempDir()}, "gemini", "gemini-2.5-pro", "low", t.TempDir(), Selection{}, nil, nil, testHost())
+	c.leadUsesSetModel = true
+	c.cached["s1"] = json.RawMessage(`[{"id":"model","currentValue":"gemini-2.5-pro"}]`)
+	set := func(id int, model string) (bool, []byte, []byte) {
+		line := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"session/set_config_option","params":{"sessionId":"s1","configId":"model","value":%q}}`+"\n", id, model)
+		handled, reply, rewritten, _ := c.fromEditor([]byte(line))
+		return handled, reply, rewritten
+	}
+	if handled, reply, rewritten := set(1, "gemini-9-ultra"); !handled || len(rewritten) != 0 || !strings.Contains(string(reply), "without an effort") {
+		t.Fatalf("switch to an unmapped model = handled %v reply %s forwarded %s, want refused naming the fix", handled, reply, rewritten)
+	}
+	if c.target.Model != "gemini-2.5-pro" || len(c.nativePending) != 0 {
+		t.Fatalf("refused switch changed the target: %+v pending %v", c.target, c.nativePending)
+	}
+	if handled, _, rewritten := set(2, "gemini-3-pro-preview"); handled || !strings.Contains(string(rewritten), `"session/set_model"`) {
+		t.Fatalf("switch to a mapped model = handled %v forwarded %s, want it sent to the adapter", handled, rewritten)
+	}
+}
+
 func TestACPControlFiltersOnlyExactCarriedPromptEcho(t *testing.T) {
 	c := newTestControl(t)
 	c.mu.Lock()

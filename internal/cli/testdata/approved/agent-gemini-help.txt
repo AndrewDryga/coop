@@ -1,12 +1,12 @@
 coop gemini — run Gemini in a sandboxed box
 
 Usage:
-  coop gemini[:<model>][@<account>] [options] [-- <gemini-args>...]
+  coop gemini[:<model>][/<effort>][@<account>] [options] [-- <gemini-args>...]
 
 EXAMPLES
   coop gemini
   coop gemini:gemini-3.5-flash
-  coop gemini:gemini-3.5-flash@work
+  coop gemini:gemini-3.5-flash/high@work
   coop gemini -- --help
 
 OPTIONS

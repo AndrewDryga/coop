@@ -1,0 +1,6 @@
+
+✗ Invalid agent target "gemini/medium"
+
+      Gemini takes effort low or high, not "medium": Gemini 3 has no other thinking level, and any Gemini target can end up on a Gemini 3 model.
+
+  Help: coop help models

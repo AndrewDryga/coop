@@ -658,10 +658,12 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         <code>max</code>. Coop passes the level straight to the
                         agent's CLI (Claude's <code>--effort</code>, Codex's
                         <code>model_reasoning_effort</code>, Grok's
-                        <code>--reasoning-effort</code>) and never validates it;
-                        Gemini has no effort control, so a <code>/effort</code>
-                        on it is rejected up front. It mirrors the model's
-                        precedence. Targets, preset and
+                        <code>--reasoning-effort</code>) and never validates it.
+                        Gemini has no effort flag, so Coop sets its thinking
+                        instead and checks the level up front: <code>low</code>
+                        or <code>high</code>, on the models Coop can map (a
+                        thinking setting you pin on one model in your own Gemini
+                        settings still wins). It mirrors the model's precedence. Targets, preset and
                         <code>.agent/loop.yaml</code> <code>agent:</code>
                         ladders, and <code>COOP_&lt;AGENT&gt;_MODEL</code> all
                         accept <code>model/effort</code> (e.g.

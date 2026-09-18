@@ -627,7 +627,7 @@ func loopRecoveryScenario(taskID string, attempts []loopProcessAttempt) loopProc
 
 func loopRecoveryTarget(provider, model, account string) string {
 	target := provider + ":" + model
-	if effort := directTargetEffort(directProviderContracts[provider]); effort != "" {
+	if effort := directLabelEffort(provider); effort != "" {
 		target += "/" + effort
 	}
 	return target + "@" + account

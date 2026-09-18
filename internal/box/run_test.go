@@ -2204,6 +2204,50 @@ func TestModelEnvArgs(t *testing.T) {
 	}
 }
 
+// An effort an agent cannot express stops the box before anything is projected — the scoped
+// agent's own, an explicit peer's, and a preset role rung's alike, each as the box would resolve it.
+func TestCheckEffortsRefusesWhatTheBoxCannotCarry(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node"}
+	lead := RunSpec{Homes: true, Agent: "gemini"}
+	cfg.SetActiveEffort("gemini", "low")
+	if err := checkEfforts(cfg, lead); err != nil {
+		t.Fatalf("gemini at low was refused: %v", err)
+	}
+	cfg.SetActiveEffort("gemini", "medium") // e.g. COOP_GEMINI_MODEL=…/medium, which no parser saw
+	if err := checkEfforts(cfg, lead); err == nil || !strings.Contains(err.Error(), "low or high") {
+		t.Fatalf("gemini at medium = %v, want refused naming low or high", err)
+	}
+	cfg.SetActiveEffort("gemini", "")
+	peer := RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude",
+		Peers: []agents.Target{{Provider: "gemini", Model: "gemini-9", Effort: "high"}}}
+	if err := checkEfforts(cfg, peer); err == nil || !strings.Contains(err.Error(), "gemini-9") {
+		t.Fatalf("explicit peer on an unmapped model = %v, want refused", err)
+	}
+	role := RunSpec{Homes: true, Agent: "gemini", Preset: &preset.Preset{Roles: []preset.Role{
+		{Name: "fast", Mode: preset.ModeDelegate, Targets: []agents.Target{{Provider: "gemini", Model: "gemini-9", Effort: "high"}}},
+	}}}
+	if err := checkEfforts(cfg, role); err == nil || !strings.Contains(err.Error(), "gemini-9") {
+		t.Fatalf("role rung on an unmapped model = %v, want refused", err)
+	}
+	// An agent whose own CLI judges the level is not second-guessed here.
+	cfg.SetActiveEffort("claude", "whatever")
+	if err := checkEfforts(cfg, RunSpec{Homes: true, Agent: "claude"}); err != nil {
+		t.Fatalf("claude effort was judged by coop: %v", err)
+	}
+
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	cfg.SetActiveEffort("gemini", "medium")
+	code, err := runWithCompositionArtifacts(cfg, recorderRuntime(t, recorder), RunSpec{
+		Image: "i", Repo: t.TempDir(), Agent: "gemini", Cmd: []string{"gemini"}, Homes: true, Quiet: true, Batch: true,
+	}, defaultCompositionArtifactOps())
+	if code != -1 || err == nil || !strings.Contains(err.Error(), "low or high") {
+		t.Fatalf("box with an inexpressible effort = %d, %v", code, err)
+	}
+	if _, err := os.Stat(recorder); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("runtime launched with an effort the box could not carry")
+	}
+}
+
 // TestLeadInstructionMount: a consult lead is ALWAYS excluded from instructionPlan, so it must
 // still receive its base instructions here even with NO named peer — otherwise it would run with
 // none (no box env note, no INSTRUCTIONS.md). With a peer NAMED, the second-opinion directive is

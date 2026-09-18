@@ -2898,6 +2898,16 @@ func (c *Control) setModelFromEditor(id json.RawMessage, sid, value string) (boo
 	if len(id) == 0 || sid == "" || value == "" {
 		return true, rpcErrorResponse(id, -32602, "session/set_config_option requires a session and model"), nil, false
 	}
+	// The session keeps its effort across a model switch, so a model that cannot carry it is
+	// refused here rather than run at the provider's default.
+	c.mu.Lock()
+	provider, effort := c.lead, c.target.Effort
+	c.mu.Unlock()
+	if ag, ok := agents.Get(provider); ok {
+		if err := agents.ValidateEffort(ag, value, effort); err != nil {
+			return true, rpcErrorResponse(id, -32602, fmt.Sprintf("Model %s was rejected: %v.", value, err)), nil, false
+		}
+	}
 	request := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      id,

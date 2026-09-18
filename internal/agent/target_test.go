@@ -24,6 +24,8 @@ func TestParseTarget(t *testing.T) {
 		{"claude:opus/xhigh", "claude", "opus", "xhigh", nil},                                 // model + effort
 		{"codex/high", "codex", "", "high", nil},                                              // effort, CLI-default model
 		{"codex:gpt-5.5/high@work", "codex", "gpt-5.5", "high", []string{"work"}},             // model + effort + account
+		{"gemini:pro/high", "gemini", "pro", "high", nil},                                     // gemini thinks at low or high
+		{"gemini/low@work", "gemini", "", "low", []string{"work"}},
 	}
 	for _, c := range ok {
 		got, err := ParseTarget(c.in)
@@ -37,20 +39,22 @@ func TestParseTarget(t *testing.T) {
 	}
 
 	bad := map[string]string{
-		"":                      "Missing agent target",
-		"gpt":                   "Unknown agent", // not registered
-		"nope:opus":             "Unknown agent",
-		"claude:":               "Add a model after",
-		"claude@":               "Add an account after",
-		"claude@work,":          "Add an account after",
-		"claude@a@b":            `Use one "@" before the account name`,
-		"claude:a:b":            "A model name cannot contain", // model can't contain ':'
-		"claude:opus@a:b":       "Invalid account name",        // account can't contain ':'
-		"claude:op us":          "A model name cannot contain",
-		"claude:opus/":          "Add a reasoning effort after",                // '/' with nothing after
-		"claude:opus/HIGH":      "lowercase letters",                           // effort is lowercase letters
-		"claude:opus@work/high": "Invalid account name",                        // effort must precede the account
-		"gemini:pro/high":       "does not support a reasoning-effort setting", // gemini exposes none
+		"":                            "Missing agent target",
+		"gpt":                         "Unknown agent", // not registered
+		"nope:opus":                   "Unknown agent",
+		"claude:":                     "Add a model after",
+		"claude@":                     "Add an account after",
+		"claude@work,":                "Add an account after",
+		"claude@a@b":                  `Use one "@" before the account name`,
+		"claude:a:b":                  "A model name cannot contain", // model can't contain ':'
+		"claude:opus@a:b":             "Invalid account name",        // account can't contain ':'
+		"claude:op us":                "A model name cannot contain",
+		"claude:opus/":                "Add a reasoning effort after",    // '/' with nothing after
+		"claude:opus/HIGH":            "lowercase letters",               // effort is lowercase letters
+		"claude:opus@work/high":       "Invalid account name",            // effort must precede the account
+		"gemini/medium":               "Gemini takes effort low or high", // Gemini 3 has no medium level
+		"gemini:gemini-2.5-pro/xhigh": "Gemini takes effort low or high",
+		"gemini:gemini-9/high":        "run gemini-9 without an effort", // no thinking base reaches it
 	}
 	for in, want := range bad {
 		_, err := ParseTarget(in)

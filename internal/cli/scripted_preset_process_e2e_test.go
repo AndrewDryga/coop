@@ -233,8 +233,8 @@ func compositionRole(provider string) string { return "role-" + provider }
 
 func compositionTarget(provider, purpose string) agents.Target {
 	raw := provider + ":composition-" + purpose + "-" + provider
-	if directProviderContracts[provider].supportsEffort {
-		raw += "/high"
+	if effort := directLabelEffort(provider); effort != "" {
+		raw += "/" + effort
 	}
 	target, err := agents.ParseTarget(raw)
 	if err != nil {

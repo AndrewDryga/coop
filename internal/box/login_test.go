@@ -25,6 +25,7 @@ func TestLoginOnlyMountsSelectedCredentialAndManagedSettings(t *testing.T) {
 			writeCopyFixture(t, filepath.Join(repo, ".agent/compose.yml"), "services: [broken\n")
 			cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "open", AutoUp: true}
 			cfg.SetActiveProfile(name, "personal")
+			cfg.SetActiveEffort(name, "medium") // no model runs at sign-in, so no effort may block it
 			cfg.MCPFile = filepath.Join(t.TempDir(), "invalid-mcp.json")
 			writeCopyFixture(t, cfg.MCPFile, "{invalid shared MCP")
 			writeCopyFixture(t, filepath.Join(cfg.ConfigDir, "INSTRUCTIONS.md"), "must-not-be-mounted")

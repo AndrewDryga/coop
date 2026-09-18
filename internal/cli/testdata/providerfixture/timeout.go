@@ -32,6 +32,10 @@ func serveTimeout(root, trace, scenarioPath string, args []string) error {
 	if err != nil || seconds < 1 || seconds > 3600 {
 		return fmt.Errorf("timeout seconds %q are outside 1..3600", args[2])
 	}
+	settings, args, err := geminiSettingsPrefix(args)
+	if err != nil {
+		return err
+	}
 	provider, err := providerToken(args[3])
 	if err != nil || provider == "timeout" {
 		return errors.New("timeout provider is invalid")
@@ -55,7 +59,7 @@ func serveTimeout(root, trace, scenarioPath string, args []string) error {
 		}
 	}
 	cmd := exec.Command(executable, args[4:]...)
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), settings...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := record(root, trace, traceRecord{Source: "timeout", Event: "start", PID: os.Getpid(), ParentPID: os.Getppid(), Argv: traceProviderArgv(args)}); err != nil {
 		return err
@@ -90,6 +94,24 @@ func serveTimeout(root, trace, scenarioPath string, args []string) error {
 		os.Exit(exitCode)
 		return nil
 	}
+}
+
+// geminiSettingsPrefix accepts the one env prefix a provider call may carry: Gemini takes its
+// per-call thinking settings from GEMINI_CLI_SYSTEM_SETTINGS_PATH, so its consult and delegate
+// arms launch `env GEMINI_CLI_SYSTEM_SETTINGS_PATH=<file> gemini …`. It returns that assignment and
+// the argv with the prefix removed; any other env use is refused.
+func geminiSettingsPrefix(args []string) ([]string, []string, error) {
+	if args[3] != "env" {
+		return nil, args, nil
+	}
+	rest, settings := args[4:], []string(nil)
+	if len(rest) > 0 && strings.HasPrefix(rest[0], "GEMINI_CLI_SYSTEM_SETTINGS_PATH=") {
+		settings, rest = rest[:1], rest[1:]
+	}
+	if len(rest) < 2 || rest[0] != "gemini" {
+		return nil, nil, errors.New("timeout env may only carry gemini's settings into a gemini call")
+	}
+	return settings, append(append([]string(nil), args[:3]...), rest...), nil
 }
 
 func serveFlock(root, trace string, args []string) error {

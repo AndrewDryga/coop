@@ -21,11 +21,21 @@ import (
 )
 
 type directProviderContract struct {
-	base            []string
-	modelEnv        string
-	effortEnv       string
-	supportsEffort  bool
-	effortFlag      func(string) []string
+	base           []string
+	modelEnv       string
+	effortEnv      string
+	supportsEffort bool
+	effortFlag     func(string) []string
+	// A provider with no effort flag takes the level from a settings file instead: settingsEnv
+	// names the variable that points its CLI at one, effortSettings the file for a level.
+	settingsEnv    string
+	effortSettings func(string) string
+	// models are the configured default and the explicit target model, efforts their levels.
+	// knownModels marks a provider that checks an effort against the models it knows, so its
+	// models here are real ones and a made-up label can carry no effort (directLabelEffort).
+	models          [2]string
+	efforts         [2]string
+	knownModels     bool
 	commandOverride string
 }
 
@@ -33,21 +43,29 @@ var directProviderContracts = map[string]directProviderContract{
 	"claude": {
 		base: []string{"claude", "--dangerously-skip-permissions"}, modelEnv: "ANTHROPIC_MODEL",
 		effortEnv: "CLAUDE_CODE_EFFORT_LEVEL", supportsEffort: true,
-		effortFlag:      func(level string) []string { return []string{"--effort", level} },
+		effortFlag: func(level string) []string { return []string{"--effort", level} },
+		models:     [2]string{"env-claude", "target-claude"}, efforts: [2]string{"medium", "high"},
 		commandOverride: "claude --dangerously-skip-permissions --model baked-claude --effort low",
 	},
 	"codex": {
 		base: []string{"codex", "--dangerously-bypass-approvals-and-sandbox"}, supportsEffort: true,
-		effortFlag:      func(level string) []string { return []string{"-c", "model_reasoning_effort=" + level} },
+		effortFlag: func(level string) []string { return []string{"-c", "model_reasoning_effort=" + level} },
+		models:     [2]string{"env-codex", "target-codex"}, efforts: [2]string{"medium", "high"},
 		commandOverride: "codex --dangerously-bypass-approvals-and-sandbox --model baked-codex -c model_reasoning_effort=low",
 	},
 	"gemini": {
-		base: []string{"gemini", "--yolo"}, modelEnv: "GEMINI_MODEL",
+		base: []string{"gemini", "--yolo"}, modelEnv: "GEMINI_MODEL", supportsEffort: true,
+		settingsEnv:    "GEMINI_CLI_SYSTEM_SETTINGS_PATH",
+		effortSettings: func(level string) string { return "/home/node/.coop-gemini/thinking/" + level + ".json" },
+		// Gemini thinks at low or high, on the models it knows. The configured default carries no
+		// effort, so a suite's made-up gemini model inherits none.
+		models: [2]string{"gemini-2.5-pro", "gemini-3.5-flash"}, efforts: [2]string{"", "high"}, knownModels: true,
 		commandOverride: "gemini --yolo --model baked-gemini",
 	},
 	"grok": {
 		base: []string{"grok", "--permission-mode", "bypassPermissions"}, supportsEffort: true,
-		effortFlag:      func(level string) []string { return []string{"--reasoning-effort", level} },
+		effortFlag: func(level string) []string { return []string{"--reasoning-effort", level} },
+		models:     [2]string{"env-grok", "target-grok"}, efforts: [2]string{"medium", "high"},
 		commandOverride: "grok --permission-mode bypassPermissions --model baked-grok --reasoning-effort low",
 	},
 }
@@ -71,26 +89,28 @@ func TestProviderScriptedDirectMatrix(t *testing.T) {
 			t.Run("marked default and configured precedence", func(t *testing.T) {
 				result, trace := suite.run(t, []string{provider}, processScenario(provider, nil, 0, ""))
 				assertDirectSuccess(t, result, provider, "fixture-ok-"+provider)
-				assertDirectRunContract(t, suite, trace, provider, "personal", directExpectedArgv(contract, "env-"+provider, directDefaultEffort(contract), nil), "env-"+provider, directDefaultEffort(contract), noOrphanBoxSweep)
+				model, effort := contract.models[0], contract.efforts[0]
+				assertDirectRunContract(t, suite, trace, provider, "personal", directExpectedArgv(contract, model, effort, nil), model, effort, noOrphanBoxSweep)
 			})
 
 			t.Run("explicit target account and forwarding", func(t *testing.T) {
-				target := provider + ":target-" + provider
-				if contract.supportsEffort {
-					target += "/high"
+				model, effort := contract.models[1], contract.efforts[1]
+				target := provider + ":" + model
+				if effort != "" {
+					target += "/" + effort
 				}
 				target += "@work"
 				extra := []string{"--fixture-flag", "fixture-value"}
 				result, trace := suite.run(t, append([]string{target, "--"}, extra...), processScenario(provider, nil, 0, ""))
 				assertDirectSuccess(t, result, provider, "fixture-ok-"+provider)
-				assertDirectRunContract(t, suite, trace, provider, "work", directExpectedArgv(contract, "target-"+provider, directTargetEffort(contract), extra), "target-"+provider, directTargetEffort(contract), noOrphanBoxSweep)
+				assertDirectRunContract(t, suite, trace, provider, "work", directExpectedArgv(contract, model, effort, extra), model, effort, noOrphanBoxSweep)
 			})
 
 			if contract.supportsEffort {
 				t.Run("effort only target", func(t *testing.T) {
 					result, trace := suite.run(t, []string{provider + "/high@work"}, processScenario(provider, nil, 0, ""))
 					assertDirectSuccess(t, result, provider, "fixture-ok-"+provider)
-					assertDirectRunContract(t, suite, trace, provider, "work", directExpectedArgv(contract, "env-"+provider, "high", nil), "env-"+provider, "high", noOrphanBoxSweep)
+					assertDirectRunContract(t, suite, trace, provider, "work", directExpectedArgv(contract, contract.models[0], "high", nil), contract.models[0], "high", noOrphanBoxSweep)
 				})
 			}
 
@@ -123,10 +143,10 @@ func TestProviderScriptedDirectMatrix(t *testing.T) {
 		})
 	}
 
-	t.Run("gemini effort fails before runtime", func(t *testing.T) {
-		result, trace := suite.run(t, []string{"gemini/high@work"}, processScenario("gemini", nil, 0, ""))
+	t.Run("inexpressible gemini effort fails before runtime", func(t *testing.T) {
+		result, trace := suite.run(t, []string{"gemini/medium@work"}, processScenario("gemini", nil, 0, ""))
 		if result.ExitCode != 2 || result.Err != nil || len(trace) != 0 ||
-			!strings.Contains(result.Stderr, "Gemini does not support a reasoning-effort setting") {
+			!strings.Contains(result.Stderr, "Gemini takes effort low or high") {
 			t.Fatalf("gemini effort rejection = exit %d err %v trace %d\nstderr:\n%s", result.ExitCode, result.Err, len(trace), result.Stderr)
 		}
 	})
@@ -171,11 +191,16 @@ func newDirectProcessSuite(t *testing.T) *directProcessSuite {
 		if contract.modelEnv != ag.ModelEnv() || contract.effortEnv != ag.EffortEnv() {
 			t.Fatalf("provider %q env contract = model %q effort %q, adapter = %q/%q", provider, contract.modelEnv, contract.effortEnv, ag.ModelEnv(), ag.EffortEnv())
 		}
-		if contract.supportsEffort != agents.SupportsEffort(ag) || contract.supportsEffort != (contract.effortFlag != nil) {
+		if contract.supportsEffort != agents.SupportsEffort(ag) || contract.supportsEffort != (contract.effortFlag != nil || contract.effortSettings != nil) ||
+			(contract.effortSettings == nil) != (contract.settingsEnv == "") || contract.models[0] == "" || contract.models[1] == "" {
 			t.Fatalf("provider %q effort capability contract is incomplete", provider)
 		}
-		if contract.supportsEffort && !reflect.DeepEqual(contract.effortFlag("probe"), ag.Effort().Args("probe")) {
-			t.Fatalf("provider %q effort argv contract = %q, adapter = %q", provider, contract.effortFlag("probe"), ag.Effort().Args("probe"))
+		var flagArgs []string
+		if contract.effortFlag != nil {
+			flagArgs = contract.effortFlag("probe")
+		}
+		if !reflect.DeepEqual(flagArgs, ag.Effort().Args("probe")) {
+			t.Fatalf("provider %q effort argv contract = %q, adapter = %q", provider, flagArgs, ag.Effort().Args("probe"))
 		}
 	}
 	if len(providers) != len(directProviderContracts) {
@@ -226,9 +251,10 @@ func newDirectProcessSuite(t *testing.T) *directProcessSuite {
 			writeCredentialMatrixFile(t, testConfig, ag, account, marker)
 		}
 		fmt.Fprintf(&defaults, "%s=personal\n", provider)
-		fmt.Fprintf(&conf, "COOP_%s_MODEL=env-%s", strings.ToUpper(provider), provider)
-		if directProviderContracts[provider].supportsEffort {
-			conf.WriteString("/medium")
+		contract := directProviderContracts[provider]
+		fmt.Fprintf(&conf, "COOP_%s_MODEL=%s", strings.ToUpper(provider), contract.models[0])
+		if contract.efforts[0] != "" {
+			conf.WriteString("/" + contract.efforts[0])
 		}
 		conf.WriteByte('\n')
 		fmt.Fprintf(&conf, "COOP_%s_CMD=%s\n", strings.ToUpper(provider), directProviderContracts[provider].commandOverride)
@@ -362,29 +388,39 @@ func processScenario(provider string, output *string, exitCode int, behavior str
 	return scenario
 }
 
+func directDefaultEffort(contract directProviderContract) string { return contract.efforts[0] }
+
+func directTargetEffort(contract directProviderContract) string { return contract.efforts[1] }
+
+// directLabelEffort is the effort a suite can pin on a made-up model label: the contract's target
+// level, except for a provider that checks the level against the models it knows — there the label
+// would be refused before the suite's own subject ran.
+func directLabelEffort(provider string) string {
+	if contract := directProviderContracts[provider]; !contract.knownModels {
+		return contract.efforts[1]
+	}
+	return ""
+}
+
+// directLabelTarget is the model and effort a suite targets a provider with: its made-up label at
+// the contract's target level, or — for a provider that checks the level against the models it
+// knows — the contract's real target model, so the effort is still exercised.
+func directLabelTarget(provider, label string) (model, effort string) {
+	if contract := directProviderContracts[provider]; contract.knownModels {
+		return contract.models[1], contract.efforts[1]
+	}
+	return label, directLabelEffort(provider)
+}
+
 func directExpectedArgv(contract directProviderContract, model, effort string, extra []string) []string {
 	argv := append([]string(nil), contract.base...)
 	if model != "" {
 		argv = append(argv, "--model", model)
 	}
-	if effort != "" {
+	if effort != "" && contract.effortFlag != nil {
 		argv = append(argv, contract.effortFlag(effort)...)
 	}
 	return append(argv, extra...)
-}
-
-func directDefaultEffort(contract directProviderContract) string {
-	if contract.supportsEffort {
-		return "medium"
-	}
-	return ""
-}
-
-func directTargetEffort(contract directProviderContract) string {
-	if contract.supportsEffort {
-		return "high"
-	}
-	return ""
 }
 
 func assertDirectSuccess(t *testing.T, result procharness.Result, provider, marker string) {
@@ -434,6 +470,15 @@ func assertDirectEnvironment(t *testing.T, env []processEnv, credentialKeys []st
 	}
 	if contract.effortEnv != "" && values[contract.effortEnv].Value != effort {
 		t.Fatalf("%s = %#v, want %q", contract.effortEnv, values[contract.effortEnv], effort)
+	}
+	if contract.settingsEnv != "" {
+		want := ""
+		if effort != "" {
+			want = contract.effortSettings(effort)
+		}
+		if values[contract.settingsEnv].Value != want {
+			t.Fatalf("%s = %#v, want %q", contract.settingsEnv, values[contract.settingsEnv], want)
+		}
 	}
 }
 

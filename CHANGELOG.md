@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Gemini takes a reasoning effort.** `coop gemini/high`, `gemini:gemini-2.5-pro/low`, a preset
+  role or a loop step now set Gemini's thinking — `low` or `high`, the two levels Gemini 3 has —
+  instead of being refused. The CLI has no effort flag, so Coop points each call at a small thinking
+  settings file that overrides the client's two model-family defaults: whichever model the client
+  actually calls (it remaps names, routes auto and falls back on quota) thinks at that level, on the
+  CLI, in the loop, in consult and delegate roles, and over ACP, including after a model switch.
+  Your own and the project's Gemini settings are merged, not replaced — so a thinking setting you
+  pinned on one model there still wins over the effort. `medium` and the other levels, or an effort
+  on a model Coop cannot map, stop before launch and name what works.
+
 - Grok now receives the project's shared skills, like the other agents. The pinned client discovers
   them natively in `~/.grok/skills`, which is where Coop's projection already puts them, and a
   repository's own `.grok/skills` still wins.

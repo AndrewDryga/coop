@@ -23,7 +23,9 @@ SET REASONING EFFORT
   coop codex:gpt-6-astra/high
   coop codex/high
 
-  Claude, Codex, and Grok support reasoning effort. Gemini does not.
+  Claude, Codex, and Grok pass the level to their own CLI.
+  Gemini takes low or high as its thinking setting, on models Coop can map.
+  A thinking setting you pin on one model in your Gemini settings still wins.
 
 CHOOSE AN ACCOUNT
   Add @account after the model.

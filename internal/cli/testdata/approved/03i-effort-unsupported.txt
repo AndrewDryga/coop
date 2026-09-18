@@ -1,6 +1,0 @@
-
-✗ Gemini does not support a reasoning-effort setting
-
-      Remove "/high" from "gemini/high".
-
-  Help: coop help models

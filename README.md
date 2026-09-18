@@ -719,9 +719,12 @@ optional model: `coop codex/high`, `coop codex:gpt-5.6-sol/high`, `coop claude:o
 `coop loop claude:opus/low`. Levels are
 `low` · `medium` · `high` · `xhigh` · `max`; coop passes the level straight to the agent's CLI
 (Claude's `--effort`, Codex's `model_reasoning_effort`, Grok's `--reasoning-effort`), so a bad one
-fails in the agent's own error — and Gemini, which has no effort control, rejects a `/effort` up
-front. It mirrors the model's tiers, and one axis carries both — a target's `:model/effort`,
-`COOP_<AGENT>_MODEL`, and a loop.yaml step's `agent:` all take `model[/effort]` (e.g.
+fails in the agent's own error. Gemini has no effort flag, so coop sets its thinking instead and
+checks the level up front: `low` or `high` (Gemini 3 thinks at only those two levels, and any
+Gemini model can end up handing a turn to one), on the models Coop can map; a thinking setting you
+pin on one model in your own Gemini settings still wins. It mirrors the model's tiers, and one
+axis carries both — a target's `:model/effort`, `COOP_<AGENT>_MODEL`, and a loop.yaml step's
+`agent:` all take `model[/effort]` (e.g.
 `signoff.agent: [claude:opus/xhigh]` signs off at xhigh while the work loop grinds low).
 
 The chosen model reaches consult peers too (each peer resolves its

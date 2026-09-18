@@ -434,7 +434,12 @@ func parseConsultInvocation(provider string, args []string) (consultInvocation, 
 			return consultInvocation{}, errors.New("gemini consult requires exact stream-json output after its session id")
 		}
 		plainArgs := append(append([]string{}, args[:4]...), args[6:]...)
-		return parsePlainConsultArgs(plainArgs, []string{"--approval-mode", "plan"}, "--session-id", "--resume", "", "-p")
+		invocation, err := parsePlainConsultArgs(plainArgs, []string{"--approval-mode", "plan"}, "--session-id", "--resume", "", "-p")
+		if err != nil {
+			return consultInvocation{}, err
+		}
+		invocation.Effort, err = geminiSettingsEffort()
+		return invocation, err
 	case "grok":
 		if len(args) < 2 || args[0] != "--tools" || args[1] == "" {
 			return consultInvocation{}, errors.New("grok consult is missing its read-only tool set")
@@ -449,6 +454,22 @@ func parseConsultInvocation(provider string, args []string) (consultInvocation, 
 	default:
 		return consultInvocation{}, fmt.Errorf("unsupported consult provider %q", provider)
 	}
+}
+
+// geminiSettingsEffort is the effort a Gemini call was given. Gemini has no effort flag: Coop points
+// GEMINI_CLI_SYSTEM_SETTINGS_PATH at one thinking file per level, in the directory it names in
+// COOP_GEMINI_THINKING, and a call with no effort gets no file.
+func geminiSettingsEffort() (string, error) {
+	path := os.Getenv("GEMINI_CLI_SYSTEM_SETTINGS_PATH")
+	if path == "" {
+		return "", nil
+	}
+	dir := os.Getenv("COOP_GEMINI_THINKING")
+	effort := strings.TrimSuffix(filepath.Base(path), ".json")
+	if dir == "" || filepath.Dir(path) != dir || (effort != "low" && effort != "high") {
+		return "", fmt.Errorf("gemini settings %q are not one of Coop's thinking files under %q", path, dir)
+	}
+	return effort, nil
 }
 
 func parsePlainConsultArgs(args, prefix []string, freshFlag, resumeFlag, effortFlag, promptFlag string) (consultInvocation, error) {

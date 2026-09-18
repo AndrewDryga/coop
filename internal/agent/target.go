@@ -156,11 +156,16 @@ func ParseTarget(s string) (Target, error) {
 		if !isEffortLevel(effort) {
 			return invalid(`Write the reasoning effort in lowercase letters, such as "high".`)
 		}
-		if a, _ := Get(provider); a != nil && !SupportsEffort(a) {
+		a, _ := Get(provider) // registered: Valid(provider) held above
+		if !SupportsEffort(a) {
 			// The agent's own name title-cased, not DisplayName() — the refusal is about the
 			// token the user typed ("gemini"), not about the product behind it.
 			return bad(strings.ToUpper(provider[:1])+provider[1:]+" does not support a reasoning-effort setting",
 				fmt.Sprintf("Remove %q from %q.", "/"+effort, DisplayTarget(raw)), "models")
+		}
+		if err := ValidateEffort(a, model, effort); err != nil {
+			cause := err.Error()
+			return invalid(strings.ToUpper(cause[:1]) + cause[1:] + ".")
 		}
 	}
 	t := Target{Provider: provider, Model: model, Effort: effort}

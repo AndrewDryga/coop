@@ -205,12 +205,12 @@ For a guide to using multiple models and providers together:
 coop gemini — run Gemini in a sandboxed box
 
 Usage:
-  coop gemini[:<model>][@<account>] [options] [-- <gemini-args>...]
+  coop gemini[:<model>][/<effort>][@<account>] [options] [-- <gemini-args>...]
 
 EXAMPLES
   coop gemini
   coop gemini:gemini-3.5-flash
-  coop gemini:gemini-3.5-flash@work
+  coop gemini:gemini-3.5-flash/high@work
   coop gemini -- --help
 
 OPTIONS
@@ -356,7 +356,9 @@ SET REASONING EFFORT
   coop codex:gpt-6-astra/high
   coop codex/high
 
-  Claude, Codex, and Grok support reasoning effort. Gemini does not.
+  Claude, Codex, and Grok pass the level to their own CLI.
+  Gemini takes low or high as its thinking setting, on models Coop can map.
+  A thinking setting you pin on one model in your Gemini settings still wins.
 
 CHOOSE AN ACCOUNT
   Add @account after the model.

@@ -257,6 +257,9 @@ func (a *app) targetCandidates(cur string, includeModels, includeAccounts bool) 
 				continue
 			}
 			for _, level := range effortCompletionLevels {
+				if agents.ValidateEffort(ag, model, level) != nil {
+					continue
+				}
 				effort := base + "/" + level
 				add(effort)
 				if wantAccounts {
@@ -268,6 +271,9 @@ func (a *app) targetCandidates(cur string, includeModels, includeAccounts bool) 
 		}
 		if wantEffort && agents.SupportsEffort(ag) {
 			for _, level := range effortCompletionLevels {
+				if agents.ValidateEffort(ag, "", level) != nil {
+					continue
+				}
 				effort := name + "/" + level
 				add(effort)
 				if wantAccounts {

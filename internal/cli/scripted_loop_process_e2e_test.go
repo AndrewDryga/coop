@@ -57,8 +57,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 				iterationHead := loopProcessGit(t, suite, "rev-parse", "HEAD")
 				taskID := "loop-task-" + provider
 				seedLoopProcessTask(t, suite.layout.Repo, taskID)
-				model := "loop-model-" + provider
-				effort := directTargetEffort(directProviderContracts[provider])
+				model, effort := directLabelTarget(provider, "loop-model-"+provider)
 				target := provider + ":" + model
 				if effort != "" {
 					target += "/" + effort

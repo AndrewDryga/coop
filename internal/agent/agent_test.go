@@ -270,7 +270,7 @@ func TestEffortSelection(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.SetActiveEffort("claude", "xhigh")
 	cfg.SetActiveEffort("codex", "high")
-	cfg.SetActiveEffort("gemini", "high") // gemini has no effort control → the flag never appears
+	cfg.SetActiveEffort("gemini", "high") // gemini takes effort from settings → no flag ever appears
 	cfg.SetActiveEffort("grok", "high")
 	cases := []struct {
 		name             string
@@ -278,7 +278,7 @@ func TestEffortSelection(t *testing.T) {
 	}{
 		{"claude", []string{"claude", "--dangerously-skip-permissions", "--effort", "xhigh"}, []string{"claude-agent-acp"}},
 		{"codex", []string{"codex", "--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=high"}, []string{"env", "INITIAL_AGENT_MODE=agent-full-access", "codex-acp"}},
-		{"gemini", []string{"gemini", "--yolo"}, []string{"gemini", "--acp"}}, // no effort flag anywhere
+		{"gemini", []string{"gemini", "--yolo"}, []string{"gemini", "--acp"}}, // effort rides its settings (MCP)
 		// grok's ACP is its own binary; the effort flag goes BEFORE the `stdio` mode, like the model.
 		{"grok", []string{"grok", "--permission-mode", "bypassPermissions", "--reasoning-effort", "high"}, []string{"grok", "agent", "--reasoning-effort", "high", "stdio"}},
 	}
@@ -291,7 +291,7 @@ func TestEffortSelection(t *testing.T) {
 			t.Errorf("%s ACP with effort = %v, want %v", c.name, got, c.acp)
 		}
 	}
-	for name, want := range map[string]bool{"claude": true, "codex": true, "grok": true, "gemini": false} {
+	for name, want := range map[string]bool{"claude": true, "codex": true, "gemini": true, "grok": true} {
 		a, _ := Get(name)
 		if SupportsEffort(a) != want {
 			t.Errorf("SupportsEffort(%s) = %v, want %v", name, SupportsEffort(a), want)
@@ -1819,8 +1819,13 @@ func TestMCP(t *testing.T) {
 	} {
 		ag, _ := Get(name)
 		wiring, err := ag.MCP(cfg, "/workspace")
-		if err != nil || len(wiring.Mounts) != 1 || wiring.Mounts[0].BoxPath != boxPath || wiring.Mounts[0].Content == "" || len(wiring.CommandArgs) != 0 {
-			t.Errorf("%s MCP = %v, %v; want one non-empty mount at %s", name, wiring, err, boxPath)
+		if err != nil {
+			t.Errorf("%s MCP: %v", name, err)
+			continue
+		}
+		wiring.Mounts = withoutThinking(wiring.Mounts)
+		if len(wiring.Mounts) != 1 || wiring.Mounts[0].BoxPath != boxPath || wiring.Mounts[0].Content == "" || len(wiring.CommandArgs) != 0 {
+			t.Errorf("%s MCP = %v; want one non-empty mount at %s", name, wiring, boxPath)
 			continue
 		}
 		switch name {
@@ -1900,7 +1905,7 @@ func TestMCPWithoutSharedSourceBuildsOnlyTheAlwaysOnOverlays(t *testing.T) {
 	}
 	gemini, _ := Get("gemini")
 	wiring, err := gemini.MCP(cfg, "/workspace")
-	if err != nil || len(wiring.Mounts) != 1 || wiring.Mounts[0].BoxPath != "/home/node/.gemini/settings.json" {
+	if mounts := withoutThinking(wiring.Mounts); err != nil || len(mounts) != 1 || mounts[0].BoxPath != "/home/node/.gemini/settings.json" {
 		t.Fatalf("gemini MCP without shared source = (%+v, %v), want always-on settings mount", wiring, err)
 	}
 	codex, _ := Get("codex")
@@ -1966,7 +1971,7 @@ func TestManagedClientDefaultsAreBoxOnly(t *testing.T) {
 	}
 
 	wiring, err = gemini.MCP(cfg, "/workspace")
-	if err != nil || len(wiring.Mounts) != 1 {
+	if wiring.Mounts = withoutThinking(wiring.Mounts); err != nil || len(wiring.Mounts) != 1 {
 		t.Fatalf("gemini MCP = (%+v, %v)", wiring, err)
 	}
 	var geminiBox map[string]any

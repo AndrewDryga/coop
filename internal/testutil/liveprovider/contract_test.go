@@ -45,7 +45,7 @@ func TestParseTargets(t *testing.T) {
 	}
 
 	for _, raw := range []string{
-		"", "all,codex", "codex,codex@work", "unknown", "codex@work,personal", "gemini/high",
+		"", "all,codex", "codex,codex@work", "unknown", "codex@work,personal", "gemini/medium",
 	} {
 		if _, _, err := ParseTargets(raw); err == nil {
 			t.Errorf("ParseTargets(%q) succeeded", raw)

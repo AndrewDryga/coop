@@ -136,13 +136,20 @@ const (
 	EffortFlagAssignment                        // -c model_reasoning_effort=high
 )
 
-// EffortSpec is the adapter-owned command grammar for reasoning effort. Assignment is used only
-// with EffortFlagAssignment; Aliases are alternate flag names accepted by the same grammar.
+// EffortSpec is the adapter-owned grammar for reasoning effort. Assignment is used only with
+// EffortFlagAssignment; Aliases are alternate flag names accepted by the same grammar. Settings
+// marks an agent whose CLI takes effort from no flag or variable at all, only from settings its
+// adapter generates for the box (see its MCP).
 type EffortSpec struct {
 	Style      EffortFlagStyle
 	Flag       string
 	Aliases    []string
 	Assignment string
+	Settings   bool
+	// Validate refuses an effort the agent cannot express for model, naming the choices that work.
+	// Nil passes every level through for the agent's own CLI to judge. A Settings agent needs it:
+	// its CLI never sees the level, so a bad one would otherwise be silently dropped.
+	Validate func(model, effort string) error
 }
 
 // SessionDiscoverer is the optional capability for an adapter that cannot choose its new
@@ -502,9 +509,9 @@ type Agent interface {
 	// a separate adapter binary that takes no flags (claude-agent-acp) still honors the
 	// chosen model.
 	ModelEnv() string
-	// Effort is this agent's command grammar for reasoning effort. A zero descriptor means the
-	// agent takes no effort flag (gemini has none; a no-flag ACP adapter may use EffortEnv).
-	// Levels pass through verbatim; the agent's own CLI validates them.
+	// Effort is this agent's grammar for reasoning effort. A zero descriptor means the agent takes
+	// no effort flag (a no-flag ACP adapter may use EffortEnv). Levels pass through verbatim for
+	// the agent's own CLI to validate, unless the spec validates them itself.
 	Effort() EffortSpec
 	// EffortEnv is the environment variable the agent's CLI reads a reasoning effort from
 	// ("" when it has none) — the effort analog of ModelEnv, for a no-flag ACP adapter
@@ -877,10 +884,22 @@ func matchExact(value string, candidates []string) (string, bool) {
 	return "", false
 }
 
-// SupportsEffort reports whether the agent has any reasoning-effort control (a CLI flag or an
-// env var). A target that names an effort for an agent without one is rejected in ParseTarget.
+// SupportsEffort reports whether the agent has any reasoning-effort control (a CLI flag, an env
+// var, or generated settings). A target that names an effort for an agent without one is rejected
+// in ParseTarget.
 func SupportsEffort(a Agent) bool {
-	return a.Effort().Flag != "" || a.EffortEnv() != ""
+	spec := a.Effort()
+	return spec.Flag != "" || spec.Settings || a.EffortEnv() != ""
+}
+
+// ValidateEffort refuses an effort a cannot express for model — the check every surface runs
+// before anything starts. An agent whose own CLI judges the level (no EffortSpec.Validate) accepts
+// every level here.
+func ValidateEffort(a Agent, model, effort string) error {
+	if validate := a.Effort().Validate; effort != "" && validate != nil {
+		return validate(model, effort)
+	}
+	return nil
 }
 
 // Packages is the union of every agent's npm packages, for the box image's install.

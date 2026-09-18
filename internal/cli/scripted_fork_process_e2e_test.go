@@ -87,7 +87,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		ids := map[string]string{}
 		for _, provider := range suite.providers {
 			model := "fork-model-" + provider
-			effort := directTargetEffort(directProviderContracts[provider])
+			effort := directLabelEffort(provider)
 			target := forkProcessTarget(provider, model, effort, account)
 			result, trace := runForkProcess(t, suite, []string{name, target}, provider)
 			assertForkProcessSuccess(t, result, provider)

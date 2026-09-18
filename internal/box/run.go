@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -417,6 +418,11 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	noticeUnappliedLimits(cfg, rt, spec)
 	workdir := resolveWorkdir(spec, cfg)
 	if spec.Homes {
+		if !spec.Login { // sign-in runs no model, so no effort can stand in its way
+			if err := checkEfforts(cfg, spec); err != nil {
+				return -1, err
+			}
+		}
 		if err := ensureAgentHomes(cfg, spec); err != nil {
 			return -1, err
 		}
@@ -1729,22 +1735,30 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, artifacts compositionArt
 	return
 }
 
-// resolvedRoleTargetList materializes each blank role model/effort from that provider's run
-// config before exporting the wrapper ladder. Provider-scoped COOP_PEER_MODEL_* may carry an
-// ad-hoc peer's explicit override; a blank role target must not inherit that unrelated pin.
+// resolvedRoleTargetList is the role's wrapper ladder: its resolved targets in wire form.
 func resolvedRoleTargetList(cfg *config.Config, role *preset.Role) string {
-	targets := role.Targets
+	targets := resolvedRoleTargets(cfg, role)
 	parts := make([]string, len(targets))
 	for i, target := range targets {
-		if target.Model == "" {
-			target.Model = cfg.ModelFor(target.Provider)
-		}
-		if target.Effort == "" {
-			target.Effort = cfg.EffortFor(target.Provider)
-		}
 		parts[i] = target.String()
 	}
 	return strings.Join(parts, " ")
+}
+
+// resolvedRoleTargets materializes each blank role model/effort from that provider's run config —
+// what the wrapper will run each rung at. Provider-scoped COOP_PEER_MODEL_* may carry an ad-hoc
+// peer's explicit override; a blank role target must not inherit that unrelated pin.
+func resolvedRoleTargets(cfg *config.Config, role *preset.Role) []agents.Target {
+	targets := slices.Clone(role.Targets)
+	for i := range targets {
+		if targets[i].Model == "" {
+			targets[i].Model = cfg.ModelFor(targets[i].Provider)
+		}
+		if targets[i].Effort == "" {
+			targets[i].Effort = cfg.EffortFor(targets[i].Provider)
+		}
+	}
+	return targets
 }
 
 // ensureAgentHomes pre-creates the credential-home dir for exactly
@@ -2340,27 +2354,11 @@ func appendROMounts(args []string, ms []extraMount) []string {
 func modelEnvArgs(cfg *config.Config, spec RunSpec, scope []string) []string {
 	consults := spec.ConsultLead != "" ||
 		(spec.Preset != nil && len(spec.Preset.ConsultRoles(runPrimary(spec))) > 0)
-	// An explicit peer target's :model pins that peer's model (COOP_PEER_MODEL_<X>); otherwise
-	// the peer runs the config default (cfg.ModelFor). The lead isn't in Peers, so it always
-	// falls through to cfg.ModelFor.
-	peerModel := map[string]string{}
-	peerEffort := map[string]string{}
-	for _, p := range spec.Peers {
-		if p.Model != "" {
-			peerModel[p.Provider] = p.Model
-		}
-		if p.Effort != "" {
-			peerEffort[p.Provider] = p.Effort
-		}
-	}
 	var args []string
 	for _, agent := range scope {
 		ag, ok := agents.Get(agent)
-		model := peerModel[agent]
-		if model == "" {
-			model = cfg.ModelFor(agent)
-		}
-		if model != "" {
+		target := scopedTarget(cfg, spec.Peers, agent)
+		if model := target.Model; model != "" {
 			if ok {
 				if env := ag.ModelEnv(); env != "" {
 					args = append(args, "-e", env+"="+model)
@@ -2372,11 +2370,7 @@ func modelEnvArgs(cfg *config.Config, spec RunSpec, scope []string) []string {
 		}
 		// Effort rides the same way but resolves independently — an agent may carry an effort
 		// (env or peer flag) even when it takes the CLI's default model.
-		effort := peerEffort[agent]
-		if effort == "" {
-			effort = cfg.EffortFor(agent)
-		}
-		if effort != "" {
+		if effort := target.Effort; effort != "" {
 			if ok {
 				if env := ag.EffortEnv(); env != "" {
 					args = append(args, "-e", env+"="+effort)
@@ -2388,6 +2382,60 @@ func modelEnvArgs(cfg *config.Config, spec RunSpec, scope []string) []string {
 		}
 	}
 	return args
+}
+
+// scopedTarget is the model and effort a scoped agent runs at: an explicit peer target's :model
+// and /effort (COOP_PEER_MODEL_<X>, COOP_PEER_EFFORT_<X>), else the run config's. The lead isn't in
+// Peers, so it always takes the config's.
+func scopedTarget(cfg *config.Config, peers []agents.Target, agent string) agents.Target {
+	target := agents.Target{Provider: agent}
+	for _, p := range peers {
+		if p.Provider != agent {
+			continue
+		}
+		if p.Model != "" {
+			target.Model = p.Model
+		}
+		if p.Effort != "" {
+			target.Effort = p.Effort
+		}
+	}
+	if target.Model == "" {
+		target.Model = cfg.ModelFor(agent)
+	}
+	if target.Effort == "" {
+		target.Effort = cfg.EffortFor(agent)
+	}
+	return target
+}
+
+// checkEfforts refuses, before the box starts, an effort an agent in it cannot express for the
+// model it will run — each scoped agent's resolved target and each role rung that can run here.
+// Most agents' own CLI judges the level; one that takes effort from generated settings never sees
+// it, so this is where a bad one is caught.
+func checkEfforts(cfg *config.Config, spec RunSpec) error {
+	scope := credentialScope(cfg, spec)
+	targets := make([]agents.Target, 0, len(scope))
+	for _, agent := range scope {
+		targets = append(targets, scopedTarget(cfg, spec.Peers, agent))
+	}
+	if spec.Preset != nil {
+		for i := range spec.Preset.Roles {
+			for _, target := range resolvedRoleTargets(cfg, &spec.Preset.Roles[i]) {
+				if slices.Contains(scope, target.Provider) {
+					targets = append(targets, target)
+				}
+			}
+		}
+	}
+	for _, target := range targets {
+		if ag, ok := agents.Get(target.Provider); ok {
+			if err := agents.ValidateEffort(ag, target.Model, target.Effort); err != nil {
+				return fmt.Errorf("%s: %w", target, err)
+			}
+		}
+	}
+	return nil
 }
 
 // assembleArgs builds the full container-runtime argument list. It is pure given

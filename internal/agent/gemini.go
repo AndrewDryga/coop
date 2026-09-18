@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -275,10 +276,12 @@ func (geminiAgent) ExampleModel() string { return "gemini-3.5-flash" }
 // covers coop-driven runs, this covers anything that takes no flags.
 func (geminiAgent) ModelEnv() string { return "GEMINI_MODEL" }
 
-// Effort/EffortEnv: the Gemini CLI exposes no reasoning-effort control, so a target that
-// names one is rejected in ParseTarget (SupportsEffort is false for gemini).
-func (geminiAgent) Effort() EffortSpec { return EffortSpec{} }
-func (geminiAgent) EffortEnv() string  { return "" }
+// Effort/EffortEnv: the Gemini CLI has no reasoning-effort flag or environment variable; it takes
+// thinking from settings, which MCP generates (see geminiThinkingWiring).
+func (geminiAgent) Effort() EffortSpec {
+	return EffortSpec{Settings: true, Validate: validateGeminiEffort}
+}
+func (geminiAgent) EffortEnv() string { return "" }
 
 func (geminiAgent) InstructionFile() string { return "GEMINI.md" }
 
@@ -430,8 +433,9 @@ func (geminiAgent) StoredCredentialStatus(profileDir string, _ time.Time) Stored
 
 // MCP builds the settings mounted inside a gemini box: the host settings plus the box-only
 // file-filtering override and the managed-client defaults (no auto-update, no update prompt,
-// no usage statistics), and shared servers only when MCP is active. The host file is never
-// written here; EnsureDefaults owns the one host-side change (folder trust).
+// no usage statistics), and shared servers only when MCP is active — and beside them the
+// per-effort thinking settings. The host file is never written here; EnsureDefaults owns the one
+// host-side change (folder trust).
 func (geminiAgent) MCP(cfg *config.Config, _ string) (MCPConfig, error) {
 	gm, requiredEnv, err := mcp.GenerateGemini(cfg.MCPFile, filepath.Join(cfg.AgentDir("gemini"), "settings.json"))
 	if err != nil {
@@ -441,7 +445,12 @@ func (geminiAgent) MCP(cfg *config.Config, _ string) (MCPConfig, error) {
 	if err != nil {
 		return MCPConfig{}, err
 	}
-	return MCPConfig{Mounts: []MCPMount{{Content: gm, BoxPath: cfg.HomeInBox + "/.gemini/settings.json"}}, RequiredEnv: requiredEnv}, nil
+	thinking, env, err := geminiThinkingWiring(cfg)
+	if err != nil {
+		return MCPConfig{}, err
+	}
+	mounts := append([]MCPMount{{Content: gm, BoxPath: cfg.HomeInBox + "/.gemini/settings.json"}}, thinking...)
+	return MCPConfig{Mounts: mounts, Env: env, RequiredEnv: requiredEnv}, nil
 }
 
 func ensureGeminiBoxDefaults(settingsJSON string) (string, error) {
@@ -558,17 +567,21 @@ const geminiConsultUsage = `select(.[-1].type=="result" and .[-1].status=="succe
 		| if (.read|token) then . else del(.read) end
 		| if (.duration|token) then . else del(.duration) end`
 
+// geminiEffortEnv hands a consult or delegate call the thinking settings for its own $effort (see
+// geminiThinkingWiring). Without one the call keeps the box's.
+const geminiEffortEnv = `env ${effort:+GEMINI_CLI_SYSTEM_SETTINGS_PATH="$` + geminiThinkingEnv + `/$effort.json"} `
+
 func (geminiAgent) ConsultFresh() string {
 	return "printf '%s' \"$id\" >\"$candidate_idfile\"\n" +
-		`gemini_run gemini --approval-mode plan --session-id "$id" -o stream-json ${model:+--model "$model"} -p "$prompt"`
+		`gemini_run ` + geminiEffortEnv + `gemini --approval-mode plan --session-id "$id" -o stream-json ${model:+--model "$model"} -p "$prompt"`
 }
 
 func (geminiAgent) ConsultResume() string {
-	return `gemini_run gemini --approval-mode plan --resume "$id" -o stream-json ${model:+--model "$model"} -p "$prompt"`
+	return `gemini_run ` + geminiEffortEnv + `gemini --approval-mode plan --resume "$id" -o stream-json ${model:+--model "$model"} -p "$prompt"`
 }
 
 func (geminiAgent) DelegateExec() string {
-	return `gemini --yolo ${model:+--model "$model"} -o stream-json -p "$prompt"`
+	return geminiEffortEnv + `gemini --yolo ${model:+--model "$model"} -o stream-json -p "$prompt"`
 }
 
 func (geminiAgent) UsagePrelude() string {
@@ -615,4 +628,113 @@ func (geminiAgent) NetworkAuthSelection(profileDir string, markerPresent bool) (
 		return NetworkAuthSelection{}, fmt.Errorf("gemini stored authentication is unsupported for restricted networking")
 	}
 	return NetworkAuthSelection{AuthMode: "api-key", EnvKey: "GEMINI_API_KEY"}, nil
+}
+
+// Gemini has no reasoning-effort flag or variable: the pinned client (0.59.0) takes thinking only
+// from its settings. What it does with them was captured at the request level, against a local
+// listener (.agent/kb/gemini-effort-thinking-settings.md), and two facts decide the shape here.
+//
+// Every chat model's settings chain runs through one family base — chat-base-3 for Gemini 3 and
+// Gemma, whose thinkingLevel has only LOW and HIGH; chat-base-2.5 for Gemini 2.5, whose
+// thinkingBudget is a token count. The model named at launch does not decide which one applies:
+// the client remaps names (gemini-3-pro-preview is sent as gemini-3.1-pro-preview, and a 2.5 flash
+// request goes to gemini-3.5-flash on an API key), routes auto, and falls back on quota. A setting
+// keyed on the typed name is silently a no-op; a setting on both bases reaches whichever model is
+// actually called.
+//
+// And since any Gemini target can end up on a Gemini 3 model, an effort has to mean something in
+// both families. Low and high do; medium and every other level have no Gemini 3 level and are
+// refused before launch rather than rounded.
+//
+// Each effort is one small system-settings file, chosen per invocation by
+// GEMINI_CLI_SYSTEM_SETTINGS_PATH, so a lead and a preset role in one box can think at different
+// levels. The client merges system settings over the user's and the project's key by key, so
+// nothing of theirs is replaced — though a thinkingConfig they pin on one model is more specific
+// than a family base, and still wins.
+
+// geminiThinking is what each Coop effort becomes in each family. The budgets sit inside every 2.5
+// model's accepted range (Pro 128-32768, Flash 0-24576, Flash-Lite 512-24576).
+var geminiThinking = map[string]struct {
+	level  string
+	budget int
+}{
+	"low":  {"LOW", 1024},
+	"high": {"HIGH", 24576},
+}
+
+// geminiThinkingModels are the names the pinned client runs through a family base: its request
+// aliases and every chat model it defines (packages/core/src/config/models.ts,
+// defaultModelConfigs.ts). An effort on any other name would reach no request, so it is refused.
+var geminiThinkingModels = []string{
+	"auto", "pro", "flash", "flash-lite", "auto-gemini-3", "auto-gemini-2.5",
+	"gemini-3-pro-preview", "gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools",
+	"gemini-3-flash-preview", "gemini-3.5-flash", "gemini-3-flash", "gemini-3.1-flash-lite",
+	"gemini-3.1-flash-lite-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
+	"gemma-4-31b-it", "gemma-4-26b-a4b-it",
+}
+
+// validateGeminiEffort refuses an effort the pinned client cannot carry for model, naming what
+// works. An empty model is the client's default, which resolves to one of the known models.
+func validateGeminiEffort(model, effort string) error {
+	if _, ok := geminiThinking[effort]; !ok {
+		return fmt.Errorf("gemini takes effort low or high, not %q: Gemini 3 has no other thinking level, and any Gemini target can end up on a Gemini 3 model", effort)
+	}
+	if model != "" && !slices.Contains(geminiThinkingModels, model) {
+		return fmt.Errorf("gemini applies effort only to the models Coop maps to a Gemini thinking level (%s); run %s without an effort", strings.Join(geminiThinkingModels, ", "), model)
+	}
+	return nil
+}
+
+// geminiThinkingEnv names the in-box directory holding one settings file per effort, for the
+// consult and delegate arms to pick from by their $effort.
+const geminiThinkingEnv = "COOP_GEMINI_THINKING"
+
+// geminiThinkingWiring mounts one system-settings file per effort outside ~/.gemini (the account's
+// own profile) and points the box's own Gemini at the one for this run's effort. Consult and
+// delegate arms choose again per call.
+func geminiThinkingWiring(cfg *config.Config) ([]MCPMount, []string, error) {
+	dir := cfg.HomeInBox + "/.coop-gemini/thinking"
+	efforts := make([]string, 0, len(geminiThinking))
+	for effort := range geminiThinking {
+		efforts = append(efforts, effort)
+	}
+	slices.Sort(efforts)
+	mounts := make([]MCPMount, 0, len(efforts))
+	for _, effort := range efforts {
+		content, err := geminiThinkingSettings(effort)
+		if err != nil {
+			return nil, nil, err
+		}
+		mounts = append(mounts, MCPMount{Content: content, BoxPath: dir + "/" + effort + ".json"})
+	}
+	env := []string{geminiThinkingEnv + "=" + dir}
+	if effort := cfg.EffortFor("gemini"); effort != "" {
+		if _, ok := geminiThinking[effort]; !ok {
+			return nil, nil, fmt.Errorf("gemini effort %q has no thinking setting; use low or high", effort)
+		}
+		env = append(env, "GEMINI_CLI_SYSTEM_SETTINGS_PATH="+dir+"/"+effort+".json")
+	}
+	return mounts, env, nil
+}
+
+// geminiThinkingSettings is one effort's system settings: both family bases at that effort, as
+// customAliases so they merge over any the user or project defines. gemini-3-flash is the one chat
+// model the pinned client gives no alias, so it would inherit neither base; here it gets its
+// family's.
+func geminiThinkingSettings(effort string) (string, error) {
+	thinking := geminiThinking[effort]
+	base := func(config map[string]any) map[string]any {
+		return map[string]any{"extends": "chat-base", "modelConfig": map[string]any{
+			"generateContentConfig": map[string]any{"thinkingConfig": config}}}
+	}
+	settings := map[string]any{"modelConfigs": map[string]any{"customAliases": map[string]any{
+		"chat-base-3":    base(map[string]any{"thinkingLevel": thinking.level}),
+		"chat-base-2.5":  base(map[string]any{"thinkingBudget": thinking.budget}),
+		"gemini-3-flash": map[string]any{"extends": "chat-base-3", "modelConfig": map[string]any{"model": "gemini-3-flash"}},
+	}}}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("assemble Gemini %s thinking settings: %w", effort, err)
+	}
+	return string(append(data, '\n')), nil
 }
