@@ -81,6 +81,7 @@ func TestShellRateLimitDetectorMatchesGo(t *testing.T) {
 		"HTTP 429 Too Many Requests",
 		"build failed after 1429 files",
 		"ordinary provider failure",
+		grokCreditsExhausted, grokAuthRejected,
 	} {
 		file := filepath.Join(dir, string(rune('a'+i)))
 		if err := os.WriteFile(file, []byte(output), 0o644); err != nil {
@@ -91,5 +92,21 @@ func TestShellRateLimitDetectorMatchesGo(t *testing.T) {
 		if got != WrapperRateLimited(output) {
 			t.Errorf("shell detector(%q) = %v, Go = %v", output, got, WrapperRateLimited(output))
 		}
+	}
+}
+
+// What a Grok role prints for the pinned client's structured error payloads (captured by replay):
+// a 402 is its "run out of credits" and rotates, a 401 is an authentication failure and does not.
+const (
+	grokCreditsExhausted = "Internal error: {\n  \"message\": \"API error (status 402 Payment Required): insufficient_credits: You have run out of credits.\",\n  \"http_status\": 402\n}"
+	grokAuthRejected     = "Internal error: {\n  \"message\": \"Auth recovery succeeded but 4 authenticated inference requests were still rejected (401); giving up after 3 retries.\",\n  \"http_status\": 401\n}"
+)
+
+func TestGrokQuotaPayloadIsARoleRateLimit(t *testing.T) {
+	if !WrapperRateLimited(grokCreditsExhausted) {
+		t.Error("a Grok role's 402 payload did not read as a rate limit")
+	}
+	if WrapperRateLimited(grokAuthRejected) {
+		t.Error("a Grok role's 401 payload read as a rate limit")
 	}
 }

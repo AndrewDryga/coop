@@ -3,11 +3,13 @@ package loop
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 )
@@ -1176,5 +1178,36 @@ func TestGrokStreamDecoderReadsExitCodesOnlyForCommands(t *testing.T) {
 	text := stripANSISequences(out.String())
 	if strings.Contains(text, "found 0 matches") || strings.Count(text, "✗") != 1 || !strings.Contains(text, "✗ false (exit 1): boom") {
 		t.Errorf("want only the command's non-zero exit shown as a failure:\n%s", text)
+	}
+}
+
+// A Grok loop attempt that ends on one of the pinned client's quota errors rotates like any
+// provider's limit. Its 402 is read from the client's own http_status, never the server's prose; an
+// authentication failure and a server error are not limits. The 402 and 429 events are the client's
+// streaming-json verbatim, captured by replaying each status at it.
+func TestGrokQuotaErrorsClassifyAsRateLimits(t *testing.T) {
+	payload := func(status int, message string) string {
+		return fmt.Sprintf(`{"type":"error","message":"Internal error: {\n  \"message\": %q,\n  \"http_status\": %d\n}"}`, message, status) + "\n"
+	}
+	for _, c := range []struct {
+		name, event string
+		limited     bool
+	}{
+		{"402 out of credits", `{"type":"error","message":"Internal error: {\n  \"message\": \"API error (status 402 Payment Required): insufficient_credits: You have run out of credits.\",\n  \"http_status\": 402\n}"}` + "\n", true},
+		{"429 rate limited", `{"type":"error","message":"rate_limit_exceeded: Too many requests."}` + "\n", true},
+		{"401 authentication", payload(401, "Auth recovery succeeded but 4 authenticated inference requests were still rejected (401); giving up after 3 retries."), false},
+		{"500 server error", payload(500, "API error (status 500 Internal Server Error): internal_error: boom."), false},
+		{"402 in the server's prose only", `{"type":"error","message":"Internal error: payment of 402 credits failed"}` + "\n", false},
+	} {
+		var out, tail, diagnostic bytes.Buffer
+		d := newGrokStreamDecoder(&out, &tail, "grok", "", "", "m")
+		d.diagnostic = &diagnostic
+		if _, err := d.Write([]byte(c.event)); err != nil {
+			t.Fatal(err)
+		}
+		d.flush()
+		if got := classifyIteration("grok", 1, nil, diagnostic.String(), d.streamOutcome(), time.Now()); (got.outcome == "rate_limit") != c.limited {
+			t.Errorf("%s: classification = %+v, want a rate limit: %v (diagnostic %q)", c.name, got, c.limited, diagnostic.String())
+		}
 	}
 }

@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A Grok account that runs out of credits now hands the work to the next account or provider,
+  as a rate limit does. Grok reports it as a "402 Payment Required" error, which Coop treated as an
+  ordinary failure: a loop spent its retries on the exhausted account, a helper role stopped, and an
+  editor or remote session showed the error instead of switching. Each now rotates on it, reading
+  the status the Grok client reports rather than the server's wording, so an authentication failure
+  or a server error still ends the attempt as before.
+
 - Filtered runs no longer cut a provider's response off after ten seconds. The gateway closed
   every connection it forwarded ten seconds after letting it through, however much was still
   streaming, so any answer that took longer broke off mid-sentence and the agent retried it again

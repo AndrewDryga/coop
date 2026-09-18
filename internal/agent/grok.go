@@ -435,10 +435,13 @@ func (grokAgent) ACPMCPServers(string, func(string) (string, bool)) ([]map[strin
 // (Any config.toml keys a fresh box turns out to need are a box-verified finalization item.)
 func (grokAgent) EnsureDefaults(*config.Config, string) error { return nil }
 
-// ACPRateLimitSignals: the structured marker grok's ACP adapter embeds on a usage/rate limit
-// isn't captured yet (needs a live limit in a box), so declare none — the controller still
-// rotates on the cross-provider output-token axis. Add the marker once observed.
-func (grokAgent) ACPRateLimitSignals() []ACPSignal { return nil }
+// ACPRateLimitSignals: the pinned 1.0.25 ACP adapter, replayed against each quota status, reports a
+// 402 — its "run out of credits" — as a generic -32603 "Internal error" whose only mark is
+// data.http_status 402, set from the HTTP response whatever the server's body says. Its 429 needs no
+// signal: the error's own message is "Rate limited", which the shared prose check already reads.
+func (grokAgent) ACPRateLimitSignals() []ACPSignal {
+	return []ACPSignal{{Key: "http_status", Value: "402"}}
+}
 
 // ACPSessionSettings: Grok carries Coop's restart target in the `grok agent ... stdio` launch
 // command. Its adapter exposes models through session/new and session/set_model; a cross-agent

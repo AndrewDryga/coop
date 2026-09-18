@@ -1651,6 +1651,30 @@ func TestACPControlStructuralLimits(t *testing.T) {
 			true,
 		},
 		{
+			"grok rate limited",
+			"grok",
+			`{"code":-32003,"message":"Rate limited","data":"API error (status 429 Too Many Requests): rate_limit_exceeded: Too many requests."}`,
+			true,
+		},
+		{
+			"grok out of credits",
+			"grok",
+			`{"code":-32603,"message":"Internal error","data":{"message":"API error (status 402 Payment Required): insufficient_credits: You have run out of credits.","http_status":402}}`,
+			true,
+		},
+		{
+			"grok authentication failure",
+			"grok",
+			`{"code":-32603,"message":"Internal error","data":{"message":"Auth recovery succeeded but 4 authenticated inference requests were still rejected (401); giving up after 3 retries.","http_status":401}}`,
+			false,
+		},
+		{
+			"grok status is foreign on a codex session",
+			"codex",
+			`{"code":-32603,"message":"Internal error","data":{"message":"provider declined the request","http_status":402}}`,
+			false,
+		},
+		{
 			"codexErrorInfo field with non-limit value",
 			"codex",
 			`{"code":-32603,"message":"provider declined the request","codexErrorInfo":"internalServerError"}`,

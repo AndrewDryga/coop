@@ -1,6 +1,7 @@
 package ladder
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"time"
@@ -35,8 +36,12 @@ func ACPErrorLimitHint(raw json.RawMessage, now time.Time, signals []agents.ACPS
 	_ = json.Unmarshal(raw, &msg)
 	hint := DetectLimit(msg.Message, now)
 
+	// Numbers decode as json.Number, so a status code an adapter reports as a number (Grok's
+	// data.http_status) is compared like any string marker.
 	var v any
-	if json.Unmarshal(raw, &v) != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if decoder.Decode(&v) != nil {
 		return hint
 	}
 	structuredRate, structuredOutput := false, false
@@ -94,6 +99,8 @@ func WalkJSONStrings(v any, key string, visit func(string, string)) {
 		}
 	case string:
 		visit(key, x)
+	case json.Number: // only when the caller decoded with UseNumber
+		visit(key, string(x))
 	}
 }
 

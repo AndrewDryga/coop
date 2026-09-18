@@ -715,6 +715,13 @@ func (d *grokStreamDecoder) event(raw json.RawMessage) {
 		if strings.Contains(strings.ToLower(ev.Type), "error") {
 			d.failed = true
 			d.passthrough(raw)
+			if grokCreditsExhausted(ev.Message) {
+				// The client's own HTTP status, never the server's prose: said once in the words the
+				// loop's classifier already rotates on, as a plain CLI's limit is. A 429 has no status
+				// to read — the client prints only the server's text, which the classifier reads when
+				// it says "too many requests".
+				d.toDiagnostic("rate limit exceeded")
+			}
 			return
 		}
 		kind := ev.Type
@@ -804,6 +811,27 @@ func (d *grokStreamDecoder) toolCallUpdate(ev *grokStreamEvent) {
 	}
 }
 
+// grokCreditsExhausted reports whether a Grok error event is the pinned client's structured payload
+// for a 402, its "run out of credits": the client wraps it as "Internal error: {…, "http_status":
+// 402}", taking the status from the HTTP response.
+func grokCreditsExhausted(message json.RawMessage) bool {
+	var text string
+	if json.Unmarshal(message, &text) != nil {
+		return false
+	}
+	start := strings.IndexByte(text, '{')
+	if start < 0 {
+		return false
+	}
+	var payload struct {
+		HTTPStatus int `json:"http_status"`
+	}
+	if json.Unmarshal([]byte(text[start:]), &payload) != nil {
+		return false
+	}
+	return payload.HTTPStatus == 402
+}
+
 // grokToolInput is the part of a tool's rawInput a progress line can use. The pinned client names a
 // file path three ways by tool — file_path, target_file, path — and a directory as target_directory.
 type grokToolInput struct {
@@ -883,6 +911,7 @@ type grokStreamEvent struct {
 	NumTurns  int             `json:"num_turns"`
 	CostUSD   json.RawMessage `json:"total_cost_usd"`
 	SessionID string          `json:"sessionId"`
+	Message   json.RawMessage `json:"message"` // an error event's text; raw so an unseen shape parses
 	// A tool event's ACP fields. The varying ones stay raw and decode leniently, so a shape this
 	// release has not seen degrades one progress line instead of the whole event.
 	ToolCallID string          `json:"toolCallId"`

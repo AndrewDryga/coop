@@ -308,6 +308,33 @@ func TestDelegateWrapperFallsBackOnRateLimit(t *testing.T) {
 	}
 }
 
+// The pinned Grok client prints a 402 — its "run out of credits" — as a structured payload on stderr,
+// and a role hands the task to its next rung on it. The same payload for a 401 is an authentication
+// failure and ends the role where it failed.
+func TestDelegateWrapperFallsBackOnGrokCreditsExhausted(t *testing.T) {
+	for _, tc := range []struct {
+		status, message string
+		wantCode        int
+		wantFallback    bool
+	}{
+		{"402", "API error (status 402 Payment Required): insufficient_credits: You have run out of credits.", 0, true},
+		{"401", "Auth recovery succeeded but 4 authenticated inference requests were still rejected (401); giving up after 3 retries.", 1, false},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			h := newDelegateHarness(t)
+			calls := filepath.Join(h.dir, "calls")
+			h.env = append(h.env, "COOP_DELEGATE_FAST_TARGETS=grok:grok-4.5 gemini:gemini-3.5-flash")
+			h.stub("grok", "echo grok >>"+calls+"\ncat >&2 <<'EOF'\nError: Internal error: {\n  \"message\": \""+tc.message+"\",\n  \"http_status\": "+tc.status+"\n}\nEOF\nexit 1")
+			h.stub("gemini", "echo gemini >>"+calls+"; echo fallback-work")
+			out, code := h.run("fast", "Implement the thing")
+			got, _ := os.ReadFile(calls)
+			if code != tc.wantCode || strings.Contains(string(got), "gemini") != tc.wantFallback {
+				t.Fatalf("exit = %d after calls %q, want exit %d and fallback %v:\n%s", code, got, tc.wantCode, tc.wantFallback, out)
+			}
+		})
+	}
+}
+
 func TestDelegateWrapperReportsAllUnmountedTargetsBeforeDispatch(t *testing.T) {
 	h := newDelegateHarness(t)
 	for index, entry := range h.env {

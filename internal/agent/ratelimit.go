@@ -26,6 +26,10 @@ var wrapperLimitMarkers = []string{
 	"selected model is at capacity", "resource exhausted", "resource_exhausted",
 	"quota exceeded", "exceeded quota",
 	"insufficient quota", "usagelimit", "usagelimitexceeded",
+	// The pinned Grok client's structured error payload for a 402, its "run out of credits". Its 429
+	// carries no status: the client prints only the server's own text, which the status pattern
+	// below reads when it says "too many requests".
+	`"http_status": 402`,
 }
 
 var (

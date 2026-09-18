@@ -56,3 +56,26 @@ func TestACPErrorLimitHintNestedProseReset(t *testing.T) {
 		t.Errorf("nested prose alone must not classify the error as limited, got %+v", h)
 	}
 }
+
+// The pinned Grok ACP adapter's error shapes, captured by replaying each status at the client. Its
+// rate-limit error (read from its message by the shared check) and its 402 status rotate; an
+// authentication failure, a server error, and prose that merely mentions a limit or a status do not.
+func TestGrokACPLimitSignalsAreTheClientsOwn(t *testing.T) {
+	now := time.Now()
+	signals := ACPRateSignals("grok")
+	for _, c := range []struct {
+		name, raw string
+		limited   bool
+	}{
+		{"429 rate limited", `{"code":-32003,"message":"Rate limited","data":"API error (status 429 Too Many Requests): rate_limit_exceeded: Too many requests."}`, true},
+		{"402 out of credits", `{"code":-32603,"message":"Internal error","data":{"message":"API error (status 402 Payment Required): insufficient_credits: You have run out of credits.","http_status":402}}`, true},
+		{"401 authentication", `{"code":-32603,"message":"Internal error","data":{"message":"Auth recovery succeeded but 4 authenticated inference requests were still rejected (401); giving up after 3 retries.","http_status":401}}`, false},
+		{"500 server error", `{"code":-32603,"message":"Internal error","data":{"message":"API error (status 500 Internal Server Error): internal_error: The server had an error processing your request.","http_status":500}}`, false},
+		{"prose about limits", `{"code":-32603,"message":"Internal error","data":{"message":"the model wrote: rate limited, 402"}}`, false},
+		{"a status that is not a quota", `{"code":-32603,"message":"Internal error","data":{"message":"API error (status 403 Forbidden)","http_status":403}}`, false},
+	} {
+		if h := ACPErrorLimitHint(json.RawMessage(c.raw), now, signals); h.Limited != c.limited || h.OutputLimited {
+			t.Errorf("%s: limit hint = %+v, want limited=%v", c.name, h, c.limited)
+		}
+	}
+}

@@ -2150,9 +2150,7 @@ func TestACPRateLimitSignalsPinned(t *testing.T) {
 		"claude": {{Key: "errorKind", Value: "rate_limit"}},
 		"codex":  {{Value: "usageLimitExceeded"}},
 		"gemini": {{Value: "RESOURCE_EXHAUSTED"}},
-		// grok's ACP limit marker isn't captured yet (needs a live limit in a box) — pin the
-		// current honest state: no structured signal, so it rotates only on the output-token axis.
-		"grok": nil,
+		"grok":   {{Key: "http_status", Value: "402"}},
 	}
 	for _, name := range Names() {
 		w, ok := want[name]

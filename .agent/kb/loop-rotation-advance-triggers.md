@@ -2,8 +2,8 @@
 name: loop-rotation-advance-triggers
 description: the loop rotation advances on rate limits (time-keyed, self-healing) and auth failures (sticky for the run); known-invalid credentials never become rungs
 subsystem: loop
-sources: [internal/ladder/ladder.go, internal/ladder/limit.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/acpctl/control.go, internal/agent/agent.go, internal/agent/claude.go, internal/box/auth.go, internal/box/profiles.go]
-updated: 2026-08-17
+sources: [internal/ladder/ladder.go, internal/ladder/limit.go, internal/ladder/acp.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/loop/streamjson_providers.go, internal/acpctl/control.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/grok.go, internal/agent/ratelimit.go, internal/box/auth.go, internal/box/profiles.go]
+updated: 2026-09-18
 ---
 A loop's rotation starts from credential presence and then applies
 `box.ProfileCredentialReady`. A native marker that its adapter classifies as
@@ -39,7 +39,22 @@ burns the whole retry budget on a rung no retry can fix. That is exactly how an 
 then-current signals) killed a 133-task overnight run while a signed-in second account sat idle in
 the same rotation. When a provider's auth wording changes, the signal list is the thing to update.
 
+**Limit evidence is per surface, so a provider's structured limit must reach each one.** ACP
+sessions (the editor control and the sessions API) rotate on `ladder.ACPErrorLimitHint`: shared
+prose on the error's top-level message, plus the lead adapter's own `ACPRateLimitSignals` matched
+on any key/value leaf, numbers included. A failed loop attempt rotates only on the anchored lines
+`DetectIterationLimit` accepts, and a stream decoder passes errors through as escaped JSON — so a
+decoder that sees a structured limit says so as one `rate limit exceeded` diagnostic line (Claude's
+terminal limit, Grok's 402). Role wrappers grep `wrapperLimitMarkers` through
+`ShellRateLimitDetector`. The pinned Grok 1.0.25, captured by replaying each status at it: a 402
+("run out of credits") is a structured `http_status: 402` on every surface, the one marker Grok
+declares; a 429 is ACP error -32003 whose message `Rate limited` the shared prose check reads, but
+headless it is only the server's own text — it rotates while that text says "too many requests", and
+nothing structured backs it; a 401 carries `http_status: 401` and is an auth failure, never a limit.
+
 ## Changelog
+- 2026-09-18 — added the per-surface limit evidence and the pinned Grok client's captured quota
+  shapes; Grok declares its 402 ACP signal, and its loop decoder and role wrappers rotate on it
 - 2026-08-17 — changed rung membership to exclude adapter-inspectable re-login credentials before
   launch; moved provider prose matching behind the shared adapter-owned classifier used by loop and
   ACP notices; re-verified env/opaque fallbacks and replaced marker-only process fixtures
