@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A consult capture that has to be stopped now takes its reader with it. The capture is a shell
+  wrapped around the process actually blocked on the peer's pipe, and only the shell was being
+  signalled — so the reader survived, was reparented away, and stayed in the box's process group
+  holding the launching process's output open. The drain's own budget is generous rather than
+  tight, too: by the time it starts counting, every writer Coop owns is already closed, so five
+  seconds was not guarding against a stuck writer, it was discarding replies a peer had already
+  produced on a busy machine. The trade is explicit — a peer that really does leave a writer behind
+  outside its own launch group now takes up to a minute per capture to give up, where it used to
+  take five seconds and be wrong far more often.
+
 - A scripted provider test that ends with a process still in the launched group now names it —
   pid, parent, group, state, elapsed and command — instead of reporting only that the group
   survived. The straggler is usually gone by the time anyone can look, so the identity has to be

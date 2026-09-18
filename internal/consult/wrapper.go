@@ -231,6 +231,23 @@ terminate_pid() {
 	wait "$pid" 2>/dev/null || :
 }
 
+# Stop a drain — and the reader inside it. A capture is a shell wrapped around the cat (or dd) that
+# is blocked on the FIFO, so signalling the shell alone left that reader running: it survives the
+# signal its owner received, is reparented out of the tree, and stays in the box's process group,
+# which is how a scripted run ended with a process nobody owned. The child it is blocked in is named
+# the portable way, through ps; any short-lived helper caught alongside it is already on its way out.
+# Best effort where ps is missing: then this degrades to signalling the shell, as before.
+terminate_capture() {
+	pid=$1
+	[ -n "$pid" ] || return 0
+	# The reader first, so the capture shell's own wait returns and it leaves on its own; the
+	# signal to the shell below is only the backstop for a reader that was already gone.
+	for reader in $(ps -A -o pid= -o ppid= 2>/dev/null | awk -v parent="$pid" '$2 == parent { print $1 }'); do
+		kill "$reader" 2>/dev/null || :
+	done
+	terminate_pid "$pid"
+}
+
 # Reached from the EXIT/signal cleanup trap.
 # shellcheck disable=SC2329
 terminate_active_run() {
@@ -251,9 +268,9 @@ terminate_active_run() {
 # shellcheck disable=SC2329
 cleanup() {
 	trap - EXIT INT TERM
-	terminate_pid "$output_pid"
-	terminate_pid "$diagnostics_pid"
-	terminate_pid "$provider_capture_pid"
+	terminate_capture "$output_pid"
+	terminate_capture "$diagnostics_pid"
+	terminate_capture "$provider_capture_pid"
 	terminate_active_run
 	if [ "$lock_owned" -eq 1 ] && [ -n "$lockdir" ]; then rmdir "$lockdir" 2>/dev/null || :; fi
 	rm -rf "$attempt_dir"
@@ -556,14 +573,24 @@ start_capture() {
 	capture_pid=$!
 }
 
+# By the time this is called the peer has been waited on and the wrapper has closed its own end of
+# the pipe, so every writer COOP owns is gone and the reader cannot block on our account — it has
+# EOF waiting for it. The old five-second budget was therefore not guarding against a stuck writer
+# at all; it was a deadline on a drain that was merely slow to be scheduled, and on a loaded machine
+# it threw away replies the peer had already produced ("failed to capture provider output safely"
+# after a peer exited 0). What remains worth bounding is a writer left OUTSIDE the peer's launch
+# group — a host with no setsid, or a child that detached itself — which run() has nothing to reap.
+# That is rare, and generous is the right size for it; a run that hits it can wait this out twice,
+# once per capture, before it gives up.
+capture_drain_limit=600 # tenths of a second: 60s
 await_capture() {
 	pid=$1
 	status_file=$2
 	waits=0
 	while [ ! -f "$status_file" ]; do
 		waits=$((waits + 1))
-		if [ "$waits" -gt 50 ]; then
-			terminate_pid "$pid"
+		if [ "$waits" -gt "$capture_drain_limit" ]; then
+			terminate_capture "$pid"
 			capture_status=1
 			return 0
 		fi
