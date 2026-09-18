@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -1101,5 +1102,79 @@ func writeSplit(t *testing.T, w interface{ Write([]byte) (int, error) }, blob st
 	}
 	if _, err := w.Write([]byte(blob[cut:])); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The pinned 1.0.25 client's own stream — captured from a real run, trimmed and with its host paths
+// replaced (testdata/grok-1.0.25-tools.jsonl) — shows every tool the way the other providers' tools
+// show: the failing shell command with its exit code and its error, the per-response usage and the
+// tool list not at all, and the final narration and spend unchanged.
+func TestGrokStreamDecoderRendersThePinnedClientsTools(t *testing.T) {
+	data, err := os.ReadFile("testdata/grok-1.0.25-tools.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out, tail bytes.Buffer
+	d := newGrokStreamDecoder(&out, &tail, "grok", "", "/repo", "grok-4.6-build")
+	rec := &activityRecorder{}
+	d.setActivity(rec)
+	if _, err := d.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	d.flush()
+	text := stripANSISequences(out.String())
+	for _, want := range []string{
+		"✎ coop-probe.txt", "▸ coop-probe.txt", "⚙ Bash Cat missing file, expected to fail",
+		"✗ cat coop-probe-missing.txt (exit 1): cat: coop-probe-missing.txt: No such file or directory",
+		"· list_dir .", "done", "· 6 turns",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("grok render lacks %q:\n%s", want, text)
+		}
+	}
+	for _, never := range []string{"· usage", "· available_commands", "· tool_call", "rawOutput"} {
+		if strings.Contains(text, never) {
+			t.Errorf("grok render shows %q:\n%s", never, text)
+		}
+	}
+	var starts, ends int
+	for _, event := range rec.events {
+		starts += boolInt(strings.HasPrefix(event, "tool_start:"))
+		ends += boolInt(strings.HasPrefix(event, "tool_end:"))
+	}
+	if starts != 5 || ends != 5 || len(d.tool.byID) != 0 || len(d.commands.byID) != 0 {
+		t.Errorf("tool activity = %d starts, %d ends, %d left open; want the five tools opened and closed", starts, ends, len(d.tool.byID))
+	}
+	if last := d.lastIterResult(); d.streamOutcome() != streamSucceeded || last == nil || last.Turns != 6 ||
+		last.SessionID != "01a0b614-fa03-7252-9695-adfe39875ba1" || last.InTok != 104509 || last.OutTok != 430 {
+		t.Errorf("grok result = %v, %+v; want the end event's turns, session and spend", d.streamOutcome(), last)
+	}
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// Only a shell command's exit code is its outcome. The grep tool reports "no match" as exit code 1
+// on a completed update — the pinned client's own shape, captured — and that is not a failure.
+func TestGrokStreamDecoderReadsExitCodesOnlyForCommands(t *testing.T) {
+	var out, tail bytes.Buffer
+	d := newGrokStreamDecoder(&out, &tail, "grok", "", "/repo", "m")
+	lines := strings.Join([]string{
+		`{"type":"tool_call","toolCallId":"g1","toolName":"grep","kind":"search","status":"pending","rawInput":{"pattern":"zzz"}}`,
+		`{"type":"tool_call_update","toolCallId":"g1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"found 0 matches"}}],"rawOutput":{"type":"GrepSearch","exit_code":1,"match_count":0}}`,
+		`{"type":"tool_call","toolCallId":"c1","toolName":"run_terminal_command","kind":"execute","status":"pending","rawInput":{"command":"false"}}`,
+		`{"type":"tool_call_update","toolCallId":"c1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"boom"}}],"rawOutput":{"type":"Bash","exit_code":1}}`,
+	}, "\n") + "\n"
+	if _, err := d.Write([]byte(lines)); err != nil {
+		t.Fatal(err)
+	}
+	d.flush()
+	text := stripANSISequences(out.String())
+	if strings.Contains(text, "found 0 matches") || strings.Count(text, "✗") != 1 || !strings.Contains(text, "✗ false (exit 1): boom") {
+		t.Errorf("want only the command's non-zero exit shown as a failure:\n%s", text)
 	}
 }

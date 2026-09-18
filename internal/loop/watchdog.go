@@ -55,7 +55,8 @@ const (
 )
 
 // providerSilenceFallbackMultiple supervises a provider whose stream declares NO tool lifecycle
-// (agents.ToolLifecycleAbsent — grok, probed at v0.2.101, which emits only thought/text/end).
+// (agents.ToolLifecycleAbsent — no current adapter; grok was one until its pinned client streamed
+// tool ids), and any agent coop has no adapter for.
 // Nothing in such a stream says "a foreground gate is running", so the idle deadline cannot be
 // suspended for one, and applying it as-is would kill a legitimate 40-minute `make check` at the
 // 30-minute mark — the exact thing coop promises not to do. That provider instead gets ONE
@@ -153,11 +154,11 @@ func watchdogPolicyFor(cfg *config.Config, agent string) watchdogPolicy {
 
 // providerWatchdogPolicy adapts resolved deadlines to what the provider's stream can prove.
 //
-// WITH a tool lifecycle (claude, codex, gemini) nothing changes: post-progress silence is bounded
-// by the idle deadline, suspended while a tool is open, and the oldest open tool carries the
-// absolute tool cap.
+// WITH a tool lifecycle (claude, codex, gemini, grok) nothing changes: post-progress silence is
+// bounded by the idle deadline, suspended while a tool is open, and the oldest open tool carries
+// the absolute tool cap.
 //
-// WITHOUT one (grok) those two phases have no events to run on. The idle deadline can never be
+// WITHOUT one those two phases have no events to run on. The idle deadline can never be
 // suspended for a foreground gate, so it would kill legitimate work; the tool cap can never be
 // armed at all, so keeping it would only inflate the attempt ceiling with a budget nothing can
 // reach. Post-progress silence is therefore bounded once, at providerSilenceFallbackMultiple ×

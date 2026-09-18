@@ -148,10 +148,9 @@ func TestStreamSpecs(t *testing.T) {
 		{"claude", StreamSpec{Format: StreamClaudeJSON, Flags: []string{"--output-format", "stream-json", "--verbose"}, ToolLifecycle: ToolLifecycleIDs}},
 		{"codex", StreamSpec{Format: StreamCodexJSON, Flags: []string{"--json"}, TrailingArgs: 1, ToolLifecycle: ToolLifecycleIDs}},
 		{"gemini", StreamSpec{Format: StreamGeminiJSON, Flags: []string{"-o", "stream-json"}, TrailingArgs: 2, ToolLifecycle: ToolLifecycleIDs}},
-		// Grok's streaming-json emits only thought/text/end — probed at v0.2.101. The absent
-		// declaration is what puts its attempts on the conservative silence fallback instead of a
-		// tool-suspended idle deadline it could never resume.
-		{"grok", StreamSpec{Format: StreamGrokJSON, Flags: []string{"--output-format", "streaming-json"}, TrailingArgs: 2, ToolLifecycle: ToolLifecycleAbsent}},
+		// Grok's pinned 1.0.25 streaming-json opens and closes every tool under a toolCallId (the
+		// v0.2.101 CLI emitted only thought/text/end), so its tools suspend the idle deadline too.
+		{"grok", StreamSpec{Format: StreamGrokJSON, Flags: []string{"--output-format", "streaming-json"}, TrailingArgs: 2, ToolLifecycle: ToolLifecycleIDs}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -419,25 +419,22 @@ func TestProviderWatchdogPolicyFollowsTheDeclaredCapability(t *testing.T) {
 // decided by the provider it is running — never by anything coop measures about the process.
 func TestWatchdogPolicyForReadsTheAdapterDeclaration(t *testing.T) {
 	cfg := &config.Config{ProviderTimeouts: "start=10s,idle=20s,tool=30s"}
-	for _, agent := range []string{"claude", "codex", "gemini"} {
+	for _, agent := range []string{"claude", "codex", "gemini", "grok"} {
 		want := watchdogPolicy{watchdogDeadlines{start: 10 * time.Second, idle: 20 * time.Second, tool: 30 * time.Second}, true}
 		if got := watchdogPolicyFor(cfg, agent); got != want {
 			t.Errorf("%s policy = %+v, want %+v", agent, got, want)
 		}
 	}
-	// Grok's stream carries no tool lifecycle (probed at v0.2.101): 4 × idle, no tool cap.
+	// An agent no adapter answers for gets the conservative side, not the trusting one: no tool
+	// lifecycle to suspend on, so 4 × idle and no tool cap.
 	want := watchdogPolicy{watchdogDeadlines: watchdogDeadlines{start: 10 * time.Second, idle: 80 * time.Second}}
-	if got := watchdogPolicyFor(cfg, "grok"); got != want {
-		t.Errorf("grok policy = %+v, want %+v", got, want)
-	}
-	// An agent no adapter answers for gets the conservative side, not the trusting one.
-	if got := watchdogPolicyFor(cfg, "not-a-registered-agent"); got.toolLifecycle {
-		t.Errorf("unknown agent policy = %+v, want no assumed tool lifecycle", got)
+	if got := watchdogPolicyFor(cfg, "not-a-registered-agent"); got != want {
+		t.Errorf("unknown agent policy = %+v, want %+v", got, want)
 	}
 }
 
-// A grok foreground gate is INVISIBLE in its stream — no start, no end, no id — so it is
-// indistinguishable from silence. Killing it at the ordinary idle deadline is exactly the thing
+// On a stream that declares no tool lifecycle, a foreground gate is INVISIBLE — no start, no end,
+// no id — so it is indistinguishable from silence. Killing it at the ordinary idle deadline is exactly the thing
 // coop promises not to do, and letting it run forever is the thing the watchdog exists to prevent.
 // The fallback is the deliberate middle: nothing suspends it, but it is long enough that no honest
 // gate reaches it.

@@ -618,21 +618,26 @@ type geminiStreamEvent struct {
 }
 
 // grokStreamDecoder renders Grok's streaming-json deltas. Thought tokens stay hidden; text
-// deltas are coalesced into the same narration line used by the other providers.
+// deltas are coalesced into the same narration line used by the other providers. Tools arrive as
+// ACP-shaped tool_call / tool_call_update events paired by toolCallId.
 type grokStreamDecoder struct {
 	*ndjsonDecoder
-	agent      string
-	profile    string
-	model      string
-	modelShown bool
-	text       boundedNarration
-	last       *iterResult
-	failed     bool
-	sessionID  string
+	agent            string
+	profile          string
+	root             string
+	model            string
+	modelShown       bool
+	text             boundedNarration
+	tool             boundedLabels
+	commands         boundedLabels // the open tools of ACP kind execute, whose exit code is their outcome
+	last             *iterResult
+	failed           bool
+	sessionID        string
+	blindWaitSeconds int
 }
 
-func newGrokStreamDecoder(out, tail io.Writer, agent, profile, _ string, model string) *grokStreamDecoder {
-	d := &grokStreamDecoder{agent: agent, profile: profile, model: model}
+func newGrokStreamDecoder(out, tail io.Writer, agent, profile, root, model string) *grokStreamDecoder {
+	d := &grokStreamDecoder{agent: agent, profile: profile, root: root, model: model}
 	d.ndjsonDecoder = newNDJSONDecoder(out, tail, d.event)
 	d.ndjsonDecoder.beforeRaw = d.flushText
 	return d
@@ -660,6 +665,13 @@ func (d *grokStreamDecoder) event(raw json.RawMessage) {
 			d.noteProgress()
 		}
 		d.text.WriteString(ev.Data)
+	case "tool_call":
+		d.toolCall(&ev)
+	case "tool_call_update":
+		d.toolCallUpdate(&ev)
+	case "usage", "available_commands":
+		// Per-response spend (the end event carries the whole turn's) and the tool and command
+		// lists: bookkeeping, with nothing to show and nothing proved about the model's progress.
 	case "end":
 		if agents.ValidSessionID(ev.SessionID) {
 			d.sessionID = ev.SessionID
@@ -686,16 +698,17 @@ func (d *grokStreamDecoder) event(raw json.RawMessage) {
 			reportedCost = &cost
 		}
 		d.last = &iterResult{
-			Turns:           ev.NumTurns,
-			InTok:           input,
-			OutTok:          output,
-			CostUSD:         cost,
-			FreshInTok:      ev.Usage.InputTokens,
-			CacheReadTok:    ev.Usage.CacheReadInputTokens,
-			CacheWriteTok:   ev.Usage.CacheCreationInputTokens,
-			ReportedOutTok:  reportedOutput,
-			ReportedCostUSD: reportedCost,
-			SessionID:       d.sessionID,
+			Turns:            ev.NumTurns,
+			InTok:            input,
+			OutTok:           output,
+			CostUSD:          cost,
+			FreshInTok:       ev.Usage.InputTokens,
+			CacheReadTok:     ev.Usage.CacheReadInputTokens,
+			CacheWriteTok:    ev.Usage.CacheCreationInputTokens,
+			ReportedOutTok:   reportedOutput,
+			ReportedCostUSD:  reportedCost,
+			SessionID:        d.sessionID,
+			BlindWaitSeconds: d.blindWaitSeconds,
 		}
 		d.emit(d.palette.Dim(fmt.Sprintf("· %d turns · %s", d.last.Turns, tokenUsageBreakdown(d.last))))
 	default:
@@ -710,6 +723,122 @@ func (d *grokStreamDecoder) event(raw json.RawMessage) {
 		}
 		d.emit(d.palette.Dim("· " + cleanDiagnosticLine(kind)))
 	}
+}
+
+// toolCall opens one tool under its toolCallId — the handle every update for it arrives under — and
+// shows it the way the other providers' tools are shown, by the ACP kind the event declares.
+func (d *grokStreamDecoder) toolCall(ev *grokStreamEvent) {
+	var input grokToolInput
+	_ = json.Unmarshal(ev.RawInput, &input) // a shape this release does not know shows as a bare name
+	name := ev.ToolName
+	if name == "" {
+		name = ev.Title
+	}
+	var label, line string
+	switch ev.Kind {
+	case "read":
+		label, line = d.fileToolLine("▸", input.path())
+	case "edit", "write", "delete", "move":
+		label, line = d.fileToolLine("✎", input.path())
+	case "execute":
+		recordBlindWait(d.ndjsonDecoder, &d.blindWaitSeconds, input.Command)
+		label = streamCommandLabel(input.Command)
+		line = d.streamBashToolLine(input.Command, input.Description)
+	default:
+		target := input.path()
+		if target != "" {
+			target, _ = repoRel(d.root, target)
+		}
+		label = strings.TrimSpace(name + " " + target)
+		line = d.palette.Dim("· " + cleanDiagnosticLine(label))
+	}
+	d.emit(line)
+	switch {
+	case d.tool.set(ev.ToolCallID, label):
+		if ev.Kind == "execute" {
+			d.commands.set(ev.ToolCallID, label)
+		}
+		d.noteToolStart(ev.ToolCallID)
+		// ACP lets a tool call arrive already finished; then it carries its own close.
+		d.toolCallUpdate(ev)
+	case ev.ToolCallID != "":
+		// Past the tracking cap a call still proves model action, but with no pairing authority
+		// for its end it cannot hold a deadline open.
+		d.noteProgress()
+	}
+}
+
+func (d *grokStreamDecoder) fileToolLine(glyph, path string) (label, line string) {
+	label, inside := repoRel(d.root, path)
+	return label, d.streamToolLine(glyph, label, !inside)
+}
+
+// toolCallUpdate closes a tool on ACP's terminal statuses — completed, failed or cancelled, the set
+// coop's own ACP consumers close on — and only a tool this stream opened: pending, in-progress and
+// null updates are progress inside an open tool, and an update for an id nothing opened proves
+// nothing about foreground work. A shell command reports its failure as a non-zero exit code on a
+// completed update, not as a failed status; other tools carry exit codes that mean something else —
+// the grep tool's 1 is "no match". A cancelled tool closes quietly: the attempt says why it stopped.
+func (d *grokStreamDecoder) toolCallUpdate(ev *grokStreamEvent) {
+	var status string
+	_ = json.Unmarshal(ev.Status, &status)
+	if status != "completed" && status != "failed" && status != "cancelled" {
+		return
+	}
+	label, tracked := d.tool.takeKnown(ev.ToolCallID)
+	if !tracked {
+		return
+	}
+	_, command := d.commands.takeKnown(ev.ToolCallID)
+	d.noteToolEnd(ev.ToolCallID)
+	var output struct {
+		ExitCode *int `json:"exit_code"`
+	}
+	_ = json.Unmarshal(ev.RawOutput, &output)
+	text := grokToolText(ev.Content)
+	switch {
+	case command && output.ExitCode != nil && *output.ExitCode != 0:
+		d.emit(d.streamFailureLine(label, fmt.Sprintf(" (exit %d)", *output.ExitCode), commandFailureDiagnostic(text), streamToolTextWidth))
+	case status == "failed":
+		d.emit(d.streamFailureLine(label, "", firstLine(text), 0))
+	}
+}
+
+// grokToolInput is the part of a tool's rawInput a progress line can use. The pinned client names a
+// file path three ways by tool — file_path, target_file, path — and a directory as target_directory.
+type grokToolInput struct {
+	Command         string `json:"command"`
+	Description     string `json:"description"`
+	FilePath        string `json:"file_path"`
+	TargetFile      string `json:"target_file"`
+	Path            string `json:"path"`
+	TargetDirectory string `json:"target_directory"`
+}
+
+func (i grokToolInput) path() string {
+	for _, path := range []string{i.FilePath, i.TargetFile, i.Path, i.TargetDirectory} {
+		if path != "" {
+			return path
+		}
+	}
+	return ""
+}
+
+// grokToolText joins the text blocks of a tool update's ACP content, ignoring any other block kind.
+func grokToolText(content json.RawMessage) string {
+	var blocks []struct {
+		Content struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if json.Unmarshal(content, &blocks) != nil {
+		return ""
+	}
+	var text strings.Builder
+	for _, block := range blocks {
+		text.WriteString(block.Content.Text)
+	}
+	return text.String()
 }
 
 func (d *grokStreamDecoder) flush() {
@@ -754,7 +883,17 @@ type grokStreamEvent struct {
 	NumTurns  int             `json:"num_turns"`
 	CostUSD   json.RawMessage `json:"total_cost_usd"`
 	SessionID string          `json:"sessionId"`
-	Usage     struct {
+	// A tool event's ACP fields. The varying ones stay raw and decode leniently, so a shape this
+	// release has not seen degrades one progress line instead of the whole event.
+	ToolCallID string          `json:"toolCallId"`
+	ToolName   string          `json:"toolName"`
+	Title      string          `json:"title"`
+	Kind       string          `json:"kind"`
+	Status     json.RawMessage `json:"status"`
+	RawInput   json.RawMessage `json:"rawInput"`
+	RawOutput  json.RawMessage `json:"rawOutput"`
+	Content    json.RawMessage `json:"content"`
+	Usage      struct {
 		InputTokens              *int `json:"input_tokens"`
 		CacheReadInputTokens     *int `json:"cache_read_input_tokens"`
 		CacheCreationInputTokens *int `json:"cache_creation_input_tokens"`

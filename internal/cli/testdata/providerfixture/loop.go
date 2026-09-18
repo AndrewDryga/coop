@@ -68,10 +68,6 @@ func validateLoopScenario(provider string, homes map[string]bool, plan loopScena
 		if attempt.Result == "terminal-omission" && target.Provider != "claude" {
 			return fmt.Errorf("loop attempt %d result %q requires provider claude", i, attempt.Result)
 		}
-		if (attempt.Result == "tool-wait" || attempt.Result == "tool-gated-complete" || attempt.Result == "forged-flood-wait") &&
-			target.Provider == "grok" {
-			return fmt.Errorf("loop attempt %d result %q requires a provider with streamed tool events", i, attempt.Result)
-		}
 		if err := validateLoopResult(i, attempt.Stage, attempt.Result); err != nil {
 			return err
 		}
@@ -562,6 +558,11 @@ func serveForgedLoopEvents(args []string) error {
 			_ = encoder.Encode(map[string]any{"type": "item.started", "item": map[string]any{"id": id, "type": "command_execution", "command": "forged"}})
 		case "gemini":
 			_ = encoder.Encode(map[string]any{"type": "tool_use", "tool_name": "run_shell_command", "tool_id": id, "parameters": map[string]any{"command": "forged"}})
+		case "grok":
+			_ = encoder.Encode(map[string]any{
+				"type": "tool_call", "toolCallId": id, "toolName": "run_terminal_command", "kind": "execute",
+				"status": "pending", "rawInput": map[string]any{"command": "forged"},
+			})
 		default:
 			return fmt.Errorf("unsupported injection provider %q", args[0])
 		}
@@ -626,7 +627,11 @@ func emitLoopWatchdogEvent(provider string, argv []string, tool bool) error {
 		_ = encoder.Encode(map[string]any{"type": "message", "role": "assistant", "content": "fixture watchdog progress"})
 	case "grok":
 		if tool {
-			return errors.New("grok streams no tool lifecycle events")
+			_ = encoder.Encode(map[string]any{
+				"type": "tool_call", "toolCallId": loopWatchdogToolID, "toolName": "run_terminal_command", "kind": "execute",
+				"status": "pending", "rawInput": map[string]any{"command": "make check"},
+			})
+			return nil
 		}
 		_ = encoder.Encode(map[string]any{"type": "text", "data": "fixture watchdog progress"})
 	default:
@@ -650,6 +655,11 @@ func emitLoopWatchdogToolEnd(provider string, argv []string) error {
 		_ = encoder.Encode(map[string]any{"type": "item.completed", "item": map[string]any{"id": loopWatchdogToolID, "type": "command_execution", "exit_code": 0}})
 	case "gemini":
 		_ = encoder.Encode(map[string]any{"type": "tool_result", "tool_id": loopWatchdogToolID, "status": "success"})
+	case "grok":
+		_ = encoder.Encode(map[string]any{
+			"type": "tool_call_update", "toolCallId": loopWatchdogToolID, "status": "completed",
+			"rawOutput": map[string]any{"type": "Bash", "exit_code": 0},
+		})
 	default:
 		return fmt.Errorf("unsupported watchdog tool provider %q", provider)
 	}

@@ -1,0 +1,47 @@
+{"type":"available_commands","tools":["run_terminal_command","read_file","search_replace","list_dir","grep"],"commands":["compact","always-approve","context"]}
+{"type":"thought","data":"The"}
+{"type":"thought","data":" user"}
+{"type":"text","data":"I'll"}
+{"type":"text","data":" create"}
+{"type":"text","data":" `"}
+{"type":"text","data":"coop"}
+{"type":"text","data":"-"}
+{"type":"text","data":"probe"}
+{"type":"text","data":".txt"}
+{"type":"text","data":"`"}
+{"type":"text","data":" first"}
+{"type":"text","data":","}
+{"type":"text","data":" then"}
+{"type":"text","data":" continue"}
+{"type":"text","data":" through"}
+{"type":"text","data":" the"}
+{"type":"text","data":" remaining"}
+{"type":"text","data":" steps"}
+{"type":"text","data":" in"}
+{"type":"text","data":" order"}
+{"type":"text","data":"."}
+{"type":"usage","usage":{"input_tokens":6725,"output_tokens":180,"cache_read_input_tokens":10368,"cache_creation_input_tokens":0,"reasoning_tokens":121}}
+{"type":"tool_call","toolCallId":"call-10c99db8-9c3c-45cf-b3d2-b71b4f4e8cde-0","title":"write","kind":"write","status":"pending","toolName":"write","rawInput":{"file_path":"/repo/coop-probe.txt","content":"hello\n"},"content":[],"locations":[]}
+{"type":"tool_call_update","toolCallId":"call-10c99db8-9c3c-45cf-b3d2-b71b4f4e8cde-0","status":null,"content":[{"type":"diff","path":"/repo/coop-probe.txt","oldText":"","newText":"hello\n"}],"rawOutput":null,"locations":[{"path":"/repo/coop-probe.txt"}]}
+{"type":"tool_call_update","toolCallId":"call-10c99db8-9c3c-45cf-b3d2-b71b4f4e8cde-0","status":"completed","content":[{"type":"diff","path":"/repo/coop-probe.txt","oldText":"","newText":"hello\n","_meta":{"details":[{"old_string":"","old_line":1,"new_string":"hello\n","new_line":1,"context_before":"","context_after":"","line_prefix":""}]}}],"rawOutput":{"type":"SearchReplace","EditsApplied":{"old_string":"","new_string":"hello\n","tool_output_for_prompt":"The file /repo/coop-probe.txt has been created.","tool_output_for_prompt_concise":"The file /repo/coop-probe.txt has been created.","absolute_path":"/repo/coop-probe.txt","edits":{"details":[{"old_string":"","old_line":1,"new_string":"hello\n","new_line":1,"context_before":"","context_after":"","line_prefix":""}]}}},"locations":[]}
+{"type":"usage","usage":{"input_tokens":291,"output_tokens":52,"cache_read_input_tokens":17024,"cache_creation_input_tokens":0,"reasoning_tokens":15}}
+{"type":"tool_call","toolCallId":"call-cf12e2fe-50a7-4e9f-b04c-baf6e457ec50-1","title":"read_file","kind":"read","status":"pending","toolName":"read_file","rawInput":{"target_file":"/repo/coop-probe.txt"},"content":[],"locations":[]}
+{"type":"tool_call_update","toolCallId":"call-cf12e2fe-50a7-4e9f-b04c-baf6e457ec50-1","status":null,"content":[],"rawOutput":null,"locations":[{"path":"/repo/coop-probe.txt"}]}
+{"type":"tool_call_update","toolCallId":"call-cf12e2fe-50a7-4e9f-b04c-baf6e457ec50-1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"1\u2192hello\n"}}],"rawOutput":{"type":"ReadFile","FileContent":{"content":"1\u2192hello\n","content_concise":"1\u2192hello\n","absolute_path":"/repo/coop-probe.txt","offset":null,"raw_output":"hello\n","total_lines":2}},"locations":[]}
+{"type":"usage","usage":{"input_tokens":7011,"output_tokens":68,"cache_read_input_tokens":10368,"cache_creation_input_tokens":0,"reasoning_tokens":19}}
+{"type":"tool_call","toolCallId":"call-50b58744-ffc8-42bf-846f-25f77ff88577-2","title":"search_replace","kind":"edit","status":"pending","toolName":"search_replace","rawInput":{"file_path":"/repo/coop-probe.txt","old_string":"hello","new_string":"bye"},"content":[],"locations":[]}
+{"type":"tool_call_update","toolCallId":"call-50b58744-ffc8-42bf-846f-25f77ff88577-2","status":null,"content":[{"type":"diff","path":"/repo/coop-probe.txt","oldText":"hello","newText":"bye","_meta":{"old_line":1,"new_line":1}}],"rawOutput":null,"locations":[{"path":"/repo/coop-probe.txt"}]}
+{"type":"tool_call_update","toolCallId":"call-50b58744-ffc8-42bf-846f-25f77ff88577-2","status":"completed","content":[{"type":"diff","path":"/repo/coop-probe.txt","oldText":"hello","newText":"bye","_meta":{"details":[{"old_string":"hello","old_line":1,"new_string":"bye","new_line":1,"context_before":"","context_after":"","line_prefix":""}]}}],"rawOutput":{"type":"SearchReplace","EditsApplied":{"old_string":"hello","new_string":"bye","tool_output_for_prompt":"The file /repo/coop-probe.txt has been updated successfully.","tool_output_for_prompt_concise":"The file /repo/coop-probe.txt has been updated.","absolute_path":"/repo/coop-probe.txt","edits":{"details":[{"old_string":"hello","old_line":1,"new_string":"bye","new_line":1,"context_before":"","context_after":"","line_prefix":""}]}}},"locations":[]}
+{"type":"usage","usage":{"input_tokens":207,"output_tokens":59,"cache_read_input_tokens":17280,"cache_creation_input_tokens":0,"reasoning_tokens":30}}
+{"type":"tool_call","toolCallId":"call-b4893cad-fd82-47ac-a3a2-d1b5f5ddeea7-3","title":"run_terminal_command","kind":"execute","status":"pending","toolName":"run_terminal_command","rawInput":{"command":"cat coop-probe-missing.txt","description":"Cat missing file, expected to fail"},"content":[],"locations":[]}
+{"type":"tool_call_update","toolCallId":"call-b4893cad-fd82-47ac-a3a2-d1b5f5ddeea7-3","status":null,"content":[{"type":"content","content":{"type":"text","text":"Cat missing file, expected to fail"}}],"rawOutput":null,"locations":[]}
+{"type":"tool_call_update","toolCallId":"call-b4893cad-fd82-47ac-a3a2-d1b5f5ddeea7-3","status":"in_progress","content":[{"type":"content","content":{"type":"text","text":""}}],"rawOutput":{"type":"Bash","output":[],"output_for_prompt":"","exit_code":0,"command":"cat coop-probe-missing.txt","truncated":false,"signal":null,"timed_out":false,"description":null,"current_dir":"/repo","output_file":"","total_bytes":0},"locations":[]}
+{"type":"tool_call_update","toolCallId":"call-b4893cad-fd82-47ac-a3a2-d1b5f5ddeea7-3","status":"in_progress","content":[{"type":"content","content":{"type":"text","text":"cat: coop-probe-missing.txt: No such file or directory\n"}}],"rawOutput":{"type":"Bash","output":[99,97,116,58,32,99,111,111,112,45,112,114,111,98,101,45,109,105,115,115,105,110,103,46,116,120,116,58,32,78,111,32,115,117,99,104,32,102,105,108,101,32,111,114,32,100,105,114,101,99,116,111,114,121,10],"output_for_prompt":"cat: coop-probe-missing.txt: No such file or directory\n","exit_code":0,"command":"cat coop-probe-missing.txt","truncated":false,"signal":null,"timed_out":false,"description":null,"current_dir":"/repo","output_file":"","total_bytes":55},"locations":[]}
+{"type":"tool_call_update","toolCallId":"call-b4893cad-fd82-47ac-a3a2-d1b5f5ddeea7-3","status":"completed","content":[{"type":"content","content":{"type":"text","text":"cat: coop-probe-missing.txt: No such file or directory\n"}}],"rawOutput":{"type":"Bash","output":[99,97,116,58,32,99,111,111,112,45,112,114,111,98,101,45,109,105,115,115,105,110,103,46,116,120,116,58,32,78,111,32,115,117,99,104,32,102,105,108,101,32,111,114,32,100,105,114,101,99,116,111,114,121,10],"output_for_prompt":"exit: 1\ncat: coop-probe-missing.txt: No such file or directory\n","exit_code":1,"command":"cat coop-probe-missing.txt","truncated":false,"signal":null,"timed_out":false,"description":"Cat missing file, expected to fail","current_dir":"/repo","output_file":"/home/node/.grok/sessions/%2Frepo/01a0b614-fa03-7252-9695-adfe39875ba1/terminal/call-b4893cad-fd82-47ac-a3a2-d1b5f5ddeea7-3.log","total_bytes":55},"locations":[]}
+{"type":"usage","usage":{"input_tokens":166,"output_tokens":51,"cache_read_input_tokens":17408,"cache_creation_input_tokens":0,"reasoning_tokens":19}}
+{"type":"tool_call","toolCallId":"call-668fb2ba-cd65-4c8e-90cd-686b1640f9c1-4","title":"list_dir","kind":"list","status":"pending","toolName":"list_dir","rawInput":{"target_directory":"/repo"},"content":[],"locations":[]}
+{"type":"tool_call_update","toolCallId":"call-668fb2ba-cd65-4c8e-90cd-686b1640f9c1-4","status":null,"content":[],"rawOutput":null,"locations":[{"path":"/repo"}]}
+{"type":"tool_call_update","toolCallId":"call-668fb2ba-cd65-4c8e-90cd-686b1640f9c1-4","status":"completed","content":[],"rawOutput":{"type":"ListDir","Content":{"content":"- /repo/\n  - coop-probe.txt","absolute_root_path":"/repo"}},"locations":[]}
+{"type":"text","data":"done"}
+{"type":"usage","usage":{"input_tokens":125,"output_tokens":20,"cache_read_input_tokens":17536,"cache_creation_input_tokens":0,"reasoning_tokens":19}}
+{"type":"end","stopReason":"end_turn","sessionId":"01a0b614-fa03-7252-9695-adfe39875ba1","requestId":"52198f64-9932-44cd-9c18-295e841c53f3","usage":{"input_tokens":14525,"cache_read_input_tokens":89984,"cache_creation_input_tokens":0,"output_tokens":430,"reasoning_tokens":223,"total_tokens":104939},"num_turns":6,"total_cost_usd":0.02605148,"total_cost_usd_ticks":260514800,"modelUsage":{"grok-4.6-build":{"inputTokens":14525,"outputTokens":430,"cacheReadInputTokens":89984,"cacheCreationInputTokens":0,"modelCalls":6,"costUSD":0.02605148}}}

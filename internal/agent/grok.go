@@ -42,17 +42,17 @@ func (grokAgent) SkillsCapable() bool { return true }
 func (grokAgent) DisplayName() string { return "Grok" }
 func (grokAgent) Vendor() string      { return "xAI" }
 
-// Stream: grok's streaming-json carries NO tool lifecycle. Probed against the installed CLI at
-// v0.2.101, a run that shelled out emitted only `thought`, `text`, and `end` — no tool start, no
-// tool end, no id to pair them with. So a grok attempt sitting on a 40-minute gate looks exactly
-// like a grok attempt that died, and the watchdog supervises it by the conservative
-// no-tool-lifecycle fallback instead (internal/cli/watchdog.go). Re-probe before changing this:
-// the declaration is the authority, and the watchdog refuses tool events from a stream that
-// declares none.
+// Stream: grok's streaming-json carries a tool lifecycle with ids. Probed against the pinned 1.0.25
+// client (the v0.2.101 CLI emitted only `thought`, `text` and `end`): every tool opens with a
+// `tool_call` under a `toolCallId` and ends at ACP's completed, failed or cancelled — on a
+// `tool_call_update`, or on the `tool_call` itself — as the binary's own format notes say the
+// stream is "derived from the agent's ACP session updates". A shell command that exits non-zero still completes — its exit code is in
+// rawOutput. Re-probe before changing this: the declaration is the authority, and the watchdog
+// refuses tool events from a stream that declares none.
 func (grokAgent) Stream() StreamSpec {
 	return StreamSpec{
 		Format: StreamGrokJSON, Flags: []string{"--output-format", "streaming-json"}, TrailingArgs: 2,
-		ToolLifecycle: ToolLifecycleAbsent,
+		ToolLifecycle: ToolLifecycleIDs,
 	}
 }
 

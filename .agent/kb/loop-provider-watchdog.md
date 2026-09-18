@@ -3,7 +3,7 @@ name: loop-provider-watchdog
 description: built-in attempts always stream; the watchdog is ARMED by default (10m/30m/2h) and trusts only decoder events, and the box's own process group makes redirected loops handle stop signals themselves
 subsystem: loop
 sources: [internal/loop/watchdog.go, internal/loop/streamjson.go, internal/loop/streamjson_providers.go, internal/loop/loop.go, internal/loop/iteration.go, internal/loop/ratelimit.go, internal/agent/agent.go, internal/agent/grok.go, internal/box/run.go, internal/runtime/runtime.go]
-updated: 2026-09-13
+updated: 2026-09-18
 ---
 
 Every built-in loop/review/preflight attempt requests the provider's structured stream —
@@ -110,10 +110,13 @@ Traps the code doesn't obviously carry:
   test that finishes in seconds. `resolveWatchdogDeadlines` takes its defaults as an argument so the
   clamp policy is tested against fixed values, not whatever the shipped constants currently are.
 - **Policy comes from the adapter's DECLARED stream capability, never from measurement.**
-  `agents.StreamSpec.ToolLifecycle` is `ToolLifecycleIDs` for claude/codex/gemini and
-  `ToolLifecycleAbsent` for grok, whose streaming-json emits only thought/text/end (probed at
-  v0.2.101). `providerWatchdogPolicy` turns that into supervision: IDs keep idle+tool exactly as
-  shipped; absent trades BOTH for one post-progress deadline at `providerSilenceFallbackMultiple`
+  `agents.StreamSpec.ToolLifecycle` is `ToolLifecycleIDs` for every adapter today. Grok was
+  `ToolLifecycleAbsent` while its streaming-json emitted only thought/text/end (v0.2.101); the
+  pinned 1.0.25 client opens each tool with `tool_call` under a `toolCallId` and ends it at ACP's
+  completed/failed/cancelled, on a `tool_call_update` or on the `tool_call` itself (a failing shell
+  completes with a non-zero `rawOutput.exit_code`). `providerWatchdogPolicy` turns the declaration into supervision: IDs keep
+  idle+tool exactly as shipped; absent — no adapter now, or an agent coop has no adapter for —
+  trades BOTH for one post-progress deadline at `providerSilenceFallbackMultiple`
   (4) × idle — 30m idle → a 2h fallback — with no tool cap, because a gate that never appears in
   the stream is indistinguishable from silence and the ordinary idle deadline would kill it. It is
   derived from idle rather than a 2h constant, so the shorten-only override shortens it too (and a
@@ -121,12 +124,16 @@ Traps the code doesn't obviously carry:
   outermost: 24 × the longest phase, which is now the fallback. The watchdog also REFUSES tool
   events from a stream that declared none — nothing may suspend a deadline whose resuming event
   does not exist. `ToolLifecycleUndeclared` (the zero value) reads as absent and fails
-  `TestEveryStreamDeclaresItsToolLifecycle`, so no stream ships unprobed. Fixtures still reject
-  grok TOOL scenarios; a grok long gate is scripted as `progress-gated-complete`.
+  `TestEveryStreamDeclaresItsToolLifecycle`, so no stream ships unprobed. The fallback policy is
+  still pinned by `TestWatchdogWithoutToolLifecycleBoundsSilenceNotWork` (unit level); the process
+  e2e now scripts grok TOOL scenarios like the others (`tool-gated-complete`, `tool-wait`).
 - Parent cancellation always wins over a watchdog fire (`ctx.Err()` guard in runIteration):
   an interrupted run stays `interrupted`, never a provider timeout.
 
 ## Changelog
+- 2026-09-18 — grok declares `ToolLifecycleIDs`: re-probed the pinned 1.0.25 client, whose
+  streaming-json carries ACP tool events; its decoder opens and closes tools by `toolCallId`, and
+  its process e2e cases moved from the no-lifecycle fallback to tool suspension and the tool cap.
 - 2026-09-13 — Claude result activity now requires an exact bounded accepted-start match;
   corrected the documented event bound for native duplicated image results.
 - 2026-08-09 — pre-launch setup is now itself step-boundary cancelable (`ctxStep` in

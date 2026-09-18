@@ -349,25 +349,22 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
-	// Grok declares no tool lifecycle, so its long foreground work reaches the host as nothing but
-	// post-progress silence. Under the ordinary idle deadline it would be killed mid-gate; under
-	// the conservative fallback (4 × idle) it finishes. Same 2s idle budget as the codex attempt in
-	// "post-progress silence retries the sole rung" above, opposite outcome — the difference is the
-	// adapter's declaration, nothing measured at runtime.
-	t.Run("silent foreground work survives past the ordinary idle deadline", func(t *testing.T) {
-		setLoopWatchdogDeadlines(t, suite, "start=20s,idle=2s,tool=30s")
+	// Grok's pinned client streams its tools under ids like the others, so a grok foreground gate
+	// holds the idle deadline open the same way — through grok's own decoder and events.
+	t.Run("a grok foreground tool suspends the idle deadline", func(t *testing.T) {
+		setLoopWatchdogDeadlines(t, suite, "start=20s,idle=1s,tool=30s")
 		resetLoopProcessRepo(t, suite)
-		taskID := "watchdog-no-lifecycle-gate"
+		taskID := "watchdog-grok-tool-gate"
 		seedLoopProcessTask(t, suite.layout.Repo, taskID)
 		target := loopRecoveryTarget("grok", "gate-model", "work")
-		attempts := []loopProcessAttempt{{Target: target, Stage: "work", Result: "progress-gated-complete"}}
+		attempts := []loopProcessAttempt{{Target: target, Stage: "work", Result: "tool-gated-complete"}}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		process := startLoopRecovery(t, suite, target)
 		defer process.Cleanup()
 		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 10*time.Second)
-		// Well past the 2s idle deadline and well inside the 8s fallback: a policy that ignored the
-		// declaration would kill this gate here and fail the assertions below.
-		time.Sleep(3500 * time.Millisecond)
+		// Hold the tool open well past the idle deadline; a false idle fire would kill the
+		// provider and fail the run below.
+		time.Sleep(2500 * time.Millisecond)
 		if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-release-"+taskID), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -376,53 +373,41 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		cancel()
 		output := visibleProcessText(result.Stdout + result.Stderr)
 		if result.Err != nil || result.ExitCode != 0 || strings.Contains(output, "timed out (") {
-			t.Fatalf("no-lifecycle gate = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+			t.Fatalf("gated grok tool = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		parsed, _ := agents.ParseTarget(target)
 		assertLoopProcessResult(t, suite, "grok", taskID, parsed.Model, parsed.Effort, parsed.Account(), suite.repoHead, 1, false)
 		records := readLoopStageRecords(t, suite)
 		if len(records) != 1 || records[0].Outcome != "success" {
-			t.Fatalf("no-lifecycle gate telemetry = %#v", records)
+			t.Fatalf("gated grok tool telemetry = %#v", records)
 		}
 		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
-	// The other half of the same policy: conservative is not unbounded. The identical stream shape
-	// that never finishes still dies — as post-progress silence, at the fallback rather than at the
-	// ordinary idle deadline it outlives.
-	t.Run("silence on a stream with no tool lifecycle is still bounded", func(t *testing.T) {
-		setLoopWatchdogDeadlines(t, suite, "start=20s,idle=2s,tool=30s")
+	// And a grok tool that never finishes is the tool cap's, as for every provider with a lifecycle.
+	t.Run("tool cap kills a wedged grok tool", func(t *testing.T) {
+		setLoopWatchdogDeadlines(t, suite, "start=20s,idle=2s,tool=4s")
 		resetLoopProcessRepo(t, suite)
-		taskID := "watchdog-no-lifecycle-silence"
+		taskID := "watchdog-grok-tool-cap"
 		seedLoopProcessTask(t, suite.layout.Repo, taskID)
-		target := loopRecoveryTarget("grok", "silence-model", "work")
+		target := loopRecoveryTarget("grok", "cap-model", "work")
 		attempts := []loopProcessAttempt{
-			{Target: target, Stage: "work", Result: "progress-wait"},
+			{Target: target, Stage: "work", Result: "tool-wait"},
 			{Target: target, Stage: "work", Result: "complete"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		process := startLoopRecovery(t, suite, target)
-		defer process.Cleanup()
-		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 10*time.Second)
-		silent := time.Now()
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		result := process.Wait(ctx)
-		cancel()
+		result := runLoopRecovery(t, suite, target)
 		output := visibleProcessText(result.Stdout + result.Stderr)
+		// With idle at 2s, an unsuspended idle deadline would have fired first and named the wrong
+		// timeout: the tool-cap outcome is also the proof that grok's tool start was honoured.
 		if result.Err != nil || result.ExitCode != 0 ||
-			!strings.Contains(output, "Stopped an unresponsive task attempt") ||
-			!strings.Contains(output, "Starting a fresh attempt") {
-			t.Fatalf("no-lifecycle silence = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
-		}
-		// The kill is the FALLBACK's, not the 2s idle deadline's: the whole run — kill, rotation,
-		// and a second completed attempt — cannot fit inside the ordinary deadline it replaced.
-		if elapsed := time.Since(silent); elapsed < 4*time.Second {
-			t.Fatalf("silent grok attempt died %s after going silent, before the 8s fallback", elapsed)
+			!strings.Contains(output, "Stopped an unresponsive task attempt") {
+			t.Fatalf("grok tool cap = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		records := readLoopStageRecords(t, suite)
 		if len(records) != 2 ||
-			records[0].Outcome != "provider_idle_timeout" || records[1].Outcome != "success" {
-			t.Fatalf("no-lifecycle silence telemetry = %#v", records)
+			records[0].Outcome != "provider_tool_timeout" || records[1].Outcome != "success" {
+			t.Fatalf("grok tool cap telemetry = %#v", records)
 		}
 		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
 	})

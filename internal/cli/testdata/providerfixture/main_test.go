@@ -570,11 +570,13 @@ func TestReadLoopScenarioAcceptsOnlyClosedV6Attempts(t *testing.T) {
 	if err := write(claudeCreditLimit); err != nil {
 		t.Fatalf("closed Claude credit-limit result rejected: %v", err)
 	}
-	// Grok may not script a TOOL scenario (rejected below — its stream has no tool events), but the
-	// gated-progress one is exactly the shape a grok long gate takes on the wire, so it must pass.
-	grokLongWork := strings.Replace(strings.ReplaceAll(valid, "codex", "grok"), `"result":"complete"`, `"result":"progress-gated-complete"`, 1)
-	if err := write(grokLongWork); err != nil {
-		t.Fatalf("grok gated-progress result rejected: %v", err)
+	// Grok's pinned client streams its tools under ids, so its TOOL scenarios script like everyone
+	// else's, and the gated-progress shape still passes.
+	for _, result := range []string{"tool-wait", "tool-gated-complete", "progress-gated-complete"} {
+		body := strings.Replace(strings.ReplaceAll(valid, "codex", "grok"), `"result":"complete"`, `"result":"`+result+`"`, 1)
+		if err := write(body); err != nil {
+			t.Fatalf("grok %s result rejected: %v", result, err)
+		}
 	}
 	for _, stage := range []string{"between", "signoff", "verify"} {
 		for _, result := range []string{"pass", "pass-with-descendant", "reopen", "reopen-gated", "reopen-authentication", "reopen-ordinary", "rate-limit", "output-limit", "authentication", "ordinary", "malformed", "truncated", "wait", "progress-wait"} {
@@ -592,8 +594,6 @@ func TestReadLoopScenarioAcceptsOnlyClosedV6Attempts(t *testing.T) {
 		strings.Replace(valid, `"result":"complete"`, `"result":"pass"`, 1),
 		strings.Replace(valid, `"result":"complete"`, `"result":"claude-credit-limit"`, 1),
 		strings.Replace(valid, `"result":"complete"`, `"result":"claude-credit-limit-plain"`, 1),
-		strings.Replace(strings.ReplaceAll(valid, "codex", "grok"), `"result":"complete"`, `"result":"tool-wait"`, 1),
-		strings.Replace(strings.ReplaceAll(valid, "codex", "grok"), `"result":"complete"`, `"result":"tool-gated-complete"`, 1),
 		strings.Replace(strings.Replace(valid, `"stage":"work"`, `"stage":"signoff"`, 1), `"result":"complete"`, `"result":"tool-gated-complete"`, 1),
 		strings.Replace(strings.Replace(valid, `"stage":"work"`, `"stage":"signoff"`, 1), `"result":"complete"`, `"result":"repair-binding"`, 1),
 		strings.Replace(valid, `"task_id":"loop-task-codex"`, `"task_id":"../escape"`, 1),

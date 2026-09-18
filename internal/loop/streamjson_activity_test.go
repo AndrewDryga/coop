@@ -119,38 +119,55 @@ func TestGeminiStreamActivity(t *testing.T) {
 	}
 }
 
+// Grok's pinned client opens every tool under a toolCallId and closes it on ACP's completed, failed
+// or cancelled status — a non-zero shell exit included, and a call that arrives already finished.
+// Null and in-progress updates are progress inside the open tool; an update for an id nothing
+// opened, a second close, and the other providers' tool shapes are nothing in a grok stream.
 func TestGrokStreamActivity(t *testing.T) {
 	var out, tail bytes.Buffer
 	rec := &activityRecorder{}
 	lines := []string{
-		`{"type":"thought","data":"hidden reasoning"}`,
+		`{"type":"thought","data":"plan"}`,
 		`{"type":"text","data":"working"}`,
-		`{"type":"tool_call","data":"unrecognized"}`,
+		`{"type":"tool_call","toolCallId":"c1","toolName":"run_terminal_command","kind":"execute","status":"pending","rawInput":{"command":"make check"}}`,
+		`{"type":"tool_call_update","toolCallId":"c1","status":null,"content":[]}`,
+		`{"type":"tool_call_update","toolCallId":"c1","status":"in_progress","rawOutput":{"type":"Bash","exit_code":0}}`,
+		`{"type":"tool_call_update","toolCallId":"c1","status":"completed","rawOutput":{"type":"Bash","exit_code":2}}`,
+		`{"type":"tool_call_update","toolCallId":"c1","status":"completed"}`,
+		`{"type":"tool_call_update","toolCallId":"ghost","status":"completed"}`,
+		`{"type":"tool_call","toolCallId":"c2","toolName":"read_file","kind":"read","status":"pending","rawInput":{"target_file":"/repo/a.go"}}`,
+		`{"type":"tool_call_update","toolCallId":"c2","status":"failed","content":[{"type":"content","content":{"type":"text","text":"no such file"}}]}`,
+		`{"type":"tool_call","toolCallId":"c3","toolName":"read_file","kind":"read","status":"completed","rawInput":{"target_file":"/repo/b.go"}}`,
+		`{"type":"tool_call","toolCallId":"c4","toolName":"run_terminal_command","kind":"execute","status":"pending","rawInput":{"command":"sleep 60"}}`,
+		`{"type":"tool_call_update","toolCallId":"c4","status":"cancelled"}`,
+		`{"type":"tool_use","tool_name":"run_shell_command","tool_id":"g1","parameters":{"command":"make check"}}`,
+		`{"type":"tool_result","tool_id":"g1","status":"success"}`,
+		`{"type":"item.started","item":{"id":"x1","type":"command_execution","command":"make check"}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"make check"}}]}}`,
+		`{"type":"usage","usage":{"input_tokens":1,"output_tokens":1}}`,
 		`{"type":"end","num_turns":1,"usage":{"input_tokens":1,"output_tokens":1}}`,
 	}
-	feedActivityLines(t, newGrokStreamDecoder(&out, &tail, "grok", "", "", "m"), rec, lines)
-	want := []string{"progress", "progress", "terminal"}
+	feedActivityLines(t, newGrokStreamDecoder(&out, &tail, "grok", "", "/repo", "m"), rec, lines)
+	want := []string{"progress", "progress", "tool_start:c1", "tool_end:c1", "tool_start:c2", "tool_end:c2",
+		"tool_start:c3", "tool_end:c3", "tool_start:c4", "tool_end:c4", "terminal"}
 	if !slices.Equal(rec.events, want) {
 		t.Errorf("grok activity = %v, want %v", rec.events, want)
 	}
 }
 
-// The adapter declares grok's stream to carry NO tool lifecycle, and the decoder has to make that
-// declaration true: the conservative silence fallback grok attempts are supervised by is only safe
-// while nothing can suspend it. Every other provider's tool shape decoded from a grok stream is
-// therefore display, never activity — a box that wants to hold its attempt cannot borrow a schema.
-func TestGrokStreamProducesNoToolActivity(t *testing.T) {
+// A tool the stream opened and never closed is still open when the attempt ends: the watchdog's
+// tool cap, not the decoder, bounds it.
+func TestGrokStreamAbandonedToolStaysOpenUntilTheAttemptEnds(t *testing.T) {
 	var out, tail bytes.Buffer
 	rec := &activityRecorder{}
 	lines := []string{
-		`{"type":"tool_use","tool_name":"run_shell_command","tool_id":"g1","parameters":{"command":"make check"}}`,
-		`{"type":"tool_result","tool_id":"g1","status":"success"}`,
-		`{"type":"item.started","item":{"id":"c1","type":"command_execution","command":"make check"}}`,
-		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"make check"}}]}}`,
+		`{"type":"tool_call","toolCallId":"c1","toolName":"run_terminal_command","kind":"execute","status":"pending","rawInput":{"command":"sleep 3600"}}`,
+		`{"type":"tool_call_update","toolCallId":"c1","status":"in_progress","rawOutput":{"type":"Bash","exit_code":0}}`,
+		`{"type":"end","num_turns":1,"usage":{"input_tokens":1,"output_tokens":1}}`,
 	}
-	feedActivityLines(t, newGrokStreamDecoder(&out, &tail, "grok", "", "", "m"), rec, lines)
-	if len(rec.events) != 0 {
-		t.Errorf("foreign tool events in a grok stream produced activity: %v", rec.events)
+	feedActivityLines(t, newGrokStreamDecoder(&out, &tail, "grok", "", "/repo", "m"), rec, lines)
+	if want := []string{"tool_start:c1", "terminal"}; !slices.Equal(rec.events, want) {
+		t.Errorf("abandoned grok tool activity = %v, want %v", rec.events, want)
 	}
 }
 
@@ -199,6 +216,12 @@ func TestEmptyRecognizedEnvelopesNeverResetActivity(t *testing.T) {
 			`{"type":"thought","data":""}`,
 			`{"type":"text"}`,
 			`{"type":"text","data":""}`,
+			`{"type":"tool_call"}`,
+			`{"type":"tool_call","toolName":"run_terminal_command","kind":"execute","rawInput":{"command":"make check"}}`,
+			`{"type":"tool_call_update"}`,
+			`{"type":"tool_call_update","toolCallId":"c1","status":"completed"}`,
+			`{"type":"usage","usage":{"input_tokens":1}}`,
+			`{"type":"available_commands","tools":["read_file"]}`,
 		}},
 	}
 	for _, c := range cases {
@@ -223,6 +246,7 @@ func TestForgedStreamIDsCannotGrowDecoderState(t *testing.T) {
 	codexTools := newCodexStreamDecoder(&out, &tail, "codex", "", "", "m")
 	codexShown := newCodexStreamDecoder(&out, &tail, "codex", "", "", "m")
 	gemini := newGeminiStreamDecoder(&out, &tail, "gemini", "", "", "m")
+	grok := newGrokStreamDecoder(&out, &tail, "grok", "", "", "m")
 	cases := []struct {
 		name    string
 		decoder iterationStreamDecoder
@@ -241,6 +265,9 @@ func TestForgedStreamIDsCannotGrowDecoderState(t *testing.T) {
 		{"gemini tool_use", gemini, func(i int) string {
 			return fmt.Sprintf(`{"type":"tool_use","tool_name":"run_shell_command","tool_id":"forged-%d","parameters":{"command":"make check"}}`, i)
 		}, func() int { return len(gemini.tool.byID) }},
+		{"grok tool_call", grok, func(i int) string {
+			return fmt.Sprintf(`{"type":"tool_call","toolCallId":"forged-%d","toolName":"run_terminal_command","kind":"execute","status":"pending","rawInput":{"command":"make check"}}`, i)
+		}, func() int { return max(len(grok.tool.byID), len(grok.commands.byID)) }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

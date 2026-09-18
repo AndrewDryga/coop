@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Grok's loop and helper runs now show their tools and are supervised like the other providers'.
+  Coop treated Grok's stream as carrying no tool events — true of its old CLI — so a Grok attempt
+  showed nothing while it ran a command, printed `· usage` noise instead, and a long `make check`
+  was supervised only by a coarse silence limit. The pinned Grok client reports every tool with
+  an id, so reads, edits and commands now appear as they do for Claude, Codex and Gemini, a failing
+  command shows its exit code and error, and an open tool keeps its attempt alive while it runs
+  (the tool time limit still stops one that hangs).
+
 - Remote sessions keep working with Grok as its login ages. A session turn gives the box only an
   access token, and coop renewed that token on the host first for Claude and Codex but not for
   Grok, so a Grok session failed once the token neared expiry and kept failing until you happened
