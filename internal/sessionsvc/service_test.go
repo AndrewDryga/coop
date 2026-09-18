@@ -2678,6 +2678,8 @@ func TestDiscardSessionCompanionRemovesLegacyLinkedWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Planned before a reboot renumbered the volume: the same directory must still be discarded.
+	plan.WorkspaceIdentity.Device++
 	if err := discardSessionCompanion(plan); err != nil {
 		t.Fatal(err)
 	}

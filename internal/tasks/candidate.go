@@ -837,7 +837,7 @@ func FinalizeForkCandidateTask(authorityRepo string, candidate ForkCandidate, as
 	}
 	defer func() { retErr = errors.Join(retErr, projection.Close()) }()
 	manifest, err := readProjectionManifest(projection)
-	if err != nil || manifest.Task != assignment.Index.Task {
+	if err != nil || !sameTaskInstance(manifest.Task, assignment.Index.Task) {
 		return errors.Join(err, errors.New("candidate projection identity changed before landing"))
 	}
 	result, snapshot, err := snapshotForkProjection(authorityRepo, root, id, expected, projection)

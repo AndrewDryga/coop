@@ -3,7 +3,7 @@ name: fork-lifecycle-state-file
 description: one generation-bound owner-v2 file holds four fork lifecycle states; unsupported formats stay held and only pid+start-token — never file age — may decide a current owner is gone
 subsystem: fork
 sources: [internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/processidentity/identity.go]
-updated: 2026-09-05
+updated: 2026-09-18
 ---
 Every fork's whole process lifecycle lives in ONE small file, `<repo>-forks/.coop/<name>.pid`, read
 and written through `forkspace.WorkerState` (`internal/forkspace/state.go`) — never by hand. Four
@@ -18,7 +18,8 @@ current shapes. Every one has an `owner-v2` header followed by the immutable gen
 
 `owner-v1` remains parseable only for stop/migration compatibility. It has no generation, cannot
 start or claim current work beside a generation record, and must never be upgraded by editing its
-bytes. The host-owned `<name>.generation.json` binds name+generation to the workspace device/inode;
+bytes. The host-owned `<name>.generation.json` binds name+generation to the workspace inode (the
+device is recorded, never compared — [[identity-fences-compare-the-inode]]);
 workers, runtime labels, executions, assignments, candidates, and cleanup all carry that exact
 identity, so `--fresh` cannot rebind a stale namesake.
 
@@ -119,6 +120,8 @@ A dead-WORKER state (not a reservation) is never auto-cleared: it may still own 
 only `coop fork stop` reaps that by owner label.
 
 ## Changelog
+- 2026-09-18 — the generation binds the workspace inode only (generation.go ValidateGenerationWorkspace,
+  OpenGenerationWorkspaceRoot): comparing the device had stopped every fork from opening after a reboot.
 - 2026-09-05 — post-land deletion retains the successful land's open inode, generation and commit
   approval through confirmation, and rechecks clean state after sidecar teardown. Regressed legacy,
   task-candidate and journal-replay success, late work, identity replacement and inspection errors.

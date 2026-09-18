@@ -1,6 +1,7 @@
 package sessionsvc
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -313,6 +314,46 @@ func TestSessionWorkspaceDiscardRefusesStaleHeadStatusReplacementAndRunning(t *t
 	}
 	if err := os.Remove(forkspace.PidPath(repo, created.Name)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A discard plan made before a reboot names the old device for the very same workspace — and so
+// does the fork generation it was created under. The discard must still go through; a workspace
+// recreated at the path is still refused (TestSessionWorkspaceDiscardRefusesStaleHeadStatusReplacementAndRunning).
+func TestSessionWorkspaceDiscardSurvivesADeviceRenumber(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	created, err := createSessionWorkspace(repo, "discard-rebooted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := planSessionWorkspaceDiscard(repo, created.Path, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.WorkspaceIdentity.Device++
+	path := forkspace.GenerationPath(repo, created.Name)
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(body, &record); err != nil {
+		t.Fatal(err)
+	}
+	record["workspace_device"] = record["workspace_device"].(float64) + 1
+	body, err = json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := discardSessionWorkspace(plan); err != nil {
+		t.Fatalf("a discard planned before a reboot was refused: %v", err)
+	}
+	if pathExists(created.Path) {
+		t.Fatal("the discard left the workspace")
 	}
 }
 

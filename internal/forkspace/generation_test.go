@@ -1,6 +1,7 @@
 package forkspace
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -62,6 +63,45 @@ func TestForkGenerationIsStableAndFencesWorkspaceReplacement(t *testing.T) {
 	}
 	if replacement.Generation == first.Generation {
 		t.Fatal("reused fork name received the same generation")
+	}
+}
+
+// renumberGenerationDevice rewrites only the device a fork's generation record names, as a reboot
+// leaves it: the volume was remounted with a new number and nothing else moved.
+func renumberGenerationDevice(t *testing.T, repo, name string) {
+	t.Helper()
+	record, err := readGenerationRecord(repo, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.WorkspaceDevice++
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(GenerationPath(repo, name), append(data, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A fork created before a reboot must still open after it: the generation record names the old
+// device for the very same workspace. A workspace recreated at the path is still refused
+// (TestForkGenerationIsStableAndFencesWorkspaceReplacement).
+func TestForkGenerationSurvivesADeviceRenumber(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "project")
+	makeGenerationWorkspace(t, repo, "perf")
+	identity := ensureTestGeneration(t, repo, "perf")
+	renumberGenerationDevice(t, repo, "perf")
+	if err := ValidateGenerationWorkspace(repo, identity); err != nil {
+		t.Fatalf("a fork created before a reboot no longer matches its generation: %v", err)
+	}
+	root, err := OpenGenerationWorkspaceRoot(repo, identity)
+	if err != nil {
+		t.Fatalf("a fork created before a reboot could not be opened: %v", err)
+	}
+	_ = root.Close()
+	if again := ensureTestGeneration(t, repo, "perf"); again != identity {
+		t.Fatalf("a reboot minted a new generation: %+v -> %+v", identity, again)
 	}
 }
 

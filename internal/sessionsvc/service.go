@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"syscall"
@@ -3646,7 +3647,8 @@ func validateDiscardSessionBinding(sess session.Session, plan DiscardPlan) error
 		return errors.New("discard plan does not belong to this session revision")
 	}
 	if sess.Workspace == "" && sess.Repository == "" && sess.ForkName == "" && sess.ForkGeneration == "" {
-		if plan.Workspace != (WorkspaceDiscardPlan{}) || len(plan.Companions) != 0 {
+		// DeepEqual, not ==: WorkspaceIdentity is deliberately not comparable (see sameDirectory).
+		if !reflect.DeepEqual(plan.Workspace, WorkspaceDiscardPlan{}) || len(plan.Companions) != 0 {
 			return errors.New("discard plan names a workspace for a session that has none")
 		}
 		return nil

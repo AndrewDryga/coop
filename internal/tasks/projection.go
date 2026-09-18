@@ -1241,7 +1241,7 @@ func acceptForkProjectionLocked(authorityRepo, root, id string, expected ForkTas
 		return ProjectionResult{}, errors.Join(err, errors.New("task assignment changed before projection acceptance"))
 	}
 	manifest, err := readProjectionManifest(projection)
-	if err != nil || record.Task == nil || manifest.Task != *record.Task {
+	if err != nil || record.Task == nil || !sameTaskInstance(manifest.Task, *record.Task) {
 		return ProjectionResult{}, errors.Join(err, errors.New("task projection manifest does not match canonical assignment identity"))
 	}
 	result, snapshot, err := snapshotForkProjection(authorityRepo, root, id, expected, projection)

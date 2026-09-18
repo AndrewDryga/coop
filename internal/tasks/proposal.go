@@ -345,7 +345,7 @@ func proposalDigest(data []byte) string {
 func ownerForProposalIndex(index ForkAssignmentIndex) (ForkTaskOwner, error) {
 	record, ok, err := ReadTaskOwnerRecord(index.CanonicalRoot, index.Task.Ref.ID)
 	if err != nil || !ok || record.Fork == nil || record.Fork.Fork != index.Fork ||
-		record.Fork.AssignmentID != index.AssignmentID || record.Task == nil || *record.Task != index.Task {
+		record.Fork.AssignmentID != index.AssignmentID || record.Task == nil || !sameTaskInstance(*record.Task, index.Task) {
 		return ForkTaskOwner{}, errors.Join(err, errors.New("fork proposal assignment no longer matches canonical authority"))
 	}
 	return *record.Fork, nil

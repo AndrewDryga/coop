@@ -77,9 +77,21 @@ type WorkspaceChanges struct {
 	PatchHasMore       bool                             `json:"patch_has_more"`
 }
 
+// sessionWorkspaceIdentity is the directory a discard plan or a staging area was made for. Compare
+// with sameDirectory: the device is recorded for diagnosis but not compared, because a reboot
+// renumbers the volume while a plan made before it still names the same directory. (A
+// reflect.DeepEqual of two identities would compare it too.)
 type sessionWorkspaceIdentity struct {
 	Device uint64 `json:"device"`
 	Inode  uint64 `json:"inode"`
+
+	_ [0]func() // not comparable with ==, which would compare the device
+}
+
+// sameDirectory reports whether two identities name one directory: a directory recreated at the
+// same path is a new inode on any volume.
+func (i sessionWorkspaceIdentity) sameDirectory(other sessionWorkspaceIdentity) bool {
+	return i.Inode == other.Inode
 }
 
 type WorkspaceDiscardPlan struct {
@@ -1059,7 +1071,7 @@ func validateSessionWorkspaceDiscardLocked(plan WorkspaceDiscardPlan) (*validate
 	if err != nil {
 		return fail(fmt.Errorf("discard plan is stale: %w", err))
 	}
-	if identity != plan.WorkspaceIdentity || !forkspace.SamePinned(plan.Workspace, info) {
+	if !identity.sameDirectory(plan.WorkspaceIdentity) || !forkspace.SamePinned(plan.Workspace, info) {
 		return fail(errors.New("discard plan is stale: workspace was replaced"))
 	}
 	branch, err := sessionWorkspaceBranch(plan.Workspace)

@@ -116,6 +116,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [signoff-scope-is-run-anchored](signoff-scope-is-run-anchored.md) — signoff subjects are a run-anchored folder diff; re-anchor only on receipt-consistent rounds, from the post-review done set
 - [task-state-is-the-folder](task-state-is-the-folder.md) — a task's state IS its directory; a bare `mv` to a missing state dir silently corrupts the queue
 - [canonical-fork-task-authority](canonical-fork-task-authority.md) — the project owns one Markdown task; a fork owns only an exact-generation execution projection and reviewed candidate
+- [identity-fences-compare-the-inode](identity-fences-compare-the-inode.md) — every persisted same-directory fence records the device but compares only the inode; a reboot renumbers volumes, and a source guard fails any new device comparison
 - [task-authority-registry-is-durable-state](task-authority-registry-is-durable-state.md) — host-global task ownership and completion trust live in ~/.local/state/coop/task-leases, never a cache dir; every authority flock rechecks its inode
 - [task-authority-model](task-authority-model.md) — four separate authorities decide who may act on a task/checkout — durable owner, iteration lease, checkout lock, and ref window — never merge them
 - [task-tmp-lifetime](task-tmp-lifetime.md) — task-local tmp survives resumable states but is containment-cleaned on done before review; artifacts persist

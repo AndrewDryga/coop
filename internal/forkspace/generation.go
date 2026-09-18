@@ -35,6 +35,10 @@ type Identity struct {
 	Generation Generation `json:"generation"`
 }
 
+// generationRecord binds a fork's generation to its workspace directory. The inode is that binding:
+// a workspace recreated at the same path is a new inode. WorkspaceDevice is recorded for diagnosis
+// but never compared — a volume's device number is assigned when it is mounted, so a reboot changes
+// it while the workspace is untouched, and every fork would stop opening after one.
 type generationRecord struct {
 	Version         int        `json:"version"`
 	Name            string     `json:"name"`
@@ -227,11 +231,11 @@ func ValidateGenerationWorkspace(repo string, identity Identity) error {
 	if record.Generation != identity.Generation {
 		return errors.New("fork generation changed")
 	}
-	device, inode, err := workspaceGeneration(repo, identity.Name)
+	_, inode, err := workspaceGeneration(repo, identity.Name)
 	if err != nil {
 		return err
 	}
-	if device != record.WorkspaceDevice || inode != record.WorkspaceInode {
+	if inode != record.WorkspaceInode {
 		return errors.New("fork workspace no longer matches its generation")
 	}
 	return nil
@@ -256,7 +260,7 @@ func OpenGenerationWorkspaceRoot(repo string, identity Identity) (*os.Root, erro
 	}
 	stat, ok := before.Sys().(*syscall.Stat_t)
 	if !ok || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 ||
-		uint64(stat.Dev) != record.WorkspaceDevice || uint64(stat.Ino) != record.WorkspaceInode {
+		uint64(stat.Ino) != record.WorkspaceInode {
 		return nil, errors.New("fork workspace no longer matches its generation")
 	}
 	root, err := os.OpenRoot(path)

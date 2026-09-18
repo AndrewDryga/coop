@@ -634,7 +634,7 @@ func removeSessionCompanionStage(
 		return errors.New("companion staging directory was replaced")
 	}
 	identity, err := sessionWorkspaceIdentityFor(info)
-	if err != nil || identity != expected {
+	if err != nil || !identity.sameDirectory(expected) {
 		return errors.New("companion staging directory identity changed")
 	}
 	if err := os.RemoveAll(stage); err != nil {
@@ -1234,7 +1234,7 @@ func discardSessionCompanionContext(ctx context.Context, plan sessionCompanionDi
 		return errors.New("companion discard plan is stale: workspace is not a real directory")
 	}
 	identity, err := sessionWorkspaceIdentityFor(info)
-	if err != nil || identity != plan.WorkspaceIdentity {
+	if err != nil || !identity.sameDirectory(plan.WorkspaceIdentity) {
 		return errors.New("companion discard plan is stale: workspace was replaced")
 	}
 	binding := session.CompanionRepository{

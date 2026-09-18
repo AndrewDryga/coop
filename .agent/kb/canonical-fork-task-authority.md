@@ -35,6 +35,9 @@ Execution records normally live beside fork state and fall back to project-keyed
 when an ordinary repository's parent is read-only.
 
 ## Changelog
+- 2026-09-18 — the fork workspace generation now binds the inode too, and the three places that
+  compared whole task instances with `!=` (proposal.go, candidate.go, projection.go) go through
+  `sameTaskInstance`. See [[identity-fences-compare-the-inode]].
 - 2026-09-18 — the instance fence compares the inode, not the device (6d92825a for ownership; the
   completion receipts, windows and pending reviews followed). Verified against identity.go,
   completion.go and lease.go; the fork workspace generation still compares the device (queued).

@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A reboot no longer strands forks and session workspaces. A fork's generation and a session's
+  discard plan recorded their directory's device number, which a volume is given when it is
+  mounted, so after a reboot every fork refused to open ("fork workspace no longer matches its
+  generation") and a discard planned before it was "stale". They now bind the directory's inode, as
+  task ownership, completion evidence and network approvals do, and the gate now fails if anything
+  compares a device number again.
+
 - A reboot no longer sends every filtered project back for network approval. An approval recorded
   its project directory's device number, which a volume is given when it is mounted, so after a
   reboot the same folder looked "replaced since it was approved". Approvals now bind the directory's
