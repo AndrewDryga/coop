@@ -26,8 +26,13 @@ func (grokAgent) PlainOutputProbe() PlainOutputProbe                            
 
 func init() { register(grokAgent{}) }
 
-func (grokAgent) Name() string        { return "grok" }
-func (grokAgent) SkillsCapable() bool { return false }
+func (grokAgent) Name() string { return "grok" }
+
+// SkillsCapable: the pinned 1.0.25 client discovers skills natively from ~/.grok/skills/<name>/
+// SKILL.md — the directory Coop's shared projection already targets (~/.<agent>/skills) — and lists
+// them in `grok inspect`. Project-scope .grok/skills outranks user scope in its own precedence, so a
+// repository's own skills still win over the projected copy.
+func (grokAgent) SkillsCapable() bool { return true }
 func (grokAgent) DisplayName() string { return "Grok" }
 func (grokAgent) Vendor() string      { return "xAI" }
 

@@ -3320,21 +3320,21 @@ func TestSynthSkillsMounts(t *testing.T) {
 	for _, m := range got {
 		boxPaths[m.box] = true
 	}
-	if !boxPaths["/home/node/.claude/skills"] || !boxPaths["/home/node/.codex/skills"] || !boxPaths["/home/node/.gemini/skills"] {
-		t.Errorf("Claude, Codex, and Gemini skills should be synthesized: %v", got)
-	}
-	if boxPaths["/home/node/.grok/skills"] {
-		t.Error("grok is not skills-capable — must not synthesize a skills mount")
+	for _, want := range []string{"/home/node/.claude/skills", "/home/node/.codex/skills", "/home/node/.gemini/skills", "/home/node/.grok/skills"} {
+		if !boxPaths[want] {
+			t.Errorf("%s should be synthesized for a skills-capable agent: %v", want, got)
+		}
 	}
 	// The repo's OWN skills dir wins — no synthesis for that agent (project beats user).
 	mkdir(".claude/skills")
+	mkdir(".grok/skills")
 	got, _, err = synthSkillsMounts(repo, "/home/node", "", names)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, m := range got {
-		if m.box == "/home/node/.claude/skills" {
-			t.Errorf("repo has .claude/skills → must not synthesize a user-level one: %v", got)
+		if m.box == "/home/node/.claude/skills" || m.box == "/home/node/.grok/skills" {
+			t.Errorf("repo has its own skills dir → must not synthesize a user-level one: %v", got)
 		}
 	}
 }

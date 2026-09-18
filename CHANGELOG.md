@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Grok now receives the project's shared skills, like the other agents. The pinned client discovers
+  them natively in `~/.grok/skills`, which is where Coop's projection already puts them, and a
+  repository's own `.grok/skills` still wins.
+
 - A filtered box no longer refuses a repository that has shared skills. The skills and home-fallback
   copies were the one generated mount made in the system temp directory instead of the run's own
   artifact directory, so the filtered launch — which proves every mount is its own — refused them

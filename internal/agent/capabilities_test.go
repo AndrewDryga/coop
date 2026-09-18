@@ -3,7 +3,7 @@ package agent
 import "testing"
 
 func TestSkillsCapabilities(t *testing.T) {
-	want := map[string]bool{"claude": true, "codex": true, "gemini": true, "grok": false}
+	want := map[string]bool{"claude": true, "codex": true, "gemini": true, "grok": true}
 	for _, name := range Names() {
 		ag, _ := Get(name)
 		capable, covered := want[name]
