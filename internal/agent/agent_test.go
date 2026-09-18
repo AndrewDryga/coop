@@ -1860,6 +1860,32 @@ func TestGrokMCPRequiresBearerEnvironment(t *testing.T) {
 	}
 }
 
+// Codex resolves env_http_headers and bearer_token_env_var itself, which only works if the box
+// actually carries those values — and the pinned client drops an unset header variable SILENTLY, so
+// nothing downstream would report the miss. The adapter must therefore declare every name the
+// generated config refers to, not just the bearer one.
+func TestCodexMCPRequiresEveryReferencedEnvironmentName(t *testing.T) {
+	dir := t.TempDir()
+	mcpFile := filepath.Join(dir, "mcp.json")
+	mustWrite(t, mcpFile, `{"mcpServers":{"private":{"url":"https://mcp.example",`+
+		`"headers":{"X-Tenant":"one","X-Token":"${TENANT_TOKEN}"},"bearer_token_env_var":"MCP_TOKEN"}}}`)
+	cfg := &config.Config{MCPFile: mcpFile, ConfigDir: dir, HomeInBox: "/home/node"}
+	codex, _ := Get("codex")
+	wiring, err := codex.MCP(cfg, "/workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(wiring.RequiredEnv, []string{"MCP_TOKEN", "TENANT_TOKEN"}) {
+		t.Fatalf("Codex required MCP env = %v, want both referenced names", wiring.RequiredEnv)
+	}
+	if len(wiring.Mounts) != 1 {
+		t.Fatalf("Codex MCP mounts = %+v, want one config.toml", wiring.Mounts)
+	}
+	if content := wiring.Mounts[0].Content; strings.Contains(content, "${TENANT_TOKEN}") {
+		t.Fatalf("the reference was written as a literal value instead of a variable name:\n%s", content)
+	}
+}
+
 // Without shared MCP, claude and grok need no generated file; codex and gemini still get their
 // always-on box overlay, because that is where the managed-client defaults live.
 func TestMCPWithoutSharedSourceBuildsOnlyTheAlwaysOnOverlays(t *testing.T) {
@@ -1985,6 +2011,50 @@ func TestEveryAgentReachesTheSharedServersThroughItsSupportedRoutes(t *testing.T
 		if len(wiring.Mounts) == 0 && len(servers) == 0 {
 			t.Errorf("%s: %d generated mount(s) and %d ACP server(s); want at least one route",
 				name, len(wiring.Mounts), len(servers))
+		}
+	}
+}
+
+// One SSE server would take the whole session down: the pinned adapter answers such an entry with
+// `RequestError.invalidRequest("Codex doesn't support MCP SSE transport protocol")`, which fails
+// session/new entirely rather than dropping that one server. Coop refuses first and names it,
+// because "invalid request" at session start names nothing. Every other adapter carries SSE
+// through — Grok speaks it for real, and Claude's and Gemini's clients decide for themselves.
+func TestCodexRefusesAnSSEServerBeforeItsACPSessionStarts(t *testing.T) {
+	dir := t.TempDir()
+	mcpFile := filepath.Join(dir, "mcp.json")
+	mustWrite(t, mcpFile, `{"mcpServers":{"legacy":{"type":"sse","url":"https://a.example/sse"}}}`)
+
+	codex, _ := Get("codex")
+	_, err := codex.ACPMCPServers(mcpFile, nil)
+	if err == nil || !strings.Contains(err.Error(), "codex-acp refuses") {
+		t.Fatalf("codex ACPMCPServers = %v, want a refusal naming the server", err)
+	}
+	if !strings.Contains(err.Error(), "legacy") {
+		t.Errorf("the refusal does not name the server: %v", err)
+	}
+
+	// Only Claude actually declares servers over ACP; grok and gemini read the mounted config and
+	// return nil here, so assert what each one really does rather than looping over an empty slice
+	// and calling it coverage.
+	for _, name := range Names() {
+		if name == "codex" {
+			continue
+		}
+		agent, _ := Get(name)
+		servers, err := agent.ACPMCPServers(mcpFile, nil)
+		if err != nil {
+			t.Errorf("%s refused an SSE server its client accepts: %v", name, err)
+		}
+		switch name {
+		case "claude":
+			if len(servers) != 1 || servers[0]["type"] != "sse" {
+				t.Errorf("claude did not carry the SSE declaration: %+v", servers)
+			}
+		default:
+			if servers != nil {
+				t.Errorf("%s declares ACP servers now; this test assumed it reads the mount: %+v", name, servers)
+			}
 		}
 	}
 }

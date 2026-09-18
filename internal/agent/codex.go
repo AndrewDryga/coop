@@ -644,22 +644,75 @@ func codexCredentialPortability(profileDir string, deadline time.Time) Credentia
 // and codex-acp read the same CODEX_HOME — so the managed-client defaults (no update check, no
 // analytics or OTEL export; see mcp.CodexManagedDefaults) apply without a host write, and the
 // shared servers land as [mcp_servers.*] when MCP is active. Auth, sessions and the user's other
-// settings are the host profile's, kept verbatim.
+// settings are the host profile's, kept verbatim. A remote server's authentication comes back with
+// the environment names the box must carry: the pinned client resolves env_http_headers and
+// bearer_token_env_var itself, so no header value is written into the generated file.
 func (codexAgent) MCP(cfg *config.Config, workdir string) (MCPConfig, error) {
-	cx, err := mcp.GenerateCodex(cfg.MCPFile, filepath.Join(cfg.AgentDir("codex"), "config.toml"))
+	cx, requiredEnv, err := mcp.GenerateCodex(cfg.MCPFile, filepath.Join(cfg.AgentDir("codex"), "config.toml"))
 	if err != nil {
 		return MCPConfig{}, err
 	}
 	cx, _ = ensureCodexTrust(cx, workdir)
-	return MCPConfig{Mounts: []MCPMount{{Content: cx, BoxPath: cfg.HomeInBox + "/.codex/config.toml"}}}, nil
+	return MCPConfig{
+		Mounts:      []MCPMount{{Content: cx, BoxPath: cfg.HomeInBox + "/.codex/config.toml"}},
+		RequiredEnv: requiredEnv,
+	}, nil
 }
 
 // ACPMCPServers declares the same shared servers to codex-acp. Codex still reads
 // their authority from the generated config.toml mount, while codex-acp 1.7 uses
 // session/new.mcpServers as the session inventory and startup contract. The
 // adapter deduplicates names already present in config.toml.
+//
+// One server can take the whole session down here. The pinned adapter maps a remote entry to
+// codex's own http_headers — so inline headers work — but answers an SSE entry with
+// `RequestError.invalidRequest("Codex doesn't support MCP SSE transport protocol")`, which fails
+// session/new entirely, not just that server. Coop refuses it first, naming the server, because
+// "invalid request" at session start names nothing.
 func (codexAgent) ACPMCPServers(path string, lookupEnv func(string) (string, bool)) ([]map[string]any, error) {
-	return mcp.ACPServers(path, lookupEnv)
+	servers, err := mcp.ACPServers(path, lookupEnv)
+	if err != nil {
+		return nil, err
+	}
+	for _, server := range servers {
+		if server["type"] == "sse" {
+			return nil, fmt.Errorf("MCP server %q is declared SSE, which codex-acp refuses — give it a streamable HTTP url, or remove it from the shared configuration when only Codex (as lead or peer) is affected", server["name"])
+		}
+		if err := resolveCodexACPHeaders(server, lookupEnv); err != nil {
+			return nil, err
+		}
+	}
+	return servers, nil
+}
+
+// resolveCodexACPHeaders makes the ACP declaration say what the mounted config.toml says. The
+// adapter maps these headers to codex's http_headers, which does NOT expand ${VAR} — so a
+// reference sent here would travel upstream as the literal characters. It only ever worked because
+// codex-acp deduplicates names already in config.toml and the config's env_http_headers definition
+// wins; that mask slips for a server name the adapter rewrites (whitespace becomes "_") or a user
+// who sets DISABLE_MCP_CONFIG_FILTERING. Resolve it here the way the bearer token already is.
+func resolveCodexACPHeaders(server map[string]any, lookupEnv func(string) (string, bool)) error {
+	headers, _ := server["headers"].([]map[string]any)
+	for _, header := range headers {
+		value, _ := header["value"].(string)
+		name, _ := header["name"].(string)
+		reference, exact := mcp.EnvHeaderReference(value)
+		if !exact {
+			if strings.Contains(value, "${") {
+				return fmt.Errorf("MCP server %q header %q refers to an environment variable in a form Codex cannot resolve; use bearer_token_env_var, or make the whole value one ${VARIABLE}", server["name"], name)
+			}
+			continue
+		}
+		resolved := ""
+		if lookupEnv != nil {
+			resolved, _ = lookupEnv(reference)
+		}
+		if strings.TrimSpace(resolved) == "" {
+			return fmt.Errorf("MCP server %q header %q needs %s, which this run does not carry", server["name"], name, reference)
+		}
+		header["value"] = resolved
+	}
+	return nil
 }
 
 // EnsureDefaults pre-trusts the workdir in codex's config.toml so a fresh box doesn't

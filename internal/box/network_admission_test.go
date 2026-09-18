@@ -249,6 +249,40 @@ func TestAdmitNetworkRefusesARuntimeThatCannotServeFiltered(t *testing.T) {
 	}
 }
 
+// Filtered MCP has a literal-only rule — the gateway cannot grant a destination whose routing an
+// environment variable could change after approval. That rule belongs to FILTERED launches only.
+// Admission used to derive the shared file's network dependencies before it knew the posture, so a
+// server with a ${VARIABLE} header refused an explicitly open launch for a constraint only a
+// filtered gateway has; env-backed headers were unusable everywhere.
+func TestAdmitNetworkOpenLaunchIgnoresFilteredMCPRules(t *testing.T) {
+	cfg, repo, root := admissionFixture(t)
+	cfg.MCPFile = filepath.Join(t.TempDir(), "mcp.json")
+	if err := os.WriteFile(cfg.MCPFile, []byte(`{"mcpServers":{"tenant":{"url":"https://mcp.example/mcp",`+
+		`"headers":{"X-Token":"${TENANT_TOKEN}"}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spec := RunSpec{Repo: repo, Homes: true}
+
+	open := egress.Open
+	if _, err := AdmitNetwork(cfg, runtime.Runtime{Name: "must-not-execute"}, spec,
+		NetworkAdmission{InvocationMode: &open}); err != nil {
+		t.Fatalf("an open launch was refused by a filtered-only MCP rule: %v", err)
+	}
+
+	// The rule still holds where it applies: a filtered launch with the same file is refused for it —
+	// and refused BEFORE the authority store is opened, so asking leaves no owner key behind. Named
+	// docker so the MCP refusal is the one under test; nothing here reaches a runtime command.
+	filtered := egress.Filtered
+	_, err := AdmitNetwork(cfg, runtime.Runtime{Name: "docker"}, spec,
+		NetworkAdmission{InvocationMode: &filtered})
+	if err == nil || !strings.Contains(err.Error(), "restricted MCP requires literal configuration") {
+		t.Fatalf("a filtered launch accepted a non-literal MCP definition: %v", err)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatal("a refused filtered launch created authority state", err)
+	}
+}
+
 // Operator domains and an operator-owned rules file grant directly; a rules
 // file inside an agent mount is only a request.
 func TestAdmitNetworkClassifiesOperatorInputBeforeCapture(t *testing.T) {

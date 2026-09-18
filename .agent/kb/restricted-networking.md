@@ -20,6 +20,11 @@ between that flag and `docker run`:
    to filtered, `checkFilteredRuntime` is the first gate: a runtime that cannot serve the gateway is
    refused before `networkstate.Open`, so asking for something this host cannot do leaves no
    authority state behind. `SetupNetwork` and `AdmitSessionNetwork` ask the same question first.
+   The shared MCP file is handled in two halves: its SOURCE is proven on every launch (outside
+   every mount, parseable — `networkMCPSnapshot`), but its destinations and the gateway's MCP
+   qualification rules (literal only, HTTPS on 443, no `headersHelper`/`oauth`) are derived only
+   once the posture is filtered (`networkMCPDependenciesOf`), because on an open box those rules
+   refuse ordinary client features.
 4. **Launch** — `box.Run` branches once, on `spec.CapturedEgress` (`box/run.go:399`): non-nil takes
    the `filtered*.go` family, nil takes the open path byte for byte.
 5. **Per-host qualification** — `SetupNetwork` (`box/network_setup.go`), run by the first filtered
@@ -171,6 +176,9 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-18 — MCP admission split: source isolation and parse on every launch, destinations and the
+  gateway's MCP rules only on the filtered path. Deriving them first had made every launch pay the
+  filtered rules, so an open box refused a `${VARIABLE}` header.
 - 2026-09-18 — the runtime question moved to the front of every filtered entry point
   (`checkFilteredRuntime`), so a non-Docker runtime is refused by name before the authority root or
   an owner key exists, instead of surfacing from `bindDocker` mid-qualification

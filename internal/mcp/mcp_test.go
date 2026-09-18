@@ -32,7 +32,7 @@ const sample = `{
 }`
 
 func TestGenerateCodex(t *testing.T) {
-	got, err := GenerateCodex(writeTmp(t, "mcp.json", sample), "")
+	got, _, err := GenerateCodex(writeTmp(t, "mcp.json", sample), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestGenerateCodexForcesManagedClientDefaults(t *testing.T) {
 	t.Run("without shared MCP the native servers and every other key survive verbatim", func(t *testing.T) {
 		existingBody := "model = \"o3\"\n\n[mcp_servers.own]\ncommand = \"keep\"\n\n[projects.\"/repo\"]\ntrust_level = \"trusted\"\n"
 		existing := writeTmp(t, "config.toml", existingBody)
-		got, err := GenerateCodex("", existing)
+		got, _, err := GenerateCodex("", existing)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -110,7 +110,7 @@ func TestGenerateCodexForcesManagedClientDefaults(t *testing.T) {
 			"[otel]\nenvironment = \"prod\"\nmetrics_exporter = \"statsig\"\n\n[otel.exporter.otlp-http]\nendpoint = \"https://collector.example\"\n\n" +
 			"[analytics]\nenabled = true\n\n[projects.\"/repo\"]\ntrust_level = \"trusted\"\n"
 		existing := writeTmp(t, "config.toml", existingBody)
-		got, err := GenerateCodex(mcpFile, existing)
+		got, _, err := GenerateCodex(mcpFile, existing)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -130,14 +130,14 @@ func TestGenerateCodexForcesManagedClientDefaults(t *testing.T) {
 		}
 	})
 	t.Run("an inline table is one provable line", func(t *testing.T) {
-		got, err := GenerateCodex("", writeTmp(t, "config.toml", "model = \"o3\"\notel = { exporter = \"otlp-http\" }\n"))
+		got, _, err := GenerateCodex("", writeTmp(t, "config.toml", "model = \"o3\"\notel = { exporter = \"otlp-http\" }\n"))
 		if err != nil || got != CodexManagedDefaults+"\nmodel = \"o3\"\n" {
 			t.Fatalf("inline table = (%q, %v)", got, err)
 		}
 	})
 	t.Run("a lookalike key is not a managed key", func(t *testing.T) {
 		existingBody := "analytics_backup = 1\ncheck_for_update_on_startup_note = \"x\"\n\n[otel_archive]\nkeep = true\n"
-		got, err := GenerateCodex("", writeTmp(t, "config.toml", existingBody))
+		got, _, err := GenerateCodex("", writeTmp(t, "config.toml", existingBody))
 		if err != nil || !strings.HasSuffix(got, existingBody) {
 			t.Fatalf("lookalike keys changed = (%q, %v)", got, err)
 		}
@@ -149,7 +149,7 @@ func TestGenerateCodexForcesManagedClientDefaults(t *testing.T) {
 	} {
 		t.Run("a form the strip cannot prove fails closed: "+tc.name, func(t *testing.T) {
 			existing := writeTmp(t, "config.toml", tc.body)
-			_, err := GenerateCodex("", existing)
+			_, _, err := GenerateCodex("", existing)
 			if err == nil || !strings.Contains(err.Error(), "cannot safely replace") {
 				t.Fatalf("GenerateCodex error = %v, want a managed-key refusal", err)
 			}
@@ -163,7 +163,7 @@ func TestGenerateCodexForcesManagedClientDefaults(t *testing.T) {
 func TestGenerateCodexPreservesExistingConfig(t *testing.T) {
 	existing := writeTmp(t, "config.toml",
 		"model = \"o3\"\n\n[mcp_servers.stale]\ncommand = \"gone\"\n\n[mcp_servers_backup]\nnote = \"keep me\"\n")
-	got, err := GenerateCodex(writeTmp(t, "mcp.json", sample), existing)
+	got, _, err := GenerateCodex(writeTmp(t, "mcp.json", sample), existing)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestGenerateCodexRetainsNativeBytesAndRemovesCanonicalMCP(t *testing.T) {
 	existingBody := " \t# keep exact CRLF\r\nmodel = \"o3\"\r\n\r\n[mcp_servers.\"stale.name\"]\r\ncommand = \"gone\"\r\n\r\n" +
 		"[mcp_servers.\"stale.name\".env]\r\nK = \"gone\"\r\n\r\n[other]\r\nthreshold = nan\r\nlimit = +inf\r\nwhen = 1979-05-27T07:32:00Z\r\n"
 	existing := writeTmp(t, "config.toml", existingBody)
-	got, err := GenerateCodex(writeTmp(t, "mcp.json", sample), existing)
+	got, _, err := GenerateCodex(writeTmp(t, "mcp.json", sample), existing)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,7 @@ func TestGenerateCodexRejectsAlternateNativeMCPForms(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			body := strings.ReplaceAll(tc.body, `\n`, "\n")
 			existing := writeTmp(t, "config.toml", body)
-			_, err := GenerateCodex(writeTmp(t, "mcp.json", sample), existing)
+			_, _, err := GenerateCodex(writeTmp(t, "mcp.json", sample), existing)
 			if err == nil || !strings.Contains(err.Error(), "cannot safely remove") || !strings.Contains(err.Error(), "COOP_MCP_FILE") {
 				t.Fatalf("GenerateCodex error = %v, want unsupported native MCP refusal", err)
 			}
@@ -233,7 +233,7 @@ func TestGenerateCodexRejectsAlternateNativeMCPForms(t *testing.T) {
 
 func TestGenerateCodexPreservesMCPLookalikesVerbatim(t *testing.T) {
 	existingBody := "note = '''\n[mcp_servers.fake]\nstill text\n'''\n\nmcp_servers_backup = { command = \"keep\" }\n[mcp_serverssettings]\nnote = \"keep too\"\n"
-	got, err := GenerateCodex(writeTmp(t, "mcp.json", sample), writeTmp(t, "config.toml", existingBody))
+	got, _, err := GenerateCodex(writeTmp(t, "mcp.json", sample), writeTmp(t, "config.toml", existingBody))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,13 +246,13 @@ func TestGenerateCodexRejectsInvalidNativeConfigEntries(t *testing.T) {
 	mcpFile := writeTmp(t, "mcp.json", sample)
 	t.Run("malformed", func(t *testing.T) {
 		path := writeTmp(t, "config.toml", `broken = {`)
-		if _, err := GenerateCodex(mcpFile, path); err == nil || !strings.Contains(err.Error(), "not valid TOML") {
+		if _, _, err := GenerateCodex(mcpFile, path); err == nil || !strings.Contains(err.Error(), "not valid TOML") {
 			t.Fatalf("GenerateCodex malformed error = %v", err)
 		}
 	})
 	t.Run("directory", func(t *testing.T) {
 		path := t.TempDir()
-		if _, err := GenerateCodex(mcpFile, path); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		if _, _, err := GenerateCodex(mcpFile, path); err == nil || !strings.Contains(err.Error(), "not a regular file") {
 			t.Fatalf("GenerateCodex directory error = %v", err)
 		}
 	})
@@ -261,7 +261,7 @@ func TestGenerateCodexRejectsInvalidNativeConfigEntries(t *testing.T) {
 		if err := os.Symlink(filepath.Join(t.TempDir(), "missing"), path); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := GenerateCodex(mcpFile, path); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		if _, _, err := GenerateCodex(mcpFile, path); err == nil || !strings.Contains(err.Error(), "symbolic link") {
 			t.Fatalf("GenerateCodex dangling symlink error = %v", err)
 		}
 	})
@@ -274,7 +274,7 @@ func TestGenerateCodexRejectsInvalidNativeConfigEntries(t *testing.T) {
 		if err := os.Symlink(target, path); err != nil {
 			t.Fatal(err)
 		}
-		if got, err := GenerateCodex(mcpFile, path); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		if got, _, err := GenerateCodex(mcpFile, path); err == nil || !strings.Contains(err.Error(), "symbolic link") {
 			t.Fatalf("GenerateCodex readable symlink = (%q, %v), want refusal", got, err)
 		}
 		if after, err := os.ReadFile(target); err != nil || string(after) != "model = \"o3\"\n" {
@@ -286,7 +286,7 @@ func TestGenerateCodexRejectsInvalidNativeConfigEntries(t *testing.T) {
 		if err := syscall.Mkfifo(path, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := GenerateCodex(mcpFile, path); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		if _, _, err := GenerateCodex(mcpFile, path); err == nil || !strings.Contains(err.Error(), "not a regular file") {
 			t.Fatalf("GenerateCodex fifo error = %v", err)
 		}
 	})
@@ -338,7 +338,7 @@ func TestGenerateCodexRejectsInvalidNativeConfigEntries(t *testing.T) {
 		if err := os.WriteFile(path, make([]byte, maxMCPConfigBytes+1), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := GenerateCodex(mcpFile, path); err == nil || !strings.Contains(err.Error(), "exceeds the 4194304-byte limit") {
+		if _, _, err := GenerateCodex(mcpFile, path); err == nil || !strings.Contains(err.Error(), "exceeds the 4194304-byte limit") {
 			t.Fatalf("GenerateCodex oversized native error = %v", err)
 		}
 	})
@@ -376,7 +376,7 @@ func TestGenerateCodexRejectsInvalidNativeConfigEntries(t *testing.T) {
 	})
 	t.Run("initially missing", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "missing.toml")
-		got, err := GenerateCodex(mcpFile, path)
+		got, _, err := GenerateCodex(mcpFile, path)
 		if err != nil || !strings.Contains(got, "[mcp_servers.ctx7]") {
 			t.Fatalf("GenerateCodex missing = (%q, %v)", got, err)
 		}
@@ -387,7 +387,7 @@ func TestGenerateCodexRejectsInvalidNativeConfigEntries(t *testing.T) {
 // scientific notation — "8080", not "8.08e+03"; a big value not "1.23e+19".
 func TestGenerateCodexNumericEnvNoScientificNotation(t *testing.T) {
 	mcp := `{"mcpServers":{"s":{"command":"x","env":{"PORT":8080,"BIG":12345678901234567890}}}}`
-	got, err := GenerateCodex(writeTmp(t, "mcp.json", mcp), "")
+	got, _, err := GenerateCodex(writeTmp(t, "mcp.json", mcp), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +403,7 @@ func TestGenerateCodexNumericEnvNoScientificNotation(t *testing.T) {
 // the name is quoted (else a dot nests the table / a space breaks the parse) and \n is escaped.
 func TestGenerateCodexQuotesNonBareNamesAndEscapes(t *testing.T) {
 	mcp := `{"mcpServers":{"my.server":{"command":"x","env":{"K":"a\nb"}}}}`
-	got, err := GenerateCodex(writeTmp(t, "mcp.json", mcp), "")
+	got, _, err := GenerateCodex(writeTmp(t, "mcp.json", mcp), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -531,7 +531,7 @@ func TestGenerateGeminiWithoutMCP(t *testing.T) {
 }
 
 func TestGenerateMalformed(t *testing.T) {
-	if _, err := GenerateCodex(writeTmp(t, "mcp.json", "{not json"), ""); err == nil {
+	if _, _, err := GenerateCodex(writeTmp(t, "mcp.json", "{not json"), ""); err == nil {
 		t.Error("malformed mcp.json should error")
 	}
 	if _, _, err := GenerateGemini(filepath.Join(t.TempDir(), "missing.json"), ""); err == nil {
@@ -540,7 +540,7 @@ func TestGenerateMalformed(t *testing.T) {
 }
 
 func TestGenerateEmpty(t *testing.T) {
-	got, err := GenerateCodex(writeTmp(t, "mcp.json", `{"mcpServers":{}}`), "")
+	got, _, err := GenerateCodex(writeTmp(t, "mcp.json", `{"mcpServers":{}}`), "")
 	if err != nil || got != CodexManagedDefaults {
 		t.Errorf("empty servers -> only the managed box defaults; got %q err %v", got, err)
 	}
@@ -670,7 +670,7 @@ func TestGenerateGeminiMalformedExistingErrors(t *testing.T) {
 // A server with neither command nor url is skipped, not emitted as a bodyless table that would
 // break Codex's whole config parse.
 func TestGenerateCodexSkipsTransportlessServer(t *testing.T) {
-	got, err := GenerateCodex(writeTmp(t, "mcp.json", `{"mcpServers":{"good":{"command":"x"},"broken":{}}}`), "")
+	got, _, err := GenerateCodex(writeTmp(t, "mcp.json", `{"mcpServers":{"good":{"command":"x"},"broken":{}}}`), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -712,26 +712,67 @@ func TestGenerateGeminiHTTPPassthrough(t *testing.T) {
 	}
 }
 
-// Codex has no inline-header support, so any server that needs headers must be refused before the
-// provider starts. bearer_token_env_var is Codex's supported bearer mechanism and still renders.
+// The pinned Codex client (codex-cli 0.153.4) accepts BOTH header tables beside
+// bearer_token_env_var — qualified with `codex mcp get` against that exact binary, which lists
+// http_headers, env_http_headers and bearer_token_env_var for one server. Coop used to refuse any
+// header at all, so a shared mcp.json that authenticated with Grok was rejected for Codex.
+//
+// The split is the point: a literal value is written into the file, and a value that is exactly one
+// ${VARIABLE} becomes the variable's NAME in env_http_headers, so the secret is resolved by the
+// client and never lands in the generated config.
 func TestGenerateCodexHTTPHeaders(t *testing.T) {
-	for name, src := range map[string]string{
-		"headers only": `{ "mcpServers": { "header-auth": {
-			"url": "https://a.example/mcp", "headers": { "Authorization": "Bearer x" }
-		} } }`,
-		"headers beside bearer auth": `{ "mcpServers": { "tenant": {
-			"url": "https://a.example/mcp", "headers": { "X-Tenant": "one" }, "bearer_token_env_var": "TOKEN"
-		} } }`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			_, err := GenerateCodex(writeTmp(t, "mcp.json", src), "")
-			if err == nil || !strings.Contains(err.Error(), "uses headers that Codex cannot configure") {
-				t.Fatalf("GenerateCodex error = %v, want actionable headers refusal", err)
-			}
-		})
+	got, requiredEnv, err := GenerateCodex(writeTmp(t, "mcp.json", `{ "mcpServers": { "tenant": {
+		"url": "https://a.example/mcp",
+		"headers": { "X-Tenant": "one", "X-Token": "${TENANT_TOKEN}" },
+		"bearer_token_env_var": "TOKEN"
+	} } }`), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Pinned whole, not by fragments: `bearer_token_env_var` has to appear BEFORE the first header
+	// table. Swap those two and the key silently becomes a HEADER inside that table — every
+	// contains-check would still pass while the server lost its bearer authentication.
+	want := `[mcp_servers.tenant]
+url = "https://a.example/mcp"
+bearer_token_env_var = "TOKEN"
+
+[mcp_servers.tenant.http_headers]
+X-Tenant = "one"
+
+[mcp_servers.tenant.env_http_headers]
+X-Token = "TENANT_TOKEN"
+`
+	if !strings.Contains(got, want) {
+		t.Errorf("generated config is not the qualified shape:\nwant:\n%s\ngot:\n%s", want, got)
+	}
+	// The value itself must never reach the file — that is the whole reason for the second table.
+	if strings.Contains(got, "${TENANT_TOKEN}") {
+		t.Errorf("an environment reference was written as a literal header value:\n%s", got)
+	}
+	if !slices.Equal(requiredEnv, []string{"TENANT_TOKEN", "TOKEN"}) {
+		t.Errorf("required env = %v, want both names the box must carry", requiredEnv)
 	}
 
-	got, err := GenerateCodex(writeTmp(t, "mcp.json", `{ "mcpServers": {
+	// Codex has no way to compose literal text with a reference, and flattening it would send the
+	// characters "${TOKEN}" upstream as if they were the token — confirmed against the pinned
+	// client, which sends http_headers verbatim without expanding anything.
+	if _, _, err := GenerateCodex(writeTmp(t, "mcp.json", `{ "mcpServers": { "mixed": {
+		"url": "https://a.example/mcp", "headers": { "Authorization": "Bearer ${TOKEN}" }
+	} } }`), ""); err == nil || !strings.Contains(err.Error(), "mixes text with an environment reference") {
+		t.Fatalf("GenerateCodex error = %v, want an actionable refusal naming bearer_token_env_var", err)
+	}
+
+	// A value that IS one reference but names something the grammar rejects gets its own sentence:
+	// telling somebody who wrote "${token}" to "make the whole value one ${VARIABLE}" answers a
+	// question they did not ask.
+	if _, _, err := GenerateCodex(writeTmp(t, "mcp.json", `{ "mcpServers": { "lower": {
+		"url": "https://a.example/mcp", "headers": { "X-Token": "${token}" }
+	} } }`), ""); err == nil || !strings.Contains(err.Error(), "not a usable variable name") {
+		t.Fatalf("GenerateCodex error = %v, want the name grammar, not the mixed-value message", err)
+	}
+
+	// A bearer-only server still renders exactly as before, with no header tables invented for it.
+	got, _, err = GenerateCodex(writeTmp(t, "mcp.json", `{ "mcpServers": {
 		"bearer": { "url": "https://b.example/mcp", "bearer_token_env_var": "B_TOKEN" }
 	} }`), "")
 	if err != nil {
@@ -741,7 +782,38 @@ func TestGenerateCodexHTTPHeaders(t *testing.T) {
 		t.Errorf("expected bearer_token_env_var for the bearer server:\n%s", got)
 	}
 	if strings.Contains(got, "headers") {
-		t.Errorf("supported bearer server unexpectedly emitted headers:\n%s", got)
+		t.Errorf("supported bearer server unexpectedly emitted a header table:\n%s", got)
+	}
+}
+
+// A server declared SSE is the one shape the pinned Codex client accepts and then quietly reports
+// as streamable_http (verified with `codex mcp get`: transport = "sse" comes back as
+// streamable_http, no warning). A server that only speaks SSE would then fail every call for a
+// reason nobody could see, so the refusal has to be Coop's. Grok speaks SSE for real — `grok mcp
+// add <url> -t sse` writes `type = "sse"` — so its config carries the declaration through.
+func TestSSETransportIsRefusedForCodexAndCarriedForGrok(t *testing.T) {
+	source := `{ "mcpServers": { "legacy": { "type": "sse", "url": "https://a.example/sse" } } }`
+
+	if _, _, err := GenerateCodex(writeTmp(t, "mcp.json", source), ""); err == nil ||
+		!strings.Contains(err.Error(), "silently treats as streamable HTTP") {
+		t.Fatalf("GenerateCodex error = %v, want an actionable SSE refusal", err)
+	}
+
+	got, _, err := GenerateGrok(writeTmp(t, "mcp.json", source), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `type = "sse"`) {
+		t.Errorf("Grok's config dropped the SSE declaration, downgrading the server:\n%s", got)
+	}
+
+	// An ordinary streamable HTTP server declares nothing extra for either client.
+	plain := `{ "mcpServers": { "modern": { "url": "https://a.example/mcp" } } }`
+	if got, _, err := GenerateGrok(writeTmp(t, "mcp.json", plain), ""); err != nil || strings.Contains(got, "type =") {
+		t.Errorf("a streamable HTTP server gained a type key: %v\n%s", err, got)
+	}
+	if got, _, err := GenerateCodex(writeTmp(t, "mcp.json", plain), ""); err != nil || strings.Contains(got, "type =") {
+		t.Errorf("a streamable HTTP server was refused or typed for Codex: %v\n%s", err, got)
 	}
 }
 
@@ -823,7 +895,7 @@ func TestMCPConsumersRejectAmbiguousAuthorization(t *testing.T) {
 		name string
 		run  func(string) error
 	}{
-		{"Codex", func(path string) error { _, err := GenerateCodex(path, ""); return err }},
+		{"Codex", func(path string) error { _, _, err := GenerateCodex(path, ""); return err }},
 		{"Grok", func(path string) error { _, _, err := GenerateGrok(path, ""); return err }},
 		{"Gemini", func(path string) error { _, _, err := GenerateGemini(path, ""); return err }},
 		{"ACP", func(path string) error { _, err := ACPServers(path, os.LookupEnv); return err }},
@@ -1021,7 +1093,7 @@ func TestTaskToolsBindingRendersForEveryConsumer(t *testing.T) {
 		t.Fatalf("coop-tasks definition = %+v", bound)
 	}
 	file := writeTmp(t, "bound.json", string(snapshot))
-	codex, err := GenerateCodex(file, "")
+	codex, _, err := GenerateCodex(file, "")
 	if err != nil {
 		t.Fatal(err)
 	}

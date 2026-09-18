@@ -239,6 +239,15 @@ func NetworkMCPDependencies(cfg *config.Config, spec RunSpec) ([]egress.Input, e
 	if err != nil {
 		return nil, err
 	}
+	return networkMCPDependenciesOf(snapshot)
+}
+
+// networkMCPDependenciesOf derives the destinations from an already validated snapshot. It carries
+// the filtered gateway's MCP qualification rules — literal definitions only (an environment
+// variable could re-route a destination after approval), a literal HTTPS origin on 443, no
+// headersHelper or oauth — so it belongs on the filtered path alone. On an open box those same
+// rules would refuse ordinary client features: a ${VARIABLE} header, an http:// dev server.
+func networkMCPDependenciesOf(snapshot []byte) ([]egress.Input, error) {
 	servers, err := mcp.NetworkServers(snapshot)
 	if err != nil {
 		return nil, err

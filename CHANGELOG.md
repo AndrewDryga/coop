@@ -4,6 +4,31 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- The filtered gateway's MCP rules no longer refuse ordinary launches. Admission used to derive the
+  shared MCP file's network destinations on every launch, before it knew the posture, so an open or
+  offline box was refused for rules only a filtered gateway has — a `${VARIABLE}` header, an
+  `http://` dev server, a `headersHelper`. Every provider was affected, including Claude's own
+  variable interpolation. The file's source is still proven on every launch (outside every mount,
+  parseable); only the gateway's qualification rules wait until the run is actually filtered.
+
+- **A shared remote MCP server with custom headers now works with Codex.** It used to be refused
+  outright — the same `mcp.json` that authenticated with Grok stopped a Codex box before launch —
+  on the belief that Codex had no inline-header support. The pinned client does: a literal value
+  goes in `http_headers`, and a value that is exactly one `${VARIABLE}` goes in `env_http_headers`
+  as the variable's NAME, so the secret is resolved by Codex and never written into the generated
+  config. `bearer_token_env_var` composes with both. Only a value that mixes text with a reference
+  is still refused, because Codex cannot express it. Every variable a Codex server refers to is now
+  required at launch: the client drops an unset header variable silently, so a missing value used
+  to start a box that quietly sent no authentication, and now stops before it starts.
+
+- **A legacy SSE server is no longer silently downgraded.** Grok speaks SSE, so its configuration
+  now carries the declaration instead of dropping it and quietly turning the server into streamable
+  HTTP. Codex's client accepts the declaration and then reports the server as streamable HTTP with
+  no warning, and its ACP adapter fails the entire session on one — so Coop refuses an SSE server
+  for Codex before launch and names it. That reaches a run where Codex is only a PEER: a lead with
+  a Codex peer and a legacy SSE server in the shared file is refused, where it used to launch with
+  the peer silently downgraded.
+
 - `make lifecycle-bench` measures how long a box really takes to become usable and to be gone,
   against the two boundaries a UI line cannot flatter: start is when the host sees the box announce
   itself, stop is when no container or volume the run owned is left. It records the workspace it

@@ -52,10 +52,10 @@ const (
 )
 
 // server is the typed view of one entry, sufficient to emit native TOML and the ACP parameter.
-// Headers is the canonical HTTP-auth field Claude, Gemini and Grok read directly. Codex cannot use
-// it (only bearer_token_env_var / OAuth), so its renderer refuses that server. Type distinguishes
-// "sse" from the "http" default; it is absent on a stdio server and must stay absent in the ACP
-// shape (see acpServer).
+// Headers is the canonical HTTP-auth field every client reads, each in its own spelling: Claude,
+// Gemini and Grok take the values directly, and Codex splits them into a literal table and a
+// variable-name table (writeTOMLRemoteAuth). Type distinguishes "sse" from the "http" default; it
+// is absent on a stdio server and must stay absent in the ACP shape (see acpServer).
 type server struct {
 	Type              string         `json:"type"`
 	Command           string         `json:"command"`
@@ -161,9 +161,8 @@ var codexManaged = managedTOML{block: CodexManagedDefaults, keys: []string{"anal
 // user's existing config kept byte for byte minus what the box owns — the managed keys, and its
 // own [mcp_servers.*] tables when shared MCP is active (mcp.json is authoritative then) — then the
 // shared servers. An empty mcpFile means no shared MCP: the native servers stay.
-func GenerateCodex(mcpFile, existing string) (string, error) {
-	generated, _, err := generateTOML(mcpFile, existing, codexManaged, false)
-	return generated, err
+func GenerateCodex(mcpFile, existing string) (string, []string, error) {
+	return generateTOML(mcpFile, existing, codexManaged, codexHeaders)
 }
 
 // GenerateGrok emits the shared servers in Grok's [mcp_servers.*] shape. Grok reads HTTP headers
@@ -171,10 +170,26 @@ func GenerateCodex(mcpFile, existing string) (string, error) {
 // header while its value stays in the captured runtime environment. No managed block: Grok's
 // update and telemetry controls are unverified, and an unknown key could refuse the whole file.
 func GenerateGrok(mcpFile, existing string) (string, []string, error) {
-	return generateTOML(mcpFile, existing, managedTOML{}, true)
+	return generateTOML(mcpFile, existing, managedTOML{}, grokHeaders)
 }
 
-func generateTOML(mcpFile, existing string, managed managedTOML, grokHeaders bool) (string, []string, error) {
+// headerDialect is how one client's config expresses a remote server's HTTP authentication. The
+// shared mcp.json says it one way; each client accepts its own, and the difference is not cosmetic:
+// Grok expands ${VAR} inside a header value, while Codex wants the variable NAME in a separate
+// table so no value ever reaches the file.
+type headerDialect int
+
+const (
+	// grokHeaders: [mcp_servers.<name>.headers] with ${VAR} expansion, and `type` carried through
+	// so a legacy SSE server stays SSE (`grok mcp add -t sse` writes exactly that).
+	grokHeaders headerDialect = iota
+	// codexHeaders: [mcp_servers.<name>.http_headers] for literal values and
+	// [mcp_servers.<name>.env_http_headers] for variable names, both accepted by the pinned client
+	// alongside bearer_token_env_var. Qualified against codex-cli 0.153.4 with `codex mcp get`.
+	codexHeaders
+)
+
+func generateTOML(mcpFile, existing string, managed managedTOML, dialect headerDialect) (string, []string, error) {
 	var servers map[string]server
 	if mcpFile != "" {
 		var err error
@@ -199,13 +214,11 @@ func generateTOML(mcpFile, existing string, managed managedTOML, grokHeaders boo
 			continue
 		}
 		separateTOMLBlock(&b)
-		required, err := writeTOMLServer(&b, name, server, grokHeaders)
+		required, err := writeTOMLServer(&b, name, server, dialect)
 		if err != nil {
 			return "", nil, err
 		}
-		if required != "" {
-			requiredEnv = append(requiredEnv, required)
-		}
+		requiredEnv = append(requiredEnv, required...)
 	}
 	sort.Strings(requiredEnv)
 	return b.String(), slices.Compact(requiredEnv), nil
@@ -318,37 +331,29 @@ func envValueString(v any) string {
 	return fmt.Sprint(v)
 }
 
-func writeTOMLServer(b *strings.Builder, name string, s server, grokHeaders bool) (string, error) {
+func writeTOMLServer(b *strings.Builder, name string, s server, dialect headerDialect) ([]string, error) {
 	if s.URL == "" && s.Command == "" {
 		// No transport — skip this malformed/empty entry rather than emit a bodyless
 		// [mcp_servers.<name>] table, which Codex may reject and so break ALL its MCP servers.
-		return "", nil
+		return nil, nil
 	}
-	if s.URL != "" && len(s.Headers) > 0 && !grokHeaders {
-		return "", fmt.Errorf("MCP server %q uses headers that Codex cannot configure; use bearer_token_env_var for bearer authentication, otherwise this server is unavailable to Codex", name)
+	if s.URL != "" && dialect == codexHeaders && s.Type == "sse" {
+		// The pinned client accepts `transport = "sse"` and then reports the server as
+		// streamable_http, with no warning — verified with `codex mcp get` on codex-cli 0.153.4.
+		// A server that speaks only SSE would fail every call for a reason nobody could see, so the
+		// refusal has to be Coop's; the client will not make it.
+		return nil, fmt.Errorf("MCP server %q is declared SSE, which Codex silently treats as streamable HTTP — give it a streamable HTTP url, or remove it from the shared configuration when only Codex is affected", name)
 	}
 	fmt.Fprintf(b, "[mcp_servers.%s]\n", tomlKey(name))
 	switch {
-	case s.URL != "": // streamable HTTP server
+	case s.URL != "": // remote server
 		fmt.Fprintf(b, "url = %s\n", tomlString(s.URL))
-		if grokHeaders {
-			headers := maps.Clone(s.Headers)
-			if s.BearerTokenEnvVar != "" {
-				if headers == nil {
-					headers = map[string]any{}
-				}
-				headers["Authorization"] = "Bearer ${" + s.BearerTokenEnvVar + "}"
-			}
-			if len(headers) > 0 {
-				b.WriteByte('\n')
-				fmt.Fprintf(b, "[mcp_servers.%s.headers]\n", tomlKey(name))
-				for _, key := range sortedKeys(headers) {
-					fmt.Fprintf(b, "%s = %s\n", tomlKey(key), tomlString(envValueString(headers[key])))
-				}
-			}
-		} else if s.BearerTokenEnvVar != "" {
-			fmt.Fprintf(b, "bearer_token_env_var = %s\n", tomlString(s.BearerTokenEnvVar))
+		if dialect == grokHeaders && s.Type == "sse" {
+			// Grok speaks SSE for real: `grok mcp add <url> -t sse` writes this exact key. Dropping
+			// it would quietly downgrade the server to streamable HTTP.
+			fmt.Fprintf(b, "type = %s\n", tomlString(s.Type))
 		}
+		return writeTOMLRemoteAuth(b, name, s, dialect)
 	case s.Command != "": // stdio server
 		fmt.Fprintf(b, "command = %s\n", tomlString(s.Command))
 		if len(s.Args) > 0 {
@@ -362,10 +367,115 @@ func writeTOMLServer(b *strings.Builder, name string, s server, grokHeaders bool
 			}
 		}
 	}
-	if grokHeaders {
-		return s.BearerTokenEnvVar, nil
+	return nil, nil
+}
+
+// writeTOMLRemoteAuth renders one remote server's authentication in the client's own dialect, and
+// returns the environment variable names the box must carry for it to work.
+func writeTOMLRemoteAuth(b *strings.Builder, name string, s server, dialect headerDialect) ([]string, error) {
+	if dialect == grokHeaders {
+		headers := maps.Clone(s.Headers)
+		if s.BearerTokenEnvVar != "" {
+			if headers == nil {
+				headers = map[string]any{}
+			}
+			headers["Authorization"] = "Bearer ${" + s.BearerTokenEnvVar + "}"
+		}
+		if len(headers) > 0 {
+			b.WriteByte('\n')
+			fmt.Fprintf(b, "[mcp_servers.%s.headers]\n", tomlKey(name))
+			for _, key := range sortedKeys(headers) {
+				fmt.Fprintf(b, "%s = %s\n", tomlKey(key), tomlString(envValueString(headers[key])))
+			}
+		}
+		if s.BearerTokenEnvVar != "" {
+			return []string{s.BearerTokenEnvVar}, nil
+		}
+		return nil, nil
 	}
-	return "", nil
+
+	// Codex. Its two header tables are exclusive per header: a literal value goes in http_headers,
+	// and a value that is EXACTLY one ${VAR} goes in env_http_headers as the variable's name, so the
+	// secret never enters the generated file. It has no way to compose the two, so a value that
+	// mixes literal text with a reference is refused rather than flattened into a literal that would
+	// send the characters "${TOKEN}" upstream as if they were the token.
+	var required []string
+	literal := map[string]string{}
+	fromEnv := map[string]string{}
+	for _, key := range sortedKeys(s.Headers) {
+		value := envValueString(s.Headers[key])
+		reference, shape := envReference(value)
+		switch shape {
+		case referenceExact:
+			fromEnv[key] = reference
+			required = append(required, reference)
+		case referenceBadName:
+			return nil, fmt.Errorf("MCP server %q header %q refers to %q, which is not a usable variable name — use upper-case letters, digits and underscores, starting with a letter or underscore", name, key, reference)
+		case referenceMixed:
+			return nil, fmt.Errorf("MCP server %q header %q mixes text with an environment reference, which Codex cannot express; use bearer_token_env_var, or make the whole value one ${VARIABLE}", name, key)
+		default:
+			literal[key] = value
+		}
+	}
+	if s.BearerTokenEnvVar != "" {
+		fmt.Fprintf(b, "bearer_token_env_var = %s\n", tomlString(s.BearerTokenEnvVar))
+		required = append(required, s.BearerTokenEnvVar)
+	}
+	writeTOMLHeaderTable(b, name, "http_headers", literal)
+	writeTOMLHeaderTable(b, name, "env_http_headers", fromEnv)
+	return required, nil
+}
+
+func writeTOMLHeaderTable(b *strings.Builder, server, table string, values map[string]string) {
+	if len(values) == 0 {
+		return
+	}
+	b.WriteByte('\n')
+	fmt.Fprintf(b, "[mcp_servers.%s.%s]\n", tomlKey(server), table)
+	for _, key := range sortedKeys(values) {
+		fmt.Fprintf(b, "%s = %s\n", tomlKey(key), tomlString(values[key]))
+	}
+}
+
+// referenceShape is what a header value turned out to be. The three failures are different
+// mistakes and deserve different sentences: somebody who wrote "${token}" already made the value one
+// reference, and telling them to "make the whole value one ${VARIABLE}" answers a question they did
+// not ask.
+type referenceShape int
+
+const (
+	referenceNone    referenceShape = iota // a plain literal
+	referenceExact                         // exactly one ${VARIABLE}, usable as a variable name
+	referenceBadName                       // exactly one ${...}, but not a usable variable name
+	referenceMixed                         // literal text around a reference
+)
+
+// EnvHeaderReference reports the variable a header value refers to when the value is EXACTLY that
+// reference, for an adapter that has to resolve one itself. The shared file's grammar lives here;
+// what each client does with it belongs to that client's adapter.
+func EnvHeaderReference(value string) (string, bool) {
+	name, shape := envReference(value)
+	return name, shape == referenceExact
+}
+
+// envReference classifies a header value, returning the referenced name when there is one.
+// "${TOKEN}" is a reference Codex can resolve itself; "Bearer ${TOKEN}" is not.
+func envReference(value string) (string, referenceShape) {
+	trimmed := strings.TrimSpace(value)
+	if !strings.HasPrefix(trimmed, "${") || !strings.HasSuffix(trimmed, "}") {
+		if strings.Contains(trimmed, "${") {
+			return "", referenceMixed
+		}
+		return "", referenceNone
+	}
+	name := trimmed[2 : len(trimmed)-1]
+	if strings.Contains(name, "${") || strings.Contains(name, "}") {
+		return "", referenceMixed // two references, or a reference inside other text
+	}
+	if !validBearerReference(name) {
+		return name, referenceBadName
+	}
+	return name, referenceExact
 }
 
 // keepNative returns the user's native TOML minus the managed keys and, when stripMCP, its
@@ -934,8 +1044,34 @@ func sortedKeys[V any](m map[string]V) []string {
 
 func tomlString(s string) string {
 	// Escape the control characters a TOML basic string forbids (a raw \n/\t in an env value would
-	// otherwise produce invalid TOML and break the whole config), plus \ and ".
-	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`, "\t", `\t`).Replace(s) + `"`
+	// otherwise produce invalid TOML and break the whole config), plus \ and ". Every OTHER control
+	// character is escaped too: one raw \u0001 in a header name makes Codex refuse the entire
+	// bootstrap configuration, so the client does not start at all — one bad character in one server
+	// taking down every server is not a failure worth preserving.
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '\\':
+			b.WriteString(`\\`)
+		case '"':
+			b.WriteString(`\"`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			if r < 0x20 || r == 0x7f {
+				fmt.Fprintf(&b, `\u%04X`, r)
+				continue
+			}
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 // tomlKey renders a TOML table-name segment / bare key, quoting it when it isn't a bare key

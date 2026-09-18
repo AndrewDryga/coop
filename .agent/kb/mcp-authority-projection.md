@@ -3,7 +3,7 @@ name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
 sources: [internal/mcp/mcp.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
-updated: 2026-09-15
+updated: 2026-09-18
 ---
 
 `COOP_MCP_FILE` is one host authority, but a box has four different consumers. `box.Run` captures
@@ -55,8 +55,23 @@ forces `general.enableAutoUpdate`, `general.enableAutoUpdateNotification` and
 `mcp.GenerateGrok` server writer and gets no managed block: its CLI does not know Codex's keys.
 Grok accepts literal HTTP headers and expands `${VAR}` in header values, so the renderer translates
 `bearer_token_env_var` to Authorization while returning the required name for the same private
-environment capture Gemini uses. Codex has no arbitrary-header equivalent and refuses a shared
-server that declares `headers` before provider launch instead of emitting an unauthenticated URL.
+environment capture Gemini uses. Codex takes headers too, in two exclusive tables: a literal value
+goes in `http_headers`, and a value that is exactly one `${VARIABLE}` goes in `env_http_headers` as
+the variable's NAME, so the secret is resolved by the client and never written into the file
+(qualified with `codex mcp get` against codex-cli 0.153.4, which lists both tables beside
+`bearer_token_env_var` for one server). Its `RequiredEnv` therefore covers every referenced name,
+not only the bearer one — the client drops an unset header variable SILENTLY, so nothing downstream
+would report the miss. A value that mixes text with a reference is refused: `http_headers` is sent
+verbatim, so it would travel upstream as the literal characters.
+
+Transport is the other asymmetry. Grok speaks legacy SSE for real (`grok mcp add -t sse` writes
+`type = "sse"`, which the renderer now carries through instead of dropping), and Claude's and
+Gemini's clients decide for themselves. Codex's client accepts an SSE declaration and then drives
+the server as streamable HTTP with no warning, and `@agentclientprotocol/codex-acp` throws
+`invalidRequest` on one — which fails `session/new` entirely, so a single legacy server takes down a
+session carrying working ones. Coop therefore refuses SSE for Codex on BOTH paths, naming the
+server; the ACP guard lives in `codexAgent.ACPMCPServers`, where provider-specific knowledge
+belongs.
 The mounts are read-only, so a client cannot persist a setting change from inside the box; the host
 profile is never written by a projection (`EnsureDefaults` alone writes it, for first-run prompts).
 Claude's controls are environment, not a file (`claudeAgent.BoxEnv`). Why the traffic is stopped at
@@ -94,6 +109,11 @@ adds ordinary `CommandArgs` must decide whether its nested commands need an equi
 mounting the raw snapshot for every scoped credential is not the fallback.
 
 ## Changelog
+- 2026-09-18 — Codex's header support corrected: it takes `http_headers` and `env_http_headers`
+  beside `bearer_token_env_var`, qualified against the pinned 0.153.4 binary, so the card's
+  "refuses a shared server that declares headers" claim is retired. Added the SSE asymmetry: Grok's
+  declaration is carried through, Codex's is refused on both the file and ACP paths because its
+  client rewrites it silently and its ACP adapter fails the whole session.
 - 2026-09-15 — split Grok's native HTTP authentication from Codex: verified Grok header and
   `${VAR}` support against the installed CLI documentation, then recorded Codex's upfront refusal
   and Grok's captured bearer projection.

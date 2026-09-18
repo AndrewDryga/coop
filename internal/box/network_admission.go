@@ -84,9 +84,13 @@ func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	if input.Services, err = requestedServiceDigests(policyRepo, p, spec.RepoReadOnly); err != nil {
 		return nil, err
 	}
-	// A direct launch mounts the trusted shared MCP configuration whenever it
-	// mounts homes at all, so its automatic dependencies are exactly that file's.
-	if input.Automatic, err = NetworkMCPDependencies(cfg, spec); err != nil {
+	// Every launch that mounts the shared MCP configuration proves its source first: that it lives
+	// outside every mount and parses. That is a property of the file the box will read, so it holds
+	// whatever the posture. What does NOT hold for every posture is the filtered gateway's
+	// literal-only rule, which is why the destinations are derived from this snapshot later, on
+	// the filtered path alone.
+	mcpSnapshot, err := networkMCPSnapshot(cfg, spec)
+	if err != nil {
 		return nil, err
 	}
 	// The preview publishes nothing and creates no owner key, so it is safe on
@@ -109,6 +113,12 @@ func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 		return nil, err
 	}
 	if err := checkFilteredSupport(cfg); err != nil {
+		return nil, err
+	}
+	// The shared file's destinations are derived only now, once the posture is filtered and before
+	// the store is opened — the order the store's preview is built for, and what prepareFiltered
+	// already does for sessions.
+	if input.Automatic, err = networkMCPDependenciesOf(mcpSnapshot); err != nil {
 		return nil, err
 	}
 	store, err := networkstate.Open(root, exposed)

@@ -948,10 +948,23 @@ An `env` block on a command server (`github` above) reaches that server under ev
 agent, verbatim — values are literal strings, no `$VAR` substitution. To keep a token
 out of `mcp.json`, point `bearer_token_env_var` at a variable (`sentry` above) and put
 the value in the env file: `echo 'SENTRY_TOKEN=…' >> ~/.config/coop/agents/env`. An HTTP
-server's `headers` work for Claude, Gemini and Grok. Grok also receives
-`bearer_token_env_var` as an environment-expanded Authorization header. Codex cannot use inline
-headers, so Coop refuses that server before launch; use `bearer_token_env_var` for Codex bearer
-authentication.
+server's `headers` work for every agent. Grok receives `bearer_token_env_var` as an
+environment-expanded Authorization header; Codex receives a literal value as a static header and a
+value that is exactly one `${VARIABLE}` as the variable's name, so a secret referenced that way is
+resolved by Codex and never written into the generated config. A value that mixes text with a
+reference (`Bearer ${TOKEN}`) is the one shape Codex cannot express — use `bearer_token_env_var`
+for that.
+
+Transport matters for one agent. Grok speaks legacy SSE (`"type": "sse"`) and Coop carries the
+declaration through; Claude and Gemini receive it and decide for themselves. Codex's client accepts
+an SSE declaration and then treats the server as streamable HTTP without saying so, and its ACP
+adapter refuses the whole session — so Coop refuses an SSE server for Codex before launch and names
+it, rather than letting either happen. That applies wherever Codex takes part, including as a
+`--peer` of another lead.
+
+Under `--egress filtered` a header value may not reference the environment at all, for any agent:
+the approved network policy is compiled from literal definitions, so `${…}` is refused there before
+launch.
 
 The example's Playwright server works in the box out of the box: Chromium's system
 libraries are baked into the image, the browser binary downloads to the cache volume on
