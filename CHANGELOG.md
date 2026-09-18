@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A task claimed before a reboot can be completed and released afterwards. Task ownership was
+  fenced on the folder's device and inode, and a volume's device number is assigned when it is
+  mounted — so after a reboot every task claimed before it reported itself "replaced" and could
+  never be finished or handed back. Ownership now fences on the task's durable identity and inode;
+  a copied or recreated task folder is still refused.
+
 - The filtered gateway's MCP rules no longer refuse ordinary launches. Admission used to derive the
   shared MCP file's network destinations on every launch, before it knew the posture, so an open or
   offline box was refused for rules only a filtered gateway has — a `${VARIABLE}` header, an

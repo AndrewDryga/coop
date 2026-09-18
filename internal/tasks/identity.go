@@ -51,11 +51,23 @@ type TaskRef struct {
 }
 
 // TaskGeneration fences delete-and-recreate ABA at the filesystem boundary. The durable TaskID is
-// the logical identity; device+inode prove that the folder currently answering its path is still
-// the exact instance an assignment captured.
+// the logical identity; the inode proves that the folder currently answering its path is still the
+// exact instance an assignment captured. Device is recorded for diagnosis but is NOT identity: see
+// SameInstanceAs.
 type TaskGeneration struct {
 	Device uint64 `json:"device"`
 	Inode  uint64 `json:"inode"`
+}
+
+// SameInstanceAs reports whether two generations name the same folder. It compares the inode and
+// deliberately not the device: a volume's device number is assigned when it is mounted — by macOS
+// for every APFS volume, and by Linux for dm/LVM, btrfs subvolumes, overlay and network mounts — so a
+// reboot changes it while the folder, its inode and its durable TaskID are all untouched, and a task
+// claimed before a reboot could then never be completed or released. The fence keeps its teeth
+// without it: a recreated folder carries a new random TaskID, and a file-level copy carries a new
+// inode. (A block-level clone keeps both, and is rightly the same task.)
+func (g TaskGeneration) SameInstanceAs(other TaskGeneration) bool {
+	return g.Inode == other.Inode
 }
 
 type TaskInstance struct {
@@ -296,5 +308,5 @@ func ReadTaskInstance(root string, item Item) (TaskInstance, error) {
 }
 
 func sameTaskInstance(a, b TaskInstance) bool {
-	return a.Ref == b.Ref && a.Generation == b.Generation
+	return a.Ref == b.Ref && a.Generation.SameInstanceAs(b.Generation)
 }

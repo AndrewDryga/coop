@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -241,6 +242,71 @@ func TestTaskOwnerV2StrictAndInstanceFenced(t *testing.T) {
 	writeTaskFile(t, filepath.Join(item.Dir, "task.md"), "# replacement\n")
 	if _, ok, err := ReadTaskOwnerRecord(root, item.ID); err == nil || ok {
 		t.Fatalf("recreated task inherited owner: ok=%v err=%v", ok, err)
+	}
+}
+
+// A reboot must not orphan a claim. macOS assigns an APFS volume's device number when it is mounted,
+// so after a reboot the same folder — same inode, same durable TaskID — reports a different device.
+// Treating that as a replaced task made every task claimed before the reboot impossible to complete
+// or release ("task owner record names a replaced task instance"). The fence must still refuse the
+// two things it exists for: a COPY (new inode, same TaskID) and a RECREATED folder (new TaskID).
+func TestTaskOwnerSurvivesADeviceRenumberButNotACopy(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "tasks")
+	item := taskForLease(t, root, StateTodo, "rebooted")
+	instance, err := EnsureTaskInstance(root, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := testLeaseOwner().Now()
+	claimed := instance
+	claimed.Generation.Device++ // the volume was remounted with a new device number; nothing else moved
+	record := TaskOwnerRecord{
+		Version: taskOwnershipRecordVersion, TaskID: item.ID, Kind: TaskOwnerHuman, Task: &claimed,
+		Source: taskOwnerSourceInteractiveClaim, User: "ada", Host: "host", ClaimedAt: now,
+	}
+	if err := writeTaskOwnerRecord(root, record); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := ReadTaskOwnerRecord(root, item.ID); err != nil || !ok {
+		t.Fatalf("a device renumber replaced the task: ok=%v err=%v", ok, err)
+	}
+
+	// With the device out of identity, the durable TaskID is what refuses a RECREATED task. Same
+	// folder, same inode, a new identity file: that isolates the TaskID check from the inode check,
+	// which the missing-identity case in TestTaskOwnerV2StrictAndInstanceFenced never reaches.
+	identityPath := filepath.Join(item.Dir, TaskIdentityFile)
+	original, err := os.ReadFile(identityPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := newDurableIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := json.Marshal(taskIdentityRecord{Version: taskIdentityVersion, ID: fresh, CreatedAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(identityPath, append(replacement, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := ReadTaskOwnerRecord(root, item.ID); err == nil || ok || !strings.Contains(err.Error(), "replaced task instance") {
+		t.Fatalf("a recreated task (new TaskID) inherited the owner: ok=%v err=%v", ok, err)
+	}
+	if err := os.WriteFile(identityPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A file-level copy keeps .coop-task.json — the same TaskID — but is a different folder on disk.
+	copied := filepath.Join(filepath.Dir(item.Dir), item.ID+"-copy")
+	if err := os.Rename(item.Dir, copied); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.CopyFS(item.Dir, os.DirFS(copied)); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := ReadTaskOwnerRecord(root, item.ID); err == nil || ok || !strings.Contains(err.Error(), "replaced task instance") {
+		t.Fatalf("a copied task folder inherited the owner: ok=%v err=%v", ok, err)
 	}
 }
 

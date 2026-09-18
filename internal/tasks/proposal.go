@@ -391,7 +391,7 @@ func exactImportedProposal(record ForkProposalRecord) (Item, bool, error) {
 	if err != nil || instance.Ref != record.Task.Ref {
 		return Item{}, false, errors.Join(err, fmt.Errorf("proposal task id %s collides with another task", record.Task.Ref.ID))
 	}
-	if record.Phase == ForkProposalImported && instance.Generation != record.Task.Generation {
+	if record.Phase == ForkProposalImported && !instance.Generation.SameInstanceAs(record.Task.Generation) {
 		return Item{}, false, errors.New("imported proposal task was replaced")
 	}
 	return item, true, nil
