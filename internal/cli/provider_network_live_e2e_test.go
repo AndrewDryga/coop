@@ -208,6 +208,7 @@ func executeProviderNetworkLiveChild(target agents.Target, marker, attemptFile, 
 var providerChatterHosts = []string{
 	"raw.githubusercontent.com", "api.github.com", "registry.npmjs.org", "formulae.brew.sh",
 	"downloads.claude.ai", "datadoghq.com", "datadoghq.eu", "sentry.io", "ab.chatgpt.com", "statsig.com",
+	"mixpanel.com",
 }
 
 // verifyProviderNetworkLiveSilence requires that no retained refusal of this capture's runs names

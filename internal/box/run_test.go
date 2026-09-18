@@ -787,6 +787,7 @@ func TestAssembleArgsMinimal(t *testing.T) {
 		"-e", "DISABLE_UPDATES=1",
 		"-e", "CODEX_SQLITE_HOME=/home/node/.codex-state", // every agent's BoxEnv is exported (inert here)
 		"-e", "GEMINI_TELEMETRY_ENABLED=false",
+		"-e", "GROK_TELEMETRY_ENABLED=false",
 		"-e", "COOP_BOX=1",
 		"-w", "/workspace", "coop-box", "claude",
 	}
@@ -882,6 +883,7 @@ func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {
 	mustContain("-e", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0")
 	mustContain("-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "-e", "DISABLE_UPDATES=1")
 	mustContain("-e", "GEMINI_TELEMETRY_ENABLED=false")
+	mustContain("-e", "GROK_TELEMETRY_ENABLED=false")
 	mustContain("--env-file", filepath.Join(dir, "env"))
 	mustContain("-v", filepath.Join(dir, "INSTRUCTIONS.md")+":/home/node/.claude/CLAUDE.md:ro")
 	mustContain("-v", cfg.MCPFile+":/home/node/.mcp.json:ro")

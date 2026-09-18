@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A filtered Grok run no longer ends with a wall of blocked lookups and a warning. Grok's own
+  telemetry looked up `api.mixpanel.com` and `grok.com` dozens of times per prompt, and `api.x.ai`
+  too, which the gateway rightly blocked but reported as a burst on every run, dropping some of
+  the run's detail. Every Grok box now runs with its telemetry switched off, as Claude, Codex and
+  Gemini boxes already do; your host settings are not changed.
+
 - A filtered Grok run starts again whenever you are signed in. It used to require the stored
   access token to last at least another hour, as if the box could not renew it; but a filtered box
   mounts your Grok login and the pinned client refreshes it through `auth.x.ai`, like Claude and

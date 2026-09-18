@@ -74,7 +74,9 @@ the client's own controls, in the box only: Claude runs with
 `config.toml` that sets `check_for_update_on_startup = false`, `analytics.enabled = false` and the
 `otel` exporters to `none` on top of your own settings, and gemini gets `general.enableAutoUpdate`,
 `general.enableAutoUpdateNotification` and `privacy.usageStatisticsEnabled` off plus
-`GEMINI_TELEMETRY_ENABLED=false`. Your host profiles are not edited. So a session that only answers
+`GEMINI_TELEMETRY_ENABLED=false`, and grok runs with `GROK_TELEMETRY_ENABLED=false` (its
+launch-time update check is not switched off yet; the pinned client in a filtered box makes none).
+Your host profiles are not edited. So a session that only answers
 a prompt records no refusals — and if an agent or your project later does reach for one of those
 hosts on purpose, that refusal is recorded, shown and approvable like any other; nothing is
 filtered out of the report.

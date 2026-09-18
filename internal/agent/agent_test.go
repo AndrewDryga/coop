@@ -1921,7 +1921,8 @@ func TestMCPWithoutSharedSourceBuildsOnlyTheAlwaysOnOverlays(t *testing.T) {
 // TestManagedClientDefaultsAreBoxOnly pins the upstream control names each managed client is
 // launched with and proves the host profile is never written on the way: claude's ride the box
 // environment (code.claude.com/docs/en/env-vars), codex's and gemini's the generated overlay
-// (developers.openai.com/codex/config-reference; gemini-cli settingsSchema.ts + docs/cli/telemetry.md).
+// (developers.openai.com/codex/config-reference; gemini-cli settingsSchema.ts + docs/cli/telemetry.md),
+// grok's the box environment (read out of the pinned 1.0.25 binary and proved in a filtered run).
 func TestManagedClientDefaultsAreBoxOnly(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{ConfigDir: dir, HomeInBox: "/home/node"}
@@ -1941,6 +1942,10 @@ func TestManagedClientDefaultsAreBoxOnly(t *testing.T) {
 	gemini, _ := Get("gemini")
 	if env := gemini.BoxEnv("/home/node"); !slices.Equal(env, []string{"GEMINI_TELEMETRY_ENABLED=false"}) {
 		t.Errorf("gemini BoxEnv = %v, want the telemetry switch only", env)
+	}
+	grok, _ := Get("grok")
+	if env := grok.BoxEnv("/home/node"); !slices.Equal(env, []string{"GROK_TELEMETRY_ENABLED=false"}) {
+		t.Errorf("grok BoxEnv = %v, want the telemetry switch only", env)
 	}
 
 	codexConfig := filepath.Join(cfg.AgentDir("codex"), "config.toml")
@@ -2192,11 +2197,6 @@ func TestACPSessionSettingsAndBoxEnv(t *testing.T) {
 		if n == "grok" {
 			if settings := a.ACPSessionSettings(target); len(settings) != 0 {
 				t.Errorf("grok should force no session settings, got %v", settings)
-			}
-		}
-		if n == "grok" {
-			if env := a.BoxEnv("/home/node"); len(env) != 0 {
-				t.Errorf("%s should need no box env, got %v", n, env)
 			}
 		}
 	}

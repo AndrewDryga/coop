@@ -4,7 +4,7 @@ description: a provider bundle grants what the client needs to function; the cli
 scope: security
 sources: [internal/agent/network_bundle.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/locked_clients_test.go, internal/mcp/mcp.go, internal/cli/provider_network_live_e2e_test.go]
 check: "go test ./internal/agent -run 'TestProviderBundlesCarryFunctionNotChatter|TestManagedClientDefaultsAreBoxOnly'"
-updated: 2026-09-14
+updated: 2026-09-18
 ---
 
 # A provider bundle carries function; a managed client's chatter is switched off, not granted or hidden
@@ -41,8 +41,9 @@ talking to itself.
   `config.toml` overlay (`check_for_update_on_startup`, `analytics.enabled`, the three `otel.*`
   exporters), gemini through the generated `settings.json` (`general.enableAutoUpdate`,
   `general.enableAutoUpdateNotification`, `privacy.usageStatisticsEnabled`) plus
-  `GEMINI_TELEMETRY_ENABLED=false`. `EnsureDefaults` writes the host profile for first-run prompts
-  only; a managed control there would be a host edit the user never asked for.
+  `GEMINI_TELEMETRY_ENABLED=false`, grok through `BoxEnv` (`GROK_TELEMETRY_ENABLED=false`).
+  `EnsureDefaults` writes the host profile for first-run prompts only; a managed control there
+  would be a host edit the user never asked for.
 - Prove the control keeps the login functional on that exact version: inference, the OAuth
   refresh and the default-on capability (Claude's connector eligibility never consults the traffic
   mode). The live probe then pins the silence: no retained refusal of a chatter host after a
@@ -54,6 +55,14 @@ Background: [[restricted-networking]] (bundles are one of five layers),
 [[mcp-authority-projection]] (the overlays are projections of the host profile, never edits).
 
 ## Changelog
+- 2026-09-18 — the 2026-09-10 sweep missed grok: its pinned 1.0.25 client, telemetry on, looked up
+  api.mixpanel.com, grok.com and api.x.ai up to 128 times a prompt, tripping the burst alert and
+  dropping detail. `GROK_TELEMETRY_ENABLED=false` (read from the binary, proved in two filtered
+  runs) silences all three; the unit check and the live probe now count `mixpanel.com` as chatter.
+  Re-swept every adapter's BoxEnv/overlay: claude, codex and gemini switch update checks and
+  telemetry off; grok switches telemetry off, and its launch-time update check
+  (`GROK_DISABLE_AUTOUPDATER`, unset; the pinned client makes none in a filtered box) is left to
+  task 2026-09-15-use-one-qualified-provider-client-set-in-every-b, which disables self-update.
 - 2026-09-14 — observed Grok's device login request to `auth.x.ai` denied by the filtered gateway,
   added that required token endpoint under a new bundle version, and pinned Grok's exact core set.
 - 2026-09-13 — updated the current approval path to the top-level `coop approve` command.

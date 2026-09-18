@@ -150,7 +150,7 @@ func TestProviderBundlesCarryFunctionNotChatter(t *testing.T) {
 	chatter := []string{
 		"raw.githubusercontent.com", "objects.githubusercontent.com", "api.github.com", // release feeds, announcements
 		"registry.npmjs.org", "downloads.claude.ai", "storage.googleapis.com", "formulae.brew.sh", // installs and updates
-		"datadoghq.com", "datadoghq.eu", "sentry.io", "ab.chatgpt.com", "statsig.com", // telemetry and error intakes
+		"datadoghq.com", "datadoghq.eu", "sentry.io", "ab.chatgpt.com", "statsig.com", "mixpanel.com", // telemetry and error intakes
 	}
 	for _, name := range Names() {
 		ag, _ := Get(name)

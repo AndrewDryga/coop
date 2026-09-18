@@ -438,9 +438,12 @@ func (grokAgent) ACPRateLimitSignals() []ACPSignal { return nil }
 // selection asks for a fresh session, which the ACP controller handles by restarting at this target.
 func (grokAgent) ACPSessionSettings(Target) []ACPSessionSetting { return nil }
 
-// BoxEnv: grok reads its config + auth from ~/.grok by default, which is where coop mounts
-// its profile — nothing extra needed.
-func (grokAgent) BoxEnv(string) []string { return nil }
+// BoxEnv: grok reads its config + auth from ~/.grok, where coop mounts its profile. The one
+// variable is the client's telemetry switch. Left on, the pinned 1.0.25 client looks up
+// api.mixpanel.com and grok.com dozens of times per prompt, and api.x.ai too — 128 blocked lookups
+// in one filtered run, a burst alert every time, and detail the record had to drop — and with it
+// off it looks up none of them and answers the same.
+func (grokAgent) BoxEnv(string) []string { return []string{"GROK_TELEMETRY_ENABLED=false"} }
 
 func (grokAgent) HomeFallbacks() []HomeFallback { return nil }
 

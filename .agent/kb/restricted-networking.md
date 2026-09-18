@@ -150,8 +150,11 @@ Traps:
   check and telemetry intake (`raw.githubusercontent.com`, `registry.npmjs.org`, `api.github.com`,
   Datadog, `ab.chatgpt.com`) are switched off box-only instead — Claude through `BoxEnv`, codex
   through the always-on `config.toml` overlay, gemini through its settings overlay plus
-  `GEMINI_TELEMETRY_ENABLED=false` — so a hello-and-exit session retains no refusal, and a later
-  deliberate request to one of those hosts is a real refusal nothing suppresses. Bundle content is
+  `GEMINI_TELEMETRY_ENABLED=false`, grok through `BoxEnv` (`GROK_TELEMETRY_ENABLED=false`, which
+  also stops its `grok.com` and `api.x.ai` lookups; its update-check switch,
+  `GROK_DISABLE_AUTOUPDATER`, is not set yet — the pinned client makes none in a filtered box) —
+  so a hello-and-exit session retains no refusal, and a later deliberate request to one of those
+  hosts is a real refusal nothing suppresses. Bundle content is
   pinned per `NetworkBundleVersion` by the owner store on first admission
   (`networkstate/bundles.go:18`): changing a bundle without bumping the version is refused as
   integrity drift, so the version moves with the content (`2026-09-10.1` added the proxy). The
@@ -193,6 +196,8 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-18 — grok's telemetry is switched off box-only (`GROK_TELEMETRY_ENABLED=false`): the
+  pinned client's mixpanel, `grok.com` and `api.x.ai` lookups raised a burst alert on every run.
 - 2026-09-18 — a filtered Grok login with a refresh token no longer has to outlive the one-hour
   horizon: the box renews it through `auth.x.ai`; access-only credentials still do.
 - 2026-09-18 — approvals and a run's artifact directory compare the inode, not the device: a reboot
