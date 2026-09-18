@@ -90,6 +90,13 @@ casts-check: require-python3 ## Validate published casts for private paths, cred
 tools-test: require-python3 ## Run standard-library tests for repository maintenance tools
 	@python3 -m unittest discover -s tools -p 'test_*.py'
 
+# Deliberately OUT of `check`: it launches real boxes, so it needs a container runtime and takes
+# minutes, and its numbers are a measurement to compare against — not a threshold to fail on. A
+# wall-clock assertion in the gate fails on a busy laptop and says nothing about the change.
+lifecycle-bench: require-python3 build ## Measure real box start/stop latency (needs a runtime; writes samples + a report)
+	@python3 tools/lifecycle_bench.py --coop ./coop --repo $(or $(WORKSPACE),$(CURDIR)) \
+	  --out $(or $(OUT),$(shell mktemp -d)/coop-lifecycle-bench) $(BENCH_ARGS)
+
 rules-check: require-python3 ## Fail if a .agent/kb card or rule is malformed, unindexed, or names a source/check that doesn't exist
 	@python3 tools/check_rules.py
 	@go test ./internal/agent -run 'TestProviderDecisionsStayInAdapters|TestProviderDecisionGuard'

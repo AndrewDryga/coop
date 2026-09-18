@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- `make lifecycle-bench` measures how long a box really takes to become usable and to be gone,
+  against the two boundaries a UI line cannot flatter: start is when the host sees the box announce
+  itself, stop is when no container or volume the run owned is left. It records the workspace it
+  measured, because a project whose policy makes every run filtered is a different product from a
+  bare directory. Deliberately outside the gate — it launches real boxes, and its output is a
+  measurement to compare against, not a threshold to fail a busy laptop on.
+
 - A consult capture that has to be stopped now takes its reader with it. The capture is a shell
   wrapped around the process actually blocked on the peer's pipe, and only the shell was being
   signalled — so the reader survived, was reparented away, and stayed in the box's process group
