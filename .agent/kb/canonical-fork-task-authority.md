@@ -3,11 +3,12 @@ name: canonical-fork-task-authority
 description: the project owns one Markdown task; a fork owns only an exact-generation execution projection and reviewed candidate
 subsystem: tasks
 sources: [internal/tasks/identity.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/snapshot.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/land.go]
-updated: 2026-08-28
+updated: 2026-09-18
 ---
 
 The canonical queue is the task database. Fork work never creates a second authority: the host
-claims one exact `TaskInstance` (queue ID, task ID, folder device/inode) for one immutable
+claims one exact `TaskInstance` (queue ID, task ID, folder inode — the device is recorded but not
+compared, since a reboot renumbers the volume) for one immutable
 `forkspace.Identity`, moves the canonical folder to in-progress, and materializes only that task
 under `.coop/task-executions/<generation>/<assignment>/tasks`. Existing loop prompts, receipts,
 between-review, and signoff run against this projection; the canonical queue is never mounted into
@@ -34,5 +35,8 @@ Execution records normally live beside fork state and fall back to project-keyed
 when an ordinary repository's parent is read-only.
 
 ## Changelog
+- 2026-09-18 — the instance fence compares the inode, not the device (6d92825a for ownership; the
+  completion receipts, windows and pending reviews followed). Verified against identity.go,
+  completion.go and lease.go; the fork workspace generation still compares the device (queued).
 - 2026-08-28 — created with canonical scheduling, one-task projections, generation candidates,
   replayable landing/discard, and the unified project activity snapshot.

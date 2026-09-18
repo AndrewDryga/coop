@@ -735,8 +735,10 @@ func readLeaseCompletionReceipt(authority *os.File, taskDir string) (leaseComple
 	if err != nil {
 		return leaseCompletionReceipt{}, false
 	}
+	// The device is recorded but not compared: a reboot renumbers the volume (see
+	// TaskGeneration.SameInstanceAs), and the inode alone names the folder the host accepted.
 	var got leaseCompletionReceipt
-	if json.Unmarshal(data, &got) != nil || got.Version != want.Version || got.Device != want.Device ||
+	if json.Unmarshal(data, &got) != nil || got.Version != want.Version ||
 		got.Inode != want.Inode || got.Nonce == "" {
 		return leaseCompletionReceipt{}, false
 	}

@@ -1340,6 +1340,70 @@ func TestCompletionWindowReplayLeavesChangedBaselineArchivesDone(t *testing.T) {
 	}
 }
 
+// A completion window left open across a reboot records a device the volume no longer has. Startup
+// recovery used to see every baseline archive as changed, call it a protected mutation, clear its
+// receipt and send the user to repair task metadata by hand. Both baseline formats are covered: the
+// device-free tree this build records, and the device-hashing tree recorded before it, which is what
+// an upgrade meets. A real change made after the reboot is still caught.
+func TestCompletionWindowSurvivesADeviceRenumber(t *testing.T) {
+	for _, format := range []struct {
+		name   string
+		legacy bool
+	}{{"current tree format", false}, {"tree recorded before the device left it", true}} {
+		t.Run(format.name, func(t *testing.T) {
+			for _, changed := range []bool{false, true} {
+				root := t.TempDir()
+				archived := taskWithCompletedChecklist(t, root, StateInProgress, "archived-before-reboot")
+				if err := CompleteTrustedTask(root, archived); err != nil {
+					t.Fatal(err)
+				}
+				archived, _ = mustCurrentTask(t, root, archived.ID)
+				windows, err := BeginCompletionWindows([]string{root})
+				if err != nil {
+					t.Fatal(err)
+				}
+				// The controller died with the window open, and the host rebooted.
+				id := windows.windows[0].id
+				if err := unlockLeaseFile(windows.windows[0].live); err != nil {
+					t.Fatal(err)
+				}
+				windows.windows[0].live = nil
+				index, err := ReadCompletionWindowIndex(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				record := index.Windows[id]
+				recorded := record.Baseline[archived.ID]
+				recorded.Device++
+				if format.legacy {
+					live, err := CompletionFingerprintFor(root, archived)
+					if err != nil {
+						t.Fatal(err)
+					}
+					recorded.TreeFormat, recorded.Tree = 0, legacyCompletionTreeDigest(live.walk, recorded.Device)
+				}
+				record.Baseline[archived.ID] = recorded
+				index.Windows[id] = record
+				if err := writeCompletionWindowIndex(root, index); err != nil {
+					t.Fatal(err)
+				}
+				if changed {
+					writeTaskFile(t, filepath.Join(archived.Dir, "late-audit.log"), "changed after the reboot\n")
+				}
+
+				err = ReconcileCompletionWindows([]string{root})
+				if !changed && (err != nil || !taskCompletionRecorded(root, archived)) {
+					t.Fatalf("recovery after a reboot = %v, receipt kept %v: an untouched archive looked changed",
+						err, taskCompletionRecorded(root, archived))
+				}
+				if changed && (err == nil || !strings.Contains(err.Error(), archived.ID)) {
+					t.Fatalf("recovery after a reboot and a real change = %v, want the mutation reported", err)
+				}
+			}
+		})
+	}
+}
+
 func TestCompletionWindowReplayArrivalPrecedesLaterMutation(t *testing.T) {
 	root := t.TempDir()
 	rogue := taskForLease(t, root, StateInProgress, "staggered-unowned-completion")

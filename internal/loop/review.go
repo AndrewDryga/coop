@@ -379,7 +379,7 @@ func validateReviewSubjects(hosts []string, snapshots []reviewSubjectSnapshot) e
 		if err != nil {
 			return fmt.Errorf("review subject %s fingerprint: %w", snapshot.id, err)
 		}
-		if fingerprint != snapshot.fingerprint {
+		if !snapshot.fingerprint.Matches(fingerprint) {
 			return fmt.Errorf("review subject %s changed completion generation", snapshot.id)
 		}
 	}

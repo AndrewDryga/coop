@@ -125,6 +125,46 @@ func seedCompletionReceiptBytes(t *testing.T, root string, task Item) []byte {
 	return leaseAuthorityBytes(t, root, task.ID)
 }
 
+// A reboot renumbers the volume, so a receipt the host accepted before it records another device.
+// It must still name the same archive; a genuinely different folder at the same path — a new inode —
+// must not inherit it.
+func TestCompletionReceiptSurvivesADeviceRenumberButNotAReplacedFolder(t *testing.T) {
+	root := t.TempDir()
+	task := taskForLease(t, root, StateDone, "receipted-before-reboot")
+	authority, err := lockLeaseAuthority(root, task.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := completionReceiptFor(task.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt.Device++ // accepted before the volume was remounted with a new number
+	receipt.Nonce = "0123456789abcdef0123456789abcdef"
+	if err := writeLeaseCompletionReceiptValue(authority, receipt); err != nil {
+		t.Fatal(err)
+	}
+	if err := unlockLeaseFile(authority); err != nil {
+		t.Fatal(err)
+	}
+	if !taskCompletionRecorded(root, task) {
+		t.Fatal("a device renumber voided the host-accepted completion receipt")
+	}
+
+	aside := task.Dir + ".replaced"
+	if err := os.Rename(task.Dir, aside); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(aside, "task.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFile(t, filepath.Join(task.Dir, "task.md"), string(body))
+	if taskCompletionRecorded(root, task) {
+		t.Fatal("a replaced folder at the same path inherited the completion receipt")
+	}
+}
+
 func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 	t.Run("new record requires baseline and non-nil history", func(t *testing.T) {
 		record := testAuditReopenRecord("new", "generation")

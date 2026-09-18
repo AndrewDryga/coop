@@ -27,6 +27,10 @@ var (
 	ErrCompletionWindowAudit = errors.New("completion window audit failed")
 )
 
+// CompletionFingerprint is what an archived task looked like when a window or a review captured it.
+// Device is recorded for diagnosis but never compared: a volume's device number is assigned when it
+// is mounted, so a reboot changes it while the folder, its inode and its contents are untouched (see
+// TaskGeneration.SameInstanceAs). Compare with Matches or sameArchive, never with ==.
 type CompletionFingerprint struct {
 	Device      uint64 `json:"device"`
 	Inode       uint64 `json:"inode"`
@@ -35,6 +39,49 @@ type CompletionFingerprint struct {
 	Receipt     string `json:"receipt,omitempty"`
 	ReceiptBusy bool   `json:"receipt_busy,omitempty"`
 	Tree        string `json:"tree"`
+	// TreeFormat 1 digests the tree without devices. Format 0 — every fingerprint recorded before
+	// it — hashed each entry's device; a live walk re-derives that digest with the device the
+	// fingerprint recorded, so a window or review opened before a reboot or an upgrade still holds.
+	TreeFormat int `json:"tree_format,omitempty"`
+
+	// walk is the live tree Tree was computed from; nil for a recorded fingerprint. Its presence
+	// also keeps the type from being compared with ==, which would compare the device.
+	walk []completionTreeEntry
+}
+
+const completionTreeFormat = 1
+
+// completionTreeEntry is one path below a task folder, with the metadata the tree digest binds.
+type completionTreeEntry struct {
+	rel       string
+	mode      uint32
+	size      int64
+	inode     uint64
+	sec, nsec int64
+}
+
+// Matches reports whether live is the completion that recorded captured: the same archive, and the
+// same receipt state.
+func (recorded CompletionFingerprint) Matches(live CompletionFingerprint) bool {
+	return recorded.sameArchive(live) && recorded.Receipt == live.Receipt && recorded.ReceiptBusy == live.ReceiptBusy
+}
+
+// sameArchive reports whether live shows the folder recorded showed — its inode, its change time
+// and every path below it — whatever device number the volume carries now. A format-0 tree on
+// either side is re-derived from the other side's walk, so the order of the operands never matters.
+func (recorded CompletionFingerprint) sameArchive(live CompletionFingerprint) bool {
+	if recorded.Inode != live.Inode || recorded.ChangeSec != live.ChangeSec || recorded.ChangeNsec != live.ChangeNsec {
+		return false
+	}
+	switch {
+	case recorded.TreeFormat == live.TreeFormat:
+		return recorded.Tree == live.Tree
+	case recorded.TreeFormat == 0 && live.walk != nil:
+		return recorded.Tree == legacyCompletionTreeDigest(live.walk, recorded.Device)
+	case live.TreeFormat == 0 && recorded.walk != nil:
+		return live.Tree == legacyCompletionTreeDigest(recorded.walk, live.Device)
+	}
+	return false
 }
 
 type CompletionWindowRecord struct {
@@ -105,13 +152,14 @@ func completionFingerprintWithReceipt(task Item, receipt string, receiptBusy boo
 		return CompletionFingerprint{}, fmt.Errorf("task completion path %q is not a real directory", task.Dir)
 	}
 	sec, nsec := statChangeTime(stat)
-	tree, err := completionTreeMetadataDigest(task.Dir)
+	walk, err := walkCompletionTree(task.Dir)
 	if err != nil {
 		return CompletionFingerprint{}, err
 	}
 	return CompletionFingerprint{
 		Device: uint64(stat.Dev), Inode: uint64(stat.Ino), ChangeSec: sec, ChangeNsec: nsec,
-		Receipt: receipt, ReceiptBusy: receiptBusy, Tree: tree,
+		Receipt: receipt, ReceiptBusy: receiptBusy, Tree: completionTreeDigest(walk),
+		TreeFormat: completionTreeFormat, walk: walk,
 	}, nil
 }
 
@@ -123,11 +171,12 @@ func completionFingerprintLocked(task Item, lock crashCompletionLock) (Completio
 	return completionFingerprintWithReceipt(task, receipt.Nonce, false)
 }
 
-// completionTreeMetadataDigest detects in-place writes below a done task without reading task
-// contents. File ctime cannot be restored by the boxed provider, while sorted relative paths and
-// inode/type/size metadata also bind adds, removals, replacements, links, and nested artifacts.
-func completionTreeMetadataDigest(taskDir string) (string, error) {
-	hash := sha256.New()
+// walkCompletionTree records the metadata that detects in-place writes below a done task without
+// reading task contents. File ctime cannot be restored by the boxed provider, while sorted relative
+// paths and inode/type/size metadata also bind adds, removals, replacements, links, and nested
+// artifacts.
+func walkCompletionTree(taskDir string) ([]completionTreeEntry, error) {
+	walk := []completionTreeEntry{} // non-nil even when empty: a walk marks a fingerprint as live
 	err := filepath.WalkDir(taskDir, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -148,13 +197,29 @@ func completionTreeMetadataDigest(taskDir string) (string, error) {
 			return err
 		}
 		sec, nsec := statChangeTime(stat)
-		_, err = fmt.Fprintf(hash, "%d:%s\x00%d:%d:%d:%d:%d:%d\x00", len(rel), rel, uint32(info.Mode()), info.Size(), uint64(stat.Dev), uint64(stat.Ino), sec, nsec)
-		return err
+		walk = append(walk, completionTreeEntry{rel: rel, mode: uint32(info.Mode()), size: info.Size(),
+			inode: uint64(stat.Ino), sec: sec, nsec: nsec})
+		return nil
 	})
-	if err != nil {
-		return "", err
+	return walk, err
+}
+
+func completionTreeDigest(walk []completionTreeEntry) string {
+	hash := sha256.New()
+	for _, e := range walk {
+		fmt.Fprintf(hash, "%d:%s\x00%d:%d:%d:%d:%d\x00", len(e.rel), e.rel, e.mode, e.size, e.inode, e.sec, e.nsec)
 	}
-	return hex.EncodeToString(hash.Sum(nil)), nil
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+// legacyCompletionTreeDigest is the format-0 digest, which hashed each entry's device. Every entry
+// shared the task folder's volume, so the device that fingerprint recorded stands in for all of them.
+func legacyCompletionTreeDigest(walk []completionTreeEntry, device uint64) string {
+	hash := sha256.New()
+	for _, e := range walk {
+		fmt.Fprintf(hash, "%d:%s\x00%d:%d:%d:%d:%d:%d\x00", len(e.rel), e.rel, e.mode, e.size, device, e.inode, e.sec, e.nsec)
+	}
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 func changedDoneCompletions(root string, baseline map[string]CompletionFingerprint) ([]QueuedTask, error) {
@@ -172,9 +237,7 @@ func changedDoneCompletions(root string, baseline map[string]CompletionFingerpri
 			return nil, err
 		}
 		before, existed := baseline[task.ID]
-		if !existed || before.Device != current.Device || before.Inode != current.Inode ||
-			before.ChangeSec != current.ChangeSec || before.ChangeNsec != current.ChangeNsec ||
-			before.Tree != current.Tree || before.Receipt != current.Receipt || before.ReceiptBusy || current.ReceiptBusy {
+		if !existed || completionFingerprintChanged(before, current) {
 			changed = append(changed, QueuedTask{Root: root, Item: task})
 		}
 	}
@@ -196,9 +259,7 @@ const (
 )
 
 func completionFingerprintChanged(before, current CompletionFingerprint) bool {
-	return before.Device != current.Device || before.Inode != current.Inode ||
-		before.ChangeSec != current.ChangeSec || before.ChangeNsec != current.ChangeNsec ||
-		before.Tree != current.Tree || before.Receipt != current.Receipt ||
+	return !before.sameArchive(current) || before.Receipt != current.Receipt ||
 		before.ReceiptBusy || current.ReceiptBusy
 }
 
@@ -285,9 +346,7 @@ func invalidateStaleCandidateReceipts(root string, baseline map[string]Completio
 			errs = append(errs, err)
 			continue
 		}
-		pathChanged := before.Device != current.Device || before.Inode != current.Inode ||
-			before.ChangeSec != current.ChangeSec || before.ChangeNsec != current.ChangeNsec || before.Tree != current.Tree
-		if pathChanged && current.Receipt == before.Receipt && !current.ReceiptBusy {
+		if !before.sameArchive(current) && current.Receipt == before.Receipt && !current.ReceiptBusy {
 			_, clearErr := clearTaskCompletionReceiptIfMatches(root, candidate.Item, before.Receipt)
 			errs = append(errs, clearErr)
 		}

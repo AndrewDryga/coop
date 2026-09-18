@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A reboot no longer breaks a loop's completion evidence. Completion receipts, completion windows
+  and pending final reviews recorded the volume's device number, which is reassigned at mount — so
+  after a reboot an open window saw every archived task as changed, cleared its receipt and stopped
+  `coop loop` with advice to repair task metadata by hand, and a pending final review could not
+  find its completion. They now compare the folder's inode, change time and contents; a window or
+  review recorded before this release still compares, and a genuine change is still caught.
+
 - **Gemini takes a reasoning effort.** `coop gemini/high`, `gemini:gemini-2.5-pro/low`, a preset
   role or a loop step now set Gemini's thinking — `low` or `high`, the two levels Gemini 3 has —
   instead of being refused. The CLI has no effort flag, so Coop points each call at a small thinking

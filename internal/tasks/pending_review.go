@@ -894,7 +894,7 @@ func pendingReviewBindingEqual(a, b PendingReviewBinding) bool {
 
 func pendingReviewRecordMatchesExpected(current, expected PendingReviewRecord) bool {
 	return current.Version == expected.Version && pendingReviewPlanEqual(current.Plan, expected.Plan) &&
-		sameTaskInstance(current.Task, expected.Task) && current.Fingerprint == expected.Fingerprint &&
+		sameTaskInstance(current.Task, expected.Task) && current.Fingerprint.Matches(expected.Fingerprint) &&
 		pendingReviewBindingEqual(current.Binding, expected.Binding) && current.Phase == expected.Phase &&
 		current.Round == expected.Round && current.RoundStarted == expected.RoundStarted &&
 		current.Prepared == expected.Prepared
@@ -920,7 +920,7 @@ func reconcileReviewedPendingReview(root, id string) (bool, error) {
 	if err != nil || !ok {
 		return finish(false, err)
 	}
-	if reviewed.CohortID != record.Plan.CohortID || !sameTaskInstance(reviewed.Task, record.Task) || reviewed.Fingerprint != record.Fingerprint ||
+	if reviewed.CohortID != record.Plan.CohortID || !sameTaskInstance(reviewed.Task, record.Task) || !record.Fingerprint.Matches(reviewed.Fingerprint) ||
 		!pendingReviewBindingEqual(reviewed.Binding, record.Binding) {
 		return finish(false, nil)
 	}
@@ -1224,7 +1224,7 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 			if current.State == StateDone {
 				currentFingerprint, err = CompletionFingerprintFor(root, current)
 			}
-			if err == nil && current.State == StateDone && currentFingerprint == record.Fingerprint {
+			if err == nil && current.State == StateDone && record.Fingerprint.Matches(currentFingerprint) {
 				record.Prepared = false
 				record.Previous = nil
 				record.UpdatedAt = time.Now().UTC()
@@ -1304,7 +1304,7 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 			continue
 		}
 		fingerprint, err := CompletionFingerprintFor(root, current)
-		if err != nil || fingerprint != record.Fingerprint {
+		if err != nil || !record.Fingerprint.Matches(fingerprint) {
 			return PendingReviewCohort{}, errors.Join(err, fmt.Errorf("pending-review task %s completion receipt or archive changed", current.ID))
 		}
 		cohort.Plan = record.Plan
@@ -1646,7 +1646,7 @@ func enrollExistingPendingReviewLocked(repo string, task QueuedTask, authority *
 	if prior, ok, readErr := readPendingReviewRecord(task.Root, task.Item.ID); readErr != nil {
 		return readErr
 	} else if ok {
-		if prior.Task.Ref.ID == task.Item.ID && prior.Fingerprint == fingerprint {
+		if prior.Task.Ref.ID == task.Item.ID && prior.Fingerprint.Matches(fingerprint) {
 			return nil
 		}
 		return fmt.Errorf("task %s already has pending review for a different generation", task.Item.ID)
@@ -1654,7 +1654,7 @@ func enrollExistingPendingReviewLocked(repo string, task QueuedTask, authority *
 	if reviewed, ok, readErr := readPendingReviewReviewed(task.Root, task.Item.ID); readErr != nil {
 		return readErr
 	} else if ok && sameTaskInstance(reviewed.Task, instance) {
-		if reviewed.Fingerprint == fingerprint {
+		if reviewed.Fingerprint.Matches(fingerprint) {
 			return fmt.Errorf("task %s already passed final review for this accepted generation", task.Item.ID)
 		}
 		receipt, accepted := readLeaseCompletionReceipt(authority, task.Item.Dir)
@@ -1829,7 +1829,7 @@ func ClearPendingReviews(hosts []string, expected []PendingReviewRecord) error {
 				readErr = fmt.Errorf("pending-review task %s changed generation after the review verdict", id)
 			} else if fingerprint, fingerprintErr := completionFingerprintLocked(task.Item, crashCompletionLock{authority: authority}); fingerprintErr != nil {
 				readErr = fingerprintErr
-			} else if fingerprint != record.Fingerprint {
+			} else if !record.Fingerprint.Matches(fingerprint) {
 				readErr = fmt.Errorf("pending-review task %s completion receipt or archive changed after the review verdict", id)
 			} else if head := gitOut(record.Plan.Workspace, "rev-parse", "--verify", "HEAD^{commit}"); !pendingReviewRawBindingValid(record.Plan.Workspace, record.Binding) ||
 				!AuditReopenCurrentValid(record.Plan.Workspace, head, id, bindingAsAuditRecord(id, record.Binding)) {

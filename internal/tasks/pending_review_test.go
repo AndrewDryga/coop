@@ -243,6 +243,46 @@ func TestPendingReviewExplicitImportIsExactAndIdempotent(t *testing.T) {
 	}
 }
 
+// A pending final review that straddles a reboot recorded a device the volume no longer has. It
+// used to fail with "no matching completion receipt"; it must find its completion — whether its tree
+// was recorded in this build's format or the device-hashing one before it — and still notice a real
+// change to the archive.
+func TestPendingReviewSurvivesADeviceRenumber(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
+		if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+			t.Fatal(err)
+		}
+		if err := assignment.Lease.Release(); err != nil {
+			t.Fatal(err)
+		}
+		record, ok, err := readPendingReviewRecord(root, done.ID)
+		if err != nil || !ok {
+			t.Fatalf("pending review record = %v, %v", ok, err)
+		}
+		record.Task.Generation.Device++
+		record.Fingerprint.Device = record.Task.Generation.Device
+		if legacy {
+			live, err := CompletionFingerprintFor(root, done)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record.Fingerprint.TreeFormat = 0
+			record.Fingerprint.Tree = legacyCompletionTreeDigest(live.walk, record.Fingerprint.Device)
+		}
+		if err := writePendingReviewRecord(root, record); err != nil {
+			t.Fatal(err)
+		}
+		if cohort, err := LoadPendingReviews(repo, []string{root}); err != nil || len(cohort.Subjects) != 1 {
+			t.Fatalf("pending review after a reboot (legacy tree %v) = %+v, %v", legacy, cohort, err)
+		}
+		writeTaskFile(t, filepath.Join(done.Dir, "log.md"), "tampered after the reboot\n")
+		if _, err := LoadPendingReviews(repo, []string{root}); err == nil || !strings.Contains(err.Error(), "archive changed") {
+			t.Fatalf("archive mutation after a reboot (legacy tree %v) = %v", legacy, err)
+		}
+	}
+}
+
 func TestPendingReviewRejectsArchiveAndHistoryMutation(t *testing.T) {
 	t.Run("archive", func(t *testing.T) {
 		repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
@@ -484,7 +524,7 @@ func TestPendingReviewActivationFailureRestoresPriorReopen(t *testing.T) {
 		t.Fatalf("activation failure = %v", err)
 	}
 	restored, ok, err := readPendingReviewRecord(root, done.ID)
-	if err != nil || !ok || restored.Prepared || restored.Previous != nil || restored.Phase != PendingReviewReopened || restored.Round != 2 || restored.Fingerprint != prior.Fingerprint {
+	if err != nil || !ok || restored.Prepared || restored.Previous != nil || restored.Phase != PendingReviewReopened || restored.Round != 2 || !prior.Fingerprint.Matches(restored.Fingerprint) {
 		t.Fatalf("restored prior review = %+v, %v, %v", restored, ok, err)
 	}
 }
