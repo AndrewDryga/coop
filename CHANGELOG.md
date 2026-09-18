@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A filtered box no longer refuses a repository that has shared skills. The skills and home-fallback
+  copies were the one generated mount made in the system temp directory instead of the run's own
+  artifact directory, so the filtered launch — which proves every mount is its own — refused them
+  for every agent ("generated network workload mount is not an owned descendant").
+
 - A task claimed before a reboot can be completed and released afterwards. Task ownership was
   fenced on the folder's device and inode, and a volume's device number is assigned when it is
   mounted — so after a reboot every task claimed before it reported itself "replaced" and could

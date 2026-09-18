@@ -281,6 +281,21 @@ type compositionArtifactOps struct {
 	gitHookDir        func(parent string) (string, error)
 }
 
+// composedCopyDir allocates a writable copy directory the box will mount. Every other generated mount
+// already lands in compositionArtifactOps.parent — a filtered run's private artifact directory, where
+// the launch proves each mount is an owned descendant and exact-owned cleanup reaches it. The skills
+// and home-fallback copies were the exception: they went to the system temp dir, so a filtered box
+// refused ANY repository with shared skills ("generated network workload mount is not an owned
+// descendant"), for every agent. An empty parent keeps the ordinary run's private temp dir.
+func composedCopyDir(repo, artifactParent, pattern string, exposedRoots ...string) (string, error) {
+	if artifactParent == "" {
+		return privateWorkspaceTempDir(repo, pattern, exposedRoots...)
+	}
+	// The artifact parent is already proven outside every mount when the network store opens; the
+	// same check runs here anyway, so a future caller cannot hand this an exposed parent.
+	return privateTempDirUnder(artifactParent, repo, pattern, exposedRoots...)
+}
+
 func defaultCompositionArtifactOps() compositionArtifactOps {
 	return compositionArtifactOps{
 		writeFile: writeTempFile, chmod: os.Chmod, assembleAgentsDir: assembleAgentsDir,
@@ -859,13 +874,13 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if spec.Login || spec.FormatCorrection {
 		workflowAgents = nil
 	}
-	synthMounts, synthDirs, err := synthSkillsMounts(spec.Repo, cfg.HomeInBox, workflowAgents, privateRoots...)
+	synthMounts, synthDirs, err := synthSkillsMounts(spec.Repo, cfg.HomeInBox, artifacts.parent, workflowAgents, privateRoots...)
 	if err != nil {
 		return -1, err
 	}
 	tmpDirs = append(tmpDirs, synthDirs...)
 	if spec.Homes {
-		homeMounts, homeDirs, err := synthHomeFallbackMounts(spec.Repo, cfg.HomeInBox, workflowAgents, privateRoots...)
+		homeMounts, homeDirs, err := synthHomeFallbackMounts(spec.Repo, cfg.HomeInBox, artifacts.parent, workflowAgents, privateRoots...)
 		if err != nil {
 			return -1, err
 		}
@@ -1888,7 +1903,7 @@ type instructionItem struct{ agent, file, content string }
 // COPY, not a read-only bind of the host dir:
 // some CLIs (codex) install their own system skills INTO the skills dir, which a :ro mount breaks —
 // and the copy keeps the host's source pristine. The copies die with the box.
-func synthSkillsMounts(repo, homeInBox string, agentNames []string, exposedRoots ...string) (mounts []extraMount, tmpdirs []string, retErr error) {
+func synthSkillsMounts(repo, homeInBox, artifactParent string, agentNames []string, exposedRoots ...string) (mounts []extraMount, tmpdirs []string, retErr error) {
 	sources, err := openRepositorySources(repo)
 	if err != nil {
 		return nil, nil, err
@@ -1948,7 +1963,7 @@ func synthSkillsMounts(repo, homeInBox string, agentNames []string, exposedRoots
 		}
 	}()
 	for _, ag := range selected {
-		dst, err := privateWorkspaceTempDir(repo, "coop-skills-"+ag+"-", exposedRoots...)
+		dst, err := composedCopyDir(repo, artifactParent, "coop-skills-"+ag+"-", exposedRoots...)
 		if err != nil {
 			return nil, nil, fmt.Errorf("prepare skills for %s: %w", ag, err)
 		}
@@ -1965,7 +1980,7 @@ func synthSkillsMounts(repo, homeInBox string, agentNames []string, exposedRoots
 // synthHomeFallbackMounts copies each active adapter's declared fallback artifacts into
 // ephemeral user-level mounts. Project artifacts suppress matching fallbacks independently;
 // writable copies keep both the committed source and host credential profile untouched.
-func synthHomeFallbackMounts(repo, homeInBox string, agentNames []string, exposedRoots ...string) (mounts []extraMount, tmpdirs []string, retErr error) {
+func synthHomeFallbackMounts(repo, homeInBox, artifactParent string, agentNames []string, exposedRoots ...string) (mounts []extraMount, tmpdirs []string, retErr error) {
 	sources, err := openRepositorySources(repo)
 	if err != nil {
 		return nil, nil, err
@@ -2005,7 +2020,7 @@ func synthHomeFallbackMounts(repo, homeInBox string, agentNames []string, expose
 				continue
 			}
 
-			dst, err := privateWorkspaceTempDir(repo, "coop-home-"+name+"-", exposedRoots...)
+			dst, err := composedCopyDir(repo, artifactParent, "coop-home-"+name+"-", exposedRoots...)
 			if err != nil {
 				return nil, nil, fmt.Errorf("prepare fallback %s for %s: %w", artifact.Source, name, err)
 			}

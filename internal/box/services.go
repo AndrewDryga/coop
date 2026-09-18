@@ -229,7 +229,14 @@ func CheckServiceTempDir(workspace string, exposedRoots ...string) error {
 }
 
 func privateWorkspaceTempDir(workspace, pattern string, exposedRoots ...string) (string, error) {
-	absParent, err := filepath.Abs(os.TempDir())
+	return privateTempDirUnder(os.TempDir(), workspace, pattern, exposedRoots...)
+}
+
+// privateTempDirUnder allocates under base after proving base is not inside the workspace or any
+// other exposed root. The check is the point: a copy the box mounts must not also be reachable, and
+// rewritable, through a mount the agent already holds.
+func privateTempDirUnder(base, workspace, pattern string, exposedRoots ...string) (string, error) {
+	absParent, err := filepath.Abs(base)
 	if err != nil {
 		return "", err
 	}
