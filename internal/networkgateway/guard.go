@@ -190,8 +190,13 @@ func (g *Guard) destination(client net.Conn) (netip.AddrPort, error) {
 	return original, nil
 }
 
+// admissionTimeout is one connection's admission budget: inspection, resolution, the controller
+// lease, the private dial and the replay, and nothing after them. A variable only so a test can
+// prove a flow outlives it without waiting GuardAdmissionTimeout.
+var admissionTimeout = GuardAdmissionTimeout
+
 func (g *Guard) forward(ctx context.Context, client net.Conn, dataSocket string) {
-	admission, cancel := context.WithTimeout(ctx, GuardAdmissionTimeout)
+	admission, cancel := context.WithTimeout(ctx, admissionTimeout)
 	defer cancel()
 	destination, err := g.destination(client)
 	if err != nil {
@@ -204,7 +209,7 @@ func (g *Guard) forward(ctx context.Context, client net.Conn, dataSocket string)
 		g.events.emit(GuardEvent{Kind: "tls_denied", Name: hello.Name, Port: port, Reason: safeReason(err)})
 		return
 	}
-	g.forwardTLS(admission, client, dataSocket, port, hello, "")
+	g.forwardTLS(ctx, admission, client, dataSocket, port, hello, "")
 }
 
 type prefixedConn struct {
@@ -227,7 +232,7 @@ func (g *Guard) serviceProxy(ctx context.Context, client net.Conn, dataSocket st
 		g.events.emit(GuardEvent{Kind: "admission_failed", Reason: "service_proxy_client_unrecognized"})
 		return
 	}
-	admission, cancel := context.WithTimeout(ctx, GuardAdmissionTimeout)
+	admission, cancel := context.WithTimeout(ctx, admissionTimeout)
 	defer cancel()
 	deadline, _ := admission.Deadline()
 	_ = client.SetReadDeadline(deadline)
@@ -270,7 +275,7 @@ func (g *Guard) serviceProxy(ctx context.Context, client net.Conn, dataSocket st
 		g.events.emit(GuardEvent{Kind: "tls_denied", Name: hello.Name, Service: service, Port: port, Reason: reason})
 		return
 	}
-	g.forwardTLS(admission, stream, dataSocket, port, hello, service)
+	g.forwardTLS(ctx, admission, stream, dataSocket, port, hello, service)
 }
 
 func (g *Guard) serviceProxyClient(peer net.Addr) (string, bool) {
@@ -296,9 +301,11 @@ func proxyStatus(conn net.Conn, status string) bool {
 	return err == nil
 }
 
-func (g *Guard) forwardTLS(ctx context.Context, client net.Conn, dataSocket string, port int, hello Hello, service string) {
-	admission, cancel := context.WithTimeout(ctx, GuardAdmissionTimeout)
-	defer cancel()
+// forwardTLS admits one inspected flow within its admission budget, then pipes it for as long as the
+// flow lives. The two contexts stay apart on purpose: the private leg closes when the guard's own
+// lifetime ends, never when admission's deadline passes. Wiring that close to the admission deadline
+// once cut every guarded TLS flow ten seconds in, mid-response.
+func (g *Guard) forwardTLS(flow, admission context.Context, client net.Conn, dataSocket string, port int, hello Hello, service string) {
 	resolution, err := g.resolver.Resolve(admission, hello.Name)
 	if err != nil {
 		g.events.emit(GuardEvent{Kind: "admission_failed", Name: hello.Name, Service: service, Reason: safeReason(err)})
@@ -360,7 +367,7 @@ func (g *Guard) forwardTLS(ctx context.Context, client net.Conn, dataSocket stri
 		return
 	}
 	defer private.Close()
-	stop := context.AfterFunc(ctx, func() { _ = private.Close() })
+	stop := context.AfterFunc(flow, func() { _ = private.Close() })
 	defer stop()
 	g.events.emit(GuardEvent{Kind: "flow_registered", FlowID: flowID, Name: hello.Name, Service: service, RuleID: hello.RuleID, Peer: peer, Port: port})
 	defer g.events.emit(GuardEvent{Kind: "private_flow_closed", FlowID: flowID})
@@ -369,7 +376,6 @@ func (g *Guard) forwardTLS(ctx context.Context, client net.Conn, dataSocket stri
 		return
 	}
 	hello.Bytes = nil
-	cancel() // admission deadline must not shorten a legitimate streaming flow
 	pipeBoth(client, private)
 }
 

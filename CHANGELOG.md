@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Filtered runs no longer cut a provider's response off after ten seconds. The gateway closed
+  every connection it forwarded ten seconds after letting it through, however much was still
+  streaming, so any answer that took longer broke off mid-sentence and the agent retried it again
+  and again — a long Grok answer failed after eight minutes of retries, and a filtered `coop loop`
+  could stall on the same request. Connections now last as long as the provider keeps them open;
+  the ten seconds bound only the check that lets a connection through. The gateway image is
+  rebuilt automatically on the first filtered run after upgrading.
+
 - Grok's loop and helper runs now show their tools and are supervised like the other providers'.
   Coop treated Grok's stream as carrying no tool events — true of its old CLI — so a Grok attempt
   showed nothing while it ran a command, printed `· usage` noise instead, and a long `make check`

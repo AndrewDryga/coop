@@ -271,6 +271,108 @@ func TestGuardReplaysExactAdmissionAndPreservesStreamingHalfClose(t *testing.T) 
 	}
 }
 
+// shortAdmission shrinks the admission budget for one test. It must run before the fixture starts:
+// the guard's goroutines are created after this write, and the fixture's cleanups stop them before
+// the restore.
+func shortAdmission(t *testing.T, budget time.Duration) {
+	t.Helper()
+	saved := admissionTimeout
+	admissionTimeout = budget
+	t.Cleanup(func() { admissionTimeout = saved })
+}
+
+// exchangeBothWays proves an admitted flow still carries bytes in each direction.
+func exchangeBothWays(t *testing.T, client, private net.Conn) {
+	t.Helper()
+	for _, leg := range []struct {
+		from, to net.Conn
+		payload  string
+	}{{client, private, "request after the admission budget"}, {private, client, "response after the admission budget"}} {
+		if err := writeAll(leg.from, []byte(leg.payload)); err != nil {
+			t.Fatalf("write after the admission budget: %v", err)
+		}
+		got := make([]byte, len(leg.payload))
+		if _, err := io.ReadFull(leg.to, got); err != nil || string(got) != leg.payload {
+			t.Fatalf("read after the admission budget = %q, %v", got, err)
+		}
+	}
+}
+
+// A guarded flow lives as long as its two ends keep it open; the admission budget bounds admission
+// alone. Every guarded TLS flow used to close when that budget ran out — ten seconds in, mid-
+// response — because the private leg's close was wired to the admission deadline.
+func TestGuardFlowOutlivesTheAdmissionBudget(t *testing.T) {
+	shortAdmission(t, 200*time.Millisecond)
+	fixture := startGuardFixture(t)
+	client, private, _ := guardPrivate(t, fixture, clientHello(t, "api.example.com"))
+	time.Sleep(700 * time.Millisecond) // well past the budget
+	exchangeBothWays(t, client, private)
+}
+
+// The budget still bounds admission: a client that never finishes its ClientHello is let go as soon
+// as it runs out, not left holding a guard connection slot.
+func TestGuardStalledAdmissionIsStillRefusedOnTime(t *testing.T) {
+	shortAdmission(t, 200*time.Millisecond)
+	fixture := startGuardFixture(t)
+	client := guardClient(t, fixture.tls.Addr().String())
+	_ = client.SetReadDeadline(time.Now().Add(wait.Deadline))
+	started := time.Now()
+	if n, err := client.Read(make([]byte, 1)); n != 0 || err == nil {
+		t.Fatalf("a stalled admission read %d bytes, %v; want the guard to close it", n, err)
+	}
+	// Well under HelloTimeout (5s): only the admission budget can have closed it this soon.
+	if waited := time.Since(started); waited > 2*time.Second {
+		t.Fatalf("a stalled admission held the connection for %s", waited)
+	}
+}
+
+// The service proxy path hands its flows to the same forwarding, and outlives its budget the same way.
+func TestServiceProxyFlowOutlivesTheAdmissionBudget(t *testing.T) {
+	shortAdmission(t, 200*time.Millisecond)
+	fixture := startGuardFixture(t)
+	serviceAddress := netip.MustParseAddr("172.31.0.16")
+	fixture.guard.serviceProxyClients = []ServiceProxyClient{{Name: "web", Address: serviceAddress}}
+	server, client := net.Pipe()
+	server = serviceProxyTestConn{Conn: server, peer: serviceAddress}
+	t.Cleanup(func() { _ = client.Close() })
+	done := make(chan struct{})
+	go func() {
+		fixture.guard.serviceProxy(context.Background(), server, fixture.private.Addr().String())
+		close(done)
+	}()
+	_ = client.SetDeadline(time.Now().Add(wait.Deadline))
+	if _, err := io.WriteString(client, "CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	if response, err := bufio.NewReader(client).ReadString('\n'); err != nil || response != "HTTP/1.1 200 Connection Established\r\n" {
+		t.Fatalf("CONNECT response = %q, %v", response, err)
+	}
+	hello := clientHello(t, "api.example.com")
+	if _, err := client.Write(hello); err != nil {
+		t.Fatal(err)
+	}
+	_ = fixture.private.SetDeadline(time.Now().Add(wait.Deadline))
+	private, err := fixture.private.AcceptUnix()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = private.Close() })
+	_ = private.SetDeadline(time.Now().Add(wait.Deadline))
+	preamble := make([]byte, 63+len(hello))
+	if _, err := io.ReadFull(private, preamble); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(700 * time.Millisecond) // well past the budget
+	exchangeBothWays(t, client, private)
+	_ = private.Close()
+	_ = client.Close()
+	select {
+	case <-done:
+	case <-time.After(wait.Deadline):
+		t.Fatal("service proxy flow leaked after both ends closed")
+	}
+}
+
 func TestGuardListenerOrControllerLossClosesExistingStream(t *testing.T) {
 	for _, failure := range []string{"tls", "dns_tcp", "dns_udp", "controller"} {
 		t.Run(failure, func(t *testing.T) {

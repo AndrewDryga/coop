@@ -37,7 +37,13 @@ carrying the validated destination AND port plus a `PP2_TYPE_UNIQUE_ID` correlat
 (`proxy.go:15`). Envoy's `original_dst` cluster dials exactly that address:port — there is no
 `upstream_port_override` any more, so the port cannot come from anywhere but the kernel. Its DNS
 side admits the NAME alone (`AdmitsName`, never a port: a client must resolve before the kernel can
-record which granted port it dialed), then resolves upstream over DoH to a pinned peer.
+record which granted port it dialed), then resolves upstream over DoH to a pinned peer. A flow has
+two clocks that must never be crossed: the ADMISSION budget (`GuardAdmissionTimeout`, 10 s —
+inspection, resolution, lease, private dial, replay) and the flow's LIFETIME (the guard's own
+context). `forwardTLS(flow, admission, …)` takes both, and only `flow` may close the private leg.
+Until 2026-09-18 the close was armed on the admission context, so every guarded TLS flow died 10 s
+after admission — long streamed model responses were cut mid-body and retried forever
+(`TestGuardFlowOutlivesTheAdmissionBudget`, `TestServiceProxyFlowOutlivesTheAdmissionBudget`).
 
 Filtered project services use the same guard through a second, bounded listener on `:15444`.
 Compose puts only the approved service closure on an internal network and points standard HTTPS
@@ -131,6 +137,9 @@ checkout, so a stale tar is a red gate, and a filtered launch only ever runs the
 [[restricted-networking]] qualification names.
 
 ## Changelog
+- 2026-09-18 — the guard's flow lifetime and admission budget are separate contexts; the private
+  leg's close used to follow the 10 s admission deadline and cut every long guarded TLS flow. The
+  credential broker's dial was checked: its admission context bounds only the dial.
 - 2026-09-18 — every filtered host launch settles interrupted runs before its own gateway starts
   (`runBox`; fork and session gates through `forkctl.Host.SettleFilteredRuns`), since a
   mid-teardown kill left the guard, controller and both volumes to launches that never swept. Proved live by `TestKilledFilteredRunIsSettledByTheNextLaunch`
