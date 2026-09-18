@@ -128,7 +128,9 @@ check: lint shellcheck build-all vuln align docs-check casts-check tools-test ru
 
 provider-scripted-e2e: ## Deterministic all-provider process e2e (no runtime or credentials needed)
 	@go test ./internal/testutil/procharness ./internal/cli/testdata/providerfixture
-	@go test -tags providere2e -run '^TestProviderScripted' -count=1 -v ./internal/cli/
+# The suite runs ~9 minutes on a quiet host, so Go's 10-minute default failed it under ordinary
+# load with every test passing. This is a hang guard; the behavior deadlines live inside the tests.
+	@go test -tags providere2e -run '^TestProviderScripted' -count=1 -timeout 20m -v ./internal/cli/
 
 live-process-control: ## Deterministic denial tests for tagged live-test process ownership
 	@go test -race -tags providerlivee2e,cooplivetest -run '^Test(LiveACPProcess|LiveInterruptible|LiveRunInterruptible|ProviderConsultLiveContract|ProviderLoopLiveContract|ProviderResumeLiveContract)' -count=1 ./internal/cli/ ./internal/acpctl/ ./internal/runtime/
