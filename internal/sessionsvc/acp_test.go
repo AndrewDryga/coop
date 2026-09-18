@@ -24,6 +24,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -2447,6 +2448,13 @@ func newSessionACPFixture(t *testing.T, scenario string, target ...string) *sess
 // binding at all.
 func newSessionACPFixtureUnder(t *testing.T, scenario, sessionTarget string, mode agents.ExecutionMode) *sessionACPFixture {
 	t.Helper()
+	return newSessionACPFixtureOn(t, scenario, sessionTarget, mode, "")
+}
+
+// newSessionACPFixtureOn is newSessionACPFixtureUnder on a network posture. A filtered session
+// carries a frozen capture reference; the fixture's child never proves it against a store.
+func newSessionACPFixtureOn(t *testing.T, scenario, sessionTarget string, mode agents.ExecutionMode, network egress.Mode) *sessionACPFixture {
+	t.Helper()
 	root := t.TempDir()
 	source := filepath.Join(root, "shared-agents")
 	writeSessionTestCredential(t, source, sessionTarget)
@@ -2478,7 +2486,10 @@ func newSessionACPFixtureUnder(t *testing.T, scenario, sessionTarget string, mod
 	request := session.CreateSessionRequest{
 		Target: sessionTarget, Policy: "policy", Mode: string(mode),
 		Repository: repo, Workspace: workspace, ForkName: "fork", BaseCommit: strings.Repeat("a", 40),
-		RepositoryReadOnly: mode == agents.ModeReadOnly,
+		RepositoryReadOnly: mode == agents.ModeReadOnly, NetworkMode: string(network),
+	}
+	if network == egress.Filtered {
+		request.NetworkFingerprint, request.NetworkQualification = strings.Repeat("a", 64), strings.Repeat("b", 64)
 	}
 	if mode == agents.ModeBare {
 		request.Repository, request.Workspace, request.ForkName, request.BaseCommit = "", "", "", ""

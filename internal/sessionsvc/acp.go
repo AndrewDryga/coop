@@ -636,22 +636,13 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 			if warmIdleTimeout > 0 {
 				credentialDeadline = time.Now().Add(warmIdleTimeout + bound.TurnTimeout)
 			}
-			// A restricted box re-checks the seeded access-only token against its own horizon
-			// and holds no refresh authority to renew it with, so the host renews before
-			// projection for at least that long — a short turn timeout is not a short token.
-			if agents.ExecutionMode(bound.Mode).Restricted() {
-				if horizon := time.Now().Add(box.RestrictedCredentialHorizon); credentialDeadline.Before(horizon) {
-					credentialDeadline = horizon
-				}
-			}
-			projection, err := r.projectCredentials(bound, target, agent, credentialDeadline)
+			projection, err := r.projectCredentials(bound, target, agent, boxCredentialDeadline(bound, credentialDeadline))
 			if err != nil && projection != nil {
 				_ = projection.remove()
 			}
 			if err != nil && warmIdleTimeout > 0 {
 				warmIdleTimeout = 0
-				credentialDeadline = deadline
-				projection, err = r.projectCredentials(bound, target, agent, credentialDeadline)
+				projection, err = r.projectCredentials(bound, target, agent, boxCredentialDeadline(bound, deadline))
 			}
 			if err != nil {
 				if projection != nil {
@@ -2070,6 +2061,22 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		}
 	}
 	return process, err
+}
+
+// boxCredentialDeadline is how long a projected credential must last in the box it goes to. A
+// restricted box re-checks the seeded access-only token against RestrictedCredentialHorizon and
+// holds no refresh authority to renew it with, so the host renews before projection for at least
+// that long — a short turn timeout is not a short token. A filtered child re-checks it too: its
+// network admission asks an access-only projection with no refresh token (Grok's) to outlive the
+// same horizon. The raise covers every provider of such a session; for one that renews on the host
+// it only means renewing up to an hour earlier.
+func boxCredentialDeadline(bound session.Session, deadline time.Time) time.Time {
+	if agents.ExecutionMode(bound.Mode).Restricted() || bound.NetworkMode == string(egress.Filtered) {
+		if horizon := time.Now().Add(box.RestrictedCredentialHorizon); deadline.Before(horizon) {
+			return horizon
+		}
+	}
+	return deadline
 }
 
 // sessionACPMCPServers asks the agent for the MCP servers its ACP session has to be handed

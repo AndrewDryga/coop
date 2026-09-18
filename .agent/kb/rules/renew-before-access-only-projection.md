@@ -2,9 +2,9 @@
 name: renew-before-access-only-projection
 description: refreshable credentials renew in trusted host storage before an access-only box projection
 scope: security
-sources: [internal/agent/agent.go, internal/agent/codex.go, internal/agent/claude.go, internal/sessionsvc/acp.go]
-check: "go test ./internal/agent -run 'TestCodexCredentialRenewal|TestClaudeCredentialRenewal'"
-updated: 2026-08-09
+sources: [internal/agent/agent.go, internal/agent/codex.go, internal/agent/claude.go, internal/agent/grok.go, internal/sessionsvc/acp.go]
+check: "go test ./internal/agent -run 'TestCodexCredentialRenewal|TestClaudeCredentialRenewal|TestGrokCredentialRenewal|TestEveryProjectableCredentialCanBeRenewed'"
+updated: 2026-09-18
 ---
 
 # Renew a refreshable credential before projecting it into a box
@@ -25,6 +25,15 @@ Every adapter whose credential is refreshable owes a `Prepare`; declaring only `
 the defect, not a lighter variant of it.
 
 ## Changelog
+- 2026-09-18 — Grok had the defect this card names: `Portability` and no `Prepare`, so a remote
+  session failed once its six-hour token aged until a local run happened to refresh the profile.
+  Wired `renewGrokCredential`. The grant shape was captured from the pinned 1.0.25 binary against
+  a logging issuer rather than recalled — it adds `principal_type` and `principal_id` to the
+  standard form — and it is sent only to the pinned `https://auth.x.ai/oauth2/token`, because the
+  stored issuer is box-writable. It takes the client's own flock on `auth.json.lock`. Proved live:
+  coop's renewal rotated the real login, and the pinned client then ran on it without refreshing.
+  Mechanized the rule as `TestEveryProjectableCredentialCanBeRenewed`; swept every adapter:
+  claude, codex and grok renew, and gemini's projection is never portable.
 - 2026-08-09 — sources repointed: the sessions service moved out of `internal/cli/session_*.go` into `internal/sessionsvc/`; the facts here are unchanged (a move-only extraction).
 - 2026-08-08 — wired the Claude adapter to the boundary. It had shipped with `Portability` and no `Prepare`, so an ~8h OAuth token expired into a hard turn failure while the source profile still held valid refresh authority; two live Responder deployments were down on Claude rungs. Endpoint, client id, and grant shape were read out of the shipped Claude Code binary rather than recalled — the remembered endpoint was wrong
 - 2026-08-06 — created after sweeping the Codex readiness, renewal, projection, and ACP admission paths; focused tests cover rotation, eight concurrent callers, failure preservation, symlink rejection, and access-only child state

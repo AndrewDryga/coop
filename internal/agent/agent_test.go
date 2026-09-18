@@ -1432,6 +1432,24 @@ func TestClaudeCredentialRenewalWithoutRefreshAuthorityNeedsSignIn(t *testing.T)
 	}
 }
 
+// TestEveryProjectableCredentialCanBeRenewed is the check of the renew-before-access-only-projection
+// rule: an adapter whose login can be projected access-only must renew it on the host too, or a
+// session turn fails the moment the token ages while the profile still holds refresh authority —
+// Grok shipped that way. Gemini's projection is never portable (a host-bound keychain), so it owes
+// nothing.
+func TestEveryProjectableCredentialCanBeRenewed(t *testing.T) {
+	for _, name := range Names() {
+		ag, _ := Get(name)
+		live := ag.LiveCredentials()
+		if live.Portability == nil || live.Portability(t.TempDir(), time.Now()) == CredentialNotPortable {
+			continue
+		}
+		if live.Prepare == nil {
+			t.Errorf("%s projects an access-only credential but declares no Prepare to renew it on the host", name)
+		}
+	}
+}
+
 func TestClaudeCredentialRenewalDoesNotFollowRedirects(t *testing.T) {
 	var redirectedRequests atomic.Int32
 	sink := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {

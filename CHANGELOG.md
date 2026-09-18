@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Remote sessions keep working with Grok as its login ages. A session turn gives the box only an
+  access token, and coop renewed that token on the host first for Claude and Codex but not for
+  Grok, so a Grok session failed once the token neared expiry and kept failing until you happened
+  to run Grok locally. Coop now renews the Grok login on the host before a turn — the same request
+  the Grok client makes, sent only to `auth.x.ai`, and coordinated with the client's own lock —
+  and a filtered session is given a token that lasts at least the hour its box checks for.
+
 - A filtered Grok run no longer ends with a wall of blocked lookups and a warning. Grok's own
   telemetry looked up `api.mixpanel.com` and `grok.com` dozens of times per prompt, and `api.x.ai`
   too, which the gateway rightly blocked but reported as a burst on every run, dropping some of

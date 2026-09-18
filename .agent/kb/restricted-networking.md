@@ -179,13 +179,11 @@ Traps:
   access-only projection does. It used to ask always, and Grok access tokens live six hours with
   no host-side renewal, so a filtered Grok was refused in each token's last hour and forever once
   it expired. Proved live on 2026-09-18: an expired login refreshed in the box through the gateway.
-  Known gap: a remote session ADMITS on the host profile (refresh token → no horizon) but each turn
-  mounts the access-only projection, whose re-check in the child (`cli/acp_cmd.go`,
-  NetworkProviderBundles) applies the horizon — so a Grok login with under an hour left now fails
-  at the first turn instead of at session creation. Safe (the child checks exactly what it mounts).
-  Closing it takes both a host `Prepare` for Grok and extending the daemon's projection-deadline
-  raise (`sessionsvc/acp.go`, today restricted modes only) to filtered sessions, so the projected
-  token outlives the child's horizon, not just the turn.
+  A remote session ADMITS on the host profile (refresh token → no horizon) but each turn mounts
+  the access-only projection, whose re-check in the child (`cli/acp_cmd.go`, NetworkProviderBundles)
+  applies the horizon. So the daemon renews Grok on the host first (`renewGrokCredential`, its
+  `Prepare`) and, for a filtered session as for a restricted one, projects for at least
+  `RestrictedCredentialHorizon` (`sessionsvc/acp.go`), not just the turn.
 - A selected Compose service and its dependency closure use fixed prepared addresses on an internal
   network. The guard maps accepted proxy peers back to those exact service names. Approved and
   denied external TLS therefore carry `service` through the existing event, receipt, human view,
@@ -196,6 +194,8 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-18 — the session gap above is closed: Grok renews on the host before projection, and a
+  filtered session projects for the horizon.
 - 2026-09-18 — grok's telemetry is switched off box-only (`GROK_TELEMETRY_ENABLED=false`): the
   pinned client's mixpanel, `grok.com` and `api.x.ai` lookups raised a burst alert on every run.
 - 2026-09-18 — a filtered Grok login with a refresh token no longer has to outlive the one-hour
