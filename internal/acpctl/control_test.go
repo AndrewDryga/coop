@@ -1326,6 +1326,18 @@ func TestAuthenticationErrorRecognizesProviderFailureShapes(t *testing.T) {
 			}
 		})
 	}
+	// The pinned Grok client's structured payload: only its own 401 status marks a rejected login.
+	grokStatus := func(status int) []byte {
+		return []byte(fmt.Sprintf(`{"error":{"code":-32603,"message":"Internal error","data":{"message":"Auth recovery succeeded but 4 authenticated inference requests were still rejected (401); giving up after 3 retries.","http_status":%d}}}`, status))
+	}
+	if !authenticationError(grokStatus(401)) {
+		t.Fatal("the Grok client's 401 status was not recognized as an authentication failure")
+	}
+	for _, status := range []int{402, 403, 500} {
+		if authenticationError(grokStatus(status)) {
+			t.Fatalf("a %d status with 401 only in its prose was classified as an authentication failure", status)
+		}
+	}
 	if authenticationError([]byte(`{"result":{"message":"authentication_failed"}}`)) {
 		t.Fatal("successful result text was classified as an authentication error")
 	}
@@ -1349,6 +1361,44 @@ func TestACPControlAccountSelectorOmitsCredentialThatNeedsRelogin(t *testing.T) 
 	encoded, _ := json.Marshal(c.coopOptions())
 	if bytes.Contains(encoded, []byte("personal_backup")) {
 		t.Fatalf("account selector advertised known-dead credential: %s", encoded)
+	}
+}
+
+// A Grok session whose login the service rejects gets the same credential policy as any provider's
+// authentication failure: Auto moves to the next signed-in account and resends, and a pinned
+// account is told how to sign in again instead of seeing the client's raw payload.
+func TestACPControlGrokRejectedLoginFollowsTheCredentialPolicy(t *testing.T) {
+	grokControl := func(sel Selection) *Control {
+		dir := t.TempDir()
+		cfg := &config.Config{ConfigDir: dir}
+		for _, p := range []string{"personal", "work"} {
+			signInCred(t, cfg, "grok", p)
+		}
+		c := New(cfg, "grok", "", "", dir, sel, nil, nil, testHost())
+		c.accounts = []string{"personal", "work"}
+		return c
+	}
+	rejected := []byte(`{"jsonrpc":"2.0","id":"p1","error":{"code":-32603,"message":"Internal error","data":{"message":"Auth recovery succeeded but 4 authenticated inference requests were still rejected (401); giving up after 3 retries. Turn ran 8s wall-clock.","http_status":401}}}` + "\n")
+
+	c := grokControl(Selection{})
+	fromEditorPrompt(c, []byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hello"}]}}`+"\n"))
+	out, restart := c.toEditor(rejected)
+	if !restart || bytes.Contains(out, []byte("Auth recovery")) {
+		t.Fatalf("Auto did not move off the rejected Grok login, out=%s restart=%v", out, restart)
+	}
+	if target, _, ok := c.SpawnTarget(); !ok || target.Account() != "work" || !c.resend["S"] {
+		t.Fatalf("after the rejected login: target %+v, resend %v; want work and a resend", target, c.resend)
+	}
+
+	c = grokControl(Selection{Account: "personal"})
+	out, restart = c.toEditor(rejected)
+	var shown struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if restart || json.Unmarshal(out, &shown) != nil || shown.Error.Message != "Sign in to grok@personal on the host: coop login grok@personal" {
+		t.Fatalf("a pinned Grok account was not told how to sign in again, out=%s restart=%v", out, restart)
 	}
 }
 

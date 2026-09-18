@@ -1841,6 +1841,51 @@ func TestConsultWrapperQuarantinesPermanentTargetForRun(t *testing.T) {
 	}
 }
 
+// The pinned Grok client prints a login its service rejected as a structured payload with
+// http_status 401. Retrying that target cannot help, so the consult treats it as the permanent
+// failure a missing login is — straight to the next rung, no retry — while a server error in the
+// same shape is retried once first.
+func TestConsultWrapperSkipsTheRetryWhenGrokRejectsTheLogin(t *testing.T) {
+	for _, tc := range []struct {
+		status    string
+		permanent bool
+	}{{"401", true}, {"500", false}} {
+		t.Run(tc.status, func(t *testing.T) {
+			dir := t.TempDir()
+			wrapper := filepath.Join(dir, "coop-consult")
+			if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			calls := filepath.Join(dir, "calls")
+			for name, body := range map[string]string{
+				"grok":    `echo "grok $*" >>"$CALLS"; printf '%s\n' 'Error: Internal error: {' '  "message": "Auth recovery succeeded but 4 authenticated inference requests were still rejected (401); giving up after 3 retries.",' '  "http_status": ` + tc.status + `' '}' >&2; exit 1`,
+				"gemini":  `echo "gemini $*" >>"$CALLS"; printf '%s\n' '{"type":"message","role":"assistant","content":"FALLBACK_OK"}' '{"type":"result","status":"success","stats":{"input_tokens":2,"output_tokens":1}}'`,
+				"timeout": `shift 3; exec "$@"`,
+			} {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cmd := exec.Command(wrapper, "critic", "--fresh", "question")
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(),
+				"PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir, "CALLS="+calls,
+				"COOP_PEERS=grok gemini", "COOP_CONSULT_CRITIC_TARGETS=grok:bad gemini:good",
+			)
+			out, err := cmd.CombinedOutput()
+			gotCalls, _ := os.ReadFile(calls)
+			attempts, want := strings.Count(string(gotCalls), "grok "), 2
+			if tc.permanent {
+				want = 1
+			}
+			if err != nil || attempts != want || !strings.Contains(string(gotCalls), "gemini ") ||
+				strings.Contains(string(out), "failed permanently") != tc.permanent {
+				t.Fatalf("consult after a Grok %s: err=%v, %d Grok attempts (want %d), permanent=%v:\n%s", tc.status, err, attempts, want, tc.permanent, out)
+			}
+		})
+	}
+}
+
 func TestConsultWrapperValidatesEveryRungBeforeDispatch(t *testing.T) {
 	dir := t.TempDir()
 	wrapper := filepath.Join(dir, "coop-consult")

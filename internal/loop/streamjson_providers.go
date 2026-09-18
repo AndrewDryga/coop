@@ -715,12 +715,15 @@ func (d *grokStreamDecoder) event(raw json.RawMessage) {
 		if strings.Contains(strings.ToLower(ev.Type), "error") {
 			d.failed = true
 			d.passthrough(raw)
-			if grokCreditsExhausted(ev.Message) {
-				// The client's own HTTP status, never the server's prose: said once in the words the
-				// loop's classifier already rotates on, as a plain CLI's limit is. A 429 has no status
-				// to read — the client prints only the server's text, which the classifier reads when
-				// it says "too many requests".
+			// The client's own HTTP status, never the server's prose, said once in the words the
+			// loop's classifier already acts on, as a plain CLI's limit or login failure is. A 429 has
+			// no status to read — the client prints only the server's text, which the classifier reads
+			// when it says "too many requests".
+			switch grokErrorStatus(ev.Message) {
+			case 402: // "run out of credits"
 				d.toDiagnostic("rate limit exceeded")
+			case 401: // the service rejected a login the client could still refresh
+				d.toDiagnostic("authentication required")
 			}
 			return
 		}
@@ -811,25 +814,25 @@ func (d *grokStreamDecoder) toolCallUpdate(ev *grokStreamEvent) {
 	}
 }
 
-// grokCreditsExhausted reports whether a Grok error event is the pinned client's structured payload
-// for a 402, its "run out of credits": the client wraps it as "Internal error: {…, "http_status":
-// 402}", taking the status from the HTTP response.
-func grokCreditsExhausted(message json.RawMessage) bool {
+// grokErrorStatus is the HTTP status in a Grok error event's structured payload, or 0 when it has
+// none. The pinned client wraps a failed request as "Internal error: {…, "http_status": N}", taking
+// N from the HTTP response.
+func grokErrorStatus(message json.RawMessage) int {
 	var text string
 	if json.Unmarshal(message, &text) != nil {
-		return false
+		return 0
 	}
 	start := strings.IndexByte(text, '{')
 	if start < 0 {
-		return false
+		return 0
 	}
 	var payload struct {
 		HTTPStatus int `json:"http_status"`
 	}
 	if json.Unmarshal([]byte(text[start:]), &payload) != nil {
-		return false
+		return 0
 	}
-	return payload.HTTPStatus == 402
+	return payload.HTTPStatus
 }
 
 // grokToolInput is the part of a tool's rawInput a progress line can use. The pinned client names a

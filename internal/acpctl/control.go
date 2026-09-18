@@ -1330,7 +1330,10 @@ func authenticationError(line []byte) bool {
 	var h struct {
 		Error any `json:"error"`
 	}
-	if json.Unmarshal(line, &h) != nil || h.Error == nil {
+	// Numbers decode as json.Number, so a status an adapter reports as a number is read like text.
+	decoder := json.NewDecoder(bytes.NewReader(line))
+	decoder.UseNumber()
+	if decoder.Decode(&h) != nil || h.Error == nil {
 		return false
 	}
 	foundExact, foundMessage := false, false
@@ -1340,6 +1343,10 @@ func authenticationError(line []byte) bool {
 		case "reason", "errorkind", "type", "code":
 			foundExact = foundExact || compactValue == "authrequired" || compactValue == "authenticationrequired" ||
 				compactValue == "authenticationfailed" || compactValue == "notauthenticated"
+		case "httpstatus":
+			// The HTTP status the provider's service answered with, as an adapter reports it (the
+			// pinned Grok client's data.http_status): a 401 is a login the service rejected.
+			foundExact = foundExact || compactValue == "401"
 		case "message":
 			foundMessage = foundMessage || authenticationRequired(value)
 		}

@@ -3,7 +3,7 @@ name: loop-rotation-advance-triggers
 description: the loop rotation advances on rate limits (time-keyed, self-healing) and auth failures (sticky for the run); known-invalid credentials never become rungs
 subsystem: loop
 sources: [internal/ladder/ladder.go, internal/ladder/limit.go, internal/ladder/acp.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/loop/streamjson_providers.go, internal/acpctl/control.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/grok.go, internal/agent/ratelimit.go, internal/box/auth.go, internal/box/profiles.go]
-updated: 2026-09-18
+updated: 2026-09-19
 ---
 A loop's rotation starts from credential presence and then applies
 `box.ProfileCredentialReady`. A native marker that its adapter classifies as
@@ -50,9 +50,13 @@ terminal limit, Grok's 402). Role wrappers grep `wrapperLimitMarkers` through
 ("run out of credits") is a structured `http_status: 402` on every surface, the one marker Grok
 declares; a 429 is ACP error -32003 whose message `Rate limited` the shared prose check reads, but
 headless it is only the server's own text — it rotates while that text says "too many requests", and
-nothing structured backs it; a 401 carries `http_status: 401` and is an auth failure, never a limit.
+nothing structured backs it. A 401 carries `http_status: 401` and is an auth failure, never a limit:
+Grok's prose `AuthSignals` never match its "Auth recovery succeeded but … rejected (401)" payload, so
+the loop decoder says `authentication required`, the ACP auth check reads a structured
+`http_status` 401, and the consult's permanent-failure check greps the stderr form.
 
 ## Changelog
+- 2026-09-19 — Grok's structured 401 now reaches the auth trigger on the loop, ACP and consult paths
 - 2026-09-18 — added the per-surface limit evidence and the pinned Grok client's captured quota
   shapes; Grok declares its 402 ACP signal, and its loop decoder and role wrappers rotate on it
 - 2026-08-17 — changed rung membership to exclude adapter-inspectable re-login credentials before

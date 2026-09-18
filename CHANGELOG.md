@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A Grok login that the service rejects is now handled like any other dead login. Grok reports it as
+  an "Internal error" carrying the service's 401, which Coop treated as an ordinary failure: a loop
+  retried the dead login until its retries ran out, and an editor session showed the raw error. A
+  loop now moves on to your next signed-in account or provider and names the `coop login` to run
+  (stopping with it when nothing else can sign in), an editor session on the automatic account
+  switches accounts and resends your message (or, on a chosen account, tells you the exact
+  `coop login` command), and a consultation goes straight to its fallback instead of retrying.
+
 - A Grok account that runs out of credits now hands the work to the next account or provider,
   as a rate limit does. Grok reports it as a "402 Payment Required" error, which Coop treated as an
   ordinary failure: a loop spent its retries on the exhausted account, a helper role stopped, and an

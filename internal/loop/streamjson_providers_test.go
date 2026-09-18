@@ -1181,23 +1181,29 @@ func TestGrokStreamDecoderReadsExitCodesOnlyForCommands(t *testing.T) {
 	}
 }
 
-// A Grok loop attempt that ends on one of the pinned client's quota errors rotates like any
-// provider's limit. Its 402 is read from the client's own http_status, never the server's prose; an
-// authentication failure and a server error are not limits. The 402 and 429 events are the client's
-// streaming-json verbatim, captured by replaying each status at it.
-func TestGrokQuotaErrorsClassifyAsRateLimits(t *testing.T) {
+// A Grok loop attempt that ends on one of the pinned client's structured errors is classified by the
+// client's own http_status, never the server's prose: a 402 ("run out of credits") rotates like any
+// limit, and a 401 — a login the service rejected — is the authentication failure the rotation
+// treats as sticky. A server error stays an ordinary failure. The 402 and 429 events are the client's
+// output verbatim, captured by replaying each status at it; the others are built in the same shape.
+func TestGrokErrorStatusesClassifyTheIteration(t *testing.T) {
 	payload := func(status int, message string) string {
-		return fmt.Sprintf(`{"type":"error","message":"Internal error: {\n  \"message\": %q,\n  \"http_status\": %d\n}"}`, message, status) + "\n"
+		inner, _ := json.Marshal(message)
+		event, _ := json.Marshal(struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		}{"error", fmt.Sprintf("Internal error: {\n  \"message\": %s,\n  \"http_status\": %d\n}", inner, status)})
+		return string(event) + "\n"
 	}
 	for _, c := range []struct {
-		name, event string
-		limited     bool
+		name, event, want string
 	}{
-		{"402 out of credits", `{"type":"error","message":"Internal error: {\n  \"message\": \"API error (status 402 Payment Required): insufficient_credits: You have run out of credits.\",\n  \"http_status\": 402\n}"}` + "\n", true},
-		{"429 rate limited", `{"type":"error","message":"rate_limit_exceeded: Too many requests."}` + "\n", true},
-		{"401 authentication", payload(401, "Auth recovery succeeded but 4 authenticated inference requests were still rejected (401); giving up after 3 retries."), false},
-		{"500 server error", payload(500, "API error (status 500 Internal Server Error): internal_error: boom."), false},
-		{"402 in the server's prose only", `{"type":"error","message":"Internal error: payment of 402 credits failed"}` + "\n", false},
+		{"402 out of credits", `{"type":"error","message":"Internal error: {\n  \"message\": \"API error (status 402 Payment Required): insufficient_credits: You have run out of credits.\",\n  \"http_status\": 402\n}"}` + "\n", "rate_limit"},
+		{"429 rate limited", `{"type":"error","message":"rate_limit_exceeded: Too many requests."}` + "\n", "rate_limit"},
+		{"401 login rejected", payload(401, "Auth recovery succeeded but 4 authenticated inference requests were still rejected (401); giving up after 3 retries. Turn ran 8s wall-clock."), "authentication"},
+		{"500 server error", payload(500, "API error (status 500 Internal Server Error): internal_error: boom."), "process_failure"},
+		{"402 in the server's prose only", `{"type":"error","message":"Internal error: payment of 402 credits failed"}` + "\n", "process_failure"},
+		{"401 in the server's prose only", `{"type":"error","message":"Internal error: upstream returned 401"}` + "\n", "process_failure"},
 	} {
 		var out, tail, diagnostic bytes.Buffer
 		d := newGrokStreamDecoder(&out, &tail, "grok", "", "", "m")
@@ -1206,8 +1212,8 @@ func TestGrokQuotaErrorsClassifyAsRateLimits(t *testing.T) {
 			t.Fatal(err)
 		}
 		d.flush()
-		if got := classifyIteration("grok", 1, nil, diagnostic.String(), d.streamOutcome(), time.Now()); (got.outcome == "rate_limit") != c.limited {
-			t.Errorf("%s: classification = %+v, want a rate limit: %v (diagnostic %q)", c.name, got, c.limited, diagnostic.String())
+		if got := classifyIteration("grok", 1, nil, diagnostic.String(), d.streamOutcome(), time.Now()); got.outcome != c.want {
+			t.Errorf("%s: classification = %+v, want %s (diagnostic %q)", c.name, got, c.want, diagnostic.String())
 		}
 	}
 }
