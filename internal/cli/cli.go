@@ -51,6 +51,7 @@ type app struct {
 	loginProvider        string                                       // presentation context for the shared sign-in flow, including provider-first aliases
 	sweptRepos           map[string]bool                              // repos already swept for orphaned boxes this process (see sweepOrphanBoxes)
 	sweptNetworks        bool                                         // orphaned coop networks already swept this process (they are not per repo)
+	settledNetworkRuns   bool                                         // interrupted filtered runs already settled this process (see settleInterruptedFilteredRuns)
 	preset               *preset.Preset                               // the run's loaded preset (from the who-runs slot), carried into each RunSpec (see applyPreset)
 	network              networkFlags                                 // this launch's --egress/--allow-domain/--egress-rules, resolved by box.AdmitNetwork
 	mode                 agents.ExecutionMode                         // this launch's --readonly/--bare; "" (normal) is every launch that takes neither

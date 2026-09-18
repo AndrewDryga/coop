@@ -28,6 +28,11 @@ type Host struct {
 	// usage telemetry (internal/cli/telemetry.go). Both come from one read, because every caller
 	// that wants one is a display site that already has the workspace.
 	ForkCost func(ws string) (usd float64, summary string)
+
+	// SettleFilteredRuns settles the filtered runs an earlier, killed coop left behind, on the
+	// runtime a filtered gate is about to use. A gate's gateway is a launch like any other, so it
+	// asks first, exactly as internal/cli's runBox does; nil settles nothing.
+	SettleFilteredRuns func(rt runtime.Runtime)
 }
 
 func (h Host) ensureRuntime() (runtime.Runtime, error) {
@@ -35,6 +40,12 @@ func (h Host) ensureRuntime() (runtime.Runtime, error) {
 		return runtime.Runtime{}, nil
 	}
 	return h.EnsureRuntime()
+}
+
+func (h Host) settleFilteredRuns(rt runtime.Runtime) {
+	if h.SettleFilteredRuns != nil {
+		h.SettleFilteredRuns(rt)
+	}
 }
 
 func (h Host) forkCost(ws string) (float64, string) {

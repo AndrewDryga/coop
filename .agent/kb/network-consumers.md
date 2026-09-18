@@ -2,8 +2,8 @@
 name: network-consumers
 description: how the loop, direct/ACP runs and remote sessions consume one frozen network capture, and which surface reads which evidence
 subsystem: networking
-sources: [internal/networkreport/report.go, internal/box/run.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/cli/session_policies_view.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/session/schema.go, internal/workerproto/protocol.go]
-updated: 2026-09-14
+sources: [internal/networkreport/report.go, internal/box/run.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/fork_cmd.go, internal/cli/boxsweep.go, internal/forkctl/merge.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/cli/session_policies_view.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/session/schema.go, internal/workerproto/protocol.go]
+updated: 2026-09-18
 ---
 
 Admission happens ONCE per unit of work and the resulting `*box.CapturedEgress` is passed down; no
@@ -67,7 +67,8 @@ config edit landing mid-session can only produce a visible denial. Then:
   skipped is exactly where a mismatching run would hide.
 - A filtered child owns a gateway, its volumes and its receipt, so it gets a 30 s stop window
   instead of the ordinary 250 ms (`sessionsvc/acp.go:48`). Killing it fast leaves two running
-  containers and a receipt nothing can finalize.
+  containers and an open receipt until recovery settles them — the next filtered launch does,
+  child or not, through `runBox` (`cli/boxsweep.go`).
 
 The API adds four reads under `GET /v1/sessions/{id}/network`: the live summary, `/connections`
 (the newest run's bounded rows), `/explanations/{event}` (one retained refusal) and `/receipt`
@@ -142,6 +143,10 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-09-18 — direct, ACP and fork ACP launches go through `runBox`, and fork and session review
+  gates call `forkctl.Host.SettleFilteredRuns`, so interrupted filtered runs are settled before a
+  filtered box starts; the stop-window row above no longer claims a killed child's receipt cannot
+  be finalized.
 - 2026-09-14 — interactive forks, local fork ACP and fork review/merge gates now use the shared
   admission path; the box boundary rechecks project policy before requiring a capture.
 - 2026-09-11 — the CLI design landed: `explain` became `blocked`, `export --include-destinations`

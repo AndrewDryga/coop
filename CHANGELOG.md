@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A filtered run whose coop was killed partway through no longer leaves its gateway behind. Its
+  guard and controller containers and both volumes carry only network labels, so the box sweep
+  never saw them, and only `coop net recover`, `coop net inspect` or a loop, fork or build start
+  settled them — a run killed mid-teardown and followed by ordinary launches kept them
+  indefinitely. Every filtered launch (`coop <agent>`, `coop run`, an editor or session box, a
+  fork's review or merge gate) now settles such runs before its own box starts, removing exactly
+  what each recorded and only once its coop process is provably gone. Open and offline launches
+  skip the check and start exactly as before.
+
 - A reboot no longer strands forks and session workspaces. A fork's generation and a session's
   discard plan recorded their directory's device number, which a volume is given when it is
   mounted, so after a reboot every fork refused to open ("fork workspace no longer matches its

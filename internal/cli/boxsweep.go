@@ -6,6 +6,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/loop"
+	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -32,9 +33,13 @@ func (a *app) sweepOrphanBoxes(repo string) {
 	if result.RemovedNetworks > 0 {
 		ui.Note("Removed %s", ui.Count(result.RemovedNetworks, "unused Coop network"))
 	}
-	if result.RecoveredFilteredRuns > 0 {
-		ui.Detail("recovered %s whose coop process is gone (coop net runs)",
-			ui.Count(result.RecoveredFilteredRuns, "interrupted filtered run"))
+	noteSettledFilteredRuns(result.RecoveredFilteredRuns)
+}
+
+// noteSettledFilteredRuns is the line a launch prints for what settleInterruptedFilteredRuns settled.
+func noteSettledFilteredRuns(settled int) {
+	if settled > 0 {
+		ui.Detail("recovered %s whose coop process is gone (coop net runs)", ui.Count(settled, "interrupted filtered run"))
 	}
 }
 
@@ -60,19 +65,55 @@ func (a *app) collectOrphanBoxes(repo string) loop.Preparation {
 	}
 	a.sweptNetworks = true
 	result.RemovedNetworks, _ = box.ReapOrphanNetworks(ctx, a.rt)
-	// A filtered run's gateway is exact-owned by the process that launched it,
-	// and the ordinary sweep above cannot see it: those containers carry
-	// coop.network.* labels, not coop=box. Settling them here means a crashed
-	// supervisor's gateway is reclaimed at the next coop start, not only when
-	// somebody runs `coop net recover`.
-	if results, err := box.RecoverNetworkRuns(ctx, a.rt, ""); err == nil {
-		recovered := 0
-		for _, result := range results {
-			if result.Skipped == "" && len(result.Pending) == 0 && len(result.Failures) == 0 {
-				recovered++
-			}
-		}
-		result.RecoveredFilteredRuns = recovered
-	}
+	result.RecoveredFilteredRuns = a.settleInterruptedFilteredRuns()
 	return result
+}
+
+// runBox is box.Run for a host launch that may be filtered. A filtered one first settles what earlier
+// killed runs left behind — before its own gateway exists, so it can never touch it — and notes what
+// it settled unless the launch runs quiet. The loop settles once at its start, through the sweep.
+func (a *app) runBox(spec box.RunSpec) (int, error) {
+	if spec.CapturedEgress != nil {
+		if settled := a.settleInterruptedFilteredRuns(); !spec.Quiet {
+			noteSettledFilteredRuns(settled)
+		}
+	}
+	return box.Run(a.cfg, a.rt, spec)
+}
+
+// recoverNetworkRuns is box.RecoverNetworkRuns; a variable so tests can see which launches settle.
+var recoverNetworkRuns = box.RecoverNetworkRuns
+
+// settleInterruptedFilteredRuns finishes the cleanup of filtered runs whose coop died before its own
+// teardown did — a SIGKILL, a crash, a supervisor's escalation. Their gateway containers and volumes
+// carry coop.network.* labels, so the box sweep never sees them; recovery removes exactly what each
+// run recorded, and only once its supervisor is provably gone. Loop, fork and build reach it through
+// the sweep; a direct, editor or session launch through runBox and a fork's gate through forkctl's
+// SettleFilteredRuns, and only when filtered: finding the pending runs reads every retained run
+// record (0.1s at five hundred), which a filtered launch's gateway dwarfs and an open or offline
+// launch must not pay. Once per process; it returns how many runs it settled.
+func (a *app) settleInterruptedFilteredRuns() int {
+	if a.settledNetworkRuns {
+		return 0
+	}
+	a.settledNetworkRuns = true
+	return settleNetworkRuns(a.rt)
+}
+
+// settleNetworkRuns is one bounded recovery pass over every pending run, counting the runs it
+// settled whole. A failure is silent: the run stays pending and the next filtered launch asks again.
+func settleNetworkRuns(rt runtime.Runtime) int {
+	ctx, cancel := context.WithTimeout(context.Background(), orphanSweepTimeout)
+	defer cancel()
+	results, err := recoverNetworkRuns(ctx, rt, "")
+	if err != nil {
+		return 0
+	}
+	settled := 0
+	for _, result := range results {
+		if result.Skipped == "" && len(result.Pending) == 0 && len(result.Failures) == 0 {
+			settled++
+		}
+	}
+	return settled
 }

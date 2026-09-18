@@ -134,11 +134,17 @@ func printForkHeader(action, name, ws string, rows []string) {
 }
 
 // forkctl binds the fork control plane to this run: the config, the runtime as detected so far
-// (the zero value is the honest "not yet"), plus runtime detection and loop cost telemetry.
+// (the zero value is the honest "not yet"), plus what forkHost lends it.
 // One Control per command, so a verb that detects the runtime and a later step that tears a box
 // down with it see the same one.
 func (a *app) forkctl() *forkctl.Control {
-	return forkctl.New(a.cfg, a.rt, forkctl.Host{
+	return forkctl.New(a.cfg, a.rt, a.forkHost())
+}
+
+// forkHost is what this process lends the fork control plane: runtime detection, loop cost
+// telemetry, and the settle a filtered gate runs before its own box.
+func (a *app) forkHost() forkctl.Host {
+	return forkctl.Host{
 		EnsureRuntime: func() (runtime.Runtime, error) {
 			if err := a.ensureRuntime(); err != nil {
 				return runtime.Runtime{}, err
@@ -146,7 +152,9 @@ func (a *app) forkctl() *forkctl.Control {
 			return a.rt, nil
 		},
 		ForkCost: loop.WorkspaceCost,
-	})
+		// The control plane's runtime is this app's (EnsureRuntime above), so a.rt is the one it passes.
+		SettleFilteredRuns: func(runtime.Runtime) { noteSettledFilteredRuns(a.settleInterruptedFilteredRuns()) },
+	}
 }
 
 // cmdFork is the `coop fork` family. Bare `coop fork` prints the family help; a
@@ -758,7 +766,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 			return 1, err
 		}
 	}
-	code, err := box.Run(a.cfg, a.rt, spec)
+	code, err := a.runBox(spec)
 	if err == nil {
 		var rememberErr error
 		if captureNewSession {
@@ -1034,7 +1042,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		defer stop()
 		spec.Ctx = ctx
 	}
-	return box.Run(a.cfg, a.rt, spec)
+	return a.runBox(spec)
 }
 
 func readOnlySessionOutputMountArgs(workspace string) ([]string, error) {

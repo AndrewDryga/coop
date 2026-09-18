@@ -301,7 +301,8 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// tear it down by id even before its labels are queryable (see cmdACPSupervise's stop()).
 	// A FILTERED child has no `docker run` to write one: its agent container is created by the
 	// gateway engine, which records the exact id itself and refuses every unqualified runtime
-	// argument. Its teardown is the cancellation below, and `coop net recover` after a kill.
+	// argument. Its teardown is the cancellation below; after a kill, the next filtered launch
+	// settles it (runBox).
 	if cid := os.Getenv("COOP_ACP_CIDFILE"); cid != "" && os.Getenv(box.SessionNetworkCaptureEnv) == "" {
 		extra = append(extra, "--cidfile", cid)
 	}
@@ -353,7 +354,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		defer stop()
 		spec.Ctx = ctx
 	}
-	return box.Run(a.cfg, a.rt, spec)
+	return a.runBox(spec)
 }
 
 // acpBare serves the target's ACP adapter under the bare profile: the shared base image, no

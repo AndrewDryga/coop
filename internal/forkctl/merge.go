@@ -195,6 +195,9 @@ func (c *Control) runGateMode(gateRepo, treeDir, img string, review bool) (bool,
 	}
 	defer capture.Close()
 	spec.CapturedEgress = capture
+	if capture != nil {
+		c.host.settleFilteredRuns(c.rt)
+	}
 	code, err := box.Run(c.cfg, c.rt, spec)
 	if err != nil {
 		return false, err

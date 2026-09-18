@@ -305,8 +305,9 @@ instead of removing another project's.
 A filtered run's gateway containers, volumes and receipt are owned by the coop process that started
 it. If that process is killed (`SIGKILL`, a crash, a reboot) the run stays `cleanup pending` until
 coop settles it — which it does on its own: `coop net inspect` of that run makes one bounded
-recovery attempt before it says anything about cleanup, and every loop or fork start sweeps
-pending runs. A successful recovery is silent. Only something external — Docker stopped, a
+recovery attempt before it says anything about cleanup, every loop, fork or build start sweeps
+pending runs, and so does every filtered launch before its own box starts. A successful recovery
+needs nothing from you. Only something external — Docker stopped, a
 different daemon at the recorded endpoint, a removal that failed — is reported, as
 `⚠ Cleanup incomplete — <the blocker>` with what to do about it; coop retries itself.
 

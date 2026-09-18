@@ -2,8 +2,8 @@
 name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
-sources: [internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/gatewayimage/image.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go]
-updated: 2026-09-13
+sources: [internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/gatewayimage/image.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/forkctl/host.go]
+updated: 2026-09-18
 ---
 
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
@@ -112,9 +112,14 @@ then seal the receipt. Every exit runs the deferred containment, which removes t
 attempts both named volumes once nothing can still mount them (`filtered_cleanup.go:160`) — an
 early return on lost host storage used to leak a volume pair per interrupted run. Missing terminal
 evidence makes the receipt partial; it never blocks containment. When the supervising PROCESS dies
-instead, nothing local can finish it: `box.RecoverNetworkRuns` (`box/network_recover.go:50`) is the
-only path that settles such a run, and it runs from `coop net recover` and from the ordinary orphan
-sweep at the next start. `coop net setup` drives its ONE smoke through this same engine behind a host-only
+instead, nothing local can finish it: `box.RecoverNetworkRuns` (`box/network_recover.go:64`) is the
+only path that settles such a run. It runs from `coop net recover`, from the orphan sweep at a loop,
+fork or build start, and before every other filtered host launch — `runBox` in `cli/boxsweep.go`,
+and a fork or session review gate through `forkctl.Host.SettleFilteredRuns` — never before an open
+or offline one, because finding the pending runs reads every retained record.
+The guard and controller carry only `coop.network.*` labels (the agent also carries `coop=box`), so
+the box sweep alone never reclaimed them: a run killed mid-teardown, followed only by direct
+launches, kept both containers and both volumes until 2026-09-18. `coop net setup` drives its ONE smoke through this same engine behind a host-only
 `networkSmokeLaunch` permit (`box/network_setup.go:225`) — the seam exists so the preflight proves
 the exact path a workload gets, and it can never appear on a `RunSpec` a caller builds.
 
@@ -126,6 +131,11 @@ checkout, so a stale tar is a red gate, and a filtered launch only ever runs the
 [[restricted-networking]] qualification names.
 
 ## Changelog
+- 2026-09-18 — every filtered host launch settles interrupted runs before its own gateway starts
+  (`runBox`; fork and session gates through `forkctl.Host.SettleFilteredRuns`), since a
+  mid-teardown kill left the guard, controller and both volumes to launches that never swept. Proved live by `TestKilledFilteredRunIsSettledByTheNextLaunch`
+  (`networkruntimee2e`); re-verified the cleanup paragraph against `filtered_cleanup.go` and
+  `network_recover.go`.
 - 2026-09-13 — filtered Compose service closures now use an internal network and the existing guard's
   bounded CONNECT path for approved TLS; startup waits for gateway readiness, and direct internet
   remains blocked independently of proxy variables.

@@ -474,6 +474,21 @@ func sessionHost() sessionsvc.Host {
 	}
 }
 
+// sessionReviewGateHost is the fork host a daemon's review gate runs on: the service's runtime,
+// detected on demand, and a settle every filtered gate repeats — quietly, and never answered once
+// for the process, because the daemon outlives any single answer.
+func sessionReviewGateHost(cfg *config.Config, rt runtime.Runtime) forkctl.Host {
+	return forkctl.Host{
+		EnsureRuntime: func() (runtime.Runtime, error) {
+			if rt.Name != "" {
+				return rt, nil
+			}
+			return runtime.Detect(cfg.RuntimeName)
+		},
+		SettleFilteredRuns: func(gateRuntime runtime.Runtime) { settleNetworkRuns(gateRuntime) },
+	}
+}
+
 // defaultSessionReviewGate runs a review candidate through THIS repo's merge gate — the same image
 // and the same pass/fail rule `coop fork merge` uses, so a session's verdict can't drift from the
 // one a human gets. The config and runtime are the service's, resolved by the time it asks; a
@@ -483,12 +498,7 @@ func defaultSessionReviewGate(cfg *config.Config, rt runtime.Runtime) sessionsvc
 		if err := ctx.Err(); err != nil {
 			return sessionsvc.ReviewGateResult{}, err
 		}
-		fc := forkctl.New(cfg, rt, forkctl.Host{EnsureRuntime: func() (runtime.Runtime, error) {
-			if rt.Name != "" {
-				return rt, nil
-			}
-			return runtime.Detect(cfg.RuntimeName)
-		}})
+		fc := forkctl.New(cfg, rt, sessionReviewGateHost(cfg, rt))
 		image, err := fc.MergeGate(gateRepo)
 		if err != nil {
 			return sessionsvc.ReviewGateResult{Configured: true, StartupError: sessionsvc.SanitizeReviewText(err.Error(), sessionsvc.MaxReviewErrorBytes)}, nil

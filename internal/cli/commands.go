@@ -222,7 +222,7 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 			return 1, err
 		}
 	}
-	code, err := box.Run(a.cfg, a.rt, spec)
+	code, err := a.runBox(spec)
 	// An interactive/run box makes unsigned commits; sign what THIS session produced on exit so a
 	// protected remote accepts them. Best-effort, session-scoped, skipped for a dirty tree.
 	if !spec.Login {
