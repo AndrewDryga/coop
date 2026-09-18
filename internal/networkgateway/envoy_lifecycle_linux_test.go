@@ -118,7 +118,9 @@ func TestPinnedEnvoyLifecycleAndAsymmetricByteAccounting(t *testing.T) {
 		if err := conn.SetDeadline(time.Now().Add(wait.Deadline)); err != nil {
 			t.Fatal(err)
 		}
-		header, err := ProxyHeader(netip.MustParseAddr("127.0.0.1"), flow)
+		// Envoy dials the address:port the header names, so it must be this fixture server's own.
+		upstream := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), uint16(listener.Addr().(*net.TCPAddr).Port))
+		header, err := ProxyHeader(upstream, flow)
 		if err != nil || writeAll(conn, header) != nil {
 			t.Fatal("private fixture header failed")
 		}

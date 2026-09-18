@@ -26,15 +26,19 @@ test: ## Run unit tests (no container runtime needed)
 cover: ## Run unit tests with a coverage summary
 	@go test -cover ./...
 
-lint: ## gofmt check + go vet + Staticcheck at the pinned version
+lint: ## gofmt check + go vet + Staticcheck at the pinned version, for Linux and macOS alike
 	@gofmt -l . | (! grep .) || { echo "gofmt: files need formatting (run: gofmt -w .)"; exit 1; }
-	@go vet ./...
+# Coop ships Linux and macOS and CI runs Linux, while this gate often runs on a Mac, where a
+# *_linux.go file never compiles: a stale Linux-only test kept CI red for a week while every local
+# gate passed. So each check below covers both platforms, whichever host runs it — with cgo off,
+# which the tree never uses, so the other platform never needs a C toolchain.
+	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet ./... || exit 1; done
 # The e2e/live files sit behind build tags, so the pass above never compiles them — a lost cancel
 # lived there unseen. Every tag in the tree in one pass; the untagged pass still covers !cooplivetest.
-	@go vet -tags acpe2e,boxruntimee2e,cooplivetest,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e ./...
+	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet -tags acpe2e,boxruntimee2e,cooplivetest,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e ./... || exit 1; done
 	@command -v staticcheck >/dev/null 2>&1 || { echo "staticcheck is not installed — run: go install honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION)"; exit 1; }
 	@staticcheck -version | grep -qF "($(STATICCHECK_VERSION))" || { echo "$$(staticcheck -version) is not the pinned $(STATICCHECK_VERSION) — run: go install honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION)"; exit 1; }
-	@staticcheck ./...
+	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os staticcheck ./... || exit 1; done
 
 # Plumbing for CI's install step, which reads the pin from here instead of repeating it.
 staticcheck-version:
