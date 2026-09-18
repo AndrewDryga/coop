@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A filtered Grok run starts again whenever you are signed in. It used to require the stored
+  access token to last at least another hour, as if the box could not renew it; but a filtered box
+  mounts your Grok login and the pinned client refreshes it through `auth.x.ai`, like Claude and
+  Codex do. Grok tokens currently live six hours and nothing else renews them, so
+  `coop grok --egress filtered` failed with "no portable credential for restricted networking" in
+  each token's last hour and every time after it expired — and a filtered editor session left Grok
+  out of its provider menu for the same reason. A credential with no refresh token, such as a
+  session's access-only copy, still has to last the hour by itself.
+
 - A filtered run whose coop was killed partway through no longer leaves its gateway behind. Its
   guard and controller containers and both volumes carry only network labels, so the box sweep
   never saw them, and only `coop net recover`, `coop net inspect` or a loop, fork or build start

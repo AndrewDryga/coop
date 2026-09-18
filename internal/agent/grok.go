@@ -362,13 +362,19 @@ func (a grokAgent) ActiveCredentialEnvKeys(_ string, markerPresent bool) []strin
 	return a.CredentialEnvKeys()
 }
 
-func (grokAgent) StoredCredentialStatus(profileDir string, now time.Time) StoredCredentialStatus {
+// readGrokCredentials decodes the profile's stored login; false means there is none usable.
+func readGrokCredentials(profileDir string) (map[string]grokSourceCredential, bool) {
 	data, err := os.ReadFile(filepath.Join(profileDir, "auth.json"))
 	if err != nil {
-		return StoredCredentialReauthRequired
+		return nil, false
 	}
 	credentials, err := decodeGrokSourceCredential(data)
-	if err != nil {
+	return credentials, err == nil
+}
+
+func (grokAgent) StoredCredentialStatus(profileDir string, now time.Time) StoredCredentialStatus {
+	credentials, ok := readGrokCredentials(profileDir)
+	if !ok {
 		return StoredCredentialReauthRequired
 	}
 	for _, credential := range credentials {
@@ -381,12 +387,8 @@ func (grokAgent) StoredCredentialStatus(profileDir string, now time.Time) Stored
 }
 
 func grokCredentialPortability(profileDir string, deadline time.Time) CredentialPortability {
-	data, err := os.ReadFile(filepath.Join(profileDir, "auth.json"))
-	if err != nil {
-		return CredentialRefreshRequired
-	}
-	credentials, err := decodeGrokAccessCredential(data)
-	if err != nil {
+	credentials, ok := readGrokCredentials(profileDir)
+	if !ok {
 		return CredentialRefreshRequired
 	}
 	for _, credential := range credentials {
@@ -535,11 +537,27 @@ func (a grokAgent) NetworkBundle(input NetworkBundleInput) (egress.Bundle, error
 		[]string{"https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.25-linux-aarch64.gz"})
 }
 
-func (grokAgent) NetworkAuthSelection(_ string, markerPresent bool) (NetworkAuthSelection, error) {
+// NetworkAuthSelection asks for a long-lived access token only where nothing can renew one. A box
+// that mounts this profile renews its own: the pinned client refreshes through auth.x.ai, which the
+// bundle allows, and writes the new pair back to the mounted file. A credential without a refresh
+// token — a session's access-only projection — has to outlive the horizon by itself.
+func (grokAgent) NetworkAuthSelection(profileDir string, markerPresent bool) (NetworkAuthSelection, error) {
 	if !markerPresent {
 		return NetworkAuthSelection{}, fmt.Errorf("grok API-key authentication is unsupported for restricted networking")
 	}
-	return NetworkAuthSelection{AuthMode: "access-file", RequirePortable: true}, nil
+	return NetworkAuthSelection{AuthMode: "access-file", RequirePortable: !grokCanRefresh(profileDir)}, nil
+}
+
+// grokCanRefresh reports whether the stored login carries refresh authority — its presence, never
+// its value.
+func grokCanRefresh(profileDir string) bool {
+	credentials, _ := readGrokCredentials(profileDir)
+	for _, credential := range credentials {
+		if credential.RefreshToken != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (grokAgent) ModelCatalog() ModelCatalogSpec {

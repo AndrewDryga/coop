@@ -1172,7 +1172,7 @@ lines up: a thread you started with `coop loop` is there to resume in Zed.
 coop's proxy sits between the editor and the box and owns the session:
 
 - Filtered networking offers only compatible providers and complete presets. Claude and Codex
-  with their supported provider-native credentials, plus Grok with a portable access file, support
+  with their supported provider-native credentials, plus Grok with its OAuth login, support
   filtered ACP. Gemini API keys are brokered only for direct CLI/loop launches; Gemini OAuth and
   Vertex AI credentials require open networking. Switching providers
   never widens the session's network access, and explicitly requesting an unsupported provider

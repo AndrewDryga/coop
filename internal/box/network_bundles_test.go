@@ -154,28 +154,43 @@ func TestNetworkTargetBundleBindsAuthenticationAndRefusesAPIKeysForACP(t *testin
 	}
 }
 
-func TestNetworkTargetBundleRequiresPortableGrokAccessFile(t *testing.T) {
+// A filtered box mounts the Grok profile itself, and the pinned client renews its own access token
+// through auth.x.ai, which the bundle allows — so a login that carries a refresh token starts however
+// little its access token has left, even none. Only a credential with no refresh token, like a
+// session's access-only projection, has to outlive the restricted horizon by itself.
+func TestNetworkTargetBundleRequiresALastingGrokTokenOnlyWithoutRefresh(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	dir := cfg.AgentProfileDir("grok", "personal")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	write := func(expiry time.Time) {
+	write := func(expiry time.Time, refresh string) {
 		t.Helper()
-		body := fmt.Sprintf(`{"https://auth.x.ai::client":{"key":"access","expires_at":%q,"auth_mode":"oauth","oidc_issuer":"https://auth.x.ai","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team","create_time":"2026-09-13T00:00:00Z"}}`, expiry.UTC().Format(time.RFC3339Nano))
+		body := fmt.Sprintf(`{"https://auth.x.ai::client":{"key":"access","expires_at":%q,"auth_mode":"oauth","oidc_issuer":"https://auth.x.ai","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team","create_time":"2026-09-13T00:00:00Z","refresh_token":%q}}`, expiry.UTC().Format(time.RFC3339Nano), refresh)
 		if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	write(time.Now().Add(2 * time.Hour))
 	target := agents.Target{Provider: "grok", Accounts: []string{"personal"}}
-	bundle, err := NetworkTargetBundle(cfg, target, egress.ClientACP)
-	if err != nil || bundle.AuthMode != "access-file" || len(bundle.Core) != 3 {
-		t.Fatalf("portable Grok access file was not qualified: %+v, %v", bundle, err)
-	}
-	write(time.Now().Add(30 * time.Minute))
-	if _, err := NetworkTargetBundle(cfg, target, egress.ClientACP); err == nil || !strings.Contains(err.Error(), "no portable credential") {
-		t.Fatal("short-lived Grok access file was admitted", err)
+	for _, c := range []struct {
+		name    string
+		expiry  time.Duration
+		refresh string
+		admit   bool
+	}{
+		{"access-only, lasting", 2 * time.Hour, "", true},
+		{"access-only, short-lived", 30 * time.Minute, "", false},
+		{"renewable, short-lived", 30 * time.Minute, "refresh", true},
+		{"renewable, already expired", -time.Hour, "refresh", true},
+	} {
+		write(time.Now().Add(c.expiry), c.refresh)
+		bundle, err := NetworkTargetBundle(cfg, target, egress.ClientACP)
+		if c.admit && (err != nil || bundle.AuthMode != "access-file" || len(bundle.Core) != 3) {
+			t.Errorf("%s Grok login was not qualified: %+v, %v", c.name, bundle, err)
+		}
+		if !c.admit && (err == nil || !strings.Contains(err.Error(), "no portable credential")) {
+			t.Errorf("%s Grok login was admitted: %v", c.name, err)
+		}
 	}
 }
 

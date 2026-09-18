@@ -167,6 +167,22 @@ Traps:
   override, and every alternate API-key variable or unsupported launch shape refuses before the
   runtime. Ordinary OAuth/access-token files keep their existing handling and are not called
   broker-protected; restricted and session projections retain their existing access-only copies.
+- A filtered box renews its own OAuth login: it mounts the provider profile like an open box
+  (`box/run.go`, the `-v` of `cfg.AgentDir`), and every bundle carries the refresh host (Claude
+  `platform.claude.com`, Codex `auth.openai.com`, Grok `auth.x.ai`, whose token endpoint is
+  `/oauth2/token`). So `RequirePortable` — the access token must outlive
+  `RestrictedCredentialHorizon` by itself — applies only where nothing can renew it: Grok asks
+  for it just when its `auth.json` carries no refresh token (`grokCanRefresh`), as a session's
+  access-only projection does. It used to ask always, and Grok access tokens live six hours with
+  no host-side renewal, so a filtered Grok was refused in each token's last hour and forever once
+  it expired. Proved live on 2026-09-18: an expired login refreshed in the box through the gateway.
+  Known gap: a remote session ADMITS on the host profile (refresh token → no horizon) but each turn
+  mounts the access-only projection, whose re-check in the child (`cli/acp_cmd.go`,
+  NetworkProviderBundles) applies the horizon — so a Grok login with under an hour left now fails
+  at the first turn instead of at session creation. Safe (the child checks exactly what it mounts).
+  Closing it takes both a host `Prepare` for Grok and extending the daemon's projection-deadline
+  raise (`sessionsvc/acp.go`, today restricted modes only) to filtered sessions, so the projected
+  token outlives the child's horizon, not just the turn.
 - A selected Compose service and its dependency closure use fixed prepared addresses on an internal
   network. The guard maps accepted proxy peers back to those exact service names. Approved and
   denied external TLS therefore carry `service` through the existing event, receipt, human view,
@@ -177,6 +193,8 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-18 — a filtered Grok login with a refresh token no longer has to outlive the one-hour
+  horizon: the box renews it through `auth.x.ai`; access-only credentials still do.
 - 2026-09-18 — approvals and a run's artifact directory compare the inode, not the device: a reboot
   renumbered every approved project into "replaced" and made post-reboot recovery refuse to clean
   up (`authority.go` `checkDirectory`, `artifact.go` `openPrivateDirectory`).

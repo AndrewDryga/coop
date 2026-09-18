@@ -29,7 +29,10 @@ type NetworkBundleInput struct {
 // NetworkAuthSelection is adapter-owned, non-secret evidence of the credential
 // family a concrete profile selected. EnvKey names the exact portable authority
 // the host must prove present; RequirePortable asks the host to prove a projected
-// file remains usable for the restricted credential horizon.
+// file remains usable for the restricted credential horizon. Set it only where
+// nothing in the box can renew that file, as with an access-only projection: a
+// mounted login that carries refresh authority renews itself through the
+// bundle's auth host.
 type NetworkAuthSelection struct {
 	AuthMode        string
 	EnvKey          string

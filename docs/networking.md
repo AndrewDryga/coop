@@ -64,7 +64,7 @@ nothing about the checks after it, and ends with `✗ this host is not ready for
 `mcp-proxy.anthropic.com` (the claude.ai connectors a login has on by default); a filtered
 `coop codex` reaches `chatgpt.com` and `auth.openai.com`; Gemini reaches
 `generativelanguage.googleapis.com` with a portable AI Studio API key; and Grok reaches
-`cli-chat-proxy.grok.com` and `code.grok.com` with a portable access file. Gemini OAuth and Vertex
+`cli-chat-proxy.grok.com`, `code.grok.com` and `auth.x.ai` (the OAuth refresh). Gemini OAuth and Vertex
 AI credentials are not supported in filtered mode and are refused before launch. The client's own
 release feed, package registry, update check
 and telemetry — `raw.githubusercontent.com`, `registry.npmjs.org`, `api.github.com`, the Datadog

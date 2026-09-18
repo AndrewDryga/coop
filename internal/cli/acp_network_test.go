@@ -15,6 +15,9 @@ import (
 	"github.com/AndrewDryga/coop/internal/preset"
 )
 
+// Every provider is signed in; Gemini's login is host-bound OAuth, which filtered mode refuses by
+// design. Grok's carries a refresh token, so its box renews an expired access token itself and it
+// is offered like Claude and Codex.
 func TestACPNetworkScope(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -24,10 +27,10 @@ func TestACPNetworkScope(t *testing.T) {
 		refuse bool
 	}{
 		{name: "unrelated signed-in providers"},
-		{name: "explicit unsupported lead", lead: "grok", refuse: true},
-		{name: "explicit unsupported peer", peers: []agents.Target{{Provider: "grok"}}, refuse: true},
-		{name: "entire selected ladder", preset: &preset.Preset{LeadTargets: []agents.Target{{Provider: "codex"}, {Provider: "grok"}}}, refuse: true},
-		{name: "entire selected role", preset: &preset.Preset{LeadTargets: []agents.Target{{Provider: "codex"}}, Roles: []preset.Role{{Mode: preset.ModeConsult, Targets: []agents.Target{{Provider: "grok"}}}}}, refuse: true},
+		{name: "explicit unsupported lead", lead: "gemini", refuse: true},
+		{name: "explicit unsupported peer", peers: []agents.Target{{Provider: "gemini"}}, refuse: true},
+		{name: "entire selected ladder", preset: &preset.Preset{LeadTargets: []agents.Target{{Provider: "codex"}, {Provider: "gemini"}}}, refuse: true},
+		{name: "entire selected role", preset: &preset.Preset{LeadTargets: []agents.Target{{Provider: "codex"}}, Roles: []preset.Role{{Mode: preset.ModeConsult, Targets: []agents.Target{{Provider: "gemini"}}}}}, refuse: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
@@ -47,16 +50,16 @@ func TestACPNetworkScope(t *testing.T) {
 				Agent: lead, Homes: true, Peers: scope, Preset: tc.preset, NetworkClient: egress.ClientACP,
 			})
 			if tc.refuse {
-				if err == nil || !strings.Contains(err.Error(), "grok") {
+				if err == nil || !strings.Contains(err.Error(), "gemini") {
 					t.Fatalf("explicit unsupported scope was pruned: %v, %v", bundles, err)
 				}
 				return
 			}
-			if err != nil || len(bundles) != 2 {
+			if err != nil || len(bundles) != 3 {
 				t.Fatalf("supported ACP startup blocked by optional providers: %v, %v", bundles, err)
 			}
 			for _, bundle := range bundles {
-				if bundle.Client != egress.ClientACP || bundle.Provider != "codex" && bundle.Provider != "claude" {
+				if bundle.Client != egress.ClientACP || bundle.Provider != "codex" && bundle.Provider != "claude" && bundle.Provider != "grok" {
 					t.Fatalf("unexpected ACP bundle: %+v", bundle)
 				}
 			}
