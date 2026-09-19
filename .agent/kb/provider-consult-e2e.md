@@ -2,7 +2,7 @@
 name: provider-consult-e2e
 description: Verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring
 subsystem: testing
-sources: [Makefile, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/consult_shell.go, internal/agent/role_health.go, internal/preset/wrapper.go, internal/loop/telemetry.go, internal/loop/streamjson_providers.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go]
+sources: [Makefile, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/consult_shell.go, internal/agent/role_health.go, internal/agent/testdata/login-failures/README.md, internal/preset/wrapper.go, internal/loop/telemetry.go, internal/loop/streamjson_providers.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go]
 updated: 2026-09-19
 ---
 
@@ -53,10 +53,17 @@ false: jq 1.6 can exit zero for `jq -e select(...)` over an empty stream, which 
 every advisor look already quarantined before its first call. `coop_role_quarantined` slurps the
 bounded ledger and tests the explicit boolean returned by `any(...)` instead.
 
-Permanence differs by wrapper. The consult's `coop_failure_permanent` reads its stderr for broken
-invocations and refused logins; the delegate records only exit 126/127 and `coop_login_rejected` on
-the provider's own stderr (`provider-stderr-<n>`), because its merged output carries the agent's reply
-and tool noise. Both hand a permanent failure to the next rung. The ledger sits in the worktree, so
+A failed command is read through `coop_client_errors <provider> <stderr> [<stdout>]`: the client's own
+error text as the loop's decoders see it — plain stderr lines, bare stdout lines, and the terminal
+errors of its well-formed stdout events decoded by the adapter's `<provider>_errors` (jq mirrors of the
+Go decoders; input normalized with `jq -cR 'fromjson? | objects'`, since one stray line aborts jq).
+A JSON event is never read as text: claude reports a refused login ONLY in its JSON result, and on
+failure the consult's diagnostics also hold the raw stream, the agent's reply included.
+`coop_login_rejected` applies each adapter's `AuthSignals` to it with `AuthenticationFailure`'s
+anchoring; `TestRoleWrappersJudgeRefusedLoginsLikeTheLoop` holds it to the loop's verdict (a malformed
+`{` event is the exception: the loop calls that stream malformed first). Permanence then differs by
+wrapper: the consult's `coop_failure_permanent` adds the generic broken-invocation phrases over the same
+text; the delegate records only exit 126/127 and the refused login. Both hand a permanent failure on. The ledger sits in the worktree, so
 the delegate's "nothing changed" snapshot excludes `.agent/runs`: its own failure row, appended before
 the comparison, otherwise stopped every in-run fallback as "changed ignored files".
 
@@ -87,6 +94,7 @@ in final/state/log. Wrapper fixtures preserve a partial reply at exit0; they do 
 native lead carries its caveats through synthesis. No prose-to-verdict parser is involved.
 
 ## Changelog
+- 2026-09-19 — `coop_login_rejected` rendered from AuthSignals over stderr + `<provider>_errors`; parity test
 - 2026-09-19 — the delegate hands a permanent failure (126/127, a refused login on stderr) to its next
   rung and quarantines it; its tree snapshot now excludes the run ledger, which had stopped every
   in-loop fallback.

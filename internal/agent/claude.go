@@ -354,9 +354,11 @@ func (claudeAgent) LiveCredentials() LiveCredentialSpec {
 		// "failed to authenticate" / "oauth session expired" are what the CLI actually prints when a
 		// stored refresh token is dead ("Failed to authenticate: OAuth session expired and could not
 		// be refreshed"). Without them an expired account reads as an ordinary process failure and
-		// burns the loop's whole retry budget on a rung no retry can fix.
+		// burns the loop's whole retry budget on a rung no retry can fix. With no usable login the
+		// pinned CLI's whole failed result is "Not logged in · Please run /login", which no shorter
+		// signal anchors.
 		AuthSignals: []string{"not logged in", "invalid auth", "authentication_error", "please run /login",
-			"failed to authenticate", "oauth session expired"},
+			"failed to authenticate", "oauth session expired", "not logged in · please run /login"},
 	}
 }
 
@@ -909,6 +911,9 @@ const claudeConsultText = `claude_text() {
 claude_delegate_text() {
 	jq --unbuffered -jr 'select(type=="object" and .type=="result")
 		| (.result | select(type=="string")), "\n"'
+}
+claude_errors() {
+	jq -r 'select(type=="object" and .type=="result" and .is_error==true) | .result | select(type=="string")'
 }
 `
 

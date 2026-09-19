@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Claude, Codex and Gemini logins that stop working are now recognized as such. Coop decided a
+  login was dead from phrases that no longer matched what the current clients print — Claude's "Not
+  logged in · Please run /login", Codex's "unexpected status 401 Unauthorized", Gemini's "API key not
+  valid" — so a `coop loop` spent all its retries on the dead account instead of moving to the next
+  one. Helper roles now use the same check as the loop: a consultation goes straight to its fallback
+  and a write-capable helper hands its task over, reading the client's own error rather than anything
+  the agent wrote.
+
 - A write-capable helper (`coop-delegate`) now hands its task to the next target in its list when the
   current one cannot start or its provider refuses the login, the way it already did for a rate limit
   — with the same checks that nothing was changed first — and skips that target for the rest of the

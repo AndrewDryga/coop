@@ -820,7 +820,7 @@ while [ "$index" -le "$total" ]; do
 	fi
 	if ! coop_rate_limited "$out" && ! coop_rate_limited "$diagnostics"; then
 		failure_cause=$(coop_failure_cause "$diagnostics" "$out")
-		if coop_failure_permanent "$st" "$diagnostics"; then
+		if coop_failure_permanent "$st" "$peer" "$diagnostics" "$attempt_dir/$peer-raw-$index"; then
 			publish_role_health failed "$attempts_on_target" true "$failure_cause"
 			if [ "$index" -lt "$total" ]; then
 				echo "[$peer: $target failed permanently — trying fallback $((index + 1))/$total]" >&2

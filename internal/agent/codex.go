@@ -295,7 +295,10 @@ func (codexAgent) LiveCredentials() LiveCredentialSpec {
 		}},
 		Prepare:     renewCodexCredential,
 		Portability: codexCredentialPortability,
-		AuthSignals: []string{"not logged in", "authentication required", "401 unauthorized", "invalid api key"},
+		// The pinned CLI ends a turn its service refused with "unexpected status 401 Unauthorized: …",
+		// both with no login and with a rejected key.
+		AuthSignals: []string{"not logged in", "authentication required", "401 unauthorized", "invalid api key",
+			"unexpected status 401 unauthorized"},
 	}
 }
 
@@ -892,6 +895,11 @@ codex_delegate_text() {
 		if .type=="item.completed" and .item.type=="agent_message" and (.item.text|type)=="string" then .item.text, "\n"
 		elif .type=="turn.failed" and (.error.message|type)=="string" then .error.message, "\n"
 		else empty end'
+}
+codex_errors() {
+	jq -r 'def text: strings | select(test("[^[:space:]]"));
+		select(type=="object" and .type=="turn.failed")
+		| ((.message|text) // (.error|objects|.message|text) // "turn failed")'
 }
 `
 

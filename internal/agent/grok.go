@@ -475,6 +475,12 @@ grok_delegate_text() {
 		elif .type=="end" then "\n"
 		else empty end'
 }
+grok_errors() {
+	jq -r 'select(type=="object" and (.type|type)=="string" and (.type|ascii_downcase|contains("error")))
+		| tojson, ((.message | select(type=="string") | sub("^[^{]*"; "") | try fromjson catch null
+			| objects | .http_status) as $status
+			| if $status==401 then "authentication required" elif $status==402 then "rate limit exceeded" else empty end)'
+}
 `
 
 const grokConsultUsage = `select(.[-1].type=="end")

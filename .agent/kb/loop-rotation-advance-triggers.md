@@ -2,7 +2,7 @@
 name: loop-rotation-advance-triggers
 description: the loop rotation advances on rate limits (time-keyed, self-healing) and auth failures (sticky for the run); known-invalid credentials never become rungs
 subsystem: loop
-sources: [internal/ladder/ladder.go, internal/ladder/limit.go, internal/ladder/acp.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/loop/streamjson_providers.go, internal/acpctl/control.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/grok.go, internal/agent/ratelimit.go, internal/box/auth.go, internal/box/profiles.go]
+sources: [internal/ladder/ladder.go, internal/ladder/limit.go, internal/ladder/acp.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/loop/streamjson_providers.go, internal/acpctl/control.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/grok.go, internal/agent/ratelimit.go, internal/agent/role_health.go, internal/agent/testdata/login-failures/README.md, internal/box/auth.go, internal/box/profiles.go]
 updated: 2026-09-19
 ---
 A loop's rotation starts from credential presence and then applies
@@ -37,7 +37,13 @@ rewords its message and the loop failure silently downgrades to a generic `proce
 burns the whole retry budget on a rung no retry can fix. That is exactly how an expired claude token
 ("Failed to authenticate: OAuth session expired and could not be refreshed", matched by none of the
 then-current signals) killed a 133-task overnight run while a signed-in second account sat idle in
-the same rotation. When a provider's auth wording changes, the signal list is the thing to update.
+the same rotation. When a provider's auth wording changes, the signal list is the thing to update —
+from evidence: `internal/agent/testdata/login-failures/` holds each pinned client's real refusal (no
+login, a rejected key) in the structured mode Coop runs it, and `TestPinnedClientsRefusedLoginsAreAuthenticationFailures`
+replays them through the real decoders. On 2026-09-19 three of four clients' refusals fell through
+(claude "Not logged in · Please run /login", codex "unexpected status 401 Unauthorized: …", gemini
+"[API Error: {… API key not valid …}]"). The role wrappers read the same signals (see
+[[provider-consult-e2e]]), so one list serves the loop and both wrappers.
 
 **Limit evidence is per surface, so a provider's structured limit must reach each one.** ACP
 sessions (the editor control and the sessions API) rotate on `ladder.ACPErrorLimitHint`: shared
@@ -53,9 +59,11 @@ headless it is only the server's own text — it rotates while that text says "t
 nothing structured backs it. A 401 carries `http_status: 401` and is an auth failure, never a limit:
 Grok's prose `AuthSignals` never match its "Auth recovery succeeded but … rejected (401)" payload, so
 the loop decoder says `authentication required`, the ACP auth check reads a structured
-`http_status` 401, and the consult's permanent-failure check greps the stderr form.
+`http_status` 401, and both role wrappers read it from the client's stdout event through
+`grok_errors`.
 
 ## Changelog
+- 2026-09-19 — pinned-client refusal captures + signals for claude/codex/gemini; wrappers share them
 - 2026-09-19 — Grok's structured 401 now reaches the auth trigger on the loop, ACP and consult paths
 - 2026-09-18 — added the per-surface limit evidence and the pinned Grok client's captured quota
   shapes; Grok declares its 402 ACP signal, and its loop decoder and role wrappers rotate on it

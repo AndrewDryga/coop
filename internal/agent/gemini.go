@@ -364,7 +364,10 @@ func (geminiAgent) LiveCredentials() LiveCredentialSpec {
 			}},
 		},
 		Portability: func(string, time.Time) CredentialPortability { return CredentialNotPortable },
-		AuthSignals: []string{"manual authorization is required", "authentication required", "must specify the gemini_api_key"},
+		// A rejected key comes back as the service's own error inside the pinned CLI's failed result:
+		// "[API Error: {… API key not valid …}]".
+		AuthSignals: []string{"manual authorization is required", "authentication required", "must specify the gemini_api_key",
+			"api key not valid"},
 	}
 }
 
@@ -555,6 +558,14 @@ gemini_delegate_text() {
 		elif .type=="error" and (.message|type)=="string" then .message, "\n"
 		elif .type=="result" then "\n"
 		else empty end'
+}
+gemini_errors() {
+	jq -r 'def text: strings | select(test("[^[:space:]]"));
+		def message: (.message|text) // (.error|text) // (.error|objects|.message|text);
+		select(type=="object")
+		| if .type=="error" then (message // "error")
+		  elif .type=="result" and .status!="success" then (message // (.status|text))
+		  else empty end'
 }
 `
 

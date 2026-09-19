@@ -518,11 +518,11 @@ for target do
 	failure_cause=$(coop_failure_cause "$out")
 	# A target that could not start, or whose login its provider refused, fails the same way on
 	# every call: it is recorded as permanently failed, so later calls in this run skip it, and
-	# handed on like a rate limit. Only the provider's own stderr can prove a refused login — its
-	# stdout is the agent's reply, which may quote anything.
+	# handed on like a rate limit. A refused login is read from the client's own error, never from
+	# the reply, which may quote anything (see coop_client_errors).
 	permanent=false
 	case "$st" in 126|127) permanent=true ;; esac
-	if coop_login_rejected "$attempt_dir/provider-stderr-$index"; then
+	if coop_login_rejected "$agent" "$attempt_dir/provider-stderr-$index" "$attempt_dir/provider-stdout-$index"; then
 		permanent=true
 	fi
 	coop_role_health "$role" delegate "$agent" "$model" "$target" failed 1 "$permanent" "$failure_cause"

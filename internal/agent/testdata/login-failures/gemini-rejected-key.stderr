@@ -1,0 +1,41 @@
+Warning: 256-color support not detected. Using a terminal with at least 256-color support is recommended for a better visual experience.
+YOLO mode is enabled. All tool calls will be automatically approved.
+YOLO mode is enabled. All tool calls will be automatically approved.
+[STARTUP] Phase 'cleanup_ops' was started but never ended. Skipping metrics.
+[STARTUP] Cannot measure phase 'cleanup_ops': start mark 'startup:cleanup_ops:start' not found (likely cleared by reset).
+Error generating content via API. Full report available at: /tmp/gemini-client-error-generateJson-api-2026-09-18T23-37-29-998Z.json _ApiError: {"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"API_KEY_INVALID","domain":"googleapis.com","metadata":{"service":"generativelanguage.googleapis.com"}},{"@type":"type.googleapis.com/google.rpc.LocalizedMessage","locale":"en-US","message":"API key not valid. Please pass a valid API key."}]}}
+    at throwErrorIfNotOK (file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:267315:24)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:267066:7
+    at async Models.generateContent (file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:268125:16)
+    at async file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:310498:26
+    at async file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:287352:23
+    at async retryWithBackoff (file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:307380:23)
+    at async BaseLlmClient._generateWithRetry (file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:307675:14)
+    at async BaseLlmClient.generateJson (file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:307568:21)
+    at async NumericalClassifierStrategy.route (file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:359077:28) {
+  status: 400
+}
+[Routing] NumericalClassifierStrategy failed: Error: Failed to generate content: {"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"API_KEY_INVALID","domain":"googleapis.com","metadata":{"service":"generativelanguage.googleapis.com"}},{"@type":"type.googleapis.com/google.rpc.LocalizedMessage","locale":"en-US","message":"API key not valid. Please pass a valid API key."}]}}
+    at BaseLlmClient._generateWithRetry (file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:307705:13)
+    at async BaseLlmClient.generateJson (file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:307568:21)
+    at async NumericalClassifierStrategy.route (file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:359077:28)
+    at async CompositeStrategy.route (file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:359148:26)
+    at async ModelRouterService.route (file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:359311:18)
+    at async GeminiClient.processTurn (file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:345544:24)
+    at async GeminiClient.sendMessageStream (file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:345663:14)
+    at async file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/gemini-OENNDR6N.js:11773:26
+    at async main (file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/gemini-OENNDR6N.js:17200:5)
+Error when talking to Gemini API Full report available at: /tmp/gemini-client-error-Turn.run-sendMessageStream-2026-09-18T23-37-30-156Z.json _ApiError: {"error":{"message":"{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"API key not valid. Please pass a valid API key.\",\n    \"status\": \"INVALID_ARGUMENT\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.ErrorInfo\",\n        \"reason\": \"API_KEY_INVALID\",\n        \"domain\": \"googleapis.com\",\n        \"metadata\": {\n          \"service\": \"generativelanguage.googleapis.com\"\n        }\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.LocalizedMessage\",\n        \"locale\": \"en-US\",\n        \"message\": \"API key not valid. Please pass a valid API key.\"\n      }\n    ]\n  }\n}\n","code":400,"status":"Bad Request"}}
+    at throwErrorIfNotOK (file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:267315:24)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:267078:7
+    at async Models.generateContentStream (file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:268174:16)
+    at async file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:310543:19
+    at async file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:287352:23
+    at async retryWithBackoff (file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:307380:23)
+    at async GeminiChat.makeApiCallAndProcessStream (file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:331230:28)
+    at async GeminiChat.streamWithRetries (file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:330983:29)
+    at async Turn.run (file:///opt/coop/clients/node_modules/@google/gemini-cli/bundle/chunk-YSBB75DZ.js:331905:24) {
+  status: 400
+}
