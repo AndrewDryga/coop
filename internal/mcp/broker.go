@@ -121,6 +121,45 @@ func RouteThroughBroker(snapshot []byte, routes map[string]BrokeredServer) ([]by
 	return encodeSnapshot(root, definitions)
 }
 
+// WithoutRemoteServers is the snapshot an offline box loads: a server reached by URL cannot answer
+// without internet, so it is left out, and a local (command) server stays. It returns the names it
+// left out, sorted — the snapshot unchanged when there were none.
+func WithoutRemoteServers(snapshot []byte) ([]byte, []string, error) {
+	if len(bytes.TrimSpace(snapshot)) == 0 {
+		return snapshot, nil, nil
+	}
+	_, servers, err := loadServerViewsData("MCP snapshot", snapshot)
+	if err != nil {
+		return nil, nil, err
+	}
+	var remote []string
+	for name, s := range servers {
+		if s.URL != "" {
+			remote = append(remote, name)
+		}
+	}
+	if len(remote) == 0 {
+		return snapshot, nil, nil
+	}
+	sort.Strings(remote)
+	root := map[string]json.RawMessage{}
+	if err := json.Unmarshal(snapshot, &root); err != nil {
+		return nil, nil, fmt.Errorf("parsing MCP snapshot: %w", err)
+	}
+	definitions := map[string]json.RawMessage{}
+	if err := json.Unmarshal(root["mcpServers"], &definitions); err != nil {
+		return nil, nil, fmt.Errorf("parsing MCP snapshot mcpServers: %w", err)
+	}
+	for _, name := range remote {
+		delete(definitions, name)
+	}
+	encoded, err := encodeSnapshot(root, definitions)
+	if err != nil {
+		return nil, nil, err
+	}
+	return encoded, remote, nil
+}
+
 // ClaudeView is the snapshot as the claude CLI reads it through --mcp-config. The pinned claude
 // has no bearer_token_env_var (captured: it sends no Authorization at all) but expands ${VAR} in a
 // header, so a bearer server carries `Authorization: Bearer ${VAR}` instead — what the gemini and

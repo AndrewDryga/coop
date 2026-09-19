@@ -32,8 +32,12 @@
   longer reaches any filtered box, and a remote session's editor adapter is handed only the stand-in.
   A bearer server declared SSE is refused under filtered networking — give it its streamable HTTP
   URL. Claude now also sends a `bearer_token_env_var` token at all: the pinned Claude ignores that
-  field, so Coop hands it the equivalent `Authorization` header. Open and offline runs keep their
-  current MCP handling for now.
+  field, so Coop hands it the equivalent `Authorization` header. Open runs keep their current MCP
+  handling for now.
+
+- An offline run leaves remote MCP servers out, and says so at launch: without internet they could
+  not answer. Local (command) servers still work, and the remote servers' tokens no longer enter
+  an offline box.
 
 - A filtered run no longer drops a connection that opens at the same moment as another: the
   credential broker now waits its turn at the network controller as every other connection does,

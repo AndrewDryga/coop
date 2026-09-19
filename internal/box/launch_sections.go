@@ -220,6 +220,15 @@ func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egre
 	}
 }
 
+// offlineMCP names the remote MCP servers an offline box goes without, under its network section:
+// they need internet, so the agent never sees them — and the person should not wonder where they went.
+func (s *launchSections) offlineMCP(omitted []string) {
+	if !s.on || len(omitted) == 0 {
+		return
+	}
+	ui.Note("  MCP servers that need internet are left out: %s", strings.Join(omitted, ", "))
+}
+
 // networkAllowances lists what a filtered box may reach, one row per kind of allowance, in the
 // order a person checks them: each selected provider's endpoints, the network rules a human
 // approved (the project's rules and this run's --allow-domain/--egress-rules), the MCP servers

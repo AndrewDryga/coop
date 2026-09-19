@@ -2413,6 +2413,13 @@ func (s *Service) captureCreateIntent(op session.Operation, req CreateRemoteSess
 				Detail: "a bare session binds no Responder MCP endpoint — it runs no tool"}
 		}
 	}
+	// An offline session's box reaches no server by URL, so its MCP copy carries only local
+	// servers — the Responder endpoint among the ones left out. Refuse the binding here rather
+	// than accept authority the turn would silently drop.
+	if policy.Egress.resolvedMode() == egress.None && req.ResponderBinding != nil {
+		return sessionCreateIntent{}, &session.Error{Code: session.CodeInvalidRequest,
+			Detail: responderNeedsNetwork}
+	}
 	sessionID := deterministicSessionID(op.ID)
 	companions := make([]session.CompanionRepository, 0, len(policy.Companions))
 	for _, companion := range policy.Companions {
@@ -3005,6 +3012,9 @@ func (s *Service) validateTurnEscalation(ctx context.Context, req session.Submit
 	if err := validateSessionForkAuthority(ctx, bound); err != nil {
 		return &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
 	}
+	if bound.NetworkMode == string(egress.None) && req.ResponderBinding != nil {
+		return &session.Error{Code: session.CodeInvalidRequest, Detail: responderNeedsNetwork}
+	}
 	if err := validateRestrictedTurn(bound, req); err != nil {
 		return err
 	}
@@ -3026,6 +3036,10 @@ func (s *Service) validateTurnEscalation(ctx context.Context, req session.Submit
 	}
 	return nil
 }
+
+// responderNeedsNetwork is the one sentence both admissions use: a Responder endpoint is reached
+// by URL, and an offline box reaches none.
+const responderNeedsNetwork = "an offline session binds no Responder MCP endpoint — its box reaches no server by URL"
 
 // validateRestrictedTurn refuses, at admission, the two turn options a restricted session cannot
 // honor. Each of its turns runs in a fresh box whose provider history dies with it, so there is

@@ -589,6 +589,39 @@ func TestAFilteredSessionWithoutSharedMCPDropsItsTokenVariables(t *testing.T) {
 	}
 }
 
+// An offline session reaches no remote MCP server: its private copy keeps only local servers, its
+// env drops the remote servers' tokens, and its session/new names only the local ones.
+func TestAnOfflineSessionIsHandedOnlyLocalMCPServers(t *testing.T) {
+	fixture := newSessionACPFixtureOn(t, "normal", "codex@work", agents.ModeNormal, egress.None)
+	if err := os.WriteFile(filepath.Join(fixture.source, "mcp.json"), []byte(`{"mcpServers":{
+		"emisar":{"type":"http","url":"https://example.invalid/mcp","bearer_token_env_var":"EMISAR_TOKEN"},
+		"local":{"command":"true"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The private copy is what the offline box loads: it has no remote server, and no token for one.
+	target, _ := agents.ParseTarget(fixture.session.Target)
+	agent, _ := agents.Get(target.Provider)
+	projection, err := fixture.runner.projectCredentials(fixture.session, target, agent, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if copied := readFile(t, filepath.Join(fixture.private, "mcp.json")); strings.Contains(copied, "example.invalid") || !strings.Contains(copied, `"local"`) {
+		t.Fatalf("offline private MCP copy = %s", copied)
+	}
+	if env := readFile(t, filepath.Join(fixture.private, "env")); strings.Contains(env, "EMISAR_TOKEN") {
+		t.Fatalf("offline private env kept the remote token: %q", env)
+	}
+	_ = projection.remove()
+	leased := fixture.submit(t, "first prompt")
+	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leased); err != nil {
+		t.Fatal(err)
+	}
+	got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new")
+	if strings.Contains(got, "example.invalid") || strings.Contains(got, "observe-only") || !strings.Contains(got, `"local"`) {
+		t.Fatalf("offline session/new mcpServers = %s", got)
+	}
+}
+
 // Codex reads authority from the generated [mcp_servers.*] file, while
 // codex-acp 1.7 also requires the exact session inventory in mcpServers. The
 // adapter deduplicates the mounted name before constructing Codex config.

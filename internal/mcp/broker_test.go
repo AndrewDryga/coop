@@ -99,3 +99,27 @@ func TestSharedConfigCannotReferenceABrokerStandIn(t *testing.T) {
 		}
 	}
 }
+
+// An offline box keeps its local servers and loses every server reached by URL, whatever its auth;
+// a snapshot with nothing remote comes back byte for byte.
+func TestWithoutRemoteServersKeepsOnlyLocalOnes(t *testing.T) {
+	snapshot := []byte(`{"mcpServers":{
+		"local":{"command":"true","args":["x"]},
+		"remote":{"type":"http","url":"https://remote.example/mcp","bearer_token_env_var":"REMOTE_TOKEN"},
+		"legacy":{"type":"sse","url":"https://legacy.example/sse"},
+		"headers":{"url":"https://headers.example/mcp","headers":{"X-Key":"${HEADER_KEY}"}}}}`)
+	local, omitted, err := WithoutRemoteServers(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"headers", "legacy", "remote"}; !slices.Equal(omitted, want) {
+		t.Fatalf("omitted = %q, want %q", omitted, want)
+	}
+	if strings.Contains(string(local), "example") || !strings.Contains(string(local), `"local"`) {
+		t.Fatalf("offline snapshot = %s", local)
+	}
+	onlyLocal := []byte(`{"mcpServers":{"local":{"command":"true"}}}`)
+	if kept, none, err := WithoutRemoteServers(onlyLocal); err != nil || none != nil || string(kept) != string(onlyLocal) {
+		t.Fatalf("an all-local snapshot changed: %s, %q, %v", kept, none, err)
+	}
+}

@@ -1672,6 +1672,15 @@ func (r *sessionTurnRunner) captureSessionMCP(
 			return nil, false, errors.Join(acpFailure(sessionACPCredentialError, "shared MCP config is invalid"), err)
 		}
 	}
+	if bound.NetworkMode == string(egress.None) {
+		// An offline session reaches no remote server, the Responder's included: its private copy
+		// carries only local ones, so neither its box nor its session/new sees the others.
+		local, _, err := mcp.WithoutRemoteServers(snapshot)
+		if err != nil {
+			return nil, false, errors.Join(acpFailure(sessionACPCredentialError, "shared MCP config is invalid"), err)
+		}
+		return local, active, nil
+	}
 	if bound.ResponderBinding != nil {
 		boundSnapshot, err := mcp.BindResponderState(snapshot, bound.ResponderBinding.Endpoint)
 		if err != nil {
@@ -1696,13 +1705,16 @@ func (r *sessionTurnRunner) projectSessionConfigFiles(
 		{name: "env", path: filepath.Join(sourceRoot, "env")},
 		{name: "INSTRUCTIONS.md", path: filepath.Join(sourceRoot, "INSTRUCTIONS.md")},
 	}
+	// An offline session has no Responder server to authenticate (captureSessionMCP left it out).
+	offline := bound.NetworkMode == string(egress.None)
+	responder := bound.ResponderBinding != nil && !offline
 	for _, source := range sources {
 		destination := filepath.Join(projection.privateRoot, source.name)
 		if err := removeProjectedSessionFile(destination); err != nil {
 			return acpFailure(sessionACPCredentialError, "stale private config is unsafe")
 		}
 		if source.name == "env" && !bound.ProjectEnv {
-			if bound.ResponderBinding == nil {
+			if !responder {
 				continue
 			}
 			data, err := bindResponderStateEnv(nil, bound.ResponderBinding.Token)
@@ -1729,12 +1741,13 @@ func (r *sessionTurnRunner) projectSessionConfigFiles(
 		if err != nil {
 			return acpFailure(sessionACPCredentialError, "source private config is unsafe")
 		}
-		if source.name == "env" && present && bound.NetworkMode == string(egress.Filtered) && !bound.ProjectMCP {
-			// A filtered session that withholds the shared MCP file brokers none of its servers, so
-			// their token variables have no business in the env its child starts a box from.
+		if source.name == "env" && present && (bound.NetworkMode == string(egress.Filtered) && !bound.ProjectMCP || offline) {
+			// A filtered session that withholds the shared MCP file brokers none of its servers, and an
+			// offline one can reach none of them, so their token variables have no business in the env
+			// its child starts a box from.
 			data = box.DropEnvKeys(data, r.sourceMCPReferences(sourceRoot))
 		}
-		if source.name == "env" && bound.ResponderBinding != nil {
+		if source.name == "env" && responder {
 			data, err = bindResponderStateEnv(data, bound.ResponderBinding.Token)
 			if err != nil {
 				return acpFailure(sessionACPCredentialError, "Responder MCP environment is invalid")

@@ -164,8 +164,11 @@ type RunSpec struct {
 	// policy before any iteration starts.
 	NetworkAdmission bool `json:"-"`
 	projectEnv       map[string]string
-	// mcpSnapshot is the validated MCP configuration this box loads, if any: what a filtered run
-	// brokers bearer servers from. claudeMCPFile is claude's own view of it, mounted for --mcp-config.
+	// mcpSnapshot is the validated MCP configuration as CONFIGURED, if any: what a filtered run
+	// brokers bearer servers from, and what an offline run reads the token names to scrub from — so
+	// it deliberately keeps the servers an offline run then leaves out (mcpScrubNames). Reassigning
+	// it after that rewrite would silently stop scrubbing the omitted servers' tokens.
+	// claudeMCPFile is claude's own view of it, mounted for --mcp-config.
 	mcpSnapshot   []byte
 	claudeMCPFile string
 	// networkSmoke is the host preflight permit. Unexported on purpose: only the
@@ -666,8 +669,22 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			return -1, err
 		}
 	}
+	// An offline box cannot reach a remote MCP server, so it gets none: every projection below loses
+	// them, their tokens stay out of its env, and the launch says why. Local servers stay.
+	var offlineScrub, offlineOmitted []string
+	if filtered == nil && cfg.Egress != "open" {
+		if offlineScrub, err = mcpScrub(cfg, spec); err != nil {
+			return -1, err
+		}
+		if mcpPresent {
+			if mcpSnapshot, offlineOmitted, err = mcp.WithoutRemoteServers(mcpSnapshot); err != nil {
+				return -1, err
+			}
+		}
+	}
 	sections.accounts(launchAccounts(cfg, spec, brokerPlan))
 	sections.internet(cfg, spec, policy, brokerPlan.mcpServerNames()...)
+	sections.offlineMCP(offlineOmitted)
 	// Whatever a box may reach is fully known before it starts, so the launch
 	// instructions say it. An agent that learns its own boundary by being
 	// refused burns a turn and reports policy as a broken tool or a dead host.
@@ -1011,6 +1028,12 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	if envTmp != "" {
 		tmpFiles = append(tmpFiles, envTmp)
+	}
+	if kept, err := dropEnvNames(artifacts, envFile, offlineScrub); err != nil {
+		return -1, err
+	} else if kept != envFile {
+		envFile = kept
+		tmpFiles = append(tmpFiles, kept)
 	}
 	if filtered != nil {
 		brokerEnv, err := filtered.credentialBrokerEnv(artifacts, envFile)

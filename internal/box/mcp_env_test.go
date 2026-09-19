@@ -71,7 +71,8 @@ func TestGeminiMCPEnvironmentAtNormalACPAndNestedLaunch(t *testing.T) {
 	} {
 		for _, available := range []bool{false, true} {
 			t.Run(name+"/available="+strconv.FormatBool(available), func(t *testing.T) {
-				cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
+				// Open: an offline box gets no remote server at all, so there is no token to capture.
+				cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "open"}
 				cfg.MCPFile = filepath.Join(t.TempDir(), "mcp.json")
 				writeCopyFixture(t, cfg.MCPFile, `{"mcpServers":{"test":{"url":"https://example.test/mcp","bearer_token_env_var":"MCP_TOKEN"}}}`)
 				t.Setenv("MCP_TOKEN", "ambient-is-not-box-authority")
@@ -140,7 +141,8 @@ func TestMCPAuthenticationRejectsBadMetadataAndCaptureFailure(t *testing.T) {
 }
 
 func TestGeminiMCPDoesNotRestoreAnotherAccountsEnvironmentKey(t *testing.T) {
-	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
+	// Open: an offline box gets no remote server at all, so there is no token to capture.
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "open"}
 	cfg.SetActiveProfile("gemini", "nondefault")
 	cfg.MCPFile = filepath.Join(t.TempDir(), "mcp.json")
 	writeCopyFixture(t, cfg.MCPFile, `{"mcpServers":{"test":{"url":"https://example.test/mcp","bearer_token_env_var":"GEMINI_API_KEY"}}}`)

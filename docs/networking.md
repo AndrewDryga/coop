@@ -125,8 +125,13 @@ call takes. The operator's own variable in Coop's env file never reaches a filte
 not that box loads MCP, and a session's ACP adapter is handed the stand-in. Each bearer server's
 host is withheld from the agent's own policy. A bearer server declared SSE (it names its own message
 endpoint at runtime), a missing token, or one set through `-e` stops the launch, naming the server.
-A remote session's Responder state tools ride the same kind of route. Open and offline runs keep
-their current MCP handling for now.
+A remote session's Responder state tools ride the same kind of route.
+
+**Offline runs leave remote MCP servers out.** A box with no network cannot reach a server by URL,
+so an offline run drops every remote server from the box's MCP configuration and says so at launch
+("MCP servers that need internet are left out: …"). Local (command) servers stay, and the remote
+servers' token variables never enter the box. An offline remote session's editor adapter is
+handed only the local servers. Open runs keep their current MCP handling for now.
 
 A `service:` grant is a request like any other: it is approved by a human and names one service.
 For a filtered run, Coop recreates that service and its dependencies on a project-owned internal

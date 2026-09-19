@@ -112,7 +112,14 @@ header, so claude's mount is `mcp.ClaudeView` — the snapshot with each bearer 
 final ACP list to the daemon-named `COOP_SESSION_MCP_HANDOFF` file before its container starts; the
 daemon renders nothing pre-spawn for it, reads the file once after `initialize` (bound to the run
 id), and refuses the turn without it. A filtered session that withholds MCP drops the source's token
-names from its private env copy. Residual: only names the configured file references are scrubbed
+names from its private env copy.
+
+**Offline runs drop every remote server** (`box.Run`, `sessionsvc` `captureSessionMCP`). A box on
+`--network none` cannot reach one, so `mcp.WithoutRemoteServers` removes each server with a `url`
+before any projection, `mcpScrub`'s names leave the env (and a `-e` of one is refused, as under
+filtered), and the network section names what was left out. An offline session's private copy is
+written without them and without the Responder binding. Its daemon-side `session/new` render reads
+that copy, so it needs no handoff. Residual: only names the configured file references are scrubbed
 — a leftover token elsewhere in the env file still rides a filtered box's env.
 
 Credential scope is not proof of command consumption. `credentialScope` answers whose login may be
@@ -129,6 +136,9 @@ adds ordinary `CommandArgs` must decide whether its nested commands need an equi
 mounting the raw snapshot for every scoped credential is not the fallback.
 
 ## Changelog
+- 2026-09-19 — offline runs drop every remote server (`mcp.WithoutRemoteServers`, one rewrite before
+  every projection), scrub their token names and name them at launch; an offline session's private
+  copy is written without them, so its box and its session/new both follow.
 - 2026-09-19 — filtered runs broker bearer MCP servers (one rewrite before every projection, stand-in
   variables, source-derived scrub, session handoff); claude's mount became `mcp.ClaudeView` because
   the pinned claude ignores `bearer_token_env_var`.

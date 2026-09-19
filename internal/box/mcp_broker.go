@@ -106,16 +106,40 @@ func mcpScrub(cfg *config.Config, spec RunSpec) ([]string, error) {
 	}
 	for _, name := range names {
 		if extraEnvAssigns(cfg.ExtraRunArgs, name) || extraEnvAssigns(spec.ExtraArgs, name) {
-			return nil, fmt.Errorf("%s holds an MCP server's token, which cannot enter a filtered box through -e", name)
+			return nil, fmt.Errorf("%s holds an MCP server's token, which cannot enter an agent box through -e", name)
 		}
 	}
 	return names, nil
 }
 
-// mcpScrubNames are the variables the run's configured MCP file reads a secret from. A filtered box
-// never receives them — whether it loads MCP or not — so they come from the configured file itself,
-// not from what this box mounts. A box that loads none (sign-in, a review's format correction)
-// reads the names leniently: a broken file must not stop it. Without homes it gets no env file.
+// dropEnvNames is the box's env file without names — a copy only when one of them is there; the
+// input itself when none is, so there is nothing new to mount or remove.
+func dropEnvNames(artifacts compositionArtifactOps, source string, names []string) (string, error) {
+	if source == "" || len(names) == 0 {
+		return source, nil
+	}
+	data, err := os.ReadFile(source)
+	if err != nil {
+		return "", fmt.Errorf("read the box environment: %w", err)
+	}
+	drop := make(map[string]bool, len(names))
+	for _, name := range names {
+		drop[name] = true
+	}
+	kept := filteredEnvContent(data, drop)
+	if kept == string(data) {
+		return source, nil
+	}
+	return artifacts.writeFile(artifacts.parent, kept)
+}
+
+// mcpScrubNames are the variables the run's configured MCP file reads a secret from. A box that
+// keeps them out — filtered, or offline — never receives them whether it loads MCP or not, so they
+// come from the configured file itself, not from what this box mounts. A box that loads none
+// (sign-in, a review's format correction) reads that file's CONTENT leniently — a malformed file
+// must not stop it — but its LOCATION is still held to the same isolation rule as a box that loads
+// it: a source inside a mounted root could be rewritten by the box it is being read for. Without
+// homes there is no env file to scrub.
 func mcpScrubNames(cfg *config.Config, spec RunSpec) ([]string, error) {
 	if spec.mcpSnapshot != nil {
 		return mcp.CredentialReferences(spec.mcpSnapshot)

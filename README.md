@@ -979,8 +979,11 @@ and names a Coop-owned stand-in variable (`COOP_MCP_TOKEN_<n>`) valid only for t
 Your own variable in Coop's env file (`SENTRY_TOKEN` above) never reaches a filtered box, whether
 or not the box loads MCP; a session's ACP adapter is handed the stand-in, never the token. A bearer
 server declared SSE is refused there — it names its own message endpoint at runtime, so no fixed
-route can carry its token — so give it its streamable HTTP URL. Open and offline runs are unchanged
-for now.
+route can carry its token — so give it its streamable HTTP URL.
+
+An offline run (`--egress none`) leaves every remote MCP server out — without internet it could not
+answer — and says so at launch; local (command) servers still work, and the remote servers' tokens
+stay out of the box. Open runs keep their current MCP handling for now.
 
 The example's Playwright server works in the box out of the box: Chromium's system
 libraries are baked into the image, the browser binary downloads to the cache volume on

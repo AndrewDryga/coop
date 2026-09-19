@@ -184,6 +184,51 @@ func TestCreateRefusesWhenNetworkAdmissionFails(t *testing.T) {
 	}
 }
 
+// An offline session's box reaches no server by URL, so its private MCP copy carries only local
+// servers — a bound Responder endpoint among the ones left out. The binding is refused by name,
+// at create and at a turn on a session created before that refusal existed, instead of being
+// accepted and then silently dropped while the receipt still claims one is bound.
+func TestAnOfflineSessionRefusesAResponderBinding(t *testing.T) {
+	service, _ := newHTTPTestSessionService(t)
+	defer service.Stop()
+	offline := service.policies["responder"]
+	offline.Name, offline.Egress = "offline", EgressPolicy{Mode: egress.None}
+	service.policies["offline"] = offline
+	service.testAdmitNetwork = func(policy Policy, _, _ string) (sessionNetworkBinding, error) {
+		return sessionNetworkBinding{Mode: policy.Egress.resolvedMode(), Fingerprint: strings.Repeat("a", 64),
+			Qualification: strings.Repeat("b", 64)}, nil
+	}
+	binding := &session.ResponderBinding{Endpoint: "https://responder.example/v1/state-tools/mcp", Token: strings.Repeat("b", 48)}
+	ctx := context.Background()
+	if _, err := service.CreateRemoteSession(ctx, "create-offline-bound", CreateRemoteSessionRequest{
+		Policy: "offline", Task: "bind me", ResponderBinding: binding,
+	}); err == nil || !strings.Contains(err.Error(), "binds no Responder MCP endpoint") {
+		t.Fatalf("offline create with a Responder binding = %v", err)
+	}
+	// The same binding on an online session is still accepted: the refusal is about the posture.
+	if _, err := service.CreateRemoteSession(ctx, "create-open-bound", CreateRemoteSessionRequest{
+		Policy: "responder", Task: "bind me", ResponderBinding: binding,
+	}); err != nil {
+		t.Fatalf("open create with a Responder binding = %v", err)
+	}
+	// A turn binding on an offline session — the shape a session created by an earlier binary can
+	// still carry — is refused the same way.
+	sess, err := service.CreateRemoteSession(ctx, "create-offline", CreateRemoteSessionRequest{Policy: "offline", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.NetworkMode != string(egress.None) {
+		t.Fatalf("offline session network mode = %q", sess.NetworkMode)
+	}
+	err = service.validateTurnEscalation(ctx, session.SubmitTurnRequest{SessionID: sess.ID, Prompt: "x", ResponderBinding: binding})
+	if err == nil || !strings.Contains(err.Error(), "binds no Responder MCP endpoint") {
+		t.Fatalf("offline turn with a Responder binding = %v", err)
+	}
+	if err := service.validateTurnEscalation(ctx, session.SubmitTurnRequest{SessionID: sess.ID, Prompt: "x"}); err != nil {
+		t.Fatalf("an offline turn without a binding = %v", err)
+	}
+}
+
 var errNetworkFixture = &session.Error{
 	Code: session.CodeInvalidRequest, Detail: "this host is not set up for filtered runs with this Docker and these agents",
 }

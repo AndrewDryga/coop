@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/AndrewDryga/coop/internal/networkgateway"
 	"github.com/AndrewDryga/coop/internal/networkstate"
+	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
 const brokeredMCPSnapshot = `{"mcpServers":{
@@ -395,5 +397,98 @@ func TestFilteredSessionBrokersTheResponderBinding(t *testing.T) {
 	}
 	if names, err := mcp.CredentialReferences(snapshot); err != nil || !slices.Contains(names, mcp.ResponderStateTokenEnv) {
 		t.Fatalf("scrub names = %q, %v", names, err)
+	}
+}
+
+// An offline box cannot reach a remote MCP server, so it gets none: no projection carries one, its
+// token variables stay out of the box's env, and a -e of one is refused. A local server stays.
+func TestOfflineRunLeavesRemoteMCPServersOut(t *testing.T) {
+	configDir := t.TempDir()
+	mcpFile := filepath.Join(configDir, "mcp.json")
+	writeRepoFile(t, mcpFile, `{"mcpServers":{
+		"local":{"command":"true"},
+		"remote":{"type":"http","url":"https://remote.example/mcp","bearer_token_env_var":"REMOTE_TOKEN"},
+		"headers":{"type":"http","url":"https://headers.example/mcp","headers":{"X-Key":"${HEADER_KEY}"}}}}`)
+	writeRepoFile(t, filepath.Join(configDir, "env"), "REMOTE_TOKEN=remote-secret\nHEADER_KEY=header-secret\nKEPT=kept\n")
+	cfg := &config.Config{ConfigDir: configDir, HomeInBox: "/home/node", MCPFile: mcpFile, MCPInBox: "/home/node/.mcp.json", Egress: "none"}
+	// The runtime keeps the env file the box was handed: it is removed once the run returns.
+	dir := t.TempDir()
+	boxEnv, calls := filepath.Join(dir, "box-env"), filepath.Join(dir, "calls")
+	shim := filepath.Join(dir, "rt")
+	writeRepoFile(t, shim, "#!/bin/sh\necho \"$@\" >> "+strconv.Quote(calls)+"\n"+
+		"prev=\nfor a in \"$@\"; do [ \"$prev\" = --env-file ] && cat \"$a\" > "+strconv.Quote(boxEnv)+"; prev=$a; done\n")
+	if err := os.Chmod(shim, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	claude, _ := agents.Get("claude")
+	spec := RunSpec{Image: "i", Repo: t.TempDir(), Cmd: claude.Interactive(cfg), Agent: "claude", AgentCommand: true, Homes: true,
+		Batch: true, Quiet: true, Peers: []agents.Target{{Provider: "codex"}, {Provider: "gemini"}, {Provider: "grok"}}}
+	artifacts := defaultCompositionArtifactOps()
+	var written []string
+	write := artifacts.writeFile
+	artifacts.writeFile = func(dir, content string) (string, error) {
+		written = append(written, content)
+		return write(dir, content)
+	}
+	if code, err := runWithCompositionArtifacts(cfg, runtime.Runtime{Name: shim}, spec, artifacts); err != nil || code != 0 {
+		t.Fatalf("offline Run = %d, %v", code, err)
+	}
+	sawLocal := false
+	for _, content := range written {
+		if strings.Contains(content, "remote.example") || strings.Contains(content, "headers.example") {
+			t.Fatalf("a remote server reached an offline projection:\n%s", content)
+		}
+		sawLocal = sawLocal || strings.Contains(content, `"local"`)
+	}
+	if !sawLocal {
+		t.Fatal("the local server was left out too")
+	}
+	if env := string(mustReadFile(t, boxEnv)); strings.Contains(env, "secret") || !strings.Contains(env, "KEPT=kept") {
+		t.Fatalf("offline box env = %q", env)
+	}
+	// Not only the env file: no argument the box is started with carries a secret either.
+	if args := string(mustReadFile(t, calls)); strings.Contains(args, "secret") {
+		t.Fatalf("a secret reached the box's arguments: %s", args)
+	}
+	spec.ExtraArgs = []string{"-e", "REMOTE_TOKEN=smuggled"}
+	if _, err := runWithCompositionArtifacts(cfg, runtime.Runtime{Name: shim}, spec, defaultCompositionArtifactOps()); err == nil ||
+		!strings.Contains(err.Error(), "cannot enter an agent box through -e") {
+		t.Fatalf("offline Run with the token through -e = %v", err)
+	}
+}
+
+// The launch says which remote servers an offline box goes without, so they do not vanish silently
+// — from the run itself, not only from the section that renders the line.
+func TestOfflineLaunchNamesTheMCPServersItLeavesOut(t *testing.T) {
+	s := &launchSections{on: true}
+	if got := captureStderr(t, func() { s.offlineMCP([]string{"docs", "tickets"}) }); got != "  MCP servers that need internet are left out: docs, tickets\n" {
+		t.Fatalf("offline narration = %q", got)
+	}
+	if got := captureStderr(t, func() { s.offlineMCP(nil) }); got != "" {
+		t.Fatalf("nothing left out, but the launch said %q", got)
+	}
+	configDir := t.TempDir()
+	mcpFile := filepath.Join(configDir, "mcp.json")
+	writeRepoFile(t, mcpFile, `{"mcpServers":{
+		"local":{"command":"true"},
+		"tickets":{"type":"http","url":"https://tickets.example/mcp"},
+		"docs":{"type":"http","url":"https://docs.example/mcp","bearer_token_env_var":"DOCS_TOKEN"}}}`)
+	writeRepoFile(t, filepath.Join(configDir, "env"), "DOCS_TOKEN=docs-secret\n")
+	cfg := &config.Config{ConfigDir: configDir, HomeInBox: "/home/node", MCPFile: mcpFile, MCPInBox: "/home/node/.mcp.json", Egress: "none"}
+	shim := filepath.Join(t.TempDir(), "rt")
+	writeRepoFile(t, shim, "#!/bin/sh\nexit 0\n")
+	if err := os.Chmod(shim, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	claude, _ := agents.Get("claude")
+	spec := RunSpec{Image: "i", Repo: t.TempDir(), Cmd: claude.Interactive(cfg), Agent: "claude", AgentCommand: true, Homes: true,
+		LoopPresentation: true}
+	out := captureStderr(t, func() {
+		if code, err := runWithCompositionArtifacts(cfg, runtime.Runtime{Name: shim}, spec, defaultCompositionArtifactOps()); err != nil || code != 0 {
+			t.Fatalf("offline Run = %d, %v", code, err)
+		}
+	})
+	if !strings.Contains(out, "MCP servers that need internet are left out: docs, tickets") {
+		t.Fatalf("the offline launch did not name what it left out:\n%s", out)
 	}
 }
