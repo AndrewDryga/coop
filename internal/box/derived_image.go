@@ -100,35 +100,65 @@ func filteredProjectImage(ctx context.Context, rt runtime.Runtime, docker filter
 		return "", errors.New("the images this host was set up with disappeared while the box was starting — run it again")
 	}
 	tag := filteredProjectTag(repo, candidate.ClientImage)
+	// Unlike `coop build`, this build is not a human action — a filtered launch
+	// runs it. The two proofs keep the clients and the base honest, but the
+	// project's own layers are still code that runs as root at build time, so
+	// say when nobody has committed the file that defines them.
+	if !spec.Quiet && fileUntracked(repo, dfRel) {
+		ui.Warning("The project Dockerfile is not tracked by Git",
+			dfRel+" controls what is installed in the box.",
+			"Review the file before using this image.")
+	}
+	entries, err := buildContextSelection(ctx, repo)
+	if err != nil {
+		return "", fmt.Errorf("reading the build context of this project's %s: %w", dfRel, err)
+	}
+	// A build of exactly these inputs already passed its proofs here: run that image instead of
+	// staging and building the same thing again. It is proven again all the same, from the memos.
+	if store != nil {
+		tree, err := contextDigest(ctx, repo, entries, nil)
+		if err != nil {
+			return "", fmt.Errorf("reading the build context of this project's %s: %w", dfRel, err)
+		}
+		if image := store.ProjectBuild(tag, projectBuildInputs(tree, candidate, closure, definition.Tag, tag, dfRel)); image != "" {
+			if id, _, err := docker.Image(ctx, image); err == nil && id == image {
+				if err := proveDerivedImage(ctx, docker, store, candidate.ClientImage, image, closure, dfRel); err != nil {
+					return "", err
+				}
+				if !spec.Quiet {
+					ui.Section("Project box")
+					ui.Note("  Using %s", dfRel)
+					ui.Pass("Unchanged since its last build")
+				}
+				return image, nil
+			}
+		}
+	}
 	var buildErrOut io.Writer
 	if !spec.Quiet {
-		// Unlike `coop build`, this build is not a human action — a filtered launch
-		// runs it. The two proofs keep the clients and the base honest, but the
-		// project's own layers are still code that runs as root at build time, so
-		// say when nobody has committed the file that defines them.
-		if fileUntracked(repo, dfRel) {
-			ui.Warning("The project Dockerfile is not tracked by Git",
-				dfRel+" controls what is installed in the box.",
-				"Review the file before using this image.")
-		}
 		// A first build takes minutes. Silence reads as a hung launch, so the
 		// operator gets the same narration `coop build` gives them.
 		ui.Section("Building the project box")
 		ui.Note("  Using %s", dfRel)
 		buildErrOut = os.Stderr
 	}
-	if err := buildProjectOnBase(rt, repo, dfRel, tag, definition.Tag, buildErrOut); err != nil {
+	built, staged, reusable, err := buildProjectOnBase(ctx, rt, repo, entries, dfRel, tag, definition.Tag, buildErrOut)
+	if err != nil {
 		return "", fmt.Errorf("this project's %s did not build on coop's client image: %w", dfRel, err)
 	}
 	if !spec.Quiet {
 		ui.Pass("Project box built")
 	}
-	built, _, err := docker.Image(ctx, tag)
-	if err != nil {
+	if id, _, err := docker.Image(ctx, built); err != nil || id != built {
 		return "", fmt.Errorf("the image %s built from this project's %s cannot be read back — run it again", tag, dfRel)
 	}
 	if err := proveDerivedImage(ctx, docker, store, candidate.ClientImage, built, closure, dfRel); err != nil {
 		return "", err
+	}
+	if store != nil && reusable {
+		// Keyed by what this build staged, not by the check above: a tree edited in between must not
+		// pair the old inputs with the new image. A failed write costs the next launch a build.
+		_ = store.RememberProjectBuild(tag, projectBuildInputs(staged, candidate, closure, definition.Tag, tag, dfRel), built)
 	}
 	return built, nil
 }

@@ -1,6 +1,10 @@
 package box
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -8,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -533,22 +538,35 @@ func (e *StageError) Unwrap() error { return e.Err }
 
 // buildProjectOnBase builds a repository's own box Dockerfile ON TOP of base, tagged tag, through
 // the same staged context, build arguments and error mapping `coop build` uses — a filtered launch
-// changes only which base image the Dockerfile inherits, never how it is built. It never reads
-// stdin or writes stdout: an ACP session speaks JSON-RPC over both.
-func buildProjectOnBase(rt runtime.Runtime, repo, dfRel, tag, base string, stderr io.Writer) error {
-	ctx, cleanup, err := stageBuildContext(repo)
+// changes only which base image the Dockerfile inherits, never how it is built. It stages entries
+// (buildContextSelection) and returns the id the build itself wrote, never the tag another launch of
+// this project may have moved since; the digest of the context it staged; and whether that build
+// may be reused for the same inputs (reusableProjectBuild). It never reads stdin or writes stdout:
+// an ACP session speaks JSON-RPC over both.
+func buildProjectOnBase(ctx context.Context, rt runtime.Runtime, repo string, entries []contextEntry, dfRel, tag, base string, stderr io.Writer) (image, staged string, reusable bool, err error) {
+	dir, staged, cleanup, err := stageContextEntries(ctx, repo, entries)
 	if err != nil {
-		return fmt.Errorf("staging the build context: %w", err)
+		return "", "", false, fmt.Errorf("staging the build context: %w", err)
 	}
 	defer cleanup()
-	code, runErr := rt.Run(nil, nil, stderr, projectBuildArgs(ctx, dfRel, tag, base, true, false)...)
+	idFile, err := os.CreateTemp("", "coop-build-id-")
+	if err != nil {
+		return "", "", false, err
+	}
+	_ = idFile.Close()
+	defer os.Remove(idFile.Name())
+	args := projectBuildArgs(dir, dfRel, tag, base, true, false)
+	code, runErr := rt.Run(nil, nil, stderr, append([]string{"build", "--iidfile", idFile.Name()}, args[1:]...)...)
 	if runErr != nil {
-		return runErr
+		return "", "", false, runErr
 	}
 	if code != 0 {
-		return fmt.Errorf("%s build exited with status %d", filepath.Base(rt.Name), code)
+		return "", "", false, fmt.Errorf("%s build exited with status %d", filepath.Base(rt.Name), code)
 	}
-	return nil
+	if image, err = readImageID(idFile.Name()); err != nil {
+		return "", "", false, err
+	}
+	return image, staged, reusableProjectBuild(dir, entries, dfRel), nil
 }
 
 // projectBuildArgs assembles the `<runtime> build` args for a project Dockerfile at dfRel inside the
@@ -594,22 +612,44 @@ func baseBuildArgs(cfg *config.Config, fresh bool) []string {
 	return append(args, "-t", cfg.BaseImage, "-")
 }
 
-// stageBuildContext copies repo into a throwaway dir, OMITTING every shadowed path (NewShadowDecider
-// — the same denylist that hides secrets from a run), gitignored build output, and .git. This keeps
-// generated firmware, tool caches, and other disposable artifacts from exhausting host storage
-// before Docker can apply its own ignore rules. Tracked files remain available even when a later
-// ignore rule matches them, as do ordinary untracked inputs an agent is still authoring.
+// stageBuildContext copies repo's build context (buildContextSelection) into a throwaway dir. This
+// keeps generated firmware, tool caches, and other disposable artifacts from exhausting host storage
+// before Docker can apply its own ignore rules.
 func stageBuildContext(repo string) (string, func(), error) {
-	shadowed := NewShadowDecider(repo)
-	ignored := ignoredBuildPaths(repo)
-	ctx, err := os.MkdirTemp("", "coop-buildctx-")
+	entries, err := buildContextSelection(context.Background(), repo)
 	if err != nil {
 		return "", func() {}, err
 	}
-	cleanup := func() { _ = os.RemoveAll(ctx) }
-	err = filepath.WalkDir(repo, func(p string, d fs.DirEntry, walkErr error) error {
+	dir, _, cleanup, err := stageContextEntries(context.Background(), repo, entries)
+	return dir, cleanup, err
+}
+
+// contextEntry is one path a project build's context holds: a directory, a regular file with its
+// permission bits, or a symlink kept as a link (so a link to an omitted secret is left dangling, not
+// resolved).
+type contextEntry struct {
+	rel    string      // repo-relative, in OS form
+	mode   fs.FileMode // fs.ModeDir, fs.ModeSymlink, or a regular file's permission bits
+	target string      // a symlink's target
+	file   fs.FileInfo // a regular file as the selection saw it: a later read must be this same file
+}
+
+// buildContextSelection is the one decision about what a project build may read: every path under
+// repo EXCEPT .git, a shadowed path (NewShadowDecider — the same denylist that hides secrets from a
+// run) and gitignored build output. Tracked files remain even when a later ignore rule matches them,
+// as do ordinary untracked inputs an agent is still authoring; irregular files are left out. It is
+// recomputed for every build: an ignore rule, a .coopignore or the built-in denylist changing what
+// is selected has to change what is built, so the selection itself must never be cached.
+func buildContextSelection(ctx context.Context, repo string) ([]contextEntry, error) {
+	shadowed := NewShadowDecider(repo)
+	ignored := ignoredBuildPaths(repo)
+	var entries []contextEntry
+	err := filepath.WalkDir(repo, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		rel, err := filepath.Rel(repo, p)
 		if err != nil {
@@ -623,18 +663,133 @@ func stageBuildContext(repo string) (string, func(), error) {
 			if d.Name() == ".git" || shadowed(slash) || ignored(slash) {
 				return fs.SkipDir // source control, secrets, and generated output never enter the context
 			}
-			return os.MkdirAll(filepath.Join(ctx, rel), 0o755)
+			entries = append(entries, contextEntry{rel: rel, mode: fs.ModeDir})
+			return nil
 		}
 		if shadowed(slash) || ignored(slash) {
 			return nil // a COPY fails loudly instead of baking a secret or depending on generated output
 		}
-		return copyForBuild(p, filepath.Join(ctx, rel))
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		switch {
+		case info.Mode()&fs.ModeSymlink != 0:
+			target, err := os.Readlink(p)
+			if err != nil {
+				return err
+			}
+			entries = append(entries, contextEntry{rel: rel, mode: fs.ModeSymlink, target: target})
+		case info.Mode().IsRegular():
+			entries = append(entries, contextEntry{rel: rel, mode: info.Mode().Perm(), file: info})
+		}
+		return nil
+	})
+	return entries, err
+}
+
+// contextDigest hashes entries as a build reads them: each entry's kind, path, and mode or link
+// target, and each file's bytes, NUL-separated (no path or target holds a NUL). write, when set,
+// gets every entry and a file's content from the same read, so a staged copy and its digest cannot
+// disagree.
+func contextDigest(ctx context.Context, repo string, entries []contextEntry, write func(contextEntry, io.Reader) error) (string, error) {
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	sum := sha256.New()
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		rel := filepath.ToSlash(entry.rel)
+		if entry.mode.IsDir() || entry.mode&fs.ModeSymlink != 0 {
+			fmt.Fprintf(sum, "%s\x00%s\x00%s\x00", entry.mode.Type(), rel, entry.target)
+			if write != nil {
+				if err := write(entry, nil); err != nil {
+					return "", err
+				}
+			}
+			continue
+		}
+		// Read only inside repo — os.Root refuses a path a swapped-in link would take out of it — and
+		// only the very file the selection judged: os.Root still follows a link that stays inside, so
+		// it is SameFile that leaves out a file deleted or replaced since (an editor's save, a directory
+		// swapped for a link into ignored output), as a walk a moment later would have left it. That
+		// needs real inode numbers; a filesystem that invents them would drop files here. O_NONBLOCK
+		// keeps a FIFO swapped in from blocking the open.
+		file, err := root.OpenFile(entry.rel, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		info, err := file.Stat()
+		if err != nil || !os.SameFile(info, entry.file) {
+			file.Close()
+			if err != nil {
+				return "", err
+			}
+			continue
+		}
+		content := sha256.New()
+		if write != nil {
+			err = write(entry, io.TeeReader(file, content))
+		} else {
+			_, err = io.Copy(content, file)
+		}
+		file.Close()
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(sum, "file\x00%s\x00%o\x00%x\x00", rel, entry.mode.Perm(), content.Sum(nil))
+	}
+	return hex.EncodeToString(sum.Sum(nil)), nil
+}
+
+// stageContextEntries copies entries into a throwaway dir and returns the digest of exactly what it
+// wrote.
+func stageContextEntries(ctx context.Context, repo string, entries []contextEntry) (string, string, func(), error) {
+	dir, err := os.MkdirTemp("", "coop-buildctx-")
+	if err != nil {
+		return "", "", func() {}, err
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	digest, err := contextDigest(ctx, repo, entries, func(entry contextEntry, content io.Reader) error {
+		return stageEntry(dir, entry, content)
 	})
 	if err != nil {
 		cleanup()
-		return "", func() {}, err
+		return "", "", func() {}, err
 	}
-	return ctx, cleanup, nil
+	return dir, digest, cleanup, nil
+}
+
+// stageEntry writes one entry into the staged context. Modes are set, not left to the umask: a file
+// created under a `umask 077` shell would carry a mode the repository does not, and the image would
+// inherit it.
+func stageEntry(dir string, entry contextEntry, content io.Reader) error {
+	dst := filepath.Join(dir, entry.rel)
+	switch {
+	case entry.mode.IsDir():
+		if err := os.MkdirAll(dst, 0o755); err != nil {
+			return err
+		}
+		return os.Chmod(dst, 0o755)
+	case entry.mode&fs.ModeSymlink != 0:
+		return os.Symlink(entry.target, dst)
+	}
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, entry.mode.Perm())
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(out, content)
+	if err == nil {
+		err = out.Chmod(entry.mode.Perm())
+	}
+	return errors.Join(err, out.Close())
 }
 
 // ignoredBuildPaths returns a predicate over Git's ignored, untracked paths. A single
@@ -676,39 +831,6 @@ func ignoredBuildPaths(repo string) func(string) bool {
 		}
 		return false
 	}
-}
-
-// copyForBuild copies one entry into the staged context, preserving symlinks (as links, so a link
-// to an omitted secret is left dangling, not resolved) and skipping irregular files.
-func copyForBuild(src, dst string) error {
-	fi, err := os.Lstat(src)
-	if err != nil {
-		return err
-	}
-	if fi.Mode()&os.ModeSymlink != 0 {
-		target, err := os.Readlink(src)
-		if err != nil {
-			return err
-		}
-		return os.Symlink(target, dst)
-	}
-	if !fi.Mode().IsRegular() {
-		return nil
-	}
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, fi.Mode().Perm())
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
-	}
-	return out.Close()
 }
 
 // runBuild runs one image build and names its failure the way a person reads it: the runtime

@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- In a project with its own box Dockerfile, a run with network rules starts about half a second
+  sooner when nothing the box is built from has changed. Coop copied the project and rebuilt its box
+  image on every start; it now runs the exact image it built last time, after the same checks. Any
+  change to a file, a mode, a link, an ignore rule, the Dockerfile or Coop's client image builds it
+  again, and a Dockerfile that reads anything besides the project and Coop's base (ADD, another image,
+  a cache mount) still builds on every start. The copy Coop builds from also keeps each file's own
+  permissions now, instead of the ones the shell's umask would give it.
+
 - A run with network rules starts about another second sooner — about 3 seconds in Coop's own
   repository — and so does an editor session there. The network gateway was ready a tenth of a second
   after it started, but it reported that only at its next once-a-second measurement, and nothing in
