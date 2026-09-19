@@ -48,3 +48,41 @@ func TestCollectorMaintenanceLifecycleAcrossInventoryRetainsAttributionGap(t *te
 		})
 	}
 }
+
+// The same contract without a kernel: a released identity whose inode the registry holds explains
+// its own remnant, a release no inode or clock backs explains nothing, and the registry hands each
+// release to one sample only, keeping the newest when a burst outruns the bound.
+func TestCollectorRetiresReleasedResolverIdentities(t *testing.T) {
+	for _, inode := range []uint64{42, 0} {
+		c, now := collectorFixture(t)
+		conn := c.doh.sockets.track(closeHookConn{closeHook: func() {}}).(*maintenanceConn)
+		conn.inode = inode // the fd read a fake connection cannot give
+		if err := conn.Close(); err != nil {
+			t.Fatal(err)
+		}
+		row := SocketRow{UID: 65532, Inode: 42, State: "closing", Tuple: conn.tuple}
+		sampleReleasedFixture(c, *now, []SocketRow{row})
+		if explained := c.snapshot.PendingConnections == 0; explained != (inode != 0) {
+			t.Fatalf("inode %d: remnant explained = %v", inode, explained)
+		}
+		if len(c.doh.sockets.drainReleased()) != 0 {
+			t.Fatal("a release was handed to a second sample")
+		}
+	}
+	var untimed maintenanceSockets // no clock: the release has no instant to expire from
+	conn := untimed.track(closeHookConn{closeHook: func() {}}).(*maintenanceConn)
+	conn.inode = 42
+	_ = conn.Close()
+	if released := untimed.drainReleased(); len(released) != 0 {
+		t.Fatalf("an untimed release was retained: %+v", released)
+	}
+	c, _ := collectorFixture(t)
+	for i := range maxReleasedMaintenance + 3 {
+		conn := c.doh.sockets.track(closeHookConn{closeHook: func() {}}).(*maintenanceConn)
+		conn.inode = uint64(i + 1)
+		_ = conn.Close()
+	}
+	if released := c.doh.sockets.drainReleased(); len(released) != maxReleasedMaintenance || released[0].Inode != 4 {
+		t.Fatalf("a burst kept %d releases, want the newest %d", len(released), maxReleasedMaintenance)
+	}
+}

@@ -244,7 +244,7 @@ func NewGuardRuntime(config LaunchConfig) (*GuardRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
-	doh, err := NewDoH(netip.MustParseAddrPort(MaintenanceResolver+":443"), MaintenanceResolverName, nil)
+	doh, err := NewDoH(netip.MustParseAddrPort(MaintenanceResolver+":443"), MaintenanceResolverName, nil, clock)
 	if err != nil {
 		return nil, err
 	}

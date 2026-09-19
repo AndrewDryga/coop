@@ -146,7 +146,7 @@ func TestCollectorHistoryDedupeSurvivesIncompleteInventory(t *testing.T) {
 			if truncated {
 				err = &inventoryTruncated{omitted: uint64(len(rows))}
 			}
-			c.publish(KernelSample{Sequence: 1, BootAt: *now, EnforcerReady: true, Counters: &KernelCounters{}}, nil, nil, err, nil, true)
+			c.publish(KernelSample{Sequence: 1, BootAt: *now, EnforcerReady: true, Counters: &KernelCounters{}}, nil, nil, err, nil, nil, true)
 			publishFixture(c, *now, rows)
 			if c.detailLost != 1 {
 				t.Fatalf("incomplete inventory manufactured history evictions: %d", c.detailLost)
@@ -157,7 +157,7 @@ func TestCollectorHistoryDedupeSurvivesIncompleteInventory(t *testing.T) {
 			*now = now.Add(ObservationStaleAfter)
 			publishFixture(c, *now, []SocketRow{row})
 			history := slices.Clone(c.closed)
-			c.publish(KernelSample{Sequence: 1, BootAt: *now, EnforcerReady: true, Counters: &KernelCounters{}}, nil, nil, err, nil, true)
+			c.publish(KernelSample{Sequence: 1, BootAt: *now, EnforcerReady: true, Counters: &KernelCounters{}}, nil, nil, err, nil, nil, true)
 			publishFixture(c, *now, []SocketRow{row})
 			if c.snapshot.PendingConnections != 0 || !slices.Equal(c.closed, history) {
 				t.Fatal("unproven absence reset expired identity or rewrote history")
@@ -177,7 +177,7 @@ func TestCollectorIncompleteHistoryIdentityBoundDoesNotInventAnOmissionCount(t *
 	row.Inode = MaxSocketInventory + 1
 	kernel := KernelSample{Sequence: 1, BootAt: *now, EnforcerReady: true, Counters: &KernelCounters{}}
 	for range 3 {
-		c.publish(kernel, nil, []SocketRow{row}, &inventoryTruncated{omitted: 1}, nil, true)
+		c.publish(kernel, nil, []SocketRow{row}, &inventoryTruncated{omitted: 1}, nil, nil, true)
 	}
 	if len(c.previousUnknown) != MaxSocketInventory || len(c.closed) != 0 || c.detailLost != 0 ||
 		!c.snapshot.Loss.DetailTruncated || c.snapshot.Loss.OmittedDetails != nil || !slices.Contains(c.snapshot.Loss.Reasons, "socket_history_identity_capacity") || c.snapshot.Coverage.ProxyBytes.Status != "exact" {
@@ -216,10 +216,10 @@ func TestCollectorFirstHistoryDoesNotHideLaterSameSocketEscalation(t *testing.T)
 	row := historicalSocket()
 	row.UID, row.State = 1000, "connecting"
 	kernel := KernelSample{Sequence: 1, BootAt: *now, Counters: &KernelCounters{}}
-	c.publish(kernel, nil, []SocketRow{row}, nil, nil, true)
+	c.publish(kernel, nil, []SocketRow{row}, nil, nil, nil, true)
 	history := c.closed[0]
 	row.State = "open"
-	c.publish(kernel, nil, []SocketRow{row}, nil, nil, true)
+	c.publish(kernel, nil, []SocketRow{row}, nil, nil, nil, true)
 	if len(c.snapshot.Connections) != 1 || c.snapshot.Connections[0].Reason != "unexpected_agent_connection" || c.snapshot.Health.Enforcer.Reason != "unexpected_agent_connection" {
 		t.Fatal("first history masked the current escalation")
 	}

@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A clean filtered run no longer ends with a false "Some network activity may be missing" warning
+  and an unmatched `1.1.1.1:443` endpoint. Those were Coop's own DNS connections, opened and closed
+  between two network samples; Coop now recognizes each by the kernel identity it reads when it
+  opens it. A socket it cannot identify is still reported.
+
 - Every Coop box now runs the same agent CLIs and editor adapters: the exact versions this Coop
   release qualified. Plain, loop, preset and editor boxes used to install the newest npm releases
   (and Grok through its install script), so they could differ from filtered boxes and break on an

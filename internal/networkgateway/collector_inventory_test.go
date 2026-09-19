@@ -12,7 +12,7 @@ func TestCollectorTruncationRetainsPartialInventoryAndStickyHistory(t *testing.T
 	row := SocketRow{Tuple: SocketTuple{Local: event.Local, Peer: event.Peer}, UID: 65532, Inode: 42, State: "open"}
 	publishFixture(c, *now, []SocketRow{row})
 	*now = now.Add(time.Second)
-	c.publish(KernelSample{Sequence: 2, BootAt: *now, EnforcerReady: true, Counters: &KernelCounters{}}, nil, nil, &inventoryTruncated{omitted: 9}, nil, true)
+	c.publish(KernelSample{Sequence: 2, BootAt: *now, EnforcerReady: true, Counters: &KernelCounters{}}, nil, nil, &inventoryTruncated{omitted: 9}, nil, nil, true)
 	s := c.Snapshot()
 	if s.PendingConnections != 1 || s.LiveConnections == nil || *s.LiveConnections != 0 || s.Coverage.SocketInventory.Status != "lower-bound" || s.Coverage.BoundaryAttribution.Status != "lower-bound" || !s.Loss.DetailTruncated || *s.Loss.OmittedDetails != 9 {
 		t.Fatal("truncation erased pending ownership or claimed a complete empty sample")
@@ -36,7 +36,7 @@ func TestCollectorAbsentSocketIsPartialNotProofOfClosedFlow(t *testing.T) {
 		if truncated {
 			inventoryErr, wantReason = &inventoryTruncated{omitted: 1}, "socket_observation_unavailable"
 		}
-		c.publish(KernelSample{Sequence: 1, BootAt: *now, EnforcerReady: true, Counters: &KernelCounters{}}, nil, nil, inventoryErr, nil, true)
+		c.publish(KernelSample{Sequence: 1, BootAt: *now, EnforcerReady: true, Counters: &KernelCounters{}}, nil, nil, inventoryErr, nil, nil, true)
 		s := c.Snapshot()
 		if len(s.Connections) != 1 || !s.Connections[0].Partial || s.Connections[0].Reason != wantReason || s.Connections[0].State == "closed" || s.Coverage.ProxyBytes.Status != "exact" {
 			t.Fatal("inventory absence became complete live attribution or invented stream ending")

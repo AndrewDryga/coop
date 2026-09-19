@@ -149,7 +149,7 @@ func TestCollectorMaintenanceBirthReconcilesOnlyTheSameRetainedInode(t *testing.
 	defer conn.Close()
 	*now = now.Add(time.Second)
 	row.Inode = 43 // a different socket at the same tuple cannot settle inode 42
-	c.publish(KernelSample{Sequence: 1, BootAt: *now, EnforcerReady: true, Counters: &KernelCounters{}}, nil, []SocketRow{row}, nil, c.doh.sockets.snapshot(), true)
+	c.publish(KernelSample{Sequence: 1, BootAt: *now, EnforcerReady: true, Counters: &KernelCounters{}}, nil, []SocketRow{row}, nil, c.doh.sockets.snapshot(), nil, true)
 	if c.snapshot.PendingConnections != 1 || c.snapshot.Coverage.BoundaryAttribution.Status != "lower-bound" {
 		t.Fatalf("maintenance tuple reuse borrowed prior pending ownership: pending=%v owned=%+v coverage=%+v", c.pending, c.doh.sockets.snapshot(), c.snapshot.Coverage)
 	}
@@ -329,9 +329,10 @@ func TestCollectorRetiredMaintenanceSocketExplainsItsOwnRemnant(t *testing.T) {
 	}
 }
 
-// A retired maintenance connection explains ITS socket, proved by the inode some
-// sample bound to it — never a socket that merely points at 1.1.1.1:443, and
-// never one the kernel handed out at that tuple long after the release.
+// A retired maintenance connection explains ITS socket, proved by an inode — one a
+// sample bound, or its own fd's — never a socket that merely points at
+// 1.1.1.1:443, and never one the kernel handed out at that tuple long after the
+// release. These fixtures have no fd, so only a sample can prove them.
 func TestCollectorMaintenanceRemnantNeedsItsOwnBoundIdentity(t *testing.T) {
 	for _, scenario := range []string{"never-bound", "other-inode", "stale"} {
 		t.Run(scenario, func(t *testing.T) {

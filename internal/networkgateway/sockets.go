@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/egress"
@@ -258,10 +259,26 @@ type maintenanceSocket struct {
 	Sent, Received uint64
 }
 
+// releasedMaintenance is a resolver socket the registry watched close: its exact tuple, the inode
+// read from its own fd when it was tracked, and the boot-clock instant it was released. The
+// collector retires it like an identity a sample bound, so a connection dialed and released
+// between two samples still explains its own remnant — by tuple AND inode, never by peer.
+type releasedMaintenance struct {
+	Tuple    SocketTuple
+	Inode    uint64
+	Released BootInstant
+}
+
+// maxReleasedMaintenance bounds the releases one sample hands over; the oldest, closest to expiry,
+// goes first.
+const maxReleasedMaintenance = 2 * MaxDNSInFlight
+
 type maintenanceSockets struct {
 	mu              sync.Mutex
 	next            uint64
 	active          map[uint64]*maintenanceConn
+	released        []releasedMaintenance
+	clock           *BootClock // the collector's; a release it cannot time explains nothing
 	sent, received  atomic.Uint64
 	partial         atomic.Bool
 	closed          bool
@@ -274,9 +291,31 @@ type maintenanceConn struct {
 	owner          *maintenanceSockets
 	id             uint64
 	tuple          SocketTuple
+	inode          uint64
 	started        time.Time
 	sent, received atomic.Uint64
 	once           sync.Once
+}
+
+// socketInode is the kernel inode behind a socket, read from its own fd — the number
+// /proc/net/tcp lists for it. 0 when conn exposes no fd or the read fails.
+func socketInode(conn net.Conn) uint64 {
+	sc, ok := conn.(syscall.Conn)
+	if !ok {
+		return 0
+	}
+	raw, err := sc.SyscallConn()
+	if err != nil {
+		return 0
+	}
+	var inode uint64
+	_ = raw.Control(func(fd uintptr) {
+		var st syscall.Stat_t
+		if syscall.Fstat(int(fd), &st) == nil {
+			inode = uint64(st.Ino)
+		}
+	})
+	return inode
 }
 
 func (m *maintenanceSockets) track(conn net.Conn) net.Conn {
@@ -299,7 +338,8 @@ func (m *maintenanceSockets) track(conn net.Conn) net.Conn {
 	m.next++
 	localAddr, peerAddr := local.AddrPort(), peer.AddrPort()
 	c := &maintenanceConn{Conn: conn, owner: m, id: m.next, tuple: SocketTuple{
-		Local: netip.AddrPortFrom(localAddr.Addr().Unmap(), localAddr.Port()), Peer: netip.AddrPortFrom(peerAddr.Addr().Unmap(), peerAddr.Port())}, started: time.Now().UTC()}
+		Local: netip.AddrPortFrom(localAddr.Addr().Unmap(), localAddr.Port()), Peer: netip.AddrPortFrom(peerAddr.Addr().Unmap(), peerAddr.Port())},
+		inode: socketInode(conn), started: time.Now().UTC()}
 	m.active[c.id] = c
 	return c
 }
@@ -402,9 +442,35 @@ func (m *maintenanceSockets) shutdown(ctx context.Context) error {
 }
 func (c *maintenanceConn) Close() error {
 	// Retire identity before releasing the kernel tuple. A concurrent scan
-	// must not attribute a reused tuple to this connection after Close.
-	c.once.Do(func() { c.owner.mu.Lock(); delete(c.owner.active, c.id); c.owner.mu.Unlock() })
+	// must not attribute a reused tuple to this connection after Close; only
+	// the released record's exact inode can still explain its own remnant.
+	c.once.Do(func() {
+		c.owner.mu.Lock()
+		delete(c.owner.active, c.id)
+		c.owner.releaseLocked(c)
+		c.owner.mu.Unlock()
+	})
 	return c.Conn.Close()
+}
+
+func (m *maintenanceSockets) releaseLocked(c *maintenanceConn) {
+	at := m.clock.instant()
+	if c.inode == 0 || !at.Valid() {
+		return // an identity no fd gave, or no clock timed, explains nothing about a later socket
+	}
+	if len(m.released) == maxReleasedMaintenance {
+		m.released = m.released[1:]
+	}
+	m.released = append(m.released, releasedMaintenance{Tuple: c.tuple, Inode: c.inode, Released: at})
+}
+
+// drainReleased hands the collector every release since its last sample.
+func (m *maintenanceSockets) drainReleased() []releasedMaintenance {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	released := m.released
+	m.released = nil
+	return released
 }
 func (m *maintenanceSockets) snapshot() []maintenanceSocket {
 	m.mu.Lock()

@@ -202,6 +202,9 @@ func (c *Collector) sample(ctx context.Context, ready, terminal bool, cutoff Boo
 	owned := c.doh.sockets.snapshot()
 	rows, inventoryErr := c.inventory()
 	owned = slices.DeleteFunc(owned, func(s maintenanceSocket) bool { return !c.doh.sockets.stillOwned(s) })
+	// Every release before the inventory read is in this drain, so a remnant this
+	// sample lists meets its own released identity rather than an unmatched socket.
+	released := c.doh.sockets.drainReleased()
 	budget := KernelSampleTimeout
 	if cutoff.Valid() {
 		budget = ControlTimeout
@@ -221,7 +224,7 @@ func (c *Collector) sample(ctx context.Context, ready, terminal bool, cutoff Boo
 	defer c.mu.Unlock()
 	c.ingest(guards, guardTotals, proxies, envoyTotals)
 	c.terminal = terminal
-	c.publish(kernel, kernelErr, rows, inventoryErr, owned, ready)
+	c.publish(kernel, kernelErr, rows, inventoryErr, owned, released, ready)
 }
 
 func (c *Collector) ingest(guards []GuardEvent, gt GuardTotals, proxies []EnvoyEvent, et EnvoyTotals) {
@@ -480,10 +483,20 @@ func retainRemnant(set map[SocketTuple]retainedSocket, tuple SocketTuple, inode 
 // showing its exact tuple — claimed by nothing else — binds its inode; when the
 // resolver later releases it, that bound identity is retained the way a proxy
 // close is, so the remnant the kernel keeps is explained as maintenance instead
-// of an agent-flow gap. A connection no sample ever bound is retained as
-// nothing: its bytes are already in the maintenance counters, and its peer
-// address alone would explain any socket to the resolver's upstream.
-func (c *Collector) reconcileMaintenance(owned []maintenanceSocket, rows []SocketRow, matched map[SocketTuple]int, now BootInstant) {
+// of an agent-flow gap. Every release also carries the inode the registry read
+// from the connection's own fd — the same kernel fact a sample binds — and the
+// instant it happened, so a connection dialed and released between two samples
+// is retained too, and a bound one is retained from its exact release. A
+// connection with neither inode is retained as nothing: its bytes are already in
+// the maintenance counters, and its peer address alone would explain any socket
+// to the resolver's upstream.
+func (c *Collector) reconcileMaintenance(owned []maintenanceSocket, released []releasedMaintenance, rows []SocketRow, matched map[SocketTuple]int, now BootInstant) {
+	// The registry's release instant is exact; a sample's is up to an interval late, so it goes last.
+	defer func() {
+		for _, r := range released {
+			c.retiredMaintenance = retainRemnant(c.retiredMaintenance, r.Tuple, r.Inode, r.Released)
+		}
+	}()
 	if len(owned) == 0 && len(c.maintenanceInodes) == 0 {
 		return
 	}
@@ -695,7 +708,7 @@ func missingCoverage(reason string) networkview.MetricCoverage {
 	return networkview.MetricCoverage{Status: "unavailable", Reason: reason}
 }
 
-func (c *Collector) publish(kernel KernelSample, kernelErr error, rows []SocketRow, inventoryErr error, owned []maintenanceSocket, ready bool) {
+func (c *Collector) publish(kernel KernelSample, kernelErr error, rows []SocketRow, inventoryErr error, owned []maintenanceSocket, released []releasedMaintenance, ready bool) {
 	now := c.clock.instant()
 	var truncation *inventoryTruncated
 	if errors.As(inventoryErr, &truncation) {
@@ -857,7 +870,7 @@ func (c *Collector) publish(kernel KernelSample, kernelErr error, rows []SocketR
 	for _, m := range owned {
 		matched[m.Tuple]++
 	}
-	c.reconcileMaintenance(owned, rows, matched, now)
+	c.reconcileMaintenance(owned, released, rows, matched, now)
 	// A proxied flow's upstream socket can outlive its stream: the inventory can
 	// precede an authoritative close consumed in this same sample, and the kernel
 	// keeps the socket into later ones. The gateway's own resolver leaves the same

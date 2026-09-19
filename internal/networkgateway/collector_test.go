@@ -27,7 +27,7 @@ func collectorFixture(t *testing.T) (*Collector, *BootInstant) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doh, err := NewDoH(netip.MustParseAddrPort("1.1.1.1:443"), "cloudflare-dns.com", nil)
+	doh, err := NewDoH(netip.MustParseAddrPort("1.1.1.1:443"), "cloudflare-dns.com", nil, controller.clock)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,14 @@ func publishFixture(c *Collector, now BootInstant, rows []SocketRow) {
 	publishOwnedFixture(c, now, rows, nil)
 }
 func publishOwnedFixture(c *Collector, now BootInstant, rows []SocketRow, owned []maintenanceSocket) {
-	c.publish(KernelSample{Sequence: 1, BootAt: now, At: time.Unix(100, 0), EnforcerReady: true, Counters: &KernelCounters{}}, nil, rows, nil, owned, true)
+	c.publish(KernelSample{Sequence: 1, BootAt: now, At: time.Unix(100, 0), EnforcerReady: true, Counters: &KernelCounters{}}, nil, rows, nil, owned, nil, true)
+}
+
+// sampleReleasedFixture publishes rows the way Sample does: the registry's owned connections, then
+// every release since the last sample.
+func sampleReleasedFixture(c *Collector, now BootInstant, rows []SocketRow) {
+	c.publish(KernelSample{Sequence: 1, BootAt: now, At: time.Unix(100, 0), EnforcerReady: true, Counters: &KernelCounters{}}, nil, rows, nil,
+		c.doh.sockets.snapshot(), c.doh.sockets.drainReleased(), true)
 }
 
 func TestCollectorCumulativeReplayAndUnknownMeters(t *testing.T) {
@@ -177,10 +184,10 @@ func TestCollectorUnknownSocketsAndKernelResetCannotClaimExactZero(t *testing.T)
 		t.Fatalf("unknown socket mislabeled maintenance or complete zero: %#v", s)
 	}
 	k := KernelSample{Sequence: 2, BootAt: *now, Counters: &KernelCounters{DeniedAgent: 100}, EnforcerReady: true}
-	c.publish(k, nil, nil, nil, nil, true)
+	c.publish(k, nil, nil, nil, nil, nil, true)
 	k.Sequence++
 	k.Counters = &KernelCounters{DeniedAgent: 1}
-	c.publish(k, nil, nil, nil, nil, true)
+	c.publish(k, nil, nil, nil, nil, nil, true)
 	if *c.snapshot.Counters.DeniedPackets != 100 || c.snapshot.Coverage.KernelPackets.Status != "lower-bound" {
 		t.Fatal("kernel reset lowered cumulative total or remained exact")
 	}
@@ -244,7 +251,7 @@ func TestCollectorCloseAfterInventoryKeepsExactBoundedJoin(t *testing.T) {
 
 func TestCollectorUnavailableEnforcerCannotReportOverallAvailable(t *testing.T) {
 	c, now := collectorFixture(t)
-	c.publish(KernelSample{Sequence: 1, BootAt: *now, Counters: &KernelCounters{}}, nil, nil, nil, nil, true)
+	c.publish(KernelSample{Sequence: 1, BootAt: *now, Counters: &KernelCounters{}}, nil, nil, nil, nil, nil, true)
 	if c.snapshot.Availability != "degraded" || c.snapshot.Health.Enforcer.Status != "unavailable" {
 		t.Fatal("failed enforcer reported available network")
 	}
@@ -288,7 +295,7 @@ func TestUnknownOpenAgentSocketOrUnavailableEnforcerIsNotCalledBlocked(t *testin
 			} else {
 				k.EnforcerReady = false
 			}
-			c.publish(k, nil, []SocketRow{row}, nil, nil, true)
+			c.publish(k, nil, []SocketRow{row}, nil, nil, nil, true)
 			if len(c.denials) != 0 || *c.snapshot.UnknownConnections != 1 || c.snapshot.Coverage.BoundaryAttribution.Status != "lower-bound" || c.snapshot.Coverage.ProxyBytes.Status != "exact" || !c.snapshot.Loss.Unknown {
 				t.Fatal("unexpected/unverified socket silently called blocked")
 			}
@@ -307,7 +314,7 @@ func TestSampledSocketEvidencePreservesDedupeAcrossInventoryFailure(t *testing.T
 	c, now := collectorFixture(t)
 	row := SocketRow{UID: 1000, Inode: 42, State: "connecting", Tuple: SocketTuple{Local: netip.MustParseAddrPort("172.17.0.2:32000"), Peer: netip.MustParseAddrPort("169.254.169.254:80")}}
 	publishFixture(c, *now, []SocketRow{row})
-	c.publish(KernelSample{Sequence: 1, BootAt: *now, Counters: &KernelCounters{}, EnforcerReady: true}, nil, nil, Failure("socket_inventory_unavailable"), nil, true)
+	c.publish(KernelSample{Sequence: 1, BootAt: *now, Counters: &KernelCounters{}, EnforcerReady: true}, nil, nil, Failure("socket_inventory_unavailable"), nil, nil, true)
 	publishFixture(c, *now, []SocketRow{row})
 	if len(c.denials) != 1 || !c.inventoryGap {
 		t.Fatal("failed inventory erased identity or gap evidence")
@@ -317,7 +324,7 @@ func TestSampledSocketEvidencePreservesDedupeAcrossInventoryFailure(t *testing.T
 func TestStaleEnforcerCannotClassifyDirectSocketAsBlocked(t *testing.T) {
 	c, now := collectorFixture(t)
 	row := SocketRow{UID: 1000, Inode: 42, State: "connecting", Tuple: SocketTuple{Local: netip.MustParseAddrPort("172.17.0.2:32000"), Peer: netip.MustParseAddrPort("169.254.169.254:80")}}
-	c.publish(KernelSample{Sequence: 1, BootAt: now.Add(-4 * time.Second), Counters: &KernelCounters{}, EnforcerReady: true}, nil, []SocketRow{row}, nil, nil, true)
+	c.publish(KernelSample{Sequence: 1, BootAt: now.Add(-4 * time.Second), Counters: &KernelCounters{}, EnforcerReady: true}, nil, []SocketRow{row}, nil, nil, nil, true)
 	if len(c.denials) != 0 || *c.snapshot.UnknownConnections != 1 {
 		t.Fatal("stale enforcement produced a blocked-socket assertion")
 	}

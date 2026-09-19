@@ -22,7 +22,7 @@ func testDoH(t *testing.T, handler http.Handler) *DoH {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doh, err := NewDoH(peer, "example.com", roots) // the httptest certificate covers example.com
+	doh, err := NewDoH(peer, "example.com", roots, nil) // the httptest certificate covers example.com
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -103,13 +103,18 @@ setup` refuse a clean run about one time in three. A retained close expires afte
 `ObservationStaleAfter` (3 s, three sampling intervals) and is evicted then, so a reused ephemeral
 port minutes later cannot hide a real gap; an unreadable clock folds nothing and evicts nothing.
 The resolver's own DoH connection leaves the same remnant, and is explained the same way — but only
-by exact identity. `owned` carries a tuple and no inode, so while a connection is owned the first
-inventory row at that tuple, claimed by nothing else, BINDS its inode; releasing the connection
-retains that tuple+inode pair under the same bound and the same expiry (`collector.go:462`,
-`:503`), and its bytes stay where they were metered, in the maintenance counters. A connection no
-sample ever bound explains nothing — the dial socket the collector can catch in SYN_SENT before
-`track()` registers it (`sockets.go:278`) is still `unattributed_socket`, because the only thing
-left to match it on is the peer address, and 1.1.1.1:443 is not an identity.
+by exact identity. While a connection is owned, the first inventory row at its tuple, claimed by
+nothing else, BINDS its inode. A connection dialed and released between two samples never meets a
+sample, so `track()` also reads the inode from the connection's own fd (`socketInode`, `fstat` —
+the number /proc/net/tcp lists) and `Close` appends (tuple, inode, boot-clock release instant) to a
+bounded released list each sample drains after its inventory read (`drainReleased`). Either way
+`reconcileMaintenance` retains the tuple+inode pair under the same bound and expiry as a proxy
+close, `maintenanceAccountsFor` explains only that exact tuple, inode and UID 65532 within 3 s, and
+the bytes stay where they were metered, in the maintenance counters. What still explains nothing:
+a dial the collector catches in SYN_SENT and that stays unregistered past the 3 s bound — its only
+key is the peer address, and 1.1.1.1:443 is not an identity — and an inode-0 closing remnant, which
+stays an ownerless `kernel_closing_remnant` (the report hides it). macOS's fstat reports no socket
+inode; only the gateway's Linux container needs it.
 
 **Cleanup** is exact-owned and ordered (`box/filtered_cleanup.go:30`): remove the agent, prove the
 guard still answers AFTER the agent is gone, stop it, copy the single `final.json` out of the
@@ -162,6 +167,11 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-09-19 — a resolver connection dialed and released between two samples no longer leaves a
+  false "may be missing" warning: `track()` reads its inode from the fd and the collector retires
+  its released identity like a bound one (human decision A on task
+  2026-09-18-attribute-the-gateway-s-own-resolver-sockets-aft). Supersedes the 2026-09-10 note that
+  such a connection stays `unattributed_socket` on purpose.
 - 2026-09-19 — `markReady` wakes the collector, so the first ready snapshot no longer waits out the
   1 s observation tick (start 3.97 s → 3.00 s)
 - 2026-09-19 — the filtered launch overlaps its independent steps (volumes; guard creation beside the

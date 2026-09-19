@@ -26,12 +26,14 @@ type DoH struct {
 	stop      context.CancelFunc
 }
 
-func NewDoH(peer netip.AddrPort, serverName string, roots *x509.CertPool) (*DoH, error) {
+// NewDoH dials only peer. clock times the release of each resolver connection for the collector.
+func NewDoH(peer netip.AddrPort, serverName string, roots *x509.CertPool, clock *BootClock) (*DoH, error) {
 	name, err := egress.NormalizeDomain(serverName, false)
 	if err != nil || !peer.IsValid() || !peer.Addr().Is4() || peer.Port() == 0 {
 		return nil, Failure("dns_upstream_invalid")
 	}
 	doh := &DoH{}
+	doh.sockets.clock = clock
 	lifetime, stop := context.WithCancel(context.Background())
 	doh.stop = stop
 	transport := &http.Transport{
