@@ -44,10 +44,10 @@ func (s buildShim) build(t *testing.T) runtime.Runtime {
 }
 
 func TestApprovedBuild(t *testing.T) {
-	// A repo with no box Dockerfile builds the shared image, which has one name and no path
-	// worth printing.
+	// A repo with no box Dockerfile builds the shared image: no path worth printing, only its tag,
+	// which names the box definition so a reader can tell which Coop's base it is.
 	t.Run("31a-build-shared-base", func(t *testing.T) {
-		cfg := &config.Config{RepoOverride: t.TempDir(), BoxHome: t.TempDir(), BaseImage: "coop-box"}
+		cfg := &config.Config{RepoOverride: t.TempDir(), BoxHome: t.TempDir(), BaseImage: "coop-box:5db4c3f8c69555471772326ae9c3e960"}
 		a := &app{cfg: cfg, rt: buildShim{daemonUp: true}.build(t), rtSet: true}
 		var code int
 		out := captureTerminal(t, func() { code, _ = a.cmdBuild(nil) })

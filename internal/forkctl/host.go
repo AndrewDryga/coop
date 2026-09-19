@@ -33,6 +33,10 @@ type Host struct {
 	// runtime a filtered gate is about to use. A gate's gateway is a launch like any other, so it
 	// asks first, exactly as internal/cli's runBox does; nil settles nothing.
 	SettleFilteredRuns func(rt runtime.Runtime)
+
+	// EnsureBaseImage builds Coop's own base when an upgrade named a new tag that a gate about to
+	// run needs, as a launch does; nil builds nothing.
+	EnsureBaseImage func() error
 }
 
 func (h Host) ensureRuntime() (runtime.Runtime, error) {
@@ -40,6 +44,13 @@ func (h Host) ensureRuntime() (runtime.Runtime, error) {
 		return runtime.Runtime{}, nil
 	}
 	return h.EnsureRuntime()
+}
+
+func (h Host) ensureBaseImage() error {
+	if h.EnsureBaseImage == nil {
+		return nil
+	}
+	return h.EnsureBaseImage()
 }
 
 func (h Host) settleFilteredRuns(rt runtime.Runtime) {

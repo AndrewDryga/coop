@@ -410,6 +410,54 @@ func ImageForRepo(repo, baseImage, override string) string {
 	return baseImage
 }
 
+// ManagedBaseRepository is where Coop builds its shared base. The tag is this binary's box
+// definition, so each Coop version on a host keeps a base of its own: one shared tag had two
+// versions rebuilding it back and forth, each running the other's clients in between.
+const ManagedBaseRepository = "coop-box"
+
+// ResolveBaseImage points the default base, the bare repository, at this binary's own definition:
+// coop-box:<definition>. Any other COOP_BASE_IMAGE is the operator's image and stands as written.
+func ResolveBaseImage(cfg *config.Config) {
+	if cfg.BaseImage != ManagedBaseRepository {
+		return
+	}
+	if definition := baseDefHash(); definition != "" {
+		cfg.BaseImage = managedBaseImage(definition)
+	}
+}
+
+func managedBaseImage(definition string) string {
+	return ManagedBaseRepository + ":" + definition[:32]
+}
+
+// IsManagedBase reports whether image is a base Coop builds for a box definition.
+func IsManagedBase(image string) bool {
+	tag, ok := strings.CutPrefix(image, ManagedBaseRepository+":")
+	return ok && len(tag) == 32 && strings.Trim(tag, "0123456789abcdef") == ""
+}
+
+// ManagedBaseRepair reports whether Coop should build its own base itself: the base is managed and
+// missing, the daemon answers, and a Coop built a managed base on this host before, so an upgrade
+// named a new tag (or a prune took this one) rather than a first build being due, which stays the
+// operator's. builtBy names who built the latest earlier base; removed is set when this very tag was
+// built here before.
+func ManagedBaseRepair(rt runtime.Runtime, cfg *config.Config) (builtBy string, removed, ok bool) {
+	if !IsManagedBase(cfg.BaseImage) || ImageExists(rt, cfg.BaseImage) || rt.EnsureDaemon() != nil {
+		return "", false, false
+	}
+	if builtBy, ok = EarlierManagedBase(cfg); !ok {
+		return "", false, false
+	}
+	_, _, err := readImageMeta(imageMetaPath(cfg, cfg.BaseImage))
+	return builtBy, err == nil, true
+}
+
+// BuildManagedBase builds the managed base alone. It reads nothing and writes build output to w:
+// an ACP child or a session daemon can reach it, and their stdio is not a terminal.
+func BuildManagedBase(rt runtime.Runtime, cfg *config.Config, version string, w io.Writer) error {
+	return BuildPlanned(rt, cfg, "", BuildPlan{Image: cfg.BaseImage}, false, version, strings.NewReader(""), w)
+}
+
 // ImageExists reports whether the given image is present locally.
 func ImageExists(rt runtime.Runtime, image string) bool {
 	return rt.Silent("image", "inspect", image)

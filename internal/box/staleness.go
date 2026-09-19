@@ -124,16 +124,13 @@ func StampImageMeta(cfg *config.Config, img, version string) {
 	}
 }
 
-// BaseImageSkew reports whether the base image was built from a different box definition
-// than this binary carries (e.g. `coop update --self-only` without the rebuild), and by
-// which coop version. Best-effort: no stamp (image built by an older coop, or elsewhere)
-// reads as no skew — never nag on a guess.
-func BaseImageSkew(cfg *config.Config, img string) (builtBy string, skewed bool) {
-	data, err := os.ReadFile(imageMetaPath(cfg, img))
+// readImageMeta parses one StampImageMeta file: the Coop version that built the image and the
+// definition it built from, each "" when absent.
+func readImageMeta(path string) (builtBy, def string, err error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", false
+		return "", "", err
 	}
-	var def string
 	for _, line := range strings.Split(string(data), "\n") {
 		f := strings.Fields(line)
 		if len(f) != 2 {
@@ -145,6 +142,49 @@ func BaseImageSkew(cfg *config.Config, img string) (builtBy string, skewed bool)
 		case "def":
 			def = f[1]
 		}
+	}
+	return builtBy, def, nil
+}
+
+// EarlierManagedBase reports whether a Coop on this host built a managed base before — an untagged
+// coop-box from before the tag named its definition, or one for another definition — and which
+// Coop built the latest of them. A missing base for this definition on such a host is an upgrade
+// to repair, not a first build to leave to the operator.
+func EarlierManagedBase(cfg *config.Config) (builtBy string, ok bool) {
+	dir := filepath.Dir(imageMetaPath(cfg, ManagedBaseRepository))
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", false
+	}
+	var latest time.Time
+	for _, entry := range entries {
+		name := entry.Name()
+		if name != ManagedBaseRepository && !IsManagedBase(strings.Replace(name, "_", ":", 1)) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() || ok && !info.ModTime().After(latest) {
+			continue
+		}
+		if version, _, err := readImageMeta(filepath.Join(dir, name)); err == nil {
+			builtBy, latest, ok = version, info.ModTime(), true
+		}
+	}
+	return builtBy, ok
+}
+
+// BaseImageSkew reports whether the base image was built from a different box definition
+// than this binary carries (e.g. `coop update --self-only` without the rebuild), and by
+// which coop version. Best-effort: no stamp (image built by an older coop, or elsewhere)
+// reads as no skew — never nag on a guess. A managed base names its definition in its tag, so
+// only an operator's COOP_BASE_IMAGE can drift this way.
+func BaseImageSkew(cfg *config.Config, img string) (builtBy string, skewed bool) {
+	if IsManagedBase(img) {
+		return "", false
+	}
+	builtBy, def, err := readImageMeta(imageMetaPath(cfg, img))
+	if err != nil {
+		return "", false
 	}
 	current := baseDefHash()
 	if def == "" || current == "" {

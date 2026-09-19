@@ -98,6 +98,7 @@ func Main(argv []string) int {
 		ui.Error("%v", err)
 		return 1
 	}
+	box.ResolveBaseImage(cfg)
 	if !detachedWorkerReexec(argv) {
 		// Once a day, check for a newer coop in the background and mention it as the command's
 		// parting line (deferred, so it runs on every return path). See startUpdateCheck.

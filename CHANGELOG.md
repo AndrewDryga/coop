@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Two Coop versions on one machine no longer rebuild each other's box. Coop's shared base is now
+  tagged by the box definition it was built from, `coop-box:<definition>`, instead of one
+  `coop-box:latest`, so each version keeps and runs its own; `coop build` and `coop update` name the
+  tag. After an upgrade, the next launch that runs the base builds it itself, as it rebuilt an
+  outdated one before; a filtered run, which uses its own client image, skips it. A
+  `COOP_BASE_IMAGE` you set stands as written. Older bases are no longer overwritten: remove ones
+  you no longer use with `docker rmi`.
+
 - Gemini consults and delegated tasks started from a Codex lead search with ripgrep again, instead
   of falling back to a slower search. `coop-consult` and `coop-delegate` now run each peer on the
   box's own PATH rather than the lead's, which carried Codex's private copy of `rg` — one Gemini

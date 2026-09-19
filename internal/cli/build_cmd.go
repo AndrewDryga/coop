@@ -42,9 +42,9 @@ func (a *app) cmdBuild(args []string) (int, error) {
 	return a.reportRecycle(repo, "Box image built", "coop build")
 }
 
-// announceBuild says which image is about to be built and from what. The shared base has one
-// name and no Dockerfile of the project's own, so it gets one line; a project build names the
-// exact configured path and tag, because both are things the reader can have changed.
+// announceBuild says which image is about to be built and from what. The shared base has no
+// Dockerfile of the project's own, so it names only its tag — one per box definition, so a reader
+// can tell which Coop's base this is; a project build also names the exact configured path.
 func announceBuild(plan box.BuildPlan, baseTitle, projectTitle string) {
 	if plan.Untracked {
 		warnBlock("The box Dockerfile is not tracked in Git",
@@ -54,6 +54,7 @@ func announceBuild(plan box.BuildPlan, baseTitle, projectTitle string) {
 	}
 	if !plan.Project {
 		ui.Note("%s", baseTitle)
+		ui.Note("  Image:      %s", plan.Image)
 		ui.Note("")
 		return
 	}
@@ -196,6 +197,7 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 	}
 	ui.Note("Updating the Coop box")
 	ui.Note("  Fetching newer base-image components. Agent clients stay at the versions this Coop qualifies.")
+	ui.Note("  Image:      %s", plan.Image)
 	ui.Note("")
 	if err := box.BuildPlanned(a.rt, a.cfg, repo, plan, true, resolveVersion(), os.Stdin, os.Stdout); err != nil {
 		ui.Note("")

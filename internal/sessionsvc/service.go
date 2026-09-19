@@ -997,6 +997,7 @@ func NewService(cfg Config) (*Service, error) {
 		if err != nil {
 			return nil, err
 		}
+		box.ResolveBaseImage(sourceCfg)
 	}
 	policies := cfg.Policies
 	if len(policies) == 0 {

@@ -61,6 +61,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [in-box-task-channel](in-box-task-channel.md) — the loop box changes task state through the coop-owned `coop-tasks` MCP server over a helper-container unix socket (never a host-created one, never HTTP), refusing only a task another live process holds
 - [release-qualification](release-qualification.md) — tagged releases reuse exact-commit CI, validate finalized notes and preserve tag identity
 - [box-time-is-utc](box-time-is-utc.md) — boxes run UTC; the host TZ is forwarded so rate-limit reset prose parses back host-local
+- [box-base-image-tags](box-base-image-tags.md) — the shared base is `coop-box:<definition>` so two Coop versions keep their own; no :latest alias, an upgrade is built on launch, project images stay shared
 - [box-home-nested-mounts](box-home-nested-mounts.md) — avoid bind targets that make Docker create missing application-owned home parents as root
 - [restricted-execution-modes](restricted-execution-modes.md) — readonly and bare share one tmpfs-only filesystem profile; the provider is seeded through a read-only bind OUTSIDE the tmpfs home, because a bind under it would be root-owned
 - [box-entrypoint-descendant-handoff](box-entrypoint-descendant-handoff.md) — supervised loop/review boxes authenticate forwarder exemptions and hand off live detached jobs

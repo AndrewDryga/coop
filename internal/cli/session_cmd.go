@@ -478,14 +478,26 @@ func sessionHost() sessionsvc.Host {
 // detected on demand, and a settle every filtered gate repeats — quietly, and never answered once
 // for the process, because the daemon outlives any single answer.
 func sessionReviewGateHost(cfg *config.Config, rt runtime.Runtime) forkctl.Host {
+	ensureRuntime := func() (runtime.Runtime, error) {
+		if rt.Name != "" {
+			return rt, nil
+		}
+		return runtime.Detect(cfg.RuntimeName)
+	}
 	return forkctl.Host{
-		EnsureRuntime: func() (runtime.Runtime, error) {
-			if rt.Name != "" {
-				return rt, nil
-			}
-			return runtime.Detect(cfg.RuntimeName)
-		},
+		EnsureRuntime:      ensureRuntime,
 		SettleFilteredRuns: func(gateRuntime runtime.Runtime) { settleNetworkRuns(gateRuntime) },
+		// An upgrade's new base is built as a launch builds it, output to the daemon's log.
+		EnsureBaseImage: func() error {
+			gateRuntime, err := ensureRuntime()
+			if err != nil {
+				return err
+			}
+			if _, _, ok := box.ManagedBaseRepair(gateRuntime, cfg); !ok {
+				return nil
+			}
+			return box.BuildManagedBase(gateRuntime, cfg, resolveVersion(), os.Stderr)
+		},
 	}
 }
 

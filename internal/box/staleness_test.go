@@ -164,3 +164,50 @@ func TestImageBuildAgeAndNudges(t *testing.T) {
 		t.Fatal("per-project inputs stamp must date the image")
 	}
 }
+
+// The default base names this binary's box definition, so two Coop versions on one host resolve
+// two different images and each keeps its own; an operator's base stands as written.
+func TestResolveBaseImageNamesTheDefinition(t *testing.T) {
+	cfg := &config.Config{BaseImage: ManagedBaseRepository}
+	ResolveBaseImage(cfg)
+	if want := ManagedBaseRepository + ":" + baseDefHash()[:32]; cfg.BaseImage != want || !IsManagedBase(cfg.BaseImage) {
+		t.Fatalf("default base = %q, want %q", cfg.BaseImage, want)
+	}
+	for _, operator := range []string{"coop-box:latest", "registry.example/base:1", "mybase"} {
+		cfg := &config.Config{BaseImage: operator}
+		if ResolveBaseImage(cfg); cfg.BaseImage != operator || IsManagedBase(operator) {
+			t.Errorf("operator base %q became %q", operator, cfg.BaseImage)
+		}
+	}
+	older, newer := managedBaseImage(strings.Repeat("a", 64)), managedBaseImage(strings.Repeat("b", 64))
+	if older == newer || imageMetaPath(cfg, older) == imageMetaPath(cfg, newer) {
+		t.Fatalf("two definitions share an image or its record: %q, %q", older, newer)
+	}
+}
+
+// A host where a Coop built a managed base before — tagged or from before the tag — has an upgrade
+// to repair; the newest record names who built it. Another image's record is not one.
+func TestEarlierManagedBaseFindsTheLatestCoopBuiltBase(t *testing.T) {
+	cfg := &config.Config{BoxHome: t.TempDir()}
+	if _, ok := EarlierManagedBase(cfg); ok {
+		t.Fatal("a host with no records reported an earlier base")
+	}
+	stamp := func(image, version string, age time.Duration) {
+		t.Helper()
+		path := imageMetaPath(cfg, image)
+		writeRepoFile(t, path, "coop "+version+"\ndef "+strings.Repeat("c", 64)+"\n")
+		at := time.Now().Add(-age)
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stamp("mybase:1", "v9.9.9", 0)
+	if _, ok := EarlierManagedBase(cfg); ok {
+		t.Fatal("an operator's base counted as Coop's")
+	}
+	stamp(ManagedBaseRepository, "v9.0.0-100-gaaaaaaa", 2*time.Hour)
+	stamp(managedBaseImage(strings.Repeat("d", 64)), "v9.0.0-226-g87e5d13", time.Hour)
+	if builtBy, ok := EarlierManagedBase(cfg); !ok || builtBy != "v9.0.0-226-g87e5d13" {
+		t.Fatalf("earlier base = %q, %v; want the latest record, v9.0.0-226-g87e5d13", builtBy, ok)
+	}
+}

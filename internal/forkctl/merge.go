@@ -141,6 +141,11 @@ func (c *Control) MergeGate(repo string) (string, error) {
 		return "", err
 	}
 	img := box.ImageForRepo(repo, c.cfg.BaseImage, c.cfg.ImageOverride)
+	if img == c.cfg.BaseImage {
+		if err := c.host.ensureBaseImage(); err != nil {
+			return "", err
+		}
+	}
 	if !box.ImageExists(c.rt, img) {
 		// Same rule as resolveImage: `image inspect` cannot tell a missing image from a dead daemon,
 		// and a merge blocked on the wrong one sends the fix at a build that would not have helped.

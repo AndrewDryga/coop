@@ -1,4 +1,5 @@
 Building the Coop box
+  Image:      coop-box:5db4c3f8c69555471772326ae9c3e960
 
 [Build output]
 

@@ -1565,6 +1565,12 @@ USER root
 RUN <install your toolchain>
 USER node
 ```
+
+Coop tags its base by the box definition it was built from, `coop-box:<definition>` (`coop build`
+names it), so two Coop versions on one machine each keep their own instead of rebuilding one
+shared tag in turn; a launch after an upgrade builds the new one itself. A plain `docker build` of
+this file needs that tag passed in (`--build-arg COOP_BASE_IMAGE=coop-box:<definition>`, listed by
+`docker image ls coop-box`). Superseded bases stay until you remove them with `docker rmi`.
 </details>
 
 <details><summary><b>Reusing an existing devcontainer</b></summary>
@@ -1803,7 +1809,7 @@ controls and cannot be set inside `coop.conf`.
 |---|---|---|
 | `COOP_RUNTIME` | auto (Docker preferred) | `docker` / `container` |
 | `COOP_IMAGE` | (auto) | force a specific image (overrides `.agent/Dockerfile` detection) |
-| `COOP_BASE_IMAGE` | `coop-box` | the shared base image tag |
+| `COOP_BASE_IMAGE` | `coop-box` | the shared base image; `coop-box` means Coop's own, tagged `coop-box:<definition>` per box definition |
 | `COOP_REPO` | (git toplevel) | the repo to operate on, overriding cwd detection |
 | `COOP_WORKDIR` | (real path) | where the repo mounts in the box |
 | `COOP_HOME_IN_BOX` | `/home/node` | where auth + instructions mount in the box |

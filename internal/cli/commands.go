@@ -38,8 +38,14 @@ func loadProject(repoOverride string) (string, *project.Project, error) {
 	return repo, p, nil
 }
 
-// resolveImage resolves the repo and its image, verifying the image is built.
-func (a *app) resolveImage() (repo, img string, err error) {
+// resolveImage resolves the repo and its image, verifying the image is built. After an upgrade,
+// Coop's own base is built here, before any box needs it.
+func (a *app) resolveImage() (repo, img string, err error) { return a.resolveLaunchImage(false) }
+
+// resolveLaunchImage is resolveImage for a launch that checks its box once its posture is known
+// (checkCoopBox): with deferBase, an upgrade's new base is left for that check to build, because a
+// filtered box never runs it.
+func (a *app) resolveLaunchImage(deferBase bool) (repo, img string, err error) {
 	repo, _, err = loadProject(a.cfg.RepoOverride)
 	if err != nil {
 		return "", "", err
@@ -51,6 +57,11 @@ func (a *app) resolveImage() (repo, img string, err error) {
 	if a.loginProvider != "" && a.cfg.ImageOverride == "" {
 		img = a.cfg.BaseImage // authentication must not depend on the project's toolchain image
 	}
+	if img == a.cfg.BaseImage && !deferBase {
+		if err := a.ensureManagedBase(); err != nil {
+			return "", "", err
+		}
+	}
 	if !box.ImageExists(a.rt, img) {
 		// `image inspect` fails the same way whether the image is missing or the daemon is gone, so
 		// probe the daemon before blaming the image — a Docker restart otherwise tells every box
@@ -59,7 +70,9 @@ func (a *app) resolveImage() (repo, img string, err error) {
 		if err := a.rt.EnsureDaemon(); err != nil {
 			return "", "", err
 		}
-		return "", "", fmt.Errorf("image %q not built — run 'coop build'", img)
+		if _, _, upgrade := box.ManagedBaseRepair(a.rt, a.cfg); !deferBase || img != a.cfg.BaseImage || !upgrade {
+			return "", "", fmt.Errorf("image %q not built — run 'coop build'", img)
+		}
 	}
 	return repo, img, nil
 }
@@ -165,7 +178,7 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 	if err != nil {
 		return -1, err
 	}
-	repo, img, err := a.resolveImage()
+	repo, img, err := a.resolveLaunchImage(true)
 	if err != nil {
 		return -1, err
 	}
@@ -247,6 +260,9 @@ func (a *app) restrictedImage() (img string, code int, err error) {
 		return "", -1, err
 	}
 	img = a.cfg.BaseImage
+	if err := a.ensureManagedBase(); err != nil {
+		return "", 1, err
+	}
 	if !box.ImageExists(a.rt, img) {
 		if err := a.rt.EnsureDaemon(); err != nil { // as resolveImage: blame a stopped daemon, not the image
 			return "", -1, err

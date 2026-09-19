@@ -174,6 +174,11 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		return -1, err
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
+	if img == a.cfg.BaseImage {
+		if err := a.ensureManagedBase(); err != nil {
+			return 1, err
+		}
+	}
 	return a.loopctl().Run(loop.RunSpec{ // local loop: no fork label, no fork owner
 		Repo: repo, Image: img, Agent: agent,
 		Rotation: rot, Queues: queues, Preset: a.preset, Peers: peers,

@@ -1338,6 +1338,30 @@ func TestMergeGateBlamesTheDaemonNotTheImage(t *testing.T) {
 	}
 }
 
+// After an upgrade, Coop's own base has a new tag the gate needs: the host builds it, as a launch
+// does, instead of the merge demanding a manual build. Another image is not Coop's to build.
+func TestMergeGateBuildsCoopsBaseAfterAnUpgrade(t *testing.T) {
+	built := filepath.Join(t.TempDir(), "built")
+	shim := filepath.Join(t.TempDir(), "docker")
+	script := "#!/bin/sh\n" +
+		"case \"$1$2\" in imageinspect) [ -f " + built + " ] && exit 0; exit 1 ;; esac\n" +
+		"exit 0\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	host := Host{EnsureBaseImage: func() error { calls++; return os.WriteFile(built, nil, 0o644) }}
+	base := "coop-box:0123456789abcdef0123456789abcdef"
+	c := New(&config.Config{Gate: []string{"true"}, BaseImage: base}, runtime.Runtime{Name: shim}, host)
+	if img, err := c.MergeGate(t.TempDir()); err != nil || img != base || calls != 1 {
+		t.Fatalf("MergeGate = %q, %v after %d base builds; want Coop's base, built once", img, err, calls)
+	}
+	operator := New(&config.Config{Gate: []string{"true"}, BaseImage: base, ImageOverride: "mine:1"}, runtime.Runtime{Name: shim}, host)
+	if _, err := operator.MergeGate(t.TempDir()); calls != 1 {
+		t.Fatalf("an operator's image made the host build Coop's base (%v)", err)
+	}
+}
+
 // A red merge gate restores the reviewed candidate; the fix then lands as commits on top of it.
 // Retiring the stale candidate returns its owners to reviewing so the next signoff republishes
 // the new HEAD and the merge lands the fixed fork — while a HEAD that does not descend from the
