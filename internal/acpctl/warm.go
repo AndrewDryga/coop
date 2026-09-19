@@ -29,16 +29,38 @@ func NewWarmPool(enabled bool, spawn func(provider string) (*acpproxy.Child, err
 	return &WarmPool{spawn: spawn, boxes: map[string]*acpproxy.Child{}, inflight: map[string]bool{}, enabled: enabled}
 }
 
-// Checkout pops and returns the warm box for provider (nil if none). The caller then OWNS it —
-// the pool no longer tracks or reaps it.
-func (p *WarmPool) Checkout(provider string) *acpproxy.Child {
+// Checkout pops and returns the warm box for provider when it runs on account (any account when
+// account is empty) from image, the box image a cold start would use now; otherwise nil. A box on
+// another account stays parked — it is still the right box for a switch to its own account — but one
+// from another image is stopped: a rebuild made it stale, and it can serve no switch again. An image
+// that cannot be told ("") reuses nothing and stops nothing. The caller then OWNS a returned box — the
+// pool no longer tracks or reaps it.
+func (p *WarmPool) Checkout(provider, account, image string) *acpproxy.Child {
 	if p == nil {
 		return nil
 	}
 	p.mu.Lock()
 	c := p.boxes[provider]
-	delete(p.boxes, provider)
+	var stale *acpproxy.Child
+	switch {
+	case c == nil || image == "":
+		c = nil
+	case c.Image != image:
+		stale, c = c, nil
+		delete(p.boxes, provider)
+	case account != "" && c.Account != account:
+		c = nil
+	default:
+		delete(p.boxes, provider)
+	}
+	if stale != nil {
+		p.fills.Add(1) // Reap must not report teardown done while this stop is still running
+	}
 	p.mu.Unlock()
+	if stale != nil {
+		p.stop(stale)
+		p.fills.Done()
+	}
 	if c != nil && c.SetActive != nil {
 		c.SetActive(true)
 	}
@@ -73,19 +95,47 @@ func (p *WarmPool) Refill(provider string) {
 
 	p.mu.Lock()
 	delete(p.inflight, provider)
-	ready := ""
+	parked := ""
 	if err == nil && child != nil && p.enabled {
 		p.boxes[provider] = child
-		ready = child.Provider + "@" + child.Account
+		parked = child.Provider + "@" + child.Account
 		child = nil // ownership moved into the pool; there is nothing left for us to stop
 	}
 	p.mu.Unlock()
-	if ready != "" {
-		acpproxy.Trace("warm pool: %s ready", ready)
+	if parked != "" {
+		// Parked, not proven up: the box may still be starting, and one that dies is found by the
+		// replay after a checkout, which then starts another cold.
+		acpproxy.Trace("warm pool: %s parked", parked)
 	}
 	// A failed spawn leaves the slot empty (the factory cold-spawns on the next switch); one that
 	// finished after Reap disabled the pool is stopped here rather than leaked. Nil-safe.
 	p.stop(child)
+}
+
+// Rebalance keeps the pool at one box for each provider the session is not using: it stops a parked
+// box for the provider that just became active — a spare nobody can switch to while it is the active
+// one — and warms each of others, the providers a switch could go to next, including the one just
+// left. Synchronous, like Refill; the caller runs it in a goroutine.
+func (p *WarmPool) Rebalance(active string, others []string) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	spare := p.boxes[active]
+	delete(p.boxes, active)
+	if spare != nil {
+		p.fills.Add(1) // Reap must not report teardown done while this stop is still running
+	}
+	p.mu.Unlock()
+	if spare != nil {
+		p.stop(spare)
+		p.fills.Done()
+	}
+	for _, provider := range others {
+		if provider != active {
+			p.Refill(provider)
+		}
+	}
 }
 
 // Reap stops every held box, disables the pool, and waits for every in-flight Refill (called on

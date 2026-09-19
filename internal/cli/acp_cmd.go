@@ -476,45 +476,68 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	}
 
 	// Keep a box warm per OTHER signed-in provider so a provider switch swaps to a hot adapter
-	// (proxy replay only) instead of cold-booting one (~5s). Behind the factory: a miss cold-spawns,
-	// so correctness is unaffected. COOP_ACP_WARM=0 opts out (a low-RAM escape hatch).
+	// (proxy replay only) instead of cold-booting one (measured 2026-09-19: ~0.8 s unrestricted, ~5.8 s
+	// filtered). Behind the factory: a miss cold-spawns, so correctness is unaffected. COOP_ACP_WARM=0
+	// opts out (a low-RAM escape hatch).
 	warm := a.cfg.ACPWarm
+	// The image a box starts from now. A warm box records it and is reused only while it still is — a
+	// `coop build` mid-session must not leave a switch on the old one.
+	currentImage := func() string {
+		repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+		if err != nil {
+			return ""
+		}
+		return a.rt.ImageID(box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride))
+	}
+	if warm && currentImage() == "" {
+		// Without the image's identity no parked box can be proved current, so none would ever be
+		// lent: keep nothing idle (Apple container, whose ids the runtime does not read, lands here).
+		warm = false
+		acpproxy.Trace("warm pool off: the box image's id cannot be read")
+	}
 	pool := acpctl.NewWarmPool(warm, func(provider string) (*acpproxy.Child, error) {
-		return a.spawnBox(context.Background(), self, inner, superID, ctrl, agents.Target{Provider: provider}, "", true, os.Stderr, forkspace.ExecutionRoleWarm)
+		image := currentImage()
+		// On the account the selector's Auto would pick, so the switch it serves can match it.
+		target := ctrl.ResolveNetworkTarget(agents.Target{Provider: provider})
+		child, err := a.spawnBox(context.Background(), self, inner, superID, ctrl, target, "", true, os.Stderr, forkspace.ExecutionRoleWarm)
+		if child != nil {
+			child.Image = image
+		}
+		return child, err
 	})
+	// After any spawn — Run's first one included, which fans the pool out in the background, so startup
+	// latency is unchanged — the pool re-centres on the provider now in use: warm the others, the one
+	// just left included, and drop a spare of the active one.
+	rebalance := func(active string) {
+		go func() { pool.Rebalance(active, ctrl.SpawnableProviders(active)) }()
+	}
+	// Warm the others while the lead's own box starts, as before any switch: the first spawn's
+	// rebalance repeats it (a fill already held or in flight is skipped), and a lead that waits out a
+	// reset, or fails, still leaves the providers it could switch to ready.
+	rebalance(ctrl.LeadProvider())
 	factory := func(ctx context.Context) (*acpproxy.Child, error) {
 		t, psName, ok := ctrl.SpawnTarget()
 		if err := ctrl.ValidateNetworkTarget(t, psName); err != nil {
 			return nil, err
 		}
-		if acpctl.BareProviderSwitch(t, psName, ok) {
-			if c := pool.Checkout(t.Provider); c != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err // a superseded spawn launches nothing — nor takes a parked box it would leak
+		}
+		if acpctl.WarmSwitch(t, psName, ok, a.cfg.ModelFor(t.Provider), a.cfg.EffortFor(t.Provider)) && a.warmCheckoutProven(ctrl, t, psName) {
+			if c := pool.Checkout(t.Provider, t.Account(), currentImage()); c != nil {
 				acpproxy.Trace("spawn: warm box for %s@%s", c.Provider, c.Account)
-				go pool.Refill(t.Provider) // keep it hot for a repeat switch
+				rebalance(c.Provider)
 				return c, nil
 			}
 		}
 		child, cerr := a.spawnBox(ctx, self, inner, superID, ctrl, t, psName, ok, os.Stderr, forkspace.ExecutionRoleActive)
-		if cerr == nil {
-			acpproxy.Trace("spawn: cold box for %s@%s", child.Provider, child.Account)
+		if cerr != nil {
+			return nil, cerr
 		}
-		if acpctl.BareProviderSwitch(t, psName, ok) && cerr == nil {
-			go pool.Refill(t.Provider)
-		}
-		return child, cerr
+		acpproxy.Trace("spawn: cold box for %s@%s", child.Provider, child.Account)
+		rebalance(child.Provider)
+		return child, nil
 	}
-	// Fan the other providers' boxes out in the background — the active one is spawned by Run's first
-	// factory call, so startup latency is unchanged.
-	if warm {
-		go func() {
-			others := ctrl.SpawnableProviders(ctrl.LeadProvider())
-			for _, prov := range others {
-				pool.Refill(prov)
-			}
-			acpproxy.Trace("warmed %d provider(s)", len(others))
-		}()
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	defer pool.Reap() // Stop held warm boxes on any exit path; the label sweep still reaps their containers
@@ -776,6 +799,52 @@ func cleanACPChildEnv(env []string) []string {
 	return out
 }
 
+// warmCheckoutProven reports whether a parked box may serve t: in a filtered session only after t passes
+// the same launch proof a cold box would.
+func (a *app) warmCheckoutProven(ctrl *acpctl.Control, t agents.Target, psName string) bool {
+	if a.acpCapture == nil {
+		return true
+	}
+	_, err := a.acpFilteredLaunchProof(ctrl, t, psName)
+	return err == nil
+}
+
+// acpFilteredLaunchProof re-proves a filtered target immediately before a box serves it — a cold launch
+// after any reset wait, and a warm box at checkout, since the conditions it was parked under can change —
+// and returns the child's account bindings.
+func (a *app) acpFilteredLaunchProof(ctrl *acpctl.Control, t agents.Target, psName string) (map[string]acpAccountBinding, error) {
+	if ctrl != nil {
+		if err := ctrl.ValidateNetworkTarget(t, psName); err != nil {
+			return nil, err
+		}
+	}
+	targets, bindings, err := a.acpFilteredSpawnScope(t, psName)
+	if err == nil {
+		for _, target := range targets {
+			if !slices.ContainsFunc(a.acpNetworkTargets, func(admitted agents.Target) bool {
+				return admitted.Provider == target.Provider && admitted.Account() == target.Account()
+			}) {
+				err = fmt.Errorf("%s account %q was not admitted by this filtered ACP supervisor", target.Provider, target.Account())
+			}
+			if ctrl != nil {
+				if validateErr := ctrl.ValidateNetworkTarget(target, ""); err == nil {
+					err = validateErr
+				}
+			}
+			if err == nil {
+				_, err = box.NetworkTargetBundle(a.cfg, target, egress.ClientACP)
+			}
+			if err != nil {
+				break
+			}
+		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("selected ACP target is no longer available under this session's network rules: %w", err)
+	}
+	return bindings, nil
+}
+
 // spawnBox execs a `coop acp` inner box for the given spawn target and wraps it as an acpproxy.Child
 // — the ONE spawn path for the live factory, warm-pool prewarm, and short-lived model probe, so each
 // gets the same credentials, process isolation, and teardown.
@@ -826,9 +895,17 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	}
 	if hasTarget {
 		if ctrl != nil { // model probes use a bare provider target and need no reset/preset wait
-			if psName != "" {
+			switch acct := t.Account(); {
+			case psName != "":
 				ctrl.WaitForPresetRung(ctx)
-			} else if acct := t.Account(); acct != "" {
+			case acct != "" && activityRole == forkspace.ExecutionRoleWarm && ctrl.Cooling(t.Provider, acct):
+				// A warm box waits for nothing: the pool leaves the slot empty instead.
+				inR.Close()
+				inW.Close()
+				outR.Close()
+				outW.Close()
+				return nil, fmt.Errorf("%s account %q is waiting out a rate limit", t.Provider, acct)
+			case acct != "":
 				ctrl.WaitForReset(ctx, t.Provider, acct)
 			}
 		}
@@ -851,42 +928,13 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	// authentication families after the wait and immediately before launching
 	// the child; open/offline ACP deliberately retains every native auth mode.
 	if a.acpCapture != nil {
-		if ctrl != nil {
-			if err := ctrl.ValidateNetworkTarget(t, psName); err != nil {
-				inR.Close()
-				inW.Close()
-				outR.Close()
-				outW.Close()
-				return nil, err
-			}
-		}
-		targets, bindings, err := a.acpFilteredSpawnScope(t, psName)
-		if err == nil {
-			for _, target := range targets {
-				if !slices.ContainsFunc(a.acpNetworkTargets, func(admitted agents.Target) bool {
-					return admitted.Provider == target.Provider && admitted.Account() == target.Account()
-				}) {
-					err = fmt.Errorf("%s account %q was not admitted by this filtered ACP supervisor", target.Provider, target.Account())
-				}
-				if ctrl != nil {
-					if validateErr := ctrl.ValidateNetworkTarget(target, ""); err == nil {
-						err = validateErr
-					}
-				}
-				if err == nil {
-					_, err = box.NetworkTargetBundle(a.cfg, target, egress.ClientACP)
-				}
-				if err != nil {
-					break
-				}
-			}
-		}
+		bindings, err := a.acpFilteredLaunchProof(ctrl, t, psName)
 		if err != nil {
 			inR.Close()
 			inW.Close()
 			outR.Close()
 			outW.Close()
-			return nil, fmt.Errorf("selected ACP target is no longer available under this session's network rules: %w", err)
+			return nil, err
 		}
 		encoded, err := json.Marshal(bindings)
 		if err != nil {

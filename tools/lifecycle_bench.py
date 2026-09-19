@@ -509,12 +509,14 @@ def read_trace(path: Path, offset: int = 0) -> str:
         return ""
 
 
+SWITCH_SETTLE_SECONDS = 10.0
+
 # The lines `coop acp` traces for a box it switches to (internal/cli/acp_cmd.go, internal/acpctl/warm.go,
 # internal/acpproxy/proxy.go). The evidence of a warm hit is the product's own account of which box
 # served the switch, never the timing.
 SPAWN_LINE = re.compile(r"\| spawn: (warm|cold) box for ([\w.-]+)@(\S+)$")
 LIVE_LINE = re.compile(r"\| replay: ([\w.-]+)@(\S+) is live on (.+)$")
-POOL_LINE = re.compile(r"\| warm pool: ([\w.-]+)@(\S+) ready$")
+POOL_LINE = re.compile(r"\| warm pool: ([\w.-]+)@(\S+) parked$")
 
 
 def switch_evidence(trace: str, provider: str) -> dict:
@@ -541,9 +543,9 @@ def case_acp_switch(coop: str, repo: str, runtime: str, extra: list[str], warm: 
 
     Two boxes can serve it. A cold one is started for the switch; a warm one was started and parked
     in the background earlier, so the switch pays only the replay. COOP_ACP_WARM=0 turns the pool off,
-    which makes every switch cold — the control. The case waits for the pool's own "ready" line before
-    a warm switch, and a sample counts only when the trace says the box it measured is the kind it
-    set out to measure.
+    which makes every switch cold — the control. The case waits for the pool's own "parked" line
+    before a warm switch, and a sample counts only when the trace says the box it measured is the kind
+    it set out to measure.
 
     The evidence is coop's ACP trace, written under the user's Coop config directory. The case deletes
     its own trace file, but turning tracing on also applies Coop's trace retention there: only the
@@ -575,8 +577,12 @@ def case_acp_switch(coop: str, repo: str, runtime: str, extra: list[str], warm: 
             deadline = time.time() + CASE_TIMEOUT_SECONDS
             while not pool_ready(read_trace(trace), target):
                 if time.time() > deadline or process.poll() is not None:
-                    return Sample("", False, detail=f"the warm pool never readied {target}")
+                    return Sample("", False, detail=f"the warm pool never parked {target}")
                 time.sleep(0.2)
+        # A person switches seconds after opening a session, not milliseconds: let a parked box
+        # finish starting so the warm number is a switch, not the tail of a boot. Both cases wait,
+        # so the control runs on the same idle machine.
+        time.sleep(SWITCH_SETTLE_SECONDS)
         offset = trace.stat().st_size if trace.exists() else 0
         start = client.mark()
         requested = time.time()

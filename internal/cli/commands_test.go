@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
@@ -582,6 +583,42 @@ func TestSpawnBoxExportsEmptyPresetSelection(t *testing.T) {
 	})
 	if string(recorded) != "set:" {
 		t.Fatalf("COOP_ACP_PRESET handoff = %q, want present-but-empty", recorded)
+	}
+}
+
+// A warm box never waits out a rate limit: the pool's spawn would sleep until the reset, and closing
+// the editor waits for every spawn the pool has in flight. It is refused at once instead, and the pool
+// leaves that provider's slot empty; an active spawn still waits, as before.
+func TestSpawnBoxRefusesAWarmBoxOnACoolingAccount(t *testing.T) {
+	shim := filepath.Join(t.TempDir(), "inner")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	ctrl := acpctl.New(cfg, "codex", "", "", t.TempDir(), acpctl.Selection{}, nil, nil, acpHost())
+	snapshot := ctrl.Snapshot()
+	snapshot.Limited = map[string]time.Time{"codex@default": time.Now().Add(time.Hour)}
+	ctrl.Restore(snapshot)
+	if !ctrl.Cooling("codex", "default") || ctrl.Cooling("codex", "work") {
+		t.Fatal("Cooling does not report the account waiting out its limit")
+	}
+	a := &app{cfg: cfg}
+	target := agents.Target{Provider: "codex", Accounts: []string{"default"}}
+	done := make(chan error, 1)
+	go func() {
+		child, err := a.spawnBox(context.Background(), shim, nil, "warm-supervisor", ctrl, target, "", true, io.Discard, forkspace.ExecutionRoleWarm)
+		if child != nil {
+			child.Stop()
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "waiting out a rate limit") {
+			t.Fatalf("a warm spawn on a cooling account = %v, want it refused", err)
+		}
+	case <-time.After(wait.Deadline):
+		t.Fatal("a warm spawn is sleeping until the account's reset")
 	}
 }
 

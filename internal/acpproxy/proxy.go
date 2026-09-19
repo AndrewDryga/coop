@@ -42,6 +42,7 @@ type Child struct {
 	SetActive func(bool) // optional host activity transition for parked warm boxes
 	Provider  string     // native session ids are scoped to this provider
 	Account   string     // successful authentication is scoped to this concrete credential too
+	Image     string     // the box image it started from, when known; a warm box is reused only on it
 }
 
 // Factory starts one child. ctx is cancelled on shutdown or when its spawn attempt

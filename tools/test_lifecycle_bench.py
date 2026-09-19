@@ -197,7 +197,7 @@ class ProviderSwitchTest(unittest.TestCase):
         self.assertEqual(bench.switch_evidence(trace, "grok"), {})
 
     def test_pool_readiness_is_per_provider(self):
-        trace = "12:00:00.500 | warm pool: gemini@personal ready"
+        trace = "12:00:00.500 | warm pool: gemini@personal parked"
         self.assertTrue(bench.pool_ready(trace, "gemini"))
         self.assertFalse(bench.pool_ready(trace, "codex"))
 

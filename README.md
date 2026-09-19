@@ -1842,7 +1842,7 @@ root-in-container (a repo `.agent/Dockerfile` that does `USER root`) from holdin
 | `COOP_REVIEW_CMD` | — | full override for `coop fork review` (`sh -c`) |
 | `COOP_TASKS` | (derived) | explicit task queue dir(s) for `coop tasks` and the loop (space-separated for several). Unset, the queues come from `.agent/project.yaml` — a [monorepo's](#monorepos) subproject queues — else `.agent/tasks`. `--tasks` replaces this for a run (it doesn't merge) |
 | `COOP_CAFFEINATE` | `1` | while a loop runs, hold a system sleep inhibitor so the machine doesn't idle-sleep mid-drain (macOS `caffeinate`; released when the loop ends). `0`/`false` to disable |
-| `COOP_ACP_WARM` | `1` | environment only; keep alternate editor ACP providers warm for fast switching; `0`/`false` disables the warm pool on low-memory hosts |
+| `COOP_ACP_WARM` | `1` | environment only; keep one box ready for each other signed-in editor ACP provider, so switching to it at its default model skips the start; `0`/`false` disables the warm pool on low-memory hosts |
 | `COOP_SPINNER` | `1` | environment only; animate Coop's live-view spinners: five-column Box Run beside progress bars and one-column Corner Run (`◰ ◳ ◲ ◱`) in dense task rows. `0`/`false` freezes them and suppresses the loop's fast repaint ticker, useful for debugging and terminal recording |
 | `COOP_STREAM_TRACE` | (off) | set to persist each streaming loop attempt's raw provider JSONL and rendered output under `.agent/runs/<run>.streams/` |
 

@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Switching providers in your editor now uses the box Coop keeps ready for it. Coop has always started
+  a box in the background for each other signed-in provider, but a Provider switch never took it — the
+  editor's switch names an account, and the ready box was only for switches that named none — so every
+  switch started from scratch: about 6 seconds in a project with network rules, about a second without.
+  A switch now takes the ready box whenever it would have started the same one (same account, the
+  provider's default model and effort, the current box image), which cuts it to about a quarter of a
+  second in both cases. After a switch Coop gets a box ready for the provider you left, instead of a
+  spare of the one you are on, so switching back is quick too.
+
 - An ACP trace (`COOP_ACP_TRACE=1`) now says which box served each provider switch — a warm one
   started earlier or a cold one started for the switch — and which adapter version the new box runs,
   so a slow switch can be explained from the trace alone.

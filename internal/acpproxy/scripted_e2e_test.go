@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -258,6 +259,78 @@ func TestScriptedACPCarryAcrossProviderSwitches(t *testing.T) {
 			t.Errorf("synthetic carry leaked to the editor in session/update:\n%s", frame.Raw)
 		}
 	}
+}
+
+// An editor's Provider switch is served by the box the warm pool parked for that provider: the
+// selector's target carries the resolved account, and the parked box runs on that same account at the
+// default model, so the switch pays only the replay. The trace is the evidence, as for the lifecycle
+// bench; the parked codex box is the fixture's first codex generation.
+func TestScriptedACPProviderSwitchIsServedWarm(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	coopBin := filepath.Join(tmp, "coop")
+	fixtureBin := filepath.Join(tmp, "acpfixture")
+	buildTestBinary(t, root, coopBin, ".")
+	buildTestBinary(t, root, fixtureBin, "./internal/acpproxy/testdata/acpfixture")
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	planPath := filepath.Join(tmp, "plan.json")
+	plan := `{
+  "providers": {
+    "claude": [[
+      {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}},
+      {"method":"session/new","result":{"sessionId":"S1","configOptions":[]}}
+    ], [
+      {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}}
+    ]],
+    "codex": [[
+      {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[],"agentInfo":{"name":"codex-acp","version":"fixture"}}},
+      {"method":"session/new","result":{"sessionId":"C2","configOptions":[{"id":"fixture","name":"Fixture","type":"select","currentValue":"ready","options":[]}]}},
+      {"method":"session/prompt","events":[{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"C2","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"codex answer"}}}}],"result":{"stopReason":"end_turn"}}
+    ]]
+  }
+}`
+	if err := os.WriteFile(planPath, []byte(plan), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	proc := startScriptedACPEnv(t, coopBin, fixtureBin, repo, tmp, planPath, "claude",
+		map[string]string{"COOP_ACP_WARM": "1", "COOP_ACP_TRACE": "1"}, "claude", "codex")
+	trace := filepath.Join(tmp, "xdg", "coop", fmt.Sprintf("acp-trace-%d.log", proc.cmd.Process.Pid))
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if _, err := proc.client.req(ctx, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}}); err != nil {
+		t.Fatalf("initialize: %v\nstderr:\n%s", err, proc.stderr.String())
+	}
+	response, err := proc.client.req(ctx, "session/new", map[string]any{"cwd": repo, "mcpServers": []any{}})
+	if err != nil {
+		t.Fatalf("session/new: %v\nstderr:\n%s", err, proc.stderr.String())
+	}
+	sid := responseSessionID(response)
+	for !strings.Contains(readFileString(trace), "warm pool: codex@default parked") {
+		if ctx.Err() != nil {
+			t.Fatalf("the pool never parked codex; trace:\n%s\nstderr:\n%s", readFileString(trace), proc.stderr.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	switchScriptedProvider(t, ctx, proc, sid, "codex")
+	promptScripted(t, ctx, proc, sid, "a question", "codex answer")
+	text := readFileString(trace)
+	if !strings.Contains(text, "spawn: warm box for codex@default") || strings.Contains(text, "spawn: cold box for codex@") {
+		t.Fatalf("the switch to codex was not served by the parked box; trace:\n%s", text)
+	}
+	if !strings.Contains(text, "replay: codex@default is live on codex-acp fixture") {
+		t.Fatalf("the trace does not name the adapter the switch now runs on:\n%s", text)
+	}
+}
+
+func readFileString(path string) string {
+	data, _ := os.ReadFile(path)
+	return string(data)
 }
 
 func TestScriptedACPSessionIdentityLifecycle(t *testing.T) {
@@ -719,6 +792,13 @@ func buildTestBinary(t *testing.T, root, output, pkg string) {
 
 func startScriptedACP(t *testing.T, coopBin, fixtureBin, repo, tmp, plan, target string, providers ...string) *scriptedACP {
 	t.Helper()
+	return startScriptedACPEnv(t, coopBin, fixtureBin, repo, tmp, plan, target, nil, providers...)
+}
+
+// startScriptedACPEnv is startScriptedACP with env overriding the harness's defaults (the warm pool
+// off, among them).
+func startScriptedACPEnv(t *testing.T, coopBin, fixtureBin, repo, tmp, plan, target string, env map[string]string, providers ...string) *scriptedACP {
+	t.Helper()
 	for _, provider := range providers {
 		signInScriptedProfile(t, tmp, provider, "default")
 	}
@@ -732,7 +812,7 @@ func startScriptedACP(t *testing.T, coopBin, fixtureBin, repo, tmp, plan, target
 		args = append(args, target)
 	}
 	cmd := exec.Command(coopBin, args...)
-	cmd.Env = testEnv(os.Environ(), map[string]string{
+	values := map[string]string{
 		"HOME":                   filepath.Join(tmp, "home"),
 		"XDG_CONFIG_HOME":        filepath.Join(tmp, "xdg"),
 		"COOP_CONF":              conf,
@@ -750,7 +830,11 @@ func startScriptedACP(t *testing.T, coopBin, fixtureBin, repo, tmp, plan, target
 		"COOP_NO_UPDATE_CHECK":   "1",
 		"COOP_ACP_FIXTURE_PLAN":  plan,
 		"COOP_ACP_FIXTURE_STATE": filepath.Join(tmp, "fixture-state"),
-	})
+	}
+	for key, value := range env {
+		values[key] = value
+	}
+	cmd.Env = testEnv(os.Environ(), values)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

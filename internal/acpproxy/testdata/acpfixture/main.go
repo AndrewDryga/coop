@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 )
 
@@ -58,6 +59,11 @@ func serveRuntime(args []string) error {
 		return nil
 	}
 	if len(args) >= 2 && args[0] == "image" && args[1] == "inspect" {
+		// One image that never changes: what the supervisor records for a warm box and checks again
+		// before reusing it.
+		if slices.Contains(args, "{{.Id}}") {
+			fmt.Println("sha256:" + strings.Repeat("0", 64))
+		}
 		return nil
 	}
 	if len(args) >= 1 && args[0] == "ps" {

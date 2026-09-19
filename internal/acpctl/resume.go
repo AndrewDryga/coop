@@ -62,9 +62,12 @@ func ReadResumeState(path string) (ResumeState, error) {
 	return st, st.Proxy.Validate()
 }
 
-// BareProviderSwitch reports whether a spawn target is a plain provider switch at default
-// account/model/effort — a bare Target{Provider} — the slow, common case the warm pool covers. A
-// pinned target or preset spawns cold (rare; correctness is unaffected).
-func BareProviderSwitch(t agents.Target, psName string, ok bool) bool {
-	return ok && psName == "" && t.Model == "" && t.Effort == "" && len(t.Accounts) == 0
+// WarmSwitch reports whether a spawn target is one a warm box can serve: a plain provider target —
+// no preset — at the provider's default model and effort, which is what a warm box runs. It says
+// nothing of the account: a warm box serves only the account it started on, and the pool checks that
+// at checkout. The editor's Provider selector always resolves an account, so this, not a bare target,
+// is the common switch; a pinned model or effort, or a preset, still starts cold.
+func WarmSwitch(t agents.Target, psName string, ok bool, defaultModel, defaultEffort string) bool {
+	return ok && psName == "" && t.Provider != "" && len(t.Accounts) <= 1 &&
+		(t.Model == "" || t.Model == defaultModel) && (t.Effort == "" || t.Effort == defaultEffort)
 }

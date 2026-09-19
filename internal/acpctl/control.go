@@ -469,6 +469,14 @@ func (c *Control) retargetLocked(provider string) {
 	c.leadUsesSetModel = false
 }
 
+// Cooling reports whether an account is still waiting out a rate limit. A warm box is never started on
+// one: its spawn would sleep until the reset, and pool shutdown waits for every spawn in flight.
+func (c *Control) Cooling(provider, account string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.limited[accountLimitKey(provider, account)].After(time.Now())
+}
+
 // waitForReset blocks until a rate-limited credential's reset passes (or ctx is done), so a respawn the
 // wait-for-reset path pointed at a still-cooling account only starts once it's usable. A no-op for an
 // account that isn't limited — the common case, including a normal rotation to a free account.

@@ -425,6 +425,25 @@ func (r Runtime) Silent(args ...string) bool {
 	return exec.Command(r.Name, args...).Run() == nil
 }
 
+// ImageID is the id of the image a reference names now, or "" when it cannot be told — a missing
+// image, a runtime that does not answer, or Apple container, whose ids this does not read.
+func (r Runtime) ImageID(image string) string {
+	if r.kind() == runtimeAppleContainer || image == "" || strings.HasPrefix(image, "-") {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := contextCommand(ctx, r.Name, "image", "inspect", "--format", "{{.Id}}", image).Output()
+	if err != nil {
+		return ""
+	}
+	id := strings.TrimSpace(string(out))
+	if !strings.HasPrefix(id, "sha256:") || strings.ContainsAny(id, " \n") {
+		return ""
+	}
+	return id
+}
+
 // NetworkIDs lists the ids of the networks matching every filter (`label=key`, `label=key=value`,
 // `name=<regex>`), running or not. Apple container has no compose and no networks coop creates,
 // so it reads as none. A query failure stays an error, never an empty list.
