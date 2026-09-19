@@ -240,3 +240,18 @@ func TestTraceRecordsChildExit(t *testing.T) {
 	}
 	h.shutdown()
 }
+
+// A restarted box's trace names the adapter it actually runs, from the initialize result's agentInfo —
+// what a later comparison needs to know it is matching like with like.
+func TestAdapterIdentityNamesTheClient(t *testing.T) {
+	for result, want := range map[string]string{
+		`{"protocolVersion":1,"agentInfo":{"name":"@agentclientprotocol/claude-agent-acp","title":"Claude Agent","version":"0.76.0"}}`: "@agentclientprotocol/claude-agent-acp 0.76.0",
+		`{"agentInfo":{"name":"grok"}}`: "grok",
+		`{"protocolVersion":1}`:         "an unnamed adapter",
+		`not json`:                      "an unnamed adapter",
+	} {
+		if got := adapterIdentity([]byte(result)); got != want {
+			t.Errorf("adapterIdentity(%s) = %q, want %q", result, got, want)
+		}
+	}
+}

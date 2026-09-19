@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- An ACP trace (`COOP_ACP_TRACE=1`) now says which box served each provider switch — a warm one
+  started earlier or a cold one started for the switch — and which adapter version the new box runs,
+  so a slow switch can be explained from the trace alone.
+
 - Claude, Codex and Gemini logins that stop working are now recognized as such. Coop decided a
   login was dead from phrases that no longer matched what the current clients print — Claude's "Not
   logged in · Please run /login", Codex's "unexpected status 401 Unauthorized", Gemini's "API key not

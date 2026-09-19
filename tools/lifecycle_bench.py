@@ -37,6 +37,8 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -199,11 +201,12 @@ def clear_marker(repo: str) -> None:
         os.remove(marker)
 
 
-def stop_process(process: subprocess.Popen) -> None:
+def stop_process(process: subprocess.Popen, drained: bool = False) -> None:
     """End a sample's coop the way a person's terminal would, escalating only if it refuses.
 
     SIGKILL first is how this tool used to lose a filtered launch's gateway containers and volumes:
-    coop was killed mid-teardown and the resources it had not reached yet stayed."""
+    coop was killed mid-teardown and the resources it had not reached yet stayed. `drained` says a
+    reader thread already owns the process's output, so this only waits instead of reading it too."""
     if process.poll() is not None:
         return
     for signal_number, grace in ((signal.SIGINT, 20.0), (signal.SIGTERM, 10.0), (signal.SIGKILL, 5.0)):
@@ -212,7 +215,10 @@ def stop_process(process: subprocess.Popen) -> None:
         except (ProcessLookupError, PermissionError):
             return
         try:
-            process.communicate(timeout=grace)
+            if drained:
+                process.wait(timeout=grace)
+            else:
+                process.communicate(timeout=grace)
             return
         except subprocess.TimeoutExpired:
             continue
@@ -408,12 +414,223 @@ def initialize_result(line: str) -> dict | None:
     return result if isinstance(result, dict) else None
 
 
+class AcpClient:
+    """Just enough of an ACP client to drive `coop acp` over stdio: requests by id, and every message
+    kept in arrival order with the host instant it arrived, so a case can wait for a notification that
+    follows a mark. A reader thread drains stdout; a blocking readline cannot time out."""
+
+    def __init__(self, process: subprocess.Popen):
+        self.process = process
+        self.messages: list[tuple[float, dict]] = []
+        self.closed = False
+        self.next_id = 0
+        self.changed = threading.Condition()
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def _read(self) -> None:
+        for line in self.process.stdout:
+            try:
+                message = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(message, dict):
+                with self.changed:
+                    self.messages.append((time.time(), message))
+                    self.changed.notify_all()
+        with self.changed:
+            self.closed = True
+            self.changed.notify_all()
+
+    def mark(self) -> int:
+        with self.changed:
+            return len(self.messages)
+
+    def send(self, method: str, params: dict) -> int:
+        self.next_id += 1
+        self.process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": self.next_id, "method": method,
+                                             "params": params}) + "\n")
+        self.process.stdin.flush()
+        return self.next_id
+
+    def wait(self, predicate, start: int, timeout: float) -> tuple[float, dict] | None:
+        """The first (arrival instant, message) from index `start` on that satisfies predicate."""
+        deadline = time.time() + timeout
+        with self.changed:
+            index = start
+            while True:
+                while index < len(self.messages):
+                    if predicate(self.messages[index][1]):
+                        return self.messages[index]
+                    index += 1
+                remaining = deadline - time.time()
+                if remaining <= 0 or self.closed:
+                    return None
+                self.changed.wait(remaining)
+
+    def request(self, method: str, params: dict, timeout: float) -> tuple[float, dict] | None:
+        start = self.mark()
+        ident = self.send(method, params)
+        return self.wait(lambda m: m.get("id") == ident and ("result" in m or "error" in m), start, timeout)
+
+
+def provider_choices(result: dict) -> tuple[str, list[str]]:
+    """The session's current provider and the providers its Provider selector offers (session/new)."""
+    for option in result.get("configOptions") or []:
+        if isinstance(option, dict) and option.get("id") == "coop_provider":
+            values = [o.get("value") for o in option.get("options") or [] if isinstance(o, dict)]
+            return option.get("currentValue") or "", [v for v in values if isinstance(v, str) and v]
+    return "", []
+
+
+def provider_update(message: dict, session: str, provider: str) -> bool:
+    """Whether a message is the config_option_update that shows `session` running on `provider` —
+    what the proxy sends once the new box has replayed the session."""
+    params = message.get("params")
+    if message.get("method") != "session/update" or not isinstance(params, dict):
+        return False
+    update = params.get("update")
+    if params.get("sessionId") != session or not isinstance(update, dict):
+        return False
+    return update.get("sessionUpdate") == "config_option_update" and provider_choices(update)[0] == provider
+
+
+def trace_path(pid: int) -> Path:
+    """Where `coop acp` writes its trace when COOP_ACP_TRACE is set (internal/acpproxy/trace.go)."""
+    root = os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config")
+    return Path(root) / "coop" / f"acp-trace-{pid}.log"
+
+
+def read_trace(path: Path, offset: int = 0) -> str:
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(offset)
+            return handle.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+# The lines `coop acp` traces for a box it switches to (internal/cli/acp_cmd.go, internal/acpctl/warm.go,
+# internal/acpproxy/proxy.go). The evidence of a warm hit is the product's own account of which box
+# served the switch, never the timing.
+SPAWN_LINE = re.compile(r"\| spawn: (warm|cold) box for ([\w.-]+)@(\S+)$")
+LIVE_LINE = re.compile(r"\| replay: ([\w.-]+)@(\S+) is live on (.+)$")
+POOL_LINE = re.compile(r"\| warm pool: ([\w.-]+)@(\S+) ready$")
+
+
+def switch_evidence(trace: str, provider: str) -> dict:
+    """Which box served a switch to `provider`, on which account, running which adapter — read from
+    the trace written after the switch was requested."""
+    evidence: dict = {}
+    for line in trace.splitlines():
+        spawn = SPAWN_LINE.search(line)
+        if spawn and spawn.group(2) == provider and "box" not in evidence:
+            evidence.update(box=spawn.group(1), account=spawn.group(3))
+        live = LIVE_LINE.search(line)
+        if live and live.group(1) == provider and "adapter" not in evidence:
+            evidence.update(adapter=live.group(3), live_account=live.group(2))
+    return evidence
+
+
+def pool_ready(trace: str, provider: str) -> bool:
+    return any((m := POOL_LINE.search(line)) and m.group(1) == provider for line in trace.splitlines())
+
+
+def case_acp_switch(coop: str, repo: str, runtime: str, extra: list[str], warm: bool) -> Sample:
+    """How long an editor's provider switch takes: from the Provider selector's request to the new
+    provider's replayed session — the moment the editor can prompt it.
+
+    Two boxes can serve it. A cold one is started for the switch; a warm one was started and parked
+    in the background earlier, so the switch pays only the replay. COOP_ACP_WARM=0 turns the pool off,
+    which makes every switch cold — the control. The case waits for the pool's own "ready" line before
+    a warm switch, and a sample counts only when the trace says the box it measured is the kind it
+    set out to measure.
+
+    The evidence is coop's ACP trace, written under the user's Coop config directory. The case deletes
+    its own trace file, but turning tracing on also applies Coop's trace retention there: only the
+    newest five acp-trace logs are kept."""
+    before = owned(runtime)
+    env = dict(os.environ, COOP_ACP_TRACE="1")
+    if not warm:
+        env["COOP_ACP_WARM"] = "0"
+    stderr = tempfile.TemporaryFile()
+    process = subprocess.Popen([coop, "acp", *extra], cwd=repo, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=stderr, text=True, env=env, start_new_session=True)
+    trace = trace_path(process.pid)
+    client = AcpClient(process)
+    try:
+        init = client.request("initialize", {"protocolVersion": 1, "clientCapabilities": {
+            "fs": {"readTextFile": False, "writeTextFile": False}}}, CASE_TIMEOUT_SECONDS)
+        if init is None or "result" not in init[1]:
+            return Sample("", False, detail="the ACP agent never answered initialize")
+        opened = client.request("session/new", {"cwd": os.path.abspath(repo), "mcpServers": []},
+                                CASE_TIMEOUT_SECONDS)
+        if opened is None or not isinstance(opened[1].get("result"), dict):
+            return Sample("", False, detail="session/new failed")
+        session = opened[1]["result"].get("sessionId", "")
+        lead, choices = provider_choices(opened[1]["result"])
+        target = next((choice for choice in choices if choice != lead), "")
+        if not session or not target:
+            return Sample("", False, detail="no second signed-in provider to switch to")
+        if warm:
+            deadline = time.time() + CASE_TIMEOUT_SECONDS
+            while not pool_ready(read_trace(trace), target):
+                if time.time() > deadline or process.poll() is not None:
+                    return Sample("", False, detail=f"the warm pool never readied {target}")
+                time.sleep(0.2)
+        offset = trace.stat().st_size if trace.exists() else 0
+        start = client.mark()
+        requested = time.time()
+        ack = client.request("session/set_config_option", {"sessionId": session, "configId": "coop_provider",
+                                                           "value": target}, CASE_TIMEOUT_SECONDS)
+        live = client.wait(lambda m: provider_update(m, session, target), start, CASE_TIMEOUT_SECONDS)
+        if ack is None or "result" not in ack[1] or live is None:
+            return Sample("", False, detail=f"the switch to {target} never completed")
+        evidence = switch_evidence(read_trace(trace, offset), target)
+        wanted = "warm" if warm else "cold"
+        extra = {"lead": lead, "provider": target, "account": evidence.get("account", "unknown"),
+                 "adapter": evidence.get("adapter", "unknown"), "box": evidence.get("box", "unknown"),
+                 "ack_seconds": round(ack[0] - requested, 3)}
+        seconds = live[0] - requested
+        if evidence.get("box") != wanted:
+            # Still a real switch, timed: kept as evidence of the miss, out of the case's statistics.
+            return Sample("", False, detail=f"wanted a {wanted} box, but a {extra['box']} box served the "
+                                            f"switch in {seconds:.3f}s", extra=extra)
+        return Sample("", True, seconds=seconds, extra=extra)
+    finally:
+        try:
+            process.stdin.close()
+        except OSError:
+            pass
+        stop_process(process, drained=True)
+        for path in (trace, Path(str(trace) + ".1")):
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        stderr.close()
+        leftovers = owned(runtime) - before
+        if leftovers:
+            remove_owned(runtime, leftovers)
+
+
+def case_acp_switch_cold(coop: str, repo: str, runtime: str, extra: list[str]) -> Sample:
+    return case_acp_switch(coop, repo, runtime, extra, warm=False)
+
+
+def case_acp_switch_warm(coop: str, repo: str, runtime: str, extra: list[str]) -> Sample:
+    return case_acp_switch(coop, repo, runtime, extra, warm=True)
+
+
 CASES = {
     "repeat_start": ("start with everything already warm on the host", "start", case_start, []),
     "filtered_start": ("start with --egress filtered (the qualified gateway)", "start", case_start,
                        ["--egress", "filtered"]),
     "acp_initialize": ("editor start: from launching coop acp to its answer to initialize", "start",
                        case_acp_initialize, []),
+    "acp_switch_cold": ("editor provider switch to a box started for it (COOP_ACP_WARM=0)", "switch",
+                        case_acp_switch_cold, []),
+    "acp_switch_warm": ("editor provider switch to the warm pool's parked box", "switch",
+                        case_acp_switch_warm, []),
     "normal_stop": ("from the box announcing itself to nothing owned remaining", "stop", case_stop, []),
     "filtered_stop": ("the same, for a filtered run and its gateway", "stop", case_stop,
                       ["--egress", "filtered"]),
@@ -588,10 +805,11 @@ def render_report(results: list[CaseResult], environment: dict, args, workspace:
         if case.unverified:
             lines.append(f"  - unverified: {case.unverified}")
         for sample in case.samples:
+            evidence = ", ".join(f"{k}={v}" for k, v in sample.extra.items())
             if not sample.ok:
-                lines.append(f"  - failed sample: {sample.detail}")
-            elif sample.extra:
-                lines.append(f"  - {', '.join(f'{k}={v}' for k, v in sample.extra.items())}")
+                lines.append(f"  - failed sample: {sample.detail}" + (f" ({evidence})" if evidence else ""))
+            elif evidence:
+                lines.append(f"  - {evidence}")
     lines += ["", "## Repeat it", "", "```",
               f"tools/lifecycle_bench.py --samples {args.samples} --cases {args.cases} \\",
               f"  --coop {redact(str(Path(args.coop).resolve()))} --repo {workspace.get('path', '<workspace>')} --out <dir>",

@@ -2209,6 +2209,9 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 	if !swapped {
 		return errReplaySuperseded
 	}
+	if !childEOF { // a candidate that already exited swaps in nothing; the next child replays again
+		Trace("replay: %s@%s is live on %s", c.Provider, c.Account, adapterIdentity(freshInitResult))
+	}
 	// Install target gates only for sessions that survived the atomic swap reconciliation. Editor
 	// prompts remain behind p.restarting until releaseRestartHeld, so this post-swap installation is
 	// still an admission boundary and a close/delete during candidate replay cannot fire stale hooks.
@@ -2632,6 +2635,21 @@ func authenticationMethodID(raw json.RawMessage) string {
 	}
 	_ = json.Unmarshal(raw, &v)
 	return v.MethodID
+}
+
+// adapterIdentity names the adapter an initialize result came from — "name version" from its
+// agentInfo — so a trace says which client a restarted box actually runs.
+func adapterIdentity(result json.RawMessage) string {
+	var v struct {
+		AgentInfo struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		} `json:"agentInfo"`
+	}
+	if json.Unmarshal(result, &v) != nil || v.AgentInfo.Name == "" {
+		return "an unnamed adapter"
+	}
+	return strings.TrimSpace(v.AgentInfo.Name + " " + v.AgentInfo.Version)
 }
 
 // authenticationMethodIDs extracts the only method ids valid for authenticate on one initialized

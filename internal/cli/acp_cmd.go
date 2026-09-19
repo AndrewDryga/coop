@@ -489,11 +489,15 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 		}
 		if acpctl.BareProviderSwitch(t, psName, ok) {
 			if c := pool.Checkout(t.Provider); c != nil {
+				acpproxy.Trace("spawn: warm box for %s@%s", c.Provider, c.Account)
 				go pool.Refill(t.Provider) // keep it hot for a repeat switch
 				return c, nil
 			}
 		}
 		child, cerr := a.spawnBox(ctx, self, inner, superID, ctrl, t, psName, ok, os.Stderr, forkspace.ExecutionRoleActive)
+		if cerr == nil {
+			acpproxy.Trace("spawn: cold box for %s@%s", child.Provider, child.Account)
+		}
 		if acpctl.BareProviderSwitch(t, psName, ok) && cerr == nil {
 			go pool.Refill(t.Provider)
 		}

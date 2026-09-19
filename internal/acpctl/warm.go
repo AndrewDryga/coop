@@ -73,11 +73,16 @@ func (p *WarmPool) Refill(provider string) {
 
 	p.mu.Lock()
 	delete(p.inflight, provider)
+	ready := ""
 	if err == nil && child != nil && p.enabled {
 		p.boxes[provider] = child
+		ready = child.Provider + "@" + child.Account
 		child = nil // ownership moved into the pool; there is nothing left for us to stop
 	}
 	p.mu.Unlock()
+	if ready != "" {
+		acpproxy.Trace("warm pool: %s ready", ready)
+	}
 	// A failed spawn leaves the slot empty (the factory cold-spawns on the next switch); one that
 	// finished after Reap disabled the pool is stopped here rather than leaked. Nil-safe.
 	p.stop(child)

@@ -162,5 +162,45 @@ class SamplingLoopTest(unittest.TestCase):
         self.assertIn("interrupted before every case finished", report)
 
 
+class ProviderSwitchTest(unittest.TestCase):
+    OPTIONS = {"configOptions": [
+        {"id": "coop_preset", "currentValue": "none", "options": [{"value": "none"}]},
+        {"id": "coop_provider", "currentValue": "claude",
+         "options": [{"value": "claude"}, {"value": "codex"}, {"value": "gemini"}]},
+    ]}
+
+    def test_reads_the_provider_selector(self):
+        self.assertEqual(bench.provider_choices(self.OPTIONS), ("claude", ["claude", "codex", "gemini"]))
+        self.assertEqual(bench.provider_choices({}), ("", []))
+
+    def test_the_switch_is_done_when_the_session_shows_the_new_provider(self):
+        update = {"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "S", "update": {
+            "sessionUpdate": "config_option_update", "configOptions": [
+                {"id": "coop_provider", "currentValue": "codex", "options": [{"value": "codex"}]}]}}}
+        self.assertTrue(bench.provider_update(update, "S", "codex"))
+        # The same update for another session, or still naming the old provider, is not the switch.
+        self.assertFalse(bench.provider_update(update, "other", "codex"))
+        self.assertFalse(bench.provider_update(update, "S", "gemini"))
+        self.assertFalse(bench.provider_update({"method": "session/update", "params": "S"}, "S", "codex"))
+
+    def test_evidence_comes_from_the_trace_not_the_timing(self):
+        trace = "\n".join([
+            "12:00:00.001 | spawn box on target=codex preset=",
+            "12:00:01.000 | spawn: cold box for gemini@personal",
+            "12:00:02.000 | spawn: warm box for codex@work",
+            "12:00:02.100 | replay: negotiating codex and restoring 1 session(s) on the restarted box",
+            "12:00:02.400 | replay: codex@work is live on codex-acp 0.13.1",
+        ])
+        self.assertEqual(bench.switch_evidence(trace, "codex"),
+                         {"box": "warm", "account": "work", "adapter": "codex-acp 0.13.1", "live_account": "work"})
+        self.assertEqual(bench.switch_evidence(trace, "gemini")["box"], "cold")
+        self.assertEqual(bench.switch_evidence(trace, "grok"), {})
+
+    def test_pool_readiness_is_per_provider(self):
+        trace = "12:00:00.500 | warm pool: gemini@personal ready"
+        self.assertTrue(bench.pool_ready(trace, "gemini"))
+        self.assertFalse(bench.pool_ready(trace, "codex"))
+
+
 if __name__ == "__main__":
     unittest.main()
