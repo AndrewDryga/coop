@@ -1056,7 +1056,7 @@ func decisionResolved(decPath string) (bool, error) {
 		return false, err
 	}
 	for _, line := range strings.Split(string(body), "\n") {
-		if r, ok := strings.CutPrefix(line, "**Resolution:**"); ok {
+		if r, ok := strings.CutPrefix(line, decisionResolutionPrefix); ok {
 			r = strings.TrimSpace(r)
 			return r != "" && !strings.HasPrefix(r, "<!--"), nil
 		}
@@ -1069,7 +1069,7 @@ func decisionResolved(decPath string) (bool, error) {
 // answer" can never disagree.
 func decisionResolution(body string) string {
 	for _, line := range strings.Split(body, "\n") {
-		if r, ok := strings.CutPrefix(line, "**Resolution:**"); ok {
+		if r, ok := strings.CutPrefix(line, decisionResolutionPrefix); ok {
 			r = strings.TrimSpace(r)
 			if r == "" || strings.HasPrefix(r, "<!--") {
 				return ""
@@ -1682,9 +1682,30 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	// Before anything moves: text that would forge the human's answer is refused, not parked.
+	if req.filled {
+		if err := CheckDecision(req.decision); err != nil {
+			return 2, err
+		}
+	}
 	t, err := FindTask(root, req.id)
 	if err != nil {
 		return 1, err
+	}
+	// A plain block would park the human's answer as a fresh question — it happened: a re-run block,
+	// its first success hidden by `| tail`, asked again about something already decided. Refuse
+	// before anything moves; a new question (--question) is still asked, keeping the answer.
+	if !req.filled && t.HasDecision {
+		answer, err := recordedAnswer(filepath.Join(t.Dir, "decision.md"))
+		if err != nil {
+			return -1, err
+		}
+		if answer != "" && t.State == StateBlocked {
+			return 1, fmt.Errorf("%s is already answered (%q) — finish it instead of blocking it again: coop tasks unblock %s", t.ID, answer, t.ID)
+		}
+		if answer != "" {
+			return 1, fmt.Errorf("%s was already answered (%q) — work it instead of blocking it again; to ask something new, block it with --question", t.ID, answer)
+		}
 	}
 	if t.State == StateDone {
 		if err := refuseForkTaskOwner(root, t.ID, "block"); err != nil {
@@ -1701,8 +1722,9 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 	}
 	taskDir := filepath.Join(root, StateBlocked, t.ID)
 	dec := filepath.Join(taskDir, "decision.md")
+	earlierAnswer := ""
 	if req.filled {
-		if err := saveRequestedDecision(taskDir, t.ID, t.Title, req.decision); err != nil {
+		if earlierAnswer, err = saveRequestedDecision(taskDir, t.ID, t.Title, req.decision); err != nil {
 			// The move already happened and is durable; say so, and say the request is not saved.
 			// A conflict is the human's to resolve (1); anything else is a real failure (-1).
 			code := -1
@@ -1719,6 +1741,9 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 	}
 	ui.OK("Blocked task: %s", t.Title)
 	ui.Note("\n  %s", displayPath(dec))
+	if earlierAnswer != "" {
+		ui.Note("\nIt had been answered (%q); that decision is kept in its log.md.", earlierAnswer)
+	}
 	if !req.filled {
 		ui.Note("\nWrite the question, options, and recommendation in this file.")
 		ui.Note("To fill them in as you block a task, see:")
@@ -1737,7 +1762,10 @@ const decisionScaffoldMarker = "<what needs to be chosen and why you cannot safe
 
 // decisionResolutionLine is the last line of every decision.md, stub or filled: the one place a
 // human writes the answer, and the command that saves it for them.
-const decisionResolutionLine = "**Resolution:** <!-- Human: write your answer here, or use coop tasks unblock. -->\n"
+const decisionResolutionLine = decisionResolutionPrefix + " <!-- Human: write your answer here, or use coop tasks unblock. -->\n"
+
+// decisionResolutionPrefix opens that line — the one structural line an agent may never write.
+const decisionResolutionPrefix = "**Resolution:**"
 
 func renderDecisionScaffold(id, title string) string {
 	return "<!-- Explain the choice and your recommendation. A human supplies the answer.\n" +
@@ -1760,20 +1788,44 @@ var errDecisionAlreadyWritten = errors.New("the task already carries a decision 
 
 // saveRequestedDecision writes a complete decision request into a blocked task's decision.md. It
 // never destroys content somebody already wrote: the identical request again is a no-op (so a retry
-// after a partial failure completes), and a DIFFERENT one is refused with the file to edit.
-func saveRequestedDecision(taskDir, id, title string, d Decision) error {
+// after a partial failure completes), an ANSWERED decision is kept in log.md before the new question
+// replaces it (its answer comes back), and a different question nobody has answered yet is refused
+// with the file to edit.
+func saveRequestedDecision(taskDir, id, title string, d Decision) (earlierAnswer string, err error) {
 	existing, err := os.ReadFile(filepath.Join(taskDir, "decision.md"))
 	rendered := RenderDecision(id, title, d)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:
-		return err
+		return "", err
 	case string(existing) == rendered:
-		return nil // the same request again — already saved, nothing to do
+		return "", nil // the same request again — already saved, nothing to do
+	case decisionResolution(string(existing)) != "":
+		return ReplaceDecision(taskDir, id, title, d)
 	case string(existing) != renderDecisionScaffold(id, title):
-		return fmt.Errorf("%w — edit %s instead", errDecisionAlreadyWritten, displayPath(filepath.Join(taskDir, "decision.md")))
+		return "", fmt.Errorf("%w — edit %s instead", errDecisionAlreadyWritten, displayPath(filepath.Join(taskDir, "decision.md")))
 	}
-	return WriteDecision(taskDir, id, title, d)
+	return "", WriteDecision(taskDir, id, title, d)
+}
+
+// recordedAnswer is the human's answer in a decision.md, or "" when it carries only the placeholder.
+func recordedAnswer(decPath string) (string, error) {
+	body, _, err := readOptionalTaskMetadataPath(decPath)
+	if err != nil {
+		return "", err
+	}
+	return decisionResolution(string(body)), nil
+}
+
+// answeredDecision reports whether a blocked task already carries the human's answer — it waits
+// only for `coop tasks unblock`, so it is no question to ask again. An unreadable decision counts
+// as unanswered: the listing then asks, which is the safe way to be wrong.
+func answeredDecision(t Item) bool {
+	if t.State != StateBlocked || !t.HasDecision {
+		return false
+	}
+	answered, err := decisionResolved(filepath.Join(t.Dir, "decision.md"))
+	return err == nil && answered
 }
 
 // displayPath renders an absolute path the way a person reading the output sees it: relative to the
@@ -2139,8 +2191,15 @@ func tasksFolderList(root string, all bool, only ...string) (int, error) {
 		fmt.Printf("No %s tasks.\n", filterLabel(only))
 		return 0, nil
 	}
-	// The one action the listing can offer: a blocked task is waiting on a human.
-	if len(byState[StateBlocked]) > 0 && (len(show) == 0 || show[StateBlocked]) {
+	// The one action the listing can offer: a blocked task is waiting on a human. An answered one
+	// waits only for its unblock, which its own row names.
+	waiting := 0
+	for _, t := range byState[StateBlocked] {
+		if !answeredDecision(t) {
+			waiting++
+		}
+	}
+	if waiting > 0 && (len(show) == 0 || show[StateBlocked]) {
 		fmt.Printf("\nAnswer blocked tasks: coop tasks decisions -i\n")
 	}
 	return 0, nil
@@ -2261,7 +2320,9 @@ func listMarkers(p ui.Palette, t Item) string {
 		}
 		parts = append(parts, prog)
 	}
-	if t.State == StateBlocked {
+	if answeredDecision(t) {
+		parts = append(parts, p.Yellow("Answered · finish it: coop tasks unblock "+t.ID))
+	} else if t.State == StateBlocked {
 		parts = append(parts, p.Red("Needs your answer"))
 	}
 	if t.State == StateInProgress {
@@ -2317,24 +2378,30 @@ func tasksFolderDecisions(root string, args []string) (int, error) {
 			return 2, fmt.Errorf("coop tasks decisions: unknown flag %q (only -i / --interactive)", a)
 		}
 	}
-	var decisions []Item
+	var decisions, answered []Item
 	items, err := ReadTaskTree(root)
 	if err != nil {
 		return -1, err
 	}
 	for _, t := range items {
-		if t.State == StateBlocked {
+		switch {
+		case answeredDecision(t):
+			answered = append(answered, t)
+		case t.State == StateBlocked:
 			decisions = append(decisions, t)
 		}
 	}
+	p := ui.For(os.Stdout)
 	if len(decisions) == 0 {
 		ui.Note("No questions waiting for your answer.")
+		printAnsweredDecisions(p, answered, false)
 		return 0, nil
 	}
 	if interactive {
-		return decisionsInteractive(root, decisions)
+		code, err := decisionsInteractive(root, decisions)
+		printAnsweredDecisions(p, answered, true)
+		return code, err
 	}
-	p := ui.For(os.Stdout)
 	fmt.Printf("%s%s\n", p.Bold("Questions waiting for your answer"), p.Dim(fmt.Sprintf(" · %d", len(decisions))))
 	for _, t := range decisions {
 		question := t.Title
@@ -2361,7 +2428,26 @@ func tasksFolderDecisions(root string, args []string) (int, error) {
 	}
 	fmt.Print("\nAnswer one: coop tasks unblock <id> \"<answer>\"\n")
 	fmt.Print("Read and answer each: coop tasks decisions -i\n")
+	printAnsweredDecisions(p, answered, true)
 	return 0, nil
+}
+
+// printAnsweredDecisions lists blocked tasks the human already answered — never a question to ask
+// again — each with the one command that finishes it. gap separates it from a listing above.
+func printAnsweredDecisions(p ui.Palette, answered []Item, gap bool) {
+	if len(answered) == 0 {
+		return
+	}
+	if gap {
+		fmt.Print("\n")
+	}
+	fmt.Printf("%s%s\n", p.Bold("Answered, still blocked"), p.Dim(fmt.Sprintf(" · %d", len(answered))))
+	for _, t := range answered {
+		answer, _ := recordedAnswer(filepath.Join(t.Dir, "decision.md"))
+		fmt.Printf("\n  %s\n", sanitizeCell(t.Title))
+		fmt.Printf("    %s %s\n", p.Dim("Answer:"), sanitizeCell(answer))
+		fmt.Printf("    Finish it: coop tasks unblock %s\n", t.ID)
+	}
 }
 
 // decisionRef locates one open decision for the browser: the queue root that owns it, the task

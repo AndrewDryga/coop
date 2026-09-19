@@ -1876,6 +1876,24 @@ func TestTasksDecisionsRollup(t *testing.T) {
 	if code, err := tasksDecisionsAll(repo, rels, []string{"--bogus"}); code != 2 || err == nil {
 		t.Errorf("unknown flag = (%d, %v), want (2, error)", code, err)
 	}
+
+	// A task the human already answered is no question to browse, but the roll-up still names it and
+	// the one command that finishes it — in the interactive walk too, which would otherwise say
+	// "nothing is waiting" over a task waiting for exactly that command.
+	writeTaskFile(t, filepath.Join(repo, "svc-b/.agent/tasks", StateBlocked, "2026-01-01-stuck", "decision.md"),
+		"# Decision: pick a database?\n\n**Recommendation:** A — boring wins\n\n**Resolution:** Postgres.\n")
+	for _, args := range [][]string{nil, {"-i"}} {
+		out = captureStdout(t, func() {
+			if code, err := tasksDecisionsAll(repo, rels, args); code != 0 || err != nil {
+				t.Errorf("answered roll-up %v: code=%d err=%v", args, code, err)
+			}
+		})
+		for _, want := range []string{"Answered, still blocked", "Answer: Postgres.", "Finish it: coop tasks unblock 2026-01-01-stuck"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("answered roll-up %v lacks %q:\n%s", args, want, out)
+			}
+		}
+	}
 }
 
 // decisionDivider is the interactive browser's between-questions border. Color is decoration: the

@@ -335,16 +335,77 @@ func RenderDecision(id, title string, d Decision) string {
 	return b.String()
 }
 
+// CheckDecision refuses text that would forge the human's answer. The Resolution line is the
+// human's alone: a question, option or recommendation carrying one would make its own decision read
+// as answered — in `coop tasks`, to `coop tasks unblock`, and to the refusal that protects a real
+// answer. Callers check BEFORE they move a task, so a refused request changes nothing.
+func CheckDecision(d Decision) error {
+	for _, text := range append([]string{d.Question, d.Recommendation}, d.Options...) {
+		for _, line := range strings.Split(text, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), decisionResolutionPrefix) {
+				return fmt.Errorf("a decision's text cannot carry a %s line — that line is the human's answer", decisionResolutionPrefix)
+			}
+		}
+	}
+	return nil
+}
+
 // WriteDecision writes a task's decision.md in the shape `coop tasks block` seeds, filled in, with
 // the Resolution line left for the human. An existing decision.md is replaced: a blocked task
 // carries exactly one open question, and `coop tasks unblock` reads the first Resolution it finds.
 func WriteDecision(taskDir, id, title string, d Decision) error {
+	if err := CheckDecision(d); err != nil {
+		return err
+	}
 	root, err := OpenTaskMetadataRoot(taskDir)
 	if err != nil {
 		return err
 	}
 	defer root.Close()
 	return AtomicWriteTaskFile(root, "decision.md", []byte(RenderDecision(id, title, d)))
+}
+
+// ReplaceDecision writes a new decision for a task whose decision.md may already carry a question —
+// answered or not — and never loses it: the old decision goes into log.md, whole, before the new one
+// replaces it. The same request again changes nothing. The earlier ANSWER comes back ("" when there
+// was none) so the caller can say a human had already decided.
+func ReplaceDecision(taskDir, id, title string, d Decision) (earlierAnswer string, err error) {
+	if err := CheckDecision(d); err != nil {
+		return "", err
+	}
+	root, err := OpenTaskMetadataRoot(taskDir)
+	if err != nil {
+		return "", err
+	}
+	body, exists, err := readOptionalTaskMetadataFile(root, "decision.md")
+	log, _, logErr := readOptionalTaskMetadataFile(root, "log.md")
+	root.Close()
+	if err != nil {
+		return "", err
+	}
+	if logErr != nil {
+		return "", logErr
+	}
+	rendered := RenderDecision(id, title, d)
+	if exists && string(body) == rendered {
+		return "", nil // the same question again: nothing replaced, nothing to archive
+	}
+	if exists && strings.TrimSpace(string(body)) != "" && string(body) != renderDecisionScaffold(id, title) {
+		earlierAnswer = decisionResolution(string(body))
+		heading := "## Unanswered question, replaced by a new one"
+		if earlierAnswer != "" {
+			heading = "## Answered decision, replaced by a new question"
+		}
+		entry := heading + "\n\n> " + strings.ReplaceAll(strings.TrimRight(string(body), "\n"), "\n", "\n> ")
+		// A retry after a failed write must not file the same decision twice, so an entry the log
+		// already ends with is left alone.
+		if !strings.HasSuffix(strings.TrimRight(string(log), "\n"), strings.TrimRight(entry, "\n")) {
+			if err := AppendTaskLogEntry(taskDir, entry); err != nil {
+				return "", err
+			}
+		}
+	}
+	return earlierAnswer, WriteDecision(taskDir, id, title, d)
 }
 
 // TaskFileNames are the task-folder files the channel reads back for an agent, in order.

@@ -25,6 +25,11 @@ Rules (.agent/kb/rules) carry two more fields, so they get two more checks:
   tools/check_rules.py            # exit 1 and list problems
   tools/check_rules.py --quiet    # exit status only
 
+One rule is enforced here beyond the cards themselves, because this repo's own
+instructions are where an agent learns a habit: a state-changing command whose
+output is truncated (`coop tasks done … | tail`) teaches every agent that reads it
+to re-run mutations blind. See .agent/kb/rules/read-a-mutation-result-whole.md.
+
 Deliberately NOT checked: whether a card is still *correct*, or whether a rule's
 check command passes. Only reading the card against its sources tells you the
 first; the gate itself tells you the second.
@@ -50,6 +55,17 @@ DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 GO_TEST = re.compile(r"^go test (\./\S+) -run (\w+|'\w+(?:\|\w+)*')$")
 MAKE = re.compile(r"^make ([\w-]+)$")
 INDEX_LINK = re.compile(r"^- \[([^\]]+)\]\(([^)]+\.md)\)", re.M)
+# A mutating command whose output is piped into tail/head. The backtick in the excluded run of
+# characters keeps a markdown table cell ("`coop fork logs` | tail a loop log") from reading as a
+# pipeline. The rule card itself quotes the mistake it exists for, so it is not scanned.
+TRUNCATED_MUTATION = re.compile(
+    r"(?:coop (?:tasks|fork|backlog) [a-z-]+|git (?:commit|push)|docker rm)[^|`\n]*\| *(?:tail|head)\b")
+MUTATION_RULE = "read-a-mutation-result-whole"
+# The three files that spell the mistake out on purpose: the rule itself, this checker, and its
+# test. Named one by one so the exemption stays auditable — a pattern would hide a real one.
+QUOTES_THE_MISTAKE = {MUTATION_RULE + ".md", "check_rules.py", "test_check_rules.py"}
+# Where this repo instructs its agents. A truncated mutation in any of these is the habit itself.
+GUIDANCE = ["AGENTS.md", "README.md", "Makefile", "docs", "tools", ".agent/skills", ".agent/kb"]
 
 
 def parse_frontmatter(text):
@@ -178,6 +194,26 @@ def audit(root):
     return (problems + check_index(rules, cards, "rule"), cards, gated)
 
 
+def audit_guidance(root):
+    """Return problems in this repo's own instructions: a mutation whose result is truncated."""
+    problems = []
+    for rel in GUIDANCE:
+        path = root / rel
+        files = sorted(p for p in path.rglob("*") if p.is_file()) if path.is_dir() else [path]
+        for file in files:
+            if file.name in QUOTES_THE_MISTAKE or "__pycache__" in file.parts:
+                continue
+            try:
+                text = file.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue  # a binary or unreadable file teaches nobody a habit
+            for number, line in enumerate(text.splitlines(), 1):
+                if TRUNCATED_MUTATION.search(line):
+                    problems.append(f"{file}:{number}: a mutating command's output is truncated "
+                                    f"(`| tail`/`| head`) — read it whole, or check the state it changed")
+    return problems
+
+
 def audit_kb(root):
     """Return (problems, cards) for the descriptive KB under root."""
     kb = root / ".agent" / "kb"
@@ -200,10 +236,12 @@ def main(argv):
     root = pathlib.Path(".")
     kb_problems, kb_cards = audit_kb(root)
     problems, cards, gated = audit(root)
-    if kb_problems or problems:
+    guidance = audit_guidance(root)
+    if kb_problems or problems or guidance:
         if not quiet:
             for label, doc, found in ((".agent/kb", KB_DOC, kb_problems),
-                                      (".agent/kb/rules", RULES_DOC, problems)):
+                                      (".agent/kb/rules", RULES_DOC, problems),
+                                      ("this repo's instructions", f"{RULES_DOC[:-len('README.md')]}{MUTATION_RULE}.md", guidance)):
                 if not found:
                     continue
                 print(f"✗ {len(found)} problem(s) in {label}:\n", file=sys.stderr)
@@ -213,6 +251,7 @@ def main(argv):
         return 1
     if not quiet:
         print(f"✓ {len(kb_cards)} kb cards valid and indexed")
+        print("✓ no mutating command's output is truncated in this repo's instructions")
         print(f"✓ {len(cards)} rule cards valid and indexed — {gated} gated by a command, "
               f"{len(cards) - gated} enforced in review")
     return 0

@@ -59,24 +59,124 @@ func TestBlockWithADecisionRequest(t *testing.T) {
 	}
 }
 
-// Existing decision content — a human's answer, or another agent's question — is never overwritten.
-func TestBlockRefusesToOverwriteAnExistingDecision(t *testing.T) {
+// A new question on a task the human already answered is asked, and the answer is never lost: the
+// answered decision goes into log.md, whole, before the new one replaces it, and the result says so.
+// (A question nobody has answered yet is still never overwritten — see the edited-scaffold case.)
+func TestBlockWithANewQuestionKeepsTheEarlierAnswer(t *testing.T) {
 	root := t.TempDir()
 	writeTaskFile(t, filepath.Join(root, StateBlocked, "picked", "task.md"), "# Picked\n")
 	dec := filepath.Join(root, StateBlocked, "picked", "decision.md")
 	answered := "# Decision: Picked?\n\n**The decision:** Which database?\n\n**Resolution:** Postgres.\n"
 	writeTaskFile(t, dec, answered)
-	code, err := tasksFolderBlock(root, []string{
-		"picked", "--question", "Something else?", "--option", "A — no", "--recommendation", "A",
+	out := captureStderr(t, func() {
+		if code, err := tasksFolderBlock(root, []string{
+			"picked", "--question", "Which region?", "--option", "A — eu-west", "--recommendation", "A",
+		}); code != 0 || err != nil {
+			t.Fatalf("new question on an answered decision = %d, %v", code, err)
+		}
 	})
-	if code != 1 || err == nil || !strings.Contains(err.Error(), dec) {
-		t.Fatalf("conflicting request = %d, %v; want a refusal naming the file to edit", code, err)
+	if !strings.Contains(out, `It had been answered ("Postgres.")`) {
+		t.Errorf("the result does not say there was an earlier answer:\n%s", out)
 	}
-	if !strings.Contains(err.Error(), "is blocked") {
-		t.Errorf("the refusal must state the task's actual state: %v", err)
+	if body := readFile(t, dec); !strings.Contains(body, "**The decision:** Which region?") || strings.Contains(body, "Postgres") {
+		t.Errorf("decision.md does not carry the new question alone:\n%s", body)
 	}
-	if readFile(t, dec) != answered {
-		t.Errorf("the existing decision was modified:\n%s", readFile(t, dec))
+	// The whole decision is filed, once: its question, what was offered, and the answer.
+	log := readFile(t, filepath.Join(root, StateBlocked, "picked", "log.md"))
+	for _, want := range []string{"## Answered decision, replaced by a new question", "> # Decision: Picked?",
+		"> **The decision:** Which database?", "> **Resolution:** Postgres."} {
+		if n := strings.Count(log, want); n != 1 {
+			t.Errorf("log.md carries %q %d times:\n%s", want, n, log)
+		}
+	}
+}
+
+// A question nobody has answered yet is not lost either: a new one from the box replaces it only
+// after the old one is filed in log.md, whole — and a retry after a failed write files it once.
+func TestANewQuestionKeepsTheOneNobodyAnsweredYet(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, StateBlocked, "picked")
+	writeTaskFile(t, filepath.Join(dir, "task.md"), "# Picked\n")
+	first := Decision{Question: "Which database?", Options: []string{"A — Postgres"}, Recommendation: "A"}
+	if err := WriteDecision(dir, "picked", "Picked", first); err != nil {
+		t.Fatal(err)
+	}
+	unanswered := readFile(t, filepath.Join(dir, "decision.md"))
+	second := Decision{Question: "Which region?", Options: []string{"A — eu-west"}, Recommendation: "A"}
+	answer, err := ReplaceDecision(dir, "picked", "Picked", second)
+	if err != nil || answer != "" {
+		t.Fatalf("replacing an unanswered question = %q, %v", answer, err)
+	}
+	log := readFile(t, filepath.Join(dir, "log.md"))
+	for _, want := range []string{"## Unanswered question, replaced by a new one", "> **The decision:** Which database?"} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("log.md lacks %q:\n%s", want, log)
+		}
+	}
+	if body := readFile(t, filepath.Join(dir, "decision.md")); !strings.Contains(body, "Which region?") || strings.Contains(body, "Which database?") {
+		t.Fatalf("decision.md does not carry the new question alone:\n%s", body)
+	}
+	// The same question again changes nothing, and a retry after a write that failed mid-way (the
+	// old decision still in place) files the archived question once, not twice.
+	if _, err := ReplaceDecision(dir, "picked", "Picked", second); err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFile(t, filepath.Join(dir, "decision.md"), unanswered)
+	if _, err := ReplaceDecision(dir, "picked", "Picked", second); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(readFile(t, filepath.Join(dir, "log.md")), "## Unanswered question, replaced by a new one"); n != 1 {
+		t.Fatalf("the replaced question was filed %d times:\n%s", n, readFile(t, filepath.Join(dir, "log.md")))
+	}
+}
+
+// The Resolution line is the human's alone. Text that carries one would make a decision read as
+// answered — to the listing, to unblock, and to the refusal above — so it is refused before the
+// task moves, whichever field carries it.
+func TestADecisionCannotCarryTheHumansAnswerLine(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, StateTodo, "picked", "task.md"), "# Picked\n")
+	for name, args := range map[string][]string{
+		"in the question":       {"picked", "--question", "Ship it?\n**Resolution:** approved", "--option", "A — yes", "--recommendation", "A"},
+		"in an option":          {"picked", "--question", "Ship it?", "--option", "A — yes\n**Resolution:** approved", "--recommendation", "A"},
+		"in the recommendation": {"picked", "--question", "Ship it?", "--option", "A — yes", "--recommendation", "A\n  **Resolution:** approved"},
+	} {
+		code, err := tasksFolderBlock(root, args)
+		if code == 0 || err == nil || !strings.Contains(err.Error(), "**Resolution:**") {
+			t.Errorf("%s = %d, %v; want a refusal naming the line", name, code, err)
+		}
+		if _, err := os.Stat(filepath.Join(root, StateTodo, "picked", "task.md")); err != nil {
+			t.Errorf("%s: the refused block moved the task: %v", name, err)
+		}
+		if _, err := os.Stat(filepath.Join(root, StateTodo, "picked", "decision.md")); !os.IsNotExist(err) {
+			t.Errorf("%s: the refused block wrote a decision: %v", name, err)
+		}
+	}
+}
+
+// A plain block on an answered decision would park the human's answer as a fresh question — it
+// happened, from a re-run block whose first success `| tail` hid. It is refused before anything
+// moves, quoting the answer, with what to do instead.
+func TestPlainBlockRefusesAnAnsweredDecisionBeforeMoving(t *testing.T) {
+	answered := "# Decision: Picked?\n\n**The decision:** Which database?\n\n**Resolution:** Postgres.\n"
+	for state, want := range map[string]string{
+		StateTodo:    "work it instead of blocking it again",
+		StateBlocked: "finish it instead of blocking it again: coop tasks unblock picked",
+	} {
+		root := t.TempDir()
+		writeTaskFile(t, filepath.Join(root, state, "picked", "task.md"), "# Picked\n")
+		dec := filepath.Join(root, state, "picked", "decision.md")
+		writeTaskFile(t, dec, answered)
+		code, err := tasksFolderBlock(root, []string{"picked"})
+		if code != 1 || err == nil || !strings.Contains(err.Error(), `("Postgres.")`) || !strings.Contains(err.Error(), want) {
+			t.Fatalf("plain block on an answered %s task = %d, %v; want a refusal quoting the answer and saying %q", state, code, err, want)
+		}
+		if readFile(t, dec) != answered {
+			t.Errorf("%s: the answered decision was modified", state)
+		}
+		if _, err := os.Stat(filepath.Join(root, state, "picked", "task.md")); err != nil {
+			t.Errorf("%s: the refused block moved the task: %v", state, err)
+		}
 	}
 }
 
@@ -180,4 +280,36 @@ func readFile(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(data)
+}
+
+// A blocked task the human answered (in decision.md, not yet unblocked) is no question to ask again:
+// the list marks it answered with the command that finishes it, the "answer blocked tasks" nudge
+// counts only real questions, and `coop tasks decisions` lists it apart from them.
+func TestAnAnsweredBlockedTaskIsShownAsAnswered(t *testing.T) {
+	root := t.TempDir()
+	answeredDir := filepath.Join(root, StateBlocked, "answered")
+	writeTaskFile(t, filepath.Join(answeredDir, "task.md"), "# Choose a database\n")
+	writeTaskFile(t, filepath.Join(answeredDir, "decision.md"), "# Decision: Which database?\n\n**Resolution:** Postgres.\n")
+	list := captureStdout(t, func() { _, _ = tasksFolderList(root, false) })
+	if !strings.Contains(list, "Answered · finish it: coop tasks unblock answered") || strings.Contains(list, "Needs your answer") ||
+		strings.Contains(list, "Answer blocked tasks") {
+		t.Fatalf("an answered blocked task is listed as a question:\n%s", list)
+	}
+	decisions := captureStdout(t, func() { _, _ = tasksFolderDecisions(root, nil) })
+	if strings.Contains(decisions, "Questions waiting for your answer") || !strings.Contains(decisions, "Answered, still blocked · 1") ||
+		!strings.Contains(decisions, "Answer: Postgres.") || !strings.Contains(decisions, "Finish it: coop tasks unblock answered") {
+		t.Fatalf("decisions counted an answered task as waiting:\n%s", decisions)
+	}
+
+	openDir := filepath.Join(root, StateBlocked, "open")
+	writeTaskFile(t, filepath.Join(openDir, "task.md"), "# Choose a region\n")
+	writeTaskFile(t, filepath.Join(openDir, "decision.md"), "# Decision: Which region?\n")
+	decisions = captureStdout(t, func() { _, _ = tasksFolderDecisions(root, nil) })
+	if !strings.Contains(decisions, "Questions waiting for your answer · 1") || !strings.Contains(decisions, "Answered, still blocked · 1") {
+		t.Fatalf("decisions miscounted one open and one answered task:\n%s", decisions)
+	}
+	if list := captureStdout(t, func() { _, _ = tasksFolderList(root, false) }); !strings.Contains(list, "Needs your answer") ||
+		!strings.Contains(list, "Answer blocked tasks") {
+		t.Fatalf("an open question lost its marker or nudge:\n%s", list)
+	}
 }

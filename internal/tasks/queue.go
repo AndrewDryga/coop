@@ -677,6 +677,7 @@ func tasksDecisionsAll(repo string, rels []string, args []string) (int, error) {
 	}
 	if interactive {
 		var refs []decisionRef
+		var answered []Item
 		for _, rel := range rels {
 			root := filepath.Join(repo, rel)
 			exists, err := taskQueueExists(root)
@@ -691,19 +692,28 @@ func tasksDecisionsAll(repo string, rels []string, args []string) (int, error) {
 				return -1, err
 			}
 			for _, t := range items {
-				if t.State == StateBlocked {
+				switch {
+				case answeredDecision(t):
+					answered = append(answered, t)
+				case t.State == StateBlocked:
 					refs = append(refs, decisionRef{root: root, label: rel, id: t.ID})
 				}
 			}
 		}
+		// A task the human already answered is not a question to browse, but it is still theirs to
+		// finish — so it is named here too, with the one command that finishes it.
+		p := ui.For(os.Stdout)
 		if len(refs) == 0 {
-			ui.OK("no open decisions — nothing is blocked")
+			ui.OK("no open decisions — nothing is waiting for your answer")
+			printAnsweredDecisions(p, answered, false)
 			return 0, nil
 		}
 		if !ui.IsTerminal(os.Stdin) {
 			return 2, errors.New("coop tasks decisions -i needs an interactive terminal")
 		}
-		return runDecisionBrowser(refs, os.Stdin, os.Stdout)
+		code, err := runDecisionBrowser(refs, os.Stdin, os.Stdout)
+		printAnsweredDecisions(p, answered, true)
+		return code, err
 	}
 	return tasksDecisionsRollup(repo, rels)
 }

@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from check_rules import audit, audit_kb, check_command, parse_frontmatter
+from check_rules import audit, audit_guidance, audit_kb, check_command, parse_frontmatter
 
 
 GOOD_CARD = """---
@@ -282,3 +282,25 @@ class AuditKbTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GuidanceTest(unittest.TestCase):
+    """This repo's own instructions must not teach an agent to truncate a mutation's result."""
+
+    def audit(self, contents):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".agent" / "skills").mkdir(parents=True)
+            (root / "AGENTS.md").write_text("# rules\n", encoding="utf-8")
+            (root / ".agent" / "skills" / "sweep.md").write_text(contents, encoding="utf-8")
+            return audit_guidance(root)
+
+    def test_a_truncated_mutation_is_a_problem(self):
+        problems = self.audit("Finish it:\n\n    coop tasks done $id | tail -2\n")
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("sweep.md:3", problems[0])
+
+    def test_a_bounded_tail_of_a_log_is_fine(self):
+        self.assertEqual(self.audit(
+            "Run the gate:\n\n    make check > gate.log 2>&1; tail -n 40 gate.log\n\n"
+            "`coop fork logs` | tail a loop log\n"), [])

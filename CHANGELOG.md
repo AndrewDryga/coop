@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A decision you already answered is never asked again or lost. `coop tasks block` refuses a plain
+  block on a task whose decision you answered, quoting your answer. A new question, from the CLI or
+  an agent in a box, keeps the decision it replaces in the task's log.md — your answer, or a
+  question nobody had answered yet, which an agent in a box used to drop — and no decision an agent
+  writes can carry a `**Resolution:**` line, which would make its own question read as answered. A
+  blocked task that already carries your answer shows as answered, with the command that finishes
+  it (`coop tasks unblock <id>`), in `coop tasks` and `coop tasks decisions`.
+
 - Two Coop versions on one machine no longer rebuild each other's box. Coop's shared base is now
   tagged by the box definition it was built from, `coop-box:<definition>`, instead of one
   `coop-box:latest`, so each version keeps and runs its own; `coop build` and `coop update` name the

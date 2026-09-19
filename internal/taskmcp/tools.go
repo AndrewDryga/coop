@@ -692,6 +692,10 @@ func (s *Server) block(_ context.Context, args json.RawMessage) *toolResult {
 		return refusal(fmt.Sprintf("%s is already done — a shipped task is not blocked from the box; a human reopens it with `coop tasks block`", loc.item.ID))
 	}
 	decision := tasks.Decision{Question: in.Decision, Options: in.Options, Recommendation: in.Recommendation}
+	// Before anything moves: text that would forge the human's answer is refused, not parked.
+	if err := tasks.CheckDecision(decision); err != nil {
+		return refusal(err.Error())
+	}
 	if loc.item.ID != s.authority.Assigned {
 		if err := tasks.BlockTrustedTask(loc.root, loc.item, tasks.ClaimActor{}); err != nil {
 			if errors.Is(err, tasks.ErrTaskLeased) {
@@ -705,10 +709,17 @@ func (s *Server) block(_ context.Context, args json.RawMessage) *toolResult {
 		}
 	}
 	dir := filepath.Join(loc.root, tasks.StateBlocked, loc.item.ID)
-	if err := tasks.WriteDecision(dir, loc.item.ID, loc.item.Title, decision); err != nil {
+	earlier, err := tasks.ReplaceDecision(dir, loc.item.ID, loc.item.Title, decision)
+	if err != nil {
 		return refusal(fmt.Sprintf("%s moved to %s/ but its decision.md could not be written: %v", loc.item.ID, tasks.StateBlocked, err))
 	}
-	return textResult(fmt.Sprintf("%s moved to %s/ with its decision.md — a human resolves it; stop working it", loc.item.ID, tasks.StateBlocked))
+	result := fmt.Sprintf("%s moved to %s/ with its decision.md — a human resolves it; stop working it", loc.item.ID, tasks.StateBlocked)
+	if earlier != "" {
+		// The human had answered its last question; that answer is not lost, but it is the reason to
+		// be sure this is a NEW question before the human is asked again.
+		result += fmt.Sprintf(". It had been answered (%q); that decision is kept in its log.md", earlier)
+	}
+	return textResult(result)
 }
 
 func (s *Server) setSubtasks(_ context.Context, args json.RawMessage) *toolResult {

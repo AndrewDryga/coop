@@ -3,7 +3,7 @@ name: in-box-task-channel
 description: the loop box reaches its task queue through a coop-owned MCP server over a helper-container unix socket, never a host-created one and never HTTP
 subsystem: box
 sources: [internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/box/taskchannel.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go]
-updated: 2026-09-13
+updated: 2026-09-19
 ---
 
 A loop work box changes task state through the `coop-tasks` MCP server (eight tools:
@@ -53,7 +53,9 @@ says to work, not a permission. A mutation on a task
 another live process leases is refused at the call (`tasks.TryTaskLease` / `ErrTaskLeased`), with a
 legible "held by another live process" message — the assigned task runs under the launching
 iteration's own lease and never leases twice. `tasks_complete`/`tasks_block` on another task use the
-host's trusted completion/block (its own lease + receipt). In a fork, `tasks_propose` writes the
+host's trusted completion/block (its own lease + receipt). `tasks_block` replaces decision.md through
+`tasks.ReplaceDecision`: a decision the human already answered goes into log.md first, and the
+result tells the agent it had been answered. In a fork, `tasks_propose` writes the
 validated proposal into `Authority.ProposalOutbox` (the same file `tasks.ImportForkProposals` reads at
 merge); in a plain loop it creates the `00_todo/`/`xx_backlog/` folder directly. Forks reach this same
 `box.Run` plumbing — `internal/loop/iteration.go` builds one RunSpec for plain and fork iterations.
@@ -101,6 +103,7 @@ server validates structure and authority, not diagnostic truth or semantic dupli
 an accepted proposal is not evidence that its diagnosis is correct.
 
 ## Changelog
+- 2026-09-19 — `tasks_block` keeps an answered decision in log.md before replacing it.
 - 2026-09-13 — shared loop discovery now checks existing owners; proposal descriptions/example
   preserve uncertainty and abnormal behavior. Scripted lookup/reuse and separate-new-proposal
   tests do not claim native model compliance or semantic deduplication.
