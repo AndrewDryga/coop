@@ -3,7 +3,7 @@ name: gemini-effort-thinking-settings
 description: Gemini has no effort flag; coop's low/high become per-call system-settings files overriding the client's two thinking family bases — why bases not model names, why only low/high, and the traps
 subsystem: agent
 sources: [internal/agent/gemini.go, internal/agent/agent.go, internal/agent/target.go, internal/box/run.go, internal/acpctl/control.go, internal/cli/testdata/providerfixture/timeout.go]
-updated: 2026-09-18
+updated: 2026-09-19
 ---
 
 The pinned Gemini CLI (0.59.0) takes thinking only from its settings. Coop maps an effort to it
@@ -34,8 +34,8 @@ refusing local listener, in the `coop-clients` image (task artifact
   cannot carry.
 - **Test oracle.** The provider fixture reads a gemini call's effort from
   `GEMINI_CLI_SYSTEM_SETTINGS_PATH`, and its `timeout` stub accepts exactly that `env` prefix.
-- **Pinned facts, floating boxes.** Base names, the model list and the LOW/HIGH enum are readings
-  of 0.59.0, while non-filtered boxes still install `@latest` (0.60.0 was re-read: same shape).
+- **Pinned facts, pinned boxes.** Base names, the model list and the LOW/HIGH enum are readings
+  of 0.59.0, the version every box runs (0.60.0 was re-read: same shape).
   `TestGeminiThinkingIsQualifiedOnTheLockedClient` fails when the locked version moves; re-read the
   new bundle before moving its pin. The `gemini-3-flash` alias has no request-level proof: on an API
   key the client sends that name as `gemini-3.5-flash`, so only an account without 3.5 GA reaches it.
@@ -43,6 +43,7 @@ refusing local listener, in the `coop-clients` image (task artifact
   probes in the `coop-clients` image (Node 24), where it answers.
 
 ## Changelog
+- 2026-09-19 — every box runs the locked 0.59.0 now; ordinary boxes no longer install `@latest`.
 - 2026-09-18 — created with the Gemini effort mapping; the claims above were re-run against the
   pinned client in `coop-clients` (headless, per-call arm, resume, ACP set_model, user/project
   settings), except the `gemini-3-flash` alias noted above.

@@ -130,9 +130,9 @@ func TestBoxSectionCarriesImageNudgesAsCautions(t *testing.T) {
 		t.Fatalf("a current image printed %q", got)
 	}
 	got := captureStderr(t, func() {
-		s.box([]string{"box image is 40 days old — 'coop update' refreshes the agent CLIs baked into it"})
+		s.box([]string{"box image is 40 days old — 'coop update' rebuilds it on the newest OS packages and Node"})
 	})
-	want := "Checking the Coop box\n  ⚠ box image is 40 days old — 'coop update' refreshes the agent CLIs baked into it\n"
+	want := "Checking the Coop box\n  ⚠ box image is 40 days old — 'coop update' rebuilds it on the newest OS packages and Node\n"
 	if got != want {
 		t.Fatalf("nudges rendered %q, want %q", got, want)
 	}
@@ -516,7 +516,7 @@ func TestRunNarratesAnInteractiveOpenLaunchAndItsStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	got = captureStderr(t, func() { _, _ = Run(cfg, runtime.Runtime{Name: shim}, spec) })
-	if !strings.HasPrefix(got, "Checking the Coop box\n  ⚠ box image is 40 days old — 'coop update' refreshes the agent CLIs baked into it\n\nProtecting secrets\n") {
+	if !strings.HasPrefix(got, "Checking the Coop box\n  ⚠ box image is 40 days old — 'coop update' rebuilds it on the newest OS packages and Node\n\nProtecting secrets\n") {
 		t.Fatalf("an old image narrated:\n%q", got)
 	}
 }

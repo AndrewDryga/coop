@@ -63,8 +63,7 @@ func TestProviderConsultLiveCompatibility(t *testing.T) {
 	}
 	runtimeSettings := liveprovider.RuntimeSettings{
 		Name: rt.Name, Image: realConfig.ImageOverride, BaseImage: realConfig.BaseImage,
-		HomeInBox: realConfig.HomeInBox, AgentPackages: realConfig.AgentPackages,
-		ConnectionEnv: connectionEnv,
+		HomeInBox: realConfig.HomeInBox, ConnectionEnv: connectionEnv,
 	}
 	image := box.ImageForRepo(t.TempDir(), realConfig.BaseImage, realConfig.ImageOverride)
 	if !box.ImageExists(rt, image) {

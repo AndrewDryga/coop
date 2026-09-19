@@ -4,7 +4,7 @@ description: a provider bundle grants what the client needs to function; the cli
 scope: security
 sources: [internal/agent/network_bundle.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/locked_clients_test.go, internal/mcp/mcp.go, internal/cli/provider_network_live_e2e_test.go]
 check: "go test ./internal/agent -run 'TestProviderBundlesCarryFunctionNotChatter|TestManagedClientDefaultsAreBoxOnly'"
-updated: 2026-09-18
+updated: 2026-09-19
 ---
 
 # A provider bundle carries function; a managed client's chatter is switched off, not granted or hidden
@@ -55,6 +55,8 @@ Background: [[restricted-networking]] (bundles are one of five layers),
 [[mcp-authority-projection]] (the overlays are projections of the host profile, never edits).
 
 ## Changelog
+- 2026-09-19 — Grok's launch-time update check is off too: `GROK_DISABLE_AUTOUPDATER=1` in its
+  BoxEnv and, with every adapter's update controls, in every Coop image.
 - 2026-09-18 — the 2026-09-10 sweep missed grok: its pinned 1.0.25 client, telemetry on, looked up
   api.mixpanel.com, grok.com and api.x.ai up to 128 times a prompt, tripping the burst alert and
   dropping detail. `GROK_TELEMETRY_ENABLED=false` (read from the binary, proved in two filtered

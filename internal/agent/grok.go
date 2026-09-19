@@ -215,8 +215,11 @@ func (a grokAgent) ACPRestrictedSessionMeta(mode ExecutionMode) (map[string]any,
 	return unqualifiedRestrictedACPSession(a, mode)
 }
 
-// Packages is empty: grok is a native binary, not an npm package.
-func (grokAgent) Packages() []string { return nil }
+// UpdateControls: the pinned 1.0.25 checks for a CLI update on launch unless
+// GROK_DISABLE_AUTOUPDATER is set (its own documentation, embedded in the binary).
+func (grokAgent) UpdateControls() UpdateControls {
+	return UpdateControls{Env: []string{"GROK_DISABLE_AUTOUPDATER=1"}}
+}
 
 // Models are grok's current model ids. Illustrative — any id the CLI accepts works.
 func (grokAgent) Models() []string {
@@ -471,7 +474,9 @@ func (grokAgent) ACPSessionSettings(Target) []ACPSessionSetting { return nil }
 // api.mixpanel.com and grok.com dozens of times per prompt, and api.x.ai too — 128 blocked lookups
 // in one filtered run, a burst alert every time, and detail the record had to drop — and with it
 // off it looks up none of them and answers the same.
-func (grokAgent) BoxEnv(string) []string { return []string{"GROK_TELEMETRY_ENABLED=false"} }
+func (a grokAgent) BoxEnv(string) []string {
+	return append([]string{"GROK_TELEMETRY_ENABLED=false"}, a.UpdateControls().Env...)
+}
 
 func (grokAgent) HomeFallbacks() []HomeFallback { return nil }
 
@@ -531,18 +536,6 @@ func (grokAgent) UsagePrelude() string {
 }
 func (a grokAgent) ShellPrelude() string {
 	return a.UsagePrelude() + consultCaptureShell("grok", "Grok")
-}
-
-// InstallScript bakes grok's CLI into the box image. grok ships a piped installer
-// (`curl … | bash`), not npm and not a checksummed release — so, per the settled supply-chain
-// call, coop runs THAT (we don't invent a checksum grok doesn't publish; matching how grok
-// distributes). The installer symlinks /usr/local/bin/grok into $HOME/.grok (root's home during
-// this root build layer), which the box's non-root `node` user can't traverse — so we resolve
-// the real binary and replace the symlink with a world-executable copy, verified as the node
-// user in a box e2e. `curl -f` fails the build on an HTTP error instead of piping an error page.
-func (grokAgent) InstallScript() string {
-	return `curl -fsSL https://x.ai/cli/install.sh | bash` +
-		` && b="$(readlink -f /usr/local/bin/grok)" && rm -f /usr/local/bin/grok && install -m 0755 "$b" /usr/local/bin/grok`
 }
 
 // LockedClients uses the exact native build whose CLI and ACP behavior is

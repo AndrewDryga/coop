@@ -100,6 +100,15 @@ launcher argv and environment controls are byte-for-byte identical. Gemini 0.59.
 npm shape; Grok 1.0.25 uses the direct checksummed GCS object. A floating installer, downloaded
 checksum, mismatched platform URL, or two conflicting declarations is not a locked client.
 
+The ordinary base image installs this same closure: `lockedClientParts` renders the client layer
+for both `baseImageDefinition` and `lockedImageDefinition`, so only PATH and the base's asdf
+provisioning differ and every box runs the qualified set. The launchers live in
+`agents.LauncherDir` (`/opt/coop/bin`), first on PATH in both images, so an asdf shim cannot shadow
+a client. Each adapter's `UpdateControls` ride in the closure too (environment in `ENV`, files under
+`/etc` via `COPY system/ /`), so the closure digest covers them: changing one re-qualifies every
+host's filtered setup on its next launch. The base build asks the runtime for its platform
+(`Runtime.BuildPlatform`) because the closure's native paths and Grok's artifact are per-arch.
+
 Traps:
 
 - A filtered run's box is the LOCKED client image, or that image plus the project's own layers.
@@ -165,8 +174,8 @@ Traps:
   Datadog, `ab.chatgpt.com`) are switched off box-only instead — Claude through `BoxEnv`, codex
   through the always-on `config.toml` overlay, gemini through its settings overlay plus
   `GEMINI_TELEMETRY_ENABLED=false`, grok through `BoxEnv` (`GROK_TELEMETRY_ENABLED=false`, which
-  also stops its `grok.com` and `api.x.ai` lookups; its update-check switch,
-  `GROK_DISABLE_AUTOUPDATER`, is not set yet — the pinned client makes none in a filtered box) —
+  also stops its `grok.com` and `api.x.ai` lookups, and `GROK_DISABLE_AUTOUPDATER=1`) — every Coop
+  image also carries each client's update controls, homes mounted or not —
   so a hello-and-exit session retains no refusal, and a later deliberate request to one of those
   hosts is a real refusal nothing suppresses. Bundle content is
   pinned per `NetworkBundleVersion` by the owner store on first admission
@@ -208,6 +217,9 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-19 — the ordinary base installs the same locked closure (one shared client layer); the
+  launchers moved to /opt/coop/bin, first on PATH; the closure carries every adapter's update
+  controls; Grok's updater is switched off.
 - 2026-09-19 — a filtered launch reuses the project image it built last when nothing it builds from
   changed (the digest, the owner-private record, the BuildKit-faithful Dockerfile scanner); staging
   keeps source modes. Re-pointed the derived_image.go line references.

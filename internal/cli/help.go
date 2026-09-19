@@ -1784,7 +1784,8 @@ Usage:
   coop update [--self-only | --box-only | --check]
 
 Updates the Coop binary when a newer release is available, then rebuilds
-the box with newer base-image components, agent CLIs, and editor adapters.
+the box on newer base-image components. The agent CLIs and editor adapters
+stay at the versions this Coop release qualifies.
 Downloaded releases are checked before replacing the binary.
 
 OPTIONS

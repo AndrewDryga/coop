@@ -290,7 +290,7 @@ func buildRuntimeInitProbe(t *testing.T, rt runtime.Runtime) string {
 func buildRuntimeEntrypointImage(t *testing.T, rt runtime.Runtime) string {
 	t.Helper()
 	dir := t.TempDir()
-	entrypoint := BaseDockerfile()
+	entrypoint := baseDockerfile(t)
 	const start = "COPY <<'ENTRY' /usr/local/bin/coop-entry\n"
 	const end = "\nENTRY\nRUN chmod +x /usr/local/bin/coop-entry"
 	_, entrypoint, ok := strings.Cut(entrypoint, start)

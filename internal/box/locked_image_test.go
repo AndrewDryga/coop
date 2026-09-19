@@ -81,11 +81,13 @@ func TestLockedImageBuildContextIsPinnedDeterministicAndEmbeddedOnly(t *testing.
 			t.Fatal(err)
 		}
 	}
-	if len(files) != 10 || len(files["global.npmrc"]) != 0 || !bytes.Equal(files["package-lock.json"], closure.Files["package-lock.json"]) {
+	if len(files) != 12 || len(files["global.npmrc"]) != 0 || !bytes.Equal(files["package-lock.json"], closure.Files["package-lock.json"]) {
 		t.Fatal("context omitted or added inputs")
 	}
 	df := string(files["Dockerfile"])
-	for _, want := range []string{"npm ci --prefix /opt/coop/clients --ignore-scripts --include=optional --omit=dev", "--userconfig=/dev/null --globalconfig=/opt/coop/clients/global.npmrc", "/node_modules/playwright/cli.js install-deps chromium", "curl --fail --silent --show-error --proto '=https'", "sha256sum -c -", "grok-1.0.25-linux-aarch64.gz", "chmod -R a-w /opt/coop/clients", "USER node", "COOP_SUPERVISE_DESCENDANTS", "terminate_jobs"} {
+	for _, want := range []string{"npm ci --prefix /opt/coop/clients --ignore-scripts --include=optional --omit=dev", "--userconfig=/dev/null --globalconfig=/opt/coop/clients/global.npmrc", "/node_modules/playwright/cli.js install-deps chromium", "curl --fail --silent --show-error --proto '=https'", "sha256sum -c -", "grok-1.0.25-linux-aarch64.gz", "chmod -R a-w /opt/coop/clients", "USER node", "COOP_SUPERVISE_DESCENDANTS", "terminate_jobs",
+		"COPY launchers/ /opt/coop/bin/", "COPY system/ /", "ENV DISABLE_UPDATES=1 GROK_DISABLE_AUTOUPDATER=1",
+		`PATH="/opt/coop/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"`} {
 		if !strings.Contains(df, want) {
 			t.Fatal("missing locked-image requirement", want)
 		}
@@ -109,7 +111,7 @@ func TestLockedImageBuildContextIsPinnedDeterministicAndEmbeddedOnly(t *testing.
 		}
 		return body
 	}
-	if supervisor(df) != supervisor(BaseDockerfile()) {
+	if supervisor(df) != supervisor(baseDockerfile(t)) {
 		t.Fatal("locked image forked process supervision")
 	}
 	for _, client := range closure.Clients {
@@ -125,7 +127,7 @@ func TestLockedImageBuildContextIsPinnedDeterministicAndEmbeddedOnly(t *testing.
 }
 
 func TestBaseDockerfilePreservesShellLongestSuffixRemoval(t *testing.T) {
-	df := BaseDockerfile()
+	df := baseDockerfile(t)
 	for _, expression := range []string{"${forward%%:*}", "${rest%%:*}", "${record%%:*}"} {
 		if !strings.Contains(df, expression) {
 			t.Errorf("Go formatting damaged shell expansion %s", expression)

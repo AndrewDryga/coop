@@ -269,13 +269,10 @@ func (claudeAgent) ACPRestrictedSessionMeta(mode ExecutionMode) (map[string]any,
 	return meta, nil
 }
 
-const (
-	claudeCLIPackage = "@anthropic-ai/claude-code@latest"
-	claudeACPPackage = "@agentclientprotocol/claude-agent-acp@latest"
-)
-
-func (claudeAgent) Packages() []string {
-	return []string{claudeCLIPackage, claudeACPPackage}
+// UpdateControls: DISABLE_UPDATES is the first switch the pinned 2.1.260 updater checks, and a
+// manual `claude update` refuses under it too — read out of the binary and its ACP adapter's SDK.
+func (claudeAgent) UpdateControls() UpdateControls {
+	return UpdateControls{Env: []string{"DISABLE_UPDATES=1"}}
 }
 
 // Models are the stable Claude Code aliases (each resolves to that family's current
@@ -863,20 +860,19 @@ func (claudeAgent) ACPSessionSettings(target Target) []ACPSessionSetting {
 // lost every run, re-prompting login), and turn off the bubblewrap subprocess env scrub
 // — the box ships no bubblewrap and is itself the isolation boundary.
 //
-// The last two are the managed-client controls, box-only and never written to a settings file:
+// The rest are the managed-client controls, box-only and never written to a settings file:
 // CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC stops auto-updates, telemetry, error reports, the
 // release-notes fetch, feedback and availability checks (and with them feature-flag fetching);
-// DISABLE_UPDATES also refuses a manual `claude update`, because Coop qualifies the exact
+// the update controls also refuse a manual `claude update`, because Coop qualifies the exact
 // installed client and a self-update would run one nobody qualified. Read out of the locked
 // 2.1.260 binary and code.claude.com/docs/en/env-vars: inference, the OAuth refresh and the
 // claude.ai connectors — whose eligibility never consults the traffic mode — keep working.
-func (claudeAgent) BoxEnv(homeInBox string) []string {
-	return []string{
+func (a claudeAgent) BoxEnv(homeInBox string) []string {
+	return append([]string{
 		"CLAUDE_CONFIG_DIR=" + homeInBox + "/.claude",
 		"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0",
 		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
-		"DISABLE_UPDATES=1",
-	}
+	}, a.UpdateControls().Env...)
 }
 
 func (claudeAgent) HomeFallbacks() []HomeFallback {
@@ -936,7 +932,6 @@ func (claudeAgent) UsagePrelude() string {
 func (a claudeAgent) ShellPrelude() string {
 	return a.UsagePrelude() + consultCaptureShell("claude", "Claude")
 }
-func (claudeAgent) InstallScript() string { return "" }
 
 const maxClaudePlainLimitBytes = 512
 

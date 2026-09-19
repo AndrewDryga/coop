@@ -74,8 +74,10 @@ the client's own controls, in the box only: Claude runs with
 `config.toml` that sets `check_for_update_on_startup = false`, `analytics.enabled = false` and the
 `otel` exporters to `none` on top of your own settings, and gemini gets `general.enableAutoUpdate`,
 `general.enableAutoUpdateNotification` and `privacy.usageStatisticsEnabled` off plus
-`GEMINI_TELEMETRY_ENABLED=false`, and grok runs with `GROK_TELEMETRY_ENABLED=false` (its
-launch-time update check is not switched off yet; the pinned client in a filtered box makes none).
+`GEMINI_TELEMETRY_ENABLED=false`, and grok runs with `GROK_TELEMETRY_ENABLED=false` and
+`GROK_DISABLE_AUTOUPDATER=1`. Coop's images carry each client's update switch as well — Claude's
+`DISABLE_UPDATES`, Codex's `/etc/codex/managed_config.toml`, Gemini's `/etc/gemini-cli/settings.json`,
+Grok's `GROK_DISABLE_AUTOUPDATER` — so no box's client updates itself, homes mounted or not.
 Your host profiles are not edited. So a session that only answers
 a prompt records no refusals — and if an agent or your project later does reach for one of those
 hosts on purpose, that refusal is recorded, shown and approvable like any other; nothing is
@@ -177,7 +179,7 @@ on your Docker. The two proofs bind what the box RUNS, not what a build may do �
 | `cidr: 0.0.0.0/0` | `a /0 rule allows everything, which is not filtering — use --egress open if that is what you want` |
 | a host, loopback, link-local or metadata range | `<range> is a protected range (your host, loopback, link-local or cloud metadata) — no rule can allow it` |
 | a project image not built on the client image | `this project's .agent/Dockerfile did not build on coop's client image — start it with ARG COOP_BASE_IMAGE and FROM ${COOP_BASE_IMAGE} …` |
-| a project image that changes a pinned client | `this project's .agent/Dockerfile changes claude's cli client at /usr/local/bin/claude — a filtered box runs the clients this host's setup qualified …` |
+| a project image that changes a pinned client | `this project's .agent/Dockerfile changes claude's cli client at /opt/coop/bin/claude — a filtered box runs the clients this host's setup qualified …` |
 | `COOP_IMAGE` | `a filtered box runs coop's own image — unset COOP_IMAGE to start one` |
 | a runtime other than Docker | `restricted networking needs docker; <runtime> cannot serve the qualified gateway — run this with --egress open or none, or set COOP_RUNTIME=docker` |
 | `box.network: true` with no `service:` grant | `a filtered box does not join the shared services network — ask for the one sidecar you need with a to: {service: <name>} rule …` |

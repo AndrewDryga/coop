@@ -4,17 +4,17 @@ description: "a coding agent is one self-registering file in `internal/agent`, n
 scope: architecture
 sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/provider_decisions_test.go, Makefile]
 check: "go test ./internal/agent -run 'TestRegistry|TestProviderDecisionsStayInAdapters|TestProviderDecisionGuard'"
-updated: 2026-09-13
+updated: 2026-09-19
 ---
 
 # A coding agent is one file in internal/agent — never a switch elsewhere
 
 Every per-agent difference (commands, session resume, ACP binary, MCP translation,
-first-run defaults, instruction filename, auth marker, npm packages) lives behind the
-`Agent` interface in `internal/agent`. Each agent is one self-registering file
+first-run defaults, instruction filename, auth marker, locked clients and update controls) lives
+behind the `Agent` interface in `internal/agent`. Each agent is one self-registering file
 (`claude.go`, `codex.go`, `gemini.go`, `grok.go`); the rest of the codebase reaches agents through
 the registry — `agents.Get(name)`, `agents.Valid(name)`, `agents.Names()`,
-`agents.Default()`, `agents.Packages()`.
+`agents.Default()`, and the client closure built from it (`agents.LockedClientClosure`).
 
 **Why:** Go's `switch` isn't exhaustive, so a hard-coded provider switch
 in cli/box/consult means adding an agent is a scavenger hunt and the compiler won't catch
@@ -33,6 +33,9 @@ adding an agent a single new file.
   tests and the two independent process-test oracle directories above are exempt.
 
 ## Changelog
+- 2026-09-19 — re-verified against the registry: `agents.Packages()` and per-agent npm package lists
+  are gone (every image installs the locked client closure); `LockedClients`/`UpdateControls` are
+  the per-agent seams the images read.
 - 2026-09-13 — swept production Go sources: moved the remaining review envelope, plain limit,
   model discovery, skills, scaffold and default selections behind the adapters. Strict host
   receipt grammar and CLI cache/execution policy remain with their owners. The guard now

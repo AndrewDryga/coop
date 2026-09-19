@@ -566,9 +566,8 @@ type Agent interface {
 	// sandbox) in its config dir so a fresh box goes straight to work. A present invalid
 	// settings file is an error, never an empty default. workdir is the resolved box cwd.
 	EnsureDefaults(cfg *config.Config, workdir string) error
-	// Packages are the npm packages the box image installs for this agent — its CLI and
-	// (if separate) its ACP adapter.
-	Packages() []string
+	// UpdateControls are the switches that stop this agent's client updating itself.
+	UpdateControls() UpdateControls
 	// LockedClients declares this adapter's exact pinned installations for one
 	// platform, used to build the qualified client image restricted networking
 	// launches. Nil where the adapter has no qualified locked client.
@@ -616,9 +615,6 @@ type Agent interface {
 	// ShellPrelude is optional helper-function shell the wrappers emit ONCE before the
 	// per-agent case (e.g. codex's output filter); "" for agents that need none.
 	ShellPrelude() string
-	// InstallScript is a non-npm box-image install command (e.g. an install-script
-	// download); "" means this agent installs via Packages() on the npm layer.
-	InstallScript() string
 }
 
 // MarkerProvidesActiveCredential reports whether a present native marker can satisfy this
@@ -931,15 +927,6 @@ func ValidateEffort(a Agent, model, effort string) error {
 		return validate(model, effort)
 	}
 	return nil
-}
-
-// Packages is the union of every agent's npm packages, for the box image's install.
-func Packages() []string {
-	var pkgs []string
-	for _, n := range Names() {
-		pkgs = append(pkgs, registry[n].Packages()...)
-	}
-	return pkgs
 }
 
 // MCPConfig is one adapter's complete native projection wiring for the shared mcp.json.

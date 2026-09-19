@@ -30,7 +30,7 @@ func (s buildShim) build(t *testing.T) runtime.Runtime {
 	var script strings.Builder
 	script.WriteString("#!/bin/sh\ncase \"$1\" in\n")
 	if s.daemonUp {
-		script.WriteString("  info) exit 0 ;;\n")
+		script.WriteString("  info) [ \"$2\" = --format ] && echo linux/aarch64; exit 0 ;;\n")
 	} else {
 		script.WriteString("  info) exit 1 ;;\n")
 	}

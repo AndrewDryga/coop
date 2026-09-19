@@ -407,7 +407,6 @@ type RuntimeSettings struct {
 	Image         string
 	BaseImage     string
 	HomeInBox     string
-	AgentPackages string
 	ConnectionEnv map[string]string
 }
 
@@ -796,7 +795,6 @@ func processEnvironmentValues(layout procharness.Layout, path string, runtime Ru
 	for key, value := range map[string]string{
 		"COOP_RUNTIME": runtime.Name, "COOP_IMAGE": runtime.Image,
 		"COOP_BASE_IMAGE": runtime.BaseImage, "COOP_HOME_IN_BOX": runtime.HomeInBox,
-		"COOP_AGENT_PACKAGES": runtime.AgentPackages,
 	} {
 		if value != "" {
 			values[key] = value

@@ -83,14 +83,12 @@ func TestRegistry(t *testing.T) {
 			t.Errorf("%s: Vendor() = %q, want the provider company (e.g. OpenAI)", n, v)
 		}
 	}
-	// Packages is the union across agents (claude 2 + codex 2 + gemini 1; grok is a native
-	// binary, not npm, so it adds none).
-	if got := Packages(); !slices.Contains(got, claudeCLIPackage) ||
-		!slices.Contains(got, claudeACPPackage) ||
-		!slices.Contains(got, codexCLIPackage) ||
-		!slices.Contains(got, codexACPPackage) ||
-		!slices.Contains(got, geminiCLIPackage) {
-		t.Errorf("Packages() = %v", got)
+	// Coop qualifies the exact client every box runs, so every adapter must switch its updater off.
+	for _, n := range Names() {
+		a, _ := Get(n)
+		if controls := a.UpdateControls(); len(controls.Env) == 0 && len(controls.Files) == 0 {
+			t.Errorf("%s declares no update controls: its client could update itself past the qualified version", n)
+		}
 	}
 }
 
@@ -2003,8 +2001,8 @@ func TestManagedClientDefaultsAreBoxOnly(t *testing.T) {
 		t.Errorf("gemini BoxEnv = %v, want the telemetry switch only", env)
 	}
 	grok, _ := Get("grok")
-	if env := grok.BoxEnv("/home/node"); !slices.Equal(env, []string{"GROK_TELEMETRY_ENABLED=false"}) {
-		t.Errorf("grok BoxEnv = %v, want the telemetry switch only", env)
+	if env := grok.BoxEnv("/home/node"); !slices.Equal(env, []string{"GROK_TELEMETRY_ENABLED=false", "GROK_DISABLE_AUTOUPDATER=1"}) {
+		t.Errorf("grok BoxEnv = %v, want the telemetry and update switches only", env)
 	}
 
 	codexConfig := filepath.Join(cfg.AgentDir("codex"), "config.toml")

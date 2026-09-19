@@ -24,7 +24,7 @@ func boxCheckApp(t *testing.T, name string, buildExit int) (*app, string) {
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
 	shim := filepath.Join(t.TempDir(), name)
 	script := "#!/bin/sh\necho \"$@\" >> " + strconv.Quote(recorder) + "\n" +
-		"case \"$1\" in build) exit " + strconv.Itoa(buildExit) + " ;; info) exit 1 ;; esac\n"
+		"case \"$1\" in build) exit " + strconv.Itoa(buildExit) + " ;; info) [ \"$2\" = --format ] && echo linux/aarch64 && exit 0; exit 1 ;; esac\n"
 	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

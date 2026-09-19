@@ -2,9 +2,9 @@
 name: box-toolchain-on-login-path
 description: "a box toolchain goes on the login PATH too, not just the `ENV` PATH"
 scope: box
-sources: [internal/box/image.go]
-check: "go test ./internal/box -run TestBaseDockerfileInstallsAgentPackages"
-updated: 2026-06-20
+sources: [internal/box/image.go, internal/scaffold/templates/dockerfile/asdf]
+check: "go test ./internal/box -run TestBaseDockerfileInstallsTheQualifiedClients"
+updated: 2026-09-19
 ---
 
 # A box toolchain must be on the login PATH, not just the ENV PATH
@@ -22,7 +22,9 @@ through a profile-sourcing shell, so the gate reported `go: not found` even
 though go was installed and asdf marked it current — for weeks, silently.
 
 The base image now carries an `/etc/profile.d/asdf.sh` drop-in that re-prepends
-the shims for login shells, matching the `ENV` behavior. `image_test.go` locks it.
+the client launchers (`/opt/coop/bin`) and the shims for login shells, in the `ENV`
+order. `image_test.go` locks it; the scaffolded asdf Dockerfile keeps the same order
+with its own drop-in (`TestAsdfDockerfileKeepsToolchainsOnLoginPath`).
 
 **Why:** `/etc/profile` resets PATH; an `ENV PATH` alone never reaches a login shell.
 
@@ -33,3 +35,5 @@ the shims for login shells, matching the `ENV` behavior. `image_test.go` locks i
 ## Changelog
 - 2026-06-20 — created
 - 2026-08-06 — card metadata added (format v1); body unchanged
+- 2026-09-19 — the qualified client launchers lead both PATHs; check renamed with its test. Swept
+  the images and the asdf scaffold: each sets the order in ENV and a profile.d drop-in.

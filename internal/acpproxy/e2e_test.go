@@ -89,7 +89,7 @@ func runLiveACPTests(m *testing.M) int {
 	coopE2ERuntimeSettings = liveprovider.RuntimeSettings{
 		Name: coopE2ERuntime.Name, Image: coopE2ERealConfig.ImageOverride,
 		BaseImage: coopE2ERealConfig.BaseImage, HomeInBox: coopE2ERealConfig.HomeInBox,
-		AgentPackages: coopE2ERealConfig.AgentPackages, ConnectionEnv: connectionEnv,
+		ConnectionEnv: connectionEnv,
 	}
 	coopE2ERepo = coopE2ELayout.Repo
 	if err := prepareLiveRepo(root, coopE2ERepo, coopE2ELayout.GitConfig); err != nil {

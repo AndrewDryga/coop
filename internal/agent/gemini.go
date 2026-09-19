@@ -259,10 +259,16 @@ func (a geminiAgent) ACPRestrictedSessionMeta(mode ExecutionMode) (map[string]an
 	return unqualifiedRestrictedACPSession(a, mode)
 }
 
-// Packages is just the CLI: gemini's ACP mode is built in (gemini --acp).
-const geminiCLIPackage = "@google/gemini-cli@latest"
+// geminiNoUpdates is Gemini's update switch, a system-settings block. /etc/gemini-cli/settings.json
+// is the pinned 0.59.0's system layer, which overrides both the user's and a workspace's settings
+// (it reports a bad file there by path). Pointing GEMINI_CLI_SYSTEM_SETTINGS_PATH at another file
+// replaces that layer instead of merging with it, so every system file Coop writes repeats the block.
+var geminiNoUpdates = map[string]any{"enableAutoUpdate": false, "enableAutoUpdateNotification": false}
 
-func (geminiAgent) Packages() []string { return []string{geminiCLIPackage} }
+func (geminiAgent) UpdateControls() UpdateControls {
+	data, _ := json.Marshal(map[string]any{"general": geminiNoUpdates}) // literals: cannot fail
+	return UpdateControls{Files: []SystemFile{{Path: "/etc/gemini-cli/settings.json", Content: string(data) + "\n"}}}
+}
 
 // Models are common Gemini model ids. Illustrative — any id the CLI accepts works.
 func (geminiAgent) Models() []string {
@@ -610,7 +616,6 @@ func (geminiAgent) UsagePrelude() string {
 func (a geminiAgent) ShellPrelude() string {
 	return a.UsagePrelude() + consultCaptureShell("gemini", "Gemini")
 }
-func (geminiAgent) InstallScript() string { return "" }
 
 // LockedClients pins Gemini's bundled CLI once while recording both ways Coop
 // launches it. The npm tarball is integrity-locked by package-lock.json; the
@@ -738,16 +743,16 @@ func geminiThinkingWiring(cfg *config.Config) ([]MCPMount, []string, error) {
 }
 
 // geminiThinkingSettings is one effort's system settings: both family bases at that effort, as
-// customAliases so they merge over any the user or project defines. gemini-3-flash is the one chat
-// model the pinned client gives no alias, so it would inherit neither base; here it gets its
-// family's.
+// customAliases so they merge over any the user or project defines, and the update switch this file
+// displaces from the image's system layer. gemini-3-flash is the one chat model the pinned client
+// gives no alias, so it would inherit neither base; here it gets its family's.
 func geminiThinkingSettings(effort string) (string, error) {
 	thinking := geminiThinking[effort]
 	base := func(config map[string]any) map[string]any {
 		return map[string]any{"extends": "chat-base", "modelConfig": map[string]any{
 			"generateContentConfig": map[string]any{"thinkingConfig": config}}}
 	}
-	settings := map[string]any{"modelConfigs": map[string]any{"customAliases": map[string]any{
+	settings := map[string]any{"general": geminiNoUpdates, "modelConfigs": map[string]any{"customAliases": map[string]any{
 		"chat-base-3":    base(map[string]any{"thinkingLevel": thinking.level}),
 		"chat-base-2.5":  base(map[string]any{"thinkingBudget": thinking.budget}),
 		"gemini-3-flash": map[string]any{"extends": "chat-base-3", "modelConfig": map[string]any{"model": "gemini-3-flash"}},

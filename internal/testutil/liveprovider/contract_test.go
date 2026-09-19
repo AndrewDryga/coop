@@ -219,7 +219,7 @@ func TestChildEnvironmentIsAllowlistOnly(t *testing.T) {
 		Path: "/safe/bin", Target: "codex@work", Marker: "MARKER", ResultFile: filepath.Join(layout.State, "result.json"),
 		AttemptFile: filepath.Join(layout.State, "attempted"), Supervisor: "supervisor", ControlFD: 3, RevokePath: revokePath,
 		Runtime: RuntimeSettings{
-			Name: "docker", Image: "image", BaseImage: "base", HomeInBox: "/home/node", AgentPackages: "packages",
+			Name: "docker", Image: "image", BaseImage: "base", HomeInBox: "/home/node",
 			ConnectionEnv: map[string]string{"DOCKER_HOST": "unix:///safe/runtime.sock", "CONTAINER_HOST": "FORBIDDEN_RUNTIME_CANARY"},
 		},
 	})

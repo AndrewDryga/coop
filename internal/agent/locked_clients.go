@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"net/url"
 	"path"
@@ -22,6 +23,11 @@ import (
 var lockedClientFiles embed.FS
 
 const lockedClientRoot = "/opt/coop/clients"
+
+// LauncherDir holds the launchers alone, first on every Coop image's PATH: a client a repo's
+// toolchain installs (an asdf-pinned Node's `npm i -g`) cannot shadow the qualified one, and
+// nothing here shadows the repo's own node or npm.
+const LauncherDir = "/opt/coop/bin"
 
 type ClientPlatform struct{ OS, Architecture, Libc string }
 
@@ -53,15 +59,33 @@ type LockedNativeArtifact struct {
 	URL, SHA256, Destination string
 }
 
-func (c LockedClient) Launcher() string { return "/usr/local/bin/" + c.Binary }
+func (c LockedClient) Launcher() string { return LauncherDir + "/" + c.Binary }
 
+// UpdateControls turn off a client's own updater: Coop qualifies the exact installed client, and
+// an update would run one nobody qualified. Every Coop image carries every adapter's controls, so
+// they hold in a box with or without the agent homes. Env entries are KEY=value; a file is
+// written at its absolute path below /etc.
+type UpdateControls struct {
+	Env   []string
+	Files []SystemFile
+}
+
+// SystemFile is one file a Coop image carries at an absolute path.
+type SystemFile struct{ Path, Content string }
+
+// ClientClosure is everything both Coop images install from: the clients, their build-context
+// files (the lock, the launchers, and the update controls' files under system/), and the update
+// controls' environment.
 type ClientClosure struct {
 	Platform   ClientPlatform
 	Digest     string
 	Clients    []LockedClient
 	Files      map[string][]byte
+	Env        []string
 	ClientRoot string
 }
+
+var controlEnv = regexp.MustCompile(`^[A-Z][A-Z0-9_]*=[0-9A-Za-z._-]+$`)
 
 var lockedVersion = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
 
@@ -89,6 +113,27 @@ func LockedClientClosure(platform ClientPlatform) (ClientClosure, error) {
 	if err := validateClientClosure(platform, files, clients); err != nil {
 		return ClientClosure{}, err
 	}
+	var env []string
+	keys := make(map[string]bool)
+	for _, name := range Names() {
+		controls := registry[name].UpdateControls()
+		for _, entry := range controls.Env {
+			key, _, _ := strings.Cut(entry, "=")
+			if !controlEnv.MatchString(entry) || keys[key] {
+				return ClientClosure{}, fmt.Errorf("%s: invalid update control %q", name, entry)
+			}
+			keys[key] = true
+			env = append(env, entry)
+		}
+		for _, file := range controls.Files {
+			entry := "system" + file.Path
+			if path.Clean(file.Path) != file.Path || !strings.HasPrefix(file.Path, "/etc/") || files[entry] != nil || file.Content == "" || len(file.Content) > 64<<10 {
+				return ClientClosure{}, fmt.Errorf("%s: invalid update control file %q", name, file.Path)
+			}
+			files[entry] = []byte(file.Content)
+		}
+	}
+	slices.Sort(env)
 	for _, client := range clients {
 		// Node interpolation and executable overrides must not change the
 		// Coop-launched client's identity. This is not an in-box code/DLP policy.
@@ -109,13 +154,14 @@ func LockedClientClosure(platform ClientPlatform) (ClientClosure, error) {
 		Platform   ClientPlatform
 		Clients    []LockedClient
 		Files      map[string][]byte
+		Env        []string
 		ClientRoot string
-	}{platform, clients, files, lockedClientRoot})
+	}{platform, clients, files, env, lockedClientRoot})
 	if err != nil {
 		return ClientClosure{}, err
 	}
 	digest := sha256.Sum256(identity)
-	return ClientClosure{Platform: platform, Digest: hex.EncodeToString(digest[:]), Clients: clients, Files: files, ClientRoot: lockedClientRoot}, nil
+	return ClientClosure{Platform: platform, Digest: hex.EncodeToString(digest[:]), Clients: clients, Files: files, Env: env, ClientRoot: lockedClientRoot}, nil
 }
 
 func validateClientClosure(platform ClientPlatform, files map[string][]byte, clients []LockedClient) error {
@@ -278,6 +324,77 @@ func lockedExecutablePackage(executable string) string {
 		return ""
 	}
 	return rel[:start] + strings.Join(parts[:count], "/")
+}
+
+// QualifiedClients names each client Coop qualifies with its exact version, in registry order: an
+// npm client by its package, a native one by its binary. Versions are the same on every platform
+// (TestQualifiedClientsAreTheSameOnEveryPlatform); only paths and artifacts differ.
+func QualifiedClients() []string {
+	closure, err := LockedClientClosure(ClientPlatform{OS: "linux", Architecture: "amd64", Libc: "glibc"})
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, client := range closure.Clients {
+		name := client.Package
+		if name == "" {
+			name = client.Binary
+		}
+		if entry := name + " " + client.Version; !slices.Contains(out, entry) {
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
+// Qualification records that the locked client set passed the provider conformance suites: the
+// set it qualified (QualifiedClientSet) and what each suite reported. `make provider-qualify` writes
+// it to locked-clients/qualification.json only when every suite passed for every provider.
+type Qualification struct {
+	Schema      int                          `json:"schema"`
+	QualifiedOn string                       `json:"qualified_on"`
+	Platform    string                       `json:"platform"` // the one the suites ran on
+	Lock        string                       `json:"lock_sha256"`
+	Clients     map[string][]string          `json:"clients"`
+	Suites      map[string]map[string]string `json:"suites"`
+}
+
+// QualifiedClientSet is what a qualification is keyed on: the lock's digest (so no dependency moves
+// unqualified) and, per platform, each client's provider, kind, package or native binary, version,
+// the versions of the executables it requires, and a native artifact's digest. Paths stay out —
+// moving a launcher is not a new client.
+func QualifiedClientSet() (lock string, clients map[string][]string, err error) {
+	clients = make(map[string][]string)
+	for _, arch := range []string{"amd64", "arm64"} {
+		closure, err := LockedClientClosure(ClientPlatform{OS: "linux", Architecture: arch, Libc: "glibc"})
+		if err != nil {
+			return "", nil, err
+		}
+		if lock == "" {
+			sum := sha256.Sum256(closure.Files["package-lock.json"])
+			lock = hex.EncodeToString(sum[:])
+		}
+		platform := closure.Platform.OS + "/" + closure.Platform.Architecture
+		for _, client := range closure.Clients {
+			name := client.Package
+			if name == "" {
+				name = client.Binary
+			}
+			line := fmt.Sprintf("%s %s %s %s", client.Provider, client.Client, name, client.Version)
+			for _, executable := range client.RequiredExecutables {
+				owner := strings.TrimPrefix(lockedExecutablePackage(executable.Path), "node_modules/")
+				if owner == "" {
+					owner = path.Base(executable.Path)
+				}
+				line += " requires " + owner + " " + executable.Version
+			}
+			if client.NativeArtifact != nil {
+				line += " sha256 " + client.NativeArtifact.SHA256
+			}
+			clients[platform] = append(clients[platform], line)
+		}
+	}
+	return lock, clients, nil
 }
 
 // FileNames returns paths in archive order, useful for deterministic

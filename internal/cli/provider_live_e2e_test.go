@@ -92,8 +92,7 @@ func testProviderLiveCompatibility(t *testing.T, workflow string) {
 	}
 	runtimeSettings := liveprovider.RuntimeSettings{
 		Name: rt.Name, Image: realConfig.ImageOverride, BaseImage: realConfig.BaseImage,
-		HomeInBox: realConfig.HomeInBox, AgentPackages: realConfig.AgentPackages,
-		ConnectionEnv: connectionEnv,
+		HomeInBox: realConfig.HomeInBox, ConnectionEnv: connectionEnv,
 	}
 	imageRoot := t.TempDir()
 	image := box.ImageForRepo(imageRoot, realConfig.BaseImage, realConfig.ImageOverride)

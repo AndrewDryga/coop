@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strings"
 
-	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -87,10 +86,22 @@ func asdfDockerfile(tools map[string]bool) (string, error) {
 	slices.Sort(pkgs)
 
 	out := string(data)
-	out = strings.ReplaceAll(out, "@SYSTEM_PACKAGES@", indentedContinuation(strings.Join(pkgs, " "), "      "))
+	out = strings.ReplaceAll(out, "@SYSTEM_PACKAGES@", systemPackagesLayer(pkgs))
 	out = strings.ReplaceAll(out, "@TOOLCHAIN_ENV@", indentedContinuation(strings.Join(env, " \\\n    "), "    "))
 	out = strings.ReplaceAll(out, "@TOOLCHAIN_SEED@", seedContinuation(seed))
 	return out, nil
+}
+
+// systemPackagesLayer is the apt layer for the packages this repo's tools need beyond Coop's box, or
+// a pointer to where one goes when they need none — so a repo whose toolchain downloads binaries
+// pays no apt-get at build time.
+func systemPackagesLayer(pkgs []string) string {
+	if len(pkgs) == 0 {
+		return "\n# Add an apt-get layer here, as root, if a tool you add to .tool-versions needs system packages.\n"
+	}
+	return "\n# Packages this project's tools need beyond Coop's box.\n# Add build dependencies here when you add tools to .tool-versions.\n" +
+		"USER root\nRUN apt-get update \\\n && apt-get install -y --no-install-recommends \\\n      " + strings.Join(pkgs, " ") +
+		" \\\n && apt-get clean && rm -rf /var/lib/apt/lists/*\nUSER node\n"
 }
 
 // indentedContinuation renders body as a backslash-continued next line, or "" when there's
@@ -250,30 +261,18 @@ func DetectDockerSetup(repo string) *DockerSetup {
 	return setup
 }
 
-// dockerfileSuggestion is the "base the box on your image" template; %s is the agent npm
-// package list (from agents.Packages(), so it never drifts from the asdf image).
+// dockerfileSuggestion is the "base the box on your environment" template: inherit Coop's box, so
+// the project keeps the clients Coop qualifies and adds only its toolchain.
 const dockerfileSuggestion = `
   Box image — base the agent box on your project's environment. Save as .agent/Dockerfile,
-  then 'coop build'. Simplest: inherit coop's box (agent CLIs + ACP adapters, browser
-  libraries, security setup) and add just your toolchain:
+  then 'coop build'. Inherit coop's box (the agent CLIs and editor adapters Coop qualifies,
+  browser libraries, security setup) and add just your toolchain:
 
     ARG COOP_BASE_IMAGE=coop-box                # coop build overrides this with the resolved base
     FROM ${COOP_BASE_IMAGE}
     USER root
     RUN apt-get update && apt-get install -y --no-install-recommends <your-system-deps>
     USER node
-
-  Or start from your own app image and bring the agent CLIs yourself:
-
-    FROM your-app-image:latest                  # or a build stage from your Dockerfile
-    USER root
-    RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
-     && apt-get install -y --no-install-recommends nodejs git ca-certificates \
-     && npm install -g %s \
-     && git config --system --add safe.directory '*' \
-     && (id -u node >/dev/null 2>&1 || useradd -m -u 1000 -s /bin/bash node)
-    USER node
-    WORKDIR /workspace
 `
 
 // SuggestDocker prints (docs only, never writes) how to build the agent box on the repo's
@@ -301,7 +300,7 @@ func SuggestDocker(repo string) {
 		fmt.Fprintf(&b, "  compose:      %s\n", line)
 	}
 	if len(f.dockerfiles) > 0 {
-		fmt.Fprintf(&b, dockerfileSuggestion, strings.Join(agents.Packages(), " "))
+		b.WriteString(dockerfileSuggestion)
 	}
 	if len(f.composes) > 0 {
 		fmt.Fprintf(&b, "\n  Sibling services — coop starts deps for the box from .agent/compose.yml (reached\n"+

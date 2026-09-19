@@ -172,6 +172,7 @@ func TestMainConfAbsentVersusInvalid(t *testing.T) {
 		{"environment-only spinner", "COOP_SPINNER=0\n", `Unknown setting "COOP_SPINNER".`},
 		{"environment-only ACP warm", "COOP_ACP_WARM=0\n", `Unknown setting "COOP_ACP_WARM".`},
 		{"retired key", "COOP_LOOP_MODEL=old\n", `Setting "COOP_LOOP_MODEL" was retired.`},
+		{"retired package override", "COOP_AGENT_PACKAGES=@openai/codex@0.1.0\n", `Setting "COOP_AGENT_PACKAGES" was retired.`},
 		{"misspelled adapter", "COOP_CLUADE_CMD=claude\n", `Unknown setting "COOP_CLUADE_CMD".`},
 		{"misspelled adapter suffix", "COOP_CODEX_MODLE=gpt\n", `Unknown setting "COOP_CODEX_MODLE".`},
 		{"overlong line", "COOP_GATE=" + strings.Repeat("x", maxMainConfLineBytes) + "\n", "This line is too long to read."},

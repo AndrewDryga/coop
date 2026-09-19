@@ -30,14 +30,6 @@ func (codexAgent) Scaffold() ScaffoldSpec {
 	return ScaffoldSpec{Project: ScaffoldLayout{Dir: ".codex"}}
 }
 
-const (
-	// Float on npm's stable latest tag so `coop update` pulls new agent fixes
-	// without a source edit. The profile trigger below remains the local guard
-	// for openai/codex#28224.
-	codexCLIPackage = "@openai/codex@latest"
-	codexACPPackage = "@agentclientprotocol/codex-acp@latest"
-)
-
 func init() { register(codexAgent{}) }
 
 func (codexAgent) Name() string        { return "codex" }
@@ -198,8 +190,11 @@ func (a codexAgent) ACPRestrictedSessionMeta(mode ExecutionMode) (map[string]any
 	return unqualifiedRestrictedACPSession(a, mode)
 }
 
-func (codexAgent) Packages() []string {
-	return []string{codexCLIPackage, codexACPPackage}
+// UpdateControls: the pinned 0.153.4 reads /etc/codex/managed_config.toml over the user's own
+// config (verified: its model beats the user's; /etc/codex/config.toml is only a default the user's
+// overrides), so the update check stays off whatever a home or project sets.
+func (codexAgent) UpdateControls() UpdateControls {
+	return UpdateControls{Files: []SystemFile{{Path: "/etc/codex/managed_config.toml", Content: "check_for_update_on_startup = false\n"}}}
 }
 
 // Models are common codex model ids. Illustrative — any id the CLI accepts works.
@@ -958,7 +953,6 @@ func (codexAgent) UsagePrelude() string {
 func (a codexAgent) ShellPrelude() string {
 	return a.UsagePrelude() + consultCaptureShell("codex", "Codex")
 }
-func (codexAgent) InstallScript() string { return "" }
 
 const (
 	codexReviewFooter = "tokens used"

@@ -3,12 +3,14 @@ package agent
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"os/exec"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/pelletier/go-toml/v2"
 )
 
 func TestLockedClientsAreCompletePinnedAndFresh(t *testing.T) {
@@ -19,10 +21,25 @@ func TestLockedClientsAreCompletePinnedAndFresh(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(closure.Clients) != 8 || len(closure.Files) != 8 || closure.ClientRoot != "/opt/coop/clients" || len(closure.Digest) != 64 || closure.Digest == previous {
+		if len(closure.Clients) != 8 || len(closure.Files) != 10 || closure.ClientRoot != "/opt/coop/clients" || len(closure.Digest) != 64 || closure.Digest == previous {
 			t.Fatal("incomplete or platform-ambiguous closure", closure.Digest)
 		}
 		previous = closure.Digest
+		// Every box runs the qualified client, so each updater is off in the image itself. A control
+		// file the client cannot parse would stop it outright (Codex refuses a bad managed config).
+		if want := []string{"DISABLE_UPDATES=1", "GROK_DISABLE_AUTOUPDATER=1"}; !slices.Equal(closure.Env, want) {
+			t.Fatalf("update-control env = %v, want %v", closure.Env, want)
+		}
+		var codex struct {
+			CheckForUpdateOnStartup *bool `toml:"check_for_update_on_startup"`
+		}
+		if err := toml.Unmarshal(closure.Files["system/etc/codex/managed_config.toml"], &codex); err != nil || codex.CheckForUpdateOnStartup == nil || *codex.CheckForUpdateOnStartup {
+			t.Fatalf("codex managed config does not switch the update check off: %v", err)
+		}
+		var gemini struct{ General map[string]bool }
+		if err := json.Unmarshal(closure.Files["system/etc/gemini-cli/settings.json"], &gemini); err != nil || gemini.General["enableAutoUpdate"] || gemini.General["enableAutoUpdateNotification"] || len(gemini.General) != 2 {
+			t.Fatalf("gemini system settings do not switch updates off: %v %v", gemini, err)
+		}
 		for _, client := range closure.Clients {
 			script := string(closure.Files["launchers/"+client.Binary])
 			if !strings.Contains(script, "unset NODE_OPTIONS NODE_PATH") || !strings.Contains(script, "exec '") || !strings.HasSuffix(script, " \"$@\"\n") {
@@ -230,5 +247,68 @@ func TestNetworkBundleAndLockedClientSupportAgree(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestQualifiedClientsAreTheSameOnEveryPlatform(t *testing.T) {
+	want := QualifiedClients()
+	if len(want) != 6 || !slices.Contains(want, "@anthropic-ai/claude-code 2.1.260") || !slices.Contains(want, "grok 1.0.25") {
+		t.Fatalf("qualified clients = %v", want)
+	}
+	for _, arch := range []string{"amd64", "arm64"} {
+		closure, err := LockedClientClosure(ClientPlatform{"linux", arch, "glibc"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, client := range closure.Clients {
+			name := client.Package
+			if name == "" {
+				name = client.Binary
+			}
+			if !slices.Contains(want, name+" "+client.Version) {
+				t.Errorf("%s runs %s %s, which the report does not name", arch, name, client.Version)
+			}
+		}
+	}
+}
+
+// The README's own-base Dockerfile examples pin the clients by hand; they must name exactly the npm
+// clients this Coop qualifies, so a bump that forgets them fails here rather than in a user's box.
+func TestReadmeExamplesPinTheQualifiedClients(t *testing.T) {
+	data, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want []string
+	for _, client := range QualifiedClients() {
+		if name, version, _ := strings.Cut(client, " "); strings.HasPrefix(name, "@") {
+			want = append(want, name+"@"+version)
+		}
+	}
+	slices.Sort(want)
+	lines := strings.Split(string(data), "\n")
+	examples := 0
+	for i, line := range lines {
+		_, specs, ok := strings.Cut(line, "npm install -g ")
+		if !ok {
+			continue
+		}
+		for j := i + 1; j < len(lines) && strings.HasSuffix(strings.TrimSpace(specs), "\\"); j++ {
+			specs = strings.TrimSuffix(strings.TrimSpace(specs), "\\") + " " + lines[j]
+		}
+		var got []string
+		for _, field := range strings.Fields(specs) {
+			if strings.HasPrefix(field, "@") {
+				got = append(got, field)
+			}
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, want) {
+			t.Errorf("README.md:%d installs %v, want the qualified %v", i+1, got, want)
+		}
+		examples++
+	}
+	if examples == 0 {
+		t.Fatal("found no npm install -g example in README.md")
 	}
 }

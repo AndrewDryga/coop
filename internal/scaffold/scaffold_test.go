@@ -37,28 +37,26 @@ func captureScaffoldStderr(t *testing.T, fn func() error) (string, error) {
 	return string(data), runErr
 }
 
-// The scaffolded asdf Dockerfile pins the agent npm packages in one ARG (it's a static embed,
-// unlike the generated base image). Guard that the ARG default stays EXACTLY agents.Packages()
-// — same set, same order — so adding, removing, or reordering an agent in coop can't silently
-// leave an asdf-stack box installing a stale list.
-func TestAsdfDockerfilePackagesMatchRegistry(t *testing.T) {
-	data, err := os.ReadFile("templates/dockerfile/asdf")
+// The scaffolded asdf Dockerfile builds on Coop's box, so an init-generated project runs the clients
+// Coop qualifies — and a filtered launch, which requires that derivation, can run it at all. It
+// installs no client of its own, and the launcher directory it keeps first on PATH (a static embed
+// cannot import it) is the one the images install.
+func TestAsdfDockerfileInheritsTheQualifiedClients(t *testing.T) {
+	got, err := asdfDockerfile(map[string]bool{"nodejs": true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	const marker = `ARG AGENT_PACKAGES="`
-	content := string(data)
-	i := strings.Index(content, marker)
-	if i < 0 {
-		t.Fatalf("asdf Dockerfile has no %q line", marker)
+	body := dockerfileInstructions(got)
+	if !strings.Contains(body, "ARG COOP_BASE_IMAGE=coop-box\nFROM ${COOP_BASE_IMAGE}\n") {
+		t.Errorf("the asdf box does not build on Coop's box:\n%s", body)
 	}
-	rest := content[i+len(marker):]
-	j := strings.Index(rest, `"`)
-	if j < 0 {
-		t.Fatal("asdf AGENT_PACKAGES ARG has no closing quote")
+	for _, own := range []string{"npm install", "@latest", "nodesource", "install.sh", "FROM debian"} {
+		if strings.Contains(body, own) {
+			t.Errorf("the asdf box installs its own clients (%q):\n%s", own, body)
+		}
 	}
-	if got, want := rest[:j], strings.Join(agents.Packages(), " "); got != want {
-		t.Errorf("asdf AGENT_PACKAGES drifted from agents.Packages():\n got: %s\nwant: %s", got, want)
+	if want := `PATH="` + agents.LauncherDir + `:/home/node/.asdf/shims:`; strings.Count(body, want) != 2 {
+		t.Errorf("the asdf box does not keep %s first on PATH for the agent and login shells:\n%s", agents.LauncherDir, body)
 	}
 }
 
@@ -146,7 +144,7 @@ func TestAsdfDockerfileKeepsToolchainsOnLoginPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const dropIn = `RUN printf 'export PATH="/home/node/.asdf/shims:$PATH"\n' > /etc/profile.d/asdf.sh`
+	const dropIn = `RUN printf 'export PATH="/opt/coop/bin:/home/node/.asdf/shims:$PATH"\n' > /etc/profile.d/zz-asdf.sh`
 	installAt := strings.Index(content, ` && MAKEFLAGS="-j$(nproc)" asdf install`)
 	rootAt := strings.LastIndex(content, "\nUSER root\n")
 	dropInAt := strings.Index(content, dropIn)
@@ -343,7 +341,8 @@ func TestInitSubproject(t *testing.T) {
 // coop mounts the repo at its real host path and sets the workdir itself, so every
 // stack image must trust any worktree (safe.directory '*'), not a fixed /workspace
 // (the stale pre-2.0 path, which leaves git with "dubious ownership" on runtimes
-// that preserve host uid).
+// that preserve host uid). A template built on Coop's box inherits that and the
+// node-owned ~/.cache from the base, which internal/box's image tests hold.
 func TestDockerfileTemplatesTrustAnyWorktree(t *testing.T) {
 	err := fs.WalkDir(templates, "templates/dockerfile", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -354,6 +353,8 @@ func TestDockerfileTemplatesTrustAnyWorktree(t *testing.T) {
 			return err
 		}
 		switch s := string(df); {
+		case strings.Contains(s, "\nFROM ${COOP_BASE_IMAGE}\n"):
+			return nil
 		case !strings.Contains(s, "safe.directory"):
 			t.Errorf("%s: no git safe.directory — git won't work on the host-path mount", p)
 		case strings.Contains(s, "safe.directory /workspace"):

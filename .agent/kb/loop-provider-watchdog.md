@@ -3,7 +3,7 @@ name: loop-provider-watchdog
 description: built-in attempts always stream; the watchdog is ARMED by default (10m/30m/2h) and trusts only decoder events, and the box's own process group makes redirected loops handle stop signals themselves
 subsystem: loop
 sources: [internal/loop/watchdog.go, internal/loop/streamjson.go, internal/loop/streamjson_providers.go, internal/loop/loop.go, internal/loop/iteration.go, internal/loop/ratelimit.go, internal/agent/agent.go, internal/agent/grok.go, internal/box/run.go, internal/runtime/runtime.go]
-updated: 2026-09-18
+updated: 2026-09-19
 ---
 
 Every built-in loop/review/preflight attempt requests the provider's structured stream —
@@ -97,7 +97,7 @@ Traps the code doesn't obviously carry:
   deadline run from the same instant; if the drain could reach the deadline, a box held open by a
   leaked descendant would die as a wedged provider and the drain's own exit codes would never be
   observed. `TestShippedProviderDeadlinesAreArmed` reads the drain default out of
-  `box.BaseDockerfile()` and fails if idle drops below 2× it — check the test, not the prose, before
+  `box.BaseDockerfile("arm64")` and fails if idle drops below 2× it — check the test, not the prose, before
   moving either. (image.go's own comment still says the deadline is disabled by default: its text is
   sha256-stamped into the box image, so editing a comment there marks every built image stale.)
 - **`COOP_PROVIDER_TIMEOUTS` is clamped, not obeyed.** It may only SHORTEN (a disabled 0 default
@@ -131,6 +131,7 @@ Traps the code doesn't obviously carry:
   an interrupted run stays `interrupted`, never a provider timeout.
 
 ## Changelog
+- 2026-09-19 — the drain default is read from `box.BaseDockerfile("arm64")` (the base is rendered per platform now).
 - 2026-09-18 — grok declares `ToolLifecycleIDs`: re-probed the pinned 1.0.25 client, whose
   streaming-json carries ACP tool events; its decoder opens and closes tools by `toolCallId`, and
   its process e2e cases moved from the no-lifecycle fallback to tool suspension and the tool cap.

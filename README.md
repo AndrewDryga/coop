@@ -70,8 +70,8 @@ auto-detects, preferring Docker because every Coop feature is qualified on it.
 The installed `coop` binary itself is static.
 
 **Staying current:** [`coop update`](#keeping-the-box-current) self-updates the binary
-*and* rebuilds the box image fresh, pulling the latest agent CLIs and ACP adapters
-(they ship features often) plus a newer base. (Re-running the install one-liner still works.)
+*and* rebuilds the box image on a newer base. Each Coop release carries the agent CLIs and
+ACP adapters it qualified, so updating Coop is how they move. (Re-running the install one-liner still works.)
 
 <details><summary><b>Other ways to install</b></summary>
 
@@ -1217,10 +1217,9 @@ throwaway clone (nothing to push, secrets never came along), and you still revie
 
 > **Services** work too — if the repo has a `.agent/compose.yml`, run `coop up` first and
 > the ACP box joins the same network.
-> **Custom images** must carry the ACP adapters: `coop init` scaffolds them in; for an
-> older/hand-written `.agent/Dockerfile`, add `@agentclientprotocol/claude-agent-acp@latest`
-> and `@agentclientprotocol/codex-acp@latest` to its `npm install -g` line (else `coop acp` fails with
-> `codex-acp: not found`).
+> **Custom images** must carry the ACP adapters: one built on coop's box (`FROM ${COOP_BASE_IMAGE}`,
+> as `coop init` scaffolds) inherits them; one on another base installs them itself, as the box
+> contract's skeleton shows (else `coop acp` fails with `codex-acp: not found`).
 
 > **One caveat on the boundary.** ACP has a second channel: the *editor* services
 > `fs/read_text_file`, `fs/write_text_file`, and `terminal/*` requests **host-side**, and
@@ -1533,14 +1532,16 @@ coop sets the working directory itself, so no `WORKDIR` is required. A skeleton:
 ```dockerfile
 FROM <your-language-base>
 RUN <install your toolchain> \
- && npm install -g @anthropic-ai/claude-code@latest @openai/codex@latest @google/gemini-cli@latest \
-      @agentclientprotocol/claude-agent-acp@latest @agentclientprotocol/codex-acp@latest \
+ && npm install -g @anthropic-ai/claude-code@2.1.260 @openai/codex@0.153.4 @google/gemini-cli@0.59.0 \
+      @agentclientprotocol/claude-agent-acp@0.75.1 @agentclientprotocol/codex-acp@1.10.0 \
  && git config --system --add safe.directory '*' \
  && id -u node >/dev/null 2>&1 || useradd -m -u 1000 -s /bin/bash node
 USER node
 ```
 
-(If the base lacks Node, install it first — the asdf template uses NodeSource.)
+(If the base lacks Node, install it first — NodeSource works.) Those are the versions this Coop
+release qualifies; an image on another base runs whatever it installs, so move them when you
+update Coop — or inherit coop's base and never think about it:
 
 **Shortcut — inherit coop's base.** Rather than meet the contract yourself, start from coop's own
 box and add only your toolchain; `coop build` resolves the base image and passes it in (building it
@@ -1562,8 +1563,8 @@ layer on top:
 
 ```dockerfile
 FROM your-devcontainer-image          # the team's source of truth for the env
-RUN npm install -g @anthropic-ai/claude-code@latest @openai/codex@latest @google/gemini-cli@latest \
-      @agentclientprotocol/claude-agent-acp@latest @agentclientprotocol/codex-acp@latest \
+RUN npm install -g @anthropic-ai/claude-code@2.1.260 @openai/codex@0.153.4 @google/gemini-cli@0.59.0 \
+      @agentclientprotocol/claude-agent-acp@0.75.1 @agentclientprotocol/codex-acp@1.10.0 \
  && git config --system --add safe.directory '*'
 USER <the devcontainer's non-root user>
 # If that user's home isn't /home/node, run with COOP_HOME_IN_BOX=/home/<user>.
@@ -1731,24 +1732,20 @@ replaced. If the repair cannot run — Docker is not answering — the launch st
 what to start before you repeat the same command.
 
 **Stable vs fresh.** `coop build` is the *stable* path: it pins the base image to a
-specific Node digest, so a rebuild gets the same OS/runtime every time, and the cache
-holds the agent CLIs steady between builds. `coop update` is the *fresh* path: it floats
-the base back to the `node:24` tag and rebuilds with `--pull --no-cache`, so the base and
-the agent CLIs + ACP adapters all jump to latest (they ship features often). To move the
-pinned base permanently, bump `pinnedNodeImage` in `internal/box/image.go`.
+specific Node digest, so a rebuild gets the same OS/runtime every time. `coop update` is the
+*fresh* path: it floats the base back to the `node:24` tag and rebuilds with `--pull
+--no-cache`, so the OS packages and Node move to their newest. To move the pinned base
+permanently, bump `pinnedNodeImage` in `internal/box/image.go`.
 
-**Agent package updates.** The built-in package specs follow npm's stable `latest` tag
-(`@anthropic-ai/claude-code@latest`, `@openai/codex@latest`, `@google/gemini-cli@latest`,
-`@agentclientprotocol/claude-agent-acp@latest`, and `@agentclientprotocol/codex-acp@latest`),
-so `coop update` can pick up agent fixes without a coop source change. Coop also applies a
-best-effort SQLite trigger to the active Codex credential before launch so inserts into the
-`logs_2.sqlite` feedback-log table are ignored; session history, auth, MCP config, and
-memories are not touched.
-
-For a fully reproducible image, also pin the tool versions: set
-`COOP_AGENT_PACKAGES` to exact specs and `coop build`, e.g.
-`COOP_AGENT_PACKAGES="@anthropic-ai/claude-code@2.1.186 @openai/codex@0.142.0 …"` (the full
-list is in `internal/agent/*.go`).
+**Agent clients.** Every Coop box — a plain run, a filtered one, a loop, a preset, an editor
+session — runs the same agent CLIs and ACP adapters: the exact versions this Coop release
+qualified, installed from a lockfile built into Coop (Grok's binary is checked against its
+digest), with each client's own updater switched off. They move only when Coop does. Need other
+versions? Build your own image
+(`COOP_IMAGE`, or a `.agent/Dockerfile` on another base): Coop runs it, but it is not a qualified
+client set. Coop also applies a best-effort SQLite trigger to the active Codex credential before
+launch so inserts into the `logs_2.sqlite` feedback-log table are ignored; session history,
+auth, MCP config, and memories are not touched.
 
 ### Path-routed context (`coop context`)
 
@@ -1796,7 +1793,6 @@ controls and cannot be set inside `coop.conf`.
 | `COOP_RUNTIME` | auto (Docker preferred) | `docker` / `container` |
 | `COOP_IMAGE` | (auto) | force a specific image (overrides `.agent/Dockerfile` detection) |
 | `COOP_BASE_IMAGE` | `coop-box` | the shared base image tag |
-| `COOP_AGENT_PACKAGES` | (latest) | pin the global agent + ACP npm specs for a reproducible `coop build` |
 | `COOP_REPO` | (git toplevel) | the repo to operate on, overriding cwd detection |
 | `COOP_WORKDIR` | (real path) | where the repo mounts in the box |
 | `COOP_HOME_IN_BOX` | `/home/node` | where auth + instructions mount in the box |

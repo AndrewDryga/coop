@@ -180,6 +180,26 @@ provider-consult-live-e2e-all: ## Strict real coop-consult probe for every provi
 	@COOP_LIVE_TARGETS="$${COOP_LIVE_TARGETS:-all}" COOP_LIVE_REQUIRE_ALL=1 \
 		go test -timeout 30m -tags providerlivee2e,cooplivetest -run '^TestProviderConsultLiveCompatibility$$' -count=1 -v ./internal/cli/
 
+# Qualifies the locked clients before a pin moves (package.json/package-lock.json, an adapter's
+# LockedClients): it rebuilds this host's box and filtered setup from the working tree, runs every
+# strict live suite against them, and records the result. PAID — every provider answers real
+# prompts. Full logs stay in the printed directory; a failure shows its tail.
+provider-qualify: ## PAID: qualify the locked clients on every provider and record it (qualification.json)
+	@go run ./tools/qualify -preflight
+	@logs="$$(mktemp -d)"; echo "logs: $$logs"; \
+	go build -o "$$logs/coop" . && mkdir "$$logs/repo" \
+	  && (cd "$$logs/repo" && git init -q && "$$logs/coop" build && "$$logs/coop" net setup) < /dev/null > "$$logs/setup.log" 2>&1 \
+	  || { tail -n 40 "$$logs/setup.log"; exit 1; }; \
+	for suite in provider-live-e2e-all provider-resume-live-e2e-all provider-loop-live-e2e-all provider-consult-live-e2e-all \
+	             provider-network-live-e2e-all acp-e2e native-roles-e2e; do \
+	  echo "== $$suite"; \
+	  COOP_LIVE_TARGETS=all $(MAKE) --no-print-directory $$suite < /dev/null > "$$logs/$$suite.log" 2>&1 || { tail -n 40 "$$logs/$$suite.log"; exit 1; }; \
+	done; \
+	targets="$$(go run ./tools/qualify -targets)" || exit 1; echo "== provider-live-e2e-effort ($$targets)"; \
+	COOP_LIVE_TARGETS="$$targets" $(MAKE) --no-print-directory provider-live-e2e-all < /dev/null > "$$logs/provider-live-e2e-effort.log" 2>&1 \
+	  || { tail -n 40 "$$logs/provider-live-e2e-effort.log"; exit 1; }; \
+	go run ./tools/qualify -logs "$$logs"
+
 acp-scripted-e2e: ## Deterministic ACP process e2e (no runtime or provider credentials needed)
 	@go test -run '^TestScriptedACP' -count=1 -v ./internal/acpproxy/
 
@@ -204,4 +224,4 @@ clean: ## Remove build artifacts
 help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
-.PHONY: build install test cover lint staticcheck-version govulncheck-version vuln shellcheck require-python3 snapshot doctor docs docs-check align casts casts-check tools-test rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e box-runtime-e2e clean help
+.PHONY: build install test cover lint staticcheck-version govulncheck-version vuln shellcheck require-python3 snapshot doctor docs docs-check align casts casts-check tools-test rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all provider-qualify acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e box-runtime-e2e clean help

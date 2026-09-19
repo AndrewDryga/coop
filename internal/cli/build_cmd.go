@@ -138,8 +138,8 @@ func (a *app) recycleBoxes(repo string) (supervised, others int, err error) {
 }
 
 // cmdUpdate self-updates the coop binary to the latest release, then force-rebuilds
-// the box image (--pull --no-cache) so the base image and the npm-installed agent CLIs
-// + ACP adapters refresh to their latest, then reports the versions it landed on.
+// the box image (--pull --no-cache) on the newest OS packages and Node — the agent
+// clients stay the set this Coop qualifies — then reports which clients it carries.
 // --self-only does just the binary; --box-only does just the image (the old behavior).
 //
 // The binary is replaced BEFORE the rebuild, and the rebuild runs in THIS, pre-update process —
@@ -195,7 +195,7 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 		return 1, updateBoxFailure(err, a.rt.Name, selfFailed)
 	}
 	ui.Note("Updating the Coop box")
-	ui.Note("  Fetching newer base-image components, agent CLIs, and editor adapters.")
+	ui.Note("  Fetching newer base-image components. Agent clients stay at the versions this Coop qualifies.")
 	ui.Note("")
 	if err := box.BuildPlanned(a.rt, a.cfg, repo, plan, true, resolveVersion(), os.Stdin, os.Stdout); err != nil {
 		ui.Note("")
@@ -207,7 +207,7 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 		return code, err
 	}
 	ui.Note("")
-	a.reportInstalledTools(repo)
+	reportInstalledTools(plan)
 	if selfFailed {
 		ui.Note("")
 		warnBlock("The box was updated, but the Coop binary was not", "")
@@ -279,23 +279,17 @@ func updateBoxFailure(err error, runtimeName string, selfFailed bool) error {
 	return reported("Could not update the box image", reason, actions...)
 }
 
-// reportInstalledTools prints the agent-tool versions the rebuilt image actually carries. A probe
-// that could not run is said so: an empty heading would read as a verified, empty answer.
-func (a *app) reportInstalledTools(repo string) {
-	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
-	ui.Note("Installed agent tools")
-	code, err := box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Batch: true, Quiet: true,
-		Cmd:       []string{"sh", "-c", "npm ls -g --depth=0 2>/dev/null | grep -iE '" + strings.Join(append(agents.Names(), "acp"), "|") + "' || true"},
-		ExtraArgs: []string{"-e", "COOP_NO_ASDF=1"}, // skip the .tool-versions provision for a quick version print
-	})
-	if err != nil || code != 0 {
-		ui.Note("")
-		reason := "The version-check box did not start."
-		if err != nil {
-			reason = sentence(firstLine(err))
-		}
-		warnBlock("Could not read the installed agent-tool versions", reason)
+// reportInstalledTools names the agent clients the rebuilt image carries: Coop's qualified set,
+// which the build installed from the lock this binary embeds (it fails rather than install
+// anything else) — unless the project's Dockerfile builds on another base and brings its own.
+func reportInstalledTools(plan box.BuildPlan) {
+	ui.Note("Agent clients")
+	if !plan.CarriesQualifiedClients() {
+		ui.Note("  This project's %s does not build on Coop's box, so it brings its own.", plan.Dockerfile)
+		return
+	}
+	for _, client := range agents.QualifiedClients() {
+		ui.Note("  %s", client)
 	}
 }
 

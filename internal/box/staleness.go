@@ -4,11 +4,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/project"
 )
@@ -76,21 +80,35 @@ func StaleImageInputs(cfg *config.Config, repo, img string) bool {
 }
 
 // The shared base gets a second stamp: which coop version built it and a hash of the box
-// definition (BaseDockerfile) that binary would generate. A later run compares the stamped
+// definition (baseImageDefinition) that binary would generate. A later run compares the stamped
 // definition against its own — a newer binary whose entry script/package list/node pin
 // changed over an old image is exactly the kubectl-style skew worth one warning line. The
 // stamp file's mtime doubles as the build time, so image age needs no runtime-specific
 // `image inspect` flags either.
 
-// ImageAgeNudge is how old a box image gets before launches nudge a refresh: a round month
-// is several agent-CLI releases behind (they churn weekly), without nagging fresh setups.
+// ImageAgeNudge is how old a box image gets before launches nudge a refresh: a round month keeps the
+// OS packages and Node underneath the clients current, without nagging fresh setups. The clients
+// themselves move only with Coop, which the skew nudge reports.
 const ImageAgeNudge = 30 * 24 * time.Hour
 
-// baseDefHash hashes the box definition THIS binary would build the shared base from.
-func baseDefHash() string {
-	sum := sha256.Sum256([]byte(BaseDockerfile()))
-	return hex.EncodeToString(sum[:])
-}
+// baseDefHash hashes the box definition THIS binary would build the shared base from — for both
+// platforms it builds, so a launch never asks the runtime which one this host's image is. Its
+// inputs are embedded, so it is computed once; "" when they are inconsistent, which never stamps
+// or reports a skew on a guess.
+var baseDefHash = sync.OnceValue(func() string {
+	sum := sha256.New()
+	for _, arch := range []string{"amd64", "arm64"} {
+		files, err := baseImageDefinition(agents.ClientPlatform{OS: "linux", Architecture: arch, Libc: "glibc"})
+		if err != nil {
+			return ""
+		}
+		for _, name := range slices.Sorted(maps.Keys(files)) {
+			fmt.Fprintf(sum, "%s\x00%d\x00", name, len(files[name]))
+			sum.Write(files[name])
+		}
+	}
+	return hex.EncodeToString(sum.Sum(nil))
+})
 
 func imageMetaPath(cfg *config.Config, img string) string {
 	safe := strings.NewReplacer("/", "_", ":", "_").Replace(img)
@@ -128,10 +146,11 @@ func BaseImageSkew(cfg *config.Config, img string) (builtBy string, skewed bool)
 			def = f[1]
 		}
 	}
-	if def == "" {
-		return "", false // corrupt/foreign stamp — a guess, so stay quiet
+	current := baseDefHash()
+	if def == "" || current == "" {
+		return "", false // corrupt/foreign stamp, or no definition to compare — a guess, so stay quiet
 	}
-	return builtBy, def != baseDefHash()
+	return builtBy, def != current
 }
 
 // ImageBuildAge returns when img was last built by this coop install, from the mtime of
@@ -160,7 +179,7 @@ func StalenessNudges(cfg *config.Config, repo, img string) []string {
 	}
 	if at, ok := ImageBuildAge(cfg, img); ok {
 		if age := time.Since(at); age >= ImageAgeNudge {
-			out = append(out, fmt.Sprintf("box image is %d days old — 'coop update' refreshes the agent CLIs baked into it", int(age.Hours()/24)))
+			out = append(out, fmt.Sprintf("box image is %d days old — 'coop update' rebuilds it on the newest OS packages and Node", int(age.Hours()/24)))
 		}
 	}
 	return out

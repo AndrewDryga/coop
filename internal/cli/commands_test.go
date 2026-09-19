@@ -1440,6 +1440,7 @@ func TestEnsureACPImageBuildsOnlyWhenMissing(t *testing.T) {
 				"echo \"$@\" >> " + strconv.Quote(recorder) + "\n" +
 				"case \"$1$2\" in\n" +
 				"  imageinspect) " + inspect + " ;;\n" +
+				"  info--format) echo linux/aarch64 ;;\n" +
 				"esac\n" +
 				"exit 0\n"
 			if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {

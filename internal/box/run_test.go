@@ -788,6 +788,7 @@ func TestAssembleArgsMinimal(t *testing.T) {
 		"-e", "CODEX_SQLITE_HOME=/home/node/.codex-state", // every agent's BoxEnv is exported (inert here)
 		"-e", "GEMINI_TELEMETRY_ENABLED=false",
 		"-e", "GROK_TELEMETRY_ENABLED=false",
+		"-e", "GROK_DISABLE_AUTOUPDATER=1",
 		"-e", "COOP_BOX=1",
 		"-w", "/workspace", "coop-box", "claude",
 	}
@@ -884,6 +885,7 @@ func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {
 	mustContain("-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "-e", "DISABLE_UPDATES=1")
 	mustContain("-e", "GEMINI_TELEMETRY_ENABLED=false")
 	mustContain("-e", "GROK_TELEMETRY_ENABLED=false")
+	mustContain("-e", "GROK_DISABLE_AUTOUPDATER=1")
 	mustContain("--env-file", filepath.Join(dir, "env"))
 	mustContain("-v", filepath.Join(dir, "INSTRUCTIONS.md")+":/home/node/.claude/CLAUDE.md:ro")
 	mustContain("-v", cfg.MCPFile+":/home/node/.mcp.json:ro")
@@ -2863,26 +2865,24 @@ func TestBuildArgs(t *testing.T) {
 	cfg := &config.Config{BaseImage: "coop-box"}
 
 	// Stable build pins the FROM image; fresh (coop update) floats it and adds --pull --no-cache.
-	if a := baseBuildArgs(cfg, false); !slices.Equal(a, []string{
-		"build",
+	// Either way the runtime's platform flags hold the build to the platform its clients were
+	// rendered for, and the staged context carries the Dockerfile.
+	platform := []string{"--platform", "linux/arm64"}
+	if a := baseBuildArgs(cfg, false, platform, "/ctx"); !slices.Equal(a, []string{
+		"build", "--platform", "linux/arm64",
 		"--build-arg", "NODE_IMAGE=" + pinnedNodeImage,
 		"--build-arg", "GO_IMAGE=" + pinnedGoImage,
-		"-t", "coop-box", "-",
+		"-t", "coop-box", "-f", filepath.Join("/ctx", "Dockerfile"), "/ctx",
 	}) {
 		t.Errorf("base cached: args=%v", a)
 	}
-	if a := baseBuildArgs(cfg, true); !slices.Equal(a, []string{
+	if a := baseBuildArgs(cfg, true, nil, "/ctx"); !slices.Equal(a, []string{
 		"build", "--pull", "--no-cache",
 		"--build-arg", "NODE_IMAGE=" + floatingNodeImage,
 		"--build-arg", "GO_IMAGE=" + floatingGoImage,
-		"-t", "coop-box", "-",
+		"-t", "coop-box", "-f", filepath.Join("/ctx", "Dockerfile"), "/ctx",
 	}) {
 		t.Errorf("base fresh: args=%v", a)
-	}
-	// COOP_AGENT_PACKAGES pins the agent npm specs via a build arg.
-	pinned := &config.Config{BaseImage: "coop-box", AgentPackages: "@anthropic-ai/claude-code@1.2.3"}
-	if a := baseBuildArgs(pinned, false); !containsSeq(a, []string{"--build-arg", "AGENT_PACKAGES=@anthropic-ai/claude-code@1.2.3"}) {
-		t.Errorf("pinned packages not forwarded: %v", a)
 	}
 	// (A repo with a .agent/Dockerfile builds from a shadow-filtered staged context — see
 	// TestStageBuildContext; that path lives in Build, not baseBuildArgs.)

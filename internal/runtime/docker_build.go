@@ -53,14 +53,7 @@ func (d *Docker) BuildImage(ctx context.Context, spec DockerBuild, contextTar []
 	if err = d.VerifyLaunch(ctx); err != nil {
 		return result, err
 	}
-	arch := d.info.Architecture
-	if arch == "aarch64" {
-		arch = "arm64"
-	}
-	if arch == "x86_64" {
-		arch = "amd64"
-	}
-	if spec.Platform != "linux/"+arch {
+	if spec.Platform != "linux/"+Architecture(d.info.Architecture) {
 		return result, errors.New("candidate build requires the bound daemon's native platform")
 	}
 	buildx, err := d.buildxExecutable(ctx)

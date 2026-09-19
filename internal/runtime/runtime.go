@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -165,6 +166,40 @@ func (r Runtime) SupportsRunLimits() bool {
 // qualification.
 func (r Runtime) SupportsRestrictedFilesystem() bool {
 	return r.kind() == runtimeDocker
+}
+
+// Architecture names a machine the way image platforms do: Docker reports uname's aarch64 and
+// x86_64, a platform says arm64 and amd64.
+func Architecture(machine string) string {
+	switch machine {
+	case "aarch64":
+		return "arm64"
+	case "x86_64":
+		return "amd64"
+	}
+	return machine
+}
+
+// BuildPlatform is the platform this runtime builds Coop's base image for ("linux/arm64"), and the
+// build flags that hold a build there. Apple's container builds for this Mac. Docker — or a
+// docker-compatible CLI selected through COOP_RUNTIME — answers for its daemon, which need not
+// share this host's architecture, and the flag keeps DOCKER_DEFAULT_PLATFORM from building another.
+func (r Runtime) BuildPlatform() (platform string, flags []string, err error) {
+	if r.kind() == runtimeAppleContainer {
+		return "linux/" + goruntime.GOARCH, nil, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := contextCommand(ctx, r.Name, "info", "--format", "{{.OSType}}/{{.Architecture}}").Output()
+	if err != nil {
+		return "", nil, fmt.Errorf("%s did not say which platform it builds for: %w", filepath.Base(r.Name), err)
+	}
+	system, machine, ok := strings.Cut(strings.TrimSpace(string(out)), "/")
+	if !ok || system == "" || machine == "" || strings.ContainsAny(machine, "/ \n") {
+		return "", nil, fmt.Errorf("%s did not say which platform it builds for", filepath.Base(r.Name))
+	}
+	platform = system + "/" + Architecture(machine)
+	return platform, []string{"--platform", platform}, nil
 }
 
 // Run executes the runtime with the given stdio and returns its exit code. A

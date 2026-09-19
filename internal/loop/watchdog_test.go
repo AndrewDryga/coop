@@ -627,7 +627,11 @@ func TestShippedProviderDeadlinesAreArmed(t *testing.T) {
 	// the same instant. Were the drain able to reach the deadline, a box held open by a leaked
 	// descendant would die as a wedged provider — losing the handoff AND the drain's own exit codes
 	// — so the two budgets are checked against each other rather than kept in step by a comment.
-	dm := regexp.MustCompile(`COOP_DESCENDANT_TIMEOUT:-(\d+)`).FindStringSubmatch(box.BaseDockerfile())
+	df, err := box.BaseDockerfile("arm64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dm := regexp.MustCompile(`COOP_DESCENDANT_TIMEOUT:-(\d+)`).FindStringSubmatch(df)
 	if dm == nil {
 		t.Fatal("could not find the descendant drain default in the generated box definition")
 	}

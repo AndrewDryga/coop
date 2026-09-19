@@ -109,6 +109,7 @@ func TestGeminiThinkingWiring(t *testing.T) {
 			continue
 		}
 		var settings struct {
+			General      map[string]any `json:"general"`
 			ModelConfigs struct {
 				CustomAliases map[string]struct {
 					Extends     string `json:"extends"`
@@ -123,6 +124,10 @@ func TestGeminiThinkingWiring(t *testing.T) {
 		}
 		if err := json.Unmarshal([]byte(content), &settings); err != nil {
 			t.Fatalf("%s thinking settings are not JSON: %v\n%s", effort, err, content)
+		}
+		// This file replaces the image's system layer, so it carries that layer's update switch.
+		if settings.General["enableAutoUpdate"] != false || settings.General["enableAutoUpdateNotification"] != false || len(settings.General) != 2 {
+			t.Errorf("%s thinking settings drop the update switch: general = %v", effort, settings.General)
 		}
 		aliases := settings.ModelConfigs.CustomAliases
 		gemini3, gemini25, flash := aliases["chat-base-3"], aliases["chat-base-2.5"], aliases["gemini-3-flash"]

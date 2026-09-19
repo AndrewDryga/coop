@@ -4,6 +4,20 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Every Coop box now runs the same agent CLIs and editor adapters: the exact versions this Coop
+  release qualified. Plain, loop, preset and editor boxes used to install the newest npm releases
+  (and Grok through its install script), so they could differ from filtered boxes and break on an
+  untested release; every box now installs from the same lockfile built into Coop, with Grok's
+  binary checked against its digest, and each client's own updater is off. `coop update` still
+  refreshes the OS packages and Node underneath. **Breaking:** `COOP_AGENT_PACKAGES` is retired
+  (a `coop.conf` that sets it is refused) — for other versions, build your own image with
+  `COOP_IMAGE` or a `.agent/Dockerfile` on another base. The clients now run under the box's own
+  Node even when a repo pins another in `.tool-versions`, and an `npm i -g` inside a box can no
+  longer shadow them. The first filtered launch after updating re-runs network setup once, since
+  the client image changed. `coop init` now writes an asdf Dockerfile that builds on Coop's box;
+  one it generated before still installs the newest clients itself — delete it and run `coop init`
+  again to regenerate it.
+
 - A preset session that generates native roles no longer hides the subagents you keep in the lead
   client's own agents folder (for example `~/.claude/agents` in Coop's profile for that account):
   they appear beside Coop's roles, so a `subagent:` reference to one of them works. A file Coop

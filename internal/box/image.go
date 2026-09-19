@@ -21,39 +21,38 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// BaseDockerfile is the shared base image: Node, the agent CLIs + ACP adapters (each
-// agent names its own npm packages), and asdf — so the box honors a repo's
-// .tool-versions at runtime, with no per-project Dockerfile needed. It runs as the
-// non-root `node` user and is built from stdin, so the base never needs a checkout.
-func BaseDockerfile() string {
-	return renderBaseDockerfile(baseImageParts{
-		packageArg: fmt.Sprintf("ARG AGENT_PACKAGES=%q", strings.Join(agents.Packages(), " ")),
-		install:    "npm install -g ${AGENT_PACKAGES}", browserDeps: "npx -y playwright install-deps chromium",
-		provision: baseProvisioningScript, scripts: installLayer(),
-		loginPath: `printf 'export PATH="/home/node/.asdf/shims:$PATH"\n' > /etc/profile.d/asdf.sh`,
-		pathEnv:   `/home/node/.asdf/shims:${PATH}`,
-	})
+// baseImageDefinition is the shared base image's build context for one platform: Node, the
+// qualified clients — the closure the filtered image installs, from the same embedded lock — and
+// asdf, so the box honors a repo's .tool-versions at runtime with no per-project Dockerfile. It runs
+// as the non-root `node` user and builds from these embedded files alone, so the base never needs a
+// checkout. The launchers lead PATH, ahead of the asdf shims.
+func baseImageDefinition(platform agents.ClientPlatform) (map[string][]byte, error) {
+	closure, err := agents.LockedClientClosure(platform)
+	if err != nil {
+		return nil, err
+	}
+	parts := lockedClientParts(closure)
+	parts.provision = baseProvisioningScript
+	parts.loginPath = `printf 'export PATH="` + agents.LauncherDir + `:/home/node/.asdf/shims:$PATH"\n' > /etc/profile.d/asdf.sh`
+	parts.pathEnv = agents.LauncherDir + `:/home/node/.asdf/shims:${PATH}`
+	closure.Files["Dockerfile"] = []byte(renderBaseDockerfile(parts))
+	return closure.Files, nil
 }
 
-type baseImageParts struct{ packageArg, files, install, browserDeps, loginPath, provision, pathEnv, scripts string }
+// BaseDockerfile is the shared base's Dockerfile as a build for linux/<arch> renders it — for code
+// that reads its fixed parts, such as the entrypoint's defaults.
+func BaseDockerfile(arch string) (string, error) {
+	files, err := baseImageDefinition(agents.ClientPlatform{OS: "linux", Architecture: arch, Libc: "glibc"})
+	if err != nil {
+		return "", err
+	}
+	return string(files["Dockerfile"]), nil
+}
+
+type baseImageParts struct{ files, install, browserDeps, loginPath, provision, pathEnv, scripts string }
 
 func renderBaseDockerfile(parts baseImageParts) string {
-	return fmt.Sprintf(baseDockerfileTemplate, parts.packageArg, parts.files, parts.install, parts.browserDeps, parts.loginPath, parts.provision, parts.pathEnv, parts.scripts)
-}
-
-// installLayer renders a RUN line for each agent whose CLI installs via a script rather than
-// npm (Agent.InstallScript) — run as root before USER node, after the npm layer. Empty for the
-// npm-only agents, so the layer is absent unless a script-installed agent is registered.
-func installLayer() string {
-	var b strings.Builder
-	for _, n := range agents.Names() { // sorted → a reproducible image
-		if a, ok := agents.Get(n); ok {
-			if s := a.InstallScript(); s != "" {
-				b.WriteString("RUN " + s + "\n")
-			}
-		}
-	}
-	return b.String()
+	return fmt.Sprintf(baseDockerfileTemplate, parts.files, parts.install, parts.browserDeps, parts.loginPath, parts.provision, parts.pathEnv, parts.scripts)
 }
 
 // Base-image references for the shared box. coop build pins the FROM image to a
@@ -67,9 +66,9 @@ const (
 	floatingGoImage   = "golang:1.26.6-bookworm"
 )
 
-// baseDockerfileTemplate shares OS tools and process supervision. Explicit slots
-// select ordinary or locked installation and optional startup provisioning; the
-// ordinary renderer retains its existing package and base-image build arguments.
+// baseDockerfileTemplate is shared by the base and the filtered client image: OS tools, the
+// qualified clients and process supervision. Its slots carry the client installation, each image's
+// PATH and the base's optional startup provisioning.
 const baseDockerfileTemplate = `ARG NODE_IMAGE=node:24-slim
 ARG GO_IMAGE=golang:1.26.6-bookworm
 
@@ -88,7 +87,6 @@ COPY --from=go-tools-builder /out/govulncheck /usr/local/bin/govulncheck
 COPY --from=go-tools-builder /out/jv /usr/local/bin/jv
 
 ARG ASDF_VERSION=0.19.0
-%s
 %s
 
 # Agent CLIs + ACP adapters, plus asdf and the build deps it needs to install or
@@ -339,8 +337,8 @@ ENV ASDF_DATA_DIR=/home/node/.asdf \
     KERL_BUILD_DOCS=no \
     KERL_CONFIGURE_OPTIONS="--without-wx --without-observer --without-debugger --without-et --without-megaco --without-javac"
 
-# Script-installed agent CLIs (Agent.InstallScript) — run as root, after the npm layer. Empty
-# for the npm-only agents, so this expands to nothing unless such an agent is registered.
+# The clients' launchers, the checks that each runs what the lock installed, and every client's
+# update controls — as root, before the image drops to node.
 %s
 USER node
 ENTRYPOINT ["/usr/local/bin/coop-entry"]
@@ -379,7 +377,8 @@ const baseProvisioningScript = `if command -v asdf >/dev/null 2>&1; then
       asdf reshim >/dev/null 2>&1 || true
     fi
   fi
-  # The agent CLIs are Node apps, so a bare node must always resolve. A prior repo's
+  # A bare node must always resolve: MCP servers and the repo's own scripts run it (the
+  # clients' launchers use the image's). A prior repo's
   # nodejs pin leaves a node shim in the persisted ~/.asdf volume; in a repo that does not
   # pin nodejs (and with no global) that shim shadows the image node and errors with
   # "No version is set for command node". COOP_NO_ASDF skips provisioning, not this repair.
@@ -411,9 +410,9 @@ func ImageExists(rt runtime.Runtime, image string) bool {
 }
 
 // Build builds the box image: a repo with a .agent/Dockerfile builds that (its
-// own toolchain), otherwise the shared base is built from BaseDockerfile. When
-// fresh is set it adds --pull --no-cache so the base image and the npm-installed
-// agent CLIs + ACP adapters are pulled to their latest (this is `coop update`).
+// own toolchain), otherwise the shared base (baseImageDefinition). When fresh is
+// set it adds --pull --no-cache so the OS and Node underneath are refreshed (this
+// is `coop update`); the clients are Coop's qualified set either way.
 // version is the building coop's version, stamped beside the image so a later
 // launch can flag binary/image skew (box can't resolve it itself — cli owns it).
 func Build(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, version string) error {
@@ -459,6 +458,11 @@ type BuildPlan struct {
 	usesBase   bool   // the Dockerfile inherits the shared base via COOP_BASE_IMAGE
 }
 
+// CarriesQualifiedClients reports whether the built image holds Coop's qualified clients: the
+// shared base does, and so does a project image built on it; one built on another base brings
+// its own.
+func (p BuildPlan) CarriesQualifiedClients() bool { return !p.Project || p.usesBase }
+
 // PlanBuild resolves what a build would do, without building anything. It loads project.yaml (so
 // a malformed one fails loudly here rather than halfway through) and requires the runtime, since
 // whether the shared base already exists is part of the answer.
@@ -498,17 +502,12 @@ func PlanBuild(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool) 
 // build output goes to stdout/stderr, and the caller owns every sentence coop speaks around it.
 func BuildPlanned(rt runtime.Runtime, cfg *config.Config, repo string, plan BuildPlan, fresh bool, version string, stdin io.Reader, stdout io.Writer) error {
 	if !plan.Project {
-		err := runBuild(rt, strings.NewReader(BaseDockerfile()), stdout, baseBuildArgs(cfg, fresh)...)
-		if err == nil {
-			StampImageMeta(cfg, cfg.BaseImage, version) // record builder + definition so a later run can flag skew/age
-		}
-		return err
+		return buildBaseImage(rt, cfg, fresh, version, stdout)
 	}
 	if plan.BaseFirst {
-		if err := runBuild(rt, strings.NewReader(BaseDockerfile()), stdout, baseBuildArgs(cfg, fresh)...); err != nil {
+		if err := buildBaseImage(rt, cfg, fresh, version, stdout); err != nil {
 			return err
 		}
-		StampImageMeta(cfg, cfg.BaseImage, version)
 	}
 	// Build from a shadow-filtered COPY of the repo, not the repo itself: secret shadowing is a
 	// run-time -v overlay, so without this a `COPY .env /` / `COPY . .` in an agent-authored
@@ -587,11 +586,47 @@ func projectBuildArgs(ctx, dfRel, img, baseImage string, usesBase, fresh bool) [
 	return append(args, "-t", img, "-f", filepath.Join(ctx, dfRel), ctx)
 }
 
-// baseBuildArgs assembles the runtime args for building the shared base image (BaseDockerfile via
-// stdin). fresh adds --pull --no-cache so the base image and the agent CLIs / ACP adapters refresh
-// to their latest; otherwise the FROM image is pinned so `coop build` is reproducible. Tool
-// versions stay latest unless pinned via COOP_AGENT_PACKAGES.
-func baseBuildArgs(cfg *config.Config, fresh bool) []string {
+// buildBaseImage builds the shared base for the platform the runtime builds for, from a staged
+// context holding only the embedded definition, then stamps it for the staleness checks.
+func buildBaseImage(rt runtime.Runtime, cfg *config.Config, fresh bool, version string, stdout io.Writer) error {
+	platform, flags, err := rt.BuildPlatform()
+	if err != nil {
+		return err
+	}
+	if platform != "linux/amd64" && platform != "linux/arm64" {
+		return fmt.Errorf("the box image carries Coop's qualified clients, built for linux/amd64 and linux/arm64 — %s builds for %s", filepath.Base(rt.Name), platform)
+	}
+	system, arch, _ := strings.Cut(platform, "/")
+	files, err := baseImageDefinition(agents.ClientPlatform{OS: system, Architecture: arch, Libc: "glibc"})
+	if err != nil {
+		return err
+	}
+	dir, err := os.MkdirTemp("", "coop-base-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	for name, data := range files {
+		file := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(file, data, 0o644); err != nil {
+			return err
+		}
+	}
+	if err := runBuild(rt, nil, stdout, baseBuildArgs(cfg, fresh, flags, dir)...); err != nil {
+		return err
+	}
+	StampImageMeta(cfg, cfg.BaseImage, version) // record builder + definition so a later run can flag skew/age
+	return nil
+}
+
+// baseBuildArgs assembles the runtime args for building the shared base image from its staged
+// context dir. fresh adds --pull --no-cache and floats the Node and Go bases to their tags, so an
+// update refreshes the OS and runtime underneath; the clients are the qualified set either way.
+// Otherwise the bases are pinned so `coop build` is reproducible.
+func baseBuildArgs(cfg *config.Config, fresh bool, platformFlags []string, dir string) []string {
 	args := []string{"build"}
 	if fresh {
 		args = append(args, "--pull", "--no-cache")
@@ -602,14 +637,12 @@ func baseBuildArgs(cfg *config.Config, fresh bool) []string {
 		node = floatingNodeImage
 		goImage = floatingGoImage
 	}
+	args = append(args, platformFlags...)
 	args = append(args,
 		"--build-arg", "NODE_IMAGE="+node,
 		"--build-arg", "GO_IMAGE="+goImage,
 	)
-	if cfg.AgentPackages != "" {
-		args = append(args, "--build-arg", "AGENT_PACKAGES="+cfg.AgentPackages)
-	}
-	return append(args, "-t", cfg.BaseImage, "-")
+	return append(args, "-t", cfg.BaseImage, "-f", filepath.Join(dir, "Dockerfile"), dir)
 }
 
 // stageBuildContext copies repo's build context (buildContextSelection) into a throwaway dir. This

@@ -33,7 +33,6 @@ type Config struct {
 	RuntimeName   string // COOP_RUNTIME — "" means autodetect
 	RepoOverride  string // COOP_REPO — overrides git-toplevel detection
 	ImageOverride string // COOP_IMAGE — overrides image selection
-	AgentPackages string // COOP_AGENT_PACKAGES — pin/override the global agent+ACP npm specs (e.g. "@anthropic-ai/claude-code@1.2.3 …")
 
 	Homes         bool // COOP_HOMES — mount the per-agent home dirs
 	Network       bool // COOP_NETWORK — join the sibling-services network
@@ -231,7 +230,6 @@ func Load() (*Config, error) {
 		RuntimeName:   get("COOP_RUNTIME", ""),
 		RepoOverride:  get("COOP_REPO", ""),
 		ImageOverride: get("COOP_IMAGE", ""),
-		AgentPackages: get("COOP_AGENT_PACKAGES", ""),
 
 		Homes:         homes,
 		Network:       network,
@@ -763,7 +761,6 @@ const maxMainConfLineBytes = 64 << 10
 
 var mainConfigKeys = map[string]struct{}{
 	"COOP_ACP_CARRY_TOKENS":  {},
-	"COOP_AGENT_PACKAGES":    {},
 	"COOP_AUTO_UP":           {},
 	"COOP_BASE_IMAGE":        {},
 	"COOP_CACHE":             {},
@@ -797,6 +794,7 @@ var mainConfigKeys = map[string]struct{}{
 }
 
 var retiredMainConfigKeys = map[string]struct{}{
+	"COOP_AGENT_PACKAGES":    {},
 	"COOP_LOOP_CMD":          {},
 	"COOP_LOOP_MODEL":        {},
 	"COOP_MAX_REVIEW_ROUNDS": {},

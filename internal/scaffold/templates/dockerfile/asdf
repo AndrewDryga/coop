@@ -1,35 +1,12 @@
 # Tools are installed at the versions in .tool-versions.
 # After changing that file, run coop build to rebuild this project's box.
-# Coop also installs agent CLIs and editor adapters.
-FROM debian:bookworm-slim
-
-ARG ASDF_VERSION=0.19.0
-# Agent CLI and editor-adapter packages installed in this image.
-# The default package list follows Coop's supported agents.
-# To pin a package, replace its @latest suffix with the version you need.
-ARG AGENT_PACKAGES="@anthropic-ai/claude-code@latest @agentclientprotocol/claude-agent-acp@latest @openai/codex@latest @agentclientprotocol/codex-acp@latest @google/gemini-cli@latest"
-
-# Packages needed by asdf, Git, and this project's selected tools.
-# Add build dependencies here when you add tools to .tool-versions.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      curl git ca-certificates locales procps unzip@SYSTEM_PACKAGES@ \
- && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \
- && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
- && apt-get install -y --no-install-recommends nodejs \
- && npm install -g ${AGENT_PACKAGES} \
- && curl -fsSL "https://github.com/asdf-vm/asdf/releases/download/v${ASDF_VERSION}/asdf-v${ASDF_VERSION}-linux-$(dpkg --print-architecture).tar.gz" \
-      | tar -C /usr/local/bin -xzf - asdf \
- && apt-get clean && rm -rf /var/lib/apt/lists/* \
- && git config --system --add safe.directory '*' \
- && useradd -m -u 1000 -s /bin/bash node \
- && mkdir -p /home/node/.cache && chown node:node /home/node/.cache
-
-ENV ASDF_DATA_DIR=/home/node/.asdf \
-    PATH="/home/node/.asdf/shims:${PATH}" \
-    LANG=en_US.UTF-8 LANGUAGE=en_US:en LC_ALL=en_US.UTF-8@TOOLCHAIN_ENV@
-
-USER node
+# Coop's box image brings the agent CLIs and editor adapters, at the versions Coop qualifies.
+ARG COOP_BASE_IMAGE=coop-box
+FROM ${COOP_BASE_IMAGE}
+@SYSTEM_PACKAGES@
+# Coop's filtered client image keeps asdf off PATH, so put the shims back — after the client
+# launchers, which nothing may shadow.
+ENV PATH="/opt/coop/bin:/home/node/.asdf/shims:${PATH}"@TOOLCHAIN_ENV@
 
 # Install the tool versions declared by the project.
 # Installation failures stop the build.
@@ -39,9 +16,10 @@ RUN cd /home/node \
  && MAKEFLAGS="-j$(nproc)" asdf install \
  && asdf reshim@TOOLCHAIN_SEED@
 
-# Debian login shells reset PATH, so restore the asdf shims after /etc/profile runs.
+# Login shells reset PATH, so restore the same order after /etc/profile runs (this drop-in sorts
+# after Coop's own, which leaves the shims out in a filtered box).
 USER root
-RUN printf 'export PATH="/home/node/.asdf/shims:$PATH"\n' > /etc/profile.d/asdf.sh
+RUN printf 'export PATH="/opt/coop/bin:/home/node/.asdf/shims:$PATH"\n' > /etc/profile.d/zz-asdf.sh
 USER node
 
 WORKDIR /workspace

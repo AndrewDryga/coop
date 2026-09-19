@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -116,23 +117,29 @@ func TestStageBuildContextOmitsIgnoredOutputButKeepsAuthoredInputs(t *testing.T)
 	}
 }
 
-// The base Dockerfile installs every agent's npm packages, assembled from the registry
-// (not a hard-coded list), with the template fully resolved.
-func TestBaseDockerfileInstallsAgentPackages(t *testing.T) {
-	df := BaseDockerfile()
-	for _, pkg := range []string{
-		"@anthropic-ai/claude-code@latest", "@agentclientprotocol/claude-agent-acp@latest",
-		"@openai/codex@latest", "@agentclientprotocol/codex-acp@latest", "@google/gemini-cli@latest",
-	} {
-		if !strings.Contains(df, pkg) {
-			t.Errorf("BaseDockerfile missing package %q", pkg)
+// baseDockerfile is the base image's Dockerfile as this binary renders it for linux/arm64.
+func baseDockerfile(t testing.TB) string {
+	t.Helper()
+	df, err := BaseDockerfile("arm64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return df
+}
+
+// The base installs the qualified clients from the embedded lock — never a floating package, a
+// piped installer or a package fetched at build time — with the template fully resolved.
+func TestBaseDockerfileInstallsTheQualifiedClients(t *testing.T) {
+	df := baseDockerfile(t)
+	for _, floating := range []string{"@latest", "npm install -g", "npx ", "install.sh", "AGENT_PACKAGES"} {
+		if strings.Contains(df, floating) {
+			t.Errorf("BaseDockerfile installs a client outside the lock (%q)", floating)
 		}
 	}
-	if strings.Contains(df, "%s") || strings.Contains(df, "%!") {
+	if strings.Contains(df, "%!") {
 		t.Errorf("BaseDockerfile template not resolved:\n%s", df)
 	}
-	// The npm install and the FROM image are driven by build args so a build can pin
-	// them; the packages live in the AGENT_PACKAGES default.
+	// The FROM images are driven by build args so an update can float them.
 	for _, want := range []string{
 		"ARG NODE_IMAGE=node:24-slim", "FROM ${NODE_IMAGE}",
 		"ARG GO_IMAGE=golang:1.26.6-bookworm", "FROM ${GO_IMAGE} AS go-tools-builder",
@@ -143,7 +150,13 @@ func TestBaseDockerfileInstallsAgentPackages(t *testing.T) {
 		"COPY --from=go-tools-builder /out/staticcheck /usr/local/bin/staticcheck",
 		"COPY --from=go-tools-builder /out/govulncheck /usr/local/bin/govulncheck",
 		"COPY --from=go-tools-builder /out/jv /usr/local/bin/jv",
-		`ARG AGENT_PACKAGES="@`, "npm install -g ${AGENT_PACKAGES}",
+		"COPY package.json package-lock.json global.npmrc /opt/coop/clients/",
+		"/usr/local/bin/npm ci --prefix /opt/coop/clients --ignore-scripts",
+		"| sha256sum -c -", "COPY launchers/ /opt/coop/bin/", "RUN chmod -R a-w /opt/coop/clients",
+		// Every client's updater is off in the image itself, homes mounted or not.
+		"COPY system/ /", "ENV DISABLE_UPDATES=1 GROK_DISABLE_AUTOUPDATER=1",
+		// The launchers lead PATH, so an asdf shim cannot shadow a qualified client.
+		`PATH="/opt/coop/bin:/home/node/.asdf/shims:${PATH}"`,
 		// ~/.cache pre-created node-owned so the coop-cache volume isn't root-owned.
 		"chown node:node /home/node/.asdf /home/node/.cache",
 		// agent search/inspect tools, with fd symlinked from Debian's fdfind; shellcheck is a
@@ -153,11 +166,12 @@ func TestBaseDockerfileInstallsAgentPackages(t *testing.T) {
 		"inotify-tools util-linux", "command -v flock >/dev/null",
 		// bare python + pip so an agent reaching for them doesn't self-debug a missing tool.
 		"python3 python-is-python3 python3-pip", `ln -s "$(command -v pip3)" /usr/local/bin/pip`,
-		// Playwright's Chromium system libs baked in as root so a browser launches in the box.
-		"npx -y playwright install-deps chromium",
+		// Playwright's Chromium system libs baked in as root (by the locked Playwright) so a
+		// browser launches in the box.
+		"/usr/local/bin/node /opt/coop/clients/node_modules/playwright/cli.js install-deps chromium",
 		// Login shells source /etc/profile (which resets PATH); a profile.d drop-in re-adds the
-		// asdf shims so go/ruby/… pinned in .tool-versions resolve there too, not just non-login.
-		`printf 'export PATH="/home/node/.asdf/shims:$PATH"\n' > /etc/profile.d/asdf.sh`,
+		// launchers and asdf shims so go/ruby/… pinned in .tool-versions resolve there too.
+		`printf 'export PATH="/opt/coop/bin:/home/node/.asdf/shims:$PATH"\n' > /etc/profile.d/asdf.sh`,
 		// The entrypoint repairs a bare `node` when an orphaned asdf nodejs shim (from a
 		// prior repo, persisted in the ~/.asdf volume) shadows the image node in a repo that
 		// doesn't pin nodejs — so the Node agent CLIs always have a working interpreter.
@@ -194,7 +208,7 @@ func TestBaseDockerfileStaticcheckMatchesGatePin(t *testing.T) {
 	if pin == "" {
 		t.Fatal("Makefile no longer pins STATICCHECK_VERSION — the gate's single Staticcheck pin")
 	}
-	if want := "ARG STATICCHECK_VERSION=" + pin; !strings.Contains(BaseDockerfile(), want) {
+	if want := "ARG STATICCHECK_VERSION=" + pin; !strings.Contains(baseDockerfile(t), want) {
 		t.Errorf("box ships a different Staticcheck than the gate pins — image.go needs %q", want)
 	}
 }
@@ -216,7 +230,7 @@ func TestBaseDockerfileGovulncheckMatchesGatePin(t *testing.T) {
 	if pin == "" {
 		t.Fatal("Makefile no longer pins GOVULNCHECK_VERSION — the gate's single govulncheck pin")
 	}
-	if want := "ARG GOVULNCHECK_VERSION=" + pin; !strings.Contains(BaseDockerfile(), want) {
+	if want := "ARG GOVULNCHECK_VERSION=" + pin; !strings.Contains(baseDockerfile(t), want) {
 		t.Errorf("box ships a different govulncheck than the gate pins — image.go needs %q", want)
 	}
 }
@@ -307,32 +321,45 @@ func TestProjectBuildArgs(t *testing.T) {
 	}
 }
 
-// TestBaseDockerfileInstallLayer: grok installs via a script (curl … | bash), so the
-// script-install layer carries its RUN line while the npm-only agents (claude/codex/gemini)
-// contribute nothing — proving Agent.InstallScript becomes a root RUN line before USER node, the
-// image seam for a non-npm agent, without editing image.go.
-func TestBaseDockerfileInstallLayer(t *testing.T) {
-	got := installLayer()
-	if !strings.HasPrefix(got, "RUN ") || !strings.Contains(got, "curl -fsSL https://x.ai/cli/install.sh") {
-		t.Errorf("grok's script install must land as a root RUN line, got:\n%s", got)
-	}
-	// The template resolves (both %s filled) and embeds the install layer.
-	df := BaseDockerfile()
-	if strings.Contains(df, "%s") || strings.Contains(df, "%!") {
-		t.Errorf("install-layer %%s left unresolved:\n%s", df)
-	}
-	// The script-install RUN lands as root, before USER node.
-	run := strings.Index(df, "RUN curl -fsSL https://x.ai/cli/install.sh")
-	user := strings.LastIndex(df, "USER node")
-	if run < 0 || user < 0 || run > user {
-		t.Errorf("a script-install RUN must precede USER node (run@%d user@%d)", run, user)
+// One manifest in every box: the base and the filtered client image render the very same client
+// installation from the same closure — lock, verified native artifacts, launchers, update controls
+// — for each platform, and the base's context carries every file that installation copies in.
+func TestBothImagesInstallTheSameClients(t *testing.T) {
+	for _, arch := range []string{"amd64", "arm64"} {
+		platform := agents.ClientPlatform{OS: "linux", Architecture: arch, Libc: "glibc"}
+		closure, err := agents.LockedClientClosure(platform)
+		if err != nil {
+			t.Fatal(err)
+		}
+		clients := lockedClientParts(closure)
+		base, err := baseImageDefinition(platform)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, locked, err := lockedImageDefinition(platform)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, files := range map[string]map[string][]byte{"base": base, "filtered": locked.Files} {
+			df := string(files["Dockerfile"])
+			for _, part := range []string{clients.files, clients.install, clients.browserDeps, clients.scripts} {
+				if !strings.Contains(df, part) {
+					t.Errorf("%s %s image does not install the shared clients:\n%s", arch, name, part)
+				}
+			}
+			for file := range closure.Files {
+				if files[file] == nil {
+					t.Errorf("%s %s image context lacks %s", arch, name, file)
+				}
+			}
+		}
 	}
 }
 
 // The base image bakes socat and the coop-entry sidecar forwarder (raw-TCP loopback) so a box can
 // reach an expose'd sidecar at the same localhost:<hostport> URL the host uses (OIDC issuer match).
 func TestBaseDockerfileHasSidecarForwarder(t *testing.T) {
-	df := BaseDockerfile()
+	df := baseDockerfile(t)
 	for _, want := range []string{
 		"util-linux socat",
 		`if [ -n "$COOP_FORWARD" ]`,
@@ -345,7 +372,7 @@ func TestBaseDockerfileHasSidecarForwarder(t *testing.T) {
 }
 
 func TestBaseDockerfileSupervisesDetachedDescendantsPortably(t *testing.T) {
-	df := BaseDockerfile()
+	df := baseDockerfile(t)
 	for _, want := range []string{
 		"echo \"${20}\"",
 		"current=${20}",
@@ -368,10 +395,12 @@ func TestBaseDockerfileSupervisesDetachedDescendantsPortably(t *testing.T) {
 func TestBuildWithHonorsCallerStreams(t *testing.T) {
 	repo := t.TempDir() // no .agent/Dockerfile → the shared-base path, which is what `coop acp` hits
 	shim := filepath.Join(t.TempDir(), "rt")
-	// Echo a marker on stdout and copy stdin through, so the test can prove where each landed.
+	// Name the daemon's platform, echo a marker on stdout, then print the Dockerfile the build was
+	// handed and whatever arrived on stdin, so the test can prove where each landed.
 	script := "#!/bin/sh\n" +
 		"case \"$1\" in\n" +
-		"  build) echo BUILD-STDOUT; cat; exit 0 ;;\n" +
+		"  info) echo linux/aarch64; exit 0 ;;\n" +
+		"  build) echo BUILD-STDOUT; while [ $# -gt 1 ]; do [ \"$1\" = -f ] && cat \"$2\"; shift; done; cat; exit 0 ;;\n" +
 		"esac\n" +
 		"exit 0\n"
 	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
@@ -381,16 +410,19 @@ func TestBuildWithHonorsCallerStreams(t *testing.T) {
 	cfg := &config.Config{BaseImage: "coop-box", ConfigDir: t.TempDir(), BoxHome: t.TempDir()}
 
 	var out strings.Builder
-	if err := BuildWith(rt, cfg, repo, false, "vTest", strings.NewReader(""), &out); err != nil {
+	if err := BuildWith(rt, cfg, repo, false, "vTest", strings.NewReader("CALLER-STDIN"), &out); err != nil {
 		t.Fatalf("BuildWith = %v, want nil", err)
 	}
 	if got := out.String(); !strings.Contains(got, "BUILD-STDOUT") {
 		t.Errorf("build stdout did not reach the caller's writer (an ACP build would have gone to the JSON-RPC wire):\n%s", got)
 	}
-	// The base path feeds the Dockerfile in on stdin; the point is that it came from BuildWith,
-	// not from the process's own os.Stdin.
-	if got := out.String(); !strings.Contains(got, "FROM ${NODE_IMAGE}") {
-		t.Errorf("base Dockerfile was not piped to the runtime:\n%s", got)
+	// The base builds from its staged context for the daemon's platform; it reads nothing from
+	// stdin — in `coop acp` that is the editor's JSON-RPC wire.
+	if got := out.String(); !strings.Contains(got, "FROM ${NODE_IMAGE}") || !strings.Contains(got, "COPY launchers/ /opt/coop/bin/") {
+		t.Errorf("the staged base Dockerfile did not reach the runtime:\n%s", got)
+	}
+	if got := out.String(); strings.Contains(got, "CALLER-STDIN") {
+		t.Errorf("the base build consumed the caller's stdin:\n%s", got)
 	}
 }
 
