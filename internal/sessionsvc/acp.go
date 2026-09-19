@@ -1729,6 +1729,11 @@ func (r *sessionTurnRunner) projectSessionConfigFiles(
 		if err != nil {
 			return acpFailure(sessionACPCredentialError, "source private config is unsafe")
 		}
+		if source.name == "env" && present && bound.NetworkMode == string(egress.Filtered) && !bound.ProjectMCP {
+			// A filtered session that withholds the shared MCP file brokers none of its servers, so
+			// their token variables have no business in the env its child starts a box from.
+			data = box.DropEnvKeys(data, r.sourceMCPReferences(sourceRoot))
+		}
 		if source.name == "env" && bound.ResponderBinding != nil {
 			data, err = bindResponderStateEnv(data, bound.ResponderBinding.Token)
 			if err != nil {
@@ -1872,6 +1877,13 @@ func (r *sessionTurnRunner) cleanupSessionCredentials(bound session.Session) err
 	// profile artifact must not keep it there.
 	if vaultErr := box.RemoveHostCredential(&config.Config{ConfigDir: privateRoot}, agent, account); vaultErr != nil {
 		err = errors.Join(err, acpFailure(sessionACPCleanupError, "projected API key cleanup failed"))
+	}
+	// A filtered child's MCP handoff that a crash stranded between its write and the daemon's read.
+	handoffs, _ := filepath.Glob(sessionMCPHandoffPath(privateRoot, "*"))
+	for _, handoff := range handoffs {
+		if removeErr := removeProjectedSessionFile(handoff); removeErr != nil {
+			err = errors.Join(err, acpFailure(sessionACPCleanupError, "a stranded MCP handoff could not be removed"))
+		}
 	}
 	return err
 }
@@ -2093,6 +2105,17 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		activityRole = forkspace.ExecutionRoleWarm
 	}
 	env = append(env, "COOP_ACP_ACTIVITY_ROLE="+string(activityRole))
+	// A filtered child's MCP servers reach its credential broker, whose listeners and stand-ins only
+	// that child knows: it hands over its adapter's list, and nothing is rendered from the real
+	// private env. A restricted child is never filtered.
+	mcpHandoff := ""
+	if bound.NetworkMode == string(egress.Filtered) && mode == agents.ModeNormal {
+		mcpHandoff = sessionMCPHandoffPath(privateRoot, runID)
+		if err := removeProjectedSessionFile(mcpHandoff); err != nil {
+			return nil, acpFailure(sessionACPCredentialError, "a stale MCP handoff is unsafe")
+		}
+		env = append(env, box.SessionMCPHandoffEnv+"="+mcpHandoff)
+	}
 	// The mode rides the child's command line as the same flag a hand launch takes, so the box
 	// it builds is exactly the restricted profile `coop <target> --readonly|--bare` proves. A
 	// bare session has no fork to front, so its child is the plain adapter launch.
@@ -2129,7 +2152,7 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		return nil, acpFailure(sessionACPInvalidTarget, err.Error())
 	}
 	var mcpServers []map[string]any
-	if mode != agents.ModeBare {
+	if mode != agents.ModeBare && mcpHandoff == "" {
 		// A bare session mounts no MCP at all: its policy withheld the shared file, and its turn
 		// can bind no endpoint, so there is nothing to ask the adapter for.
 		if mcpServers, err = r.sessionACPMCPServers(agent, privateRoot); err != nil {
@@ -2140,6 +2163,7 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 	if process != nil {
 		process.runID = runID
 		process.mcpServers = mcpServers
+		process.mcpHandoff = mcpHandoff
 		process.sessionMeta = sessionMeta
 		process.cwd = bound.Workspace
 		if mode == agents.ModeBare {
@@ -2169,6 +2193,22 @@ func boxCredentialDeadline(bound session.Session, deadline time.Time) time.Time 
 		}
 	}
 	return deadline
+}
+
+// sourceMCPReferences are the token variables the daemon's shared MCP file reads — read leniently,
+// since a session that withholds the file must not fail on it.
+func (r *sessionTurnRunner) sourceMCPReferences(sourceRoot string) []string {
+	mcpFile := r.sourceCfg.MCPFile
+	if mcpFile == "" {
+		mcpFile = filepath.Join(sourceRoot, "mcp.json")
+	}
+	return mcp.ReferencedCredentialNames(mcpFile)
+}
+
+// sessionMCPHandoffPath is where a filtered child of this run hands over its ACP MCP list: in the
+// session's private root, named by the run, so an overlapping execution never reads another's.
+func sessionMCPHandoffPath(privateRoot, runID string) string {
+	return filepath.Join(privateRoot, "mcp-handoff-"+runID+".json")
 }
 
 // sessionACPMCPServers asks the agent for the MCP servers its ACP session has to be handed
@@ -2330,6 +2370,7 @@ type sessionACPProcess struct {
 	sessionMeta            map[string]any
 	restricted             bool
 	mcpServers             []map[string]any
+	mcpHandoff             string // a filtered child's MCP list, read once after initialize
 	nextID                 int64
 	initialized            bool
 	nativeSessionID        string
@@ -2782,6 +2823,15 @@ func (r *sessionTurnRunner) runACP(
 		}
 		process.imageCapable = initialized.AgentCapabilities.PromptCapabilities.Image
 		process.embeddedContextCapable = initialized.AgentCapabilities.PromptCapabilities.EmbeddedContext
+		if process.mcpHandoff != "" {
+			// The adapter answered, so its box is running: the child wrote its list before starting it.
+			servers, err := box.ReadSessionMCPHandoff(process.mcpHandoff, process.runID)
+			_ = removeProjectedSessionFile(process.mcpHandoff)
+			if err != nil {
+				return "", nil, session.Usage{}, errors.Join(acpFailure(sessionACPCredentialError, "the filtered child handed over no MCP servers"), err)
+			}
+			process.mcpServers, process.mcpHandoff = servers, ""
+		}
 		mcpServers := sessionACPMCPServerParam(process.mcpServers)
 		nativeID := bound.NativeSessionID
 		if nativeID == "" {

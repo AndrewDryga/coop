@@ -865,7 +865,7 @@ func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {
 		MCPInBox:  "/home/node/.mcp.json",
 		Egress:    "open", // production default; required for the services-net join below
 	}
-	spec := RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true, Network: true, Cache: true}
+	spec := RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true, Network: true, Cache: true, claudeMCPFile: filepath.Join(dir, "claude-mcp.json")}
 	mcpMounts := []extraMount{{"/tmp/g", "/home/node/.gemini/settings.json"}}
 	gitMounts := []extraMount{{"/tmp/gc", "/home/node/.gitconfig"}}
 	instructionMounts := []extraMount{{filepath.Join(dir, "INSTRUCTIONS.md"), "/home/node/.claude/CLAUDE.md"}}
@@ -888,7 +888,7 @@ func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {
 	mustContain("-e", "GROK_DISABLE_AUTOUPDATER=1")
 	mustContain("--env-file", filepath.Join(dir, "env"))
 	mustContain("-v", filepath.Join(dir, "INSTRUCTIONS.md")+":/home/node/.claude/CLAUDE.md:ro")
-	mustContain("-v", cfg.MCPFile+":/home/node/.mcp.json:ro")
+	mustContain("-v", spec.claudeMCPFile+":/home/node/.mcp.json:ro")
 	mustContain("-v", "/tmp/g:/home/node/.gemini/settings.json:ro")
 	mustContain("-v", "/tmp/gc:/home/node/.gitconfig:ro")
 	mustContain("--network", "coop-r_default")
@@ -1268,8 +1268,7 @@ func TestRunUsesOneValidatedMCPSnapshotAfterSourceMutation(t *testing.T) {
 		Peers: []agents.Target{{Provider: "codex"}, {Provider: "gemini"}, {Provider: "grok"}},
 	}
 	artifacts := defaultCompositionArtifactOps()
-	var snapshotPath string
-	var written []string
+	var paths, written []string
 	originalWrite := artifacts.writeFile
 	artifacts.writeFile = func(_, content string) (string, error) {
 		path, err := originalWrite("", content)
@@ -1277,8 +1276,8 @@ func TestRunUsesOneValidatedMCPSnapshotAfterSourceMutation(t *testing.T) {
 			return "", err
 		}
 		written = append(written, content)
-		if snapshotPath == "" {
-			snapshotPath = path
+		paths = append(paths, path)
+		if len(paths) == 1 {
 			if err := os.WriteFile(mcpFile, []byte(after), 0o600); err != nil {
 				return "", err
 			}
@@ -1317,11 +1316,15 @@ func TestRunUsesOneValidatedMCPSnapshotAfterSourceMutation(t *testing.T) {
 	if strings.Contains(string(args), mcpFile+":"+cfg.MCPInBox) {
 		t.Fatalf("runtime mounted mutable MCP source:\n%s", args)
 	}
-	if !strings.Contains(string(args), snapshotPath+":"+cfg.MCPInBox+":ro") {
-		t.Fatalf("runtime did not mount the validated snapshot:\n%s", args)
+	// claude reads its own view of the frozen snapshot, written right after it.
+	if !strings.Contains(written[1], "before") || strings.Contains(written[1], "after") ||
+		!strings.Contains(string(args), paths[1]+":"+cfg.MCPInBox+":ro") {
+		t.Fatalf("runtime did not mount claude's view of the validated snapshot:\n%s", args)
 	}
-	if _, err := os.Stat(snapshotPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("MCP snapshot was not removed after the run: %v", err)
+	for _, path := range paths[:2] {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("MCP snapshot %s was not removed after the run: %v", path, err)
+		}
 	}
 }
 
@@ -2673,7 +2676,7 @@ func TestRunActiveMCPArtifactFailuresStopBeforeProvider(t *testing.T) {
 		writes := 0
 		artifacts.writeFile = func(_, content string) (string, error) {
 			writes++
-			if writes == 3 { // shared snapshot, Codex overlay, then Grok overlay
+			if writes == 4 { // shared snapshot, claude's view, Codex overlay, then Grok overlay
 				return "", sentinel
 			}
 			path, err := originalWrite("", content)

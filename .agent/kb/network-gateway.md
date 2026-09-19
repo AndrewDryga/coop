@@ -26,7 +26,14 @@ sibling containers and other sessions' boxes. Being the namespace owner it also 
 host-published traffic is NAT'd from, so a sibling container cannot reach a served port. Leases are relative kernel timeouts: the controller reserves
 the whole 250 ms commit budget plus a 20 ms tick allowance out of every TTL and returns the
 conservative lower bound to the guard (`controller.go:268`), so a slow kernel commit can never
-extend DNS authority.
+extend DNS authority. The controller commits ONE lease at a time and answers every concurrent
+request `gateway_lease_capacity` (`control.go`) — contention, not a verdict — so the guard and every
+credential broker admit through the same `admitLease` (`guard.go`): wait their turn within the
+admission budget, and refresh an answer inside the commit margin once. (The broker once skipped
+both, and a client opening its MCP servers beside its model call lost one of them to a spurious
+`credential_broker_upstream_unavailable`.) The resolver asks once more, after a second, when an
+answer arrives already expired: a caching upstream serves a record at TTL 0 at the end of its life
+(Akamai's 20 s records through 1.1.1.1), which no lease can use.
 
 **Guard** — UID `65532:65532`, capless, read-only rootfs, sharing the controller's namespace
 (`filtered_launch.go:198`). It terminates nothing: it reads the connection's ORIGINAL destination
@@ -53,12 +60,17 @@ allowed CONNECT receives `200`, then the guard parses the actual ClientHello and
 and rule identity to match before using the ordinary resolver, lease, Envoy and observation path.
 Direct service traffic cannot bypass the proxy because the Docker network itself is internal.
 
-Brokered API keys use the guard too (`credential_broker.go`): one loopback listener per route of the
-run's plan, `CredentialBrokerAddress(i)` = 15580+i, each holding only its own route's substitute and
-key (`CredentialBrokerSecrets` v2, bound to the run and gateway epoch; substitutes must differ). A
+Brokered credentials use the guard too (`credential_broker.go`): one loopback listener per route of
+the run's plan, `CredentialBrokerAddress(i)` = 15580+i, each holding only its own route's substitute
+and credential (`CredentialBrokerSecrets` v2, bound to the run and gateway epoch and to each route
+by name; substitutes must differ). A route's kind decides its shape: `provider` is one POST endpoint
+with a 30 s response-header timeout; `mcp` is one streamable-HTTP endpoint — exact path,
+POST/GET/DELETE, bearer, no query — with NO header timeout, because a server answering a tool call
+with JSON sends headers only when the tool finishes and a 502 makes the agent retry a mutation. A
 request must fit its route's endpoint (`CredentialBrokerRoute.Admits`: method; a path already clean
 — no dot segment, doubled slash or second encoding an upstream could normalize into a sibling
-endpoint — equal to or under the route's; a query only where the adapter declared one) and name its
+endpoint, and a trailing slash only as an exact route's own path (MCP endpoints like `/mcp/`) —
+equal to or under the route's; a query only where the adapter declared one) and name its
 own listener in `Host`, so a capability presented to another route's listener is refused before
 any upstream dial; the key is injected on the route's fixed upstream through the ordinary
 lease/Envoy path.
@@ -177,6 +189,12 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-09-19 — the broker admits through the guard's `admitLease` (waits out a busy controller), and
+  the resolver asks again after an answer that arrived already expired; both surfaced as spurious
+  broker denials when a filtered session opened two MCP servers at once.
+- 2026-09-19 — broker routes gained a kind (`provider`, `mcp`) and a method set; up to 72 routes;
+  `Admits` lets an exact route's path end in a slash (MCP endpoints use them); a prefix route still
+  refuses a slash-terminated path.
 - 2026-09-19 — the credential broker serves one loopback listener per brokered route (15580+i),
   each bound to its own substitute and endpoint (`Admits`).
 - 2026-09-19 — a resolver connection dialed and released between two samples no longer leaves a

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -175,6 +176,11 @@ func TestNetworkAllowancesNeverOmitAGrant(t *testing.T) {
 	want := []string{"Anthropic endpoints allowed", "Applied 1 approved network rule", "1 other destination allowed"}
 	if strings.Join(rows, "|") != strings.Join(want, "|") {
 		t.Fatalf("allowances = %q, want %q", rows, want)
+	}
+	// A server reached through the credential broker has no grant of its own, and is still allowed.
+	policy.Grants = append(policy.Grants, grant("g3", "docs.example", egress.Origin{Kind: "mcp", Name: "docs"}))
+	if rows := networkAllowances(policy, "emisar"); !slices.Contains(rows, "2 configured MCP services allowed") {
+		t.Fatalf("allowances with a brokered MCP server = %q", rows)
 	}
 	if got := captureStderr(t, func() { newLaunchSections(RunSpec{Cmd: []string{"sh"}}).secrets(0) }); got != "Protecting secrets\n  ✓ No secret paths to hide\n" {
 		t.Fatalf("zero secrets rendered %q", got)

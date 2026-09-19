@@ -4,6 +4,20 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Your MCP servers' tokens now stay outside filtered boxes too. A shared MCP server that
+  authenticates with `bearer_token_env_var` reaches its host through Coop's credential broker: the
+  box's copy of the MCP configuration points it at a local listener with a stand-in valid only for
+  that server and run, and the real token is added on the way out. Your own token variable no
+  longer reaches any filtered box, and a remote session's editor adapter is handed only the stand-in.
+  A bearer server declared SSE is refused under filtered networking — give it its streamable HTTP
+  URL. Claude now also sends a `bearer_token_env_var` token at all: the pinned Claude ignores that
+  field, so Coop hands it the equivalent `Authorization` header. Open and offline runs keep their
+  current MCP handling for now.
+
+- A filtered run no longer drops a connection that opens at the same moment as another: the
+  credential broker now waits its turn at the network controller as every other connection does,
+  and a DNS answer that arrives already expired is asked for again instead of refused.
+
 - API keys now work in every filtered run, not only a single direct agent: peers, preset roles,
   consult and delegate helpers, loop reviewers, editor (ACP) sessions and remote sessions can use a
   Claude, Codex or Gemini API key, and keys of different providers can share one box. Each key

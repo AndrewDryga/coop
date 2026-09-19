@@ -507,7 +507,7 @@ func TestAssembleArgsNormalModeGolden(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: dir, BaseImage: "coop-box", MCPFile: filepath.Join(dir, "mcp.json"), MCPInBox: "/home/node/.mcp.json", Egress: "open", ConsultTimeout: "30"}
 	t.Setenv("TZ", "America/Merida")
-	spec := RunSpec{Image: "coop-box", Repo: "/repo", Cmd: []string{"claude"}, Agent: "claude", Homes: true, Cache: true, Network: true, Serve: true, RunID: "run-1", SuperviseDescendants: true, ExtraArgs: []string{"-e", "X=1"}}
+	spec := RunSpec{Image: "coop-box", Repo: "/repo", Cmd: []string{"claude"}, Agent: "claude", Homes: true, Cache: true, Network: true, Serve: true, RunID: "run-1", SuperviseDescendants: true, ExtraArgs: []string{"-e", "X=1"}, claudeMCPFile: cfg.MCPFile}
 	mounts := []Mount{{Kind: Bind, Source: "/repo", Target: "/workspace"}, {Kind: Decoy, Target: "/workspace/.env"}}
 	assemble := func(spec RunSpec) []string {
 		return assembleArgs(cfg, true, spec, mounts, "/d", "/dd", "/workspace", ttyInteractive, true,

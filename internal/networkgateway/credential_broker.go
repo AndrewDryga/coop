@@ -39,9 +39,10 @@ type CredentialBrokerSecrets struct {
 	Routes  []CredentialBrokerSecret `json:"routes"`
 }
 
-// CredentialBrokerSecret is one route's temporary capability and the real key it stands for.
+// CredentialBrokerSecret is one route's temporary capability and the real credential it stands for,
+// bound to its route by name.
 type CredentialBrokerSecret struct {
-	Provider   string `json:"provider"`
+	Name       string `json:"name"`
 	Substitute string `json:"substitute"`
 	Credential string `json:"credential"`
 }
@@ -63,7 +64,7 @@ func ReadCredentialBrokerSecrets(reader io.Reader, config LaunchConfig) (Credent
 	// for one account would unlock the other's key.
 	substitutes := make(map[string]bool, len(value.Routes))
 	for i, route := range value.Routes {
-		if route.Provider != config.Brokers[i].Provider || len(route.Substitute) < 32 || len(route.Substitute) > 256 ||
+		if route.Name != config.Brokers[i].Name || len(route.Substitute) < 32 || len(route.Substitute) > 256 ||
 			len(route.Credential) < 8 || len(route.Credential) > 32<<10 || route.Substitute == route.Credential || substitutes[route.Substitute] ||
 			strings.ContainsAny(route.Substitute, "\x00\r\n") || strings.ContainsAny(route.Credential, "\x00\r\n") {
 			return CredentialBrokerSecrets{}, invalid
@@ -90,7 +91,7 @@ type credentialBroker struct {
 
 func newCredentialBroker(config LaunchConfig, index int, secret CredentialBrokerSecret, clock *BootClock, doh *DoH, events *GuardEvents, controller ControllerClient) (*credentialBroker, error) {
 	if index < 0 || index >= len(config.Brokers) || !config.Brokers[index].valid() || clock == nil || doh == nil || events == nil ||
-		secret.Provider != config.Brokers[index].Provider {
+		secret.Name != config.Brokers[index].Name {
 		return nil, Failure("credential_broker_configuration_invalid")
 	}
 	route := config.Brokers[index]
@@ -99,7 +100,7 @@ func newCredentialBroker(config LaunchConfig, index int, secret CredentialBroker
 		return nil, Failure("credential_broker_unavailable")
 	}
 	rule := egress.Rule{To: egress.Destination{Domain: route.Upstream}, Protocol: "tls", Ports: []int{route.Port}}
-	policy, err := egress.Compile("broker", egress.Filtered, []egress.Input{{Rules: []egress.Rule{rule}, Origin: egress.Origin{Kind: "broker", Name: route.Provider}}}, nil, false, key[:])
+	policy, err := egress.Compile("broker", egress.Filtered, []egress.Input{{Rules: []egress.Rule{rule}, Origin: egress.Origin{Kind: "broker", Name: route.Name}}}, nil, false, key[:])
 	if err != nil {
 		return nil, Failure("credential_broker_configuration_invalid")
 	}
@@ -109,6 +110,13 @@ func newCredentialBroker(config LaunchConfig, index int, secret CredentialBroker
 	}
 	b := &credentialBroker{route: route, address: CredentialBrokerAddress(index), secret: secret, clock: clock, resolver: resolver,
 		controller: controller, events: events, slots: make(chan struct{}, maxCredentialBrokerFlows)}
+	// A provider streams its headers at once. An MCP server answering a tool call with JSON sends
+	// them only when the tool finishes — minutes for a long runbook — and a 502 there makes the
+	// agent retry a mutation, so only the run's own lifetime bounds that wait.
+	headerTimeout := credentialBrokerTimeout
+	if route.Kind == CredentialBrokerMCP {
+		headerTimeout = 0
+	}
 	transport := &http.Transport{
 		Proxy:                  nil,
 		DialContext:            b.dial,
@@ -120,7 +128,7 @@ func newCredentialBroker(config LaunchConfig, index int, secret CredentialBroker
 		MaxIdleConnsPerHost:    maxCredentialBrokerFlows,
 		IdleConnTimeout:        time.Minute,
 		TLSHandshakeTimeout:    credentialBrokerTimeout,
-		ResponseHeaderTimeout:  credentialBrokerTimeout,
+		ResponseHeaderTimeout:  headerTimeout,
 		MaxResponseHeaderBytes: 1 << 20,
 	}
 	b.transport = transport
@@ -156,7 +164,7 @@ func (b *credentialBroker) setProxy(transport http.RoundTripper) {
 			reason := safeReason(err)
 			message := "credential broker unavailable"
 			if reason == "credential_broker_redirect_refused" {
-				message = "credential broker refused an upstream redirect"
+				message = "credential broker refused an upstream redirect; configure the server's final URL"
 			} else {
 				reason = "credential_broker_upstream_unavailable"
 			}
@@ -244,15 +252,7 @@ func (b *credentialBroker) dial(ctx context.Context, network, address string) (n
 	if err != nil || len(resolution.Addresses) == 0 {
 		return nil, Failure("credential_broker_upstream_unavailable")
 	}
-	peer := resolution.Addresses[(b.peerCursor.Add(1)-1)%uint64(len(resolution.Addresses))]
-	until, err := b.controller.AdmitBroker(admission, Lease{Name: resolution.Name, Peer: peer, Port: b.route.Port, Expires: resolution.Expires})
-	if err == Failure("dns_ttl_expired") {
-		resolution, err = b.resolver.refresh(admission, resolution)
-		if err == nil && len(resolution.Addresses) != 0 {
-			peer = resolution.Addresses[(b.peerCursor.Add(1)-1)%uint64(len(resolution.Addresses))]
-			until, err = b.controller.AdmitBroker(admission, Lease{Name: resolution.Name, Peer: peer, Port: b.route.Port, Expires: resolution.Expires})
-		}
-	}
+	_, peer, until, err := admitLease(admission, b.resolver, &b.peerCursor, resolution, b.route.Port, b.controller.AdmitBroker)
 	if err != nil {
 		return nil, Failure("credential_broker_upstream_unavailable")
 	}

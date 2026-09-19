@@ -225,9 +225,29 @@ func (r *Resolver) Resolve(ctx context.Context, name string) (Resolution, error)
 	}
 }
 
+// resolverRolloverPause is how long a lookup waits after an answer that arrived already expired
+// before asking again.
+var resolverRolloverPause = time.Second
+
 func (r *Resolver) lookup(ctx context.Context, name string) (Resolution, error) {
 	ctx, cancel := context.WithTimeout(ctx, DNSQueryTimeout)
 	defer cancel()
+	resolution, err := r.lookupChain(ctx, name)
+	if err != Failure("dns_ttl_expired") {
+		return resolution, err
+	}
+	// An upstream cache hands out a record in its last second with TTL 0 and refetches it a moment
+	// later. Without the pause a CDN name whose records live seconds (Akamai's: 20 s) fails a flow
+	// at every expiry — and the failure is cached for a second, so an immediate refresh fails too.
+	select {
+	case <-ctx.Done():
+		return Resolution{}, Failure("dns_unavailable")
+	case <-time.After(resolverRolloverPause):
+	}
+	return r.lookupChain(ctx, name)
+}
+
+func (r *Resolver) lookupChain(ctx context.Context, name string) (Resolution, error) {
 	started := r.now()
 	if !started.Valid() {
 		return Resolution{}, Failure("clock_unavailable")

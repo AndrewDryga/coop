@@ -9,9 +9,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/net/dns/dnsmessage"
+
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -24,7 +31,7 @@ func testCredentialBroker(t *testing.T, upstream http.RoundTripper) (*credential
 	clock := testBootClock()
 	clock.read = func() (BootInstant, error) { return now, nil }
 	b := &credentialBroker{
-		route:   CredentialBrokerRoute{Provider: "claude", Upstream: "api.anthropic.com", Header: "x-api-key", Method: "POST", Path: "/v1/messages", Port: 443},
+		route:   CredentialBrokerRoute{Name: "claude", Kind: CredentialBrokerProvider, Upstream: "api.anthropic.com", Header: "x-api-key", Methods: []string{"POST"}, Path: "/v1/messages", Port: 443},
 		address: CredentialBrokerAddress(0),
 		secret:  CredentialBrokerSecret{Substitute: strings.Repeat("s", 64), Credential: "real-secret-key"},
 		clock:   clock, events: NewGuardEvents(clock), slots: make(chan struct{}, maxCredentialBrokerFlows),
@@ -71,8 +78,8 @@ func TestCredentialBrokerSupportsBearerAndNarrowProviderPathPrefixes(t *testing.
 		}
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("ok"))}, nil
 	}))
-	b.route = CredentialBrokerRoute{Provider: "codex", Upstream: "api.openai.com", Header: "authorization",
-		HeaderPrefix: "Bearer ", Method: "POST", Path: "/v1/responses", PathPrefix: true, Port: 443}
+	b.route = CredentialBrokerRoute{Name: "codex", Kind: CredentialBrokerProvider, Upstream: "api.openai.com", Header: "authorization",
+		HeaderPrefix: "Bearer ", Methods: []string{"POST"}, Path: "/v1/responses", PathPrefix: true, Port: 443}
 	b.setProxy(b.proxy.Transport)
 
 	request := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader("{}"))
@@ -85,9 +92,10 @@ func TestCredentialBrokerSupportsBearerAndNarrowProviderPathPrefixes(t *testing.
 	}
 
 	// A sibling endpoint, including one the prefix reaches only once the upstream normalizes a dot
-	// segment, a doubled slash or an encoded slash.
+	// segment, a doubled slash or an encoded slash — and a slash-terminated path, which only an
+	// exact route's own path may be.
 	for _, target := range []string{"/v1/chat/completions", "/v1/responses_other", "/v1/responses/../chat/completions",
-		"/v1/responses/%2e%2e/chat/completions", "/v1/responses//compact", "/v1/responses%2Fcompact"} {
+		"/v1/responses/%2e%2e/chat/completions", "/v1/responses//compact", "/v1/responses%2Fcompact", "/v1/responses/", "/v1/responses/compact/"} {
 		request = httptest.NewRequest(http.MethodPost, target, strings.NewReader("{}"))
 		request.Host = CredentialBrokerAddress(0)
 		request.Header.Set("Authorization", "Bearer "+strings.Repeat("s", 64))
@@ -99,6 +107,70 @@ func TestCredentialBrokerSupportsBearerAndNarrowProviderPathPrefixes(t *testing.
 	}
 }
 
+// An MCP route carries the protocol's own traffic — POST a message, GET the stream, DELETE the
+// session — to its one exact path with the real token in place of the substitute, and nothing else.
+func TestCredentialBrokerCarriesAnMCPSessionToItsExactEndpoint(t *testing.T) {
+	var seen []string
+	b, _ := testCredentialBroker(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Header.Get("Authorization") != "Bearer real-secret-key" || request.Host != "mcp.example.com" {
+			t.Fatalf("brokered MCP request = %#v", request)
+		}
+		seen = append(seen, request.Method+" "+request.URL.Path)
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Mcp-Session-Id": {"s1"}}, Body: io.NopCloser(strings.NewReader("ok"))}, nil
+	}))
+	b.route = CredentialBrokerRoute{Name: "mcp-1", Kind: CredentialBrokerMCP, Upstream: "mcp.example.com", Header: "authorization",
+		HeaderPrefix: "Bearer ", Methods: []string{"POST", "GET", "DELETE"}, Path: "/mcp", Port: 443}
+	b.setProxy(b.proxy.Transport)
+	send := func(method, target string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, target, strings.NewReader(""))
+		request.Host = CredentialBrokerAddress(0)
+		request.Header.Set("Authorization", "Bearer "+strings.Repeat("s", 64))
+		request.Header.Set("Mcp-Session-Id", "s1")
+		recorder := httptest.NewRecorder()
+		b.handler().ServeHTTP(recorder, request)
+		return recorder
+	}
+	for _, method := range []string{http.MethodPost, http.MethodGet, http.MethodDelete} {
+		if recorder := send(method, "/mcp"); recorder.Code != http.StatusOK || recorder.Header().Get("Mcp-Session-Id") != "s1" {
+			t.Fatalf("%s /mcp returned %d %#v", method, recorder.Code, recorder.Header())
+		}
+	}
+	for _, refused := range [][2]string{{http.MethodPut, "/mcp"}, {http.MethodPost, "/mcp/other"}, {http.MethodPost, "/mcp?next=x"}, {http.MethodPost, "/"}} {
+		if recorder := send(refused[0], refused[1]); recorder.Code != http.StatusForbidden {
+			t.Fatalf("%s %s returned %d", refused[0], refused[1], recorder.Code)
+		}
+	}
+	if !slices.Equal(seen, []string{"POST /mcp", "GET /mcp", "DELETE /mcp"}) {
+		t.Fatalf("upstream saw %q", seen)
+	}
+}
+
+// A provider streams its headers at once; an MCP server answering a tool call with JSON sends them
+// only when the tool finishes, so only the run's lifetime bounds that wait.
+func TestCredentialBrokerWaitsForAnMCPToolsResponseHeaders(t *testing.T) {
+	config := testLaunch(t)
+	config.Brokers = []CredentialBrokerRoute{
+		{Name: "claude", Kind: CredentialBrokerProvider, Upstream: "api.anthropic.com", Header: "x-api-key", Methods: []string{"POST"}, Path: "/v1/messages", Port: 443},
+		{Name: "mcp-1", Kind: CredentialBrokerMCP, Upstream: "mcp.example.com", Header: "authorization", HeaderPrefix: "Bearer ",
+			Methods: []string{"POST", "GET", "DELETE"}, Path: "/mcp", Port: 443},
+	}
+	clock := testBootClock()
+	doh, err := NewDoH(netip.MustParseAddrPort("1.1.1.1:443"), "cloudflare-dns.com", nil, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []time.Duration{credentialBrokerTimeout, 0} {
+		secret := CredentialBrokerSecret{Name: config.Brokers[i].Name, Substitute: strings.Repeat("s", 64), Credential: "real-secret-key"}
+		b, err := newCredentialBroker(config, i, secret, clock, doh, NewGuardEvents(clock), ControllerClient{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b.transport.ResponseHeaderTimeout != want {
+			t.Fatalf("%s response header timeout = %s, want %s", config.Brokers[i].Kind, b.transport.ResponseHeaderTimeout, want)
+		}
+	}
+}
+
 func TestCredentialBrokerAllowsQueryOnlyWhenAdapterDeclaresIt(t *testing.T) {
 	b, _ := testCredentialBroker(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if request.URL.RawQuery != "alt=sse" || request.Header.Get("X-Goog-Api-Key") != "real-secret-key" {
@@ -106,8 +178,8 @@ func TestCredentialBrokerAllowsQueryOnlyWhenAdapterDeclaresIt(t *testing.T) {
 		}
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("ok"))}, nil
 	}))
-	b.route = CredentialBrokerRoute{Provider: "gemini", Upstream: "generativelanguage.googleapis.com", Header: "x-goog-api-key",
-		Method: "POST", Path: "/v1beta/models/", PathPrefix: true, AllowQuery: true, Port: 443}
+	b.route = CredentialBrokerRoute{Name: "gemini", Kind: CredentialBrokerProvider, Upstream: "generativelanguage.googleapis.com", Header: "x-goog-api-key",
+		Methods: []string{"POST"}, Path: "/v1beta/models/", PathPrefix: true, AllowQuery: true, Port: 443}
 	b.setProxy(b.proxy.Transport)
 
 	request := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini:streamGenerateContent?alt=sse", strings.NewReader("{}"))
@@ -256,12 +328,12 @@ func TestCredentialBrokerOccupiedPortFailsBeforeReadiness(t *testing.T) {
 func TestCredentialBrokerSecretsAreBoundToOneGatewayGeneration(t *testing.T) {
 	config := testLaunch(t)
 	config.Brokers = []CredentialBrokerRoute{
-		{Provider: "claude", Upstream: "api.anthropic.com", Header: "x-api-key", Method: "POST", Path: "/v1/messages", Port: 443},
-		{Provider: "claude", Upstream: "api.anthropic.com", Header: "x-api-key", Method: "POST", Path: "/v1/messages", Port: 443},
+		{Name: "claude", Kind: CredentialBrokerProvider, Upstream: "api.anthropic.com", Header: "x-api-key", Methods: []string{"POST"}, Path: "/v1/messages", Port: 443},
+		{Name: "claude", Kind: CredentialBrokerProvider, Upstream: "api.anthropic.com", Header: "x-api-key", Methods: []string{"POST"}, Path: "/v1/messages", Port: 443},
 	}
 	secrets := CredentialBrokerSecrets{Version: 2, RunID: config.RunID, Epoch: config.Epoch, Routes: []CredentialBrokerSecret{
-		{Provider: "claude", Substitute: strings.Repeat("s", 64), Credential: "real-work-key"},
-		{Provider: "claude", Substitute: strings.Repeat("t", 64), Credential: "real-personal-key"},
+		{Name: "claude", Substitute: strings.Repeat("s", 64), Credential: "real-work-key"},
+		{Name: "claude", Substitute: strings.Repeat("t", 64), Credential: "real-personal-key"},
 	}}
 	data, _ := json.Marshal(secrets)
 	if _, err := ReadCredentialBrokerSecrets(bytes.NewReader(data), config); err != nil {
@@ -271,7 +343,7 @@ func TestCredentialBrokerSecretsAreBoundToOneGatewayGeneration(t *testing.T) {
 		"other run":         func(s *CredentialBrokerSecrets) { s.RunID = strings.Repeat("c", 32) },
 		"other epoch":       func(s *CredentialBrokerSecrets) { s.Epoch = strings.Repeat("d", 32) },
 		"older format":      func(s *CredentialBrokerSecrets) { s.Version = 1 },
-		"other provider":    func(s *CredentialBrokerSecrets) { s.Routes[1].Provider = "codex" },
+		"other provider":    func(s *CredentialBrokerSecrets) { s.Routes[1].Name = "codex" },
 		"same key":          func(s *CredentialBrokerSecrets) { s.Routes[0].Credential = s.Routes[0].Substitute },
 		"shared capability": func(s *CredentialBrokerSecrets) { s.Routes[1].Substitute = s.Routes[0].Substitute },
 		"a route missing":   func(s *CredentialBrokerSecrets) { s.Routes = s.Routes[:1] },
@@ -334,11 +406,90 @@ func TestCredentialBrokerRoutesAreBoundToTheirOwnListener(t *testing.T) {
 	}
 }
 
+// The controller runs one kernel update at a time and answers the rest gateway_lease_capacity. A
+// broker flow that opens beside another — a client starting its MCP servers with its model call —
+// waits its turn as a guarded flow does, instead of failing the tool call.
+func TestCredentialBrokerWaitsOutAConcurrentLeaseUpdate(t *testing.T) {
+	config := testLaunch(t)
+	config.Brokers = []CredentialBrokerRoute{{Name: "mcp-0", Kind: CredentialBrokerMCP, Upstream: "mcp.example.com", Header: "authorization", HeaderPrefix: "Bearer ",
+		Methods: []string{"POST", "GET", "DELETE"}, Path: "/mcp", Port: 443}}
+	clock := testBootClock()
+	var holding atomic.Bool
+	applying, release := make(chan struct{}), make(chan struct{})
+	c, err := NewController(Identity{Clock: clock.Domain(), RunID: config.RunID, Epoch: config.Epoch, PolicyFingerprint: config.Policy.Fingerprint},
+		config.Policy, nil, nil, nil, nil, netip.Addr{}, config.Brokers, clock, func(_ context.Context, rules string) error {
+			if strings.HasPrefix(rules, "flush set") && holding.CompareAndSwap(false, true) {
+				close(applying)
+				<-release
+			}
+			return nil
+		})
+	if err != nil || c.Initialize(context.Background(), netip.MustParseAddr("1.1.1.1")) != nil {
+		t.Fatal("controller setup", err)
+	}
+	fixed := testBootNow()
+	c.now = func() BootInstant { return fixed } // the held update never outlives its own bound
+	var asks atomic.Int32
+	client, _, _ := startControlFixture(t, c, func(*net.UnixConn) bool { asks.Add(1); return true })
+	letGo := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(letGo)
+	doh, err := NewDoH(netip.MustParseAddrPort("1.1.1.1:443"), "cloudflare-dns.com", nil, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := CredentialBrokerSecret{Name: "mcp-0", Substitute: strings.Repeat("s", 64), Credential: "real-token"}
+	b, err := newCredentialBroker(config, 0, secret, clock, doh, NewGuardEvents(clock), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.resolver.exchange = answerExchange(t, func(name string) []dnsmessage.Resource {
+		return []dnsmessage.Resource{aRecord(name, "93.184.216.34", 60)}
+	})
+
+	held := make(chan error, 1)
+	go func() {
+		_, err := client.Admit(context.Background(), Lease{Name: "api.example.com", Port: 443, Peer: netip.MustParseAddr("93.184.216.34"), Expires: fixed.Add(time.Minute)})
+		held <- err
+	}()
+	select {
+	case <-applying:
+	case <-time.After(wait.Deadline):
+		t.Fatal("the first kernel update did not start")
+	}
+	before := asks.Load()
+	dialed := make(chan struct{})
+	go func() {
+		defer close(dialed)
+		if conn, err := b.dial(context.Background(), "tcp", "mcp.example.com:443"); err == nil {
+			_ = conn.Close() // no Envoy in a unit test: the lease is what this proves
+		}
+	}()
+	// A second ask means the first was refused while the other update held the kernel.
+	wait.For(t, "the broker to ask again after a busy reply", func() bool { return asks.Load() >= before+2 })
+	letGo()
+	select {
+	case <-dialed:
+	case <-time.After(wait.Deadline):
+		t.Fatal("broker dial leaked")
+	}
+	if err := <-held; err != nil {
+		t.Fatal("the held update failed", err)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, lease := range c.leases {
+		if lease.Name == "mcp.example.com" {
+			return
+		}
+	}
+	t.Fatal("the broker gave up on a busy controller instead of waiting its turn")
+}
+
 func TestControllerKeepsBrokerLeaseOutOfAgentPolicy(t *testing.T) {
 	policy := testPolicy(t)
 	clock := testBootClock()
-	route := CredentialBrokerRoute{Provider: "claude", Upstream: "api.anthropic.com", Header: "x-api-key", Method: "POST", Path: "/v1/messages", Port: 443}
-	codex := CredentialBrokerRoute{Provider: "codex", Upstream: "api.openai.com", Header: "authorization", HeaderPrefix: "Bearer ", Method: "POST", Path: "/v1/responses", Port: 443}
+	route := CredentialBrokerRoute{Name: "claude", Kind: CredentialBrokerProvider, Upstream: "api.anthropic.com", Header: "x-api-key", Methods: []string{"POST"}, Path: "/v1/messages", Port: 443}
+	codex := CredentialBrokerRoute{Name: "codex", Kind: CredentialBrokerProvider, Upstream: "api.openai.com", Header: "authorization", HeaderPrefix: "Bearer ", Methods: []string{"POST"}, Path: "/v1/responses", Port: 443}
 	c, err := NewController(Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32), PolicyFingerprint: policy.Fingerprint},
 		policy, nil, nil, nil, nil, netip.Addr{}, []CredentialBrokerRoute{route, codex}, clock, func(context.Context, string) error { return nil })
 	if err != nil || c.Initialize(context.Background(), netip.MustParseAddr("1.1.1.1")) != nil {

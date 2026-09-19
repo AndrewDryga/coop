@@ -84,6 +84,7 @@ type filteredExecution struct {
 	// mountpoint lives inside the daemon VM and is not a host path an agent could redirect.
 	taskVolume  string
 	broker      *credentialBrokerRun
+	mcpScrub    []string        // the configured MCP file's token variables, kept out of the box env
 	authMarkers map[string]bool // frozen before admission; agent-writable profile state cannot widen env authority
 }
 
@@ -169,6 +170,23 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 			return nil, fmt.Errorf("%s's API is also granted to the agent directly by this network policy; remove that grant so its key stays outside the box", credentialBrokerAgentName(route.provider))
 		}
 	}
+	// Bearer MCP servers ride the same broker — for a box whose agents load the file; a raw box
+	// consumes none, so a route there would only be a capability nobody needs. A direct grant of a
+	// brokered host needs no refusal: the box never holds the token.
+	if len(credentialScope(cfg, spec)) != 0 {
+		if brokerPlan, err = planMCPRoutes(cfg, spec, spec.mcpSnapshot, brokerPlan); err != nil {
+			return nil, err
+		}
+	}
+	scrub, err := mcpScrub(cfg, spec)
+	if err != nil {
+		return nil, err
+	}
+	if spec.Serve {
+		if err := brokerPlan.checkBrokerServePorts(spec.servePorts); err != nil {
+			return nil, err
+		}
+	}
 	// The captured policy decides which ports this run captures, so the serve
 	// check needs it — and it still runs before anything is created.
 	if spec.Serve {
@@ -221,6 +239,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	if brokerPlan != nil {
 		f.broker = &credentialBrokerRun{plan: brokerPlan}
 	}
+	f.mcpScrub = scrub
 	f.unsafeRoots = []string{spec.Repo, project}
 	if roots := ConfigExposureRoots(cfg); len(roots) > 1 {
 		f.unsafeRoots = append(f.unsafeRoots, roots[1:]...)

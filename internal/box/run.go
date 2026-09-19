@@ -164,6 +164,10 @@ type RunSpec struct {
 	// policy before any iteration starts.
 	NetworkAdmission bool `json:"-"`
 	projectEnv       map[string]string
+	// mcpSnapshot is the validated MCP configuration this box loads, if any: what a filtered run
+	// brokers bearer servers from. claudeMCPFile is claude's own view of it, mounted for --mcp-config.
+	mcpSnapshot   []byte
+	claudeMCPFile string
 	// networkSmoke is the host preflight permit. Unexported on purpose: only the
 	// in-package setup workflow can drive a smoke through this same engine, so
 	// what it proves is exactly what a workload later gets.
@@ -481,6 +485,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			mcpPresent = true
 		}
 	}
+	spec.mcpSnapshot = mcpSnapshot
 	var mounts []Mount
 	if !spec.Login {
 		mounts, err = ComputeMounts(spec.Repo, workdir)
@@ -662,7 +667,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 	}
 	sections.accounts(launchAccounts(cfg, spec, brokerPlan))
-	sections.internet(cfg, spec, policy)
+	sections.internet(cfg, spec, policy, brokerPlan.mcpServerNames()...)
 	// Whatever a box may reach is fully known before it starts, so the launch
 	// instructions say it. An agent that learns its own boundary by being
 	// refused burns a turn and reports policy as a broken tool or a dead host.
@@ -741,14 +746,26 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	rawMCP := false
 	if mcpPresent {
-		path, err := artifacts.writeFile(artifacts.parent, string(mcpSnapshot))
-		if err != nil {
-			return -1, fmt.Errorf("snapshot mcp.json: %w", err)
+		var brokered map[string]mcp.BrokeredServer
+		if filtered != nil && filtered.broker != nil {
+			brokered = filtered.broker.plan.brokeredServers()
 		}
-		tmpFiles = append(tmpFiles, path)
+		path, claudePath, written, err := writeMCPSnapshots(artifacts, mcpSnapshot, brokered)
+		tmpFiles = append(tmpFiles, written...)
+		if err != nil {
+			return -1, err
+		}
+		spec.claudeMCPFile = claudePath
 		snapshotConfig := *cfg
 		snapshotConfig.MCPFile = path
 		cfg = &snapshotConfig
+	}
+	snapshotPath := ""
+	if mcpPresent {
+		snapshotPath = cfg.MCPFile
+	}
+	if err := filtered.handOffSessionMCP(spec, os.Getenv(SessionMCPHandoffEnv), snapshotPath); err != nil {
+		return -1, err
 	}
 	configAgents := credentialScope(cfg, spec)
 	configForAgent := cfg
@@ -995,13 +1012,17 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if envTmp != "" {
 		tmpFiles = append(tmpFiles, envTmp)
 	}
-	if filtered != nil && filtered.broker != nil {
+	if filtered != nil {
 		brokerEnv, err := filtered.credentialBrokerEnv(artifacts, envFile)
 		if err != nil {
 			return -1, err
 		}
-		envFile = brokerEnv
-		tmpFiles = append(tmpFiles, brokerEnv)
+		// Only a file the step wrote is this run's to mount and remove; with nothing to drop or add
+		// it hands back its input, which may be no file at all.
+		if brokerEnv != envFile {
+			envFile = brokerEnv
+			tmpFiles = append(tmpFiles, brokerEnv)
+		}
 	}
 
 	if err := ctxStep(spec.Ctx, "sibling services"); err != nil {
@@ -2676,7 +2697,7 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 		// Your git environment: identity + signing-off + global gitignore.
 		args = appendROMounts(args, gitMounts)
 		if rawMCP {
-			args = append(args, "-v", cfg.MCPFile+":"+cfg.MCPInBox+":ro")
+			args = append(args, "-v", spec.claudeMCPFile+":"+cfg.MCPInBox+":ro")
 		}
 		args = appendROMounts(args, mcpMounts)
 	}

@@ -70,7 +70,13 @@ logs `method url` and answers 403, and the client's base URL pointed at it — C
 `GOOGLE_GEMINI_BASE_URL` with `settings.json` selecting `gemini-api-key` and
 `GEMINI_CLI_TRUST_WORKSPACE=true`, Codex its managed config's `base_url`. Also re-verify that the
 pinned codex still loads `/etc/codex/managed_config.toml` over `-c`, project and user config: the
-broker's Codex provider rides that file.
+broker's Codex provider rides that file. MCP routes are pinned the same way
+(`TestMCPRoutesAdmitWhatThePinnedClientsSend`): point each client (and claude-agent-acp's bundled SDK
+`claude`) at a local endpoint that answers `initialize`/`tools/list` and logs `method url` plus the
+Authorization shape — claude `--mcp-config` with `headers.Authorization: "Bearer ${VAR}"` (it ignores
+`bearer_token_env_var`), codex `config.toml`, gemini `settings.json`, grok `config.toml` — and move
+the pins. 2026-09-19: every client sends POST (initialize, notifications, tools) and GET (the stream)
+to the exact path with the bearer.
 
 Traps: the strict suites fail on any skip, so every provider needs a signed-in default account whose
 access token outlives the run (a Claude or Grok token hours old is skipped as refresh-required —
@@ -80,6 +86,7 @@ host re-run filtered setup once — a filtered launch does it itself, an editor 
 `coop net setup`.
 
 ## Changelog
+- 2026-09-19 — added the MCP request-line pins and their capture.
 - 2026-09-19 — the broker serves consult peers, ACP and remote sessions on filtered networking;
   added the request-line capture to the bump procedure.
 - 2026-09-19 — created with the one-manifest base image, update controls, the qualification tooling

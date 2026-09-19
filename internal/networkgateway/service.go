@@ -38,8 +38,15 @@ const (
 	MaintenanceResolverName = "cloudflare-dns.com"
 	CredentialBrokerPort    = 15580 // route 0's listener; route i listens on CredentialBrokerPort+i
 	CredentialBrokerPath    = "/run/coop-credential-broker.json"
-	// MaxCredentialBrokerRoutes bounds the brokered provider accounts one run can select.
-	MaxCredentialBrokerRoutes = 8
+	// MaxCredentialBrokerRoutes bounds one run's brokered routes: a provider route per selected
+	// account kind (at most 8) and a route per bearer-authenticated MCP server (at most 64).
+	MaxCredentialBrokerRoutes = 72
+)
+
+// A brokered route is a provider's API or one bearer-authenticated MCP server.
+const (
+	CredentialBrokerProvider = "provider"
+	CredentialBrokerMCP      = "mcp"
 )
 
 // CredentialBrokerAddress is route i's listener on the gateway loopback the agent shares.
@@ -92,41 +99,64 @@ type LaunchConfig struct {
 	Brokers []CredentialBrokerRoute `json:"credential_brokers,omitempty"`
 }
 
-// CredentialBrokerRoute is one exact provider endpoint, not a user policy or forward-proxy rule.
+// CredentialBrokerRoute is one exact endpoint a brokered credential reaches — a provider's API, or
+// one bearer-authenticated MCP server — not a user policy or forward-proxy rule.
 type CredentialBrokerRoute struct {
-	Provider     string `json:"provider"`
-	Upstream     string `json:"upstream"`
-	Header       string `json:"header"`
-	HeaderPrefix string `json:"header_prefix,omitempty"`
-	Method       string `json:"method"`
-	Path         string `json:"path"`
-	PathPrefix   bool   `json:"path_prefix,omitempty"`
-	AllowQuery   bool   `json:"allow_query,omitempty"`
-	Port         int    `json:"port"`
+	Name         string   `json:"name"` // the provider, or mcp-<i> for a tool server
+	Kind         string   `json:"kind"`
+	Upstream     string   `json:"upstream"`
+	Header       string   `json:"header"`
+	HeaderPrefix string   `json:"header_prefix,omitempty"`
+	Methods      []string `json:"methods"`
+	Path         string   `json:"path"`
+	PathPrefix   bool     `json:"path_prefix,omitempty"`
+	AllowQuery   bool     `json:"allow_query,omitempty"`
+	Port         int      `json:"port"`
 }
 
 func (r CredentialBrokerRoute) valid() bool {
 	name, err := egress.NormalizeDomain(r.Upstream, false)
-	return err == nil && name == r.Upstream && r.Provider != "" && len(r.Provider) <= 32 &&
-		strings.Trim(r.Provider, "abcdefghijklmnopqrstuvwxyz0123456789-") == "" &&
-		r.Header != "" && strings.ToLower(r.Header) == r.Header &&
-		r.Method == "POST" && strings.HasPrefix(r.Path, "/") &&
-		!strings.ContainsAny(r.Path, "?#\x00\r\n") && !strings.ContainsAny(r.HeaderPrefix, "\x00\r\n") && r.Port == 443
+	if err != nil || name != r.Upstream || r.Name == "" || len(r.Name) > 32 ||
+		strings.Trim(r.Name, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" ||
+		r.Header == "" || strings.ToLower(r.Header) != r.Header || !strings.HasPrefix(r.Path, "/") ||
+		strings.ContainsAny(r.Path, "?#\x00\r\n") || strings.ContainsAny(r.HeaderPrefix, "\x00\r\n") || r.Port != 443 {
+		return false
+	}
+	switch r.Kind {
+	case CredentialBrokerProvider:
+		return slices.Equal(r.Methods, []string{"POST"})
+	case CredentialBrokerMCP:
+		// A streamable-HTTP endpoint: its exact path, the methods the protocol uses (POST a
+		// message, GET the stream, DELETE the session), a bearer token and no query.
+		if len(r.Methods) == 0 || r.PathPrefix || r.AllowQuery || r.Header != "authorization" || r.HeaderPrefix != "Bearer " {
+			return false
+		}
+		for i, method := range r.Methods {
+			if method != "GET" && method != "POST" && method != "DELETE" || slices.Contains(r.Methods[:i], method) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // Admits reports whether a request line fits the route's one endpoint: its method, its exact path
 // (or one under it for a prefix route), and a query only where the adapter declared its client
 // sends one. The path must already be in its one clean form: a dot segment, a doubled slash or a
-// second encoding would let a prefix route name a sibling endpoint once the upstream normalizes it.
+// second encoding would let a prefix route name a sibling endpoint once the upstream normalizes
+// it. Only an exact route's path may end in a slash (MCP endpoints like /mcp/ do) — it is then
+// matched literally.
 func (r CredentialBrokerRoute) Admits(method string, target *url.URL) bool {
-	if path.Clean(target.Path) != target.Path || target.RawPath != "" && target.RawPath != target.Path {
+	if clean := path.Clean(target.Path); clean != target.Path && (r.PathPrefix || clean+"/" != target.Path) ||
+		target.RawPath != "" && target.RawPath != target.Path {
 		return false
 	}
 	pathMatches := target.Path == r.Path
 	if r.PathPrefix {
 		pathMatches = pathMatches || strings.HasPrefix(target.Path, strings.TrimSuffix(r.Path, "/")+"/")
 	}
-	return method == r.Method && pathMatches && (r.AllowQuery || target.RawQuery == "") && !target.IsAbs()
+	return slices.Contains(r.Methods, method) && pathMatches && (r.AllowQuery || target.RawQuery == "") && !target.IsAbs()
 }
 
 type ServiceBinding struct {

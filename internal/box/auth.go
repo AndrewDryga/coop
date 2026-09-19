@@ -238,6 +238,15 @@ func scopedHostCredentialEnv(cfg *config.Config, spec RunSpec, userEnv map[strin
 	return values, nil
 }
 
+// DropEnvKeys is an env file without the given keys — their assignments and bare imports alike.
+func DropEnvKeys(data []byte, keys []string) []byte {
+	drop := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		drop[key] = true
+	}
+	return []byte(filteredEnvContent(data, drop))
+}
+
 func filteredEnvContent(data []byte, drop map[string]bool) string {
 	lines := strings.Split(string(data), "\n")
 	kept := make([]string, 0, len(lines))

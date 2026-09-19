@@ -711,3 +711,20 @@ func TestGuardRefusedSingleLabelQueryIsNamedByItsLabel(t *testing.T) {
 		}
 	}
 }
+
+// Contention is waited out only within the flow's admission budget: a controller that stays busy
+// fails the flow with that reason instead of holding it forever.
+func TestLeaseContentionEndsWithTheAdmissionBudget(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	var cursor atomic.Uint64
+	resolution := Resolution{Name: "api.example.com", Addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}, Expires: testBootNow().Add(time.Minute)}
+	asks := 0
+	_, _, _, err := admitLease(ctx, nil, &cursor, resolution, 443, func(context.Context, Lease) (BootInstant, error) {
+		asks++
+		return 0, Failure("gateway_lease_capacity")
+	})
+	if err != Failure("gateway_lease_capacity") || asks < 2 {
+		t.Fatalf("a busy controller ended with %v after %d asks", err, asks)
+	}
+}

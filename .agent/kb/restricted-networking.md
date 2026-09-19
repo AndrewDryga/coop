@@ -210,6 +210,12 @@ Traps:
   env (`projectSessionKey`), removed after the turn and again by the session janitor. A sign-in box
   classifies nothing (`brokeredProviders` returns early): it receives no key, and its sign-in
   endpoints must stay granted.
+- Bearer MCP servers ride the same broker, as `mcp`-kind routes after the provider routes (exact
+  URL path, POST/GET/DELETE, no header timeout; 8 provider + 64 MCP routes, 15580–15651): the box
+  gets `COOP_MCP_TOKEN_<i>` stand-ins and a rewritten snapshot, the operator's token variables never
+  enter any filtered box, and each bearer server's host is withheld from the agent's own grants. A
+  direct grant of such a host needs no refusal — the box never holds the token. Details and the
+  session handoff: [[mcp-authority-projection]].
 - A filtered box renews its own OAuth login: it mounts the provider profile like an open box
   (`box/run.go`, the `-v` of `cfg.AgentDir`), and every bundle carries the refresh host (Claude
   `platform.claude.com`, Codex `auth.openai.com`, Grok `auth.x.ai`, whose token endpoint is
@@ -234,6 +240,7 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-19 — bearer MCP servers ride the broker under filtered networking.
 - 2026-09-19 — the broker serves every selected API-key account (one route and listener per
   provider, lead to ACP and remote sessions); the Codex hookup moved from lead-only `-c` argv to a
   per-run managed config; recorded the three live-found traps (the Claude query, the caller-owned

@@ -95,16 +95,48 @@ func TestGatewayLaunchConfigurationIsBoundedAndConcrete(t *testing.T) {
 	}
 }
 
+// An MCP route is one streamable-HTTP endpoint: its exact path, the protocol's three methods, a
+// bearer token and no query — nothing that widens it into a prefix or a second credential shape.
+func TestGatewayLaunchConfigurationBoundsAnMCPRoute(t *testing.T) {
+	config := testLaunch(t)
+	mcp := CredentialBrokerRoute{Name: "mcp-1", Kind: CredentialBrokerMCP, Upstream: "mcp.example.com", Header: "authorization",
+		HeaderPrefix: "Bearer ", Methods: []string{"POST", "GET", "DELETE"}, Path: "/mcp", Port: 443}
+	config.Brokers = []CredentialBrokerRoute{mcp}
+	if err := config.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*CredentialBrokerRoute){
+		"a path prefix":     func(r *CredentialBrokerRoute) { r.PathPrefix = true },
+		"a query":           func(r *CredentialBrokerRoute) { r.AllowQuery = true },
+		"another header":    func(r *CredentialBrokerRoute) { r.Header = "x-api-key" },
+		"a bare token":      func(r *CredentialBrokerRoute) { r.HeaderPrefix = "" },
+		"another method":    func(r *CredentialBrokerRoute) { r.Methods = []string{"POST", "PUT"} },
+		"a repeated method": func(r *CredentialBrokerRoute) { r.Methods = []string{"POST", "POST"} },
+		"no method":         func(r *CredentialBrokerRoute) { r.Methods = nil },
+		"an uppercase name": func(r *CredentialBrokerRoute) { r.Name = "MCP-1" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := config
+			route := mcp
+			mutate(&route)
+			changed.Brokers = []CredentialBrokerRoute{route}
+			if changed.Validate() == nil {
+				t.Fatal("invalid MCP route accepted")
+			}
+		})
+	}
+}
+
 func TestGatewayLaunchConfigurationKeepsBrokerSeparateAndReserved(t *testing.T) {
 	config := testLaunch(t)
-	claude := CredentialBrokerRoute{Provider: "claude", Upstream: "api.anthropic.com", Header: "x-api-key", Method: "POST", Path: "/v1/messages", Port: 443}
+	claude := CredentialBrokerRoute{Name: "claude", Kind: CredentialBrokerProvider, Upstream: "api.anthropic.com", Header: "x-api-key", Methods: []string{"POST"}, Path: "/v1/messages", Port: 443}
 	config.Brokers = []CredentialBrokerRoute{claude, claude} // two accounts, two listeners
 	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	for name, mutate := range map[string]func(*LaunchConfig){
 		"wildcard upstream": func(c *LaunchConfig) { c.Brokers[1].Upstream = "*.anthropic.com" },
-		"arbitrary method":  func(c *LaunchConfig) { c.Brokers[1].Method = "CONNECT" },
+		"arbitrary method":  func(c *LaunchConfig) { c.Brokers[1].Methods = []string{"CONNECT"} },
 		"arbitrary path":    func(c *LaunchConfig) { c.Brokers[1].Path = "/v1/messages?next=elsewhere" },
 		"other port":        func(c *LaunchConfig) { c.Brokers[1].Port = 8443 },
 		"serve collision": func(c *LaunchConfig) {
@@ -116,6 +148,8 @@ func TestGatewayLaunchConfigurationKeepsBrokerSeparateAndReserved(t *testing.T) 
 				c.Brokers = append(c.Brokers, claude)
 			}
 		},
+		"unknown kind":     func(c *LaunchConfig) { c.Brokers[1].Kind = "proxy" },
+		"provider methods": func(c *LaunchConfig) { c.Brokers[1].Methods = []string{"POST", "GET"} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := config

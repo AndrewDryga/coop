@@ -763,6 +763,19 @@ func ReadValidatedSnapshot(path string) ([]byte, bool, error) {
 	if len(servers) == 0 {
 		return nil, false, nil
 	}
+	// Coop's broker hands a box its stand-ins under this prefix; an operator's reference to one
+	// could read a substitute as its token, or collide with a route's.
+	for _, name := range sortedKeys(servers) {
+		references := []string{servers[name].BearerTokenEnvVar}
+		for _, value := range servers[name].Headers {
+			references = append(references, headerReferences(envValueString(value))...)
+		}
+		for _, reference := range references {
+			if strings.HasPrefix(reference, BrokerTokenPrefix) {
+				return nil, false, fmt.Errorf("MCP server %q refers to %s, but Coop reserves the %s prefix", name, reference, BrokerTokenPrefix)
+			}
+		}
+	}
 	return data, true, nil
 }
 

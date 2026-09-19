@@ -957,7 +957,7 @@ An `env` block on a command server (`github` above) reaches that server under ev
 agent, verbatim — values are literal strings, no `$VAR` substitution. To keep a token
 out of `mcp.json`, point `bearer_token_env_var` at a variable (`sentry` above) and put
 the value in the env file: `echo 'SENTRY_TOKEN=…' >> ~/.config/coop/agents/env`. An HTTP
-server's `headers` work for every agent. Grok receives `bearer_token_env_var` as an
+server's `headers` work for every agent. Claude and Grok receive `bearer_token_env_var` as an
 environment-expanded Authorization header; Codex receives a literal value as a static header and a
 value that is exactly one `${VARIABLE}` as the variable's name, so a secret referenced that way is
 resolved by Codex and never written into the generated config. A value that mixes text with a
@@ -973,7 +973,14 @@ it, rather than letting either happen. That applies wherever Codex takes part, i
 
 Under `--egress filtered` a header value may not reference the environment at all, for any agent:
 the approved network policy is compiled from literal definitions, so `${…}` is refused there before
-launch.
+launch. A `bearer_token_env_var` token stays outside a filtered box: Coop's credential broker holds
+it and sends it upstream, while the box's copy of the file points the server at a loopback listener
+and names a Coop-owned stand-in variable (`COOP_MCP_TOKEN_<n>`) valid only for that server and run.
+Your own variable in Coop's env file (`SENTRY_TOKEN` above) never reaches a filtered box, whether
+or not the box loads MCP; a session's ACP adapter is handed the stand-in, never the token. A bearer
+server declared SSE is refused there — it names its own message endpoint at runtime, so no fixed
+route can carry its token — so give it its streamable HTTP URL. Open and offline runs are unchanged
+for now.
 
 The example's Playwright server works in the box out of the box: Chromium's system
 libraries are baked into the image, the browser binary downloads to the cache volume on

@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -27,10 +29,14 @@ type credentialRoute struct {
 	shadowMarker string
 }
 
-// credentialPlan is every brokered route one run selects, in listener order: route i is served at
-// networkgateway.CredentialBrokerAddress(i). A box holds one account per provider, so a plan has at
-// most one route per provider — every teammate of that provider in the box shares it.
-type credentialPlan struct{ routes []*credentialRoute }
+// credentialPlan is every brokered route one run selects, in listener order: the provider routes,
+// then the MCP routes, route i served at networkgateway.CredentialBrokerAddress(i). A box holds one
+// account per provider, so a plan has at most one route per provider — every teammate of that
+// provider in the box shares it — and one route per bearer-authenticated MCP server.
+type credentialPlan struct {
+	routes []*credentialRoute
+	mcp    []*mcpRoute
+}
 
 func (p *credentialPlan) route(provider string) (int, *credentialRoute) {
 	if p != nil {
@@ -138,8 +144,8 @@ func selectCredentialPlanWithMarkers(cfg *config.Config, spec RunSpec, markers m
 	if spec.Mode.Restricted() {
 		return nil, fmt.Errorf("%s %s needs filtered networking, which the read-only and bare modes cannot use yet; sign in with the provider instead", credentialBrokerAgentName(first.provider), first.spec.CredentialEnv)
 	}
-	if len(plan.routes) > networkgateway.MaxCredentialBrokerRoutes {
-		return nil, fmt.Errorf("one run can protect at most %d API-key accounts", networkgateway.MaxCredentialBrokerRoutes)
+	if len(plan.routes) > maxProviderRoutes {
+		return nil, fmt.Errorf("one run can protect at most %d API-key accounts", maxProviderRoutes)
 	}
 	return plan, nil
 }
@@ -293,11 +299,21 @@ func (p *credentialPlan) gatewayRoutes() []networkgateway.CredentialBrokerRoute 
 	if p == nil {
 		return nil
 	}
-	routes := make([]networkgateway.CredentialBrokerRoute, 0, len(p.routes))
+	routes := make([]networkgateway.CredentialBrokerRoute, 0, len(p.routes)+len(p.mcp))
 	for _, r := range p.routes {
-		routes = append(routes, networkgateway.CredentialBrokerRoute{Provider: r.provider, Upstream: r.spec.Upstream,
-			Header: r.spec.Header, HeaderPrefix: r.spec.HeaderPrefix, Method: r.spec.Method,
+		routes = append(routes, networkgateway.CredentialBrokerRoute{Name: r.provider, Kind: networkgateway.CredentialBrokerProvider,
+			Upstream: r.spec.Upstream, Header: r.spec.Header, HeaderPrefix: r.spec.HeaderPrefix, Methods: []string{r.spec.Method},
 			Path: r.spec.Path, PathPrefix: r.spec.PathPrefix, AllowQuery: r.spec.AllowQuery, Port: r.spec.Port})
+	}
+	for j, r := range p.mcp {
+		// The path a request carries is decoded before the gateway compares it.
+		decoded, err := url.PathUnescape(r.path)
+		if err != nil {
+			decoded = r.path // planMCPRoutes took it from a parsed URL, so this cannot happen
+		}
+		routes = append(routes, networkgateway.CredentialBrokerRoute{Name: "mcp-" + strconv.Itoa(p.mcpListener(j)),
+			Kind: networkgateway.CredentialBrokerMCP, Upstream: r.upstream, Header: "authorization", HeaderPrefix: "Bearer ",
+			Methods: []string{"POST", "GET", "DELETE"}, Path: decoded, Port: 443})
 	}
 	return routes
 }
@@ -311,16 +327,23 @@ func (f *filteredExecution) prepareCredentialBroker(artifacts compositionArtifac
 		return errors.New("credential broker artifact ownership changed")
 	}
 	secrets := networkgateway.CredentialBrokerSecrets{Version: 2, RunID: f.record.ID, Epoch: f.record.Epoch}
-	f.broker.substitutes = make([]string, len(f.broker.plan.routes))
-	for i, route := range f.broker.plan.routes {
+	routes := f.broker.plan.gatewayRoutes()
+	f.broker.substitutes = make([]string, len(routes))
+	for i, route := range routes {
 		random := make([]byte, 32)
 		if _, err := rand.Read(random); err != nil {
 			return errors.New("create credential broker substitute")
 		}
 		f.broker.substitutes[i] = hex.EncodeToString(random)
-		secrets.Routes = append(secrets.Routes, networkgateway.CredentialBrokerSecret{Provider: route.provider,
-			Substitute: f.broker.substitutes[i], Credential: route.credential})
-		route.credential = ""
+		var credential string
+		if i < len(f.broker.plan.routes) {
+			credential, f.broker.plan.routes[i].credential = f.broker.plan.routes[i].credential, ""
+		} else {
+			mcpRoute := f.broker.plan.mcp[i-len(f.broker.plan.routes)]
+			credential, mcpRoute.token = mcpRoute.token, ""
+		}
+		secrets.Routes = append(secrets.Routes, networkgateway.CredentialBrokerSecret{Name: route.Name,
+			Substitute: f.broker.substitutes[i], Credential: credential})
 	}
 	data, err := json.Marshal(secrets)
 	for i := range secrets.Routes {
@@ -371,17 +394,25 @@ func (f *filteredExecution) checkCredentialBrokerBinding() error {
 // keys and base URL are dropped, and its capability and route URL take their place. One environment
 // serves the whole box, so every teammate of that provider reaches the same route.
 func (f *filteredExecution) credentialBrokerEnv(artifacts compositionArtifactOps, source string) (string, error) {
-	if f.broker == nil || f.broker.plan == nil {
-		return source, nil
+	var plan *credentialPlan
+	if f.broker != nil {
+		plan = f.broker.plan
 	}
+	// The configured MCP file's token variables never enter a filtered box, whatever it loads.
 	drop := map[string]bool{}
-	for _, route := range f.broker.plan.routes {
+	for _, name := range f.mcpScrub {
+		drop[name] = true
+	}
+	for _, route := range plan.routesOrNil() {
 		drop[route.spec.BaseURLEnv] = true
 		if agent, ok := agents.Get(route.provider); ok {
 			for _, key := range agent.CredentialEnvKeys() {
 				drop[key] = true
 			}
 		}
+	}
+	if len(drop) == 0 && len(plan.mcpRoutesOrNil()) == 0 {
+		return source, nil
 	}
 	content := ""
 	if source != "" {
@@ -394,9 +425,12 @@ func (f *filteredExecution) credentialBrokerEnv(artifacts compositionArtifactOps
 	if content != "" {
 		content += "\n"
 	}
-	for i, route := range f.broker.plan.routes {
+	for i, route := range plan.routesOrNil() {
 		content += route.spec.CredentialEnv + "=" + f.broker.substitutes[i] + "\n"
-		content += route.spec.BaseURLEnv + "=" + f.broker.plan.baseURL(i) + "\n"
+		content += route.spec.BaseURLEnv + "=" + plan.baseURL(i) + "\n"
+	}
+	for j := range plan.mcpRoutesOrNil() {
+		content += plan.mcpTokenEnv(j) + "=" + f.broker.substitutes[plan.mcpListener(j)] + "\n"
 	}
 	path, err := artifacts.writeFile(artifacts.parent, content)
 	if err != nil {

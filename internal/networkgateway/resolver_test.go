@@ -255,7 +255,16 @@ func TestResolverCNAMEChainIsPlumbingNotAnotherAgentGrant(t *testing.T) {
 	}
 }
 
+// quickRollover shortens the pause before the resolver asks again for an answer that arrived
+// already expired, so a test of that path does not wait the real second.
+func quickRollover(t *testing.T) {
+	pause := resolverRolloverPause
+	resolverRolloverPause = time.Millisecond
+	t.Cleanup(func() { resolverRolloverPause = pause })
+}
+
 func TestResolverMalformedChainsAndExpiredTTLFailClosed(t *testing.T) {
+	quickRollover(t)
 	tests := map[string][]dnsmessage.Resource{
 		"cycle":                 {cnameRecord("api.example.com", "other.example.net", 10), cnameRecord("other.example.net", "api.example.com", 10)},
 		"cname and address":     {cnameRecord("api.example.com", "other.example.net", 10), aRecord("api.example.com", "1.1.1.1", 10)},
@@ -280,6 +289,24 @@ func TestResolverMalformedChainsAndExpiredTTLFailClosed(t *testing.T) {
 	}))
 	if _, err := r.Resolve(context.Background(), "api.example.com"); err == nil || calls > MaxCNAMEs+1 {
 		t.Fatalf("unbounded CNAME chain: calls=%d err=%v", calls, err)
+	}
+}
+
+// An upstream cache answers a record in its last second with TTL 0, then refetches it: one pause and
+// a second question get the fresh record instead of failing the flow — and a name that keeps
+// answering expired still fails closed.
+func TestResolverAsksAgainAfterAnAnswerThatArrivedExpired(t *testing.T) {
+	quickRollover(t)
+	var calls atomic.Int64
+	r := newTestResolver(t, answerExchange(t, func(name string) []dnsmessage.Resource {
+		ttl := uint32(20)
+		if calls.Add(1) == 1 {
+			ttl = 0
+		}
+		return []dnsmessage.Resource{cnameRecord(name, "edge.example.net", 3600), aRecord("edge.example.net", "1.1.1.1", ttl)}
+	}))
+	if got, err := r.Resolve(context.Background(), "api.example.com"); err != nil || len(got.Addresses) != 1 || calls.Load() != 2 {
+		t.Fatalf("resolution after a rollover = %#v, %v (exchanges %d)", got, err, calls.Load())
 	}
 }
 

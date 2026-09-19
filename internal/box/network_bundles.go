@@ -249,6 +249,9 @@ func networkMCPDependenciesOf(snapshot []byte) ([]egress.Input, error) {
 		if server.URL == "" {
 			continue // a stdio command is not a destination grant
 		}
+		if server.Auth == "bearer-env" {
+			continue // the credential broker reaches it with the token; the agent gets no grant of its own
+		}
 		parsed, _ := url.Parse(server.URL) // NetworkServers validated the literal URL
 		rules, err := egress.NormalizeRules([]egress.Rule{{To: egress.Destination{Domain: parsed.Hostname()}, Protocol: "tls", Ports: []int{443}}})
 		if err != nil {

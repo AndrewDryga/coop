@@ -2,7 +2,7 @@
 name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
-sources: [internal/mcp/mcp.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
+sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/box/mcp_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
 updated: 2026-09-19
 ---
 
@@ -95,10 +95,30 @@ the launch: Gemini itself leaves a missing placeholder literal, so interpolation
 denial check. Normal, ACP and nested Gemini all use this boundary. This check happens after setup,
 before the provider; it does not promise that no daemon or sidecar was started.
 
+**Filtered runs broker bearer servers** (`box/mcp_broker.go`, `mcp/broker.go`). Every
+`bearer_token_env_var` server becomes a route of the run's credential broker after the provider
+routes (`planMCPRoutes`; listener i, route name `mcp-<i>`, kind `mcp`: exact URL path, POST/GET/
+DELETE, no response-header timeout). The rewrite happens ONCE, before any projection:
+`mcp.RouteThroughBroker` points each server at `http://127.0.0.1:<port><path>` and renames its
+variable to `COOP_MCP_TOKEN_<i>` (renaming is required — two servers sharing one operator variable
+need two stand-ins), so generated configs, claude's file and a session's ACP list all follow it. The
+operator's variables — every name the CONFIGURED file references, read from the source even for a
+box that loads no MCP (`mcpScrubNames`) — are dropped from a filtered box's env, and the
+`COOP_MCP_TOKEN_` prefix is reserved in operator input (`ReadValidatedSnapshot`). An SSE bearer
+server, a missing token or one set through `-e` refuses by name. The pinned claude IGNORES
+`bearer_token_env_var` (captured 2026-09-19: no Authorization at all) and expands `${VAR}` in a
+header, so claude's mount is `mcp.ClaudeView` — the snapshot with each bearer turned into
+`Authorization: Bearer ${NAME}` — in every non-restricted mode (restricted modes mount no MCP file). A filtered SESSION child writes its lead adapter's
+final ACP list to the daemon-named `COOP_SESSION_MCP_HANDOFF` file before its container starts; the
+daemon renders nothing pre-spawn for it, reads the file once after `initialize` (bound to the run
+id), and refuses the turn without it. A filtered session that withholds MCP drops the source's token
+names from its private env copy. Residual: only names the configured file references are scrubbed
+— a leftover token elsewhere in the env file still rides a filtered box's env.
+
 Credential scope is not proof of command consumption. `credentialScope` answers whose login may be
 mounted, while `nestedAgentCommand` answers whether an explicit peer or a consult/delegate role can
-actually spawn that provider CLI (a native role runs in the lead's own session and spawns none). The raw snapshot mount exists only for an outer
-ordinary command or such a nested consumer. In particular, a plain Claude ACP run does not gain the
+actually spawn that provider CLI (a native role runs in the lead's own session and spawns none).
+Claude's snapshot mount exists only for an outer ordinary command or such a nested consumer. In particular, a plain Claude ACP run does not gain the
 ordinary CLI's `--mcp-config` mount; `claude-agent-acp` uses the protocol projection instead.
 
 The adapter owns both halves of nested wiring. Claude declares the trusted in-box snapshot path in
@@ -109,6 +129,9 @@ adds ordinary `CommandArgs` must decide whether its nested commands need an equi
 mounting the raw snapshot for every scoped credential is not the fallback.
 
 ## Changelog
+- 2026-09-19 — filtered runs broker bearer MCP servers (one rewrite before every projection, stand-in
+  variables, source-derived scrub, session handoff); claude's mount became `mcp.ClaudeView` because
+  the pinned claude ignores `bearer_token_env_var`.
 - 2026-09-19 — native preset roles are never demoted to consults any more; nestedAgentCommand line re-verified.
 - 2026-09-18 — Codex's header support corrected: it takes `http_headers` and `env_http_headers`
   beside `bearer_token_env_var`, qualified against the pinned 0.153.4 binary, so the card's

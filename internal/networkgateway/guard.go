@@ -315,37 +315,7 @@ func (g *Guard) forwardTLS(flow, admission context.Context, client net.Conn, dat
 		g.events.emit(GuardEvent{Kind: "admission_failed", Name: hello.Name, Service: service, Reason: "dns_no_address"})
 		return
 	}
-	peer := resolution.Addresses[(g.peerCursor.Add(1)-1)%uint64(len(resolution.Addresses))]
-	var until BootInstant
-	refreshed := false
-	for {
-		until, err = g.controller.Admit(admission, Lease{Name: resolution.Name, Peer: peer, Port: port, Expires: resolution.Expires})
-		if err == Failure("dns_ttl_expired") && !refreshed {
-			// The controller reserves a kernel-commit margin before DNS expiry.
-			// Do not turn that safe margin into a recurring short-TTL outage.
-			refreshed = true
-			resolution, err = g.resolver.refresh(admission, resolution)
-			if err != nil || len(resolution.Addresses) == 0 {
-				if err == nil {
-					err = Failure("dns_no_address")
-				}
-				break
-			}
-			peer = resolution.Addresses[(g.peerCursor.Add(1)-1)%uint64(len(resolution.Addresses))]
-			continue
-		}
-		if err != Failure("gateway_lease_capacity") {
-			break
-		}
-		// Bounded contention retry belongs to this flow, not the heartbeat.
-		select {
-		case <-admission.Done():
-			err = Failure("gateway_lease_capacity")
-		case <-time.After(10 * time.Millisecond):
-			continue
-		}
-		break
-	}
+	resolution, peer, until, err := admitLease(admission, g.resolver, &g.peerCursor, resolution, port, g.controller.Admit)
 	if err != nil {
 		g.events.emit(GuardEvent{Kind: "admission_failed", Name: hello.Name, Service: service, Reason: safeReason(err)})
 		return
@@ -377,6 +347,41 @@ func (g *Guard) forwardTLS(flow, admission context.Context, client net.Conn, dat
 	}
 	hello.Bytes = nil
 	pipeBoth(client, private)
+}
+
+// admitLease installs the kernel lease one flow dials under — a guarded flow's and a credential
+// broker's alike. The controller reserves a kernel-commit margin before DNS expiry, so an answer
+// inside it is refreshed once rather than becoming a recurring short-TTL outage. And it runs one
+// kernel transaction at a time, answering every concurrent one gateway_lease_capacity: that is
+// contention, not a verdict, so the flow asks again until its admission budget ends — flows that
+// open together, like a client starting its MCP servers beside its model call, must not fail each
+// other.
+func admitLease(admission context.Context, resolver *Resolver, cursor *atomic.Uint64, resolution Resolution, port int, admit func(context.Context, Lease) (BootInstant, error)) (Resolution, netip.Addr, BootInstant, error) {
+	peer := resolution.Addresses[(cursor.Add(1)-1)%uint64(len(resolution.Addresses))]
+	refreshed := false
+	for {
+		until, err := admit(admission, Lease{Name: resolution.Name, Peer: peer, Port: port, Expires: resolution.Expires})
+		switch {
+		case err == Failure("dns_ttl_expired") && !refreshed:
+			refreshed = true
+			if resolution, err = resolver.refresh(admission, resolution); err == nil && len(resolution.Addresses) == 0 {
+				err = Failure("dns_no_address")
+			}
+			if err != nil {
+				return resolution, peer, 0, err
+			}
+			peer = resolution.Addresses[(cursor.Add(1)-1)%uint64(len(resolution.Addresses))]
+		case err == Failure("gateway_lease_capacity"):
+			// Bounded contention retry belongs to this flow, not the heartbeat.
+			select {
+			case <-admission.Done():
+				return resolution, peer, 0, err
+			case <-time.After(10 * time.Millisecond):
+			}
+		default:
+			return resolution, peer, until, err
+		}
+	}
 }
 
 func (g *Guard) replay(admission context.Context, private net.Conn, header, hello []byte, until BootInstant) error {

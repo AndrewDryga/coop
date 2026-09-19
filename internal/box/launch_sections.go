@@ -194,7 +194,9 @@ func (s *launchSections) accounts(rows []accountRow) {
 // internet is the one stable section every mode shares. A filtered run lists what the frozen
 // policy allows and only then claims the rest is blocked; an open run and an offline run get a
 // warning under the same heading, never a green row.
-func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egress.Snapshot) {
+// brokeredMCP names the MCP servers the run reaches through its credential broker: allowed like the
+// rest, though the agent's own policy holds no grant for them.
+func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egress.Snapshot, brokeredMCP ...string) {
 	if !s.on {
 		return
 	}
@@ -203,7 +205,7 @@ func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egre
 	s.section("Configuring network access")
 	switch {
 	case policy != nil:
-		for _, row := range networkAllowances(*policy) {
+		for _, row := range networkAllowances(*policy, brokeredMCP...) {
 			ui.Pass("%s", row)
 		}
 		ui.Pass("Everything else blocked")
@@ -223,7 +225,7 @@ func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egre
 // approved (the project's rules and this run's --allow-domain/--egress-rules), the MCP servers
 // coop configured. Every grant lands in one of these rows — or in the catch-all last one — so
 // the closing "Everything else blocked" is never claimed over an omitted allowance.
-func networkAllowances(policy egress.Snapshot) []string {
+func networkAllowances(policy egress.Snapshot, brokeredMCP ...string) []string {
 	var vendors []string
 	provider := func(name string) {
 		if ag, ok := agents.Get(name); ok {
@@ -239,6 +241,9 @@ func networkAllowances(policy egress.Snapshot) []string {
 		provider(dependency.Provider)
 	}
 	approved, servers := map[string]bool{}, map[string]bool{}
+	for _, name := range brokeredMCP {
+		servers[name] = true
+	}
 	other := 0
 	for _, grant := range policy.Grants {
 		represented := false

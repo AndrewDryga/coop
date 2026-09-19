@@ -115,6 +115,19 @@ retain their existing access-only copies. A remote session hands its child a sel
 way the host keeps it, in the session's private host-side config, and removes it after each turn
 and when the session closes.
 
+**MCP servers' bearer tokens stay outside a filtered box too.** Each shared MCP server that
+authenticates with `bearer_token_env_var` becomes one more route of the run's broker, after the
+provider routes. The box's copy of the MCP configuration points the server at the route's loopback
+listener and names a Coop-owned variable, `COOP_MCP_TOKEN_<n>`, holding a stand-in valid only for
+that route and run; the guard sends the real token upstream. The route admits the server's exact
+URL path and the methods the MCP protocol uses (POST, GET, DELETE), and waits as long as a tool
+call takes. The operator's own variable in Coop's env file never reaches a filtered box, whether or
+not that box loads MCP, and a session's ACP adapter is handed the stand-in. Each bearer server's
+host is withheld from the agent's own policy. A bearer server declared SSE (it names its own message
+endpoint at runtime), a missing token, or one set through `-e` stops the launch, naming the server.
+A remote session's Responder state tools ride the same kind of route. Open and offline runs keep
+their current MCP handling for now.
+
 A `service:` grant is a request like any other: it is approved by a human and names one service.
 For a filtered run, Coop recreates that service and its dependencies on a project-owned internal
 network before starting them. Those services can talk to each other directly, but the network has
