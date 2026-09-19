@@ -135,6 +135,9 @@ func renderConsult(as []consultInput) string {
 # wrapper holds the box open and the handoff un-completes a finished task.
 set -u
 umask 077
+# A peer is its own client, so it runs on the PATH the box started with (coop-entry), not the
+# lead's: Codex prepends its vendored rg, which Gemini refuses as untrusted without looking further.
+PATH=${COOP_BOX_PATH:-$PATH}
 
 consult_prompt_limit=` + strconv.Itoa(consultPromptLimitBytes) + `
 consult_context_limit=` + strconv.Itoa(consultContextLimitBytes) + `

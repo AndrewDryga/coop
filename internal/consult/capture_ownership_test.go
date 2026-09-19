@@ -121,6 +121,28 @@ printf '{"type":"result","status":"success"}\n'`)
 	}
 }
 
+// A peer is its own client, so it runs on the box's PATH, not the lead's. A Codex lead prepends its
+// vendored rg to every command it runs, and the pinned Gemini refuses an rg outside a trusted system
+// directory without looking further down PATH: a consult from a Codex lead lost ripgrep.
+func TestConsultPeerRunsOnTheBoxPath(t *testing.T) {
+	dir := consultStubDir(t)
+	lead := t.TempDir() // the lead client's own tool directory
+	writeStub(t, lead, "rg", "exit 0")
+	seen := filepath.Join(dir, "peer-path")
+	writeStub(t, dir, "gemini", `printf '%s' "$PATH" >"`+seen+`"
+printf '{"type":"message","role":"assistant","content":"OK"}\n'
+printf '{"type":"result","status":"success"}\n'`)
+	boxPath := dir + ":" + os.Getenv("PATH")
+	cmd := consultWrapperCommand(t, dir, "")
+	cmd.Env = append(cmd.Env, "PATH="+lead+":"+boxPath, "COOP_BOX_PATH="+boxPath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("consult failed: %v\n%s", err, out)
+	}
+	if got, err := os.ReadFile(seen); err != nil || string(got) != boxPath {
+		t.Fatalf("the peer ran on PATH %q (%v), want the box's %q", got, err, boxPath)
+	}
+}
+
 // freezeReaders stops every capture drain in pgid and returns them, so the caller can let them go
 // again. Stopping the reader is the only portable way to make a drain slow without making it stuck.
 func freezeReaders(t *testing.T, pgid int) []int {

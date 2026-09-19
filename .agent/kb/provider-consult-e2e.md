@@ -2,7 +2,7 @@
 name: provider-consult-e2e
 description: Verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring
 subsystem: testing
-sources: [Makefile, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/consult_shell.go, internal/agent/role_health.go, internal/agent/testdata/login-failures/README.md, internal/preset/wrapper.go, internal/loop/telemetry.go, internal/loop/streamjson_providers.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go]
+sources: [Makefile, internal/box/image.go, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/consult_shell.go, internal/agent/role_health.go, internal/agent/testdata/login-failures/README.md, internal/preset/wrapper.go, internal/loop/telemetry.go, internal/loop/streamjson_providers.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go]
 updated: 2026-09-19
 ---
 
@@ -44,6 +44,16 @@ event or valid token usage. No version guessed from the selected model name.
 Same-target calls serialize on a private lock. The Coop image uses `flock`, so the kernel releases
 ownership after an unclean exit. A custom image without `flock` uses a fail-closed `mkdir` fallback;
 after confirming no consult is active, remove its private `.lock.d` directory.
+
+Both wrappers run their arms on `COOP_BOX_PATH`, the PATH `coop-entry` recorded when the box
+started, never on the lead's. A lead client prepends its own tool directories to every command it
+runs — Codex 0.153 its vendored `codex-path` (holding its own `rg`) and an arg0 helper directory —
+and the pinned Gemini takes the FIRST `rg` on PATH, accepts it only under a trusted system prefix
+(`/usr/bin`, `/bin`, `/usr/local/bin`, …) and never looks further: a Codex lead cost every Gemini
+consult and delegate ripgrep ("Ripgrep is not available. Falling back to GrepTool."). Unset — an
+image whose entrypoint is not coop-entry, the scripted fixture — the caller's PATH stands. A test
+that runs a wrapper must pin the variable, since a coop box sets it for everything inside:
+`internal/consult/main_test.go` unsets it, the delegate harness scrubs `COOP_*`.
 
 Preset role health shares the host-created private `<run>.peers.jsonl` ledger with usage rows.
 Wrappers resolve the Git top level when they append, so a consult launched from a monorepo
@@ -94,6 +104,8 @@ in final/state/log. Wrapper fixtures preserve a partial reply at exit0; they do 
 native lead carries its caveats through synthesis. No prose-to-verdict parser is involved.
 
 ## Changelog
+- 2026-09-19 — both wrappers run their arms on `COOP_BOX_PATH` (recorded by coop-entry): a Codex
+  lead's vendored `rg` on PATH made every Gemini consult fall back to GrepTool.
 - 2026-09-19 — `coop_login_rejected` rendered from AuthSignals over stderr + `<provider>_errors`; parity test
 - 2026-09-19 — the delegate hands a permanent failure (126/127, a refused login on stderr) to its next
   rung and quarantines it; its tree snapshot now excludes the run ledger, which had stopped every

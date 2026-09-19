@@ -127,6 +127,39 @@ func baseDockerfile(t testing.TB) string {
 	return df
 }
 
+// entrypointScript is the base image's coop-entry, cut from the heredoc that installs it.
+func entrypointScript(t testing.TB) string {
+	t.Helper()
+	const start = "COPY <<'ENTRY' /usr/local/bin/coop-entry\n"
+	const end = "\nENTRY\nRUN chmod +x /usr/local/bin/coop-entry"
+	_, entrypoint, ok := strings.Cut(baseDockerfile(t), start)
+	if !ok {
+		t.Fatal("base Dockerfile has no coop-entry heredoc")
+	}
+	entrypoint, _, ok = strings.Cut(entrypoint, end)
+	if !ok {
+		t.Fatal("base Dockerfile coop-entry heredoc is unterminated")
+	}
+	return entrypoint
+}
+
+// coop-entry records the PATH the box started with, overriding whatever an env file carried, so the
+// consult and delegate wrappers can hand their arms the box's PATH instead of a lead client's.
+func TestEntrypointRecordsTheBoxPath(t *testing.T) {
+	entry := filepath.Join(t.TempDir(), "coop-entry")
+	if err := os.WriteFile(entry, []byte(entrypointScript(t)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// An empty PATH directory keeps the entry's asdf provisioning off this host.
+	boxPath := t.TempDir() + ":/opt/coop/bin"
+	cmd := exec.Command("/bin/sh", entry, "/bin/sh", "-c", `printf %s "$COOP_BOX_PATH"`)
+	cmd.Env = []string{"PATH=" + boxPath, "COOP_BOX_PATH=/from/an/env/file"}
+	out, err := cmd.CombinedOutput()
+	if err != nil || string(out) != boxPath {
+		t.Fatalf("the provider saw COOP_BOX_PATH %q (%v), want the box's own %q", out, err, boxPath)
+	}
+}
+
 // The base installs the qualified clients from the embedded lock — never a floating package, a
 // piped installer or a package fetched at build time — with the template fully resolved.
 func TestBaseDockerfileInstallsTheQualifiedClients(t *testing.T) {

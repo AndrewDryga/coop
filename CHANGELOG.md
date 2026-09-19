@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Gemini consults and delegated tasks started from a Codex lead search with ripgrep again, instead
+  of falling back to a slower search. `coop-consult` and `coop-delegate` now run each peer on the
+  box's own PATH rather than the lead's, which carried Codex's private copy of `rg` — one Gemini
+  refuses to use.
+
 - Your MCP servers' tokens now stay outside filtered boxes too. A shared MCP server that
   authenticates with `bearer_token_env_var` reaches its host through Coop's credential broker: the
   box's copy of the MCP configuration points it at a local listener with a stand-in valid only for

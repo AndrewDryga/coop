@@ -290,18 +290,7 @@ func buildRuntimeInitProbe(t *testing.T, rt runtime.Runtime) string {
 func buildRuntimeEntrypointImage(t *testing.T, rt runtime.Runtime) string {
 	t.Helper()
 	dir := t.TempDir()
-	entrypoint := baseDockerfile(t)
-	const start = "COPY <<'ENTRY' /usr/local/bin/coop-entry\n"
-	const end = "\nENTRY\nRUN chmod +x /usr/local/bin/coop-entry"
-	_, entrypoint, ok := strings.Cut(entrypoint, start)
-	if !ok {
-		t.Fatal("base Dockerfile has no coop-entry heredoc")
-	}
-	entrypoint, _, ok = strings.Cut(entrypoint, end)
-	if !ok {
-		t.Fatal("base Dockerfile coop-entry heredoc is unterminated")
-	}
-	if err := os.WriteFile(filepath.Join(dir, "coop-entry"), []byte(entrypoint), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "coop-entry"), []byte(entrypointScript(t)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	dockerfile := "FROM alpine:3.21\nRUN apk add --no-cache util-linux socat\nCOPY coop-entry /usr/local/bin/coop-entry\nENTRYPOINT [\"/usr/local/bin/coop-entry\"]\n"

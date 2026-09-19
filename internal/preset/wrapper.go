@@ -126,6 +126,9 @@ const delegateWrapperTmpl = `#!/bin/sh
 # Git/filesystem snapshot and Git history remain unchanged.
 set -u
 umask 077
+# A delegate is its own client, so it runs on the PATH the box started with (coop-entry), not the
+# lead's: Codex prepends its vendored rg, which Gemini refuses as untrusted without looking further.
+PATH=${COOP_BOX_PATH:-$PATH}
 delegate_stream_limit=@@STREAM_LIMIT@@
 delegate_prompt_limit=@@PROMPT_LIMIT@@
 delegate_snapshot_blocks=@@SNAPSHOT_BLOCKS@@

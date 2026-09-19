@@ -308,6 +308,27 @@ func TestDelegateWrapperFallsBackOnRateLimit(t *testing.T) {
 	}
 }
 
+// A delegate is its own client, so it runs on the box's PATH, not the lead's: a Codex lead prepends
+// its vendored rg to every command it runs, which cost a Gemini role ripgrep (the consult side:
+// TestConsultPeerRunsOnTheBoxPath).
+func TestDelegateRunsOnTheBoxPath(t *testing.T) {
+	h := newDelegateHarness(t)
+	lead := t.TempDir() // the lead client's own tool directory
+	if err := os.WriteFile(filepath.Join(lead, "rg"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seen := filepath.Join(h.dir, "delegate-path")
+	h.stub("gemini", `printf '%s' "$PATH" >"`+seen+`"; echo work`)
+	boxPath := h.dir + ":" + os.Getenv("PATH")
+	h.env = append(h.env, "PATH="+lead+":"+boxPath, "COOP_BOX_PATH="+boxPath)
+	if out, code := h.run("fast", "Implement the thing"); code != 0 {
+		t.Fatalf("exit = %d:\n%s", code, out)
+	}
+	if got, err := os.ReadFile(seen); err != nil || string(got) != boxPath {
+		t.Fatalf("the delegate ran on PATH %q (%v), want the box's %q", got, err, boxPath)
+	}
+}
+
 // refusedLogin is a stub body that answers as a pinned client did when its login was refused: the
 // captured stdout and stderr (internal/agent/testdata/login-failures), and a failing exit.
 func refusedLogin(t *testing.T, provider, capture, calls string) string {

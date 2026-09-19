@@ -160,6 +160,12 @@ if [ -n "$COOP_FORWARD" ] && command -v socat >/dev/null 2>&1; then
   IFS=$oldifs
 fi
 
+# The PATH the box started with, for coop-consult and coop-delegate to hand their arms: a lead's
+# client prepends its own tool directories to every command it runs (Codex its vendored rg), and an
+# arm is another client, not the lead's shell.
+COOP_BOX_PATH=$PATH
+export COOP_BOX_PATH
+
 [ "$COOP_SUPERVISE_DESCENDANTS" = 1 ] || exec "$@"
 
 # Reserved results are returned only by this supervisor. A provider that exits with either code
