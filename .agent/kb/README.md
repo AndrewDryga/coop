@@ -75,7 +75,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [doctor-report-accounting](doctor-report-accounting.md) — how `coop doctor` counts: the 35 checks, the outcomes a row can have, and why a failed probe adds one failure plus the checks it was carrying
 - [trusted-git-view](trusted-git-view.md) — host git runs under a coop-owned GIT_DIR view with an allowlisted config, so repository-defined filter/textconv/merge drivers never execute; ref-store writes stay on the real git dir
 - [test-fixture-guards-vs-timing-bounds](test-fixture-guards-vs-timing-bounds.md) — a wait that guards a broken fixture is generous (testutil/wait, 60 s); a tight bound is only for timing that IS the behavior, and attributes its phases
-- [repository-source-copies](repository-source-copies.md) — skills and fallback copies retain rooted content authority and validate links only after relocation
+- [repository-source-copies](repository-source-copies.md) — skills and fallback copies retain rooted content authority and validate links only after relocation; a lead's own agents are copied without following any link
 - [credentials-expired-is-a-false-alarm](credentials-expired-is-a-false-alarm.md) — refreshable OAuth stays signed in; re-login required means the stored login cannot recover
 - [credential-presence-is-adapter-declared](credential-presence-is-adapter-declared.md) — adapters own credential presence, selected env authority, and inspectable stored readiness
 - [mcp-authority-projection](mcp-authority-projection.md) — one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope

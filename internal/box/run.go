@@ -28,6 +28,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/taskchannel"
 	"github.com/AndrewDryga/coop/internal/ui"
+	"golang.org/x/sys/unix"
 )
 
 // Container labels coop stamps on its boxes so it can find and tear them down later. The SET
@@ -1709,7 +1710,11 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, artifacts compositionArt
 		// The adapter renders its native-role files and owns their in-home destination. They mount
 		// from a disposable read-only directory, separate from the repo's own live artifacts.
 		if gen := generatedSubagentFiles(spec.Preset, support); len(gen) > 0 {
-			dir, assembleErr := artifacts.assembleAgentsDir(artifacts.parent, gen)
+			// The mount replaces the lead home's own agents directory in the box, so the definitions
+			// the user keeps there ride along — a `subagent:` reference among them — with a generated
+			// role winning a name they share.
+			own := ownAgentFiles(cfg.AgentDir(lead), lead, support.HomeDir)
+			dir, assembleErr := artifacts.assembleAgentsDir(artifacts.parent, append(own, gen...))
 			if assembleErr != nil {
 				err = fmt.Errorf("assemble native roles for %s: %w", lead, assembleErr)
 				return
@@ -2116,17 +2121,90 @@ func generatedSubagentFiles(p *preset.Preset, support agents.NativeSubagentSuppo
 	return out
 }
 
-// assembleAgentsDir builds a host temp dir holding only adapter-rendered native role files. The
-// caller mounts it read-only at the adapter-owned user-level destination and cleans it up.
+// Bounds on the user's own agent definitions carried into a preset box (ownAgentFiles).
+const (
+	maxOwnAgentFiles     = 256
+	maxOwnAgentFileBytes = 1 << 20
+)
+
+// ownAgentFiles reads the definitions the lead's home holds at homeDir (an adapter's in-home agents
+// directory, ".<lead>/…"), which the generated roles are mounted over. The box writes that home but
+// sees it only through its own mounts — an auth file the credential broker covers, the shared ACP
+// directories — so nothing it plants there may redirect the read: each directory below the home is
+// opened relative to its parent, as a directory and never through a link, and so is each entry the
+// listing types a regular file (readOwnAgentFile). A link or FIFO put in place of either is refused
+// instead of reaching a file the box is not shown or blocking the launch. Anything unreadable
+// is left out: a missing helper is the worst that follows, which is what the mount did to all of
+// them before.
+func ownAgentFiles(home, lead, homeDir string) []genFile {
+	sub, ok := strings.CutPrefix(homeDir, "."+lead+"/")
+	if !ok {
+		return nil
+	}
+	dir, err := os.OpenFile(home, os.O_RDONLY|syscall.O_DIRECTORY, 0)
+	if err != nil {
+		return nil
+	}
+	for _, name := range strings.Split(sub, "/") {
+		fd, err := unix.Openat(int(dir.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+		dir.Close()
+		if err != nil {
+			return nil
+		}
+		dir = os.NewFile(uintptr(fd), filepath.Join(dir.Name(), name))
+	}
+	defer dir.Close()
+	entries, err := dir.ReadDir(-1)
+	if err != nil {
+		return nil
+	}
+	slices.SortFunc(entries, func(a, b os.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
+	var own []genFile
+	for _, entry := range entries {
+		if len(own) == maxOwnAgentFiles {
+			break
+		}
+		if !entry.Type().IsRegular() {
+			continue
+		}
+		if data, ok := readOwnAgentFile(dir, entry.Name()); ok {
+			own = append(own, genFile{entry.Name(), string(data)})
+		}
+	}
+	return own
+}
+
+// readOwnAgentFile reads one entry of the agents directory while it is still a regular file within
+// the bound, checked before a byte is read: Go waits in a read from a FIFO a writer holds open, so one
+// swapped in since the listing would otherwise stall the launch for good.
+func readOwnAgentFile(dir *os.File, name string) ([]byte, bool) {
+	fd, err := unix.Openat(int(dir.Fd()), name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, false
+	}
+	file := os.NewFile(uintptr(fd), filepath.Join(dir.Name(), name))
+	defer file.Close()
+	if info, err := file.Stat(); err != nil || !info.Mode().IsRegular() || info.Size() > maxOwnAgentFileBytes {
+		return nil, false
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxOwnAgentFileBytes+1))
+	return data, err == nil && len(data) <= maxOwnAgentFileBytes
+}
+
+// assembleAgentsDir builds a host temp dir holding the files the caller hands it — the user's own
+// definitions, then the adapter-rendered native roles, a later file replacing an earlier one of the
+// same name. The caller mounts it read-only at the adapter-owned user-level destination and cleans
+// it up.
 func assembleAgentsDir(parent string, gen []genFile) (string, error) {
 	dir, err := os.MkdirTemp(parent, "coop-agents-")
 	if err != nil {
 		return "", err
 	}
 	for _, g := range gen {
-		// The name is adapter-rendered data, not a path: anything but a plain local leaf could
-		// place a file outside the dir coop mounts. Refuse it rather than clean it into a name
-		// that happens to land inside — a rewritten role file is not the role that was asked for.
+		// A name is data, not a path — a listed entry is always a plain leaf, an adapter's render
+		// need not be: anything but a plain local leaf could place a file outside the dir coop
+		// mounts. Refuse it rather than clean it into a name that happens to land inside — a
+		// rewritten role file is not the role that was asked for.
 		if !filepath.IsLocal(g.name) || filepath.Base(g.name) != g.name || g.name == "." {
 			os.RemoveAll(dir)
 			return "", fmt.Errorf("generated role file %q must be a plain file name", g.name)

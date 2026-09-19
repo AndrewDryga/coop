@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A preset session that generates native roles no longer hides the subagents you keep in the lead
+  client's own agents folder (for example `~/.claude/agents` in Coop's profile for that account):
+  they appear beside Coop's roles, so a `subagent:` reference to one of them works. A file Coop
+  generates wins a name you share, and links in or to that folder are not followed.
+
 - A preset's native role now keeps the mode and write access you gave it. When a lead that could not
   host it took over — a Codex rung after a Claude one, say — Coop quietly ran the role as read-only
   advice instead; now Coop refuses to start and names the role to change. Native roles also work

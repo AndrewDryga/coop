@@ -3196,9 +3196,9 @@ func TestGeneratedSubagentFiles(t *testing.T) {
 	}
 }
 
-// assembleAgentsDir builds a temp dir with ONLY the generated coop-<role> files — the user-level
-// agents mount. The repo's own .claude/agents is deliberately NOT copied in: it stays the live repo
-// mount, so deleting/editing the user's subagents never drags coop's preset roles along.
+// assembleAgentsDir builds a temp dir with ONLY the files it is handed — the user-level agents mount.
+// The repo's own .claude/agents is deliberately NOT copied in: it stays the live repo mount, so
+// deleting/editing the user's subagents never drags coop's preset roles along.
 func TestAssembleAgentsDir(t *testing.T) {
 	dir, err := assembleAgentsDir("", []genFile{{"coop-thinker.md", "generated"}})
 	if err != nil {
@@ -3242,6 +3242,124 @@ func TestPresetRoleMountsNativeTargetsUserAgents(t *testing.T) {
 	}
 	if target != "/home/node/.claude/agents" {
 		t.Fatalf("native agents mount target = %q, want /home/node/.claude/agents (user-level, not the repo's)", target)
+	}
+}
+
+// The generated roles are mounted over the lead home's own agents directory, so the definitions the
+// user keeps there are carried in beside them — on every provider — with a generated role winning a
+// name they share. A link (an agent can plant one in its own home), a directory or an oversized file
+// is left out, and the user's own directory is left as it was.
+func TestPresetRoleMountsKeepTheUsersOwnAgents(t *testing.T) {
+	for _, provider := range agents.Names() {
+		t.Run(provider, func(t *testing.T) {
+			ag, _ := agents.Get(provider)
+			support := ag.NativeSubagents()
+			generated, _ := support.Render(agents.NativeSubagent{Name: "coop-thinker"})
+			cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
+			own := filepath.Join(cfg.AgentDir(provider), strings.TrimPrefix(support.HomeDir, "."+provider+"/"))
+			secret := filepath.Join(t.TempDir(), "host-secret")
+			for path, body := range map[string]string{
+				filepath.Join(own, "user-helper.md"): "the user's helper",
+				filepath.Join(own, generated):        "the user's stale copy",
+				filepath.Join(own, "huge.md"):        strings.Repeat("x", maxOwnAgentFileBytes+1),
+				secret:                               "HOST SECRET",
+			} {
+				writeCopyFixture(t, path, body)
+			}
+			if err := os.Symlink(secret, filepath.Join(own, "linked.md")); err != nil {
+				t.Fatal(err)
+			}
+			// A link is left out even when it stays inside the home.
+			if err := os.Symlink("user-helper.md", filepath.Join(own, "linked-sibling.md")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(own, "nested"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			p := &preset.Preset{LeadTargets: []agents.Target{{Provider: provider}}, Roles: []preset.Role{
+				{Name: "thinker", Mode: preset.ModeNative, Targets: []agents.Target{{Provider: provider}}},
+			}}
+			mounts, _, _, tmpDirs, err := presetRoleMounts(cfg, RunSpec{Homes: true, Preset: p, ConsultLead: provider, Repo: t.TempDir()}, defaultCompositionArtifactOps())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				for _, d := range tmpDirs {
+					os.RemoveAll(d)
+				}
+			}()
+			dir := ""
+			for _, m := range mounts {
+				if m.box == "/home/node/"+support.HomeDir {
+					dir = m.host
+				}
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatalf("no agents mount at %s: %v", support.HomeDir, err)
+			}
+			var names []string
+			for _, entry := range entries {
+				names = append(names, entry.Name())
+			}
+			slices.Sort(names)
+			if want := []string{generated, "user-helper.md"}; !slices.Equal(names, want) {
+				t.Fatalf("mounted agents = %v, want %v", names, want)
+			}
+			if data, _ := os.ReadFile(filepath.Join(dir, "user-helper.md")); string(data) != "the user's helper" {
+				t.Errorf("the user's helper = %q", data)
+			}
+			if data, _ := os.ReadFile(filepath.Join(dir, generated)); !strings.Contains(string(data), "coop-thinker") {
+				t.Errorf("the generated role lost its name to the user's copy: %q", data)
+			}
+			if data, _ := os.ReadFile(filepath.Join(own, generated)); string(data) != "the user's stale copy" {
+				t.Errorf("the user's own directory was changed: %q", data)
+			}
+		})
+	}
+}
+
+// The box can put anything where its home's agents directory was. The launch that copies the
+// definitions must neither read through a link — even one into the home, whose files the box may
+// only see covered, like the auth file a credential broker mounts over — nor wait on a FIFO.
+func TestOwnAgentFilesTakeOnlyARealAgentsDirectory(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		plant func(t *testing.T, home string)
+	}{
+		{"a link out of the home", func(t *testing.T, home string) {
+			hostDir := t.TempDir()
+			writeCopyFixture(t, filepath.Join(hostDir, "id_rsa"), "HOST SECRET")
+			if err := os.Symlink(hostDir, filepath.Join(home, "agents")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"a link into the home", func(t *testing.T, home string) {
+			writeCopyFixture(t, filepath.Join(home, ".credentials.json"), "REAL CREDENTIAL")
+			if err := os.Symlink(".", filepath.Join(home, "agents")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"a FIFO", func(t *testing.T, home string) {
+			if err := syscall.Mkfifo(filepath.Join(home, "agents"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			test.plant(t, home)
+			done := make(chan []genFile, 1)
+			go func() { done <- ownAgentFiles(home, "claude", ".claude/agents") }()
+			select {
+			case own := <-done:
+				if len(own) != 0 {
+					t.Fatalf("read through %s: %+v", test.name, own)
+				}
+			case <-time.After(wait.Deadline):
+				t.Fatalf("the launch blocked on %s", test.name)
+			}
+		})
 	}
 }
 
