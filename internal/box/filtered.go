@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
@@ -159,12 +160,14 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 		return nil, err
 	}
 	authMarkers := profileMarkerSnapshot(cfg)
-	brokerCandidate, err := selectCredentialBrokerWithMarkers(cfg, spec, authMarkers)
+	brokerPlan, err := selectCredentialPlanWithMarkers(cfg, spec, authMarkers)
 	if err != nil {
 		return nil, err
 	}
-	if brokerCandidate != nil && policy.Domain(brokerCandidate.spec.Upstream, brokerCandidate.spec.Port).Allowed {
-		return nil, errors.New("the credential broker upstream is also present in the agent's network policy; remove that direct grant before starting this protected run")
+	for _, route := range brokerPlan.routesOrNil() {
+		if policy.Domain(route.spec.Upstream, route.spec.Port).Allowed {
+			return nil, fmt.Errorf("%s's API is also granted to the agent directly by this network policy; remove that grant so its key stays outside the box", credentialBrokerAgentName(route.provider))
+		}
 	}
 	// The captured policy decides which ports this run captures, so the serve
 	// check needs it — and it still runs before anything is created.
@@ -215,8 +218,8 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 		}
 	}
 	f := &filteredExecution{store: capture.Store, docker: docker, policy: policy, attempted: map[string]bool{}, taskVolume: spec.taskVolume, authMarkers: authMarkers}
-	if brokerCandidate != nil {
-		f.broker = &credentialBrokerRun{candidate: brokerCandidate}
+	if brokerPlan != nil {
+		f.broker = &credentialBrokerRun{plan: brokerPlan}
 	}
 	f.unsafeRoots = []string{spec.Repo, project}
 	if roots := ConfigExposureRoots(cfg); len(roots) > 1 {
@@ -305,7 +308,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 		smoke.registered(f.record)
 	}
 	launch := networkgateway.LaunchConfig{Version: 1, RunID: f.record.ID, Epoch: f.record.Epoch, Policy: policy, Protected: protected,
-		Services: f.services, ServiceProxyClients: f.serviceProxyClients, Serve: servePorts, Ingress: ingress, Broker: brokerCandidate.route()}
+		Services: f.services, ServiceProxyClients: f.serviceProxyClients, Serve: servePorts, Ingress: ingress, Brokers: f.broker.gatewayRoutes()}
 	if err := launch.Validate(); err != nil {
 		return f, err
 	}

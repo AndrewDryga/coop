@@ -712,6 +712,39 @@ func TestForkACPMountsSessionCompanionsReadOnly(t *testing.T) {
 	}
 }
 
+// A fork's ACP launch — the session daemon's turn child — is the agent's own ACP client, so an API
+// key meets the broker's rules, not the refusal for commands that are not the agent. Offline, that
+// rule is the refusal to put the key in a box the filtered gateway does not guard.
+func TestForkACPTreatsAKeyAsTheAgentsOwnClient(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(root, "repo")
+	if err := os.MkdirAll(forkspace.Workspace(repo, "keyed"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configDir := filepath.Join(root, "config")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "env"), []byte("OPENAI_API_KEY=fixture-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{
+		cfg: &config.Config{
+			RepoOverride: repo, ConfigDir: configDir, Homes: true,
+			BoxHome: filepath.Join(root, "box"), HomeInBox: "/home/node",
+			ImageOverride: "test-image", Egress: "none",
+		},
+		rt: recordingRuntime(t, filepath.Join(root, "runtime-args")), rtSet: true,
+	}
+	code, err := a.forkACP("keyed", []string{"codex"})
+	if code == 0 || err == nil || !strings.Contains(err.Error(), "requires filtered networking") {
+		t.Fatalf("offline fork ACP with an API key = (%d, %v), want the filtered-networking refusal", code, err)
+	}
+}
+
 // A live Responder triage turn on 2026-08-18 committed a typo fix before the
 // engineering-task confirmation because its supposedly read-only session was
 // only constrained by prompt text. The trusted session bit must reach the

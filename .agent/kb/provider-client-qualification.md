@@ -2,7 +2,7 @@
 name: provider-client-qualification
 description: every box runs one locked client set; make provider-qualify records a strict live qualification (no record or gate yet — why) — the conformance rows, where each is proven, the gaps, the bump procedure
 subsystem: agent
-sources: [internal/agent/locked_clients.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/acpproxy/e2e_test.go]
+sources: [internal/agent/locked_clients.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go]
 updated: 2026-09-19
 ---
 
@@ -24,10 +24,12 @@ and each reported `<provider>-cli <semver>` equals the pin. It is keyed by `Qual
 the lock's SHA-256 plus, per platform, each client's provider, kind, package/binary, version,
 required executables' versions and native digest (paths stay out — moving a launcher is not a new
 client). **No record exists yet, so no gate enforces one:** on 2026-09-19 the strict suites could
-not pass on any host, because a brokered API key (Gemini's only portable account family) is
-refused on open networking, as a consult peer and in ACP, and Gemini OAuth is host-bound. The first
-record and the gate that fails a pin move without a matching one land with the follow-up task
-(`2026-09-19-close-the-live-conformance-gaps-in-provider-qual`), after the broker task.
+not pass on any host: Gemini's only portable account family is an API key, which needs filtered
+networking, while the open, consult and ACP suites run open (Gemini OAuth is host-bound). The
+broker now serves a key to a consult peer, an ACP session and a remote session on filtered
+networking; routing API-key targets through the filtered gateway in every suite, the first record
+and the gate that fails a pin move without a matching one land with the follow-up task
+(`2026-09-19-close-the-live-conformance-gaps-in-provider-qual`).
 
 **Conformance rows** (D = deterministic in `make check`, L = the paid run; all four providers unless
 noted — mapped 2026-09-19 by reading the tests):
@@ -59,6 +61,17 @@ move the adapter's `LockedClients` (versions, platform paths; Grok's URL and bot
 the captured `login-failures` and `grok-*-tools.jsonl` fixtures); then run `make provider-qualify`
 and commit the record with the bump. `validateClientClosure` also pins Playwright's version.
 
+A brokered client's request shape is pinned too: `TestCredentialBrokerRoutesAdmitWhatThePinnedClientsSend`
+holds the request line each client version really sends (a synthetic fixture once hid that Claude
+posts `/v1/messages?beta=true`, so every brokered Claude request was refused). Re-capture on a bump,
+offline: run the client in the locked image with `--network none`, a tiny local listener that
+logs `method url` and answers 403, and the client's base URL pointed at it — Claude
+`ANTHROPIC_BASE_URL` (and claude-agent-acp's bundled SDK `claude` directly), Gemini
+`GOOGLE_GEMINI_BASE_URL` with `settings.json` selecting `gemini-api-key` and
+`GEMINI_CLI_TRUST_WORKSPACE=true`, Codex its managed config's `base_url`. Also re-verify that the
+pinned codex still loads `/etc/codex/managed_config.toml` over `-c`, project and user config: the
+broker's Codex provider rides that file.
+
 Traps: the strict suites fail on any skip, so every provider needs a signed-in default account whose
 access token outlives the run (a Claude or Grok token hours old is skipped as refresh-required —
 one real prompt refreshes it); `provider-qualify`'s preflight refuses `COOP_IMAGE` (it would
@@ -67,6 +80,8 @@ host re-run filtered setup once — a filtered launch does it itself, an editor 
 `coop net setup`.
 
 ## Changelog
+- 2026-09-19 — the broker serves consult peers, ACP and remote sessions on filtered networking;
+  added the request-line capture to the bump procedure.
 - 2026-09-19 — created with the one-manifest base image, update controls, the qualification tooling
   and the row map. The first run stopped on Gemini (a brokered API key cannot run the open, consult
   or ACP suites); the first record, its gate and the missing live proof are queued as one task.

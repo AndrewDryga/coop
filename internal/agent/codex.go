@@ -190,11 +190,17 @@ func (a codexAgent) ACPRestrictedSessionMeta(mode ExecutionMode) (map[string]any
 	return unqualifiedRestrictedACPSession(a, mode)
 }
 
-// UpdateControls: the pinned 0.153.4 reads /etc/codex/managed_config.toml over the user's own
-// config (verified: its model beats the user's; /etc/codex/config.toml is only a default the user's
-// overrides), so the update check stays off whatever a home or project sets.
+// codexManagedConfig is the pinned 0.153.4's managed layer, which it loads after -c, the project
+// and the user's own config (verified: its model beats the user's; /etc/codex/config.toml is only a
+// default the user's overrides) — so what it sets holds whatever a home or project sets.
+const (
+	codexManagedConfig  = "/etc/codex/managed_config.toml"
+	codexNoUpdateChecks = "check_for_update_on_startup = false\n"
+)
+
+// UpdateControls: the managed layer keeps the update check off.
 func (codexAgent) UpdateControls() UpdateControls {
-	return UpdateControls{Files: []SystemFile{{Path: "/etc/codex/managed_config.toml", Content: "check_for_update_on_startup = false\n"}}}
+	return UpdateControls{Files: []SystemFile{{Path: codexManagedConfig, Content: codexNoUpdateChecks}}}
 }
 
 // Models are common codex model ids. Illustrative — any id the CLI accepts works.
@@ -280,15 +286,19 @@ func (codexAgent) CredentialBroker() CredentialBrokerSpec {
 		Path:           "/v1/responses",
 		PathPrefix:     true,
 		ClientBasePath: "/v1",
-		CommandArgs: func(baseURL string) []string {
-			return []string{
-				"-c", `model_provider="coop-broker"`,
-				"-c", `model_providers.coop-broker.name="Coop credential broker"`,
-				"-c", `model_providers.coop-broker.base_url="` + baseURL + `"`,
-				"-c", `model_providers.coop-broker.env_key="OPENAI_API_KEY"`,
-				"-c", `model_providers.coop-broker.wire_api="responses"`,
-				"-c", `features.responses_websockets=false`,
-			}
+		// A provider of its own, not OPENAI_BASE_URL: a stored ChatGPT login would otherwise win
+		// over the key, and the broker serves plain POSTs, not the responses websocket. The managed
+		// layer carries it so the lead, every consult or delegate arm, and codex-acp all use it.
+		Config: func(baseURL string) SystemFile {
+			return SystemFile{Path: codexManagedConfig, Content: codexNoUpdateChecks +
+				"model_provider = \"coop-broker\"\n\n" +
+				"[model_providers.coop-broker]\n" +
+				"name = \"Coop credential broker\"\n" +
+				"base_url = \"" + baseURL + "\"\n" +
+				"env_key = \"OPENAI_API_KEY\"\n" +
+				"wire_api = \"responses\"\n\n" +
+				"[features]\n" +
+				"responses_websockets = false\n"}
 		},
 		Port: 443,
 	}

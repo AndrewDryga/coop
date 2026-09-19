@@ -23,43 +23,59 @@ import (
 )
 
 const (
-	maxCredentialBrokerSecret = 64 << 10
+	maxCredentialBrokerSecret = MaxCredentialBrokerRoutes * (33 << 10) // a 32 KiB credential and its envelope per route
 	maxCredentialBrokerBody   = 64 << 20
 	maxCredentialBrokerFlows  = 32
 	credentialBrokerTimeout   = 30 * time.Second
 )
 
-// CredentialBrokerSecret is mounted into the capless guard only. It is deliberately separate
-// from LaunchConfig, which is also readable by the privileged controller.
+// CredentialBrokerSecrets is mounted into the capless guard only. It is deliberately separate
+// from LaunchConfig, which is also readable by the privileged controller. Routes[i] is the secret
+// of LaunchConfig.Brokers[i], bound to this one gateway generation.
+type CredentialBrokerSecrets struct {
+	Version int                      `json:"version"`
+	RunID   string                   `json:"run_id"`
+	Epoch   string                   `json:"gateway_epoch"`
+	Routes  []CredentialBrokerSecret `json:"routes"`
+}
+
+// CredentialBrokerSecret is one route's temporary capability and the real key it stands for.
 type CredentialBrokerSecret struct {
-	Version    int    `json:"version"`
-	RunID      string `json:"run_id"`
-	Epoch      string `json:"gateway_epoch"`
 	Provider   string `json:"provider"`
 	Substitute string `json:"substitute"`
 	Credential string `json:"credential"`
 }
 
-func ReadCredentialBrokerSecret(reader io.Reader, config LaunchConfig) (CredentialBrokerSecret, error) {
+func ReadCredentialBrokerSecrets(reader io.Reader, config LaunchConfig) (CredentialBrokerSecrets, error) {
+	invalid := Failure("credential_broker_configuration_invalid")
 	data, err := io.ReadAll(io.LimitReader(reader, maxCredentialBrokerSecret+1))
-	if err != nil || len(data) == 0 || len(data) > maxCredentialBrokerSecret || config.Broker == nil {
-		return CredentialBrokerSecret{}, Failure("credential_broker_configuration_invalid")
+	if err != nil || len(data) == 0 || len(data) > maxCredentialBrokerSecret || len(config.Brokers) == 0 {
+		return CredentialBrokerSecrets{}, invalid
 	}
-	var value CredentialBrokerSecret
+	var value CredentialBrokerSecrets
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&value) != nil || decoder.Decode(new(any)) != io.EOF ||
-		value.Version != 1 || value.RunID != config.RunID || value.Epoch != config.Epoch ||
-		value.Provider != config.Broker.Provider || len(value.Substitute) < 32 || len(value.Substitute) > 256 ||
-		len(value.Credential) < 8 || len(value.Credential) > 32<<10 || value.Substitute == value.Credential ||
-		strings.ContainsAny(value.Substitute, "\x00\r\n") || strings.ContainsAny(value.Credential, "\x00\r\n") {
-		return CredentialBrokerSecret{}, Failure("credential_broker_configuration_invalid")
+		value.Version != 2 || value.RunID != config.RunID || value.Epoch != config.Epoch || len(value.Routes) != len(config.Brokers) {
+		return CredentialBrokerSecrets{}, invalid
+	}
+	// A substitute opens exactly one listener: were two routes to share one, a capability issued
+	// for one account would unlock the other's key.
+	substitutes := make(map[string]bool, len(value.Routes))
+	for i, route := range value.Routes {
+		if route.Provider != config.Brokers[i].Provider || len(route.Substitute) < 32 || len(route.Substitute) > 256 ||
+			len(route.Credential) < 8 || len(route.Credential) > 32<<10 || route.Substitute == route.Credential || substitutes[route.Substitute] ||
+			strings.ContainsAny(route.Substitute, "\x00\r\n") || strings.ContainsAny(route.Credential, "\x00\r\n") {
+			return CredentialBrokerSecrets{}, invalid
+		}
+		substitutes[route.Substitute] = true
 	}
 	return value, nil
 }
 
 type credentialBroker struct {
 	route      CredentialBrokerRoute
+	address    string // this route's own listener
 	secret     CredentialBrokerSecret
 	clock      *BootClock
 	resolver   *Resolver
@@ -72,17 +88,18 @@ type credentialBroker struct {
 	lifecycle  context.Context
 }
 
-func newCredentialBroker(config LaunchConfig, secret CredentialBrokerSecret, clock *BootClock, doh *DoH, events *GuardEvents, controller ControllerClient) (*credentialBroker, error) {
-	if config.Broker == nil || !config.Broker.valid() || clock == nil || doh == nil || events == nil ||
-		secret.RunID != config.RunID || secret.Epoch != config.Epoch || secret.Provider != config.Broker.Provider {
+func newCredentialBroker(config LaunchConfig, index int, secret CredentialBrokerSecret, clock *BootClock, doh *DoH, events *GuardEvents, controller ControllerClient) (*credentialBroker, error) {
+	if index < 0 || index >= len(config.Brokers) || !config.Brokers[index].valid() || clock == nil || doh == nil || events == nil ||
+		secret.Provider != config.Brokers[index].Provider {
 		return nil, Failure("credential_broker_configuration_invalid")
 	}
+	route := config.Brokers[index]
 	var key [32]byte
 	if _, err := rand.Read(key[:]); err != nil {
 		return nil, Failure("credential_broker_unavailable")
 	}
-	rule := egress.Rule{To: egress.Destination{Domain: config.Broker.Upstream}, Protocol: "tls", Ports: []int{config.Broker.Port}}
-	policy, err := egress.Compile("broker", egress.Filtered, []egress.Input{{Rules: []egress.Rule{rule}, Origin: egress.Origin{Kind: "broker", Name: config.Broker.Provider}}}, nil, false, key[:])
+	rule := egress.Rule{To: egress.Destination{Domain: route.Upstream}, Protocol: "tls", Ports: []int{route.Port}}
+	policy, err := egress.Compile("broker", egress.Filtered, []egress.Input{{Rules: []egress.Rule{rule}, Origin: egress.Origin{Kind: "broker", Name: route.Provider}}}, nil, false, key[:])
 	if err != nil {
 		return nil, Failure("credential_broker_configuration_invalid")
 	}
@@ -90,7 +107,7 @@ func newCredentialBroker(config LaunchConfig, secret CredentialBrokerSecret, clo
 	if err != nil {
 		return nil, Failure("credential_broker_configuration_invalid")
 	}
-	b := &credentialBroker{route: *config.Broker, secret: secret, clock: clock, resolver: resolver,
+	b := &credentialBroker{route: route, address: CredentialBrokerAddress(index), secret: secret, clock: clock, resolver: resolver,
 		controller: controller, events: events, slots: make(chan struct{}, maxCredentialBrokerFlows)}
 	transport := &http.Transport{
 		Proxy:                  nil,
@@ -152,13 +169,7 @@ func (b *credentialBroker) setProxy(transport http.RoundTripper) {
 
 func (b *credentialBroker) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		pathMatches := request.URL.Path == b.route.Path
-		if b.route.PathPrefix {
-			prefix := strings.TrimSuffix(b.route.Path, "/") + "/"
-			pathMatches = pathMatches || strings.HasPrefix(request.URL.Path, prefix)
-		}
-		if request.Method != b.route.Method || !pathMatches || !b.route.AllowQuery && request.URL.RawQuery != "" || request.URL.IsAbs() ||
-			request.Host != CredentialBrokerAddress || request.Header.Get("Authorization") != "" && b.route.Header != "authorization" ||
+		if !b.route.Admits(request.Method, request.URL) || request.Host != b.address || request.Header.Get("Authorization") != "" && b.route.Header != "authorization" ||
 			request.Header.Get("X-Api-Key") != "" && b.route.Header != "x-api-key" ||
 			request.Header.Get("X-Goog-Api-Key") != "" && b.route.Header != "x-goog-api-key" ||
 			request.Header.Get("Proxy-Authorization") != "" || request.Header.Get("Cookie") != "" || request.Header.Get("Upgrade") != "" {
@@ -186,7 +197,7 @@ func (b *credentialBroker) handler() http.Handler {
 }
 
 func (b *credentialBroker) Serve(ctx context.Context, ready func()) error {
-	listener, err := net.Listen("tcp4", CredentialBrokerAddress)
+	listener, err := net.Listen("tcp4", b.address)
 	if err != nil {
 		return Failure("credential_broker_listener_unavailable")
 	}

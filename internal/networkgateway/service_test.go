@@ -97,24 +97,29 @@ func TestGatewayLaunchConfigurationIsBoundedAndConcrete(t *testing.T) {
 
 func TestGatewayLaunchConfigurationKeepsBrokerSeparateAndReserved(t *testing.T) {
 	config := testLaunch(t)
-	config.Broker = &CredentialBrokerRoute{Provider: "claude", Upstream: "api.anthropic.com", Header: "x-api-key", Method: "POST", Path: "/v1/messages", Port: 443}
+	claude := CredentialBrokerRoute{Provider: "claude", Upstream: "api.anthropic.com", Header: "x-api-key", Method: "POST", Path: "/v1/messages", Port: 443}
+	config.Brokers = []CredentialBrokerRoute{claude, claude} // two accounts, two listeners
 	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	for name, mutate := range map[string]func(*LaunchConfig){
-		"wildcard upstream": func(c *LaunchConfig) { c.Broker.Upstream = "*.anthropic.com" },
-		"arbitrary method":  func(c *LaunchConfig) { c.Broker.Method = "CONNECT" },
-		"arbitrary path":    func(c *LaunchConfig) { c.Broker.Path = "/v1/messages?next=elsewhere" },
-		"other port":        func(c *LaunchConfig) { c.Broker.Port = 8443 },
+		"wildcard upstream": func(c *LaunchConfig) { c.Brokers[1].Upstream = "*.anthropic.com" },
+		"arbitrary method":  func(c *LaunchConfig) { c.Brokers[1].Method = "CONNECT" },
+		"arbitrary path":    func(c *LaunchConfig) { c.Brokers[1].Path = "/v1/messages?next=elsewhere" },
+		"other port":        func(c *LaunchConfig) { c.Brokers[1].Port = 8443 },
 		"serve collision": func(c *LaunchConfig) {
-			c.Serve = []int{CredentialBrokerPort}
+			c.Serve = []int{CredentialBrokerPort + 1}
 			c.Ingress = netip.MustParseAddr("172.17.0.1")
+		},
+		"too many routes": func(c *LaunchConfig) {
+			for len(c.Brokers) <= MaxCredentialBrokerRoutes {
+				c.Brokers = append(c.Brokers, claude)
+			}
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := config
-			route := *config.Broker
-			changed.Broker = &route
+			changed.Brokers = append([]CredentialBrokerRoute(nil), config.Brokers...)
 			mutate(&changed)
 			if changed.Validate() == nil {
 				t.Fatal("invalid broker route accepted")

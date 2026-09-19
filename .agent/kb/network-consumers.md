@@ -127,7 +127,10 @@ reached its main process: a launch that failed earlier has no traffic to report.
 
 An interactive launch (`!Batch && !Quiet && !ForceNoTTY`, `box/launch_sections.go`) is narrated in
 bold unprefixed sections before agent output — `Protecting secrets` (the exact shadow count),
-`Configuring network access` (filtered: one row per selected provider's endpoints from
+`Connecting account`/`Connecting accounts` (`launchAccounts`: one row per provider in the credential
+scope — display name, the account the box mounts, `API key protected` for a route of the run's
+broker plan else `Signed in` — plus the one-line explanation, once, only when a key is protected;
+no section without an account), `Configuring network access` (filtered: one row per selected provider's endpoints from
 `policy.Dependencies` and each agent's `Vendor()`, `Applied N approved network rules` counted over
 `project`/`operator` origins, the MCP servers over `mcp` origins, an unrecognized origin counted as "other", THEN
 `✓ Everything else blocked`; open/offline: one `⚠` row under the same heading), `Starting <agent>`
@@ -135,8 +138,8 @@ bold unprefixed sections before agent output — `Protecting secrets` (the exact
 Dockerfile that drifted) as `⚠` rows, and in the cli (`cli/launch_box.go`, after admission and only
 for a run that will use the repo's image — a filtered box runs the qualified client image) the
 automatic `box.Build` when `BaseImageSkew` reports a definition mismatch, never for an age nudge
-or an unstamped image. Restricted modes (`restricted.go`) still print the old
-`coop: shadowed …` line and get no box check. A failure before the main process is rendered once as
+or an unstamped image. Restricted modes (`restricted.go`) narrate the same sections but get no box
+check. A failure before the main process is rendered once as
 a nested `ui.Fail` under its
 section, AFTER the deferred cleanup has joined its own error into the reason, and comes back as
 `ui.Reported(err)`, which `cli.Main` does not print again; a cancellation the stop line named is
@@ -147,6 +150,8 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-09-19 — added the `Connecting account(s)` section; the network section lost its broker row.
+  Restricted modes narrate the sections too (the old shadow-line claim was stale).
 - 2026-09-19 — the ACP supervisor's child stop is graceful for filtered children (was SIGKILL, which
   stranded every gateway on editor close); the session daemon closes warm sessions per workspace
   concurrently

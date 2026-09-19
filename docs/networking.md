@@ -83,25 +83,37 @@ a prompt records no refusals — and if an agent or your project later does reac
 hosts on purpose, that refusal is recorded, shown and approvable like any other; nothing is
 filtered out of the report.
 
-**Supported API keys stay outside a direct filtered box.** Coop replaces the reusable key with a
-random credential valid only for this gateway generation and points the pinned provider client at
-a loopback broker. The capless guard injects the real key only for that provider's qualified API
-route; the agent policy itself does not grant the API domain. The broker uses the same guarded
-Envoy path, so provider traffic keeps normal attribution. Stopping the box revokes the substitute
-and cancels open streams.
+**Supported API keys stay outside a filtered box.** Every provider account a run selects that holds
+a supported API key — the lead's, a peer's, a preset role's — becomes one route of the run's broker.
+Coop replaces each key with a random credential valid only for this gateway generation and that
+route, and points every process of that provider in the box (the lead, consult and delegate
+helpers, the editor adapter) at the route's own loopback listener. The capless guard injects the
+real key only for that provider's qualified API route; the agent policy itself does not grant the
+API domain. The broker uses the same guarded Envoy path, so provider traffic keeps normal
+attribution. Stopping the box revokes every substitute and cancels open streams.
 
-The qualified direct CLI routes are Claude `ANTHROPIC_API_KEY` to
-`api.anthropic.com/v1/messages`, Gemini `GEMINI_API_KEY` to
-`generativelanguage.googleapis.com/v1beta/models/`, and Codex `OPENAI_API_KEY` to
-`api.openai.com/v1/responses`. A single loop worker uses that same direct launch shape. The pinned
-Grok client has no qualified API base override, so `XAI_API_KEY` is refused. Claude's alternate
-token variables, Gemini's Vertex `GOOGLE_API_KEY`, and Codex's alternate key/access-token variables
-are also refused rather than entering a box.
+A box holds one account per provider, so every teammate of a provider in the box shares its one key;
+keys and signed-in accounts of different providers mix freely. Several accounts of one provider run
+side by side in separate boxes — loop rotation, editor account switches, remote sessions — each
+with its own broker. One filtered policy cannot switch a provider between an API key and a sign-in,
+because the sign-in needs the API granted that the broker withholds: a loop or preset ladder that
+mixes them stops before launch, and an editor session offers a provider's accounts of one kind —
+the kind of the account it names, or else of the first one it can use.
 
-API-key runs using open/offline networking, ACP, login, read-only/bare mode, peers, presets, or a
-remote session stop before launch. Configured custom provider base URLs stop as well. Ordinary
-provider-native OAuth/access-token files keep their existing handling and are not broker-protected;
-restricted and session projections retain their existing access-only copies.
+The qualified routes are Claude `ANTHROPIC_API_KEY` to `api.anthropic.com/v1/messages`, Gemini
+`GEMINI_API_KEY` to `generativelanguage.googleapis.com/v1beta/models/`, and Codex `OPENAI_API_KEY`
+to `api.openai.com/v1/responses`, each shaped to the request its pinned client actually sends.
+The pinned Grok client has no qualified API base override, so `XAI_API_KEY` is refused. Claude's
+alternate token variables, Gemini's Vertex `GOOGLE_API_KEY`, and Codex's alternate
+key/access-token variables are also refused rather than entering a box.
+
+API-key runs using open/offline networking, login, or read-only/bare mode (which cannot use filtered
+networking yet) stop before launch. Configured custom provider base URLs stop as well, and so does a
+key only a client's own credential file holds. Ordinary provider-native OAuth/access-token files
+keep their existing handling and are not broker-protected; restricted and session projections
+retain their existing access-only copies. A remote session hands its child a selected API key the
+way the host keeps it, in the session's private host-side config, and removes it after each turn
+and when the session closes.
 
 A `service:` grant is a request like any other: it is approved by a human and names one service.
 For a filtered run, Coop recreates that service and its dependencies on a project-owned internal

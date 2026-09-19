@@ -4,6 +4,17 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- API keys now work in every filtered run, not only a single direct agent: peers, preset roles,
+  consult and delegate helpers, loop reviewers, editor (ACP) sessions and remote sessions can use a
+  Claude, Codex or Gemini API key, and keys of different providers can share one box. Each key
+  stays on your computer behind its own route of Coop's broker; the box sees only a stand-in valid
+  for that run. An interactive launch now names the accounts it connects (`Connecting account` —
+  `✓ Gemini (personal) · API key protected`, or `· Signed in`). Claude API keys now actually work
+  through the broker, which used to refuse the request the pinned Claude client sends. One network
+  policy cannot grant a provider's API to a sign-in and withhold it for a key, so a filtered editor
+  session offers a provider's accounts of one kind, and a loop or preset ladder that mixes a
+  provider's key and sign-in stops before launch.
+
 - A clean filtered run no longer ends with a false "Some network activity may be missing" warning
   and an unmatched `1.1.1.1:443` endpoint. Those were Coop's own DNS connections, opened and closed
   between two network samples; Coop now recognizes each by the kernel identity it reads when it

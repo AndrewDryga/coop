@@ -1610,7 +1610,7 @@ SWITCHING AGENTS
   Account changes keep the conversation with the same provider.
 
   With filtered networking, only compatible providers and presets are offered.
-  Claude and Codex support it; Gemini and Grok currently require open networking.
+  Claude, Codex and Grok support it; Gemini needs an API key to use it.
   Switching never changes this session's network rules.
 
 READ-ONLY WORK

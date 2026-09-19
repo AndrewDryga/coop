@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkreport"
@@ -101,6 +102,64 @@ func TestInternetSectionIsOneHeadingInEveryMode(t *testing.T) {
 		if got != "Configuring network access\n"+c.want {
 			t.Errorf("%s: rendered %q, want %q", c.name, got, "Configuring network access\n"+c.want)
 		}
+	}
+}
+
+// The account section names every account a launch connects, one stable row each, and — once, and
+// only when an API key is protected — what that protection means; several accounts pluralize both.
+// A launch with no account prints no section, and batch output stays quiet.
+func TestAccountSectionNamesEveryConnectedAccount(t *testing.T) {
+	spec := RunSpec{Agent: "gemini", Cmd: []string{"gemini"}}
+	for _, c := range []struct {
+		name string
+		rows []accountRow
+		want string
+	}{
+		{"one protected key", []accountRow{{"gemini", "personal2", true}},
+			"Connecting account\n  ✓ Gemini (personal2) · API key protected\n\n" +
+				"  The key stays on this computer. The agent can use the account but never see the key.\n"},
+		{"two protected keys", []accountRow{{"gemini", "personal2", true}, {"codex", "work", true}},
+			"Connecting accounts\n  ✓ Gemini (personal2) · API key protected\n  ✓ Codex (work) · API key protected\n\n" +
+				"  Keys stay on this computer. Agents can use the accounts but never see the keys.\n"},
+		{"a protected key and a login", []accountRow{{"gemini", "personal2", true}, {"claude", "work", false}},
+			"Connecting accounts\n  ✓ Gemini (personal2) · API key protected\n  ✓ Claude (work) · Signed in\n\n" +
+				"  Keys stay on this computer. Agents can use the accounts but never see the keys.\n"},
+		{"signed in only", []accountRow{{"claude", "work", false}}, "Connecting account\n  ✓ Claude (work) · Signed in\n"},
+		{"no account", nil, ""},
+	} {
+		if got := captureStderr(t, func() { newLaunchSections(spec).accounts(c.rows) }); got != c.want {
+			t.Errorf("%s: rendered\n%q\nwant\n%q", c.name, got, c.want)
+		}
+	}
+	batch := RunSpec{Agent: "gemini", Batch: true}
+	if got := captureStderr(t, func() { newLaunchSections(batch).accounts([]accountRow{{"gemini", "personal2", true}}) }); got != "" {
+		t.Errorf("batch output narrated its accounts: %q", got)
+	}
+}
+
+// Only a brokered route is a protected key; a signed-in teammate is a login, and a provider with no
+// credential at all is no account the launch connects.
+func TestLaunchAccountsComeFromTheRunsOwnScope(t *testing.T) {
+	cfg, _ := brokerFixture(t, "GEMINI_API_KEY=gemini-secret\n")
+	signIn := cfg.AgentProfileDir("claude", cfg.ActiveProfile("claude"))
+	if err := os.MkdirAll(signIn, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(signIn, ".credentials.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spec := RunSpec{Agent: "gemini", AgentCommand: true, Homes: true, Peers: []agents.Target{{Provider: "claude"}, {Provider: "codex"}}}
+	plan, err := selectCredentialPlan(cfg, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := launchAccounts(cfg, spec, plan)
+	want := []accountRow{{"gemini", "default", true}, {"claude", "default", false}}
+	if fmt.Sprint(rows) != fmt.Sprint(want) {
+		t.Fatalf("launch accounts = %+v, want %+v", rows, want)
+	}
+	if rows := launchAccounts(cfg, RunSpec{Cmd: []string{"sh"}, Homes: true}, nil); len(rows) != 0 {
+		t.Fatalf("a raw run connected accounts: %+v", rows)
 	}
 }
 

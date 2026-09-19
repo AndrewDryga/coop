@@ -151,10 +151,50 @@ func (s *launchSections) secrets(hidden int) {
 	ui.Pass("%s hidden from the box", ui.Count(hidden, "secret path"))
 }
 
+// accountRow is one account a launch connects: the provider, the account, and whether its API key
+// is protected — kept on this computer — or it is a signed-in login. Names only: no credential value
+// ever reaches presentation.
+type accountRow struct {
+	provider, account string
+	protected         bool
+}
+
+// accounts is the launch's account section: one stable row per account the run selected, in the
+// order the run uses them, then — once, and only when an API key is protected — what that means. A
+// run without an account, like a raw command, prints no section.
+func (s *launchSections) accounts(rows []accountRow) {
+	if !s.on || len(rows) == 0 {
+		return
+	}
+	plural := len(rows) > 1
+	if plural {
+		s.section("Connecting accounts")
+	} else {
+		s.section("Connecting account")
+	}
+	protected := false
+	for _, row := range rows {
+		state := "Signed in"
+		if row.protected {
+			state, protected = "API key protected", true
+		}
+		ui.Pass("%s (%s) · %s", strings.ToUpper(row.provider[:1])+row.provider[1:], row.account, state)
+	}
+	if !protected {
+		return
+	}
+	ui.Note("")
+	if plural {
+		ui.Note("  Keys stay on this computer. Agents can use the accounts but never see the keys.")
+	} else {
+		ui.Note("  The key stays on this computer. The agent can use the account but never see the key.")
+	}
+}
+
 // internet is the one stable section every mode shares. A filtered run lists what the frozen
 // policy allows and only then claims the rest is blocked; an open run and an offline run get a
 // warning under the same heading, never a green row.
-func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egress.Snapshot, brokerProvider ...string) {
+func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egress.Snapshot) {
 	if !s.on {
 		return
 	}
@@ -163,13 +203,6 @@ func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egre
 	s.section("Configuring network access")
 	switch {
 	case policy != nil:
-		if len(brokerProvider) == 1 && brokerProvider[0] != "" {
-			name := brokerProvider[0]
-			if agent, ok := agents.Get(name); ok {
-				name = agent.Vendor()
-			}
-			ui.Pass("%s through the credential broker — reusable key stays outside the box", name)
-		}
 		for _, row := range networkAllowances(*policy) {
 			ui.Pass("%s", row)
 		}

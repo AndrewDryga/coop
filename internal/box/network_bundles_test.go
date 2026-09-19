@@ -105,9 +105,20 @@ func TestNetworkProviderBundlesAllowLoginWithoutAnExistingCredential(t *testing.
 	if len(bundles) != 1 || bundles[0].Provider != "grok" || bundles[0].AuthMode != "access-file" {
 		t.Fatalf("Grok login bundle = %+v", bundles)
 	}
+	// A key already in the env file is not the login's credential: the sign-in box gets none of it,
+	// so its provider's sign-in endpoints stay granted rather than left to a broker it never runs.
+	if err := os.WriteFile(cfg.EnvFile(), []byte("ANTHROPIC_API_KEY=env-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bundles, err = NetworkProviderBundles(cfg, RunSpec{Agent: "claude", Homes: true, Login: true})
+	if err != nil || len(bundles) != 1 || bundles[0].Provider != "claude" {
+		t.Fatalf("Claude login beside an env key = %+v, %v; want its sign-in endpoints granted", bundles, err)
+	}
 }
 
-func TestNetworkTargetBundleBindsAuthenticationAndRefusesAPIKeysForACP(t *testing.T) {
+// A portable key qualifies exactly one authentication family, for the CLI and — through the
+// broker, which keeps the key outside the box — for ACP sessions alike.
+func TestNetworkTargetBundleBindsAuthenticationAndOffersAPIKeysToACP(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	gemini, _ := agents.Get("gemini")
 	if err := SaveHostCredential(cfg, gemini, "key", []byte("portable-key")); err != nil {
@@ -118,8 +129,26 @@ func TestNetworkTargetBundleBindsAuthenticationAndRefusesAPIKeysForACP(t *testin
 	if err != nil || bundle.AuthMode != "api-key" || len(bundle.Core) != 1 || bundle.Core[0].To.Domain != "generativelanguage.googleapis.com" {
 		t.Fatalf("portable Gemini key was not qualified exactly: %+v, %v", bundle, err)
 	}
-	if _, err := NetworkTargetBundle(cfg, key, egress.ClientACP); err == nil || !strings.Contains(err.Error(), "reusable GEMINI_API_KEY") {
-		t.Fatal("Gemini API key was offered to ACP", err)
+	if acp, err := NetworkTargetBundle(cfg, key, egress.ClientACP); err != nil || acp.AuthMode != "api-key" {
+		t.Fatalf("Gemini API key was not offered to ACP: %+v, %v", acp, err)
+	}
+	// The client's own key file beside Coop's host key is shadowed by the broker, as in a direct
+	// run; a key only that file holds would enter the box.
+	if err := os.WriteFile(filepath.Join(cfg.AgentProfileDir("gemini", "key"), "gemini-credentials.json"), []byte(`{"encrypted":"native"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if acp, err := NetworkTargetBundle(cfg, key, egress.ClientACP); err != nil || acp.AuthMode != "api-key" {
+		t.Fatalf("Gemini host key beside a native key file was not offered to ACP: %+v, %v", acp, err)
+	}
+	codexDir := cfg.AgentProfileDir("codex", "native")
+	if err := os.MkdirAll(codexDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(codexDir, "auth.json"), []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"native-key"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NetworkTargetBundle(cfg, agents.Target{Provider: "codex", Accounts: []string{"native"}}, egress.ClientACP); err == nil || !strings.Contains(err.Error(), "native credential file") {
+		t.Fatal("a key only Codex's own file holds was offered to ACP", err)
 	}
 
 	oauthDir := cfg.AgentProfileDir("gemini", "oauth")
@@ -151,6 +180,31 @@ func TestNetworkTargetBundleBindsAuthenticationAndRefusesAPIKeysForACP(t *testin
 	}
 	if _, err := NetworkTargetBundle(cfg, agents.Target{Provider: "gemini", Accounts: []string{"named"}}, egress.ClientACP); err == nil {
 		t.Fatal("named Gemini account borrowed the default env key")
+	}
+}
+
+// A preset role runs its active account, so a policy classifies the role the way its run's plan
+// does: a role's key belongs to the broker, never an API granted to the agent that the launch would
+// then refuse — whether one run or a whole loop is being admitted.
+func TestNetworkProviderBundlesBrokerAPresetRolesKey(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "filtered"}
+	if err := os.WriteFile(cfg.EnvFile(), []byte("GEMINI_API_KEY=gemini-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	codex := cfg.AgentProfileDir("codex", "default")
+	if err := os.MkdirAll(codex, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(codex, "auth.json"), []byte(`{"auth_mode":"chatgpt","tokens":{"refresh_token":"refresh"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := &preset.Preset{Roles: []preset.Role{{Name: "reviewer", Mode: preset.ModeConsult, Targets: []agents.Target{{Provider: "gemini"}}}}}
+	for _, admission := range []bool{false, true} {
+		spec := RunSpec{Agent: "codex", AgentCommand: true, Homes: true, Preset: p, NetworkAdmission: admission}
+		bundles, err := NetworkProviderBundles(cfg, spec)
+		if err != nil || len(bundles) != 1 || bundles[0].Provider != "codex" {
+			t.Fatalf("admission=%v: bundles = %+v, %v; want only the signed-in lead's API granted", admission, bundles, err)
+		}
 	}
 }
 

@@ -2,7 +2,7 @@
 name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
-sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, docs/networking.md]
+sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, docs/networking.md, internal/sessionsvc/acp.go]
 updated: 2026-09-19
 ---
 
@@ -182,17 +182,34 @@ Traps:
   (`networkstate/bundles.go:18`): changing a bundle without bumping the version is refused as
   integrity drift, so the version moves with the content (`2026-09-10.1` added the proxy). The
   rule is [[provider-bundles-carry-function-not-chatter]].
-- A direct filtered CLI run (including one loop worker) brokers the one API-key route its pinned
-  adapter declares: Claude `ANTHROPIC_API_KEY`, Gemini `GEMINI_API_KEY`, or Codex
-  `OPENAI_API_KEY`. The key is removed from the agent environment and replaced with a per-execution
-  substitute plus a loopback provider base URL; Codex also receives an adapter-owned custom
-  provider selection because its built-in provider ignores `OPENAI_BASE_URL`. The capless guard
-  alone receives an exact read-only secret file; the privileged controller and agent never do.
-  Its helper-only resolver and typed controller lease keep the provider API out of agent policy,
-  while Envoy retains exact socket/byte attribution. Grok's pinned client has no qualified API base
-  override, and every alternate API-key variable or unsupported launch shape refuses before the
+- A filtered run brokers every API-key route its selected accounts declare — lead, peers, preset
+  roles (`credentialPlan`, `box/credential_broker.go`): Claude `ANTHROPIC_API_KEY`, Gemini
+  `GEMINI_API_KEY`, Codex `OPENAI_API_KEY`. A box holds one account per provider, so a plan has at
+  most one route per provider, and route i listens on `CredentialBrokerAddress(i)` (15580+i) with
+  its own substitute. The key leaves the one env file every process in the box inherits (lead,
+  peers, helpers, the ACP adapter), replaced by the substitute plus the route's loopback base URL;
+  Codex, whose built-in provider ignores `OPENAI_BASE_URL`, gets its adapter's
+  `/etc/codex/managed_config.toml` (`CredentialBrokerSpec.Config`), mounted read-only so every codex
+  process — consult/delegate arms and codex-acp too — uses the route. The capless guard alone
+  receives the exact read-only secret file; the privileged controller and agent never do. Its
+  helper-only resolver and typed controller lease keep the provider API out of agent policy, while
+  Envoy retains exact socket/byte attribution. Traps, each found live: a route must admit the
+  request line its pinned client really sends (Claude posts `/v1/messages?beta=true` —
+  `TestCredentialBrokerRoutesAdmitWhatThePinnedClientsSend` pins captured lines per client
+  version); whether a run is filtered is the CALLER's to say (`requireFiltered` in `box.Run`'s
+  unfiltered branch) — an ACP child's or a session's filtered authority arrives as a capture while
+  its own `cfg.Egress` may say open; a policy classifies every account it covers
+  (`brokeredProviders`, the accounts its bundles derive from), because one policy cannot grant a
+  provider's API to a sign-in and withhold it for a key — a loop or preset ladder mixing them is
+  refused, an editor session offers one kind per provider (`acpNetworkScope`). Grok's pinned
+  client has no qualified API base override, and every alternate API-key variable, a key only a
+  native credential file holds, open/offline egress and read-only/bare mode refuse before the
   runtime. Ordinary OAuth/access-token files keep their existing handling and are not called
-  broker-protected; restricted and session projections retain their existing access-only copies.
+  broker-protected; restricted and session projections retain their existing access-only copies
+  — a remote session instead hands its child an API key in the private config's host-side vault or
+  env (`projectSessionKey`), removed after the turn and again by the session janitor. A sign-in box
+  classifies nothing (`brokeredProviders` returns early): it receives no key, and its sign-in
+  endpoints must stay granted.
 - A filtered box renews its own OAuth login: it mounts the provider profile like an open box
   (`box/run.go`, the `-v` of `cfg.AgentDir`), and every bundle carries the refresh host (Claude
   `platform.claude.com`, Codex `auth.openai.com`, Grok `auth.x.ai`, whose token endpoint is
@@ -217,6 +234,10 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-19 — the broker serves every selected API-key account (one route and listener per
+  provider, lead to ACP and remote sessions); the Codex hookup moved from lead-only `-c` argv to a
+  per-run managed config; recorded the three live-found traps (the Claude query, the caller-owned
+  filtered check, per-account classification).
 - 2026-09-19 — the ordinary base installs the same locked closure (one shared client layer); the
   launchers moved to /opt/coop/bin, first on PATH; the closure carries every adapter's update
   controls; Grok's updater is switched off.

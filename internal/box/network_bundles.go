@@ -31,21 +31,16 @@ func (s RunSpec) networkClient() egress.Client {
 // An unsupported provider fails admission here. Launching it under a policy
 // that cannot reach its API would only produce a confusing mid-session denial.
 func NetworkProviderBundles(cfg *config.Config, spec RunSpec) ([]egress.Bundle, error) {
-	brokered := map[string]bool{}
-	if spec.NetworkAdmission {
-		var err error
-		brokered, err = networkAdmissionBrokerProviders(cfg, spec)
-		if err != nil {
+	if !spec.NetworkAdmission {
+		// A run's own plan refuses first what no policy can serve: a command that is not the
+		// agent, a restricted mode.
+		if _, err := selectCredentialPlan(cfg, spec); err != nil {
 			return nil, err
 		}
-	} else {
-		broker, err := selectCredentialBroker(cfg, spec)
-		if err != nil {
-			return nil, err
-		}
-		if broker != nil {
-			brokered[broker.provider] = true
-		}
+	}
+	brokered, err := brokeredProviders(cfg, spec)
+	if err != nil {
+		return nil, err
 	}
 	var bundles []egress.Bundle
 	seenBundles := map[string]bool{}
@@ -145,9 +140,6 @@ func NetworkTargetBundle(cfg *config.Config, target agents.Target, client egress
 		if err != nil {
 			return egress.Bundle{}, err
 		}
-		if client == egress.ClientACP && selection.EnvKey != "" {
-			return egress.Bundle{}, fmt.Errorf("%s account %q uses reusable %s authentication, which ACP sessions do not support", target.Provider, account, selection.EnvKey)
-		}
 		if selection.EnvKey != "" {
 			available := ProfileHostCredentialPresent(cfg, target.Provider, account)
 			if account == cfg.DefaultProfileOf(target.Provider) {
@@ -169,14 +161,12 @@ func NetworkTargetBundle(cfg *config.Config, target agents.Target, client egress
 		}
 	}
 	if client == egress.ClientACP {
-		activeEnv := ag.ActiveCredentialEnvKeys(profileDir, markerPresent)
-		if account == cfg.DefaultProfileOf(target.Provider) && anyCredentialEnvPresent(activeEnv, envFileKeys(cfg.EnvFile())) {
-			return egress.Bundle{}, fmt.Errorf("%s account %q uses a reusable environment credential, which ACP sessions do not support", target.Provider, account)
-		}
-		if ProfileHostCredentialPresent(cfg, target.Provider, account) {
-			return egress.Bundle{}, fmt.Errorf("%s account %q uses a reusable host credential, which ACP sessions do not support", target.Provider, account)
-		}
-		if detector, ok := ag.(agents.StoredAPIKeyDetector); ok && markerPresent {
+		// An environment or host key reaches an ACP session through the broker like any other run,
+		// and the broker shadows the client's own credential file; a key only that file holds
+		// cannot be kept out of the box.
+		portable := ProfileHostCredentialPresent(cfg, target.Provider, account) || account == cfg.DefaultProfileOf(target.Provider) &&
+			anyCredentialEnvPresent(ag.ActiveCredentialEnvKeys(profileDir, markerPresent), envFileKeys(cfg.EnvFile()))
+		if detector, ok := ag.(agents.StoredAPIKeyDetector); ok && markerPresent && !portable {
 			stored, err := detector.StoredAPIKey(profileDir)
 			if err != nil {
 				return egress.Bundle{}, fmt.Errorf("inspect %s account %q credential: %w", target.Provider, account, err)
@@ -189,22 +179,18 @@ func NetworkTargetBundle(cfg *config.Config, target agents.Target, client egress
 	return ag.NetworkBundle(input)
 }
 
-func networkAdmissionBrokerProviders(cfg *config.Config, spec RunSpec) (map[string]bool, error) {
+// brokeredProviders classifies every account one policy covers — the same accounts its bundles
+// derive from: a loop's every rung, an ACP session's every offered account, else a provider's
+// active one — and names the providers whose accounts are API keys the broker serves.
+func brokeredProviders(cfg *config.Config, spec RunSpec) (map[string]bool, error) {
 	result := map[string]bool{}
-	accounts := map[string][]string{spec.Agent: {cfg.ActiveProfile(spec.Agent)}}
-	for _, target := range spec.Peers {
-		account := target.Account()
-		if account == "" {
-			account = cfg.ActiveProfile(target.Provider)
-		}
-		if !slices.Contains(accounts[target.Provider], account) {
-			accounts[target.Provider] = append(accounts[target.Provider], account)
-		}
+	if spec.Login {
+		return result, nil // sign-in creates a login; its box receives none of the account's keys
 	}
-	for _, name := range credentialScope(cfg, spec) {
+	for _, name := range networkCredentialScope(cfg, spec) {
 		brokered, plain := false, false
-		for _, account := range accounts[name] {
-			candidate, err := credentialBrokerCandidateFor(cfg, spec, name, account, nil)
+		for _, target := range networkTargetsForProvider(cfg, spec, name) {
+			candidate, err := credentialBrokerCandidateFor(cfg, spec, name, target.Account(), nil)
 			if err != nil {
 				return nil, err
 			}
@@ -217,15 +203,21 @@ func networkAdmissionBrokerProviders(cfg *config.Config, spec RunSpec) (map[stri
 		if !brokered {
 			continue
 		}
-		if !spec.CredentialBrokerLoop {
-			return nil, fmt.Errorf("%s API-key brokering does not support a loop with peers or a preset; run a direct loop without them", credentialBrokerAgentName(name))
-		}
+		// One policy serves every box it covers. A signed-in account needs its provider's API granted
+		// to the agent, which the broker requires withheld, so one provider cannot be both.
 		if plain {
-			return nil, fmt.Errorf("%s cannot mix brokered API-key and stored-credential accounts in one filtered loop", credentialBrokerAgentName(name))
+			return nil, fmt.Errorf("%s cannot mix API-key and signed-in accounts under one filtered policy; use one kind for this run", credentialBrokerAgentName(name))
 		}
 		result[name] = true
 	}
 	return result, nil
+}
+
+// AccountBrokersKey reports whether one account's credential is an API key the broker serves rather
+// than a sign-in — the two kinds one filtered policy cannot mix within a provider.
+func AccountBrokersKey(cfg *config.Config, provider, account string) (bool, error) {
+	route, err := credentialBrokerCandidateFor(cfg, RunSpec{Homes: true}, provider, account, nil)
+	return route != nil, err
 }
 
 // NetworkMCPDependencies returns the automatic HTTP destinations of the trusted

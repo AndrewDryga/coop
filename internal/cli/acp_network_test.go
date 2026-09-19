@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -67,7 +68,9 @@ func TestACPNetworkScope(t *testing.T) {
 	}
 }
 
-func TestACPNetworkScopeExcludesGeminiAPIKeyAccounts(t *testing.T) {
+// Filtered ACP offers a Gemini API-key account — the broker keeps its key outside the box — and
+// still leaves out the host-bound OAuth account no filtered box can carry.
+func TestACPNetworkScopeOffersGeminiAPIKeyAccounts(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
 	signInCred(t, cfg, "codex", "default")
 	gemini, _ := agents.Get("gemini")
@@ -95,8 +98,48 @@ func TestACPNetworkScopeExcludesGeminiAPIKeyAccounts(t *testing.T) {
 			geminiAccounts = append(geminiAccounts, target.Account())
 		}
 	}
-	if len(geminiAccounts) != 0 {
-		t.Fatalf("filtered ACP offered Gemini API-key accounts: %v", geminiAccounts)
+	if len(geminiAccounts) != 1 || geminiAccounts[0] != "portable" {
+		t.Fatalf("filtered ACP offered Gemini accounts %v, want only the API-key account", geminiAccounts)
+	}
+}
+
+// A key and a sign-in of one provider need opposite grants, and one policy serves every box a
+// filtered session may start, so the session offers a provider's accounts of one kind: that of the
+// account it names, or else of its active one. Its policy then brokers the key or grants the
+// sign-in's API, and switching accounts never meets a denial mid-session.
+func TestACPNetworkScopeOffersOneCredentialKindPerProvider(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
+	if err := os.WriteFile(cfg.EnvFile(), []byte("ANTHROPIC_API_KEY=fixture-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	signInCred(t, cfg, "claude", "work")
+	a := &app{cfg: cfg}
+	for _, tc := range []struct {
+		initial  agents.Target
+		want     string
+		brokered bool
+	}{
+		{agents.Target{Provider: "claude"}, "default", true},
+		{agents.Target{Provider: "claude", Accounts: []string{"work"}}, "work", false},
+	} {
+		scope, err := a.acpNetworkScope(cfg.RepoOverride, tc.initial, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var claude []string
+		for _, target := range scope {
+			if target.Provider == "claude" && !slices.Contains(claude, target.Account()) {
+				claude = append(claude, target.Account())
+			}
+		}
+		if len(claude) != 1 || claude[0] != tc.want {
+			t.Fatalf("session for %s offered Claude accounts %v, want only %q", tc.initial, claude, tc.want)
+		}
+		bundles, err := box.NetworkProviderBundles(cfg, box.RunSpec{Agent: "claude", Homes: true, Peers: scope, NetworkClient: egress.ClientACP})
+		granted := slices.ContainsFunc(bundles, func(bundle egress.Bundle) bool { return bundle.Provider == "claude" })
+		if err != nil || granted == tc.brokered {
+			t.Fatalf("session for %s: Claude API granted = %v, %v; want brokered = %v", tc.initial, granted, err, tc.brokered)
+		}
 	}
 }
 

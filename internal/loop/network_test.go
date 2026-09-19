@@ -47,7 +47,7 @@ func TestNetworkAdmissionSpecCoversEveryLadderRung(t *testing.T) {
 	}
 }
 
-func TestDirectLoopAdmissionRecognizesBrokeredClaudeLadder(t *testing.T) {
+func TestLoopAdmissionBrokersAKeyBesideSignedInTeammates(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Homes: true, Egress: "filtered"}
 	if err := os.MkdirAll(filepath.Dir(cfg.EnvFile()), 0o700); err != nil {
 		t.Fatal(err)
@@ -65,6 +65,35 @@ func TestDirectLoopAdmissionRecognizesBrokeredClaudeLadder(t *testing.T) {
 		if bundle.Provider == "claude" {
 			t.Fatalf("brokered loop admitted Claude directly: %#v", bundles)
 		}
+	}
+
+	// A brokered lead with a signed-in peer is one policy: the peer's API is granted, the key's is
+	// the broker's alone.
+	codex := cfg.AgentProfileDir("codex", "default")
+	if err := os.MkdirAll(codex, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(codex, "auth.json"), []byte(`{"auth_mode":"chatgpt","tokens":{"refresh_token":"refresh"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spec = networkAdmissionSpec(cfg, "/repo", "img", "claude", nil, []agents.Target{target("codex", "default")}, work)
+	if bundles, err = box.NetworkProviderBundles(cfg, spec); err != nil || len(bundles) != 1 || bundles[0].Provider != "codex" {
+		t.Fatalf("brokered loop with a signed-in peer = %#v, %v; want only the peer's API granted", bundles, err)
+	}
+
+	// One provider cannot rotate between a key and a login under that one policy: the login needs
+	// the API granted that the key's broker needs withheld.
+	claude := cfg.AgentProfileDir("claude", "personal")
+	if err := os.MkdirAll(claude, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(claude, ".credentials.json"), []byte(`{"claudeAiOauth":{"refreshToken":"refresh","scopes":["user:inference"]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mixed := ladder.NewRotation([]agents.Target{target("claude", "default"), target("claude", "personal")})
+	spec = networkAdmissionSpec(cfg, "/repo", "img", "claude", nil, nil, mixed)
+	if _, err := box.NetworkProviderBundles(cfg, spec); err == nil || !strings.Contains(err.Error(), "cannot mix API-key and signed-in accounts") {
+		t.Fatalf("a key and a login rotated under one policy: %v", err)
 	}
 }
 

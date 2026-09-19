@@ -2030,6 +2030,79 @@ func TestSessionACPProjectionCanOmitSharedEnvironmentAndMCP(t *testing.T) {
 	}
 }
 
+// An API-key account has no login to project. The session hands its child the key where the host
+// keeps one — Coop's vault, or the default account's env line even when the policy withholds the
+// shared env — in the private config, never the profile the box mounts, and removes it after the
+// turn; the child's filtered run brokers it like any other.
+func TestSessionACPProjectionHandsAKeyToTheBrokerNotTheBox(t *testing.T) {
+	keyFree := func(t *testing.T, dir, key string) {
+		t.Helper()
+		_ = filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
+			if err == nil && !entry.IsDir() && strings.Contains(readFile(t, path), key) {
+				t.Fatalf("the key reached %s, which the box mounts", path)
+			}
+			return nil
+		})
+	}
+	t.Run("Coop-held key", func(t *testing.T) {
+		fixture := newSessionACPFixture(t, "normal")
+		gemini, _ := agents.Get("gemini")
+		if err := box.SaveHostCredential(&config.Config{ConfigDir: fixture.source}, gemini, "studio", []byte("vault-key")); err != nil {
+			t.Fatal(err)
+		}
+		target := agents.Target{Provider: "gemini", Accounts: []string{"studio"}}
+		if _, err := fixture.runner.projectCredentials(fixture.session, target, gemini, time.Now().Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		private := &config.Config{ConfigDir: fixture.private}
+		if _, value, found, err := box.LoadHostCredential(private, gemini, "studio"); err != nil || !found || value != "vault-key" {
+			t.Fatalf("private vault = %v, %v", found, err)
+		}
+		keyFree(t, private.AgentProfileDir("gemini", "studio"), "vault-key")
+		// A daemon killed mid-turn never runs the turn's own cleanup; closing the session must still
+		// take the key, even past a profile artifact it cannot remove.
+		stuck := filepath.Join(private.AgentProfileDir("gemini", "studio"), "gemini-credentials.json")
+		if err := os.Mkdir(stuck, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		bound := fixture.session
+		bound.Target = "gemini@studio"
+		if err := fixture.runner.cleanupSessionCredentials(bound); err == nil {
+			t.Fatal("cleanup reported success past an artifact it could not remove")
+		}
+		if _, _, found, _ := box.LoadHostCredential(private, gemini, "studio"); found {
+			t.Fatal("the projected key outlived the session")
+		}
+	})
+	t.Run("default account's env key", func(t *testing.T) {
+		fixture := newSessionACPFixture(t, "normal")
+		if err := os.WriteFile(filepath.Join(fixture.source, "env"), []byte("EMISAR_TOKEN=observe-only\nANTHROPIC_API_KEY=env-key\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		bound := fixture.session
+		bound.ProjectEnv = false
+		claude, _ := agents.Get("claude")
+		projection, err := fixture.runner.projectCredentials(bound, agents.Target{Provider: "claude"}, claude, time.Now().Add(time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		env := filepath.Join(fixture.private, "env")
+		if got := readFile(t, env); got != "ANTHROPIC_API_KEY=env-key\n" {
+			t.Fatalf("private env = %q, want only the selected key", got)
+		}
+		if got := readFile(t, filepath.Join(fixture.private, "defaults")); got != "claude=default\n" {
+			t.Fatalf("private defaults = %q", got)
+		}
+		keyFree(t, filepath.Join(fixture.private, "claude"), "env-key")
+		if err := projection.remove(); err != nil {
+			t.Fatal(err)
+		}
+		if pathExists(env) {
+			t.Fatal("the projected key outlived the turn")
+		}
+	})
+}
+
 func TestResponderStateBindingSurvivesOmittedSharedMCPAndEnvironment(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
 	bound := fixture.session

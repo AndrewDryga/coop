@@ -1512,66 +1512,27 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 		return projection, acpFailure(sessionACPCredentialError, "source credential account is unsafe")
 	}
 
-	live := agent.LiveCredentials()
-	if len(live.Artifacts) == 0 || live.Portability == nil {
-		return projection, acpFailure(sessionACPCredentialError, "provider has no credential projection")
+	keyed, err := box.AccountBrokersKey(r.sourceCfg, target.Provider, account)
+	if err != nil {
+		return projection, acpFailure(sessionACPCredentialError, "selected API key cannot be kept outside the box")
 	}
-	if live.Prepare != nil {
-		if err := live.Prepare(sourceProfile, deadline); err != nil {
-			return projection, acpFailure(sessionACPCredentialError, "provider credential needs sign-in or renewal")
+	envKey := false
+	if keyed {
+		// An API-key account has no login to project. Its key goes to the private config's
+		// host-side vault or env, never the profile the box mounts, and the child's filtered run
+		// brokers it.
+		if envKey, err = r.projectSessionKey(sourceRoot, account, agent, projection); err != nil {
+			return projection, err
 		}
-	}
-	seen := make(map[string]bool, len(live.Artifacts))
-	primaryProjected := false
-	for _, artifact := range live.Artifacts {
-		if !validArtifactName(artifact.Name) || artifact.Project == nil || seen[artifact.Name] {
-			return projection, acpFailure(sessionACPCredentialError, "provider credential projection is invalid")
-		}
-		seen[artifact.Name] = true
-		sourcePath := filepath.Join(sourceProfile, artifact.Name)
-		data, present, err := readCredentialArtifact(sourcePath)
-		if err != nil {
-			return projection, acpFailure(sessionACPCredentialError, "source credential artifact is unsafe")
-		}
-		if !present {
-			if artifact.Primary {
-				return projection, acpFailure(sessionACPCredentialError, "primary credential data is missing")
-			}
-			continue
-		}
-		projected, err := artifact.Project(data)
-		if err != nil {
-			return projection, acpFailure(sessionACPCredentialError, "credential projection failed")
-		}
-		if projected == nil {
-			if artifact.Primary {
-				return projection, acpFailure(sessionACPCredentialError, "primary credential data is missing")
-			}
-			continue
-		}
-		if len(projected) == 0 || len(projected) > sessionACPArtifactLimit || bytes.IndexByte(projected, 0) >= 0 {
-			return projection, acpFailure(sessionACPCredentialError, "projected credential output is invalid")
-		}
-		destination := filepath.Join(privateProfile, artifact.Name)
-		projection.files = append(projection.files, destination)
-		if err := writeCredentialArtifact(destination, projected); err != nil {
-			return projection, acpFailure(sessionACPCredentialError, "projected credential output is unsafe")
-		}
-		if artifact.Primary {
-			primaryProjected = true
-		}
-	}
-	if !primaryProjected {
-		return projection, acpFailure(sessionACPCredentialError, "primary credential data is missing")
-	}
-	if status := live.Portability(privateProfile, deadline); status != agents.CredentialPortable {
-		return projection, acpFailure(sessionACPCredentialError, "credential is not portable through the turn deadline")
+	} else if err := r.projectSessionLogin(sourceProfile, privateProfile, agent, deadline, projection); err != nil {
+		return projection, err
 	}
 
 	// A target without @account means the source provider default. Bind that same default in the
 	// private config without copying the shared defaults file, so the child receives the exact
-	// selected account while the command remains the session's exact target string.
-	if len(target.Accounts) == 0 {
+	// selected account while the command remains the session's exact target string. An env-file
+	// key is the default account's alone, so it binds that account too.
+	if len(target.Accounts) == 0 || envKey {
 		defaults := filepath.Join(privateRoot, "defaults")
 		projection.files = append(projection.files, defaults)
 		if err := writePrivateDefaults(defaults, target.Provider, account); err != nil {
@@ -1579,6 +1540,102 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 		}
 	}
 	return projection, nil
+}
+
+// projectSessionLogin projects the selected account's native login: renewed first, reduced to what
+// a box may hold, and portable through the turn deadline.
+func (r *sessionTurnRunner) projectSessionLogin(sourceProfile, privateProfile string, agent agents.Agent, deadline time.Time, projection *sessionACPProjection) error {
+	live := agent.LiveCredentials()
+	if len(live.Artifacts) == 0 || live.Portability == nil {
+		return acpFailure(sessionACPCredentialError, "provider has no credential projection")
+	}
+	if live.Prepare != nil {
+		if err := live.Prepare(sourceProfile, deadline); err != nil {
+			return acpFailure(sessionACPCredentialError, "provider credential needs sign-in or renewal")
+		}
+	}
+	seen := make(map[string]bool, len(live.Artifacts))
+	primaryProjected := false
+	for _, artifact := range live.Artifacts {
+		if !validArtifactName(artifact.Name) || artifact.Project == nil || seen[artifact.Name] {
+			return acpFailure(sessionACPCredentialError, "provider credential projection is invalid")
+		}
+		seen[artifact.Name] = true
+		sourcePath := filepath.Join(sourceProfile, artifact.Name)
+		data, present, err := readCredentialArtifact(sourcePath)
+		if err != nil {
+			return acpFailure(sessionACPCredentialError, "source credential artifact is unsafe")
+		}
+		if !present {
+			if artifact.Primary {
+				return acpFailure(sessionACPCredentialError, "primary credential data is missing")
+			}
+			continue
+		}
+		projected, err := artifact.Project(data)
+		if err != nil {
+			return acpFailure(sessionACPCredentialError, "credential projection failed")
+		}
+		if projected == nil {
+			if artifact.Primary {
+				return acpFailure(sessionACPCredentialError, "primary credential data is missing")
+			}
+			continue
+		}
+		if len(projected) == 0 || len(projected) > sessionACPArtifactLimit || bytes.IndexByte(projected, 0) >= 0 {
+			return acpFailure(sessionACPCredentialError, "projected credential output is invalid")
+		}
+		destination := filepath.Join(privateProfile, artifact.Name)
+		projection.files = append(projection.files, destination)
+		if err := writeCredentialArtifact(destination, projected); err != nil {
+			return acpFailure(sessionACPCredentialError, "projected credential output is unsafe")
+		}
+		if artifact.Primary {
+			primaryProjected = true
+		}
+	}
+	if !primaryProjected {
+		return acpFailure(sessionACPCredentialError, "primary credential data is missing")
+	}
+	if status := live.Portability(privateProfile, deadline); status != agents.CredentialPortable {
+		return acpFailure(sessionACPCredentialError, "credential is not portable through the turn deadline")
+	}
+	return nil
+}
+
+// projectSessionKey hands the child the selected account's API key where a host keeps one: Coop's
+// vault, or the default account's line in the operator env file — which a policy may withhold, and
+// which may import the value from the daemon's own environment. A later assignment wins, so the
+// resolved line goes last. It reports whether the key came from the env file.
+func (r *sessionTurnRunner) projectSessionKey(sourceRoot, account string, agent agents.Agent, projection *sessionACPProjection) (bool, error) {
+	vault, err := box.ProjectHostCredential(r.sourceCfg, &config.Config{ConfigDir: projection.privateRoot}, agent, account)
+	if vault != "" {
+		projection.files = append(projection.files, vault)
+	}
+	if err != nil {
+		return false, acpFailure(sessionACPCredentialError, "API key projection failed")
+	}
+	if vault != "" {
+		return false, nil
+	}
+	key := agent.CredentialBroker().CredentialEnv
+	value := box.EnvFileValues(filepath.Join(sourceRoot, "env"))[key]
+	if value == "" || strings.ContainsAny(value, "\x00\r\n") {
+		return false, acpFailure(sessionACPCredentialError, "API key projection failed")
+	}
+	destination := filepath.Join(projection.privateRoot, "env")
+	data, _, err := readCredentialArtifact(destination)
+	if err != nil {
+		return false, acpFailure(sessionACPCredentialError, "private config is unsafe")
+	}
+	if len(data) != 0 && data[len(data)-1] != '\n' {
+		data = append(data, '\n')
+	}
+	projection.files = append(projection.files, destination)
+	if err := writeCredentialArtifact(destination, append(data, key+"="+value+"\n"...)); err != nil {
+		return false, acpFailure(sessionACPCredentialError, "private config projection failed")
+	}
+	return true, nil
 }
 
 func (r *sessionTurnRunner) captureSessionMCP(
@@ -1810,10 +1867,13 @@ func (r *sessionTurnRunner) cleanupSessionCredentials(bound session.Session) err
 	for _, name := range []string{"defaults", "env", "mcp.json", "INSTRUCTIONS.md", ".coop-conf-disabled"} {
 		paths = append(paths, filepath.Join(privateRoot, name))
 	}
-	if err := (&sessionACPProjection{files: paths}).remove(); err != nil {
-		return err
+	err = (&sessionACPProjection{files: paths}).remove()
+	// An API key projected for the broker sits in the private vault, beside the profile; a stuck
+	// profile artifact must not keep it there.
+	if vaultErr := box.RemoveHostCredential(&config.Config{ConfigDir: privateRoot}, agent, account); vaultErr != nil {
+		err = errors.Join(err, acpFailure(sessionACPCleanupError, "projected API key cleanup failed"))
 	}
-	return nil
+	return err
 }
 
 func (r *sessionTurnRunner) stopSessionServices(parent context.Context, bound session.Session) error {

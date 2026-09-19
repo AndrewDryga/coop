@@ -326,7 +326,9 @@ func (claudeAgent) CredentialBroker() CredentialBrokerSpec {
 		Header:        "x-api-key",
 		Method:        "POST",
 		Path:          "/v1/messages",
-		Port:          443,
+		// The pinned client posts to the beta Messages endpoint, /v1/messages?beta=true.
+		AllowQuery: true,
+		Port:       443,
 	}
 }
 

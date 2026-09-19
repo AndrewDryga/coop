@@ -988,7 +988,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	}
 	spec := box.RunSpec{
 		Image: img, Repo: ws, Workdir: ws, RepoReadOnly: repositoryReadOnly,
-		Cmd: cmd, ForceNoTTY: true, Agent: agent, ConsultLead: lead, Peers: peers,
+		Cmd: cmd, ForceNoTTY: true, Agent: agent, ConsultLead: lead, Peers: peers, NetworkClient: egress.ClientACP,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 		ForkName: name, ForkOwner: forkctl.ForkContainerOwner(repo, name, identity.Generation),
 		ForkGeneration: string(identity.Generation),
@@ -1010,7 +1010,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		// still proved this fork is the session's own. The run owns a host seed directory holding
 		// the credential projection, so the signal the daemon ends a turn with has to arrive as a
 		// cancellation this run can clean up after — exactly as a filtered child's does.
-		spec.Mode, spec.RepoReadOnly, spec.NetworkClient = a.mode, true, egress.ClientACP
+		spec.Mode, spec.RepoReadOnly = a.mode, true
 		spec.ActivityRepo, spec.ActivityKind, spec.ActivityRole, spec.ActivityReservationOwner, spec.ActivitySource = "", "", "", "", ""
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 		defer stop()

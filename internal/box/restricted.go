@@ -428,7 +428,7 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	if spec.ExtraArgs, err = restrictedRuntimeArgs(spec.ExtraArgs, mode, "its own runtime arguments"); err != nil {
 		return -1, err
 	}
-	if _, err := selectCredentialBroker(cfg, spec); err != nil {
+	if _, err := selectCredentialPlan(cfg, spec); err != nil {
 		return -1, err
 	}
 	workdir := BareWorkdir
@@ -597,6 +597,7 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	if mode == agents.ModeBare {
 		sections.secrets(0) // nothing mounted, nothing to hide — said rather than skipped
 	}
+	sections.accounts(launchAccounts(cfg, spec, nil))
 	sections.internet(cfg, spec, nil)
 	sections.starting()
 	if spec.Ctx != nil {

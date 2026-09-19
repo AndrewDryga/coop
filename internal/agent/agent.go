@@ -341,15 +341,19 @@ type CredentialBrokerSpec struct {
 	PathPrefix     bool
 	AllowQuery     bool
 	ClientBasePath string
-	CommandArgs    func(baseURL string) []string
-	Port           int
+	// Config is the system file that points every process of this client in the box — the lead,
+	// consult and delegate arms, the ACP adapter — at the broker's base URL, for a client whose
+	// BaseURLEnv alone cannot. It replaces the image's file at that path, so it repeats what the
+	// image's copy says. Nil when the environment is enough.
+	Config func(baseURL string) SystemFile
+	Port   int
 }
 
 // Declared reports whether an adapter opted into credential brokering at all.
 func (s CredentialBrokerSpec) Declared() bool {
 	return s.CredentialEnv != "" || s.BaseURLEnv != "" || s.Upstream != "" || s.Header != "" ||
 		s.HeaderPrefix != "" || s.Method != "" || s.Path != "" || s.PathPrefix || s.AllowQuery ||
-		s.ClientBasePath != "" || s.CommandArgs != nil || s.Port != 0
+		s.ClientBasePath != "" || s.Config != nil || s.Port != 0
 }
 
 // Valid rejects partially declared broker shapes. Exact provider support is still qualified by

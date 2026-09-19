@@ -161,12 +161,9 @@ type RunSpec struct {
 	// the ordinary CLI; an ACP launch sets it explicitly.
 	NetworkClient egress.Client
 	// NetworkAdmission marks the synthetic whole-loop spec used only to freeze one
-	// policy before any iteration starts. CredentialBrokerLoop says that loop has no
-	// peer or preset execution shape, so its provider ladder may use the direct-run
-	// broker qualification instead of being mistaken for an executable peer run.
-	NetworkAdmission     bool `json:"-"`
-	CredentialBrokerLoop bool `json:"-"`
-	projectEnv           map[string]string
+	// policy before any iteration starts.
+	NetworkAdmission bool `json:"-"`
+	projectEnv       map[string]string
 	// networkSmoke is the host preflight permit. Unexported on purpose: only the
 	// in-package setup workflow can drive a smoke through this same engine, so
 	// what it proves is exactly what a workload later gets.
@@ -643,27 +640,37 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		if err := filtered.prepareCredentialBroker(artifacts); err != nil {
 			return -1, err
 		}
-		if filtered.broker != nil {
-			spec.Cmd = filtered.broker.candidate.command(spec.Cmd)
-		}
 	}
 	var policy *egress.Snapshot
 	if filtered != nil {
 		policy = &filtered.policy
 	}
-	brokerProvider := ""
+	var brokerPlan *credentialPlan
 	if filtered != nil && filtered.broker != nil {
-		brokerProvider = filtered.broker.candidate.provider
+		brokerPlan = filtered.broker.plan
 	}
-	sections.internet(cfg, spec, policy, brokerProvider)
+	if filtered == nil {
+		// Only the filtered gateway keeps a key outside the box, so an open or offline run holding
+		// one stops here: before the launch names an account it will not connect, the runtime
+		// starts, or a broken selected-provider file leaves a provider home half initialized.
+		plan, err := selectCredentialPlan(cfg, spec)
+		if err == nil {
+			err = plan.requireFiltered()
+		}
+		if err != nil {
+			return -1, err
+		}
+	}
+	sections.accounts(launchAccounts(cfg, spec, brokerPlan))
+	sections.internet(cfg, spec, policy)
 	// Whatever a box may reach is fully known before it starts, so the launch
 	// instructions say it. An agent that learns its own boundary by being
 	// refused burns a turn and reports policy as a broken tool or a dead host.
 	networkNote := ""
 	if filtered != nil {
 		networkNote = networkInstructionNote(filtered.policy)
-		if brokerProvider != "" {
-			networkNote += "\nYour provider API is available only through Coop's session-bound credential broker; the reusable key is not in this box."
+		if len(brokerPlan.routesOrNil()) != 0 {
+			networkNote += "\nYour provider API keys stay outside this box: each provider's API is reachable only through Coop's session-bound credential broker."
 		}
 	}
 
@@ -725,12 +732,12 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	var mcpMounts []extraMount
 	if filtered != nil {
-		if mount, path, err := filtered.credentialBrokerMarkerMount(artifacts, cfg.HomeInBox); err != nil {
+		mounts, paths, err := filtered.credentialBrokerMounts(artifacts, cfg.HomeInBox)
+		tmpFiles = append(tmpFiles, paths...)
+		if err != nil {
 			return -1, err
-		} else if path != "" {
-			tmpFiles = append(tmpFiles, path)
-			mcpMounts = append(mcpMounts, mount)
 		}
+		mcpMounts = append(mcpMounts, mounts...)
 	}
 	rawMCP := false
 	if mcpPresent {
@@ -940,13 +947,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 
 	// All required host artifacts now exist. Only after the whole set succeeds may the runtime or
-	// first-run defaults have side effects; a broken selected-provider file must never start Docker
-	// or leave an earlier provider home partially initialized.
-	if filtered == nil {
-		if _, err := selectCredentialBroker(cfg, spec); err != nil {
-			return -1, err
-		}
-	}
+	// first-run defaults have side effects.
 	if err := rt.EnsureDaemon(); err != nil {
 		return -1, err
 	}

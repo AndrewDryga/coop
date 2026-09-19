@@ -16,28 +16,67 @@ import (
 	"github.com/AndrewDryga/coop/internal/networkgateway"
 )
 
-type credentialBrokerCandidate struct {
+// credentialRoute is one brokered provider account in a run: the adapter's request shape, the real
+// key (host side only, cleared once it is written into the guard's secret), and the auth marker the
+// box must not see.
+type credentialRoute struct {
 	provider     string
+	account      string
 	spec         agents.CredentialBrokerSpec
 	credential   string
 	shadowMarker string
 }
 
+// credentialPlan is every brokered route one run selects, in listener order: route i is served at
+// networkgateway.CredentialBrokerAddress(i). A box holds one account per provider, so a plan has at
+// most one route per provider — every teammate of that provider in the box shares it.
+type credentialPlan struct{ routes []*credentialRoute }
+
+func (p *credentialPlan) route(provider string) (int, *credentialRoute) {
+	if p != nil {
+		for i, route := range p.routes {
+			if route.provider == provider {
+				return i, route
+			}
+		}
+	}
+	return -1, nil
+}
+
+func (p *credentialPlan) routesOrNil() []*credentialRoute {
+	if p == nil {
+		return nil
+	}
+	return p.routes
+}
+
+// gatewayRoutes is the run's broker plan as the gateway reads it; none without a broker.
+func (r *credentialBrokerRun) gatewayRoutes() []networkgateway.CredentialBrokerRoute {
+	if r == nil {
+		return nil
+	}
+	return r.plan.gatewayRoutes()
+}
+
+func (p *credentialPlan) baseURL(i int) string {
+	return "http://" + networkgateway.CredentialBrokerAddress(i) + p.routes[i].spec.ClientBasePath
+}
+
 type credentialBrokerRun struct {
-	candidate  *credentialBrokerCandidate
-	configPath string
-	substitute string
-	configInfo os.FileInfo
+	plan        *credentialPlan
+	substitutes []string // route i's capability, bound to route i's listener
+	configPath  string
+	configInfo  os.FileInfo
 }
 
-// selectCredentialBroker recognizes reusable credentials before a box is assembled. A supported
-// direct filtered run gets a broker; every other shape refuses instead of falling back to putting
-// the credential in the container.
-func selectCredentialBroker(cfg *config.Config, spec RunSpec) (*credentialBrokerCandidate, error) {
-	return selectCredentialBrokerWithMarkers(cfg, spec, nil)
+// selectCredentialPlan recognizes reusable credentials before a box is assembled. Every provider
+// account the run selects that holds a brokerable key gets a route of one filtered run's broker;
+// a shape the broker cannot serve refuses instead of falling back to putting a key in the container.
+func selectCredentialPlan(cfg *config.Config, spec RunSpec) (*credentialPlan, error) {
+	return selectCredentialPlanWithMarkers(cfg, spec, nil)
 }
 
-func selectCredentialBrokerWithMarkers(cfg *config.Config, spec RunSpec, markers map[string]bool) (*credentialBrokerCandidate, error) {
+func selectCredentialPlanWithMarkers(cfg *config.Config, spec RunSpec, markers map[string]bool) (*credentialPlan, error) {
 	if cfg == nil {
 		return nil, nil
 	}
@@ -77,30 +116,43 @@ func selectCredentialBrokerWithMarkers(cfg *config.Config, spec RunSpec, markers
 		}
 		return nil, nil
 	}
-	var selected *credentialBrokerCandidate
+	plan := &credentialPlan{}
 	for _, name := range credentialScope(cfg, spec) {
-		candidate, err := credentialBrokerCandidateFor(cfg, spec, name, cfg.ActiveProfile(name), markers)
+		route, err := credentialBrokerCandidateFor(cfg, spec, name, cfg.ActiveProfile(name), markers)
 		if err != nil {
 			return nil, err
 		}
-		if candidate == nil {
-			continue
+		if route != nil {
+			plan.routes = append(plan.routes, route)
 		}
-		if selected != nil || name != spec.Agent {
-			return nil, fmt.Errorf("%s API-key brokering is not yet supported as a peer; run it as the only direct agent", credentialBrokerAgentName(name))
-		}
-		selected = candidate
 	}
-	if selected == nil {
+	if len(plan.routes) == 0 {
 		return nil, nil
 	}
-	if conflict := credentialBrokerConflict(spec); conflict != "" {
-		return nil, fmt.Errorf("%s API-key brokering does not support %s; run %s directly without peers or a preset", credentialBrokerAgentName(selected.provider), conflict, selected.provider)
+	first := plan.routes[0]
+	// The agent's own command or its ACP adapter; a maintenance command under an agent's
+	// credential scope is neither.
+	if !spec.AgentCommand && spec.networkClient() != egress.ClientACP {
+		return nil, fmt.Errorf("%s API-key brokering serves agents, not this command; run the agent itself", credentialBrokerAgentName(first.provider))
 	}
-	if cfg.Egress != string(egress.Filtered) {
-		return nil, fmt.Errorf("%s %s requires filtered networking so Coop can keep it outside the box; use --egress filtered or sign in with the provider instead", credentialBrokerAgentName(selected.provider), selected.spec.CredentialEnv)
+	if spec.Mode.Restricted() {
+		return nil, fmt.Errorf("%s %s needs filtered networking, which the read-only and bare modes cannot use yet; sign in with the provider instead", credentialBrokerAgentName(first.provider), first.spec.CredentialEnv)
 	}
-	return selected, nil
+	if len(plan.routes) > networkgateway.MaxCredentialBrokerRoutes {
+		return nil, fmt.Errorf("one run can protect at most %d API-key accounts", networkgateway.MaxCredentialBrokerRoutes)
+	}
+	return plan, nil
+}
+
+// requireFiltered refuses a plan in a run without the filtered gateway: the broker is the only way
+// a key stays outside the box. Whether a run is filtered is its caller's to say — an ACP child's or
+// a session's filtered authority arrives as a capture, not as its configured egress.
+func (p *credentialPlan) requireFiltered() error {
+	if len(p.routesOrNil()) == 0 {
+		return nil
+	}
+	first := p.routes[0]
+	return fmt.Errorf("%s %s requires filtered networking so Coop can keep it outside the box; use --egress filtered or sign in with the provider instead", credentialBrokerAgentName(first.provider), first.spec.CredentialEnv)
 }
 
 func credentialBrokerAgentName(name string) string {
@@ -110,7 +162,7 @@ func credentialBrokerAgentName(name string) string {
 	return name
 }
 
-func credentialBrokerCandidateFor(cfg *config.Config, spec RunSpec, name, profile string, markers map[string]bool) (*credentialBrokerCandidate, error) {
+func credentialBrokerCandidateFor(cfg *config.Config, spec RunSpec, name, profile string, markers map[string]bool) (*credentialRoute, error) {
 	agent, ok := agents.Get(name)
 	if !ok {
 		return nil, nil
@@ -173,7 +225,7 @@ func credentialBrokerCandidateFor(cfg *config.Config, spec RunSpec, name, profil
 	if markerPresent {
 		shadowMarker, _ = agent.AuthMarker()
 	}
-	return &credentialBrokerCandidate{provider: name, spec: broker, credential: credential, shadowMarker: shadowMarker}, nil
+	return &credentialRoute{provider: name, account: profile, spec: broker, credential: credential, shadowMarker: shadowMarker}, nil
 }
 
 // effectiveCredentialEnv mirrors prepareBoxEnvFile's order for one account: project defaults,
@@ -199,27 +251,6 @@ func effectiveCredentialEnv(cfg *config.Config, spec RunSpec, agent agents.Agent
 		}
 	}
 	return values, nil
-}
-
-func credentialBrokerConflict(spec RunSpec) string {
-	switch {
-	case spec.Login:
-		return "sign-in"
-	case spec.Preset != nil:
-		return "a preset run"
-	case spec.ConsultLead != "" || len(spec.Peers) != 0:
-		return "a peer or consult run"
-	case spec.ShareACPSessions || spec.ForceNoTTY || spec.networkClient() == egress.ClientACP:
-		return "ACP or a remote session"
-	case spec.Mode.Restricted():
-		return "restricted-filesystem mode"
-	case !spec.AgentCommand:
-		return "this non-agent command"
-	case spec.networkClient() != egress.ClientCLI:
-		return "this client variant"
-	default:
-		return ""
-	}
 }
 
 func extraEnvAssigns(args []string, key string) bool {
@@ -257,46 +288,44 @@ func extraProviderCredential(spec RunSpec, argSets ...[]string) string {
 	return ""
 }
 
-func (c *credentialBrokerCandidate) route() *networkgateway.CredentialBrokerRoute {
-	if c == nil {
+// gatewayRoutes is the plan as the gateway's non-secret launch authority, in listener order.
+func (p *credentialPlan) gatewayRoutes() []networkgateway.CredentialBrokerRoute {
+	if p == nil {
 		return nil
 	}
-	return &networkgateway.CredentialBrokerRoute{Provider: c.provider, Upstream: c.spec.Upstream,
-		Header: c.spec.Header, HeaderPrefix: c.spec.HeaderPrefix, Method: c.spec.Method,
-		Path: c.spec.Path, PathPrefix: c.spec.PathPrefix, AllowQuery: c.spec.AllowQuery, Port: c.spec.Port}
-}
-
-func (c *credentialBrokerCandidate) command(cmd []string) []string {
-	if c == nil || c.spec.CommandArgs == nil || len(cmd) == 0 {
-		return cmd
+	routes := make([]networkgateway.CredentialBrokerRoute, 0, len(p.routes))
+	for _, r := range p.routes {
+		routes = append(routes, networkgateway.CredentialBrokerRoute{Provider: r.provider, Upstream: r.spec.Upstream,
+			Header: r.spec.Header, HeaderPrefix: r.spec.HeaderPrefix, Method: r.spec.Method,
+			Path: r.spec.Path, PathPrefix: r.spec.PathPrefix, AllowQuery: r.spec.AllowQuery, Port: r.spec.Port})
 	}
-	baseURL := "http://" + networkgateway.CredentialBrokerAddress + c.spec.ClientBasePath
-	args := c.spec.CommandArgs(baseURL)
-	out := make([]string, 0, len(cmd)+len(args))
-	out = append(out, cmd[0])
-	out = append(out, args...)
-	return append(out, cmd[1:]...)
+	return routes
 }
 
 func (f *filteredExecution) prepareCredentialBroker(artifacts compositionArtifactOps) error {
-	if f.broker == nil || f.broker.candidate == nil {
+	if f.broker == nil || f.broker.plan == nil {
 		return nil
 	}
 	root, err := f.store.RunFilesPath(f.record.ID)
 	if err != nil || root != artifacts.parent {
 		return errors.New("credential broker artifact ownership changed")
 	}
-	random := make([]byte, 32)
-	if _, err := rand.Read(random); err != nil {
-		return errors.New("create credential broker substitute")
+	secrets := networkgateway.CredentialBrokerSecrets{Version: 2, RunID: f.record.ID, Epoch: f.record.Epoch}
+	f.broker.substitutes = make([]string, len(f.broker.plan.routes))
+	for i, route := range f.broker.plan.routes {
+		random := make([]byte, 32)
+		if _, err := rand.Read(random); err != nil {
+			return errors.New("create credential broker substitute")
+		}
+		f.broker.substitutes[i] = hex.EncodeToString(random)
+		secrets.Routes = append(secrets.Routes, networkgateway.CredentialBrokerSecret{Provider: route.provider,
+			Substitute: f.broker.substitutes[i], Credential: route.credential})
+		route.credential = ""
 	}
-	f.broker.substitute = hex.EncodeToString(random)
-	secret := networkgateway.CredentialBrokerSecret{Version: 1, RunID: f.record.ID, Epoch: f.record.Epoch,
-		Provider: f.broker.candidate.provider, Substitute: f.broker.substitute,
-		Credential: f.broker.candidate.credential}
-	data, err := json.Marshal(secret)
-	secret.Credential = ""
-	f.broker.candidate.credential = ""
+	data, err := json.Marshal(secrets)
+	for i := range secrets.Routes {
+		secrets.Routes[i].Credential = ""
+	}
 	if err != nil {
 		return errors.New("encode credential broker configuration")
 	}
@@ -338,9 +367,21 @@ func (f *filteredExecution) checkCredentialBrokerBinding() error {
 	return nil
 }
 
+// credentialBrokerEnv rewrites the box environment for every route: the provider's own credential
+// keys and base URL are dropped, and its capability and route URL take their place. One environment
+// serves the whole box, so every teammate of that provider reaches the same route.
 func (f *filteredExecution) credentialBrokerEnv(artifacts compositionArtifactOps, source string) (string, error) {
-	if f.broker == nil || f.broker.candidate == nil {
+	if f.broker == nil || f.broker.plan == nil {
 		return source, nil
+	}
+	drop := map[string]bool{}
+	for _, route := range f.broker.plan.routes {
+		drop[route.spec.BaseURLEnv] = true
+		if agent, ok := agents.Get(route.provider); ok {
+			for _, key := range agent.CredentialEnvKeys() {
+				drop[key] = true
+			}
+		}
 	}
 	content := ""
 	if source != "" {
@@ -348,19 +389,15 @@ func (f *filteredExecution) credentialBrokerEnv(artifacts compositionArtifactOps
 		if err != nil {
 			return "", fmt.Errorf("read environment for credential broker: %w", err)
 		}
-		drop := map[string]bool{f.broker.candidate.spec.BaseURLEnv: true}
-		if agent, ok := agents.Get(f.broker.candidate.provider); ok {
-			for _, key := range agent.CredentialEnvKeys() {
-				drop[key] = true
-			}
-		}
 		content = strings.TrimRight(filteredEnvContent(data, drop), "\n")
 	}
 	if content != "" {
 		content += "\n"
 	}
-	content += f.broker.candidate.spec.CredentialEnv + "=" + f.broker.substitute + "\n"
-	content += f.broker.candidate.spec.BaseURLEnv + "=http://" + networkgateway.CredentialBrokerAddress + f.broker.candidate.spec.ClientBasePath + "\n"
+	for i, route := range f.broker.plan.routes {
+		content += route.spec.CredentialEnv + "=" + f.broker.substitutes[i] + "\n"
+		content += route.spec.BaseURLEnv + "=" + f.broker.plan.baseURL(i) + "\n"
+	}
 	path, err := artifacts.writeFile(artifacts.parent, content)
 	if err != nil {
 		return "", fmt.Errorf("prepare credential broker environment: %w", err)
@@ -368,14 +405,55 @@ func (f *filteredExecution) credentialBrokerEnv(artifacts compositionArtifactOps
 	return path, nil
 }
 
-func (f *filteredExecution) credentialBrokerMarkerMount(artifacts compositionArtifactOps, homeInBox string) (extraMount, string, error) {
-	if f.broker == nil || f.broker.candidate == nil || f.broker.candidate.shadowMarker == "" {
-		return extraMount{}, "", nil
+// credentialBrokerMounts are each route's read-only files: an empty auth marker over the account's
+// native one, so a client that prefers its stored credential still meets only the route, and the
+// client's own configuration where the adapter needs one to reach the route.
+func (f *filteredExecution) credentialBrokerMounts(artifacts compositionArtifactOps, homeInBox string) ([]extraMount, []string, error) {
+	if f.broker == nil || f.broker.plan == nil {
+		return nil, nil, nil
 	}
-	path, err := artifacts.writeFile(artifacts.parent, "{}\n")
-	if err != nil {
-		return extraMount{}, "", fmt.Errorf("prepare credential marker shadow: %w", err)
+	var mounts []extraMount
+	var paths []string
+	write := func(content, target, what string) error {
+		path, err := artifacts.writeFile(artifacts.parent, content)
+		if err != nil {
+			return fmt.Errorf("prepare %s: %w", what, err)
+		}
+		paths = append(paths, path)
+		mounts = append(mounts, extraMount{path, target})
+		return nil
 	}
-	target := filepath.Join(homeInBox, "."+f.broker.candidate.provider, f.broker.candidate.shadowMarker)
-	return extraMount{path, target}, path, nil
+	for i, route := range f.broker.plan.routes {
+		if route.shadowMarker != "" {
+			if err := write("{}\n", filepath.Join(homeInBox, "."+route.provider, route.shadowMarker), "credential marker shadow"); err != nil {
+				return nil, paths, err
+			}
+		}
+		if route.spec.Config != nil {
+			file := route.spec.Config(f.broker.plan.baseURL(i))
+			if err := write(file.Content, file.Path, route.provider+" broker configuration"); err != nil {
+				return nil, paths, err
+			}
+		}
+	}
+	return mounts, paths, nil
+}
+
+// launchAccounts is every account the run selected, in its scope order, as the launch presents it:
+// a brokered route is a protected key, any other account a signed-in login, and a provider with no
+// credential at all is not an account the run connects.
+func launchAccounts(cfg *config.Config, spec RunSpec, plan *credentialPlan) []accountRow {
+	if spec.Login {
+		return nil // a sign-in box creates the account; it connects none
+	}
+	var rows []accountRow
+	for _, name := range credentialScope(cfg, spec) {
+		account := cfg.ActiveProfile(name)
+		if _, route := plan.route(name); route != nil {
+			rows = append(rows, accountRow{provider: name, account: route.account, protected: true})
+		} else if ProfileAuthed(cfg, name, account) {
+			rows = append(rows, accountRow{provider: name, account: account})
+		}
+	}
+	return rows
 }

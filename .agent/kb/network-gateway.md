@@ -2,7 +2,7 @@
 name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
-sources: [internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/gatewayimage/image.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/forkctl/host.go]
+sources: [internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/gatewayimage/image.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/forkctl/host.go]
 updated: 2026-09-19
 ---
 
@@ -52,6 +52,16 @@ from the closure's fixed addresses. CONNECT names outside the frozen TLS policy 
 allowed CONNECT receives `200`, then the guard parses the actual ClientHello and requires its SNI
 and rule identity to match before using the ordinary resolver, lease, Envoy and observation path.
 Direct service traffic cannot bypass the proxy because the Docker network itself is internal.
+
+Brokered API keys use the guard too (`credential_broker.go`): one loopback listener per route of the
+run's plan, `CredentialBrokerAddress(i)` = 15580+i, each holding only its own route's substitute and
+key (`CredentialBrokerSecrets` v2, bound to the run and gateway epoch; substitutes must differ). A
+request must fit its route's endpoint (`CredentialBrokerRoute.Admits`: method; a path already clean
+— no dot segment, doubled slash or second encoding an upstream could normalize into a sibling
+endpoint — equal to or under the route's; a query only where the adapter declared one) and name its
+own listener in `Host`, so a capability presented to another route's listener is refused before
+any upstream dial; the key is injected on the route's fixed upstream through the ordinary
+lease/Envoy path.
 
 Facts the code cannot say twice, all still true:
 
@@ -167,6 +177,8 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-09-19 — the credential broker serves one loopback listener per brokered route (15580+i),
+  each bound to its own substitute and endpoint (`Admits`).
 - 2026-09-19 — a resolver connection dialed and released between two samples no longer leaves a
   false "may be missing" warning: `track()` reads its inode from the fd and the collector retires
   its released identity like a bound one (human decision A on task

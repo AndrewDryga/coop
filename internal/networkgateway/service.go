@@ -9,10 +9,13 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,10 +36,31 @@ const (
 	MaxLaunchConfigBytes    = 4 << 20
 	MaintenanceResolver     = "1.1.1.1"
 	MaintenanceResolverName = "cloudflare-dns.com"
-	CredentialBrokerPort    = 15580
-	CredentialBrokerAddress = "127.0.0.1:15580"
+	CredentialBrokerPort    = 15580 // route 0's listener; route i listens on CredentialBrokerPort+i
 	CredentialBrokerPath    = "/run/coop-credential-broker.json"
+	// MaxCredentialBrokerRoutes bounds the brokered provider accounts one run can select.
+	MaxCredentialBrokerRoutes = 8
 )
+
+// CredentialBrokerAddress is route i's listener on the gateway loopback the agent shares.
+func CredentialBrokerAddress(route int) string {
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(CredentialBrokerPort+route))
+}
+
+// validBrokerRoutes holds each route to one exact provider endpoint, and keeps every route's
+// listener off the ports the agent network contract serves or captures.
+func validBrokerRoutes(routes []CredentialBrokerRoute, serve, tlsPorts []int) bool {
+	if len(routes) > MaxCredentialBrokerRoutes {
+		return false
+	}
+	for i, route := range routes {
+		port := CredentialBrokerPort + i
+		if !route.valid() || slices.Contains(serve, port) || slices.Contains(tlsPorts, port) {
+			return false
+		}
+	}
+	return true
+}
 
 // LaunchConfig contains a previously verified host capture, never an owner key,
 // credential or agent-supplied executable/path. The direct read-only file mount
@@ -62,9 +86,10 @@ type LaunchConfig struct {
 	// container on the same bridge could reach a port the host published on
 	// loopback only.
 	Ingress netip.Addr `json:"ingress,omitempty"`
-	// Broker is non-secret helper-only authority derived from the selected adapter. The reusable
-	// credential lives in a separate guard-only mount and never in this controller-readable file.
-	Broker *CredentialBrokerRoute `json:"credential_broker,omitempty"`
+	// Brokers are non-secret helper-only authority derived from the selected adapters: one route per
+	// brokered provider account, in listener order. The reusable credentials live in a separate
+	// guard-only mount and never in this controller-readable file.
+	Brokers []CredentialBrokerRoute `json:"credential_brokers,omitempty"`
 }
 
 // CredentialBrokerRoute is one exact provider endpoint, not a user policy or forward-proxy rule.
@@ -87,6 +112,21 @@ func (r CredentialBrokerRoute) valid() bool {
 		r.Header != "" && strings.ToLower(r.Header) == r.Header &&
 		r.Method == "POST" && strings.HasPrefix(r.Path, "/") &&
 		!strings.ContainsAny(r.Path, "?#\x00\r\n") && !strings.ContainsAny(r.HeaderPrefix, "\x00\r\n") && r.Port == 443
+}
+
+// Admits reports whether a request line fits the route's one endpoint: its method, its exact path
+// (or one under it for a prefix route), and a query only where the adapter declared its client
+// sends one. The path must already be in its one clean form: a dot segment, a doubled slash or a
+// second encoding would let a prefix route name a sibling endpoint once the upstream normalizes it.
+func (r CredentialBrokerRoute) Admits(method string, target *url.URL) bool {
+	if path.Clean(target.Path) != target.Path || target.RawPath != "" && target.RawPath != target.Path {
+		return false
+	}
+	pathMatches := target.Path == r.Path
+	if r.PathPrefix {
+		pathMatches = pathMatches || strings.HasPrefix(target.Path, strings.TrimSuffix(r.Path, "/")+"/")
+	}
+	return method == r.Method && pathMatches && (r.AllowQuery || target.RawQuery == "") && !target.IsAbs()
 }
 
 type ServiceBinding struct {
@@ -154,7 +194,7 @@ func (c LaunchConfig) Validate() error {
 	if len(c.Serve) != 0 && (!c.Ingress.Is4() || !c.Ingress.IsValid()) {
 		return Failure("gateway_configuration_invalid")
 	}
-	if c.Broker != nil && (!c.Broker.valid() || slices.Contains(c.Serve, CredentialBrokerPort) || slices.Contains(c.Policy.TLSPorts(), CredentialBrokerPort)) {
+	if !validBrokerRoutes(c.Brokers, c.Serve, c.Policy.TLSPorts()) {
 		return Failure("gateway_configuration_invalid")
 	}
 	// One construction, one meaning: the same grant/binding/port checks the
@@ -183,7 +223,7 @@ func RunController(ctx context.Context, config LaunchConfig) error {
 		return Failure("controller_socket_unavailable")
 	}
 	c, err := NewController(config.identity(clock), config.Policy, config.Protected, config.Services, config.ServiceProxyClients,
-		config.Serve, config.Ingress, config.Broker, clock, applyKernelRules)
+		config.Serve, config.Ingress, config.Brokers, clock, applyKernelRules)
 	if err != nil {
 		return err
 	}
@@ -213,7 +253,7 @@ type GuardRuntime struct {
 	GuardEvents *GuardEvents
 	EnvoyEvents *EnvoyEvents
 	guard       *Guard
-	broker      *credentialBroker
+	brokers     []*credentialBroker
 	doh         *DoH
 	collector   *Collector
 	phase       atomic.Uint32
@@ -263,36 +303,37 @@ func NewGuardRuntime(config LaunchConfig) (*GuardRuntime, error) {
 	}
 	guard.serviceProxyClients = slices.Clone(config.ServiceProxyClients)
 	envoyEvents := NewEnvoyEvents(clock)
-	var broker *credentialBroker
-	if config.Broker != nil {
+	var brokers []*credentialBroker
+	var brokerResolvers []*Resolver
+	if len(config.Brokers) != 0 {
 		file, openErr := os.Open(CredentialBrokerPath)
 		if openErr != nil {
 			doh.Close()
 			return nil, Failure("credential_broker_configuration_invalid")
 		}
 		info, statErr := file.Stat()
-		secret, readErr := ReadCredentialBrokerSecret(file, config)
+		secrets, readErr := ReadCredentialBrokerSecrets(file, config)
 		_ = file.Close()
 		if statErr != nil || !info.Mode().IsRegular() || readErr != nil {
 			doh.Close()
 			return nil, Failure("credential_broker_configuration_invalid")
 		}
-		broker, err = newCredentialBroker(config, secret, clock, doh, events, controller)
-		if err != nil {
-			doh.Close()
-			return nil, err
+		for route, secret := range secrets.Routes {
+			broker, err := newCredentialBroker(config, route, secret, clock, doh, events, controller)
+			if err != nil {
+				doh.Close()
+				return nil, err
+			}
+			brokers = append(brokers, broker)
+			brokerResolvers = append(brokerResolvers, broker.resolver)
 		}
-	}
-	var brokerResolvers []*Resolver
-	if broker != nil {
-		brokerResolvers = append(brokerResolvers, broker.resolver)
 	}
 	collector, err := NewCollector(guard, envoyEvents, doh, brokerResolvers...)
 	if err != nil {
 		doh.Close()
 		return nil, err
 	}
-	return &GuardRuntime{Identity: identity, GuardEvents: events, EnvoyEvents: envoyEvents, guard: guard, broker: broker, doh: doh, collector: collector}, nil
+	return &GuardRuntime{Identity: identity, GuardEvents: events, EnvoyEvents: envoyEvents, guard: guard, brokers: brokers, doh: doh, collector: collector}, nil
 }
 
 func (g *GuardRuntime) Run(ctx context.Context) (result error) {
@@ -380,11 +421,8 @@ func (g *GuardRuntime) Run(ctx context.Context) (result error) {
 	}
 	var workers sync.WaitGroup
 	defer func() { g.stopReady(); cancel(); workers.Wait() }()
-	failures := make(chan error, 4)
-	needed := int32(1)
-	if g.broker != nil {
-		needed++
-	}
+	failures := make(chan error, 3+len(g.brokers))
+	needed := int32(1 + len(g.brokers))
 	var readyParts atomic.Int32
 	partReady := func() {
 		if readyParts.Add(1) == needed {
@@ -392,8 +430,8 @@ func (g *GuardRuntime) Run(ctx context.Context) (result error) {
 		}
 	}
 	workers.Go(func() { failures <- g.guard.Serve(ctx, partReady) })
-	if g.broker != nil {
-		workers.Go(func() { failures <- g.broker.Serve(ctx, partReady) })
+	for _, broker := range g.brokers {
+		workers.Go(func() { failures <- broker.Serve(ctx, partReady) })
 	}
 	workers.Go(func() { failures <- health.watch(ctx) })
 	workers.Go(func() { failures <- g.serveReadiness(ctx) })

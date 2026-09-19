@@ -74,19 +74,48 @@ func (a *app) acpPresetNetworkTargets(p *preset.Preset) ([]agents.Target, error)
 // request; optional choices contribute only whole, qualified provider closures.
 func (a *app) acpNetworkScope(repo string, initial agents.Target, peers []agents.Target, selected *preset.Preset) ([]agents.Target, error) {
 	var scope []agents.Target
+	// One policy serves every box this session may start, and a provider's API-key and signed-in
+	// accounts need opposite grants (the broker withholds the API a sign-in is granted). So a
+	// provider's optional accounts follow the kind of the account the session names first — the
+	// editor's, a peer's, a preset's — or else of its first qualified one, the default when it is.
+	keyed := map[string]bool{}
+	anchor := func(target agents.Target) {
+		if _, set := keyed[target.Provider]; !set {
+			keyed[target.Provider], _ = box.AccountBrokersKey(a.cfg, target.Provider, target.Account())
+		}
+	}
+	sameKind := func(target agents.Target) bool {
+		key, err := box.AccountBrokersKey(a.cfg, target.Provider, target.Account())
+		return err == nil && key == keyed[target.Provider]
+	}
 	// Ad-hoc peers use their active account in the child. Preserve that exact
 	// identity so filtered admission cannot be borrowed from a portable sibling.
 	for _, peer := range peers {
 		if len(peer.Accounts) == 0 {
 			peer.Accounts = []string{a.cfg.ActiveProfile(peer.Provider)}
 		}
+		anchor(peer)
 		scope = append(scope, peer)
+	}
+	if len(initial.Accounts) != 0 {
+		anchor(initial)
+	}
+	selectedTargets, err := a.acpPresetNetworkTargets(selected)
+	if err != nil {
+		return nil, err
+	}
+	for _, target := range selectedTargets {
+		anchor(target)
 	}
 	add := func(providers []string) {
 		for _, provider := range providers {
 			for _, account := range accountsFor(a.cfg, provider) {
 				target := agents.Target{Provider: provider, Accounts: []string{account}}
-				if acpNetworkQualified(a.cfg, target) {
+				if !acpNetworkQualified(a.cfg, target) {
+					continue
+				}
+				anchor(target)
+				if sameKind(target) {
 					scope = append(scope, target)
 				}
 			}
@@ -108,10 +137,6 @@ func (a *app) acpNetworkScope(repo string, initial agents.Target, peers []agents
 			scope = append(scope, initial)
 		}
 	}
-	selectedTargets, err := a.acpPresetNetworkTargets(selected)
-	if err != nil {
-		return nil, err
-	}
 	scope = append(scope, selectedTargets...)
 	// A reload restores its effective selection after admission. Include it as
 	// required now, rather than admitting only the original editor arguments.
@@ -128,6 +153,7 @@ func (a *app) acpNetworkScope(repo string, initial agents.Target, peers []agents
 				if len(target.Accounts) == 0 {
 					addRequired([]string{provider})
 				} else {
+					anchor(target)
 					scope = append(scope, target)
 				}
 			}
@@ -161,7 +187,7 @@ func (a *app) acpNetworkScope(repo string, initial agents.Target, peers []agents
 		}
 		qualified := true
 		for _, target := range targets {
-			qualified = qualified && acpNetworkQualified(a.cfg, target)
+			qualified = qualified && acpNetworkQualified(a.cfg, target) && sameKind(target)
 		}
 		if qualified {
 			scope = append(scope, targets...)

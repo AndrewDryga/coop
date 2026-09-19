@@ -46,7 +46,7 @@ func (l Lease) destination() netip.AddrPort {
 type Controller struct {
 	identity            Identity
 	policy              egress.Snapshot
-	broker              *CredentialBrokerRoute
+	brokers             []CredentialBrokerRoute
 	protected           []netip.Prefix
 	apply               ApplyRules
 	now                 func() BootInstant
@@ -65,7 +65,7 @@ type Controller struct {
 }
 
 func NewController(identity Identity, policy egress.Snapshot, protected []netip.Prefix, services []ServiceBinding, serviceProxyClients []ServiceProxyClient,
-	serve []int, ingress netip.Addr, broker *CredentialBrokerRoute, clock *BootClock, apply ApplyRules) (*Controller, error) {
+	serve []int, ingress netip.Addr, brokers []CredentialBrokerRoute, clock *BootClock, apply ApplyRules) (*Controller, error) {
 	if err := policy.RequireSupported(); err != nil {
 		return nil, err
 	}
@@ -82,10 +82,10 @@ func NewController(identity Identity, policy egress.Snapshot, protected []netip.
 	if len(serve) != 0 && !ingress.Is4() {
 		return nil, errors.New("published serve ports require the bridge gateway address host traffic arrives from")
 	}
-	if broker != nil && (slices.Contains(serve, CredentialBrokerPort) || slices.Contains(policy.TLSPorts(), CredentialBrokerPort)) {
-		return nil, errors.New("credential broker port collides with the agent network contract")
+	if !validBrokerRoutes(brokers, serve, policy.TLSPorts()) {
+		return nil, errors.New("credential broker routes are invalid or collide with the agent network contract")
 	}
-	if apply == nil || len(protected) > MaxProtectedRanges || !identity.Valid() || identity.PolicyFingerprint != policy.Fingerprint || clock.Domain() != identity.Clock || !clock.instant().Valid() || broker != nil && !broker.valid() {
+	if apply == nil || len(protected) > MaxProtectedRanges || !identity.Valid() || identity.PolicyFingerprint != policy.Fingerprint || clock.Domain() != identity.Clock || !clock.instant().Valid() {
 		return nil, errors.New("invalid gateway controller configuration")
 	}
 	for _, prefix := range protected {
@@ -93,12 +93,7 @@ func NewController(identity Identity, policy egress.Snapshot, protected []netip.
 			return nil, errors.New("invalid protected namespace prefix")
 		}
 	}
-	var brokerCopy *CredentialBrokerRoute
-	if broker != nil {
-		value := *broker
-		brokerCopy = &value
-	}
-	return &Controller{identity: identity, policy: policy.Clone(), broker: brokerCopy, protected: slices.Clone(protected), grants: grants,
+	return &Controller{identity: identity, policy: policy.Clone(), brokers: slices.Clone(brokers), protected: slices.Clone(protected), grants: grants,
 		serviceProxyClients: slices.Clone(serviceProxyClients), serve: slices.Clone(serve),
 		ingress: ingress, apply: apply, now: clock.instant, clock: clock, leases: map[string]Lease{}}, nil
 }
@@ -231,11 +226,12 @@ func (c *Controller) Admit(ctx context.Context, lease Lease) (BootInstant, error
 }
 
 // AdmitBroker is a separate helper-only authority path. The agent cannot reach the private
-// controller socket, and the controller checks the immutable launch route rather than trusting a
-// caller-supplied label or unioning the provider into the agent policy.
+// controller socket, and the controller checks the immutable launch routes rather than trusting a
+// caller-supplied label or unioning a provider into the agent policy.
 func (c *Controller) AdmitBroker(ctx context.Context, lease Lease) (BootInstant, error) {
 	name, err := egress.NormalizeDomain(lease.Name, false)
-	if err != nil || name != lease.Name || c.broker == nil || name != c.broker.Upstream || lease.Port != c.broker.Port ||
+	route := func(r CredentialBrokerRoute) bool { return r.Upstream == name && r.Port == lease.Port }
+	if err != nil || name != lease.Name || !slices.ContainsFunc(c.brokers, route) ||
 		!lease.Peer.Is4() || !egress.PublicAnswer(lease.Peer, c.protected) {
 		return 0, Failure("gateway_lease_refused")
 	}

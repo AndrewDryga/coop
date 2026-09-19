@@ -143,6 +143,26 @@ func RemoveHostCredential(cfg *config.Config, ag agents.Agent, profile string) e
 	return nil
 }
 
+// ProjectHostCredential copies the Coop-held API key one account runs on into another config's
+// vault — the host-side store a session child brokers it from, never a home a box mounts — and
+// returns the file it wrote, for its owner to remove. An account whose key Coop does not hold (or
+// does not select) writes nothing.
+func ProjectHostCredential(from, to *config.Config, ag agents.Agent, profile string) (string, error) {
+	profileDir := from.AgentProfileDir(ag.Name(), profile)
+	if !hostCredentialSelected(ag, profileDir, profileMarkerPresent(ag, profileDir)) {
+		return "", nil
+	}
+	_, value, found, err := LoadHostCredential(from, ag, profile)
+	if err != nil || !found {
+		return "", err
+	}
+	dir, err := hostCredentialDir(to, ag.Name(), profile)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, ag.HostCredential().File), SaveHostCredential(to, ag, profile, []byte(value))
+}
+
 func hostCredentialMtime(cfg *config.Config, ag agents.Agent, profile string) (os.FileInfo, bool) {
 	spec := ag.HostCredential()
 	if !spec.Declared() {
