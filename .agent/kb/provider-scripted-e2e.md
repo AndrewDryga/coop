@@ -20,6 +20,17 @@ generated wrapper/persona mounts, scoped homes, native provider argv/output, con
 fallback, and telemetry. It covers every provider arm and all 12 ordered distinct fallback pairs;
 see [[provider-consult-e2e]] for the state and live-ring contracts.
 
+A failed process test carries its own evidence (`describeGroup`): a leader that exits with group
+members left lists them as `survivors (pid ppid pgid stat elapsed command)`, and a deadline lists
+what was `still running at the deadline`, captured before the kill erases the stall (rows are cut
+short: a provider's argv can carry its whole prompt). Known intermittent, unexplained: a fallback
+pair has twice stalled after its final grok resume exited 0 (codex_to_grok, gemini_to_grok): no
+resumed reply, stderr ending `Terminated: 15` (a foreground child killed at the deadline). 180 pair
+runs under CPU load and a full suite under compile load did not reproduce it; read the deadline rows
+of the next one. Separately, under heavy compile load the overflow cases of
+`TestProviderScriptedConsultTimeoutAndOverflowMatrix` outrun their 20 s budget; the run examined was
+a slow drain, not a hang — `bounded_capture` spawns about five processes per 64 KiB block.
+
 Fork coverage uses disposable parent and fork repositories to cross the external CLI/runtime
 boundary without a second emulator. It proves fresh, resume, and new sessions; all four native
 launch shapes; provider, account, cwd, and explicit-ID isolation; remembered-provider behavior
@@ -125,6 +136,8 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-09-19 — a deadline now names what was still running; recorded the unexplained grok-resume
+  pair stall and the load-only overflow slowness.
 - 2026-09-19 — the native-role degradation row became two: a native role mounts in every provider's
   own agents directory, and a lead that cannot host one is refused before the runtime.
 - 2026-09-17 — Podman removed; CI's doctor matrix is Docker only.

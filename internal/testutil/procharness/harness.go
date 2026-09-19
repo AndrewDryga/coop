@@ -325,18 +325,25 @@ func (p *Process) wait(ctx context.Context) Result {
 			if p.beforeCancel != nil {
 				beforeErr = p.beforeCancel()
 			}
-			survivors := describeGroup(result.PID)
+			survivors := describeGroup(result.PID, "survivors")
 			signalGroup(result.PID, syscall.SIGKILL)
 			cleanupErr := waitGroupGone(result.PID, 2*time.Second)
 			survivorErr := fmt.Errorf("process group %d survived leader exit%s", result.PID, survivors)
 			result.Err = errors.Join(result.Err, beforeErr, survivorErr, cleanupErr)
 		}
 	case <-ctx.Done():
+		// A deadline names what was still running when it struck, before anything the kill could
+		// erase: a stalled run is some process waiting on something, and which one is the finding.
+		// A deliberate cancellation has nothing to explain.
+		stopped := ctx.Err()
+		if errors.Is(stopped, context.DeadlineExceeded) {
+			stopped = fmt.Errorf("%w%s", stopped, describeGroup(result.PID, "still running at the deadline"))
+		}
 		var beforeErr error
 		if p.beforeCancel != nil {
 			beforeErr = p.beforeCancel()
 		}
-		result.Err = errors.Join(ctx.Err(), beforeErr, cancelProcessGroup(result.PID, p.done, p.grace))
+		result.Err = errors.Join(stopped, beforeErr, cancelProcessGroup(result.PID, p.done, p.grace))
 	}
 	return finishResult(result, p.stdout, p.stderr)
 }
@@ -422,10 +429,10 @@ func cancelProcessGroup(pid int, done <-chan error, grace time.Duration) error {
 // are the finding — a reparented process in a sleeping state is one whose owner exited without
 // taking it along, which is a different bug from one that is merely slow to leave.
 //
-// Bounded twice over: one `ps`, on a deadline so a wedged process table cannot hang the test
-// instead of failing it, and at most a handful of rows, so a failure adds evidence rather than a
-// page of process table to the transcript.
-func describeGroup(pid int) string {
+// Bounded three ways: one `ps`, on a deadline so a wedged process table cannot hang the test
+// instead of failing it; at most a handful of rows; and each row cut short, since a provider's
+// argv can carry a whole prompt. A failure adds evidence rather than a page of process table.
+func describeGroup(pid int, heading string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), describeGroupTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "ps", "-A", "-o", "pid=,ppid=,pgid=,stat=,etime=,command=").Output()
@@ -445,17 +452,25 @@ func describeGroup(pid int) string {
 			rows = append(rows, "…")
 			break
 		}
-		rows = append(rows, strings.TrimSpace(line))
+		row := strings.TrimSpace(line)
+		if len(row) > describeGroupRowBytes {
+			row = strings.ToValidUTF8(row[:describeGroupRowBytes], "") + "…"
+		}
+		rows = append(rows, row)
 	}
 	if len(rows) == 0 {
 		return " (nothing was left in the group by the time it was listed)"
 	}
-	return "; survivors (pid ppid pgid stat elapsed command):\n  " + strings.Join(rows, "\n  ")
+	return "; " + heading + " (pid ppid pgid stat elapsed command):\n  " + strings.Join(rows, "\n  ")
 }
 
 // describeGroupLimit keeps a failure's evidence bounded. One straggler is the usual case and the
 // interesting one; a runaway group is proven by the first few rows just as well as by all of them.
 const describeGroupLimit = 8
+
+// describeGroupRowBytes keeps one row to what identifies the process: its command and the start of
+// its arguments, not a prompt the provider was handed in argv.
+const describeGroupRowBytes = 512
 
 // describeGroupTimeout bounds the one `ps`. Collecting evidence must never become the reason a
 // failing test hangs to its package deadline instead of reporting.

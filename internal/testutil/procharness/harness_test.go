@@ -2,6 +2,7 @@ package procharness
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -136,6 +137,32 @@ func TestRunDeadlineReapsTheProcessGroup(t *testing.T) {
 			t.Fatal(err)
 		}
 		awaitGone(t, pid)
+	}
+}
+
+// A deadline says what was still running when it struck: the stalled step is the finding, and the
+// kill that follows erases it. A deliberate cancellation explains nothing.
+func TestRunDeadlineNamesWhatWasStillRunning(t *testing.T) {
+	layout, err := NewLayout(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A provider's argv can carry a whole prompt: the row names the process without pasting it.
+	prompt := strings.Repeat("p", 4096)
+	command := Command{Path: "/bin/sh", Args: []string{"-c", "sleep 30; :", prompt}, Dir: layout.Root,
+		Env: []string{"PATH=/usr/bin:/bin"}, KillGrace: 50 * time.Millisecond, MaxOutput: 1024}
+	const heading = "still running at the deadline (pid ppid pgid stat elapsed command)"
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	result := Run(ctx, command)
+	if !errors.Is(result.Err, context.DeadlineExceeded) || !strings.Contains(result.Err.Error(), heading) ||
+		!strings.Contains(result.Err.Error(), "sleep 30") || strings.Contains(result.Err.Error(), prompt) {
+		t.Fatalf("deadline result = %.2000v, want the deadline and what was still running, cut short", result.Err)
+	}
+	cancelled, stop := context.WithCancel(context.Background())
+	stop()
+	if result := Run(cancelled, command); result.Err == nil || strings.Contains(result.Err.Error(), heading) {
+		t.Fatalf("cancelled result = %v, want the cancellation alone", result.Err)
 	}
 }
 
