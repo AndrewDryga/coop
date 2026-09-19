@@ -84,7 +84,9 @@ func (f *filteredExecution) cleanup(workload string) (agentGone bool, result err
 	retainEvidence := false
 	guard, resolveErr := f.resolveResource("guard")
 	result = errors.Join(result, resolveErr)
-	if resolveErr == nil && guard.ID != "" {
+	// A guard that was only created never ran: there is nothing to stop and no final observation to
+	// take — asking the daemon for one reports a missing file, a failure that never happened.
+	if resolveErr == nil && guard.ID != "" && f.resource("guard").State != "created" {
 		if agentGone {
 			ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
 			// This round-trip happens after exact agent absence. A guard that

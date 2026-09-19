@@ -10,7 +10,7 @@ A filtered run adds two helper containers from one pinned image, both running `c
 (`cmd/coop-net/main.go`), and puts the agent in the controller's network namespace.
 
 **Controller** — UID `0:65532`, `CAP_ADD NET_ADMIN` and nothing else, on the bridge
-(`box/filtered_launch.go:86`, `:128`). It owns nftables table `coop_net`
+(`box/filtered_launch.go:151`, `:194`). It owns nftables table `coop_net`
 (`networkgateway/controller.go:316`): a nat/output `capture` chain redirects the agent's
 (skuid 1000) TCP on every port the policy grants TLS on — `tcp dport { 443, 853, … }` — to the
 guard's `:15443`, and 53 tcp+udp to its `:15353`; a filter/output chain drops by default. A policy
@@ -29,7 +29,7 @@ conservative lower bound to the guard (`controller.go:268`), so a slow kernel co
 extend DNS authority.
 
 **Guard** — UID `65532:65532`, capless, read-only rootfs, sharing the controller's namespace
-(`filtered_launch.go:132`). It terminates nothing: it reads the connection's ORIGINAL destination
+(`filtered_launch.go:198`). It terminates nothing: it reads the connection's ORIGINAL destination
 before any byte (`SO_ORIGINAL_DST` through a raw `getsockopt`, `destination_linux.go:16`), parses
 the ClientHello for SNI, refuses every ECH offer including empty and GREASE ones (`hello.go:61`),
 then replays the original bytes to Envoy over a private filesystem socket with a PROXY v2 header
@@ -145,7 +145,24 @@ guard probed and stopped, final observation taken — and only independent steps
 removal beside the controller's stop, and the two volumes; store writes stay serialized under `f.mu`.
 Measured 2026-09-19: SIGINT→exit 1.87 s → ~1.03 s.
 
+**Start latency.** A filtered launch (`box/filtered_launch.go`, `launch`) is ~180 Docker CLI calls of
+~20–25 ms, each preceded by a `docker info` daemon-identity check that is custody, not overhead. Only
+independent steps overlap, through `together`, which waits for EVERY step so a failing one never
+strands its sibling's request mid-flight, and raises a step's panic again on the launch goroutine so
+the run's deferred teardown still runs: the two volumes, and the guard's creation beside the
+controller's start. Docker creates a container on `--network container:<id>` while the target merely
+exists but refuses to start it ("cannot join network namespace of a non running container") until the
+target runs, so the guard's start stays after the controller's. A guard still in registry state
+`created` never ran, and cleanup skips its observation block: `docker cp` from a never-started
+container reports the final file missing, a failure that never happened. Measured 2026-09-19 in this
+repo: start p50 4.33 s → 3.90 s. The largest remaining block is the guard readiness wait (~1 s): the
+guard answers `probe` ~0.1 s after its start, but the collector publishes its first snapshot before
+`markReady` and the next only one `ObservationInterval` later.
+
 ## Changelog
+- 2026-09-19 — the filtered launch overlaps its independent steps (volumes; guard creation beside the
+  controller's start) and cleanup skips the observation block of a guard that never started (start
+  4.33 s → 3.90 s); re-pointed the controller/guard line references, which had drifted
 - 2026-09-19 — the terminal counters barrier wakes the sampler; filtered cleanup overlaps independent
   steps (stop 1.87 s → ~1.03 s)
 - 2026-09-18 — the guard's flow lifetime and admission budget are separate contexts; the private

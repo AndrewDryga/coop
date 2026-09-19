@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A run with network rules starts about 0.4 seconds sooner — about 3.9 seconds instead of 4.3 in
+  Coop's own repository — and an editor session there answers its first request about a quarter of a
+  second sooner. Coop set up the network gateway one step at a time; it now creates the gateway's two
+  volumes together, and creates the guard while the controller starts. Every check still runs, and a
+  step that needs another still waits for it.
+
 - Closing an editor session in a project with network rules no longer leaves its network gateways
   running. Coop ended each of the session's boxes with a kill, which skipped the box's own teardown,
   so every closed session left two containers and two volumes per box running until the next run with

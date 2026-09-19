@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
+	"runtime/debug"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/egress"
@@ -38,17 +40,70 @@ func networkMount(kind, source, target string, readonly bool) string {
 	return strings.TrimSuffix(buffer.String(), "\n")
 }
 
+// markAttempted records whether a create request for role may have reached the daemon. Launch steps
+// that run together write it at once; cleanup reads it only after every one of them has returned.
+func (f *filteredExecution) markAttempted(role string, attempted bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.attempted[role] = attempted
+}
+
+// together runs launch steps that do not depend on each other at once, and returns only when every
+// one has: a step that fails does not abandon its sibling mid-request, because a runtime call already
+// sent must settle before cleanup can know what the daemon holds.
+func together(ctx context.Context, steps ...func() error) error {
+	errs, panics := make([]error, len(steps)), make([]any, len(steps))
+	var running sync.WaitGroup
+	for i, step := range steps {
+		running.Go(func() {
+			// A panic belongs to the launch: raised again there, it still unwinds through the run's
+			// deferred teardown instead of ending the process with the gateway left running.
+			defer func() {
+				if r := recover(); r != nil {
+					panics[i] = fmt.Sprintf("%v\n\n%s", r, debug.Stack())
+				}
+			}()
+			errs[i] = step()
+		})
+	}
+	running.Wait()
+	for _, p := range panics {
+		if p != nil {
+			panic(p)
+		}
+	}
+	// One interrupt, or one daemon fault, can fail every step the same way: name it once, and keep
+	// every failure that differs.
+	var kept []error
+	for _, err := range errs {
+		if err != nil && !slices.ContainsFunc(kept, func(prior error) bool { return sameFailure(ctx, prior, err) }) {
+			kept = append(kept, err)
+		}
+	}
+	return errors.Join(kept...)
+}
+
+// sameFailure reports whether two step errors say the same thing: the same text, or both the launch's
+// own interrupt.
+func sameFailure(ctx context.Context, a, b error) bool {
+	if a.Error() == b.Error() {
+		return true
+	}
+	interrupted := ctx.Err()
+	return interrupted != nil && errors.Is(a, interrupted) && errors.Is(b, interrupted)
+}
+
 func (f *filteredExecution) createVolume(ctx context.Context, role string) error {
 	ctx, cancel := context.WithTimeout(ctx, filteredControlTimeout)
 	defer cancel()
 	if err := f.transition(ctx, role, "creating"); err != nil {
 		return err
 	}
-	f.attempted[role] = true
+	f.markAttempted(role, true)
 	volume, err := f.docker.CreateVolume(ctx, f.ref(role))
 	if err != nil {
 		if errors.Is(err, runtime.ErrDockerCreateNotAttempted) {
-			f.attempted[role] = false
+			f.markAttempted(role, false)
 		}
 		return err // current absence cannot settle an ambiguous daemon request
 	}
@@ -65,11 +120,11 @@ func (f *filteredExecution) createContainer(ctx context.Context, role, image str
 	if err := f.transition(ctx, role, "creating"); err != nil {
 		return err
 	}
-	f.attempted[role] = true
+	f.markAttempted(role, true)
 	id, createErr := f.docker.CreateContainer(ctx, runtime.DockerCreate{Ref: f.ref(role), Image: image, Options: options, Command: command})
 	if id == "" {
 		if errors.Is(createErr, runtime.ErrDockerCreateNotAttempted) {
-			f.attempted[role] = false
+			f.markAttempted(role, false)
 			return createErr
 		}
 		return errors.Join(createErr, errors.New("network container creation outcome is unknown"))
@@ -222,28 +277,39 @@ func (f *filteredExecution) waitReady(ctx context.Context) error {
 // launch never returns with a running observation goroutine. Its caller always
 // performs exact daemon cleanup, including when attachment or setup was canceled.
 func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
-	for _, role := range []string{"ipc", "observations"} {
-		if err := f.createVolume(ctx, role); err != nil {
-			return -1, err
-		}
+	gateway := f.record.GatewayImage
+	if err := together(ctx,
+		func() error { return f.createVolume(ctx, "ipc") },
+		func() error { return f.createVolume(ctx, "observations") },
+	); err != nil {
+		return -1, err
 	}
-	for _, role := range []string{"controller", "guard"} {
-		if err := f.createContainer(ctx, role, f.record.GatewayImage, f.helperOptions(role), []string{role}); err != nil {
-			return -1, err
-		}
-		// The internal service network is attached before the controller runs.
-		// Its fixed alias is the only route prepared services get to approved TLS.
-		if role == "controller" && f.servicesNet != "" {
-			attach, stop := context.WithTimeout(ctx, filteredControlTimeout)
-			err := f.docker.ConnectNetwork(attach, f.servicesNet, f.ref("controller"), filteredServiceProxyAlias)
-			stop()
-			if err != nil {
-				return -1, err
+	if err := f.createContainer(ctx, "controller", gateway, f.helperOptions("controller"), []string{"controller"}); err != nil {
+		return -1, err
+	}
+	// The guard joins the controller's network namespace, which must exist when the guard is created
+	// but run only when the guard starts — so the guard's creation overlaps the controller's start.
+	guardOptions := f.helperOptions("guard")
+	if err := together(ctx,
+		func() error {
+			// The internal service network is attached before the controller runs.
+			// Its fixed alias is the only route prepared services get to approved TLS.
+			if f.servicesNet != "" {
+				attach, stop := context.WithTimeout(ctx, filteredControlTimeout)
+				err := f.docker.ConnectNetwork(attach, f.servicesNet, f.ref("controller"), filteredServiceProxyAlias)
+				stop()
+				if err != nil {
+					return err
+				}
 			}
-		}
-		if err := f.startHelper(ctx, role); err != nil {
-			return -1, err
-		}
+			return f.startHelper(ctx, "controller")
+		},
+		func() error { return f.createContainer(ctx, "guard", gateway, guardOptions, []string{"guard"}) },
+	); err != nil {
+		return -1, err
+	}
+	if err := f.startHelper(ctx, "guard"); err != nil {
+		return -1, err
 	}
 	if err := f.waitReady(ctx); err != nil {
 		return -1, err

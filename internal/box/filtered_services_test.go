@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -329,6 +330,11 @@ func TestFilteredLaunchStartsServicesAfterTheGateway(t *testing.T) {
 	}
 	if len(docker.connected) != 1 || !strings.HasSuffix(docker.connected[0], "/"+filteredServiceProxyAlias) {
 		t.Fatalf("controller network attachment = %v", docker.connected)
+	}
+	// The alias is the prepared services' only route to approved TLS, so it exists before the
+	// controller runs — even with the guard's creation overlapping the controller's start.
+	if attach, start := slices.Index(docker.log, "connect:controller"), slices.Index(docker.log, "start:controller"); attach < 0 || attach > start {
+		t.Fatalf("the services network was attached after the controller started: %v", docker.log)
 	}
 }
 

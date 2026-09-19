@@ -55,6 +55,8 @@ type filteredDaemonFixture struct {
 	composeServices                        map[string]string
 	connected                              []string
 	onStart                                func(string)
+	failStart                              string
+	beforeCall                             func(op string) // runs before the daemon lock, so a test can hold calls in flight together
 	images                                 map[string]fixtureImage
 	layerReads, fileReads, treeReads       map[string]int
 }
@@ -65,6 +67,7 @@ func (d *filteredDaemonFixture) ConnectNetwork(_ context.Context, network string
 	if ref.ID == "" {
 		return errors.New("network attachment needs an exact container id")
 	}
+	d.log = append(d.log, "connect:"+ref.Labels["coop.network.role"])
 	d.connected = append(d.connected, network+"/"+ref.ID+"/"+strings.Join(aliases, ","))
 	return nil
 }
@@ -167,6 +170,23 @@ func filteredFixture(t *testing.T) (*filteredExecution, *filteredDaemonFixture) 
 	return f, d
 }
 
+// arrive runs the test's hook for op outside the daemon lock, where two calls can meet.
+func (d *filteredDaemonFixture) arrive(op string) {
+	if d.beforeCall != nil {
+		d.beforeCall(op)
+	}
+}
+
+// runningID reports whether the container with this exact id is running. The caller holds d.mu.
+func (d *filteredDaemonFixture) runningID(id string) bool {
+	for _, container := range d.containers {
+		if container.ID == id {
+			return container.State.Running
+		}
+	}
+	return false
+}
+
 // faultSelects reports whether a fixture fault names this role. An unset fault
 // names NO role — including the roleless container an image proof creates.
 func faultSelects(fault, role string) bool { return fault != "" && fault == role }
@@ -254,9 +274,10 @@ func (d *filteredDaemonFixture) Close() error {
 	return nil
 }
 func (d *filteredDaemonFixture) CreateVolume(_ context.Context, ref runtime.DockerRef) (runtime.DockerVolume, error) {
+	role := ref.Labels["coop.network.role"]
+	d.arrive("create:" + role)
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	role := ref.Labels["coop.network.role"]
 	d.log = append(d.log, "create:"+role)
 	if faultSelects(d.notAttempted, role) {
 		return runtime.DockerVolume{}, runtime.ErrDockerCreateNotAttempted
@@ -283,9 +304,10 @@ func (d *filteredDaemonFixture) RemoveVolume(_ context.Context, ref runtime.Dock
 	return nil
 }
 func (d *filteredDaemonFixture) CreateContainer(_ context.Context, spec runtime.DockerCreate) (string, error) {
+	role := spec.Ref.Labels["coop.network.role"]
+	d.arrive("create:" + role)
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	role := spec.Ref.Labels["coop.network.role"]
 	d.log = append(d.log, "create:"+role)
 	if faultSelects(d.notAttempted, role) {
 		return "", runtime.ErrDockerCreateNotAttempted
@@ -350,13 +372,22 @@ func (d *filteredDaemonFixture) InspectContainer(_ context.Context, ref runtime.
 	return v, ok, nil
 }
 func (d *filteredDaemonFixture) StartContainer(_ context.Context, ref runtime.DockerRef) error {
+	role := ref.Labels["coop.network.role"]
+	d.arrive("start:" + role)
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.log = append(d.log, "start:"+ref.Labels["coop.network.role"])
+	d.log = append(d.log, "start:"+role)
 	if d.onStart != nil {
-		d.onStart(ref.Labels["coop.network.role"])
+		d.onStart(role)
+	}
+	if faultSelects(d.failStart, role) {
+		return errors.New("fixture start refused")
 	}
 	v := d.containers[ref.Name]
+	// Docker starts a container that joins another's network namespace only while that one runs.
+	if joined, ok := strings.CutPrefix(v.NetworkMode, "container:"); ok && !d.runningID(joined) {
+		return errors.New("cannot join network namespace of a non running container")
+	}
 	v.State = runtime.DockerContainerState{Status: "running", Running: true, StartedAt: time.Now()}
 	d.containers[ref.Name] = v
 	return nil
@@ -469,10 +500,14 @@ func (d *filteredDaemonFixture) ExecRead(_ context.Context, _ runtime.DockerRef,
 	d.log = append(d.log, "snapshot")
 	return d.observation(false), nil
 }
-func (d *filteredDaemonFixture) CopyArchive(_ context.Context, _ runtime.DockerRef, _ string, _ int) ([]byte, error) {
+func (d *filteredDaemonFixture) CopyArchive(_ context.Context, ref runtime.DockerRef, path string, _ int) ([]byte, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.log = append(d.log, "capture-final")
+	// A container that never started wrote nothing: Docker reports the file missing.
+	if d.containers[ref.Name].State.StartedAt.IsZero() {
+		return nil, errors.New("Could not find the file " + path)
+	}
 	if d.malformedFinal {
 		return []byte("invalid archive"), nil
 	}
@@ -485,8 +520,67 @@ func (d *filteredDaemonFixture) CopyArchive(_ context.Context, _ runtime.DockerR
 	return b.Bytes(), nil
 }
 
+// rendezvous holds each pair of daemon calls until both have arrived, so a pair gets through only if
+// the launch has both in flight at once; one run after the other never meets, and fails the test.
+func rendezvous(t *testing.T, pairs ...[2]string) func(string) {
+	arrived, partner, once := map[string]chan struct{}{}, map[string]string{}, map[string]*sync.Once{}
+	for _, pair := range pairs {
+		for i, op := range pair {
+			arrived[op], partner[op], once[op] = make(chan struct{}), pair[1-i], &sync.Once{}
+		}
+	}
+	return func(op string) {
+		if _, ok := arrived[op]; !ok {
+			return
+		}
+		once[op].Do(func() { close(arrived[op]) })
+		select {
+		case <-arrived[partner[op]]:
+		case <-time.After(5 * time.Second):
+			t.Errorf("%s was never in flight together with %s", op, partner[op])
+		}
+	}
+}
+
+// matchGroups consumes log from the front: each group's entries come next, in any order among
+// themselves. It returns what is left and whether every group matched.
+func matchGroups(log []string, groups ...[]string) ([]string, bool) {
+	for _, group := range groups {
+		if len(log) < len(group) {
+			return log, false
+		}
+		next, want := slices.Clone(log[:len(group)]), slices.Clone(group)
+		slices.Sort(next)
+		slices.Sort(want)
+		if !slices.Equal(next, want) {
+			return log, false
+		}
+		log = log[len(group):]
+	}
+	return log, true
+}
+
 func TestFilteredLaunchOrdersReadinessAndExactCleanup(t *testing.T) {
 	f, d := filteredFixture(t)
+	meet := rendezvous(t, [2]string{"create:ipc", "create:observations"}, [2]string{"start:controller", "create:guard"})
+	// Hold the controller's start a moment: a guard start issued before the controller runs reaches
+	// the daemon first — signalled from inside it, so its refusal is decided before the hold ends.
+	guardStarting := make(chan struct{})
+	var guardStartingOnce sync.Once
+	d.onStart = func(role string) {
+		if role == "guard" {
+			guardStartingOnce.Do(func() { close(guardStarting) })
+		}
+	}
+	d.beforeCall = func(op string) {
+		meet(op)
+		if op == "start:controller" {
+			select {
+			case <-guardStarting:
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
+	}
 	var output bytes.Buffer
 	launches := 0
 	code, err := f.launch(context.Background(), RunSpec{Cmd: []string{"fixture"}, OnRuntimeLaunch: func() { launches++ }}, nil, nil, &output, io.Discard)
@@ -497,24 +591,27 @@ func TestFilteredLaunchOrdersReadinessAndExactCleanup(t *testing.T) {
 	if err != nil || !gone {
 		t.Fatal("cleanup", gone, err)
 	}
-	// The causal order is exact: the agent gone before the guard stops, the final observation taken
-	// from the stopped guard, the controller removed only once the guard is gone, the volumes last.
-	// Independent steps run together — the guard's removal beside the controller's stop, the two
-	// volumes — so only their membership is pinned.
-	prefix := []string{"create:ipc", "create:observations", "create:controller", "start:controller", "create:guard", "start:guard", "snapshot", "create:agent", "snapshot", "start:agent",
-		"stop:agent", "remove:agent", "stop:guard", "capture-final"}
-	ordered := len(d.log) == len(prefix)+8 && slices.Equal(d.log[:len(prefix)], prefix)
+	// The causal order is exact wherever one step needs another: the controller exists before the
+	// guard is created in its namespace and runs before the guard starts; the guard is ready before the
+	// agent is created, and ready again before it starts. Teardown: the agent gone before the guard
+	// stops, the final observation taken from the stopped guard, the controller removed only once the
+	// guard is gone, the volumes last. Independent steps run together — the two volumes, the guard's
+	// creation beside the controller's start, the guard's removal beside the controller's stop — so
+	// only their membership is pinned.
+	rest, ordered := matchGroups(d.log,
+		[]string{"create:ipc", "create:observations"}, []string{"create:controller"},
+		[]string{"start:controller", "create:guard"}, []string{"start:guard"},
+		[]string{"snapshot"}, []string{"create:agent"}, []string{"snapshot"}, []string{"start:agent"},
+		[]string{"stop:agent"}, []string{"remove:agent"}, []string{"stop:guard"}, []string{"capture-final"})
 	if ordered {
-		together := d.log[len(prefix) : len(prefix)+3]
+		together := rest[:min(3, len(rest))]
 		guardStop, guardRemove := slices.Index(together, "stop:guard"), slices.Index(together, "remove:guard")
-		ordered = slices.Contains(together, "stop:controller") && guardStop >= 0 && guardRemove > guardStop
-		rest := d.log[len(prefix)+3:]
-		ordered = ordered && slices.Equal(rest[:2], []string{"stop:controller", "remove:controller"}) &&
-			(slices.Equal(rest[2:4], []string{"remove:ipc", "remove:observations"}) || slices.Equal(rest[2:4], []string{"remove:observations", "remove:ipc"})) &&
-			rest[4] == "close"
+		rest, ordered = matchGroups(rest, []string{"stop:controller", "stop:guard", "remove:guard"}, []string{"stop:controller"},
+			[]string{"remove:controller"}, []string{"remove:ipc", "remove:observations"}, []string{"close"})
+		ordered = ordered && len(rest) == 0 && guardRemove > guardStop
 	}
 	if !ordered {
-		t.Fatalf("lifecycle order:\n%v\nwant %v, then the guard's stop and removal beside the controller's stop, the controller's removal, both volumes, close", d.log, prefix)
+		t.Fatalf("lifecycle order:\n%v\nwant the volumes together, the controller, its start beside the guard's creation, the guard's start, readiness, the agent, then teardown", d.log)
 	}
 	record, err := f.store.Execution(f.record.ID)
 	if err != nil || record.Receipt == nil || record.Receipt.Completeness != "complete" || record.Receipt.Cleanup != "complete" || *record.Receipt.Snapshot.Counters.SentBytes != 123 {
@@ -522,6 +619,150 @@ func TestFilteredLaunchOrdersReadinessAndExactCleanup(t *testing.T) {
 	}
 	if _, err := os.Stat(f.runfiles); !os.IsNotExist(err) {
 		t.Fatal("generated files retained after complete cleanup", err)
+	}
+}
+
+// A step that fails beside another does not strand it: the sibling's request settles, the launch
+// stops there, and cleanup removes everything either one created — with no failure it did not have.
+func TestFilteredLaunchStepFailureSettlesItsSibling(t *testing.T) {
+	for _, test := range []struct {
+		name, notAttempted, failStart string
+		pair                          [2]string
+		want                          string
+	}{
+		{"one volume never reaches the daemon", "ipc", "", [2]string{"create:ipc", "create:observations"}, runtime.ErrDockerCreateNotAttempted.Error()},
+		{"the controller does not start", "", "controller", [2]string{"start:controller", "create:guard"}, "fixture start refused"},
+		{"the guard is never created", "guard", "", [2]string{"start:controller", "create:guard"}, runtime.ErrDockerCreateNotAttempted.Error()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f, d := filteredFixture(t)
+			d.notAttempted, d.failStart = test.notAttempted, test.failStart
+			d.beforeCall = rendezvous(t, test.pair)
+			_, err := f.launch(context.Background(), RunSpec{}, nil, nil, io.Discard, io.Discard)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("launch error = %v, want %q", err, test.want)
+			}
+			if slices.Contains(d.log, "start:guard") || slices.Contains(d.log, "create:agent") {
+				t.Fatalf("the launch went on past a failed step: %v", d.log)
+			}
+			gone, err := f.cleanup("launch_failed")
+			if err != nil || !gone {
+				t.Fatal("cleanup after one failed step", gone, err)
+			}
+			if slices.Contains(d.log, "capture-final") {
+				t.Fatal("cleanup asked a guard that never ran for its final observation")
+			}
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			if len(d.containers) != 0 || len(d.volumes) != 0 {
+				t.Fatalf("cleanup left %v and %v", slices.Collect(maps.Keys(d.containers)), slices.Collect(maps.Keys(d.volumes)))
+			}
+			record, err := f.store.Execution(f.record.ID)
+			if err != nil || record.Receipt == nil || record.Receipt.Cleanup != "complete" {
+				t.Fatal("the receipt did not record complete cleanup", err)
+			}
+		})
+	}
+}
+
+// An interrupt that lands while two steps are in flight stops the launch once: both requests settle,
+// the error names the cancellation a single time — keeping any real fault beside it — and nothing
+// either one created survives cleanup.
+func TestFilteredLaunchCancelledMidPairDrainsBoth(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		pair         [2]string
+		notAttempted string
+	}{
+		{"volumes", [2]string{"create:ipc", "create:observations"}, ""},
+		{"controller start and guard creation", [2]string{"start:controller", "create:guard"}, ""},
+		{"a real fault beside the interrupt", [2]string{"create:ipc", "create:observations"}, "observations"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f, d := filteredFixture(t)
+			d.notAttempted = test.notAttempted
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			meet := rendezvous(t, test.pair)
+			d.beforeCall = func(op string) {
+				meet(op)
+				if op == test.pair[0] {
+					cancel() // both calls are in flight now
+				}
+			}
+			_, err := f.launch(ctx, RunSpec{}, nil, nil, io.Discard, io.Discard)
+			if !errors.Is(err, context.Canceled) || strings.Count(err.Error(), context.Canceled.Error()) != 1 {
+				t.Fatalf("launch error = %q, want the cancellation named once", err)
+			}
+			if test.notAttempted != "" && !errors.Is(err, runtime.ErrDockerCreateNotAttempted) {
+				t.Fatalf("launch error = %q, want the fault beside the interrupt kept", err)
+			}
+			if slices.Contains(d.log, "start:guard") || slices.Contains(d.log, "create:agent") {
+				t.Fatalf("a cancelled launch went on: %v", d.log)
+			}
+			if gone, err := f.cleanup("cancelled"); err != nil || !gone {
+				t.Fatal("cleanup after cancellation", gone, err)
+			}
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			if len(d.containers) != 0 || len(d.volumes) != 0 {
+				t.Fatalf("cancellation leaked %v and %v", slices.Collect(maps.Keys(d.containers)), slices.Collect(maps.Keys(d.volumes)))
+			}
+		})
+	}
+}
+
+// A step that panics does not end the process around a half-built gateway: the panic waits for its
+// sibling to settle, then rises on the launch's own goroutine — through the teardown its caller
+// deferred — with the stack of where it happened.
+func TestFilteredLaunchStepPanicReachesTheCallersTeardown(t *testing.T) {
+	f, d := filteredFixture(t)
+	d.beforeCall = func(op string) {
+		if op == "start:controller" {
+			panic("fixture step panicked")
+		}
+	}
+	var recovered any
+	func() {
+		defer func() { recovered = recover() }()
+		_, _ = f.launch(context.Background(), RunSpec{}, nil, nil, io.Discard, io.Discard)
+	}()
+	if message := fmt.Sprint(recovered); !strings.Contains(message, "fixture step panicked") || !strings.Contains(message, "goroutine") {
+		t.Fatalf("the step's panic did not reach the launch with its stack: %v", recovered)
+	}
+	if f.resource("guard").State != "created" {
+		t.Fatalf("the panic rose before its sibling settled: guard is %q", f.resource("guard").State)
+	}
+	if gone, err := f.cleanup("launch_failed"); err != nil || !gone {
+		t.Fatal("teardown after a step panic", gone, err)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.containers) != 0 || len(d.volumes) != 0 {
+		t.Fatalf("teardown after a panic left %v and %v", slices.Collect(maps.Keys(d.containers)), slices.Collect(maps.Keys(d.volumes)))
+	}
+}
+
+// Overlapping the volumes does not move them ahead of their own authority: when the registry refuses
+// the intent, neither step reaches the daemon.
+func TestFilteredLaunchRefusedIntentAllocatesNothing(t *testing.T) {
+	f, d := filteredFixture(t)
+	if err := os.Chmod(f.store.Path(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(f.store.Path(), 0o700)
+	_, err := f.launch(context.Background(), RunSpec{}, nil, nil, io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("a launch whose intent was refused went ahead")
+	}
+	// Both steps were refused for the one reason, and the launch says it once.
+	if lines := strings.Split(err.Error(), "\n"); len(lines) != 1 {
+		t.Fatalf("one refusal was reported %d times: %q", len(lines), err)
+	}
+	for _, entry := range d.log {
+		if strings.HasPrefix(entry, "create:") {
+			t.Fatalf("a refused intent reached the daemon: %v", d.log)
+		}
 	}
 }
 
