@@ -312,7 +312,7 @@ func (p *credentialPlan) gatewayRoutes() []networkgateway.CredentialBrokerRoute 
 			decoded = r.path // planMCPRoutes took it from a parsed URL, so this cannot happen
 		}
 		routes = append(routes, networkgateway.CredentialBrokerRoute{Name: "mcp-" + strconv.Itoa(p.mcpListener(j)),
-			Kind: networkgateway.CredentialBrokerMCP, Upstream: r.upstream, Header: "authorization", HeaderPrefix: "Bearer ",
+			Kind: networkgateway.CredentialBrokerMCP, Upstream: r.upstream, Header: r.header, HeaderPrefix: r.prefix,
 			Methods: []string{"POST", "GET", "DELETE"}, Path: decoded, Port: 443})
 	}
 	return routes

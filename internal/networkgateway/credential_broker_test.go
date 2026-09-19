@@ -145,6 +145,48 @@ func TestCredentialBrokerCarriesAnMCPSessionToItsExactEndpoint(t *testing.T) {
 	}
 }
 
+// A server whose secret rides its own header gets that header, carrying the real credential after the
+// route's prefix, and no other credential. The stand-in must sit in exactly that header, and a request
+// that brings any other credential header is refused.
+func TestCredentialBrokerCarriesAnMCPSecretHeader(t *testing.T) {
+	b, _ := testCredentialBroker(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Header.Get("X-Api-Key") != "key real-secret-key" || request.Header.Get("Authorization") != "" ||
+			request.Header.Get("X-Client") != "coop" {
+			t.Fatalf("brokered MCP request headers = %#v", request.Header)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("ok"))}, nil
+	}))
+	b.route = CredentialBrokerRoute{Name: "mcp-1", Kind: CredentialBrokerMCP, Upstream: "mcp.example.com", Header: "x-api-key",
+		HeaderPrefix: "key ", Methods: []string{"POST", "GET", "DELETE"}, Path: "/mcp", Port: 443}
+	b.setProxy(b.proxy.Transport)
+	send := func(headers map[string]string) int {
+		request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader("{}"))
+		request.Host = CredentialBrokerAddress(0)
+		request.Header.Set("X-Client", "coop") // a literal header rides as written
+		for key, value := range headers {
+			request.Header.Set(key, value)
+		}
+		recorder := httptest.NewRecorder()
+		b.handler().ServeHTTP(recorder, request)
+		return recorder.Code
+	}
+	stand := strings.Repeat("s", 64)
+	if code := send(map[string]string{"X-Api-Key": "key " + stand}); code != http.StatusOK {
+		t.Fatalf("the stand-in in its header returned %d", code)
+	}
+	for name, headers := range map[string]map[string]string{
+		"no prefix":        {"X-Api-Key": stand},
+		"a wrong stand-in": {"X-Api-Key": "key " + strings.Repeat("t", 64)},
+		"the wrong header": {"Authorization": "key " + stand},
+		"a second secret":  {"X-Api-Key": "key " + stand, "Authorization": "Bearer " + stand},
+		"no secret at all": {},
+	} {
+		if code := send(headers); code != http.StatusUnauthorized && code != http.StatusForbidden {
+			t.Errorf("%s returned %d", name, code)
+		}
+	}
+}
+
 // A provider streams its headers at once; an MCP server answering a tool call with JSON sends them
 // only when the tool finishes, so only the run's lifetime bounds that wait.
 func TestCredentialBrokerWaitsForAnMCPToolsResponseHeaders(t *testing.T) {

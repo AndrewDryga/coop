@@ -127,8 +127,8 @@ func (r CredentialBrokerRoute) valid() bool {
 		return slices.Equal(r.Methods, []string{"POST"})
 	case CredentialBrokerMCP:
 		// A streamable-HTTP endpoint: its exact path, the methods the protocol uses (POST a
-		// message, GET the stream, DELETE the session), a bearer token and no query.
-		if len(r.Methods) == 0 || r.PathPrefix || r.AllowQuery || r.Header != "authorization" || r.HeaderPrefix != "Bearer " {
+		// message, GET the stream, DELETE the session), one secret header and no query.
+		if len(r.Methods) == 0 || r.PathPrefix || r.AllowQuery || !MCPSecretHeader(r.Header, r.HeaderPrefix) {
 			return false
 		}
 		for i, method := range r.Methods {
@@ -139,6 +139,34 @@ func (r CredentialBrokerRoute) valid() bool {
 		return true
 	}
 	return false
+}
+
+// MaxMCPHeaderPrefix bounds the literal text a secret header may carry before its credential.
+const MaxMCPHeaderPrefix = 64
+
+// MCPSecretHeader is the same judgment the gateway makes, for the host to make FIRST: a run that
+// plans a header this gateway would reject refuses by server name while planning, instead of
+// failing the whole launch configuration later with nothing a person could act on.
+func MCPSecretHeader(name, prefix string) bool {
+	return mcpSecretHeader(name) && len(prefix) <= MaxMCPHeaderPrefix && !strings.ContainsAny(prefix, "\x00\r\n")
+}
+
+// mcpSecretHeader reports whether an MCP server's secret may ride header name: a plain lower-case
+// token that is none of the headers HTTP, the proxy or the MCP protocol itself owns — a secret
+// there would break the transport or be rewritten on the way.
+func mcpSecretHeader(name string) bool {
+	if name == "" || len(name) > 64 || strings.Trim(name, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" {
+		return false
+	}
+	switch name {
+	case "host", "connection", "keep-alive", "upgrade", "te", "trailer", "transfer-encoding",
+		"cookie", "accept", "accept-encoding", "last-event-id",
+		// The proxy appends to these AFTER the director sets the credential, so a secret here
+		// would travel as "<credential>, <client>".
+		"x-forwarded-for", "forwarded":
+		return false
+	}
+	return !strings.HasPrefix(name, "content-") && !strings.HasPrefix(name, "proxy-") && !strings.HasPrefix(name, "mcp-")
 }
 
 // Admits reports whether a request line fits the route's one endpoint: its method, its exact path

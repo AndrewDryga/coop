@@ -95,25 +95,36 @@ func TestGatewayLaunchConfigurationIsBoundedAndConcrete(t *testing.T) {
 	}
 }
 
-// An MCP route is one streamable-HTTP endpoint: its exact path, the protocol's three methods, a
-// bearer token and no query — nothing that widens it into a prefix or a second credential shape.
+// An MCP route is one streamable-HTTP endpoint: its exact path, the protocol's three methods, one
+// secret header and no query — nothing that widens it into a prefix, or puts the secret in a header
+// HTTP, a proxy or the MCP protocol itself owns.
 func TestGatewayLaunchConfigurationBoundsAnMCPRoute(t *testing.T) {
 	config := testLaunch(t)
 	mcp := CredentialBrokerRoute{Name: "mcp-1", Kind: CredentialBrokerMCP, Upstream: "mcp.example.com", Header: "authorization",
 		HeaderPrefix: "Bearer ", Methods: []string{"POST", "GET", "DELETE"}, Path: "/mcp", Port: 443}
-	config.Brokers = []CredentialBrokerRoute{mcp}
-	if err := config.Validate(); err != nil {
-		t.Fatal(err)
+	for _, header := range []struct{ name, prefix string }{{"authorization", "Bearer "}, {"x-api-key", ""}, {"authorization", "Token "}, {"private-token", ""}} {
+		route := mcp
+		route.Header, route.HeaderPrefix = header.name, header.prefix
+		config.Brokers = []CredentialBrokerRoute{route}
+		if err := config.Validate(); err != nil {
+			t.Fatalf("%s %q refused: %v", header.name, header.prefix, err)
+		}
 	}
 	for name, mutate := range map[string]func(*CredentialBrokerRoute){
-		"a path prefix":     func(r *CredentialBrokerRoute) { r.PathPrefix = true },
-		"a query":           func(r *CredentialBrokerRoute) { r.AllowQuery = true },
-		"another header":    func(r *CredentialBrokerRoute) { r.Header = "x-api-key" },
-		"a bare token":      func(r *CredentialBrokerRoute) { r.HeaderPrefix = "" },
-		"another method":    func(r *CredentialBrokerRoute) { r.Methods = []string{"POST", "PUT"} },
-		"a repeated method": func(r *CredentialBrokerRoute) { r.Methods = []string{"POST", "POST"} },
-		"no method":         func(r *CredentialBrokerRoute) { r.Methods = nil },
-		"an uppercase name": func(r *CredentialBrokerRoute) { r.Name = "MCP-1" },
+		"a path prefix":          func(r *CredentialBrokerRoute) { r.PathPrefix = true },
+		"a query":                func(r *CredentialBrokerRoute) { r.AllowQuery = true },
+		"the host":               func(r *CredentialBrokerRoute) { r.Header = "host" },
+		"a content header":       func(r *CredentialBrokerRoute) { r.Header = "content-type" },
+		"a cookie":               func(r *CredentialBrokerRoute) { r.Header = "cookie" },
+		"a proxy header":         func(r *CredentialBrokerRoute) { r.Header = "proxy-authorization" },
+		"an MCP protocol header": func(r *CredentialBrokerRoute) { r.Header = "mcp-session-id" },
+		"an uppercase header":    func(r *CredentialBrokerRoute) { r.Header = "X-Api-Key" },
+		"a long prefix":          func(r *CredentialBrokerRoute) { r.HeaderPrefix = strings.Repeat("p", 65) },
+		"a prefix with a break":  func(r *CredentialBrokerRoute) { r.HeaderPrefix = "Bearer \r\n" },
+		"another method":         func(r *CredentialBrokerRoute) { r.Methods = []string{"POST", "PUT"} },
+		"a repeated method":      func(r *CredentialBrokerRoute) { r.Methods = []string{"POST", "POST"} },
+		"no method":              func(r *CredentialBrokerRoute) { r.Methods = nil },
+		"an uppercase name":      func(r *CredentialBrokerRoute) { r.Name = "MCP-1" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := config

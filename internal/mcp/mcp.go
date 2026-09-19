@@ -277,7 +277,15 @@ func acpServer(name string, s server, lookupEnv func(string) (string, bool)) map
 	case s.URL != "":
 		headers := make([]map[string]any, 0, len(s.Headers)+1)
 		for _, key := range sortedKeys(s.Headers) {
-			headers = append(headers, map[string]any{"name": key, "value": envValueString(s.Headers[key])})
+			// An adapter takes inline headers only: it hands the value on as written, so a
+			// `${VAR}` left in one travels upstream as those characters. Resolve it here, from
+			// the same environment the bearer token below is read from, and drop a server whose
+			// variable has no value rather than authenticate it with the reference itself.
+			value, ok := resolveHeaderReferences(envValueString(s.Headers[key]), lookupEnv)
+			if !ok {
+				return nil // unauthenticatable — see ACPServers
+			}
+			headers = append(headers, map[string]any{"name": key, "value": value})
 		}
 		if s.BearerTokenEnvVar != "" {
 			token := ""
@@ -449,6 +457,24 @@ const (
 	referenceBadName                       // exactly one ${...}, but not a usable variable name
 	referenceMixed                         // literal text around a reference
 )
+
+// resolveHeaderReferences replaces every ${VAR} in a header value with what lookupEnv answers,
+// keeping the literal text around it. ok is false when a reference has no usable value: the caller
+// must then drop that server, because sending the reference itself authenticates nothing and looks
+// to the server like a malformed credential.
+func resolveHeaderReferences(value string, lookupEnv func(string) (string, bool)) (string, bool) {
+	for _, name := range headerReferences(value) {
+		resolved := ""
+		if lookupEnv != nil {
+			resolved, _ = lookupEnv(name)
+		}
+		if strings.TrimSpace(resolved) == "" {
+			return "", false
+		}
+		value = strings.ReplaceAll(value, "${"+name+"}", resolved)
+	}
+	return value, true
+}
 
 // EnvHeaderReference reports the variable a header value refers to when the value is EXACTLY that
 // reference, for an adapter that has to resolve one itself. The shared file's grammar lives here;

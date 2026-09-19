@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -14,9 +15,74 @@ import (
 // shared file cannot reference one, so a stand-in is never mistaken for an operator's token.
 const BrokerTokenPrefix = "COOP_MCP_TOKEN_"
 
-// BrokeredServer is where a bearer server is reached from inside a box once Coop brokers it: the
-// listener's URL, and the Coop-owned variable holding that listener's substitute.
-type BrokeredServer struct{ URL, TokenEnv string }
+// BrokeredServer is where a secret-bearing server is reached from inside a box once Coop brokers
+// it: the listener's URL, the Coop-owned variable holding that listener's substitute, and — for a
+// header secret — the header key as the file spells it and the literal text before the secret. A
+// bearer server leaves HeaderKey empty.
+type BrokeredServer struct{ URL, TokenEnv, HeaderKey, Prefix string }
+
+// SecretServer is one remote server that authenticates with a secret its box must not hold: the
+// header that carries it (lower-case, as the broker names it) and its key as the file spells it,
+// the literal text before the secret, the variable the secret is read from, and whether that is a
+// bearer_token_env_var (an Authorization header written out reads the same on the wire, but is
+// rewritten where it is written).
+type SecretServer struct {
+	Name, URL, Transport                string
+	Header, HeaderKey, Prefix, Variable string
+	Bearer                              bool
+}
+
+// SecretServers lists a validated snapshot's remote servers that carry a secret, sorted by name: a
+// bearer_token_env_var (the Authorization header after "Bearer "), or one header whose whole value
+// is literal text followed by one ${VARIABLE}. A literal header is not a secret and stays as
+// written. Any other shape — two secrets, text after the reference, two references in one value —
+// is refused by name: no single brokered header could carry it.
+func SecretServers(snapshot []byte) ([]SecretServer, error) {
+	if len(bytes.TrimSpace(snapshot)) == 0 {
+		return nil, nil
+	}
+	_, servers, err := loadServerViewsData("MCP snapshot", snapshot)
+	if err != nil {
+		return nil, err
+	}
+	var result []SecretServer
+	for _, name := range slices.Sorted(maps.Keys(servers)) {
+		s := servers[name]
+		if s.URL == "" {
+			continue
+		}
+		var secrets []SecretServer
+		if s.BearerTokenEnvVar != "" {
+			secrets = append(secrets, SecretServer{Header: "authorization", HeaderKey: "Authorization", Prefix: "Bearer ", Variable: s.BearerTokenEnvVar, Bearer: true})
+		}
+		for _, key := range slices.Sorted(maps.Keys(s.Headers)) {
+			value := envValueString(s.Headers[key])
+			references := headerReferences(value)
+			if len(references) == 0 {
+				continue
+			}
+			prefix, _, _ := strings.Cut(value, "${")
+			if len(references) != 1 || value != prefix+"${"+references[0]+"}" {
+				return nil, fmt.Errorf("MCP server %q's %s header must be literal text then one ${VARIABLE}, so Coop can keep the secret outside the box", name, key)
+			}
+			secrets = append(secrets, SecretServer{Header: strings.ToLower(key), HeaderKey: key, Prefix: prefix, Variable: references[0]})
+		}
+		if len(secrets) == 0 {
+			continue
+		}
+		if len(secrets) > 1 {
+			return nil, fmt.Errorf("MCP server %q carries %d secrets; Coop can keep one per server outside the box", name, len(secrets))
+		}
+		transport := s.Type
+		if transport == "" {
+			transport = "http"
+		}
+		secret := secrets[0]
+		secret.Name, secret.URL, secret.Transport = name, s.URL, transport
+		result = append(result, secret)
+	}
+	return result, nil
+}
 
 // CredentialReferences names every variable a snapshot reads a secret from — each
 // bearer_token_env_var and each ${VAR} a header value refers to — sorted, once each. These are
@@ -91,9 +157,10 @@ func headerReferences(value string) []string {
 	}
 }
 
-// RouteThroughBroker points the named bearer servers of a validated snapshot at Coop's broker: a
-// server's url becomes its listener's, and its bearer_token_env_var the variable holding that
-// listener's substitute. Every other field, and every other server, is kept byte for byte.
+// RouteThroughBroker points the named secret-bearing servers of a validated snapshot at Coop's
+// broker: a server's url becomes its listener's, and its secret the variable holding that
+// listener's substitute — the bearer_token_env_var itself, or the secret header's ${…} with its
+// prefix kept. Every other field, and every other server, is kept byte for byte.
 func RouteThroughBroker(snapshot []byte, routes map[string]BrokeredServer) ([]byte, error) {
 	if len(routes) == 0 {
 		return snapshot, nil
@@ -111,11 +178,20 @@ func RouteThroughBroker(snapshot []byte, routes map[string]BrokeredServer) ([]by
 		if raw, ok := definitions[name]; !ok || json.Unmarshal(raw, &fields) != nil {
 			return nil, fmt.Errorf("MCP snapshot has no server %q to route", name)
 		}
-		if _, bearer := fields["bearer_token_env_var"]; !bearer {
-			return nil, fmt.Errorf("MCP server %q has no bearer token to route", name)
-		}
 		fields["url"], _ = json.Marshal(route.URL)
-		fields["bearer_token_env_var"], _ = json.Marshal(route.TokenEnv)
+		if route.HeaderKey == "" {
+			if _, bearer := fields["bearer_token_env_var"]; !bearer {
+				return nil, fmt.Errorf("MCP server %q has no bearer token to route", name)
+			}
+			fields["bearer_token_env_var"], _ = json.Marshal(route.TokenEnv)
+		} else {
+			headers := map[string]json.RawMessage{}
+			if raw, ok := fields["headers"]; !ok || json.Unmarshal(raw, &headers) != nil || headers[route.HeaderKey] == nil {
+				return nil, fmt.Errorf("MCP server %q has no %s header to route", name, route.HeaderKey)
+			}
+			headers[route.HeaderKey], _ = json.Marshal(route.Prefix + "${" + route.TokenEnv + "}")
+			fields["headers"], _ = json.Marshal(headers)
+		}
 		definitions[name], _ = json.Marshal(fields)
 	}
 	return encodeSnapshot(root, definitions)

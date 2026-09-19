@@ -252,25 +252,33 @@ func TestSessionMCPHandoffCarriesOnlyStandInsForItsOwnRun(t *testing.T) {
 
 // An MCP route must admit what each pinned client really sends to a streamable-HTTP server — the
 // lines were captured offline from the locked clients against a local endpoint (recipe:
-// .agent/kb/provider-client-qualification.md): POST the messages, GET the server's stream.
+// .agent/kb/provider-client-qualification.md): POST the messages, GET the server's stream, and a
+// secret written as a header ("X-Api-Key: ${VAR}", "X-Auth: Token ${VAR}") sent as its text with the
+// variable's value in place — byte for byte what the broker compares.
 func TestMCPRoutesAdmitWhatThePinnedClientsSend(t *testing.T) {
 	type capture struct {
 		version  string
 		requests []string
+		headers  []string // each header secret as it arrived, its variable holding <stand-in>
 	}
 	lines := []string{"POST /mcp", "GET /mcp"}
+	headers := []string{"x-api-key: <stand-in>", "x-auth: Token <stand-in>"}
 	captured := map[string]map[egress.Client]capture{
-		"claude": {egress.ClientCLI: {"2.1.260", lines}, egress.ClientACP: {"0.75.1", lines}}, // the adapter's SDK claude, 2.1.257
-		"codex":  {egress.ClientCLI: {"0.153.4", lines}, egress.ClientACP: {"1.10.0", lines}}, // codex-acp drives the same codex
-		"gemini": {egress.ClientCLI: {"0.59.0", lines}, egress.ClientACP: {"0.59.0", lines}},
-		"grok":   {egress.ClientCLI: {"1.0.25", lines}, egress.ClientACP: {"1.0.25", lines}}, // grok first POSTs server/discover
+		"claude": {egress.ClientCLI: {"2.1.260", lines, headers}, egress.ClientACP: {"0.75.1", lines, headers}}, // the adapter's SDK claude, 2.1.257
+		// codex-acp drives the same codex, and Coop refuses text before a reference for Codex.
+		"codex":  {egress.ClientCLI: {"0.153.4", lines, headers[:1]}, egress.ClientACP: {"1.10.0", lines, headers[:1]}},
+		"gemini": {egress.ClientCLI: {"0.59.0", lines, headers}, egress.ClientACP: {"0.59.0", lines, headers}},
+		"grok":   {egress.ClientCLI: {"1.0.25", lines, headers}, egress.ClientACP: {"1.0.25", lines, headers}}, // grok first POSTs server/discover
 	}
-	cfg, spec := brokerFixture(t, "TOKEN=secret\n")
-	plan, err := planMCPRoutes(cfg, spec, []byte(`{"mcpServers":{"x":{"type":"http","url":"https://x.example/mcp","bearer_token_env_var":"TOKEN"}}}`), nil)
+	cfg, spec := brokerFixture(t, "TOKEN=secret\nKEY=secret\nAUTH=secret\n")
+	plan, err := planMCPRoutes(cfg, spec, []byte(`{"mcpServers":{
+		"a":{"type":"http","url":"https://a.example/mcp","bearer_token_env_var":"TOKEN"},
+		"b":{"type":"http","url":"https://b.example/mcp","headers":{"X-Api-Key":"${KEY}"}},
+		"c":{"type":"http","url":"https://c.example/mcp","headers":{"X-Auth":"Token ${AUTH}"}}}}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	route := plan.gatewayRoutes()[0]
+	routes := plan.gatewayRoutes()
 	for _, name := range agents.Names() {
 		agent, _ := agents.Get(name)
 		for _, client := range agent.LockedClients(agents.ClientPlatform{OS: "linux", Architecture: "arm64", Libc: "glibc"}) {
@@ -282,8 +290,16 @@ func TestMCPRoutesAdmitWhatThePinnedClientsSend(t *testing.T) {
 			for _, line := range seen.requests {
 				method, target, _ := strings.Cut(line, " ")
 				parsed, err := url.ParseRequestURI(target)
-				if err != nil || !route.Admits(method, parsed) {
+				if err != nil || !routes[0].Admits(method, parsed) {
 					t.Errorf("an MCP route refuses %s %s's %q", name, client.Client, line)
+				}
+			}
+			for _, header := range seen.headers {
+				key, value, _ := strings.Cut(header, ": ")
+				if !slices.ContainsFunc(routes, func(route networkgateway.CredentialBrokerRoute) bool {
+					return route.Header == key && value == route.HeaderPrefix+"<stand-in>"
+				}) {
+					t.Errorf("no MCP route accepts %s %s's %q", name, client.Client, header)
 				}
 			}
 		}
@@ -490,5 +506,55 @@ func TestOfflineLaunchNamesTheMCPServersItLeavesOut(t *testing.T) {
 	})
 	if !strings.Contains(out, "MCP servers that need internet are left out: docs, tickets") {
 		t.Fatalf("the offline launch did not name what it left out:\n%s", out)
+	}
+}
+
+// A header secret plans a route of its own: the gateway gets the header lower-cased with its prefix,
+// and the box's snapshot keeps the key as written with the stand-in behind the prefix — an
+// Authorization header written out is rewritten there too, not taken for a bearer_token_env_var. A
+// URL no fixed route can carry is refused by name.
+func TestPlanMCPRoutesCarriesAHeaderSecret(t *testing.T) {
+	cfg, spec := brokerFixture(t, "DOCS_KEY=docs-secret\nTICKETS_TOKEN=tickets-secret\nWIKI_TOKEN=wiki-secret\n")
+	snapshot := []byte(`{"mcpServers":{
+		"docs":{"type":"http","url":"https://docs.example/mcp","headers":{"X-Api-Key":"key ${DOCS_KEY}","X-Client":"coop"}},
+		"tickets":{"type":"http","url":"https://tickets.example/mcp","headers":{"Authorization":"Token ${TICKETS_TOKEN}"}},
+		"wiki":{"type":"http","url":"https://wiki.example/mcp","headers":{"Authorization":"Bearer ${WIKI_TOKEN}"}}}}`)
+	plan, err := planMCPRoutes(cfg, spec, snapshot, nil)
+	if err != nil || len(plan.mcp) != 3 {
+		t.Fatalf("plan = %+v, %v", plan, err)
+	}
+	routes := plan.gatewayRoutes()
+	if routes[0].Header != "x-api-key" || routes[0].HeaderPrefix != "key " || routes[1].Header != "authorization" || routes[1].HeaderPrefix != "Token " {
+		t.Fatalf("header routes = %+v", routes)
+	}
+	routed, err := mcp.RouteThroughBroker(snapshot, plan.brokeredServers())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"X-Api-Key":"key ${COOP_MCP_TOKEN_0}"`, `"Authorization":"Token ${COOP_MCP_TOKEN_1}"`,
+		`"Authorization":"Bearer ${COOP_MCP_TOKEN_2}"`, `"X-Client":"coop"`} {
+		if !strings.Contains(string(routed), want) {
+			t.Errorf("routed snapshot lacks %s:\n%s", want, routed)
+		}
+	}
+	for name, url := range map[string]string{"plain http": "http://docs.example/mcp", "another port": "https://docs.example:8443/mcp"} {
+		bad := []byte(`{"mcpServers":{"docs":{"type":"http","url":"` + url + `","headers":{"X-Api-Key":"${DOCS_KEY}"}}}}`)
+		if _, err := planMCPRoutes(cfg, spec, bad, nil); err == nil || !strings.Contains(err.Error(), `"docs"`) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// A header the gateway would reject is refused HERE, by server name and header: planning it
+	// would fail the whole launch configuration later with nothing a person could act on.
+	for name, definition := range map[string]string{
+		"a header the transport owns": `{"Cookie":"session=${DOCS_KEY}"}`,
+		"a header the proxy appends":  `{"X-Forwarded-For":"${DOCS_KEY}"}`,
+		"a name no header may carry":  `{"X_Api_Key":"${DOCS_KEY}"}`,
+		"a prefix past the bound":     `{"X-Api-Key":"` + strings.Repeat("k", 65) + `${DOCS_KEY}"}`,
+	} {
+		bad := []byte(`{"mcpServers":{"docs":{"type":"http","url":"https://docs.example/mcp","headers":` + definition + `}}}`)
+		if _, err := planMCPRoutes(cfg, spec, bad, nil); err == nil || !strings.Contains(err.Error(), `"docs"`) ||
+			!strings.Contains(err.Error(), "header") {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }

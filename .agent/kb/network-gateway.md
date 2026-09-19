@@ -65,8 +65,13 @@ the run's plan, `CredentialBrokerAddress(i)` = 15580+i, each holding only its ow
 and credential (`CredentialBrokerSecrets` v2, bound to the run and gateway epoch and to each route
 by name; substitutes must differ). A route's kind decides its shape: `provider` is one POST endpoint
 with a 30 s response-header timeout; `mcp` is one streamable-HTTP endpoint — exact path,
-POST/GET/DELETE, bearer, no query — with NO header timeout, because a server answering a tool call
-with JSON sends headers only when the tool finishes and a 502 makes the agent retry a mutation. A
+POST/GET/DELETE, one secret header (any lower-case name HTTP, a proxy or the MCP protocol does not
+own — `mcpSecretHeader`, which also refuses `x-forwarded-for`/`forwarded` because the proxy appends
+to those AFTER the director sets the credential — after a literal prefix of at most 64 bytes;
+`MCPSecretHeader` is the same judgment exported so the HOST refuses such a header first, by server
+name), no query — with NO header
+timeout, because a server answering a tool call with JSON sends headers only when the tool finishes
+and a 502 makes the agent retry a mutation. A
 request must fit its route's endpoint (`CredentialBrokerRoute.Admits`: method; a path already clean
 — no dot segment, doubled slash or second encoding an upstream could normalize into a sibling
 endpoint, and a trailing slash only as an exact route's own path (MCP endpoints like `/mcp/`) —
@@ -189,6 +194,10 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-09-20 — the host makes the same header judgment first (`MCPSecretHeader`), and the proxy's
+  own forwarded headers are refused as secret carriers.
+- 2026-09-19 — an `mcp` route may carry its secret in one header of its own (`mcpSecretHeader`),
+  not only `Authorization: Bearer`.
 - 2026-09-19 — the broker admits through the guard's `admitLease` (waits out a busy controller), and
   the resolver asks again after an answer that arrived already expired; both surfaced as spurious
   broker denials when a filtered session opened two MCP servers at once.

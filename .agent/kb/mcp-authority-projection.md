@@ -96,9 +96,17 @@ denial check. Normal, ACP and nested Gemini all use this boundary. This check ha
 before the provider; it does not promise that no daemon or sidecar was started.
 
 **Filtered runs broker bearer servers** (`box/mcp_broker.go`, `mcp/broker.go`). Every
-`bearer_token_env_var` server becomes a route of the run's credential broker after the provider
-routes (`planMCPRoutes`; listener i, route name `mcp-<i>`, kind `mcp`: exact URL path, POST/GET/
-DELETE, no response-header timeout). The rewrite happens ONCE, before any projection:
+secret-bearing server `mcp.SecretServers` finds becomes a route of the run's credential broker after
+the provider routes (`planMCPRoutes`; listener i, route name `mcp-<i>`, kind `mcp`: exact URL path,
+POST/GET/DELETE, no response-header timeout). A secret is a `bearer_token_env_var` or ONE header
+that is literal text then one `${VAR}` (anything else is refused by server name); under filtered,
+admission already refused `${`, so only bearer servers get here. `SecretServer.Bearer` tells a
+`bearer_token_env_var` from an `Authorization: Bearer ${X}` header written out — they read the same
+on the wire but are rewritten in different places. A header the gateway would reject
+(`networkgateway.MCPSecretHeader`) is refused HERE, by server name; an ACP adapter takes inline
+headers only, so `acpServer` resolves every `${VAR}` in a header from the same environment the
+bearer token is read from and DROPS a server whose reference has no value — a stand-in left
+unresolved would 401 that server for the whole session. The rewrite happens ONCE, before any projection:
 `mcp.RouteThroughBroker` points each server at `http://127.0.0.1:<port><path>` and renames its
 variable to `COOP_MCP_TOKEN_<i>` (renaming is required — two servers sharing one operator variable
 need two stand-ins), so generated configs, claude's file and a session's ACP list all follow it. The
@@ -136,6 +144,8 @@ adds ordinary `CommandArgs` must decide whether its nested commands need an equi
 mounting the raw snapshot for every scoped credential is not the fallback.
 
 ## Changelog
+- 2026-09-19 — planning reads `mcp.SecretServers` (bearer or one `prefix${VAR}` header); the rewrite
+  turns a header secret into `prefix${COOP_MCP_TOKEN_<i>}` where it is written.
 - 2026-09-19 — offline runs drop every remote server (`mcp.WithoutRemoteServers`, one rewrite before
   every projection), scrub their token names and name them at launch; an offline session's private
   copy is written without them, so its box and its session/new both follow.

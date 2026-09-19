@@ -29,42 +29,52 @@ const maxProviderRoutes = 8
 // broker listeners and substitutes its adapter must be handed.
 const SessionMCPHandoffEnv = "COOP_SESSION_MCP_HANDOFF"
 
-// mcpRoute is one bearer-authenticated MCP server a filtered run brokers: the upstream its literal
-// URL names, and its token — read on the host from the env the box would have carried it in, and
-// cleared once written into the guard's secret. The box reaches it as COOP_MCP_TOKEN_<i> at
+// mcpRoute is one secret-bearing MCP server a run brokers: the upstream its literal URL names, the
+// header its secret rides (lower-case for the gateway, as spelled for the snapshot) after its
+// literal prefix, and the secret — read on the host from the env the box would have carried it in,
+// and cleared once written into the broker's secret. The box reaches it as COOP_MCP_TOKEN_<i> at
 // listener i.
 type mcpRoute struct {
-	server   string
-	upstream string
-	path     string // as the client sends it, escaped
-	token    string
+	server            string
+	upstream          string
+	path              string // as the client sends it, escaped
+	header, headerKey string
+	prefix            string
+	bearer            bool
+	token             string
 }
 
-// planMCPRoutes adds a route for every bearer server of a filtered run's MCP snapshot. Admission
-// already proved each definition literal — an https origin on 443, no query, no ${…} — so what is
-// left to refuse here is an SSE server (it names its own message endpoint at runtime, so no fixed
-// route fits it), a missing token, and a path the broker would refuse. (-e: mcpScrub.)
+// planMCPRoutes adds a route for every secret-bearing server of a run's MCP snapshot: a
+// bearer_token_env_var, or one header that is literal text then one ${VARIABLE}
+// (mcp.SecretServers refuses any other shape). It refuses what no fixed route can carry — an SSE
+// server (it names its own message endpoint at runtime), a URL that is not plain https on 443, a
+// path the broker would refuse — and a missing secret. Under filtered networking admission already
+// proved every definition literal, so only bearer servers reach this. (-e: mcpScrub.)
 func planMCPRoutes(cfg *config.Config, spec RunSpec, snapshot []byte, plan *credentialPlan) (*credentialPlan, error) {
-	servers, err := mcp.NetworkServers(snapshot)
+	servers, err := mcp.SecretServers(snapshot)
 	if err != nil {
 		return nil, err
 	}
 	values := effectiveMCPEnv(cfg, spec)
 	for _, server := range servers {
-		if server.Auth != "bearer-env" {
-			continue
-		}
 		if server.Transport == "sse" {
 			return nil, fmt.Errorf("MCP server %q uses the SSE transport, whose token Coop cannot keep outside the box; give it its streamable HTTP URL", server.Name)
 		}
-		key := server.BearerReference
+		// The gateway holds a secret header to names it does not control, after a bounded literal
+		// prefix. Refuse one it would reject here, by server name, rather than let the whole launch
+		// configuration fail later with nothing a person could act on.
+		if !networkgateway.MCPSecretHeader(server.Header, server.Prefix) {
+			return nil, fmt.Errorf("MCP server %q's %s header cannot carry its secret through Coop: that header, or the text before the secret, is one the broker itself controls", server.Name, server.HeaderKey)
+		}
+		key := server.Variable
 		token := values[key]
 		if strings.TrimSpace(token) == "" || strings.ContainsAny(token, "\x00\r\n") {
 			return nil, fmt.Errorf("MCP server %q needs %s, which has no usable value", server.Name, key)
 		}
 		parsed, err := url.Parse(server.URL)
-		if err != nil {
-			return nil, err
+		if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" ||
+			parsed.Fragment != "" || parsed.Port() != "" && parsed.Port() != "443" {
+			return nil, fmt.Errorf("MCP server %q's URL must be plain https:// on port 443 for Coop to keep its secret outside the box", server.Name)
 		}
 		escaped := parsed.EscapedPath()
 		if escaped == "" {
@@ -77,7 +87,8 @@ func planMCPRoutes(cfg *config.Config, spec RunSpec, snapshot []byte, plan *cred
 		if plan == nil {
 			plan = &credentialPlan{}
 		}
-		plan.mcp = append(plan.mcp, &mcpRoute{server: server.Name, upstream: parsed.Hostname(), path: escaped, token: token})
+		plan.mcp = append(plan.mcp, &mcpRoute{server: server.Name, upstream: parsed.Hostname(), path: escaped, header: server.Header,
+			headerKey: server.HeaderKey, prefix: server.Prefix, bearer: server.Bearer, token: token})
 	}
 	return plan, nil
 }
@@ -191,10 +202,14 @@ func (p *credentialPlan) brokeredServers() map[string]mcp.BrokeredServer {
 	}
 	servers := make(map[string]mcp.BrokeredServer, len(p.mcp))
 	for j, route := range p.mcp {
-		servers[route.server] = mcp.BrokeredServer{
+		brokered := mcp.BrokeredServer{
 			URL:      "http://" + networkgateway.CredentialBrokerAddress(p.mcpListener(j)) + route.path,
 			TokenEnv: p.mcpTokenEnv(j),
 		}
+		if !route.bearer {
+			brokered.HeaderKey, brokered.Prefix = route.headerKey, route.prefix
+		}
+		servers[route.server] = brokered
 	}
 	return servers
 }

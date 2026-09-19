@@ -936,6 +936,13 @@ func TestACPServersRenderTheShapeTheClaudeAdapterReads(t *testing.T) {
 			`{"mcpServers":{"h":{"type":"http","url":"https://a.example/mcp","headers":{"X-Api-Key":"k","Authorization":"Bearer inline"}}}}`,
 			`[{"headers":[{"name":"Authorization","value":"Bearer inline"},{"name":"X-Api-Key","value":"k"}],"name":"h","type":"http","url":"https://a.example/mcp"}]`,
 		},
+		// The adapter hands a header on as written, so a reference left in one would travel
+		// upstream as those characters — and a brokered server's stand-in would authenticate
+		// nothing, for the whole session.
+		"a header reference is resolved, keeping its text": {
+			`{"mcpServers":{"h":{"type":"http","url":"https://a.example/mcp","headers":{"X-Api-Key":"key ${EMISAR_API_KEY}"}}}}`,
+			`[{"headers":[{"name":"X-Api-Key","value":"key emk-x"}],"name":"h","type":"http","url":"https://a.example/mcp"}]`,
+		},
 		"sse keeps its transport": {
 			`{"mcpServers":{"legacy":{"type":"sse","url":"https://legacy.example/sse"}}}`,
 			`[{"name":"legacy","type":"sse","url":"https://legacy.example/sse"}]`,
@@ -997,6 +1004,27 @@ func TestACPServersDropAServerWhoseBearerTokenCannotBeResolved(t *testing.T) {
 	want := `[{"headers":[{"name":"Authorization","value":"Bearer tok"}],"name":"present","type":"http","url":"https://d.example/mcp"}]`
 	if string(got) != want {
 		t.Errorf("unauthenticatable servers were not dropped:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+	// The same for a secret written as a header: an unresolvable reference is no credential.
+	headers := `{"mcpServers":{
+		"absent":  {"url":"https://a.example/mcp","headers":{"X-Api-Key":"key ${NOT_IN_ENV}"}},
+		"blank":   {"url":"https://b.example/mcp","headers":{"X-Api-Key":"${BLANK}"}},
+		"present": {"url":"https://d.example/mcp","headers":{"X-Api-Key":"key ${PRESENT}"}}
+	}}`
+	servers, err = ACPServers(writeTmp(t, "headers.json", headers), func(key string) (string, bool) {
+		v, ok := env[key]
+		return v, ok
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = json.Marshal(servers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = `[{"headers":[{"name":"X-Api-Key","value":"key tok"}],"name":"present","type":"http","url":"https://d.example/mcp"}]`
+	if string(got) != want {
+		t.Errorf("servers with an unresolvable header secret were not dropped:\n--- got ---\n%s\n--- want ---\n%s", got, want)
 	}
 }
 

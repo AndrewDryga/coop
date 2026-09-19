@@ -123,3 +123,54 @@ func TestWithoutRemoteServersKeepsOnlyLocalOnes(t *testing.T) {
 		t.Fatalf("an all-local snapshot changed: %s, %q, %v", kept, none, err)
 	}
 }
+
+// A server's secret is a bearer_token_env_var or one header that is literal text then one ${VAR};
+// a literal header is no secret, and any other shape is refused by name.
+func TestSecretServersReadsEachSecretShape(t *testing.T) {
+	servers, err := SecretServers([]byte(`{"mcpServers":{
+		"bearer":{"url":"https://a.example/mcp","bearer_token_env_var":"A_TOKEN"},
+		"key":{"url":"https://b.example/mcp","headers":{"X-Api-Key":"${B_KEY}","X-Client":"coop"}},
+		"token":{"type":"http","url":"https://c.example/mcp","headers":{"Authorization":"Token ${C_TOKEN}"}},
+		"plain":{"url":"https://d.example/mcp","headers":{"X-Client":"coop"}},
+		"local":{"command":"true"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []SecretServer{
+		{Name: "bearer", URL: "https://a.example/mcp", Transport: "http", Header: "authorization", HeaderKey: "Authorization", Prefix: "Bearer ", Variable: "A_TOKEN", Bearer: true},
+		{Name: "key", URL: "https://b.example/mcp", Transport: "http", Header: "x-api-key", HeaderKey: "X-Api-Key", Variable: "B_KEY"},
+		{Name: "token", URL: "https://c.example/mcp", Transport: "http", Header: "authorization", HeaderKey: "Authorization", Prefix: "Token ", Variable: "C_TOKEN"},
+	}
+	if !slices.Equal(servers, want) {
+		t.Fatalf("secret servers = %+v\nwant %+v", servers, want)
+	}
+	for name, definition := range map[string]string{
+		"text after the reference": `{"url":"https://x.example/mcp","headers":{"X-Key":"${K}-suffix"}}`,
+		"two references":           `{"url":"https://x.example/mcp","headers":{"X-Key":"${K}${L}"}}`,
+		"two secrets":              `{"url":"https://x.example/mcp","bearer_token_env_var":"K","headers":{"X-Key":"${L}"}}`,
+	} {
+		if _, err := SecretServers([]byte(`{"mcpServers":{"x":` + definition + `}}`)); err == nil || !strings.Contains(err.Error(), `"x"`) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// A header secret is rewritten where it is written — the key keeps its spelling, the prefix stays —
+// and nothing else in the server changes.
+func TestRouteThroughBrokerRewritesASecretHeader(t *testing.T) {
+	snapshot := []byte(`{"mcpServers":{"key":{"url":"https://b.example/mcp","headers":{"X-Api-Key":"key ${B_KEY}","X-Client":"coop"}}}}`)
+	routed, err := RouteThroughBroker(snapshot, map[string]BrokeredServer{
+		"key": {URL: "http://127.0.0.1:15581/mcp", TokenEnv: "COOP_MCP_TOKEN_1", HeaderKey: "X-Api-Key", Prefix: "key "},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"url":"http://127.0.0.1:15581/mcp"`, `"X-Api-Key":"key ${COOP_MCP_TOKEN_1}"`, `"X-Client":"coop"`} {
+		if !strings.Contains(string(routed), want) {
+			t.Errorf("routed snapshot lacks %s:\n%s", want, routed)
+		}
+	}
+	if strings.Contains(string(routed), "B_KEY") || strings.Contains(string(routed), "b.example") {
+		t.Fatalf("the operator's variable or host survived:\n%s", routed)
+	}
+}

@@ -76,7 +76,11 @@ broker's Codex provider rides that file. MCP routes are pinned the same way
 Authorization shape — claude `--mcp-config` with `headers.Authorization: "Bearer ${VAR}"` (it ignores
 `bearer_token_env_var`), codex `config.toml`, gemini `settings.json`, grok `config.toml` — and move
 the pins. 2026-09-19: every client sends POST (initialize, notifications, tools) and GET (the stream)
-to the exact path with the bearer.
+to the exact path with the bearer. Header secrets are pinned beside them: servers with
+`X-Api-Key: ${VAR}` and `X-Auth: Token ${VAR}` rendered by Coop's own renderers (Codex takes only the
+first; Coop refuses text before a reference for it), and every client sends the header's text with
+the value in place. Capture grok with a fake `XAI_API_KEY` and `-p`, not `grok mcp doctor`, which
+probes OAuth discovery paths and GETs the endpoint without the configured headers.
 
 Traps: the strict suites fail on any skip, so every provider needs a signed-in default account whose
 access token outlives the run (a Claude or Grok token hours old is skipped as refresh-required —
@@ -86,6 +90,7 @@ host re-run filtered setup once — a filtered launch does it itself, an editor 
 `coop net setup`.
 
 ## Changelog
+- 2026-09-19 — pinned how each client sends a header secret; grok's `mcp doctor` is not a capture.
 - 2026-09-19 — added the MCP request-line pins and their capture.
 - 2026-09-19 — the broker serves consult peers, ACP and remote sessions on filtered networking;
   added the request-line capture to the bump procedure.

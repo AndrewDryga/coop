@@ -175,6 +175,12 @@ func (b *credentialBroker) setProxy(transport http.RoundTripper) {
 	}
 }
 
+// handler admits one request: to this route's own listener and endpoint, carrying this route's
+// secret header with exactly the stand-in issued for it. A request naming any OTHER credential
+// header the broker itself would set — or the connection headers a proxy owns — is refused, so a
+// box cannot ride its own Authorization upstream beside the credential. A header the broker does
+// not set travels as written: the box already reaches this one upstream through this route, and the
+// route's own credential is the only authority it gains.
 func (b *credentialBroker) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		if !b.route.Admits(request.Method, request.URL) || request.Host != b.address || request.Header.Get("Authorization") != "" && b.route.Header != "authorization" ||
