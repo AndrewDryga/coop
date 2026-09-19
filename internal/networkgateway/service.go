@@ -226,7 +226,14 @@ const (
 	gatewayStopped
 )
 
-func (g *GuardRuntime) markReady() { g.phase.CompareAndSwap(gatewayStarting, gatewayReady) }
+// markReady opens the gateway and has the collector say so at once: its latest sample predates
+// readiness, and the next tick is up to a second away.
+func (g *GuardRuntime) markReady() {
+	if g.phase.CompareAndSwap(gatewayStarting, gatewayReady) {
+		g.collector.Wake()
+	}
+}
+
 func (g *GuardRuntime) stopReady() { g.phase.Store(gatewayStopped) }
 
 func NewGuardRuntime(config LaunchConfig) (*GuardRuntime, error) {

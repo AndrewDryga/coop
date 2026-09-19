@@ -44,6 +44,39 @@ func TestGuardReadinessCannotReopenDuringShutdown(t *testing.T) {
 	}
 }
 
+// The collector publishes readiness the moment the gateway is marked ready, not at its next tick: a
+// launch starts nothing until a snapshot says ready, and the tick is a second away. Once the observer
+// has stopped, a late wake samples nothing, so the terminal sample stays the last one.
+func TestGuardReadinessIsPublishedAtOnce(t *testing.T) {
+	c, _ := collectorFixture(t)
+	gateway := &GuardRuntime{collector: c}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c.Run(ctx, func() bool { return gateway.phase.Load() == gatewayReady })
+	}()
+	wait.For(t, "the collector's first sample", func() bool { return c.Snapshot().Sequence >= 1 })
+	if c.Snapshot().Health.Gateway.Status == "ready" {
+		t.Fatal("a gateway not yet marked ready was published ready")
+	}
+	began := time.Now()
+	gateway.markReady()
+	wait.For(t, "a ready sample", func() bool { return c.Snapshot().Health.Gateway.Status == "ready" })
+	if took := time.Since(began); took > 500*time.Millisecond {
+		t.Fatalf("readiness waited %s for the collector's tick", took)
+	}
+	cancel()
+	<-done
+	c.sample(context.Background(), false, true, c.clock.instant())
+	final := c.Snapshot()
+	c.Wake()
+	// Nothing is left to take the wake: it stays queued, and no sample follows the terminal one.
+	if after := c.Snapshot(); !final.Terminal || after.Sequence != final.Sequence || len(c.wake) != 1 {
+		t.Fatalf("a wake after the observer stopped was taken (%d queued) or sampled past the terminal sample: %d, then %d", len(c.wake), final.Sequence, after.Sequence)
+	}
+}
+
 func TestGatewayLaunchConfigurationIsBoundedAndConcrete(t *testing.T) {
 	config := testLaunch(t)
 	data, _ := json.Marshal(config)

@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A run with network rules starts about another second sooner — about 3 seconds in Coop's own
+  repository — and so does an editor session there. The network gateway was ready a tenth of a second
+  after it started, but it reported that only at its next once-a-second measurement, and nothing in
+  the box starts before the gateway says it is ready. It now reports readiness the moment it happens.
+
 - A run with network rules starts about 0.4 seconds sooner — about 3.9 seconds instead of 4.3 in
   Coop's own repository — and an editor session there answers its first request about a quarter of a
   second sooner. Coop set up the network gateway one step at a time; it now creates the gateway's two

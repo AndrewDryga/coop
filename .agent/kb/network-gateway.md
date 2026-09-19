@@ -155,11 +155,15 @@ exists but refuses to start it ("cannot join network namespace of a non running 
 target runs, so the guard's start stays after the controller's. A guard still in registry state
 `created` never ran, and cleanup skips its observation block: `docker cp` from a never-started
 container reports the final file missing, a failure that never happened. Measured 2026-09-19 in this
-repo: start p50 4.33 s → 3.90 s. The largest remaining block is the guard readiness wait (~1 s): the
-guard answers `probe` ~0.1 s after its start, but the collector publishes its first snapshot before
-`markReady` and the next only one `ObservationInterval` later.
+repo: start p50 4.33 s → 3.90 s. The guard answers `probe` ~0.1 s after its start, but the launch
+also waits for a READY snapshot, and the snapshot is the collector's last published sample: its first
+comes before `markReady`, and on the 1 s tick the next came a whole `ObservationInterval` later — the
+largest block of a start. `markReady` now wakes the collector (`Collector.Wake`, the kernel sampler's
+pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-09-19 — `markReady` wakes the collector, so the first ready snapshot no longer waits out the
+  1 s observation tick (start 3.97 s → 3.00 s)
 - 2026-09-19 — the filtered launch overlaps its independent steps (volumes; guard creation beside the
   controller's start) and cleanup skips the observation block of a guard that never started (start
   4.33 s → 3.90 s); re-pointed the controller/guard line references, which had drifted

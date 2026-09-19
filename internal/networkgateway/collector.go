@@ -122,6 +122,7 @@ type Collector struct {
 	kernelPartial               bool
 	lastGuardAt, lastEnvoyAt    *time.Time
 	snapshot                    networkview.Snapshot
+	wake                        chan struct{} // a sample wanted before the next tick (Wake)
 }
 
 func NewCollector(g *Guard, e *EnvoyEvents, doh *DoH, extraResolvers ...*Resolver) (*Collector, error) {
@@ -137,7 +138,8 @@ func NewCollector(g *Guard, e *EnvoyEvents, doh *DoH, extraResolvers ...*Resolve
 	}
 	c := &Collector{identity: g.controller.Identity, clock: g.clock, started: g.clock.instant(), guard: g.events,
 		envoy: e, resolver: g.resolver, resolvers: resolvers, doh: doh, controller: g.controller, boundary: g.boundary(),
-		inventory: func() ([]SocketRow, error) { return readSocketInventory(g.boundary()) }, flows: make(map[string]*collectedFlow)}
+		inventory: func() ([]SocketRow, error) { return readSocketInventory(g.boundary()) }, flows: make(map[string]*collectedFlow),
+		wake: make(chan struct{}, 1)}
 	if _, err := rand.Read(c.key[:]); err != nil || !c.started.Valid() {
 		return nil, Failure("collector_unavailable")
 	}
@@ -170,7 +172,21 @@ func (c *Collector) Run(ctx context.Context, ready func() bool) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-c.wake:
 		}
+	}
+}
+
+// Wake asks Run for a sample now rather than at its next tick. The gateway turning ready is news a
+// launch is polling for — it starts nothing until a snapshot says so — and the tick is a second away.
+// It never blocks: a wake already pending covers this one, and once Run has returned nothing samples.
+func (c *Collector) Wake() {
+	if c == nil {
+		return
+	}
+	select {
+	case c.wake <- struct{}{}:
+	default:
 	}
 }
 
