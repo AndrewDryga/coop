@@ -90,7 +90,7 @@ func networkCredentialScope(cfg *config.Config, spec RunSpec) []string {
 	if !spec.Homes || runPrimary(spec) == "" || spec.Preset == nil || spec.Login {
 		return scope
 	}
-	for _, provider := range spec.Preset.RunnableRoleAgents(runPrimary(spec)) {
+	for _, provider := range spec.Preset.RunnableRoleAgents() {
 		if !slices.Contains(scope, provider) {
 			scope = append(scope, provider)
 		}

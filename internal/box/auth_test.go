@@ -141,9 +141,9 @@ func TestCredentialScope(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "env"), []byte("GEMINI_API_KEY=real\n"), 0o644)
 	cfg := &config.Config{ConfigDir: dir}
 
-	// A preset whose only role is a native claude thinker: in-session under a Claude lead
-	// (adds nothing to the scope), but degrades to a consult on claude under a codex lead —
-	// which then must mount claude's creds.
+	// A preset whose only role is a native claude thinker runs it in the lead's own session, so it
+	// adds nothing to the scope. (A lead of another provider is refused before any scope is
+	// taken — see TestRunRefusesALeadThatCannotHostANativeRole.)
 	nativePreset := &preset.Preset{Roles: []preset.Role{{Name: "thinker", Mode: preset.ModeNative, Targets: peerTargets("claude")}}}
 	sameProviderConsult := &preset.Preset{Roles: []preset.Role{{Name: "probe", Mode: preset.ModeConsult, Targets: peerTargets("claude")}}}
 
@@ -162,7 +162,6 @@ func TestCredentialScope(t *testing.T) {
 		{"consult names two peers", RunSpec{Homes: true, Agent: "codex", ConsultLead: "codex", Peers: peerTargets("claude", "gemini")}, []string{"codex", "claude", "gemini"}},
 		{"claude lead keeps native in-session", RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude", Preset: nativePreset}, []string{"claude"}},
 		{"same-provider consult mounts one credential", RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude", Preset: sameProviderConsult}, []string{"claude"}},
-		{"codex lead degrades native to a claude consult", RunSpec{Homes: true, Agent: "codex", ConsultLead: "codex", Preset: nativePreset}, []string{"codex", "claude"}},
 	}
 	for _, c := range cases {
 		if got := credentialScope(cfg, c.spec); !slices.Equal(got, c.want) {

@@ -3068,7 +3068,7 @@ func TestLeadInstructionMountPreset(t *testing.T) {
 	if !wired {
 		t.Error("a consult role must wire coop-consult")
 	}
-	for _, want := range []string{`preset "frontier"`, "coop-consult critic --fresh", "coop-delegate fast", "@deep-reasoner", "BASE RULES"} {
+	for _, want := range []string{`preset "frontier"`, "coop-consult critic --fresh", "coop-delegate fast", "the deep-reasoner subagent", "BASE RULES"} {
 		if !strings.Contains(content, want) {
 			t.Errorf("preset lead instructions missing %q:\n%s", want, content)
 		}
@@ -3155,6 +3155,21 @@ func TestModelEnvArgsPreset(t *testing.T) {
 	}
 }
 
+// A box whose lead cannot host one of its preset's native roles refuses before the runtime is
+// touched — the last line behind every launcher's own check — rather than run the role as a
+// read-only consult it was never declared to be.
+func TestRunRefusesALeadThatCannotHostANativeRole(t *testing.T) {
+	p := &preset.Preset{Name: "t", Dir: t.TempDir(), Roles: []preset.Role{{Name: "thinker", Mode: preset.ModeNative, Targets: []agents.Target{{Provider: "claude"}}}}}
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	_, err := Run(&config.Config{}, recorderRuntime(t, recorder), RunSpec{Repo: t.TempDir(), Homes: true, Agent: "codex", ConsultLead: "codex", Preset: p})
+	if err == nil || !strings.Contains(err.Error(), "thinker is a native claude subagent, but codex can lead this preset too") {
+		t.Fatalf("a codex box with a native claude role = %v", err)
+	}
+	if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("the refused box reached the runtime: %v", statErr)
+	}
+}
+
 // generatedSubagentFiles returns a coop-<role>.md (name + content) only for the un-referenced
 // native role, with the role's model in its frontmatter — not for a referenced native role
 // (subagent set) or non-native roles.
@@ -3162,22 +3177,21 @@ func TestGeneratedSubagentFiles(t *testing.T) {
 	p := &preset.Preset{Roles: []preset.Role{
 		{Name: "thinker", Mode: preset.ModeNative, Targets: []agents.Target{{Provider: "claude", Model: "claude-opus-4-8"}}, When: []string{"architecture"}},
 		{Name: "critic", Mode: preset.ModeNative, Targets: []agents.Target{{Provider: "claude"}}, Subagent: "deep-reasoner"},
-		{Name: "foreign", Mode: preset.ModeNative, Targets: []agents.Target{{Provider: "codex"}}},
 		{Name: "fast", Mode: preset.ModeDelegate, Targets: []agents.Target{{Provider: "gemini"}}},
 	}}
 	claude, _ := agents.Get("claude")
 	support := claude.NativeSubagents()
-	got := generatedSubagentFiles(p, "claude", support)
+	got := generatedSubagentFiles(p, support)
 	if len(got) != 1 || got[0].name != "coop-thinker.md" {
 		t.Fatalf("want only coop-thinker.md, got %+v", got)
 	}
 	if !strings.Contains(got[0].content, "name: coop-thinker") || !strings.Contains(got[0].content, "model: claude-opus-4-8") {
 		t.Errorf("content missing frontmatter:\n%s", got[0].content)
 	}
-	if generatedSubagentFiles(nil, "claude", support) != nil {
+	if generatedSubagentFiles(nil, support) != nil {
 		t.Error("nil preset should yield no files")
 	}
-	if generatedSubagentFiles(p, "claude", agents.NativeSubagentSupport{}) != nil {
+	if generatedSubagentFiles(p, agents.NativeSubagentSupport{}) != nil {
 		t.Error("unsupported adapter should yield no native files")
 	}
 }

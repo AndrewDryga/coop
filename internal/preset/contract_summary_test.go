@@ -26,17 +26,6 @@ func TestDelegateContractAsksForOneSummary(t *testing.T) {
 	}
 }
 
-func TestDelegateContractIsLeadIndependent(t *testing.T) {
-	for _, extra := range []string{"", "Keep this appended instruction."} {
-		r := &Role{Name: "fast", Mode: ModeDelegate, Targets: []agents.Target{{Provider: "gemini"}}, PromptText: extra}
-		for _, lead := range agents.Names() {
-			if RoleContract(r) != roleContract(r, lead) {
-				t.Errorf("delegate contract changed for %s with appendix %q", lead, extra)
-			}
-		}
-	}
-}
-
 func TestLeadReviewEvidenceGuidanceParity(t *testing.T) {
 	for _, mode := range []string{ModeConsult, ModeNative, ModeDelegate} {
 		for _, lead := range []string{"claude", "codex"} {

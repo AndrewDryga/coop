@@ -35,16 +35,18 @@ import (
 
 // acpPresetNames lists the repo's loadable presets for the ACP selector — ANY lead: switching to
 // a different-provider preset is a provider switch, which the proxy now survives (the session is
-// re-created and the conversation carried best-effort as a text preamble; see spawnTarget).
-func (a *app) acpPresetNames(repo string) []string {
+// re-created and the conversation carried best-effort as a text preamble; see spawnTarget). A
+// preset that does not load is left out, and skipped says why, for the session start to report.
+func (a *app) acpPresetNames(repo string) (names []string, skipped []error) {
 	globalDir := a.cfg.GlobalPresetsDir()
-	var out []string
 	for _, name := range preset.List(repo, globalDir) {
-		if _, err := preset.Load(repo, globalDir, name); err == nil {
-			out = append(out, name)
+		if _, err := preset.Load(repo, globalDir, name); err != nil {
+			skipped = append(skipped, err)
+		} else {
+			names = append(names, name)
 		}
 	}
-	return out
+	return names, skipped
 }
 
 // acpHost builds the real acpctl.Host: the rotation and models-cache policy the ACP control needs
@@ -271,7 +273,11 @@ func (a *app) cmdACP(args []string) (int, error) {
 		if toolSet {
 			sel.Provider = tool
 		}
-		ctrl := acpctl.New(a.cfg, tool, ctrlModel, ctrlEffort, repo, sel, a.acpPresetNames(repo), serveURLs, acpHost())
+		presets, skipped := a.acpPresetNames(repo)
+		for _, err := range skipped {
+			ui.Warn("%v — left out of the editor's preset list", err) // stderr: stdout carries ACP
+		}
+		ctrl := acpctl.New(a.cfg, tool, ctrlModel, ctrlEffort, repo, sel, presets, serveURLs, acpHost())
 		if a.acpCapture != nil {
 			ctrl.LimitNetworkTargets(scope)
 		}
@@ -715,7 +721,7 @@ func validateACPAccountBindings(cfg *config.Config, spec box.RunSpec, bindings m
 		}
 	}
 	if spec.Preset != nil {
-		for _, provider := range spec.Preset.RunnableRoleAgents(spec.Agent) {
+		for _, provider := range spec.Preset.RunnableRoleAgents() {
 			if err := add(provider); err != nil {
 				return err
 			}
@@ -783,7 +789,7 @@ func (a *app) acpFilteredSpawnScope(lead agents.Target, presetName string) ([]ag
 		return nil, nil, err
 	}
 	targets = append(targets, closure...)
-	for _, provider := range p.RunnableRoleAgents(lead.Provider) {
+	for _, provider := range p.RunnableRoleAgents() {
 		account := a.cfg.ActiveProfile(provider)
 		if provider == lead.Provider {
 			account = lead.Account()

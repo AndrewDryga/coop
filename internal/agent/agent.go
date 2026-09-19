@@ -17,6 +17,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"gopkg.in/yaml.v3"
 )
 
 // StreamFormat identifies the provider-owned NDJSON schema emitted by a headless agent.
@@ -240,6 +241,9 @@ type ACPSessionSetting struct {
 
 // NativeSubagent is the provider-neutral role material an adapter may render into its own native
 // subagent format. The adapter owns file syntax and destination; preset owns the role semantics.
+// No renderer lists or restricts tools, so a helper gets what its client grants a definition that
+// names none: the lead's full set, as Claude and Gemini document it (Codex and Grok document no
+// default, and no live run has shown theirs).
 type NativeSubagent struct {
 	Name        string
 	Description string
@@ -250,9 +254,35 @@ type NativeSubagent struct {
 
 // NativeSubagentSupport describes an adapter's complete native-role capability. A zero value
 // means unsupported. HomeDir is relative to that adapter's in-box home; Render returns one file.
+// Effort checks a role's reasoning effort against what the format carries; nil means it carries
+// none, so a role that sets one cannot keep it there.
 type NativeSubagentSupport struct {
 	HomeDir string
 	Render  func(NativeSubagent) (filename, content string)
+	Effort  func(effort string) error
+}
+
+// anyNativeEffort is the Effort check for a format that carries whatever effort the target itself
+// accepted.
+func anyNativeEffort(string) error { return nil }
+
+// nativeMarkdown renders a Markdown agent definition: YAML frontmatter from fields in order, skipping
+// empty values, then the prompt as its body. The YAML is encoded, never pasted: a strict parser
+// (Gemini's, Grok's) drops the whole agent over an unquoted `description: Use for: …`.
+func nativeMarkdown(prompt string, fields ...[2]string) string {
+	var frontmatter yaml.Node
+	frontmatter.Kind = yaml.MappingNode
+	for _, field := range fields {
+		if field[1] != "" {
+			frontmatter.Content = append(frontmatter.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Value: field[0]}, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: field[1]})
+		}
+	}
+	encoded, err := yaml.Marshal(&frontmatter)
+	if err != nil {
+		panic(err) // a mapping of plain strings always encodes
+	}
+	return "---\n" + string(encoded) + "---\n\n" + prompt + "\n"
 }
 
 // CredentialArtifact is one adapter-owned file that can be copied into an isolated credential
@@ -467,7 +497,8 @@ type Agent interface {
 	// "CLAUDE.md" — where coop writes the shared or consult-augmented instructions.
 	InstructionFile() string
 	// NativeSubagents owns this adapter's generated native-role format and in-home destination.
-	// A zero descriptor means native preset roles degrade to read-only consults.
+	// A zero descriptor means the adapter hosts no native preset roles, and a preset that needs
+	// one under this lead is refused.
 	NativeSubagents() NativeSubagentSupport
 	// AuthMarker is the credential file (under the agent's config dir) it writes on login and
 	// its canonical primary env-file key. Presence checks use CredentialEnvKeys so alternate

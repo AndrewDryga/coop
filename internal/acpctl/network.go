@@ -93,7 +93,7 @@ func (c *Control) validateNetworkPreset(name string) error {
 			if !c.networkAccountAllowed(lead.Provider, lead.Account()) {
 				return fmt.Errorf("preset %s needs %s, which is unavailable under this session's network rules", name, lead.String())
 			}
-			for _, provider := range p.RunnableRoleAgents(lead.Provider) {
+			for _, provider := range p.RunnableRoleAgents() {
 				account := c.cfg.ActiveProfile(provider)
 				if provider == lead.Provider && lead.Account() != "" {
 					account = lead.Account()

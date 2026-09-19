@@ -11,13 +11,12 @@ func SubagentName(r *Role) string {
 	return "coop-" + r.Name
 }
 
-// GeneratedNativeRoles returns native roles the effective lead can host and Coop must generate.
-// A role targeting another provider degrades to consult; a role with `subagent:` is an existing
-// native reference, so neither belongs in the generated mount.
-func (p *Preset) GeneratedNativeRoles(lead string) []Role {
+// GeneratedNativeRoles returns the native roles Coop generates for the lead: every native role but
+// one that references an existing subagent (`subagent:`), which the lead's client already has.
+func (p *Preset) GeneratedNativeRoles() []Role {
 	var out []Role
 	for _, r := range p.Roles {
-		if nativeRoleUsable(&r, lead) && r.Subagent == "" {
+		if r.Mode == ModeNative && r.Subagent == "" {
 			out = append(out, r)
 		}
 	}
@@ -25,8 +24,6 @@ func (p *Preset) GeneratedNativeRoles(lead string) []Role {
 }
 
 // NativeBody is a native role's system prompt: its own prompt text, or a sensible default.
-// Shared by the generated subagent (its body) and the degraded consult (its persona) so the
-// two deliveries of the same role read identically.
 func NativeBody(r *Role) string {
 	if b := strings.TrimSpace(r.PromptText); b != "" {
 		return b
@@ -50,13 +47,8 @@ func NativeDescription(r *Role) string {
 	return "The " + r.Name + " subagent the lead delegates to."
 }
 
-// ConsultBody is the persona mounted for a consult-wired role — what the peer reads ahead of
-// the lead's question. An explicit consult role's persona is its own prompt (none → empty: no
-// persona file, the peer answers as itself); a degraded native always has one (NativeBody), so
-// the role reads the same whether it runs as a subagent or as a consult.
+// ConsultBody is the persona mounted for a consult role — what the peer reads ahead of the lead's
+// question: its own prompt (none → empty: no persona file, the peer answers as itself).
 func ConsultBody(r *Role) string {
-	if r.Mode == ModeNative {
-		return NativeBody(r)
-	}
 	return strings.TrimSpace(r.PromptText)
 }

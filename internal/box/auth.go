@@ -49,7 +49,7 @@ func nestedAgentCommand(spec RunSpec, name string) bool {
 			}
 		}
 	}
-	return spec.Preset != nil && slices.Contains(spec.Preset.RunnableRoleAgents(runPrimary(spec)), name)
+	return spec.Preset != nil && slices.Contains(spec.Preset.RunnableRoleAgents(), name)
 }
 
 // credentialScope is the set of agents whose credential home (~/.<name>) and env-file API key a
@@ -81,10 +81,10 @@ func credentialScope(cfg *config.Config, spec RunSpec) []string {
 		add(p.Provider, true)
 	}
 	// A preset's consult/delegate roles run their own agent CLIs from inside the lead's box, so
-	// their (authed) agents join the scope. A native role under a capable lead runs in-session and
-	// adds nothing; under any other lead it degrades to a consult whose agent needs mounting.
+	// their (authed) agents join the scope. A native role runs in the lead's own session and adds
+	// nothing: a lead that could not host it was refused before this box.
 	if spec.Preset != nil {
-		for _, agent := range spec.Preset.RunnableRoleAgents(primary) {
+		for _, agent := range spec.Preset.RunnableRoleAgents() {
 			add(agent, ProfileAuthed(cfg, agent, cfg.ActiveProfile(agent)))
 		}
 	}

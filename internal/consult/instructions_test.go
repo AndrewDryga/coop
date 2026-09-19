@@ -537,9 +537,8 @@ func TestLeadInstructions(t *testing.T) {
 	}
 }
 
-// coop-consult also resolves a preset ROLE (a consult role, or a native role degraded under
-// a non-Claude lead): COOP_CONSULT_<KEY>_{TARGETS,CONTRACT}, with the role's persona
-// (contract) prepended so it answers AS that role.
+// coop-consult also resolves a preset consult ROLE: COOP_CONSULT_<KEY>_{TARGETS,CONTRACT}, with the
+// role's persona (contract) prepended so it answers AS that role.
 func TestConsultWrapperResolvesRoles(t *testing.T) {
 	for _, want := range []string{
 		"COOP_CONSULT_${key}_TARGETS",

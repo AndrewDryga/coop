@@ -445,7 +445,9 @@ HOW TO DEFINE A PRESET
     prompt:  adds custom instructions to Coop’s generated instructions for the
              lead or role
 
-    If the lead does not support native roles, they run as consult roles.
+    A native role runs in the lead's own session, so every lead in the preset
+    must use that role's provider. Otherwise Coop stops before it starts and
+    names the role to change.
 
   Where presets live:
     Project  .agent/presets/<name>/preset.yaml

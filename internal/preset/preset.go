@@ -317,7 +317,39 @@ func loadPreset(name, dir string, data []byte, readFile func(string) ([]byte, er
 		}
 		p.Roles = append(p.Roles, r)
 	}
+	leads := make([]string, 0, len(p.LeadTargets))
+	for _, target := range p.LeadTargets {
+		leads = append(leads, target.Provider)
+	}
+	if err := p.CheckLeads(leads...); err != nil {
+		return nil, err
+	}
 	return p, nil
+}
+
+// CheckLeads refuses a preset that a lead in leads could not run as written. A native role runs
+// inside the lead's own session, so only a lead of that role's provider can host it; under any
+// other lead the role would have to become something else, and a role's mode and write authority
+// never change behind its preset's back. The error names the role, the lead and the way out.
+func (p *Preset) CheckLeads(leads ...string) error {
+	for _, r := range p.Roles {
+		for _, lead := range leads {
+			if r.Mode != ModeNative || nativeRoleUsable(&r, lead) {
+				continue
+			}
+			provider := r.Primary().Provider
+			problem := fmt.Sprintf("%s is a native %s subagent, but %s can lead this preset too, and a %s session cannot run a %s subagent.",
+				r.Name, provider, lead, lead, provider)
+			if lead == "" {
+				problem = fmt.Sprintf("%s is a native %s subagent, but nothing leads this box to run it in.", r.Name, provider)
+			}
+			return &LoadError{Name: p.Name, Path: filepath.Join(p.Dir, "preset.yaml"), Detail: []string{
+				problem,
+				fmt.Sprintf("Make %s mode: consult (it advises) or delegate (it edits files), or lead only with %s.", r.Name, provider),
+			}}
+		}
+	}
+	return nil
 }
 
 // roleOrder lists a preset's roles in the order its preset.yaml declares them. A person reads back
@@ -418,6 +450,15 @@ func loadRole(name string, y yamlRole, readFile func(string) ([]byte, error)) (R
 			return bad(fmt.Sprintf("%s is native, but %s has no in-session subagents.", role, r.Primary().Provider),
 				"Use mode: consult or delegate.")
 		}
+		if effort := r.Primary().Effort; effort != "" {
+			if support.Effort == nil {
+				return bad(fmt.Sprintf("%s is native with effort %s, but a %s subagent cannot set its own effort.", role, effort, r.Primary().Provider),
+					"Drop /"+effort+" from its agent, or use mode: consult or delegate.")
+			}
+			if err := support.Effort(effort); err != nil {
+				return bad(fmt.Sprintf("%s is native, but %s.", role, err.Error()), "Change the effort, or use mode: consult or delegate.")
+			}
+		}
 		// subagent is OPTIONAL: set = reference an adapter-native subagent; empty = coop
 		// generates coop-<role> in the box from this role (model/when/prompt).
 		r.Subagent = y.Subagent
@@ -479,26 +520,26 @@ func (p *Preset) Delegates() []Role {
 	return out
 }
 
-// ConsultRoles returns every role that the effective lead invokes through coop-consult, in
-// preset order: explicit consult roles under every lead, plus native roles degraded when the
-// effective lead cannot host generated subagents. This is the canonical wrapper/instruction view.
-func (p *Preset) ConsultRoles(lead string) []Role {
+// ConsultRoles returns the roles the lead invokes through coop-consult, in preset order: the
+// consult roles. A native role runs in the lead's session under every lead that may run the preset
+// (CheckLeads), so it is never one of them.
+func (p *Preset) ConsultRoles() []Role {
 	var out []Role
 	for _, r := range p.Roles {
-		if r.Mode == ModeConsult || (r.Mode == ModeNative && !nativeRoleUsable(&r, lead)) {
+		if r.Mode == ModeConsult {
 			out = append(out, r)
 		}
 	}
 	return out
 }
 
-// RunnableRoleAgents returns the distinct providers whose credentials the effective lead needs
-// for consult and delegate roles. A native role contributes only when it degrades to a consult.
-func (p *Preset) RunnableRoleAgents(lead string) []string {
+// RunnableRoleAgents returns the distinct providers whose credentials the lead needs for consult
+// and delegate roles. A native role runs on the lead's own login.
+func (p *Preset) RunnableRoleAgents() []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, r := range p.Roles {
-		if r.Mode != ModeConsult && r.Mode != ModeDelegate && !(r.Mode == ModeNative && !nativeRoleUsable(&r, lead)) {
+		if r.Mode != ModeConsult && r.Mode != ModeDelegate {
 			continue
 		}
 		for _, target := range r.Targets {
@@ -510,27 +551,6 @@ func (p *Preset) RunnableRoleAgents(lead string) []string {
 		}
 	}
 	return out
-}
-
-// RunnableProviders is the complete provider scope across every lead rung. A native
-// role may become a separate consult when a different provider takes over the lead.
-func (p *Preset) RunnableProviders() []string {
-	if p == nil {
-		return nil
-	}
-	seen := map[string]bool{}
-	for _, target := range p.LeadTargets {
-		seen[target.Provider] = true
-		for _, provider := range p.RunnableRoleAgents(target.Provider) {
-			seen[provider] = true
-		}
-	}
-	providers := make([]string, 0, len(seen))
-	for provider := range seen {
-		providers = append(providers, provider)
-	}
-	sort.Strings(providers)
-	return providers
 }
 
 // Primary returns the role's first target. Loaded roles always have one; the zero value keeps

@@ -146,54 +146,66 @@ func TestProviderScriptedPresetExplicitPeerAndRoleIdentities(t *testing.T) {
 	assertPresetMixedRoleWiring(t, suite, run, leadTarget, peer, peerTarget, roleTargets)
 }
 
-func TestProviderScriptedNativeRoleDegradesUnderIncapableLead(t *testing.T) {
+// A native role runs inside the lead's own session under every pinned provider: the launch renders
+// it in that client's format and mounts it where that client loads agents from — never as a consult.
+func TestProviderScriptedNativeRoleRunsInEveryProvidersSession(t *testing.T) {
 	suite := newDirectProcessSuite(t)
-	var lead, nativeProvider string
 	for _, provider := range suite.providers {
-		ag, _ := agents.Get(provider)
-		support := ag.NativeSubagents()
-		if support.HomeDir != "" && support.Render != nil {
-			nativeProvider = provider
-		} else if lead == "" {
-			lead = provider
-		}
+		t.Run(provider, func(t *testing.T) {
+			ag, _ := agents.Get(provider)
+			support := ag.NativeSubagents()
+			if support.Render == nil {
+				t.Fatalf("%s hosts no native roles", provider)
+			}
+			name := "native-" + provider
+			writePresetRolePreset(t, suite.layout.Repo, name, compositionTarget(provider, "native-lead"), []preset.Role{{
+				Name: "thinker", Mode: preset.ModeNative, Targets: []agents.Target{{Provider: provider, Model: "composition-native-" + provider}},
+				PromptText: "Deterministic native persona.",
+			}})
+			result, trace := suite.run(t, []string{name}, processScenario(provider, nil, 0, ""))
+			if result.Err != nil || result.ExitCode != 0 {
+				t.Fatalf("native %s role = exit %d err %v\nstdout:\n%s\nstderr:\n%s", provider, result.ExitCode, result.Err, result.Stdout, result.Stderr)
+			}
+			run := oneProcessEvent(t, trace, "runtime", "run")
+			agentsDir := "<container>/home/node/" + support.HomeDir
+			native := 0
+			for _, mount := range run.Run.Mounts {
+				if mount.Target == agentsDir {
+					native++
+				}
+				if strings.Contains(mount.Target, "/.coop/consult/") {
+					t.Fatalf("a native %s role was wired as a consult: %#v", provider, mount)
+				}
+			}
+			if native != 1 {
+				t.Fatalf("native %s agents dir %s mounted %d times: %#v", provider, agentsDir, native, run.Run.Mounts)
+			}
+		})
 	}
-	if lead == "" || nativeProvider == "" || lead == nativeProvider {
-		t.Fatalf("fixture needs distinct capable/incapable native providers, got lead=%q native=%q", lead, nativeProvider)
+}
+
+// A lead of another provider cannot host a native role, so the launch refuses by name before the
+// runtime starts anything — where it once ran the role as a read-only consult nobody declared.
+func TestProviderScriptedNativeRoleRefusesALeadThatCannotHostIt(t *testing.T) {
+	suite := newDirectProcessSuite(t)
+	lead, nativeProvider := suite.providers[0], suite.providers[1]
+	name := "native-elsewhere"
+	dir := filepath.Join(suite.layout.Repo, ".agent", "presets", name)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
 	}
-	name := "native-degradation"
-	leadTarget := compositionTarget(lead, "degraded-lead")
-	roleTarget := compositionTarget(nativeProvider, "native-role")
-	personas := writePresetRolePreset(t, suite.layout.Repo, name, leadTarget, []preset.Role{{
-		Name: "thinker", Mode: preset.ModeNative, Targets: []agents.Target{roleTarget}, PromptText: "Deterministic degraded native persona.",
-	}})
-	question := "degraded native question"
-	step := consultPairStep(roleTarget, "fresh", "usable", consultPersonaPrompt(personas["thinker"], question), "degraded native reply")
-	result, trace := suite.run(t, []string{name}, consultProcessScenario(lead, suite.providers,
-		[]consultCallSpec{{Target: "thinker", Mode: "fresh", Prompt: question, ExitCode: 0}}, []consultStepSpec{step}))
-	if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stdout, step.Reply) {
-		t.Fatalf("native degradation = exit %d err %v\nstdout:\n%s\nstderr:\n%s\ntrace:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr, readProcessFile(t, suite.layout.Trace))
+	body := fmt.Sprintf("lead: {agent: %s}\nroles:\n  thinker:\n    mode: native\n    agent: %s:composition-native-%s\n",
+		compositionTarget(lead, "refused-lead").String(), nativeProvider, nativeProvider)
+	if err := os.WriteFile(filepath.Join(dir, "preset.yaml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	start := oneProcessEvent(t, trace, "peer", "start")
-	if start.Consult == nil || start.Consult.Provider != nativeProvider || start.Consult.Model != roleTarget.Model || start.Consult.Effort != roleTarget.Effort {
-		t.Fatalf("degraded native start = %#v, want %s", start.Consult, roleTarget.String())
+	result, trace := suite.run(t, []string{name}, processScenario(lead, nil, 0, ""))
+	want := fmt.Sprintf("thinker is a native %s subagent, but %s can lead this preset too", nativeProvider, lead)
+	if result.ExitCode == 0 || !strings.Contains(result.Stderr, want) {
+		t.Fatalf("a lead that cannot host the native role = exit %d\nstderr:\n%s", result.ExitCode, result.Stderr)
 	}
-	run := oneProcessEvent(t, trace, "runtime", "run")
-	values := processEnvironment(run.Run.Environment)
-	if values["COOP_CONSULT_THINKER_TARGETS"].Value != roleTarget.String() {
-		t.Errorf("degraded native target env = %#v, want %s", values["COOP_CONSULT_THINKER_TARGETS"], roleTarget.String())
-	}
-	persona, nativeMount := 0, 0
-	for _, mount := range run.Run.Mounts {
-		if mount.Target == "<container>/home/node/.coop/consult/thinker.md" {
-			persona++
-		}
-		if strings.HasSuffix(mount.Target, "/agents") {
-			nativeMount++
-		}
-	}
-	if persona != 1 || nativeMount != 0 {
-		t.Fatalf("degraded native mounts = persona %d native-dir %d", persona, nativeMount)
+	if runs := processEvents(trace, "runtime", "run"); len(runs) != 0 {
+		t.Fatalf("the refused preset reached the runtime: %#v", runs)
 	}
 }
 

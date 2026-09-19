@@ -358,6 +358,31 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		}
 	}
 	currentVerifyEnabled := len(currentCustom) == 0 && currentVerify.Enabled
+	// A preset's roles ride every box this run starts, work and review alike, so every lead those
+	// boxes may run under must host its native roles as written — refused now, not demoted later. A
+	// stage that cannot start a box (verify switched off; no review under a custom work.command)
+	// is not asked; box.Run still refuses any box that slips past.
+	if c.preset != nil {
+		for _, stage := range []struct {
+			name string
+			rot  *ladder.Rotation
+			runs bool
+		}{{"work", rot, true},
+			{"signoff", signoffRot, len(custom) == 0 || spec.CandidateReview != nil}, {"between", betweenRot, len(custom) == 0},
+			{"verify", verifyRot, verifyEnabled}, {"current signoff", currentSignoffRot, len(currentCustom) == 0},
+			{"current between", currentBetweenRot, len(currentCustom) == 0}, {"current verify", currentVerifyRot, currentVerifyEnabled}} {
+			if stage.rot == nil || !stage.runs {
+				continue
+			}
+			var leads []string
+			for _, target := range stage.rot.Targets() {
+				leads = append(leads, target.Provider)
+			}
+			if err := c.preset.CheckLeads(leads...); err != nil {
+				return 2, fmt.Errorf("%s agent: %w", stage.name, err)
+			}
+		}
+	}
 	// Restricted networking is admitted ONCE, here, for the whole run: the
 	// operator's --egress choice, the project's approved requests, and the core
 	// endpoints of every rung this run may rotate onto are frozen into one policy,

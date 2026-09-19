@@ -771,7 +771,7 @@ scoping is already handled.
 The orchestrator pattern above is assembled by hand — a `:model` here, a `--peer <target>`
 there. A preset declares the whole arrangement once, as a runtime recipe under
 `.agent/presets/<name>/`: who leads, and which roles it routes work to. Three role
-modes cover the spectrum: `native` (a Claude subagent inside the lead's session),
+modes cover the spectrum: `native` (a subagent inside the lead's own session),
 `consult` (a read-only peer via `coop-consult`), and `delegate` (a write-capable
 delegate via `coop-delegate`). `.agent/presets/frontier/preset.yaml`:
 
@@ -785,11 +785,11 @@ lead:
   prompt: roles/lead.md           # optional Markdown, appended to the generated contract
 
 roles:
-  thinker:                              # deep thinking + review, in the lead's own session
-    mode: native
-    agent: claude:claude-opus-4-8/xhigh # model + effort ride agent: (generates coop-thinker)
+  thinker:                              # deep thinking + review, read-only
+    mode: consult                       # native would run it in the lead's session: every lead must be claude
+    agent: claude:claude-opus-4-8/xhigh # model + effort ride agent:
     when: [architecture, debugging, code-review, before-commit]
-    prompt: roles/thinker.md            # its system prompt (or set subagent: <name> to reuse one)
+    prompt: roles/thinker.md            # the persona it answers as
 
   critic:                          # independent critique from another vendor, read-only
     mode: consult
@@ -824,13 +824,13 @@ preset shadows a same-named global one (no merging); `coop presets` tags a globa
 one `(global)`. `coop presets init` scaffolds into the repo; author a global preset by hand.
 
 coop generates the lead's routing contract from the YAML — each role, when to use it,
-and its role-addressed invocation (`@coop-thinker`, `coop-consult critic --fresh "…"`, or a
+and its role-addressed invocation (the `coop-thinker` subagent, `coop-consult critic --fresh "…"`, or a
 `coop-delegate fast <<'EOF' … EOF` heredoc) — and mounts the wrappers. Required routing files,
 wrappers, and role prompts are assembled as one contract: if any cannot be created, coop exits
 before starting the provider instead of silently dropping a role. A native role
-generates its Claude subagent in the box — `coop-<role>`, from the role's model + `when` +
-prompt, never written to your repo (`.gitignore` keeps the overlay out of commits); set
-`subagent: <name>` to reference an existing `.claude/agents/` subagent instead. A consult
+generates its subagent in the box, in the lead client's own format — `coop-<role>`, from the
+role's model + `when` + prompt, never written to your repo (`.gitignore` keeps the overlay out of
+commits); set `subagent: <name>` to reference one the lead's client already has instead. A consult
 role accepts one target or a fallback list. Its wrapper advances to the next rung when a failed
 command proves a rate limit, when the target fails permanently — it cannot start, is misconfigured,
 or its login is refused, and is then skipped for the rest of the run — or when an ordinary failure
@@ -842,10 +842,10 @@ silently double-billing the failed call. A delegate advances
 only from a clean worktree when the failed rung changed neither files (ignored ones included)
 nor Git history. Providers without mounted credentials are skipped. Every available rung's
 credential home is mounted for the lead box. The role's prompt (if any) is the persona the peer adopts — so
-two consult roles on one agent stay distinct. Native roles run inside the
-lead's session, so under a `codex`/`gemini`/`grok` lead they **degrade to exactly such a consult** —
-same model and persona, `coop-consult <role>` instead of in-session — so a non-Claude lead
-still gets Claude's deep reasoning.
+two consult roles on one agent stay distinct. A native role runs inside the lead's own session —
+Coop generates it in that client's subagent format, for Claude, Codex, Gemini and Grok alike — so
+every lead a preset lists must use the role's provider. Otherwise Coop stops before it starts and
+names the role to change, rather than quietly running it as something else.
 `coop presets init` scaffolds starter `roles/lead.md`, `roles/thinker.md`, and `roles/fast.md` (usable
 defaults, not placeholders); their Markdown feeds the generated text — never replacing the
 safety/routing rules — and you edit or delete them freely.

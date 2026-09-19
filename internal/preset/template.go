@@ -1,8 +1,8 @@
 package preset
 
 // Template is the scaffolded preset — the documented frontier recipe, ready to edit:
-// a big-model lead, a native deep-thinking subagent, a read-only cross-vendor critic,
-// and a cheap write-capable delegate. Its comments say what a person has to decide,
+// a big-model lead with a cross-provider fallback, a read-only deep-thinking consult, a
+// read-only cross-vendor critic, and a cheap write-capable delegate. Its comments say what a person has to decide,
 // not everything the loader accepts — `coop help presets` is the reference. The
 // prompt: lines are active because Scaffold also writes the files they reference
 // (templateFiles); the result must load cleanly (TestScaffold loads it), so any
@@ -23,14 +23,13 @@ lead:
 
 roles:
   thinker:
-    # Native roles run inside a compatible lead session.
-    # With another provider leading, this becomes read-only advice.
-    mode: native
+    # Consult roles give read-only advice.
+    # mode: native would run this role inside the lead's own session instead,
+    # which needs every lead above to be the role's provider.
+    mode: consult
     agent: claude:claude-opus-4-8/xhigh
     when: [architecture, debugging, code-review, before-commit]
     prompt: roles/thinker.md
-    # To use an existing Claude subagent instead:
-    # subagent: <name>
 
   critic:
     # Consult roles give read-only advice.
@@ -110,9 +109,8 @@ You are the second opinion, asked precisely because you did not write the plan.
 - You read; you never edit. Answer in a few dense sentences, no preamble and no praise.
 `
 
-// thinkerPrompt is the generated coop-thinker subagent's system prompt (the native "thinker" role
-// has no subagent:, so coop generates one from this). It IS the subagent's instructions rather than
-// an addition to a contract, so it reads as one.
+// thinkerPrompt is the persona the "thinker" consult adopts. It reads as instructions to the role
+// itself, so it serves unchanged if the role is made native (a generated subagent's system prompt).
 const thinkerPrompt = `<!-- Extra instructions for this agent. Remove the prompt setting to omit this file. -->
 
 You are the deep-reasoning specialist the lead delegates hard thinking to.

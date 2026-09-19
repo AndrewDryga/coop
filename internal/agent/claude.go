@@ -301,23 +301,12 @@ func (claudeAgent) EffortEnv() string { return "CLAUDE_CODE_EFFORT_LEVEL" }
 func (claudeAgent) InstructionFile() string { return "CLAUDE.md" }
 
 func (claudeAgent) NativeSubagents() NativeSubagentSupport {
-	return NativeSubagentSupport{HomeDir: ".claude/agents", Render: renderClaudeSubagent}
+	return NativeSubagentSupport{HomeDir: ".claude/agents", Render: renderClaudeSubagent, Effort: anyNativeEffort}
 }
 
 func renderClaudeSubagent(role NativeSubagent) (filename, content string) {
-	var b strings.Builder
-	b.WriteString("---\n")
-	b.WriteString("name: " + role.Name + "\n")
-	b.WriteString("description: " + role.Description + "\n")
-	if role.Model != "" {
-		b.WriteString("model: " + role.Model + "\n")
-	}
-	if role.Effort != "" {
-		b.WriteString("effort: " + role.Effort + "\n")
-	}
-	b.WriteString("---\n\n")
-	b.WriteString(role.Prompt + "\n")
-	return role.Name + ".md", b.String()
+	return role.Name + ".md", nativeMarkdown(role.Prompt, [2]string{"name", role.Name},
+		[2]string{"description", role.Description}, [2]string{"model", role.Model}, [2]string{"effort", role.Effort})
 }
 
 func (claudeAgent) AuthMarker() (file, envKey string) {

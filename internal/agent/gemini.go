@@ -285,7 +285,16 @@ func (geminiAgent) EffortEnv() string { return "" }
 
 func (geminiAgent) InstructionFile() string { return "GEMINI.md" }
 
-func (geminiAgent) NativeSubagents() NativeSubagentSupport { return NativeSubagentSupport{} }
+// NativeSubagents: Gemini CLI 0.59 loads local subagents from ~/.gemini/agents/*.md. The format has no
+// reasoning effort, so a native Gemini role cannot set one.
+func (geminiAgent) NativeSubagents() NativeSubagentSupport {
+	return NativeSubagentSupport{HomeDir: ".gemini/agents", Render: renderGeminiSubagent}
+}
+
+func renderGeminiSubagent(role NativeSubagent) (filename, content string) {
+	return role.Name + ".md", nativeMarkdown(role.Prompt, [2]string{"name", role.Name},
+		[2]string{"description", role.Description}, [2]string{"kind", "local"}, [2]string{"model", role.Model})
+}
 
 func (geminiAgent) AuthMarker() (file, envKey string) {
 	return "gemini-credentials.json", "GEMINI_API_KEY"

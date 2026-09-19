@@ -190,6 +190,9 @@ review-writes-e2e: ## Review mount-isolation e2e (needs Docker; pulls a small te
 	@docker image inspect alpine:3.21 >/dev/null 2>&1 || docker pull alpine:3.21
 	@go test -tags reviewwritee2e -run '^TestReviewWritesDockerRuntime$$' -count=1 -v ./internal/box/
 
+native-roles-e2e: ## Each pinned client loads the native roles coop renders (needs the locked client image: coop net setup)
+	@go test -tags boxruntimee2e -run '^TestRuntimeNativeRolesAreDiscoveredByEveryPinnedClient$$' -count=1 -v ./internal/box/
+
 box-runtime-e2e: ## Init/reaping, signal, and entrypoint descendant-supervision contracts (set COOP_RUNTIME=docker)
 	@test -n "$$COOP_RUNTIME" || { echo 'COOP_RUNTIME is required (for example: COOP_RUNTIME=docker make box-runtime-e2e)'; exit 2; }
 	@go test -tags boxruntimee2e -run '^TestRuntime(Init|Entrypoint|Compose)' -count=1 -v ./internal/box/

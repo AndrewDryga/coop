@@ -353,6 +353,13 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	} else if mode.Restricted() {
 		return runRestricted(cfg, rt, spec, artifacts, mode)
 	}
+	// Every launcher checks its leads before it starts; a box whose lead cannot host a native role
+	// still refuses rather than run that role as something else.
+	if spec.Preset != nil {
+		if err := spec.Preset.CheckLeads(spec.ConsultLead); err != nil {
+			return -1, err
+		}
+	}
 	if !spec.Homes {
 		if spec.Preset != nil {
 			return -1, fmt.Errorf("preset %q requires agent homes so its instructions, wrappers, and roles can mount", spec.Preset.Name)
@@ -1637,9 +1644,8 @@ func projectPolicyRepo(spec RunSpec) string {
 // presetRoleMounts wires a preset's roles into the box and returns the mounts to add, the -e args
 // to append to spec.ExtraArgs, and the temp files/dirs to clean up: the coop-delegate wrapper plus
 // each delegate role's contract and COOP_DELEGATE_<ROLE>_* env; generated coop-<role> native
-// subagents under a capable lead (mounted at the adapter-owned user-level destination); and each
-// consult-wired role's persona + COOP_CONSULT_<ROLE>_* env (explicit consult roles plus natives
-// degraded under an incapable lead). A run with no preset (or homes off) returns all-nil.
+// subagents (mounted at the lead adapter's own user-level destination); and each consult role's
+// persona + COOP_CONSULT_<ROLE>_* env. A run with no preset (or homes off) returns all-nil.
 func presetRoleMounts(cfg *config.Config, spec RunSpec, artifacts compositionArtifactOps) (mounts []extraMount, extraArgs, tmpFiles, tmpDirs []string, err error) {
 	defer func() {
 		if err == nil {
@@ -1694,15 +1700,15 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, artifacts compositionArt
 		}
 	}
 
-	// Native roles under a capable lead run in-session as generated coop-<role> subagents.
-	// Explicit consult roles and natives degraded under another lead are wired role-addressed so
-	// `coop-consult <role>` runs the role's agent on its model, with its persona if any.
+	// Native roles run in the lead's session as generated coop-<role> subagents (Run refused a lead
+	// that cannot host them). Consult roles are wired role-addressed so `coop-consult <role>` runs
+	// the role's agent on its model, with its persona if any.
 	lead := spec.ConsultLead
 	if ag, ok := agents.Get(lead); ok {
 		support := ag.NativeSubagents()
 		// The adapter renders its native-role files and owns their in-home destination. They mount
 		// from a disposable read-only directory, separate from the repo's own live artifacts.
-		if gen := generatedSubagentFiles(spec.Preset, lead, support); len(gen) > 0 {
+		if gen := generatedSubagentFiles(spec.Preset, support); len(gen) > 0 {
 			dir, assembleErr := artifacts.assembleAgentsDir(artifacts.parent, gen)
 			if assembleErr != nil {
 				err = fmt.Errorf("assemble native roles for %s: %w", lead, assembleErr)
@@ -1717,7 +1723,7 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, artifacts compositionArt
 	// env the wrapper resolves agent/model/persona from. coop-consult itself is mounted by Run
 	// (a preset with consult-wired roles is consult-wired — leadInstructionMount); the roles'
 	// agents join the credential scope (credentialScope).
-	for _, role := range spec.Preset.ConsultRoles(lead) {
+	for _, role := range spec.Preset.ConsultRoles() {
 		key := preset.EnvKey(role.Name)
 		if body := preset.ConsultBody(&role); body != "" {
 			dst := cfg.HomeInBox + "/.coop/consult/" + role.Name + ".md"
@@ -2094,12 +2100,12 @@ type genFile struct{ name, content string }
 
 // generatedSubagentFiles asks the active lead adapter to render each generated native role.
 // Empty means no preset, no native roles, or no adapter capability.
-func generatedSubagentFiles(p *preset.Preset, lead string, support agents.NativeSubagentSupport) []genFile {
+func generatedSubagentFiles(p *preset.Preset, support agents.NativeSubagentSupport) []genFile {
 	if p == nil || support.Render == nil {
 		return nil
 	}
 	var out []genFile
-	for _, role := range p.GeneratedNativeRoles(lead) {
+	for _, role := range p.GeneratedNativeRoles() {
 		primary := role.Primary()
 		fname, content := support.Render(agents.NativeSubagent{
 			Name: preset.SubagentName(&role), Description: preset.NativeDescription(&role),
@@ -2158,7 +2164,7 @@ func leadInstructionMount(cfg *config.Config, lead string, p *preset.Preset, pee
 		if tail := consult.LeadInstructions(base, peers); tail != "" {
 			content += "\n" + tail + "\n"
 		}
-		return content, file, len(p.ConsultRoles(lead)) > 0 || len(peers) > 0, true, nil
+		return content, file, len(p.ConsultRoles()) > 0 || len(peers) > 0, true, nil
 	}
 	return consult.LeadInstructions(base, peers), file, len(peers) > 0, true, nil
 }
@@ -2353,7 +2359,7 @@ func appendROMounts(args []string, ms []extraMount) []string {
 // runs); the primary agent's command already carries --model, which beats its env var.
 func modelEnvArgs(cfg *config.Config, spec RunSpec, scope []string) []string {
 	consults := spec.ConsultLead != "" ||
-		(spec.Preset != nil && len(spec.Preset.ConsultRoles(runPrimary(spec))) > 0)
+		(spec.Preset != nil && len(spec.Preset.ConsultRoles()) > 0)
 	var args []string
 	for _, agent := range scope {
 		ag, ok := agents.Get(agent)

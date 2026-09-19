@@ -86,10 +86,10 @@ func TestLoadFrontier(t *testing.T) {
 	if len(p.Roles) != 3 || p.Roles[0].Name != "thinker" || p.Roles[1].Name != "critic" || p.Roles[2].Name != "fast" {
 		t.Fatalf("roles = %+v", p.Roles)
 	}
-	if len(p.ConsultRoles("claude")) == 0 || len(p.Delegates()) == 0 {
+	if len(p.ConsultRoles()) == 0 || len(p.Delegates()) == 0 {
 		t.Error("frontier has a consult and a delegate role")
 	}
-	if got := p.RunnableRoleAgents("claude"); len(got) != 2 || got[0] != "codex" || got[1] != "gemini" {
+	if got := p.RunnableRoleAgents(); len(got) != 2 || got[0] != "codex" || got[1] != "gemini" {
 		t.Errorf("RunnableRoleAgents = %v (native thinker must not add claude)", got)
 	}
 	th := p.Roles[0]
@@ -131,7 +131,14 @@ func TestLoadValidation(t *testing.T) {
 		{"role agent map rejected", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: {p: codex}}}", nil, "not a map"},
 		{"role account rejected", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex@work}}", nil, "default account"},
 		{"role credentials unknown", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, credentials: [work]}}", nil, "could not read this file as YAML"},
-		{"native needs a capable agent", "lead: {agent: claude}\nroles: {r: {mode: native, agent: codex}}", nil, "has no in-session subagents"},
+		{"native under another provider's lead", "lead: {agent: claude}\nroles: {r: {mode: native, agent: codex}}", nil,
+			"r is a native codex subagent, but claude can lead this preset too, and a claude session cannot run a codex subagent. Make r mode: consult (it advises) or delegate (it edits files), or lead only with codex."},
+		{"native under a fallback lead of another provider", "lead: {agent: [claude, codex]}\nroles: {r: {mode: native, agent: claude}}", nil,
+			"r is a native claude subagent, but codex can lead this preset too"},
+		{"native effort the format cannot carry", "lead: {agent: gemini}\nroles: {r: {mode: native, agent: gemini:gemini-3.5-flash/high}}", nil,
+			"cannot set its own effort. Drop /high from its agent"},
+		{"native effort the client would drop", "lead: {agent: grok}\nroles: {r: {mode: native, agent: grok:grok-4.5/minimal}}", nil,
+			`a Grok subagent's effort is low, medium, high, xhigh or max, not "minimal"`},
 		{"subagent on consult", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, subagent: x}}", nil, "only applies to mode: native"},
 		{"commit allow rejected", "lead: {agent: claude}\nroles: {r: {mode: delegate, agent: gemini, commit: allow}}", nil, `Only "never" is supported`},
 		{"concurrent group rejected", "lead: {agent: claude}\nroles: {r: {mode: delegate, agent: gemini, concurrent: \"group:a\"}}", nil, `Only "never" is supported`},
@@ -183,7 +190,7 @@ roles:
 	if primary := r.Primary(); primary.Provider != "codex" || primary.Model != "gpt-5.6-sol" || primary.Effort != "xhigh" {
 		t.Errorf("primary target = %s, want first target", primary.String())
 	}
-	if got := p.RunnableRoleAgents("claude"); !slices.Equal(got, []string{"codex", "grok", "gemini"}) {
+	if got := p.RunnableRoleAgents(); !slices.Equal(got, []string{"codex", "grok", "gemini"}) {
 		t.Errorf("RunnableRoleAgents = %v, want every fallback provider", got)
 	}
 }
@@ -247,11 +254,11 @@ func TestLeadContract(t *testing.T) {
 	c := LeadContract(p, "claude")
 	for _, want := range []string{
 		`preset "frontier" — you are the lead (claude)`,
-		"@deep-reasoner",              // native invocation
-		"coop-consult critic --fresh", // consult invocation — role-addressed, like every role
-		"coop-delegate fast <<'EOF'",  // delegate invocation
-		"NEVER commit",                // delegate safety text
-		"review its `git diff`",       // lead owns review
+		"the deep-reasoner subagent in your own session", // native invocation
+		"coop-consult critic --fresh",                    // consult invocation — role-addressed, like every role
+		"coop-delegate fast <<'EOF'",                     // delegate invocation
+		"NEVER commit",                                   // delegate safety text
+		"review its `git diff`",                          // lead owns review
 		"Use for: architecture, debugging",
 		"one-line status is not the reply",
 		"poll that same session to terminal exit",
@@ -268,29 +275,8 @@ func TestLeadContract(t *testing.T) {
 	if strings.Contains(c, "coop-consult codex") {
 		t.Errorf("consult roles are role-addressed, not agent-addressed:\n%s", c)
 	}
-	// A non-Claude lead can't host native subagents in-session, so the thinker DEGRADES to a
-	// role-addressed read-only consult (coop-consult thinker) instead of @-delegation; the
-	// consult/delegate roles stay as they are.
-	cx := LeadContract(p, "codex")
-	if strings.Contains(cx, "@deep-reasoner") {
-		t.Errorf("native role must not @-delegate under a codex lead:\n%s", cx)
-	}
-	if !strings.Contains(cx, "coop-consult thinker --fresh") {
-		t.Errorf("native thinker should degrade to `coop-consult thinker` under a codex lead:\n%s", cx)
-	}
-	if n := strings.Count(cx, "poll that same session to terminal exit"); n < 2 {
-		t.Errorf("consult and degraded-native roles both need yielded-session guidance, got %d:\n%s", n, cx)
-	}
-	if !strings.Contains(cx, "coop-consult critic") || !strings.Contains(cx, "coop-delegate fast") {
-		t.Errorf("consult/delegate roles should survive a codex lead:\n%s", cx)
-	}
-	// A degraded native's prompt becomes the consult persona (ConsultBody), so it must not
-	// also dump into the lead contract.
-	if strings.Contains(cx, "THINKER EXTRA") {
-		t.Errorf("a degraded native's prompt belongs in its persona, not the lead contract:\n%s", cx)
-	}
 	// Markdown appends AFTER the generated role text, never replaces it.
-	if strings.Index(c, "@deep-reasoner") > strings.Index(c, "THINKER EXTRA") {
+	if strings.Index(c, "the deep-reasoner subagent") > strings.Index(c, "THINKER EXTRA") {
 		t.Error("role prompt must append after the generated role contract")
 	}
 	if strings.Index(c, "LEAD EXTRA") < strings.Index(c, "coop-delegate fast") {
@@ -334,8 +320,10 @@ func TestScaffold(t *testing.T) {
 			t.Errorf("template lead ladder[%d] = %q, want %q", i, got, want)
 		}
 	}
-	if len(p.Roles) != 3 || len(p.ConsultRoles("claude")) == 0 || len(p.Delegates()) == 0 {
-		t.Errorf("template should carry all three role modes: %+v", p.Roles)
+	// The template's lead falls back to another provider, so it has no native role: each role is
+	// what it says under either lead.
+	if len(p.Roles) != 3 || len(p.ConsultRoles()) != 2 || len(p.Delegates()) != 1 {
+		t.Errorf("template should carry two consult roles and a delegate: %+v", p.Roles)
 	}
 	wantRoles := map[string]struct{ agent, model, effort string }{
 		"thinker": {"claude", "claude-opus-4-8", "xhigh"},
@@ -403,7 +391,7 @@ func TestNativeSubagentGeneration(t *testing.T) {
 	}
 
 	p := &Preset{Roles: []Role{gen, ref, {Name: "fast", Mode: ModeDelegate, Targets: []agents.Target{{Provider: "gemini"}}}}}
-	if nr := p.GeneratedNativeRoles("claude"); len(nr) != 1 || nr[0].Name != "thinker" {
+	if nr := p.GeneratedNativeRoles(); len(nr) != 1 || nr[0].Name != "thinker" {
 		t.Fatalf("GeneratedNativeRoles = %+v, want only the generated native role", nr)
 	}
 
@@ -414,10 +402,10 @@ func TestNativeSubagentGeneration(t *testing.T) {
 		t.Errorf("empty prompt should get a default body:\n%s", body)
 	}
 
-	// The lead contract invokes @coop-thinker (generated) and @deep-reasoner (referenced),
-	// and doesn't dump the generated role's prompt into the contract.
+	// The lead contract names coop-thinker (generated) and deep-reasoner (referenced), and doesn't
+	// dump the generated role's prompt into the contract.
 	c := LeadContract(&Preset{Name: "t", LeadTargets: []agents.Target{{Provider: "claude"}}, Roles: []Role{gen, ref}}, "claude")
-	if !strings.Contains(c, "@coop-thinker") || !strings.Contains(c, "@deep-reasoner") {
+	if !strings.Contains(c, "the coop-thinker subagent") || !strings.Contains(c, "the deep-reasoner subagent") {
 		t.Errorf("contract invocations wrong:\n%s", c)
 	}
 	if strings.Contains(c, "Think hard.") {
@@ -425,19 +413,16 @@ func TestNativeSubagentGeneration(t *testing.T) {
 	}
 }
 
-// ConsultRoles is the single lead-aware view of role-addressed read-only runners. ConsultBody is
-// each one's persona: a degraded native's NativeBody, or an explicit consult's own prompt.
+// ConsultRoles lists the role-addressed read-only runners and ConsultBody gives each its persona: an
+// explicit consult's own prompt, or none. A native role is never one of them — it runs natively
+// under every lead that may run its preset, or the preset does not run.
 func TestConsultWiredRoles(t *testing.T) {
 	p := &Preset{Roles: []Role{
 		{Name: "thinker", Mode: ModeNative, Targets: []agents.Target{{Provider: "claude", Model: "opus"}}, PromptText: "Think hard."},
 		{Name: "critic", Mode: ModeConsult, Targets: []agents.Target{{Provider: "codex"}}, PromptText: "Be ruthless."},
 		{Name: "scout", Mode: ModeConsult, Targets: []agents.Target{{Provider: "codex"}}}, // two consult roles on ONE agent — distinct wirings
 	}}
-	if b := ConsultBody(&Role{Name: "x", Mode: ModeNative}); !strings.Contains(b, "You are the x subagent") {
-		t.Errorf("a promptless native should yield the default body, got %q", b)
-	}
-	// Explicit consult roles wire under a native-capable lead, each with its own persona (or none).
-	cs := p.ConsultRoles("claude")
+	cs := p.ConsultRoles()
 	if len(cs) != 2 || cs[0].Name != "critic" || cs[1].Name != "scout" {
 		t.Fatalf("Consults = %+v, want [critic scout]", cs)
 	}
@@ -447,60 +432,41 @@ func TestConsultWiredRoles(t *testing.T) {
 	if ConsultBody(&cs[1]) != "" {
 		t.Errorf("a promptless consult has no persona (the peer answers as itself), got %q", ConsultBody(&cs[1]))
 	}
-	// ConsultRoles is the effective, lead-aware list every caller uses for wrapper wiring:
-	// explicit consults under Claude; the same list plus degraded natives under another lead.
-	if got := p.ConsultRoles("claude"); len(got) != 2 || got[0].Name != "critic" || got[1].Name != "scout" {
-		t.Errorf("ConsultRoles(claude) = %+v, want [critic scout]", got)
-	}
-	if got := p.ConsultRoles("codex"); len(got) != 3 || got[0].Name != "thinker" || got[1].Name != "critic" || got[2].Name != "scout" {
-		t.Errorf("ConsultRoles(codex) = %+v, want preset-order [thinker critic scout]", got)
-	} else if ConsultBody(&got[0]) != "Think hard." {
-		t.Errorf("a degraded native's persona is its prompt, got %q", ConsultBody(&got[0]))
-	}
-	if got := p.RunnableRoleAgents("claude"); !slices.Equal(got, []string{"codex"}) {
-		t.Errorf("RunnableRoleAgents(claude) = %v, want [codex]", got)
-	}
-	if got := p.RunnableRoleAgents("codex"); !slices.Equal(got, []string{"claude", "codex"}) {
-		t.Errorf("RunnableRoleAgents(codex) = %v, want [claude codex]", got)
+	if got := p.RunnableRoleAgents(); !slices.Equal(got, []string{"codex"}) {
+		t.Errorf("RunnableRoleAgents = %v, want [codex]: a native role runs on the lead's login", got)
 	}
 }
 
-func TestNativeRoleRequiresMatchingCapableLead(t *testing.T) {
-	p := &Preset{Roles: []Role{{
-		Name: "foreign", Mode: ModeNative, Targets: []agents.Target{{Provider: "codex", Model: "gpt-5.6"}},
+// A native role runs inside the lead's own session, so a lead of another provider cannot host it.
+// Such a lead is refused by name, with the way out — never run with the role silently turned into
+// a read-only consult — and the contract always renders the role as the preset declares it.
+func TestCheckLeadsRefusesALeadThatCannotHostANativeRole(t *testing.T) {
+	p := &Preset{Name: "t", Dir: "/presets/t", Roles: []Role{{
+		Name: "reviewer", Mode: ModeNative, Targets: []agents.Target{{Provider: "codex", Model: "gpt-5.6"}},
 		PromptText: "Review the boundary.",
 	}}}
-	if got := p.GeneratedNativeRoles("claude"); got != nil {
-		t.Fatalf("Claude lead generated a Codex-native role: %+v", got)
+	if err := p.CheckLeads("codex"); err != nil {
+		t.Fatalf("its own provider cannot host a native role: %v", err)
 	}
-	consults := p.ConsultRoles("claude")
-	if len(consults) != 1 || consults[0].Name != "foreign" {
-		t.Fatalf("mismatched native role did not degrade to consult: %+v", consults)
+	err := p.CheckLeads("codex", "claude")
+	var loadErr *LoadError
+	if !errors.As(err, &loadErr) || loadErr.Path != filepath.Join("/presets/t", "preset.yaml") || !slices.Equal(loadErr.Detail, []string{
+		"reviewer is a native codex subagent, but claude can lead this preset too, and a claude session cannot run a codex subagent.",
+		"Make reviewer mode: consult (it advises) or delegate (it edits files), or lead only with codex.",
+	}) {
+		t.Fatalf("a lead that cannot host the role = %#v", err)
 	}
-	if got := p.RunnableRoleAgents("claude"); !slices.Equal(got, []string{"codex"}) {
-		t.Fatalf("degraded role credential scope = %v, want [codex]", got)
+	if err := p.CheckLeads(""); err == nil || !strings.Contains(err.Error(), "reviewer is a native codex subagent, but nothing leads this box to run it in.") {
+		t.Fatalf("a box with no lead = %v", err)
 	}
-	contract := LeadContract(p, "claude")
-	if !strings.Contains(contract, "coop-consult foreign --fresh") || strings.Contains(contract, "@coop-foreign") {
-		t.Fatalf("mismatched native role contract did not degrade:\n%s", contract)
+	if got := p.GeneratedNativeRoles(); len(got) != 1 || got[0].Name != "reviewer" {
+		t.Fatalf("GeneratedNativeRoles = %+v, want the native role", got)
 	}
-}
-
-func TestRunnableProviders(t *testing.T) {
-	if got := (*Preset)(nil).RunnableProviders(); got != nil {
-		t.Fatalf("nil preset providers = %v", got)
+	if got := p.ConsultRoles(); got != nil {
+		t.Fatalf("a native role became a consult: %+v", got)
 	}
-	p := &Preset{
-		LeadTargets: []agents.Target{{Provider: "claude"}, {Provider: "codex"}},
-		Roles: []Role{
-			{Mode: ModeNative, Targets: []agents.Target{{Provider: "claude"}}},
-			{Mode: ModeNative, Targets: []agents.Target{{Provider: "gemini"}}},
-			{Mode: ModeConsult, Targets: []agents.Target{{Provider: "codex"}, {Provider: "grok"}}},
-			{Mode: ModeDelegate, Targets: []agents.Target{{Provider: "gemini"}}},
-		},
-	}
-	if got := p.RunnableProviders(); !slices.Equal(got, []string{"claude", "codex", "gemini", "grok"}) {
-		t.Fatalf("provider closure = %v, want all lead, role and fallback providers", got)
+	if contract := LeadContract(p, "codex"); !strings.Contains(contract, "the coop-reviewer subagent") || strings.Contains(contract, "coop-consult reviewer") {
+		t.Fatalf("the contract did not render the native role as native:\n%s", contract)
 	}
 }
 

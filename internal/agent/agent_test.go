@@ -20,6 +20,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/pelletier/go-toml/v2"
+	"gopkg.in/yaml.v3"
 )
 
 // cleanCmdEnv unsets the per-agent command and model overrides so the defaults are exercised.
@@ -302,32 +303,73 @@ func TestEffortSelection(t *testing.T) {
 	}
 }
 
+// Every pinned client hosts native helpers in its own format and home. Each rendering must parse back
+// to exactly the role — a strict parser drops the whole helper over one unquoted colon — and each
+// format says whether it can carry the role's reasoning effort.
 func TestNativeSubagentCapabilityIsAdapterOwned(t *testing.T) {
-	for name, want := range map[string]bool{"claude": true, "codex": false, "gemini": false, "grok": false} {
-		a, ok := Get(name)
-		if !ok {
-			t.Fatalf("agent %q not registered", name)
-		}
-		support := a.NativeSubagents()
-		if got := support.Render != nil; got != want {
-			t.Errorf("%s native renderer present = %v, want %v", name, got, want)
-		}
-		if want && support.HomeDir == "" {
-			t.Errorf("%s native support has no destination", name)
-		}
+	role := NativeSubagent{Name: "coop-thinker", Description: "Use for: architecture, code-review.", Model: "some-model",
+		Effort: "high", Prompt: "Think hard: say \"why\" first.\n\n- then: the plan"}
+	for _, test := range []struct {
+		provider, home, file string
+		effort               bool
+	}{
+		{"claude", ".claude/agents", "coop-thinker.md", true},
+		{"codex", ".codex/agents", "coop-thinker.toml", true},
+		{"gemini", ".gemini/agents", "coop-thinker.md", false},
+		{"grok", ".grok/agents", "coop-thinker.md", true},
+	} {
+		t.Run(test.provider, func(t *testing.T) {
+			a, ok := Get(test.provider)
+			if !ok {
+				t.Fatalf("agent %q not registered", test.provider)
+			}
+			support := a.NativeSubagents()
+			if support.Render == nil || support.HomeDir != test.home || (support.Effort != nil) != test.effort {
+				t.Fatalf("native support = home %q, renders %v, carries effort %v", support.HomeDir, support.Render != nil, support.Effort != nil)
+			}
+			rendered := role
+			if !test.effort {
+				rendered.Effort = ""
+			}
+			file, content := support.Render(rendered)
+			if file != test.file {
+				t.Fatalf("file = %q, want %q", file, test.file)
+			}
+			var got struct {
+				Name        string `yaml:"name" toml:"name"`
+				Description string `yaml:"description" toml:"description"`
+				Model       string `yaml:"model" toml:"model"`
+				Effort      string `yaml:"effort" toml:"model_reasoning_effort"`
+				Kind        string `yaml:"kind" toml:"-"`
+				Prompt      string `yaml:"-" toml:"developer_instructions"`
+			}
+			if test.provider == "codex" {
+				if err := toml.Unmarshal([]byte(content), &got); err != nil {
+					t.Fatalf("role file does not parse: %v\n%s", err, content)
+				}
+			} else {
+				frontmatter, body, ok := strings.Cut(strings.TrimPrefix(content, "---\n"), "\n---\n\n")
+				if !ok || !strings.HasPrefix(content, "---\n") {
+					t.Fatalf("not a frontmatter document:\n%s", content)
+				}
+				if err := yaml.Unmarshal([]byte(frontmatter), &got); err != nil {
+					t.Fatalf("frontmatter does not parse: %v\n%s", err, content)
+				}
+				got.Prompt = strings.TrimSuffix(body, "\n")
+			}
+			if got.Name != role.Name || got.Description != role.Description || got.Model != role.Model ||
+				got.Effort != rendered.Effort || got.Prompt != role.Prompt {
+				t.Fatalf("rendering does not read back as the role: %+v\n%s", got, content)
+			}
+			if test.provider == "gemini" && got.Kind != "local" {
+				t.Fatalf("a Gemini subagent must be local:\n%s", content)
+			}
+		})
 	}
-	claude, _ := Get("claude")
-	support := claude.NativeSubagents()
-	name, content := support.Render(NativeSubagent{
-		Name: "coop-thinker", Description: "Use for: architecture.", Model: "opus",
-		Effort: "xhigh", Prompt: "Think hard.",
-	})
-	if name != "coop-thinker.md" || support.HomeDir != ".claude/agents" {
-		t.Errorf("Claude native destination = (%q, %q), want coop-thinker.md under .claude/agents", name, support.HomeDir)
-	}
-	for _, want := range []string{"name: coop-thinker", "description: Use for: architecture.", "model: opus", "effort: xhigh", "Think hard."} {
-		if !strings.Contains(content, want) {
-			t.Errorf("Claude native rendering missing %q:\n%s", want, content)
+	grok, _ := Get("grok")
+	for effort, ok := range map[string]bool{"low": true, "max": true, "minimal": false, "none": false} {
+		if err := grok.NativeSubagents().Effort(effort); (err == nil) != ok {
+			t.Errorf("a Grok subagent with effort %q accepted = %v, want %v", effort, err == nil, ok)
 		}
 	}
 }

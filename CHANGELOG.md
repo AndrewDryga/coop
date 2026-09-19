@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A preset's native role now keeps the mode and write access you gave it. When a lead that could not
+  host it took over — a Codex rung after a Claude one, say — Coop quietly ran the role as read-only
+  advice instead; now Coop refuses to start and names the role to change. Native roles also work
+  under Codex, Gemini and Grok leads: Coop writes each client's own subagent file, with the role's
+  model and, where the client has one, its effort. `coop presets init` now scaffolds its thinker as a
+  consult, because the scaffolded lead falls back to another provider.
+
 - In a project with its own box Dockerfile, a run with network rules starts about half a second
   sooner when nothing the box is built from has changed. Coop copied the project and rebuilt its box
   image on every start; it now runs the exact image it built last time, after the same checks. Any

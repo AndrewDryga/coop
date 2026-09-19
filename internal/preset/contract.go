@@ -15,8 +15,8 @@ import (
 //
 // lead is the EFFECTIVE lead agent (a loop work.agent ladder or an ACP cross-provider rung
 // may run a preset under a different provider than the preset's own lead). A native role runs
-// inside a capable lead's session; otherwise it degrades to a read-only consult on its configured
-// agent (same model + persona), invoked as `coop-consult <role>` (see roleContract).
+// inside that lead's session: every lead that may run the preset was checked to host it
+// (CheckLeads), so a role renders as exactly what its preset says it is.
 func LeadContract(p *Preset, lead string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Orchestration preset %q — you are the lead (%s)\n\n", p.Name, lead)
@@ -31,7 +31,7 @@ func LeadContract(p *Preset, lead string) string {
 	b.WriteString("useful advice. A completed, evidenced review remains usable.\n")
 	for i := range p.Roles {
 		b.WriteString("\n")
-		b.WriteString(roleContract(&p.Roles[i], lead))
+		b.WriteString(roleContract(&p.Roles[i]))
 	}
 	if p.LeadPromptText != "" {
 		b.WriteString("\n" + p.LeadPromptText + "\n")
@@ -41,32 +41,24 @@ func LeadContract(p *Preset, lead string) string {
 
 // RoleContract renders one role's generated contract plus its appended Markdown —
 // the same text the lead sees for that role, reused as the delegate wrapper's
-// prepended contract so the delegate knows its own ground rules. Delegate-only, so the
-// lead is immaterial (native/consult degradation never applies).
+// prepended contract so the delegate knows its own ground rules.
 func RoleContract(r *Role) string {
-	return roleContract(r, "")
+	return roleContract(r)
 }
 
-func roleContract(r *Role, lead string) string {
+func roleContract(r *Role) string {
 	var b strings.Builder
 	primary := r.Primary()
 	model := primary.Model
 	if model == "" {
 		model = "its default model"
 	}
-	// A native role degrades under a lead that cannot host it, rendered exactly like an explicit
-	// read-only consult role (both are
-	// role-addressed: `coop-consult <role>` carries the role's agent + model + persona).
-	mode := r.Mode
-	if mode == ModeNative && !nativeRoleUsable(r, lead) {
-		mode = ModeConsult
-	}
-	switch mode {
+	switch r.Mode {
 	case ModeNative:
 		fmt.Fprintf(&b, "## %s — native %s subagent (%s)\n", r.Name, primary.Provider, model)
 		writeWhen(&b, r.When)
-		fmt.Fprintf(&b, "Invoke it as the @%s subagent in your own session — it thinks inside your\n", SubagentName(r))
-		b.WriteString("context; you weigh its conclusion and act on it yourself.\n")
+		fmt.Fprintf(&b, "Delegate to it as the %s subagent in your own session — it works with your tools\n", SubagentName(r))
+		b.WriteString("and reports back; you weigh its conclusion and act on it yourself.\n")
 	case ModeConsult:
 		fmt.Fprintf(&b, "## %s — read-only consult (%s)\n", r.Name, roleRunner(r, model))
 		writeWhen(&b, r.When)
@@ -92,18 +84,19 @@ func roleContract(r *Role, lead string) string {
 		b.WriteString("When it returns, YOU review its `git diff`, run the gate, fix or revert what\nfalls short, and make the commit yourself — the delegate's work ships under\nyour review or not at all.\n")
 	}
 	// A role whose prompt reaches its runner elsewhere doesn't dump it into the lead contract:
-	// a generated native's prompt IS its subagent's system prompt (GeneratedSubagent), and a
-	// consult-wired role's prompt IS the peer's persona (ConsultBody, mounted in the box) —
-	// degraded natives included. A delegate or a referenced native appends here.
-	promptReachesRunner := r.Mode == ModeConsult || (r.Mode == ModeNative && (r.Subagent == "" || !nativeRoleUsable(r, lead)))
+	// a generated native's prompt IS its subagent's system prompt (GeneratedNativeRoles), and a
+	// consult role's prompt IS the peer's persona (ConsultBody, mounted in the box). A delegate or
+	// a referenced native appends here.
+	promptReachesRunner := r.Mode == ModeConsult || (r.Mode == ModeNative && r.Subagent == "")
 	if r.PromptText != "" && !promptReachesRunner {
 		b.WriteString("\n" + r.PromptText + "\n")
 	}
 	return b.String()
 }
 
-// nativeRoleUsable requires both halves of native execution: the effective lead must be the
-// role's configured provider, and that provider's adapter must own a complete native descriptor.
+// nativeRoleUsable requires both halves of native execution: the lead must be the role's configured
+// provider, and that provider's adapter must own a complete native descriptor. CheckLeads refuses a
+// preset any of its leads fails this for.
 func nativeRoleUsable(role *Role, lead string) bool {
 	if role.Mode != ModeNative || role.Primary().Provider != lead {
 		return false

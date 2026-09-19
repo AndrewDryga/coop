@@ -723,16 +723,16 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         <tr>
                             <td><code>native</code></td>
                             <td>
-                                a Claude subagent that runs inside the lead's
-                                own session — no separate box. coop generates it
+                                a subagent that runs inside the lead's own
+                                session — no separate box. coop generates it
                                 (<code>coop-&lt;role&gt;</code>, from the role's
-                                model + prompt) in the box, or set
-                                <code>subagent:</code> to reuse an existing one.
-                                It's Claude's own subagent, so it needs a Claude
-                                lead; under a Codex, Gemini, or Grok lead this
-                                role degrades to a read-only
-                                <code>coop-consult &lt;role&gt;</code> (same model
-                                + persona)
+                                model + prompt) in the box, in that client's own
+                                subagent format — Claude, Codex, Gemini or Grok —
+                                or set <code>subagent:</code> to reuse an existing
+                                one. Because it runs in the lead's session, every
+                                lead the preset lists must use the role's
+                                provider; otherwise coop stops before it starts
+                                and names the role to change
                             </td>
                         </tr>
                         <tr>

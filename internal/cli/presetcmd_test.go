@@ -295,7 +295,7 @@ func TestCmdPresetsInit(t *testing.T) {
 			t.Errorf("cmdPresets() after init = (%d, %v)", code, err)
 		}
 	})
-	for _, want := range []string{"frontier", "claude:claude-fable-5", "1 adviser, 1 editor, 1 in-session role", "project"} {
+	for _, want := range []string{"frontier", "claude:claude-fable-5", "2 advisers, 1 editor", "project"} {
 		if !strings.Contains(list, want) {
 			t.Errorf("scaffolded preset should list cleanly, missing %q:\n%s", want, list)
 		}

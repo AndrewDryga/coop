@@ -56,7 +56,7 @@ func (a *app) acpPresetNetworkTargets(p *preset.Preset) ([]agents.Target, error)
 		}
 		for _, lead := range leads {
 			add(lead)
-			for _, provider := range p.RunnableRoleAgents(lead.Provider) {
+			for _, provider := range p.RunnableRoleAgents() {
 				account := a.cfg.ActiveProfile(provider)
 				if provider == lead.Provider && lead.Account() != "" {
 					account = lead.Account()
@@ -149,7 +149,8 @@ func (a *app) acpNetworkScope(repo string, initial agents.Target, peers []agents
 	for _, provider := range agents.Names() {
 		add([]string{provider})
 	}
-	for _, name := range a.acpPresetNames(repo) {
+	names, _ := a.acpPresetNames(repo)
+	for _, name := range names {
 		p, err := preset.Load(repo, a.cfg.GlobalPresetsDir(), name)
 		if err != nil {
 			continue

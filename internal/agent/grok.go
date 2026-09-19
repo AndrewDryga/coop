@@ -241,7 +241,25 @@ func (grokAgent) EffortEnv() string { return "" }
 // for compatibility).
 func (grokAgent) InstructionFile() string { return "AGENTS.md" }
 
-func (grokAgent) NativeSubagents() NativeSubagentSupport { return NativeSubagentSupport{} }
+// NativeSubagents: Grok 1.0 loads agent definitions from ~/.grok/agents/*.md.
+func (grokAgent) NativeSubagents() NativeSubagentSupport {
+	return NativeSubagentSupport{HomeDir: ".grok/agents", Render: renderGrokSubagent, Effort: grokNativeEffort}
+}
+
+func renderGrokSubagent(role NativeSubagent) (filename, content string) {
+	return role.Name + ".md", nativeMarkdown(role.Prompt, [2]string{"name", role.Name},
+		[2]string{"description", role.Description}, [2]string{"model", role.Model}, [2]string{"effort", role.Effort})
+}
+
+// grokNativeEffort: a Grok agent definition takes exactly these; Grok drops a definition with any
+// other effort without a word.
+func grokNativeEffort(effort string) error {
+	switch effort {
+	case "low", "medium", "high", "xhigh", "max":
+		return nil
+	}
+	return fmt.Errorf("a Grok subagent's effort is low, medium, high, xhigh or max, not %q", effort)
+}
 
 func (grokAgent) AuthMarker() (file, envKey string) { return "auth.json", "XAI_API_KEY" }
 

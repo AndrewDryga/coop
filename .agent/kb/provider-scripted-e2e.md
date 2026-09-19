@@ -3,7 +3,7 @@ name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
 sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/loop/loop.go, internal/loop/iteration.go, internal/tasks/audit.go, internal/cli/fork_cmd.go, internal/forkctl/meta.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/tasks/lease.go, internal/loop/streamjson.go, internal/loop/telemetry.go, internal/loop/review.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_loop_handoff_telemetry_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
-updated: 2026-09-17
+updated: 2026-09-19
 ---
 
 `make provider-scripted-e2e` builds fresh Coop and fixture executables inside a disposable root,
@@ -93,8 +93,9 @@ Preset composition uses four dense registry-derived runs: every lead gets one mo
 consult role on every provider, so the suite launches all 16 lead-provider x role-provider
 relationships while starting only four boxes. It proves distinct same-provider lead/role models,
 effective effort, personas, wrapper cardinality, credential scope, and repository immutability.
-Focused rows cover explicit peers plus multiple roles on one provider, native-role degradation,
-and terminal first-rung pinning. Missing role authentication remains owned by the consult matrix.
+Focused rows cover explicit peers plus multiple roles on one provider, a native role mounted in
+every provider's own agents directory, the refusal of a lead that cannot host a native role, and
+terminal first-rung pinning. Missing role authentication remains owned by the consult matrix.
 ACP's inner
 child has a separate assembly test proving the supervisor-selected preset and concrete target
 replace stale launch state; the ACP supervisor matrix remains the owner of migration and rate-limit
@@ -124,6 +125,8 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-09-19 — the native-role degradation row became two: a native role mounts in every provider's
+  own agents directory, and a lead that cannot host one is refused before the runtime.
 - 2026-09-17 — Podman removed; CI's doctor matrix is Docker only.
 - 2026-09-13 - reproduced and fixed duplicate terminal review handoff emission; process tests
   compare all three stages with exact provider lifecycle, usage totals and successful recovery.

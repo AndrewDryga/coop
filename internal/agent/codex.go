@@ -237,7 +237,30 @@ func (codexAgent) EffortEnv() string { return "" }
 
 func (codexAgent) InstructionFile() string { return "AGENTS.md" }
 
-func (codexAgent) NativeSubagents() NativeSubagentSupport { return NativeSubagentSupport{} }
+// NativeSubagents: Codex 0.153 loads agent roles from $CODEX_HOME/agents/*.toml, and its lead spawns
+// one by name (spawn_agent's agent_type).
+func (codexAgent) NativeSubagents() NativeSubagentSupport {
+	return NativeSubagentSupport{HomeDir: ".codex/agents", Render: renderCodexSubagent, Effort: anyNativeEffort}
+}
+
+// codexAgentRole is one Codex agent role file. Codex requires name and developer_instructions and
+// ignores the whole file over a field it does not know.
+type codexAgentRole struct {
+	Name                  string `toml:"name"`
+	Description           string `toml:"description"`
+	DeveloperInstructions string `toml:"developer_instructions"`
+	Model                 string `toml:"model,omitempty"`
+	ModelReasoningEffort  string `toml:"model_reasoning_effort,omitempty"`
+}
+
+func renderCodexSubagent(role NativeSubagent) (filename, content string) {
+	data, err := toml.Marshal(codexAgentRole{Name: role.Name, Description: role.Description,
+		DeveloperInstructions: role.Prompt, Model: role.Model, ModelReasoningEffort: role.Effort})
+	if err != nil {
+		panic(err) // a struct of plain strings always encodes
+	}
+	return role.Name + ".toml", string(data)
+}
 
 func (codexAgent) AuthMarker() (file, envKey string) { return "auth.json", "OPENAI_API_KEY" }
 

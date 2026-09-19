@@ -125,8 +125,7 @@ func renderConsult(as []consultInput) string {
 #   COOP_CONSULT_TIMEOUT sets the timeout in whole seconds; 0 means unlimited.
 #   COOP_CONSULT_STREAM_LIMIT sets the output limit in bytes; 0 means unlimited.
 #
-# A preset CONSULT ROLE — or a native role degraded under a non-Claude lead — is addressed by its
-# ROLE name. Its COOP_CONSULT_<ROLE>_TARGETS value is an ordered fallback ladder; each target
+# A preset CONSULT ROLE is addressed by its ROLE name. Its COOP_CONSULT_<ROLE>_TARGETS value is an ordered fallback ladder; each target
 # remains READ-ONLY. --fresh starts at rung one. --continue resumes the successful rung and, if
 # that provider is now rate limited, starts the next provider fresh. Each rung is attempted once.
 # Nothing is bounded by default: a working model is left to work, because killing one costs the
@@ -299,8 +298,8 @@ clear_failed_resume() {
 	publish_state "" "$contextfile" || die "cannot clear uncertain continuation session"
 }
 
-# A preset consult role (or a native role degraded under a non-Claude lead) carries its own
-# target ladder/persona via COOP_CONSULT_<ROLE>_*; otherwise the name IS the peer agent.
+# A preset consult role carries its own target ladder/persona via COOP_CONSULT_<ROLE>_*;
+# otherwise the name IS the peer agent.
 eval "targets=\${COOP_CONSULT_${key}_TARGETS:-}"
 eval "persona=\${COOP_CONSULT_${key}_CONTRACT:-}"
 if [ -n "$targets" ]; then

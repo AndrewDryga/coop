@@ -3,7 +3,7 @@ name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
 sources: [internal/mcp/mcp.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
-updated: 2026-09-18
+updated: 2026-09-19
 ---
 
 `COOP_MCP_FILE` is one host authority, but a box has four different consumers. `box.Run` captures
@@ -96,8 +96,8 @@ denial check. Normal, ACP and nested Gemini all use this boundary. This check ha
 before the provider; it does not promise that no daemon or sidecar was started.
 
 Credential scope is not proof of command consumption. `credentialScope` answers whose login may be
-mounted, while `nestedAgentCommand` answers whether an explicit peer or consult/delegate/degraded
-native role can actually spawn that provider CLI. The raw snapshot mount exists only for an outer
+mounted, while `nestedAgentCommand` answers whether an explicit peer or a consult/delegate role can
+actually spawn that provider CLI (a native role runs in the lead's own session and spawns none). The raw snapshot mount exists only for an outer
 ordinary command or such a nested consumer. In particular, a plain Claude ACP run does not gain the
 ordinary CLI's `--mcp-config` mount; `claude-agent-acp` uses the protocol projection instead.
 
@@ -109,6 +109,7 @@ adds ordinary `CommandArgs` must decide whether its nested commands need an equi
 mounting the raw snapshot for every scoped credential is not the fallback.
 
 ## Changelog
+- 2026-09-19 — native preset roles are never demoted to consults any more; nestedAgentCommand line re-verified.
 - 2026-09-18 — Codex's header support corrected: it takes `http_headers` and `env_http_headers`
   beside `bearer_token_env_var`, qualified against the pinned 0.153.4 binary, so the card's
   "refuses a shared server that declares headers" claim is retired. Added the SSE asymmetry: Grok's

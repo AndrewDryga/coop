@@ -78,7 +78,7 @@ func LoopWorkPrompt(repo, assignedRoot, assignedID, agent string, peers []agents
 func loopPeerCapabilities(agent string, peers []agents.Target, p *preset.Preset) string {
 	var consults, delegates []string
 	if p != nil {
-		for _, role := range p.ConsultRoles(agent) {
+		for _, role := range p.ConsultRoles() {
 			consults = append(consults, role.Name)
 		}
 		for _, role := range p.Delegates() {
