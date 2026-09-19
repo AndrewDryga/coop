@@ -153,9 +153,13 @@ func (p *WarmPool) Reap() {
 		held := p.boxes
 		p.boxes = map[string]*acpproxy.Child{}
 		p.mu.Unlock()
+		// Parked boxes are independent runs — at most one per provider — so they stop together: a
+		// filtered box's own teardown takes about two seconds, and the editor waits for all of them.
+		var stops sync.WaitGroup
 		for _, c := range held {
-			p.stop(c)
+			stops.Go(func() { p.stop(c) })
 		}
+		stops.Wait()
 		p.fills.Wait()
 	})
 }

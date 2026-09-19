@@ -158,3 +158,29 @@ func TestKernelTerminalBarrierRequiresSampleStartedAfterCutoff(t *testing.T) {
 		t.Fatal("canceled terminal barrier fabricated measured counters")
 	}
 }
+
+// A terminal barrier does not wait out the sampler's one-second tick: it wakes the sampler, whose next
+// sample starts after the cutoff — so a run's teardown pays one counter read, not up to a second.
+func TestKernelTerminalBarrierWakesTheSampler(t *testing.T) {
+	clock := testBootClock()
+	var reads atomic.Int32
+	k := &kernelEvents{read: func(context.Context) (KernelCounters, error) {
+		reads.Add(1)
+		return KernelCounters{DeniedAgent: 1}, nil
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go k.run(ctx, clock)
+	for reads.Load() == 0 { // the first tick's sample
+		time.Sleep(time.Millisecond)
+	}
+	cutoff := clock.instant()
+	began := time.Now()
+	got := k.after(ctx, cutoff)
+	if got.Counters == nil || got.StartedBoot.Before(cutoff) {
+		t.Fatalf("terminal sample = %#v, want one started after the cutoff", got)
+	}
+	if took := time.Since(began); took > 500*time.Millisecond {
+		t.Fatalf("the terminal barrier waited %s for the sampler's tick", took)
+	}
+}

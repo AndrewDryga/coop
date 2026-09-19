@@ -10,6 +10,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -3090,4 +3091,49 @@ func TestProxyResumeReplayTimeoutRespawnsClean(t *testing.T) {
 
 	clientInW.Close() // client gone → the proxy stops the live child and returns; no c2.outW race
 	<-done
+}
+
+// A caller learns that the proxy is stopping before its child is stopped — once, however many shutdown
+// paths fire — so it can tear down its own independent resources (the editor's parked boxes) at the same
+// time instead of after the active box.
+func TestRunWithAnnouncesStoppingBeforeStoppingTheChild(t *testing.T) {
+	var events []string
+	var mu sync.Mutex
+	record := func(event string) {
+		mu.Lock()
+		events = append(events, event)
+		mu.Unlock()
+	}
+	fake := newFakeChild()
+	factory := func(context.Context) (*Child, error) {
+		child := fake.child()
+		stop := child.Stop
+		child.Stop = func() { record("stop"); stop() }
+		return child, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	clientInR, clientInW := io.Pipe()
+	clientOutR, clientOutW := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		done <- RunWith(ctx, clientInR, clientOutW, factory, nil, RunOpts{Stopping: func() { record("stopping") }})
+	}()
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	readLine(t, bufio.NewReader(fake.inR))
+	writeLine(t, fake.outW, `{"jsonrpc":"2.0","id":1,"result":{}}`)
+	readLine(t, bufio.NewReader(clientOutR))
+	go func() { _, _ = io.Copy(io.Discard, clientOutR) }()
+	clientInW.Close() // the editor goes away...
+	cancel()          // ...and the process is signalled too: two shutdown paths, one announcement
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("RunWith did not return after the editor left")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(events) < 2 || events[0] != "stopping" || slices.Index(events, "stop") < 1 || slices.Index(events[1:], "stopping") >= 0 {
+		t.Fatalf("shutdown events = %v, want one stopping announcement before the child's stop", events)
+	}
 }

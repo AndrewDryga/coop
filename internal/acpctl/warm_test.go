@@ -313,3 +313,27 @@ func TestWarmPoolReapStopsEachBoxExactlyOnce(t *testing.T) {
 		t.Fatalf("every held box must be stopped exactly once, got %v", stopped)
 	}
 }
+
+// Closing an editor stops every parked box, and a filtered one takes about two seconds to tear its own
+// gateway down; they are independent runs, so Reap stops them together, not one after another.
+func TestWarmPoolReapStopsParkedBoxesTogether(t *testing.T) {
+	var inStop sync.WaitGroup
+	inStop.Add(2)
+	both := make(chan struct{})
+	go func() { inStop.Wait(); close(both) }()
+	p := NewWarmPool(true, func(provider string) (*acpproxy.Child, error) {
+		return &acpproxy.Child{Provider: provider, Image: "img", Stop: func() {
+			inStop.Done()
+			<-both // each stop finishes only once the other has started
+		}}, nil
+	})
+	p.Refill("codex")
+	p.Refill("gemini")
+	reaped := make(chan struct{})
+	go func() { p.Reap(); close(reaped) }()
+	select {
+	case <-reaped:
+	case <-time.After(wait.Deadline):
+		t.Fatal("Reap stops parked boxes one at a time")
+	}
+}

@@ -3,7 +3,7 @@ name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
 sources: [internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/gatewayimage/image.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/forkctl/host.go]
-updated: 2026-09-18
+updated: 2026-09-19
 ---
 
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
@@ -136,7 +136,18 @@ no repository build context (`gatewayimage/image.go:43`). After ANY change to `c
 checkout, so a stale tar is a red gate, and a filtered launch only ever runs the exact image pair a
 [[restricted-networking]] qualification names.
 
+**Stop latency.** A run's teardown ends with the guard's terminal counters barrier
+(`kernelEvents.after`): it needs a kernel sample STARTED after its cutoff, and the controller samples
+nft once a second, so the barrier used to wait out up to that whole tick — the guard took ~0.5 s to exit
+after SIGTERM on every filtered stop. The barrier now wakes the sampler (a sample starts at once, still
+after the cutoff). On the host side (`box/filtered_cleanup.go`) the causal order is fixed — agent gone,
+guard probed and stopped, final observation taken — and only independent steps overlap: the guard's
+removal beside the controller's stop, and the two volumes; store writes stay serialized under `f.mu`.
+Measured 2026-09-19: SIGINT→exit 1.87 s → ~1.03 s.
+
 ## Changelog
+- 2026-09-19 — the terminal counters barrier wakes the sampler; filtered cleanup overlaps independent
+  steps (stop 1.87 s → ~1.03 s)
 - 2026-09-18 — the guard's flow lifetime and admission budget are separate contexts; the private
   leg's close used to follow the 10 s admission deadline and cut every long guarded TLS flow. The
   credential broker's dial was checked: its admission context bounds only the dial.

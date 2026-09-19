@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/AndrewDryga/coop/internal/networkgateway"
 	"github.com/AndrewDryga/coop/internal/networkstate"
@@ -123,24 +124,38 @@ func (f *filteredExecution) cleanup(workload string) (agentGone bool, result err
 			result = errors.Join(result, captureErr)
 		}
 	}
+	// Removing the guard and stopping the controller are independent — the guard has stopped and its
+	// final observation is taken — so they run together; only the controller's removal needs the
+	// guard gone. Each runtime call is a CLI process of about a tenth of a second.
+	var guardErr, controllerErr error
+	var steps sync.WaitGroup
 	if !retainEvidence {
-		result = errors.Join(result, f.removeResource(evidence, "guard"))
+		steps.Go(func() { guardErr = f.removeResource(evidence, "guard") })
 	}
-	if controller, err := f.resolveResource("controller"); err == nil && controller.ID != "" {
+	steps.Go(func() {
+		controller, err := f.resolveResource("controller")
+		if err != nil || controller.ID == "" {
+			controllerErr = err
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
-		result = errors.Join(result, f.docker.StopContainer(ctx, controller, 0))
+		controllerErr = f.docker.StopContainer(ctx, controller, 0)
 		cancel()
-	} else {
-		result = errors.Join(result, err)
-	}
+	})
+	steps.Wait()
+	result = errors.Join(result, guardErr, controllerErr)
 	if !retainEvidence && f.resource("guard").State == "gone" && agentGone {
 		result = errors.Join(result, f.removeResource(evidence, "controller"))
 	}
 	consumersGone := agentGone && f.resource("guard").State == "gone" && f.resource("controller").State == "gone"
 	if consumersGone {
-		for _, role := range []string{"ipc", "observations"} {
-			result = errors.Join(result, f.removeResource(evidence, role))
-		}
+		// With every consumer gone the two volumes are independent too.
+		var ipcErr, observationsErr error
+		var volumes sync.WaitGroup
+		volumes.Go(func() { ipcErr = f.removeResource(evidence, "ipc") })
+		volumes.Go(func() { observationsErr = f.removeResource(evidence, "observations") })
+		volumes.Wait()
+		result = errors.Join(result, ipcErr, observationsErr)
 		ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
 		result = errors.Join(result, f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
 			return evidence.CleanupArtifacts(ctx, r.ID, r.Revision)

@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -3148,5 +3149,59 @@ func TestFailedTurnKeepsTheUsageItsCompletedRoundsReported(t *testing.T) {
 	}
 	if result.Usage.Recorded() {
 		t.Fatalf("a turn with no completed round invented usage: %+v", result.Usage)
+	}
+}
+
+// Closing the daemon stops every warm session. Different workspaces' sessions stop together — each
+// filtered child tears its own gateway down — while two in one workspace, which share its services,
+// still stop one after the other; every error is kept.
+func TestCloseWarmExecutionsStopsWorkspacesTogether(t *testing.T) {
+	warm := func(repo, workspace string) *sessionWarmExecution {
+		return &sessionWarmExecution{bound: session.Session{Repository: repo, Workspace: workspace}}
+	}
+	a1, a2, b, c := warm("/r", "/w/a"), warm("/r", "/w/a"), warm("/r", "/w/b"), warm("/r", "/w/c")
+	var mu sync.Mutex
+	inside := map[string]int{}
+	overlap := false
+	release := make(chan struct{})
+	entered := make(chan string, 4)
+	err := func() error {
+		done := make(chan error, 1)
+		go func() {
+			done <- closeWarmExecutions([]*sessionWarmExecution{a1, a2, b, c}, func(e *sessionWarmExecution) error {
+				mu.Lock()
+				inside[e.bound.Workspace]++
+				if inside[e.bound.Workspace] > 1 {
+					overlap = true
+				}
+				mu.Unlock()
+				entered <- e.bound.Workspace
+				<-release
+				mu.Lock()
+				inside[e.bound.Workspace]--
+				mu.Unlock()
+				if e == b {
+					return errors.New("b failed")
+				}
+				return nil
+			})
+		}()
+		seen := map[string]bool{}
+		for len(seen) < 3 { // one cleanup per workspace is running at once before any finishes
+			select {
+			case workspace := <-entered:
+				seen[workspace] = true
+			case <-time.After(wait.Deadline):
+				t.Fatalf("workspaces are not closed together: %v", seen)
+			}
+		}
+		close(release)
+		return <-done
+	}()
+	if overlap {
+		t.Fatal("two sessions of one workspace stopped at the same time")
+	}
+	if err == nil || !strings.Contains(err.Error(), "b failed") {
+		t.Fatalf("close error = %v, want the failed session's error kept", err)
 	}
 }

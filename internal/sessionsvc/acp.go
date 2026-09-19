@@ -61,9 +61,11 @@ const (
 	// per-minute janitor anyway, so the budget only has to be generous enough not to cry wolf.
 	sessionRuntimeReapTimeout = 10 * time.Second
 	sessionACPWarmLimit       = 20
-	sessionACPStderrLimit     = 4 << 10
-	sessionACPRejectionLimit  = 300
-	sessionACPAirVersion      = 1
+	// sessionACPWarmCloseConcurrency bounds how many workspaces' warm sessions stop at once on close.
+	sessionACPWarmCloseConcurrency = 4
+	sessionACPStderrLimit          = 4 << 10
+	sessionACPRejectionLimit       = 300
+	sessionACPAirVersion           = 1
 )
 
 // One initial candidate plus two corrections keeps a broken model from
@@ -1367,10 +1369,40 @@ func (r *sessionTurnRunner) CloseWarmSessions() error {
 		executions = append(executions, execution)
 	}
 	r.warmMu.Unlock()
-	var errs []error
+	return closeWarmExecutions(executions, r.cleanupWarmExecution)
+}
+
+// closeWarmExecutions cleans up warm executions. Sessions in different workspaces are independent, so
+// their children stop together — a filtered one tears its own gateway down, about a second each, and
+// up to sessionACPWarmLimit may be warm. Sessions sharing a workspace share its services, so those
+// still stop one after another.
+func closeWarmExecutions(executions []*sessionWarmExecution, cleanup func(*sessionWarmExecution) error) error {
+	byWorkspace := map[string][]*sessionWarmExecution{}
+	var order []string
 	for _, execution := range executions {
-		errs = append(errs, r.cleanupWarmExecution(execution))
+		key := execution.bound.Repository + "\x00" + execution.bound.Workspace
+		if _, seen := byWorkspace[key]; !seen {
+			order = append(order, key)
+		}
+		byWorkspace[key] = append(byWorkspace[key], execution)
 	}
+	var mu sync.Mutex
+	var errs []error
+	var groups sync.WaitGroup
+	slots := make(chan struct{}, sessionACPWarmCloseConcurrency)
+	for _, key := range order {
+		groups.Go(func() {
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			for _, execution := range byWorkspace[key] {
+				err := cleanup(execution)
+				mu.Lock()
+				errs = append(errs, err)
+				mu.Unlock()
+			}
+		})
+	}
+	groups.Wait()
 	return errors.Join(errs...)
 }
 

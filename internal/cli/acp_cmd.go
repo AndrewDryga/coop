@@ -495,11 +495,14 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 		warm = false
 		acpproxy.Trace("warm pool off: the box image's id cannot be read")
 	}
+	// Stopping cancels warm fills still in flight: one that has not launched launches nothing, so the
+	// pool's reap does not wait for a box nobody will use.
+	warmFills, cancelWarmFills := context.WithCancel(context.Background())
 	pool := acpctl.NewWarmPool(warm, func(provider string) (*acpproxy.Child, error) {
 		image := currentImage()
 		// On the account the selector's Auto would pick, so the switch it serves can match it.
 		target := ctrl.ResolveNetworkTarget(agents.Target{Provider: provider})
-		child, err := a.spawnBox(context.Background(), self, inner, superID, ctrl, target, "", true, os.Stderr, forkspace.ExecutionRoleWarm)
+		child, err := a.spawnBox(warmFills, self, inner, superID, ctrl, target, "", true, os.Stderr, forkspace.ExecutionRoleWarm)
 		if child != nil {
 			child.Image = image
 		}
@@ -540,17 +543,21 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	defer pool.Reap() // Stop held warm boxes on any exit path; the label sweep still reaps their containers
+	reapPool := func() { cancelWarmFills(); pool.Reap() }
+	defer reapPool() // Stop held warm boxes on any exit path; the label sweep still reaps their containers
 	// Thread bindings outlive this process: a reopened thread's session/load must reach the provider and
 	// native session the conversation actually continued on, not the transcript stub its editor id names.
 	bindings := acpctl.OpenThreadBindings(acpctl.ThreadBindingsDir(a.cfg))
-	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, ctrl.Hooks(), acpproxy.RunOpts{Resume: resume, Reload: reload, Bindings: bindings})
+	// The parked boxes are independent of the active one, so they stop while it does; the deferred
+	// Reap then waits for that same teardown to finish.
+	stopping := func() { go reapPool() }
+	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, ctrl.Hooks(), acpproxy.RunOpts{Resume: resume, Reload: reload, Bindings: bindings, Stopping: stopping})
 	// A SIGHUP reload: write the combined state to a 0600 temp file and re-exec THIS binary in place —
 	// same PID + fd 0/1/2, so the editor's transport never breaks. Run's reload path already stopped
 	// the box; reap the warm boxes here (execve replaces the image, so deferred reap won't run) and
 	// skip the label sweep — the re-exec'd process regenerates its own superID and owns the next box.
 	if snap, ok := acpproxy.ReloadSnapshot(err); ok {
-		pool.Reap()
+		reapPool()
 		// Sweep any box still labelled with THIS superID before exec — a warm spawn that was mid-flight
 		// (reap only stops boxes already parked) would otherwise reparent to init and never be reaped
 		// (the re-exec'd process uses a fresh superID). Safe here: Run already stopped the active box
@@ -644,6 +651,12 @@ func newSupervisorID() (string, error) {
 }
 
 const acpCleanupTimeout = 5 * time.Second
+
+// acpFilteredStopGrace bounds a filtered child's own teardown — agent absence, the gateway's final
+// observation, then its guard, controller and volumes — before its process group is killed. It takes
+// under two seconds. A single runtime call may take up to its own minute (box.filteredControlTimeout),
+// so a wedged daemon is killed mid-teardown here; the next filtered launch's recovery settles the rest.
+const acpFilteredStopGrace = 30 * time.Second
 const acpAccountBindingsEnv = "COOP_ACP_ACCOUNTS"
 
 type acpAccountBinding struct {
@@ -982,9 +995,13 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	var stopOnce sync.Once
 	stop := func() {
 		stopOnce.Do(func() {
-			// Kill and await the generation group before its cid cleanup. In tagged live binaries the
+			// End and await the generation group before its cid cleanup. In tagged live binaries the
 			// group leader is a resident gate wrapper, so a runtime cannot outlive this identity.
-			_ = syscall.Kill(-pid, syscall.SIGKILL)
+			grace := time.Duration(0)
+			if a.acpCapture != nil {
+				grace = acpFilteredStopGrace
+			}
+			stopACPChild(pid, grace)
 			inW.Close()
 			outR.Close()
 			groupGone := waitACPProcessGroupGone(pid, acpCleanupTimeout)
@@ -1044,6 +1061,20 @@ func (a *app) reapACPChildBoxes(repo, superID string, pid int) bool {
 		}
 	}
 	return true
+}
+
+// stopACPChild ends an inner ACP child's process group. A filtered child owns a gateway, two volumes and
+// a receipt, and tears them down itself when its run is cancelled, so it gets SIGTERM and up to grace to
+// finish; SIGKILL first would strand all of it. Any child still running after that — or any child when
+// grace is zero, which has nothing of its own to tear down — is killed.
+func stopACPChild(pgid int, grace time.Duration) {
+	if grace > 0 {
+		_ = syscall.Kill(-pgid, syscall.SIGTERM)
+		if waitACPProcessGroupGone(pgid, grace) {
+			return
+		}
+	}
+	_ = syscall.Kill(-pgid, syscall.SIGKILL)
 }
 
 func waitACPProcessGroupGone(pgid int, timeout time.Duration) bool {

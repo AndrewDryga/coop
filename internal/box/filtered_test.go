@@ -497,10 +497,24 @@ func TestFilteredLaunchOrdersReadinessAndExactCleanup(t *testing.T) {
 	if err != nil || !gone {
 		t.Fatal("cleanup", gone, err)
 	}
-	want := []string{"create:ipc", "create:observations", "create:controller", "start:controller", "create:guard", "start:guard", "snapshot", "create:agent", "snapshot", "start:agent",
-		"stop:agent", "remove:agent", "stop:guard", "capture-final", "stop:guard", "remove:guard", "stop:controller", "stop:controller", "remove:controller", "remove:ipc", "remove:observations", "close"}
-	if !slices.Equal(d.log, want) {
-		t.Fatalf("lifecycle order:\n%v\nwant:\n%v", d.log, want)
+	// The causal order is exact: the agent gone before the guard stops, the final observation taken
+	// from the stopped guard, the controller removed only once the guard is gone, the volumes last.
+	// Independent steps run together — the guard's removal beside the controller's stop, the two
+	// volumes — so only their membership is pinned.
+	prefix := []string{"create:ipc", "create:observations", "create:controller", "start:controller", "create:guard", "start:guard", "snapshot", "create:agent", "snapshot", "start:agent",
+		"stop:agent", "remove:agent", "stop:guard", "capture-final"}
+	ordered := len(d.log) == len(prefix)+8 && slices.Equal(d.log[:len(prefix)], prefix)
+	if ordered {
+		together := d.log[len(prefix) : len(prefix)+3]
+		guardStop, guardRemove := slices.Index(together, "stop:guard"), slices.Index(together, "remove:guard")
+		ordered = slices.Contains(together, "stop:controller") && guardStop >= 0 && guardRemove > guardStop
+		rest := d.log[len(prefix)+3:]
+		ordered = ordered && slices.Equal(rest[:2], []string{"stop:controller", "remove:controller"}) &&
+			(slices.Equal(rest[2:4], []string{"remove:ipc", "remove:observations"}) || slices.Equal(rest[2:4], []string{"remove:observations", "remove:ipc"})) &&
+			rest[4] == "close"
+	}
+	if !ordered {
+		t.Fatalf("lifecycle order:\n%v\nwant %v, then the guard's stop and removal beside the controller's stop, the controller's removal, both volumes, close", d.log, prefix)
 	}
 	record, err := f.store.Execution(f.record.ID)
 	if err != nil || record.Receipt == nil || record.Receipt.Completeness != "complete" || record.Receipt.Cleanup != "complete" || *record.Receipt.Snapshot.Counters.SentBytes != 123 {

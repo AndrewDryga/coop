@@ -23,7 +23,12 @@ const liveACPStartGate = `
 IFS= read -r coop_gate <&3 || exit 125
 [ "$coop_gate" = go ] || exit 125
 exec 3<&-
-trap '' TERM HUP INT
+# The leader pins this generation's process group until the supervisor ends it. TERM is that request
+# — a filtered child's graceful stop, which the child answers by tearing its gateway down — so it is
+# only noted: the leader outlives the child, then lets the group go.
+coop_stop=
+trap 'coop_stop=1' TERM
+trap '' HUP INT
 # A non-interactive shell gives an asynchronous command /dev/null as stdin. Preserve the editor's
 # ACP pipe on a private descriptor before backgrounding, then close the duplicate in both processes.
 exec 4<&0
@@ -31,8 +36,9 @@ exec 4<&0
 coop_child=$!
 exec 4<&-
 exec 0<&- 1>&- 2>&-
-wait "$coop_child"
-while :; do /bin/sleep 3600; done
+# A trapped TERM interrupts wait; keep waiting until the child is really gone.
+while kill -0 "$coop_child" 2>/dev/null; do wait "$coop_child"; done
+while [ -z "$coop_stop" ]; do /bin/sleep 3600; done
 `
 
 var (

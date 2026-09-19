@@ -4,6 +4,17 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Closing an editor session in a project with network rules no longer leaves its network gateways
+  running. Coop ended each of the session's boxes with a kill, which skipped the box's own teardown,
+  so every closed session left two containers and two volumes per box running until the next run with
+  network rules cleaned them up. The boxes now tear themselves down, all at once rather than one after
+  another, and the whole session is gone in about a second and a half.
+
+- Stopping a run with network rules takes about 1.25 seconds instead of 1.8. The gateway waited for
+  its next once-a-second measurement before its final report, and cleanup steps that do not depend on
+  each other ran one after another. Remote sessions kept warm in different workspaces also stop
+  together when the session service shuts down.
+
 - Switching providers in your editor now uses the box Coop keeps ready for it. Coop has always started
   a box in the background for each other signed-in provider, but a Provider switch never took it — the
   editor's switch names an account, and the ready box was only for switches that named none — so every

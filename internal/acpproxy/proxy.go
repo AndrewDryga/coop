@@ -192,6 +192,10 @@ type RunOpts struct {
 	Resume   *Snapshot       // seed + replay this session state on the FIRST child (a resumed start)
 	Reload   <-chan struct{} // a receive triggers a graceful reload: snapshot + stop child + return reloadError
 	Bindings BindingStore    // durable thread → native-session bindings across processes; nil = memory only (bindings.go)
+	// Stopping, when set, is called once as the proxy begins shutting down — the editor gone or ctx
+	// done — before it stops its child, so a caller can tear down its own independent resources at the
+	// same time instead of after. It must not block.
+	Stopping func()
 }
 
 // reloadError is returned by RunWith when a reload fires; it carries the snapshot to hand the
@@ -226,6 +230,7 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 		out:            clientOut,
 		hooks:          hooks,
 		bindings:       opts.Bindings,
+		stopping:       opts.Stopping,
 		authentication: map[authenticationScope]authenticationState{},
 		setupReqs:      map[string]setupRequest{},
 		authPending:    map[authenticationScope]string{},
@@ -522,6 +527,9 @@ type clientLine struct {
 type proxy struct {
 	out io.Writer
 
+	stopping     func()    // RunOpts.Stopping
+	stoppingOnce sync.Once // it runs once, whichever shutdown path gets there first
+
 	controlMu      sync.Mutex // serializes controller hooks with restart decisions and resume admission
 	mu             sync.Mutex
 	child          *Child
@@ -694,6 +702,9 @@ func (p *proxy) retireChild(c *Child) {
 }
 
 func (p *proxy) shutdownChild() {
+	if p.stopping != nil {
+		p.stoppingOnce.Do(p.stopping)
+	}
 	p.mu.Lock()
 	p.shuttingDown = true
 	c, candidate := p.child, p.candidate

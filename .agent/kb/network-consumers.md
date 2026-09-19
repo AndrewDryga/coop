@@ -2,8 +2,8 @@
 name: network-consumers
 description: how the loop, direct/ACP runs and remote sessions consume one frozen network capture, and which surface reads which evidence
 subsystem: networking
-sources: [internal/networkreport/report.go, internal/box/run.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/fork_cmd.go, internal/cli/boxsweep.go, internal/forkctl/merge.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/cli/session_policies_view.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/session/schema.go, internal/workerproto/protocol.go]
-updated: 2026-09-18
+sources: [internal/networkreport/report.go, internal/box/run.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/acpctl/warm.go, internal/cli/fork_cmd.go, internal/cli/boxsweep.go, internal/forkctl/merge.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/cli/session_policies_view.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/session/schema.go, internal/workerproto/protocol.go]
+updated: 2026-09-19
 ---
 
 Admission happens ONCE per unit of work and the resulting `*box.CapturedEgress` is passed down; no
@@ -22,7 +22,11 @@ switch reuses that capture instead of meeting a mid-session denial. Each spawned
 per-child REFERENCE through `COOP_NETWORK_CAPTURE` (`cli/acp_cmd.go:493`) — the same envelope a
 remote session uses — and an inherited one is stripped from the child environment. A filtered ACP
 child gets no `--cidfile` (the gateway engine owns its container ids) and a SIGTERM-cancelable
-context, so an editor closing the session cleans up instead of stranding a gateway.
+context, and the supervisor's stop (`stopACPChild`) sends SIGTERM and waits up to 30 s
+(`acpFilteredStopGrace`) before SIGKILL, so an editor closing the session lets every box — active and
+parked, together — tear its own gateway down. Until 2026-09-19 it sent SIGKILL at once: every closed
+filtered editor session stranded each box's guard, controller and volumes until the next filtered
+launch settled them.
 
 **The loop** admits once, right after the review ladders are built, and every box it launches —
 pre-flight, work, review, verify, debug shell — attaches that same capture through one `runBox`
@@ -143,6 +147,9 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-09-19 — the ACP supervisor's child stop is graceful for filtered children (was SIGKILL, which
+  stranded every gateway on editor close); the session daemon closes warm sessions per workspace
+  concurrently
 - 2026-09-18 — direct, ACP and fork ACP launches go through `runBox`, and fork and session review
   gates call `forkctl.Host.SettleFilteredRuns`, so interrupted filtered runs are settled before a
   filtered box starts; the stop-window row above no longer claims a killed child's receipt cannot

@@ -57,6 +57,18 @@ type kernelEvents struct {
 	mu     sync.Mutex
 	sample KernelSample
 	read   func(context.Context) (KernelCounters, error)
+	// wake asks the sampler for a sample now rather than at its next tick: a terminal barrier needs one
+	// started after its cutoff, and every run's teardown waits for it. Made on first use.
+	wake chan struct{}
+}
+
+func (k *kernelEvents) wakeup() chan struct{} {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.wake == nil {
+		k.wake = make(chan struct{}, 1)
+	}
+	return k.wake
 }
 
 func (k *kernelEvents) snapshot() KernelSample {
@@ -80,6 +92,7 @@ func (k *kernelEvents) run(ctx context.Context, clock *BootClock) {
 	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	wake := k.wakeup()
 	for {
 		started := clock.instant()
 		bounded, cancel := context.WithTimeout(ctx, KernelSampleTimeout)
@@ -98,6 +111,7 @@ func (k *kernelEvents) run(ctx context.Context, clock *BootClock) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-wake:
 		}
 	}
 }
@@ -105,6 +119,12 @@ func (k *kernelEvents) run(ctx context.Context, clock *BootClock) {
 func (k *kernelEvents) after(ctx context.Context, cutoff BootInstant) KernelSample {
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
+	// Without this the barrier waits out up to a whole sampling tick — the better part of a second on
+	// every filtered run's stop. A sample started now starts after the cutoff, which has passed.
+	select {
+	case k.wakeup() <- struct{}{}:
+	default: // a wake is already pending
+	}
 	for {
 		sample := k.snapshot()
 		if sample.StartedBoot.Valid() && !sample.StartedBoot.Before(cutoff) {

@@ -45,6 +45,13 @@ acp_switch_cold,acp_switch_warm` times a Provider switch to the replayed `config
 counts a warm sample only on `spawn: warm box`; `TestScriptedACPProviderSwitchIsServedWarm` proves the
 wiring on the fixture runtime. The bench parses these lines, so change them together.
 
+**Stop.** When the proxy begins shutting down it calls `RunOpts.Stopping` before stopping the active
+child; the supervisor then cancels in-flight warm fills (a fill that has not launched launches nothing)
+and reaps the pool, whose parked boxes stop concurrently — beside the active box, not after it. The
+deferred reap waits for that same teardown. Measured on a filtered project with two parked boxes:
+editor close → everything gone in ~1.4 s.
+
 ## Changelog
+- 2026-09-19 — stop: Stopping hook, cancelled fills, concurrent reap
 - 2026-09-19 — rewritten from acp-warm-pool-serves-only-bare-targets: identity-matched reuse, image
   check, rebalance; the measured miss it replaced is recorded in task 2026-09-18-measure-editor-warm-…

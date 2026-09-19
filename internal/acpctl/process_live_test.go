@@ -375,3 +375,55 @@ func waitCommand(cmd *exec.Cmd, timeout time.Duration) error {
 		return errors.New("live ACP helper timed out")
 	}
 }
+
+// The resident leader pins the generation's process group, but a stop's TERM is a request it honours
+// once its child — which tears a filtered gateway down on TERM — has exited; a child that exits on its
+// own still leaves the group pinned until the supervisor ends it.
+func TestLiveACPStartGateReleasesTheGroupOnlyWhenAskedToStop(t *testing.T) {
+	start := func(t *testing.T, child string) (*exec.Cmd, chan struct{}) {
+		t.Helper()
+		gate, released, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("/bin/sh", "-c", liveACPStartGate, "gate", "/bin/sh", "-c", child)
+		cmd.ExtraFiles = []*os.File{gate}
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		gate.Close()
+		if _, err := released.WriteString("go\n"); err != nil {
+			t.Fatal(err)
+		}
+		released.Close()
+		exited := make(chan struct{})
+		go func() { _ = cmd.Wait(); close(exited) }()
+		t.Cleanup(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); <-exited })
+		return cmd, exited
+	}
+	dir := t.TempDir()
+	marker, ready := filepath.Join(dir, "tore-down"), filepath.Join(dir, "ready")
+	cmd, exited := start(t, "trap 'echo done > "+marker+"; exit 0' TERM; : > "+ready+"; while :; do /bin/sleep 0.05; done")
+	waitForFile(t, ready)
+	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-exited:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the leader held the group after its child answered the stop")
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("the child was not let to tear down before the group ended")
+	}
+
+	_ = os.Remove(ready)
+	_, exited = start(t, ": > "+ready+"; exit 0") // the child ends on its own
+	waitForFile(t, ready)
+	select {
+	case <-exited:
+		t.Fatal("the leader released the group without being asked to stop")
+	case <-time.After(300 * time.Millisecond):
+	}
+}

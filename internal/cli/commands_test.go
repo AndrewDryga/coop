@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -583,6 +585,86 @@ func TestSpawnBoxExportsEmptyPresetSelection(t *testing.T) {
 	})
 	if string(recorded) != "set:" {
 		t.Fatalf("COOP_ACP_PRESET handoff = %q, want present-but-empty", recorded)
+	}
+}
+
+// A filtered ACP child tears its own gateway down when its run is cancelled, so it is asked with SIGTERM
+// and waited for; one that ignores the request, and a child with nothing of its own to tear down, is
+// killed.
+func TestStopACPChildLetsAFilteredChildTearDownFirst(t *testing.T) {
+	start := func(t *testing.T, script string) (int, chan struct{}) {
+		t.Helper()
+		cmd := exec.Command("sh", "-c", script)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		exited := make(chan struct{})
+		go func() { _ = cmd.Wait(); close(exited) }()
+		return cmd.Process.Pid, exited
+	}
+	marker := filepath.Join(t.TempDir(), "tore-down")
+	ready := filepath.Join(t.TempDir(), "ready")
+	awaitReady := func(t *testing.T) {
+		t.Helper()
+		wait.For(t, "the child installing its handler", func() bool { _, err := os.Stat(ready); return err == nil })
+		_ = os.Remove(ready)
+	}
+
+	pid, exited := start(t, "trap 'echo done > "+marker+"; exit 0' TERM; : > "+ready+"; while :; do sleep 0.05; done")
+	awaitReady(t)
+	began := time.Now()
+	stopACPChild(pid, 10*time.Second)
+	<-exited
+	if _, err := os.Stat(marker); err != nil || time.Since(began) > 5*time.Second {
+		t.Fatalf("the child was not let to tear down on SIGTERM (marker: %v, took %s)", err, time.Since(began))
+	}
+
+	pid, exited = start(t, "trap '' TERM; : > "+ready+"; while :; do sleep 0.05; done")
+	awaitReady(t)
+	began = time.Now()
+	stopACPChild(pid, 300*time.Millisecond)
+	select {
+	case <-exited:
+	case <-time.After(wait.Deadline):
+		t.Fatal("a child that ignored SIGTERM was never killed")
+	}
+	if time.Since(began) < 300*time.Millisecond {
+		t.Fatal("a child that ignored SIGTERM was killed before its grace ran out")
+	}
+
+	_ = os.Remove(marker)
+	pid, exited = start(t, "trap 'echo done > "+marker+"; exit 0' TERM; : > "+ready+"; while :; do sleep 0.05; done")
+	awaitReady(t)
+	stopACPChild(pid, 0)
+	<-exited
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a child with nothing to tear down got SIGTERM instead of being killed")
+	}
+}
+
+// Stopping the editor cancels the warm fills still in flight: a fill that has not launched its box
+// launches nothing, so the pool's reap does not wait for a box no switch will use.
+func TestSpawnBoxLaunchesNothingForACancelledFill(t *testing.T) {
+	launched := filepath.Join(t.TempDir(), "launched")
+	shim := filepath.Join(t.TempDir(), "inner")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\n: > "+strconv.Quote(launched)+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	ctrl := acpctl.New(cfg, "codex", "", "", t.TempDir(), acpctl.Selection{}, nil, nil, acpHost())
+	a := &app{cfg: cfg}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	child, err := a.spawnBox(cancelled, shim, nil, "warm-supervisor", ctrl, agents.Target{Provider: "codex", Accounts: []string{"default"}}, "", true, io.Discard, forkspace.ExecutionRoleWarm)
+	if child != nil {
+		child.Stop()
+	}
+	if err == nil {
+		t.Fatal("a cancelled warm fill spawned a box")
+	}
+	if _, statErr := os.Stat(launched); statErr == nil {
+		t.Fatal("a cancelled warm fill launched its inner process")
 	}
 }
 
