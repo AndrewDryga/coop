@@ -1,9 +1,12 @@
 package eval
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -131,4 +134,44 @@ func snapshotSymlink(root, path, target string) error {
 		return fmt.Errorf("symlink resolves outside the workspace")
 	}
 	return os.Symlink(dest, target)
+}
+
+// TreeSignature summarizes a workspace's content-bearing files — every regular file outside `.git`,
+// by relative path and size — so two moments can be compared cheaply. It answers exactly one
+// question: did anything happen here?
+//
+// That question matters because "the agent exited non-zero and changed NOTHING" is almost never
+// evidence about the model. It is what a refused request, an expired login, a missing binary or an
+// unsupported model looks like from outside, and grading an untouched workspace would record a
+// confident FAIL for a trial where the model never got to work. `.git` is excluded because the
+// initial commit is Coop's own and says nothing about the candidate.
+func TreeSignature(dir string) (string, error) {
+	h := sha256.New()
+	var entries []string
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil // unreadable entries cannot be compared; they are the same on both sides
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil || rel == "." {
+			return nil
+		}
+		if strings.EqualFold(d.Name(), ".git") && d.IsDir() {
+			return filepath.SkipDir
+		}
+		info, err := d.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			return nil
+		}
+		entries = append(entries, fmt.Sprintf("%s:%d", rel, info.Size()))
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	sort.Strings(entries)
+	for _, e := range entries {
+		fmt.Fprintf(h, "%d:%s", len(e), e)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }

@@ -105,3 +105,38 @@ func contains(list []string, want string) bool {
 	}
 	return false
 }
+
+// TreeSignature answers one question — did anything happen here? — and must ignore the .git Coop
+// created itself, or every trial would look like work was done.
+func TestTreeSignatureDetectsWorkAndIgnoresGit(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "a.txt"), "one\n")
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
+
+	base, err := TreeSignature(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := TreeSignature(dir); again != base {
+		t.Error("the signature is not stable for an unchanged tree")
+	}
+	// Coop's own git activity is not the candidate's work.
+	mustWrite(t, filepath.Join(dir, ".git", "COMMIT_EDITMSG"), "anything\n")
+	if changed, _ := TreeSignature(dir); changed != base {
+		t.Error("a change inside .git counted as candidate work")
+	}
+	// A new file is work.
+	mustWrite(t, filepath.Join(dir, "answer.txt"), "hello\n")
+	if changed, _ := TreeSignature(dir); changed == base {
+		t.Error("creating a file did not change the signature")
+	}
+	// So is editing one to a different size.
+	base2, _ := TreeSignature(dir)
+	mustWrite(t, filepath.Join(dir, "a.txt"), "one much longer line\n")
+	if changed, _ := TreeSignature(dir); changed == base2 {
+		t.Error("editing a file did not change the signature")
+	}
+}

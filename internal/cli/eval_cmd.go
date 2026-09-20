@@ -179,6 +179,11 @@ func (a *app) evalRun(args []string) (int, error) {
 // trial's workspace lives under one scratch root that is removed when the run ends — the durable
 // record is the store's, not a pile of temp directories.
 func (a *app) executeEvalRun(plan *eval.Plan, frozen []eval.FrozenConfig) (int, error) {
+	// Every trial runs in a box, so the runtime has to be detected before the first launch — and
+	// refused HERE, by name, rather than surfacing later as an unhelpful per-trial error.
+	if err := a.ensureRuntime(); err != nil {
+		return 1, err
+	}
 	root, err := evalStateRoot()
 	if err != nil {
 		return 1, err
@@ -196,10 +201,14 @@ func (a *app) executeEvalRun(plan *eval.Plan, frozen []eval.FrozenConfig) (int, 
 	}
 	defer os.Remove(workRoot) // succeeds only when every trial passed and removed its own directory
 
-	runner := &trialRunner{
-		app: a, suite: plan.Suite, workRoot: workRoot,
-		image: box.ImageForRepo("", a.cfg.BaseImage, a.cfg.ImageOverride),
+	// Resolve the managed base image to its definition-pinned tag, the same way every other box
+	// command does — an unresolved "coop-box" is not a tag that exists.
+	box.ResolveBaseImage(a.cfg)
+	image := box.ImageForRepo("", a.cfg.BaseImage, a.cfg.ImageOverride)
+	if !box.ImageExists(a.rt, image) {
+		return 1, fmt.Errorf("the box image %s is not built yet — run: coop build", image)
 	}
+	runner := &trialRunner{app: a, suite: plan.Suite, workRoot: workRoot, image: image}
 	fmt.Printf("Running %s (%d trials)…\n", store.ID(), len(plan.Suite.Cases)*len(plan.Configs)*plan.Repeat)
 	summary, err := eval.Execute(context.Background(), plan, frozen, store, runner.run, time.Now)
 	if err != nil {
@@ -413,8 +422,12 @@ func parseEvalRunArgs(args []string) (suite string, positionals []string, opts e
 			positionals = append(positionals, arg)
 		}
 	}
+	// A whole-invocation deadline is required, not defaulted: an eval launches real models, and the
+	// one number that bounds what it can spend should be a decision the operator made, not one Coop
+	// guessed. It is required for --dry-run too, because the dry run's job is to show exactly what
+	// the real run would do — deadline included.
 	if opts.Timeout <= 0 {
-		return "", nil, opts, ui.MissingOptionValue("--timeout", cmd, "coop eval run <suite> <target|preset>... --timeout 60m")
+		return "", nil, opts, ui.MissingArgument("--timeout", cmd, "coop eval run <suite> <target|preset>... --timeout 60m")
 	}
 	return suite, positionals, opts, nil
 }

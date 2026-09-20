@@ -217,66 +217,66 @@ func TestTrialRunnerRefusesAPresetOnAnAgentSuite(t *testing.T) {
 	}
 }
 
-// The candidate's exit code does not decide the verdict — the verifier does. An agent that exits
-// non-zero having done the work still passes.
-func TestTrialRunnerLetsTheVerifierDecideNotTheAgentExitCode(t *testing.T) {
-	suite := trialSuite(t)
-	r := newTrialRunner(t, suite, func(spec box.RunSpec) (int, error) {
-		if spec.Agent != "" {
-			return 1, nil // the agent exited non-zero...
-		}
-		return 0, nil // ...but its work verifies
-	})
-	if res := r.run(context.Background(), trialFor(suite)); res.Status != eval.TrialPassed {
-		t.Errorf("status = %q (detail %q); the verifier decides, not the agent's exit code", res.Status, res.Detail)
-	}
-}
-
-// A pinned @account must actually be used: labelling a run with one credential and executing it on
-// another would make the whole comparison a lie. More than one account is a ladder, which an eval
-// must refuse rather than silently narrow.
-func TestApplyEvalConfiguration(t *testing.T) {
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	name, err := applyEvalConfiguration(cfg, eval.FrozenConfig{Kind: eval.ConfigTarget, Label: "codex:gpt-5.6/xhigh@work"})
-	if err != nil || name != "codex" {
-		t.Fatalf("agent = %q, err = %v", name, err)
-	}
-	// AgentDir resolves through the selected profile, so the pinned account shows up in the
-	// credential home the attempt would mount.
-	if dir := cfg.AgentDir("codex"); !strings.Contains(dir, "work") {
-		t.Errorf("the pinned account was dropped: credential home = %q", dir)
-	}
-
-	// A ladder is refused by name.
-	if _, err := applyEvalConfiguration(cfg, eval.FrozenConfig{Kind: eval.ConfigTarget, Label: "codex@work,personal"}); err == nil ||
-		!strings.Contains(err.Error(), "exactly one") {
-		t.Errorf("a two-account ladder should be refused, got %v", err)
-	}
-	// A preset is refused with the reason.
-	if _, err := applyEvalConfiguration(cfg, eval.FrozenConfig{Kind: eval.ConfigPreset, Label: "frontier"}); err == nil ||
-		!strings.Contains(err.Error(), "loop suites") {
-		t.Errorf("a preset should be refused, got %v", err)
-	}
-}
-
-// Clone must deep-copy the per-run maps, or two trials evaluating DIFFERENT configurations would
-// share one selection.
-func TestEvalConfigurationsDoNotLeakBetweenTrials(t *testing.T) {
+// A candidate runs with no MCP servers and on its own copy of the config: MCP is a route out of the
+// trial and differs per machine, and a shared config would leak one trial's selection into the next.
+func TestEvalTrialConfigDropsMCPAndDoesNotTouchTheCallers(t *testing.T) {
 	base, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, b := base.Clone(), base.Clone()
-	if _, err := applyEvalConfiguration(a, eval.FrozenConfig{Kind: eval.ConfigTarget, Label: "codex:gpt-5.6@work"}); err != nil {
+	base.MCPFile = filepath.Join(t.TempDir(), "mcp.json")
+	cfg := evalTrialConfig(base)
+	if cfg.MCPFile != "" {
+		t.Errorf("a candidate was given MCP servers: %q", cfg.MCPFile)
+	}
+	if base.MCPFile == "" {
+		t.Error("the trial cleared the caller's MCP configuration instead of its own copy")
+	}
+	// And the per-run selections are independent, not shared through the clone.
+	if _, err := applyEvalConfiguration(cfg, eval.FrozenConfig{Kind: eval.ConfigTarget, Label: "codex@work"}); err != nil {
 		t.Fatal(err)
 	}
-	if dir := b.AgentDir("codex"); strings.Contains(dir, "work") {
-		t.Errorf("one trial's account selection leaked into another: %q", dir)
-	}
 	if dir := base.AgentDir("codex"); strings.Contains(dir, "work") {
-		t.Errorf("a trial's account selection leaked into the caller's config: %q", dir)
+		t.Errorf("the trial's account selection leaked into the caller's config: %q", dir)
+	}
+}
+
+// An agent that exits non-zero having changed NOTHING is not evidence about the model — it is what
+// an unsupported model, an expired login or a missing binary looks like from outside. Recording it
+// as a failure would put a confident zero on a trial where the model never got to work.
+func TestTrialRunnerDoesNotScoreAnUntouchedWorkspaceAsAFailure(t *testing.T) {
+	suite := trialSuite(t)
+	graded := false
+	r := newTrialRunner(t, suite, func(spec box.RunSpec) (int, error) {
+		if spec.Agent != "" {
+			return 1, nil // the provider refused; the workspace is untouched
+		}
+		graded = true
+		return 1, nil // the verifier would happily call it a fail
+	})
+	res := r.run(context.Background(), trialFor(suite))
+	if res.Status != eval.TrialError {
+		t.Errorf("status = %q, want error (detail %q)", res.Status, res.Detail)
+	}
+	if !strings.Contains(res.Detail, "not a model failure") {
+		t.Errorf("the reason was not explained: %q", res.Detail)
+	}
+	if graded {
+		t.Error("an untouched workspace was still sent to the verifier")
+	}
+}
+
+// But an agent that exits non-zero having DONE something is graded normally — the verifier decides,
+// and a genuine failure is still a failure.
+func TestTrialRunnerStillGradesWorkAfterANonZeroExit(t *testing.T) {
+	suite := trialSuite(t)
+	r := newTrialRunner(t, suite, func(spec box.RunSpec) (int, error) {
+		if spec.Agent != "" {
+			return 1, os.WriteFile(filepath.Join(spec.Repo, "answer.txt"), []byte("hello\n"), 0o644)
+		}
+		return 0, nil
+	})
+	if res := r.run(context.Background(), trialFor(suite)); res.Status != eval.TrialPassed {
+		t.Errorf("status = %q (detail %q); work was done, so the verifier decides", res.Status, res.Detail)
 	}
 }

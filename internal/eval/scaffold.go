@@ -9,11 +9,14 @@ import (
 // Scaffold writes a working custom suite into dir: a runnable agent example plus a documented loop
 // example, and the directories the manifest references. It is create-only — the CLI proves the
 // manifest does not already exist — so it never overwrites a user's work. The result loads and
-// plans as-is (a placeholder verifier), so a user edits a working shape rather than a blank file.
+// RUNS as-is — the scaffolded verifier is a real, working grader for the scaffolded case, not a
+// placeholder — so `coop eval init` followed by `coop eval run` produces an actual verdict, and a
+// user edits something they have already seen work.
 func Scaffold(dir string) error {
 	files := map[string]string{
 		"suite.yaml":                   scaffoldManifest,
 		"verifiers/greeting/README.md": scaffoldVerifierNote,
+		"verifiers/greeting/verify.sh": scaffoldVerifier,
 		"files/greeting/.keep":         "",
 	}
 	for rel := range files {
@@ -69,6 +72,26 @@ cases:
 #     tasks: ./queues/repository-evolution # an ordinary Coop task queue template
 #     verifier: ./verifiers/repository-evolution
 #     timeout: 50m
+`
+
+// scaffoldVerifier grades the scaffolded case for real. It is deliberately tiny and uses only the
+// three exit codes, so it doubles as the worked example the README describes.
+const scaffoldVerifier = `#!/bin/sh
+# Grades the "greeting" case. Runs in a clean container with the candidate's finished
+# workspace at /workspace — no model credentials, no network.
+#
+#   exit 0 = passed    exit 1 = did not pass    anything else = the GRADER broke
+
+test -f /workspace/greeting.txt || {
+	echo "greeting.txt was not created"
+	exit 1
+}
+if [ "$(cat /workspace/greeting.txt)" != "hello" ]; then
+	echo "greeting.txt does not contain exactly: hello"
+	exit 1
+fi
+echo "greeting.txt is correct"
+exit 0
 `
 
 const scaffoldVerifierNote = `# Independent verifier

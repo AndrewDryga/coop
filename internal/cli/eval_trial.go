@@ -60,6 +60,9 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 
 	// 2. Size before the candidate touches anything. A measurement gap is recorded, never a zero.
 	before, beforeErr := eval.MeasureSize(ctx, workspace)
+	// And a signature of the initial tree, so we can tell afterwards whether the candidate did
+	// anything at all (see the untouched-workspace check below).
+	beforeSig, _ := eval.TreeSignature(workspace)
 
 	// 3. The attempt. This is the only paid step.
 	att, err := r.attempt(ctx, t, workspace)
@@ -70,6 +73,19 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 		// The provider refused — an expired login, a rate limit, a quota. The model never got to
 		// try, so grading its untouched workspace would record a FAIL that is really our problem.
 		return fail(ctx, joinDetail("the provider refused the attempt (rate limit, quota or sign-in), so there is nothing to grade", att.detail))
+	}
+	// The same judgement, reached without having to recognize any particular provider's wording: the
+	// agent exited non-zero AND left the workspace exactly as it found it. A model that genuinely
+	// tried and failed leaves something behind — a file, an edit, a broken attempt. Nothing at all,
+	// plus a non-zero exit, is what an unsupported model, an expired login or a missing binary looks
+	// like from out here, and calling that a FAIL would put a confident zero on a trial where the
+	// model never got to work. It is recorded as a harness error instead, with the agent's own words.
+	if att.code != 0 {
+		if sig, sigErr := eval.TreeSignature(workspace); sigErr == nil && beforeSig != "" && sig == beforeSig {
+			return fail(ctx, joinDetail(
+				fmt.Sprintf("the agent exited %d having changed nothing in the workspace, so there is no work to grade — recorded as a harness error, not a model failure", att.code),
+				att.detail))
+		}
 	}
 
 	// 4. The candidate's box has exited, so the workspace is quiet: snapshot it. A non-zero agent
@@ -96,7 +112,13 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 	if res.Status == eval.TrialPassed {
 		os.RemoveAll(dir)
 	} else {
+		// Keep what a reader needs to understand a non-pass: the graded tree, and what the MODEL
+		// said. Without the attempt's own output, a trial where the model did nothing at all is
+		// indistinguishable from one where it tried and was refused.
 		os.RemoveAll(workspace) // the pre-grading copy is redundant once the snapshot exists
+		if att.detail != "" {
+			res.Detail = joinDetail(res.Detail, "the model's last words: "+att.detail)
+		}
 		res.Detail = joinDetail(res.Detail, "graded workspace kept at "+snap.Dir)
 	}
 	return res
@@ -106,6 +128,7 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 // sign-in, rate limit, quota) — the model never worked, so this is a harness fact, not a result.
 type attemptOutcome struct {
 	detail  string
+	code    int
 	limited bool
 }
 
@@ -116,7 +139,7 @@ func (r *trialRunner) attempt(ctx context.Context, t eval.Trial, workspace strin
 	// A CLONE of the config, not `*r.app.cfg`: Config carries per-run maps, and a shallow copy shares
 	// them — so one trial's model/effort/profile would leak into the next, which may be evaluating
 	// the OTHER configuration, and concurrent workers would race on one map.
-	cfg := r.app.cfg.Clone()
+	cfg := evalTrialConfig(r.app.cfg)
 	agentName, err := applyEvalConfiguration(cfg, t.Config)
 	if err != nil {
 		return attemptOutcome{}, err
@@ -159,11 +182,25 @@ func (r *trialRunner) attempt(ctx context.Context, t eval.Trial, workspace strin
 		run = func(s box.RunSpec) (int, error) { return box.Run(cfg, r.app.rt, s) }
 	}
 	code, err := run(spec)
-	res := attemptOutcome{detail: gradeDetail(out.String(), errOut.String())}
+	res := attemptOutcome{detail: gradeDetail(out.String(), errOut.String()), code: code}
 	if probe != nil {
 		res.limited = probe.Limited(code)
 	}
 	return res, err
+}
+
+// evalTrialConfig is the config a candidate runs under: a CLONE of the operator's (Config's per-run
+// maps are shared by a shallow copy, so one trial's model/effort/account would otherwise leak into
+// the next), with MCP servers removed.
+//
+// No MCP for a candidate, for two reasons that each disqualify on their own. They are a route OUT of
+// the trial — to the operator's infrastructure, their tickets, a web search that might surface the
+// answer — and they differ from machine to machine, so a run that used them would not be
+// reproducible by anyone else. An eval measures the model on the case.
+func evalTrialConfig(base *config.Config) *config.Config {
+	cfg := base.Clone()
+	cfg.MCPFile = ""
+	return cfg
 }
 
 // applyEvalConfiguration selects on cfg exactly what the configuration names, and returns the agent
