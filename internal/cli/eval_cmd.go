@@ -334,6 +334,11 @@ func renderEvalComparison(c *eval.Comparison) {
 		// denominator, so a run can't look better by not finishing. Coverage is a separate figure.
 		fmt.Printf("  %-7s %v: %d/%d passed; coverage %d/%d graded; failed %d, error %d, timed out %d, pending %d\n",
 			label, o.Configs, o.Passed, o.Requested, o.Covered(), o.Requested, o.Failed, o.Errored, o.TimedOut, o.Pending)
+		if o.Size.Measured > 0 {
+			// Beside the counts, never inside them: this is a review signal, not a score.
+			fmt.Printf("          change size: net code %+d (%d→%d lines) over %d graded trial(s)\n",
+				o.Size.NetGrowth, o.Size.CodeBefore, o.Size.CodeAfter, o.Size.Measured)
+		}
 	}
 	fmt.Println()
 	line("before", c.Base)

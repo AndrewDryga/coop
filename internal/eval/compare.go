@@ -36,6 +36,20 @@ type ConfigOutcome struct {
 	Errored   int
 	Pending   int
 	TimedOut  int
+	// Size is the change-size summary over the trials that were actually GRADED. It is a separate
+	// field, never mixed into the counts above, because size is a review signal and not a score: a
+	// smaller wrong answer does not beat a larger right one, and two equally correct solutions of
+	// different size is a question for a human, not a ranking.
+	Size SizeSummary
+}
+
+// SizeSummary aggregates change size across a run's graded trials. Measured is how many of them
+// carried a measurement, so a partial figure is never read as a complete one.
+type SizeSummary struct {
+	Measured   int
+	NetGrowth  int // summed after-minus-before code across measured trials
+	CodeBefore int
+	CodeAfter  int
 }
 
 // Covered is the trials that reached a graded verdict (passed or failed) — the COVERAGE figure,
@@ -111,6 +125,17 @@ func outcomeOf(r sealedRun) ConfigOutcome {
 	o := ConfigOutcome{Requested: r.summary.Requested}
 	for _, c := range r.run.Configs {
 		o.Configs = append(o.Configs, c.Label)
+	}
+	for _, tr := range r.trials {
+		// Only a graded trial's size means anything: an errored or never-started trial's workspace
+		// says nothing about what the configuration would have written.
+		if tr.Size == nil || (tr.Status != TrialPassed && tr.Status != TrialFailed) {
+			continue
+		}
+		o.Size.Measured++
+		o.Size.CodeBefore += tr.Size.CodeBefore
+		o.Size.CodeAfter += tr.Size.CodeAfter
+		o.Size.NetGrowth += tr.Size.NetGrowth()
 	}
 	for status, n := range r.summary.Counts {
 		switch status {

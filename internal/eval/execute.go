@@ -38,6 +38,8 @@ type Trial struct {
 type TrialResult struct {
 	Status TrialStatus
 	Detail string
+	// Size is the change-size measurement, when one was taken. nil means it could not be measured.
+	Size *TrialSize
 }
 
 // TrialFunc runs one trial to a terminal result. It must honor ctx (cancelled at the trial deadline
@@ -82,12 +84,13 @@ func Execute(ctx context.Context, plan *Plan, frozen []FrozenConfig, store *Stor
 
 	var mu sync.Mutex
 	counts := map[TrialStatus]int{}
-	record := func(t Trial, status TrialStatus, detail string, started, ended time.Time) error {
+	record := func(t Trial, status TrialStatus, detail string, size *TrialSize, started, ended time.Time) error {
 		mu.Lock()
 		counts[status]++
 		mu.Unlock()
 		rec := pendingRecord(store.ID(), t)
 		rec.Status, rec.Detail, rec.StartedAt, rec.EndedAt = status, capDetail(detail), started, ended
+		rec.Size = size
 		return store.WriteTrial(rec)
 	}
 
@@ -137,7 +140,7 @@ func Execute(ctx context.Context, plan *Plan, frozen []FrozenConfig, store *Stor
 				if status == "" {
 					status = TrialError
 				}
-				noteErr(record(t, status, res.Detail, started, now()))
+				noteErr(record(t, status, res.Detail, res.Size, started, now()))
 			}
 		}()
 	}

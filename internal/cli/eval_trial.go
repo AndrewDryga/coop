@@ -126,6 +126,10 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 	// 7. Size after, reported BESIDE the verdict. Size never changes a verdict: a smaller wrong
 	// answer is not better than a larger right one.
 	after, afterErr := eval.MeasureSize(ctx, snap.Dir, ignore...)
+	if beforeErr == nil && afterErr == nil {
+		// Recorded structurally as well as in prose, so a comparison can add it up.
+		res.Size = &eval.TrialSize{CodeBefore: before.TotalCode(), CodeAfter: after.TotalCode()}
+	}
 	res.Detail = joinDetail(res.Detail, sizeNote(before, beforeErr, after, afterErr, snap.Skipped))
 
 	// A trial that PASSED needs no evidence kept — its workspace is megabytes of "it worked". One

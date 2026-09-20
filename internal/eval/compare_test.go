@@ -92,3 +92,63 @@ func TestCompareRefusesAnUnsealedRun(t *testing.T) {
 		t.Error("comparing an unsealed run was allowed")
 	}
 }
+
+// Change size is aggregated over the trials that were actually GRADED, and kept in its own field:
+// an errored trial's workspace says nothing about what the configuration would have written, and
+// size must never be mixed into the pass counts, because it is a review signal and not a score.
+func TestCompareAggregatesSizeOnlyOverGradedTrials(t *testing.T) {
+	root := t.TempDir()
+	mk := func(id string, trials []TrialRecord) string {
+		plan := &Plan{Suite: &Suite{Name: "s", Runner: RunnerAgent, Cases: []Case{{ID: "c"}}}, Repeat: 1, Jobs: 1, Timeout: time.Minute}
+		rec := NewRunRecord(plan, []FrozenConfig{{Kind: ConfigTarget, Label: "t"}}, time.Now())
+		rec.ID = id
+		store, err := CreateRun(root, rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		counts := map[TrialStatus]int{}
+		for _, tr := range trials {
+			tr.RunID = id
+			if err := store.WriteTrial(tr); err != nil {
+				t.Fatal(err)
+			}
+			counts[tr.Status]++
+		}
+		if err := store.Seal(RunSummary{Requested: len(trials), Counts: counts}); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	base := mk("base-run", []TrialRecord{
+		{Case: "c", Status: TrialPassed, Size: &TrialSize{CodeBefore: 10, CodeAfter: 30}},
+		// Errored: its size must be ignored even though one was recorded.
+		{Case: "c", ConfigIndex: 0, Repetition: 1, Status: TrialError, Size: &TrialSize{CodeBefore: 10, CodeAfter: 9000}},
+		// Graded but unmeasured: counted as a trial, not as a zero-sized one.
+		{Case: "c", ConfigIndex: 0, Repetition: 2, Status: TrialFailed},
+	})
+	next := mk("next-run", []TrialRecord{
+		{Case: "c", Status: TrialPassed, Size: &TrialSize{CodeBefore: 10, CodeAfter: 14}},
+		{Case: "c", ConfigIndex: 0, Repetition: 1, Status: TrialError, Size: &TrialSize{CodeBefore: 10, CodeAfter: 9000}},
+		{Case: "c", ConfigIndex: 0, Repetition: 2, Status: TrialFailed},
+	})
+
+	cmp, err := Compare(root, base, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmp.Base.Size.Measured != 1 || cmp.Base.Size.NetGrowth != 20 {
+		t.Errorf("base size = %+v, want 1 measured trial and +20", cmp.Base.Size)
+	}
+	if cmp.New.Size.Measured != 1 || cmp.New.Size.NetGrowth != 4 {
+		t.Errorf("new size = %+v, want 1 measured trial and +4", cmp.New.Size)
+	}
+	// The errored trial's enormous size must not have leaked into either figure.
+	if cmp.Base.Size.CodeAfter > 100 || cmp.New.Size.CodeAfter > 100 {
+		t.Errorf("an ungraded trial's size was aggregated: base %+v new %+v", cmp.Base.Size, cmp.New.Size)
+	}
+	// And size is nowhere near the verdict counts.
+	if cmp.Base.Passed != 1 || cmp.New.Passed != 1 {
+		t.Errorf("pass counts changed with size: base %d new %d", cmp.Base.Passed, cmp.New.Passed)
+	}
+}

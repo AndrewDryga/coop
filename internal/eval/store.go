@@ -85,7 +85,21 @@ type TrialRecord struct {
 	EndedAt     time.Time   `json:"ended_at,omitzero"`
 	Order       int         `json:"order"`
 	Detail      string      `json:"detail,omitempty"`
+	// Size is the change-size measurement for this trial, when one was taken. It is recorded
+	// STRUCTURALLY, not only in Detail's prose, so a comparison can aggregate it — and it is kept
+	// beside the status rather than inside it, because size never decides a verdict.
+	Size *TrialSize `json:"size,omitempty"`
 }
+
+// TrialSize is what the change-size pass measured for one trial. Absent (nil on the record) when it
+// could not be taken — cloc missing, the tree unreadable — which is a measurement gap, never a zero.
+type TrialSize struct {
+	CodeBefore int `json:"code_before"`
+	CodeAfter  int `json:"code_after"`
+}
+
+// NetGrowth is after-minus-before code: the honest net, derived from the two totals.
+func (s TrialSize) NetGrowth() int { return s.CodeAfter - s.CodeBefore }
 
 // TrialKey identifies a trial within a run, and names its record file.
 func TrialKey(caseID string, configIndex, repetition int) string {
