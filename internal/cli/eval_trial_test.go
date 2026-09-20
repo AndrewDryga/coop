@@ -280,3 +280,45 @@ func TestTrialRunnerStillGradesWorkAfterANonZeroExit(t *testing.T) {
 		t.Errorf("status = %q (detail %q); work was done, so the verifier decides", res.Status, res.Detail)
 	}
 }
+
+// Trials share one credential home, and they have to: splitting a credential store per trial breaks
+// single-use refresh tokens, so the tokens themselves cannot be copied. What must NOT be shared is
+// anything a candidate could write to steer a LATER trial — above all the agent's instruction file,
+// which every agent reads at startup. Coop mounts those read-only over the home; this test pins that
+// property for the eval path, because losing it would let one trial write the next one's prompt.
+func TestTrialAttemptCannotRewriteTheNextTrialsInstructions(t *testing.T) {
+	suite := trialSuite(t)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Homes = true
+	recorder := filepath.Join(t.TempDir(), "argv.log")
+	r := &trialRunner{
+		app: &app{cfg: cfg, rt: recordingRuntime(t, recorder)}, suite: suite,
+		image: "coop-box:test", workRoot: t.TempDir(),
+	}
+	r.run(context.Background(), trialFor(suite))
+
+	data, rerr := os.ReadFile(recorder)
+	if rerr != nil {
+		t.Fatalf("the attempt never launched: %v", rerr)
+	}
+	var attempt string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "run ") && strings.Contains(line, "/.codex") {
+			attempt = line
+		}
+	}
+	if attempt == "" {
+		t.Skip("no credential-carrying attempt in this environment")
+	}
+	// Every mount that lands on an agent instruction file or its config must be read-only.
+	for _, field := range strings.Fields(attempt) {
+		for _, guarded := range []string{"AGENTS.md", "CLAUDE.md", "config.toml", "settings.json"} {
+			if strings.Contains(field, "/"+guarded) && !strings.HasSuffix(field, ":ro") {
+				t.Errorf("%s is mounted writable — a trial could rewrite what the next one is told:\n%s", guarded, field)
+			}
+		}
+	}
+}

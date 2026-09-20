@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
@@ -87,5 +88,62 @@ func TestGradingArgvIgnoresAHostileProjectPolicyInTheSnapshot(t *testing.T) {
 		if strings.Contains(argv, home) {
 			t.Errorf("the grading box mounts %s — a verifier must never reach agent credentials.\nargv: %s", home, argv)
 		}
+	}
+}
+
+// A candidate asked to produce a file that happens to be named like a secret — a .env, a key — must
+// be graded on what it actually wrote. Secret shadowing replaces such files with empty decoys, which
+// protects a MODEL from someone's stray credential but would silently fail the case here, because a
+// grader is trusted code that has to see the truth.
+func TestGradingSeesFilesNamedLikeSecrets(t *testing.T) {
+	snapshot := t.TempDir()
+	for name, body := range map[string]string{
+		".env":         "ANSWER=42\n",
+		"server.pem":   "-----BEGIN CERTIFICATE-----\n",
+		"ordinary.txt": "plain\n",
+	} {
+		if err := os.WriteFile(filepath.Join(snapshot, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recorder := filepath.Join(t.TempDir(), "argv.log")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: cfg, rt: recordingRuntime(t, recorder)}
+	verifier := verifierDir(t, "verify.sh", "exit 0\n", 0o644)
+	a.gradeSnapshot(context.Background(), gradeRequest{
+		Image: "coop-box:trusted", Workspace: snapshot, Verifier: verifier,
+	}, nil)
+
+	data, rerr := os.ReadFile(recorder)
+	if rerr != nil {
+		t.Fatalf("the grading launch never reached the runtime: %v", rerr)
+	}
+	argv := string(data)
+	// A decoy mount targets the file's path inside the box; none may exist for the graded tree.
+	for _, name := range []string{".env", "server.pem"} {
+		if strings.Contains(argv, gradeWorkspaceDir+"/"+name) {
+			t.Errorf("%s was shadowed with a decoy; the grader would see an empty file:\n%s", name, argv)
+		}
+	}
+}
+
+// The rail: the unshadowed mount must never be combined with model credentials.
+func TestGradeSnapshotIsRefusedWithCredentials(t *testing.T) {
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := box.Run(cfg, recordingRuntime(t, filepath.Join(t.TempDir(), "argv.log")), box.RunSpec{
+		Image: "img", Repo: t.TempDir(), Cmd: []string{"true"},
+		GradeSnapshot: true, Homes: true,
+	})
+	if err == nil {
+		t.Fatal("an unshadowed tree was allowed beside agent credentials")
+	}
+	if code != -1 {
+		t.Errorf("exit code = %d, want -1", code)
 	}
 }

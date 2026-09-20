@@ -60,7 +60,10 @@ shellcheck: ## ShellCheck every tracked .sh: the installer, both sweep queue gua
 # forget to update. An empty list means git failed or the tree moved, never "nothing to check":
 # that is the one way a lint silently stops running, so it fails closed.
 	@git ls-files '*.sh' | grep -q . || { echo "shellcheck: no tracked .sh files found — refusing to pass by checking nothing"; exit 1; }
-	@git ls-files -z '*.sh' | xargs -0 shellcheck
+# An eval starter's `files/` are WORKLOADS, not Coop's shell: they contain the bug the case is about,
+# so linting them would demand we fix the thing a model is supposed to find. Everything else, including
+# every starter's verifier, is ours and is checked.
+	@git ls-files -z '*.sh' | grep -zv '^internal/eval/starters/[^/]*/files/' | xargs -0 shellcheck
 
 # Guard for the python-backed targets: name the fix instead of leaving make to print a bare
 # "python3: No such file or directory". No ## — it's a prerequisite, not something you run.

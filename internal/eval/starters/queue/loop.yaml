@@ -1,0 +1,3 @@
+# The recipe under test. Copy this suite and change this file to compare two recipes.
+signoff:
+  rounds: 2

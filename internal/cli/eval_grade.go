@@ -101,8 +101,12 @@ func (a *app) gradeSnapshot(ctx context.Context, req gradeRequest, run boxRunner
 		Image:      req.Image,
 		Repo:       req.Workspace,
 		PolicyRepo: policyDir, // never the snapshot: see above
-		Workdir:    gradeWorkspaceDir,
-		Cmd:        command,
+		// The grader sees the tree as it is. Secret shadowing would replace a file the candidate was
+		// asked to produce — a .env, a key, a certificate — with an empty decoy, and the case would
+		// fail for a reason that has nothing to do with the model.
+		GradeSnapshot: true,
+		Workdir:       gradeWorkspaceDir,
+		Cmd:           command,
 		// Batch: no tty and no stdin — a verifier that waits for input times out rather than hangs
 		// the sweep. Quiet: grading narration is the run's, not the box's.
 		Batch: true,

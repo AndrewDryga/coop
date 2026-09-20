@@ -75,6 +75,11 @@ type RunSpec struct {
 	Mode agents.ExecutionMode
 	// PolicyRepo is the trusted source for .agent/project.yaml box policy. Empty uses Repo.
 	PolicyRepo string
+	// GradeSnapshot marks this launch as `coop eval`'s grader running against a trial snapshot, and
+	// turns OFF secret shadowing of the mounted tree — a grader must see what the candidate actually
+	// wrote, including a file named like a secret. It is refused together with Homes, so it can never
+	// be the reason an unshadowed tree is mounted beside model credentials.
+	GradeSnapshot bool
 	// RepoReadOnly mounts Repo read-only. Maintenance checks can inspect an isolated candidate
 	// without letting the command alter even that disposable tree.
 	RepoReadOnly bool
@@ -332,6 +337,12 @@ func ctxStep(ctx context.Context, step string) error {
 // agent homes + MCP. It returns the container's exit code (with a nil error when
 // the container merely exited non-zero); a non-nil error means it never started.
 func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
+	// The one rail on GradeSnapshot: it disables secret shadowing, so it must never be combined with
+	// a box that carries model credentials. Enforced here, at the single public entry point, rather
+	// than trusted to every caller.
+	if spec.GradeSnapshot && spec.Homes {
+		return -1, fmt.Errorf("a grading box must not carry agent credentials; refusing to mount an unshadowed tree beside them")
+	}
 	return runWithCompositionArtifacts(cfg, rt, spec, defaultCompositionArtifactOps())
 }
 
@@ -492,7 +503,17 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	spec.mcpSnapshot = mcpSnapshot
 	var mounts []Mount
-	if !spec.Login {
+	switch {
+	case spec.Login:
+		// no repo mounts at all
+	case spec.GradeSnapshot:
+		// Grading an eval snapshot: bind the tree as it actually is. Secret shadowing exists to keep
+		// a MODEL from seeing a credential someone left in a repo; a grader is trusted code that has
+		// to see exactly what the candidate produced, and a decoy here would silently fail any case
+		// whose answer is a file named like a secret (.env, a key, a cert). The rail below keeps this
+		// from ever being a way to expose a real repository to something that can talk to a model.
+		mounts = []Mount{{Kind: Bind, Source: spec.Repo, Target: workdir}}
+	default:
 		mounts, err = ComputeMounts(spec.Repo, workdir)
 		if err != nil {
 			return -1, err

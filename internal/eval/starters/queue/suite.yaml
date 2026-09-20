@@ -1,0 +1,17 @@
+# A loop scenario: ten ordinary tasks in a queue, worked by a whole `coop loop`.
+#
+# This is the eval for a PRESET or a loop recipe, not for a single answer. What it measures is how
+# much of a real queue a configuration actually finishes — and the final verifier checks the work,
+# not the number of folders that reached 99_done, because moving a task is not the same as doing it.
+
+version: 1
+name: coop-queue
+runner: loop
+loop_config: ./loop.yaml
+
+cases:
+  - id: ten-tasks
+    fixture: ./fixtures/toolkit
+    tasks: ./queues/ten-tasks
+    verifier: ./verifiers/ten-tasks
+    timeout: 90m

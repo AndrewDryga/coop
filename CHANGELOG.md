@@ -36,6 +36,12 @@
   nothing, so each grader was run against a correct solution and against each near miss before the
   starter shipped.
 
+  A second starter, `queue`, is a whole `coop loop` over ten queued tasks — the one to use when the
+  thing you are comparing is a preset or a loop recipe. Its verifier grades the WORK rather than the
+  bookkeeping: it runs each subcommand on inputs no task mentions and reports how many are genuinely
+  correct, so a loop that moves folders into 99_done without finishing anything scores nothing, and a
+  loop that ran out of budget still gets an honest partial count.
+
 - A run that finished cleanly is no longer occasionally reported as failed. When your workload's
   process exits, Coop asks the runtime for the container's final state — and on a busy machine that
   answer can lag a moment behind the process, or a single query can time out. Coop now waits that

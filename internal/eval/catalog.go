@@ -33,6 +33,10 @@ var starters = []Starter{{
 	ID:      "core",
 	dir:     "starters/core",
 	Summary: "three small tasks with a near miss each — a plausible answer the grader rejects",
+}, {
+	ID:      "queue",
+	dir:     "starters/queue",
+	Summary: "a whole coop loop over ten queued tasks — for comparing presets and loop recipes (long)",
 }}
 
 // Starters returns the qualified public starter suites, in catalog order.
