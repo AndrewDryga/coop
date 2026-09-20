@@ -4,7 +4,7 @@ description: a provider bundle grants what the client needs to function; the cli
 scope: security
 sources: [internal/agent/network_bundle.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/locked_clients_test.go, internal/mcp/mcp.go, internal/cli/provider_network_live_e2e_test.go]
 check: "go test ./internal/agent -run 'TestProviderBundlesCarryFunctionNotChatter|TestManagedClientDefaultsAreBoxOnly'"
-updated: 2026-09-19
+updated: 2026-09-20
 ---
 
 # A provider bundle carries function; a managed client's chatter is switched off, not granted or hidden
@@ -50,11 +50,28 @@ talking to itself.
   hello-and-exit session (`verifyProviderNetworkLiveSilence`).
 - Never add a denial filter keyed by hostname, and never present a box default as qualification:
   gemini has these defaults and is still unsupported for filtered runs.
+- A default-on FEATURE whose traffic no control can switch off, and which a bundle must not carry,
+  has a third answer: broker exactly what it fetches, credential-free. Codex's curated plugin store
+  is the case — with an API key it looked up chatgpt.com, github.com and api.github.com on every
+  start (16 refusals a run), and only `features.plugins = false` silenced it, which would have
+  taken a working, vendor-documented feature away. Coop instead fetches those PUBLIC bytes for it
+  through two `download` broker routes (`internal/agent/codex.go` `Downloads`): the featured list
+  and one repository's git fetch, each an exact method and path, with no credential sent and any
+  the box offers refused. The hosts stay OUT of the agent's policy, so a request the routes do not
+  name is still a real, visible refusal. Reach for this only when the capture proves the client can
+  be pointed at Coop (codex: `chatgpt_base_url` and a Coop-owned git `insteadOf` — its own git
+  child has `GIT_CONFIG_*` scrubbed, so a file is the only way in). Match the QUERY too, not just
+  the path: git's discovery path serves a fetch and a push by query alone. The tradeoff to state
+  plainly: those routes are a narrow outbound channel to a host the box otherwise cannot reach, so
+  keep the request lines exact and the request body small (1 MiB), and let every refusal on them be
+  recorded like any other.
 
 Background: [[restricted-networking]] (bundles are one of five layers),
 [[mcp-authority-projection]] (the overlays are projections of the host profile, never edits).
 
 ## Changelog
+- 2026-09-20 — a third answer beside grant-or-switch-off: broker the fetch credential-free, proved
+  on Codex's curated plugin store (no warning, no denial, the store still syncs).
 - 2026-09-19 — Grok's launch-time update check is off too: `GROK_DISABLE_AUTOUPDATER=1` in its
   BoxEnv and, with every adapter's update controls, in every Coop image.
 - 2026-09-18 — the 2026-09-10 sweep missed grok: its pinned 1.0.25 client, telemetry on, looked up

@@ -187,6 +187,106 @@ func TestCredentialBrokerCarriesAnMCPSecretHeader(t *testing.T) {
 	}
 }
 
+// A download route fetches public bytes for a client the agent's own policy does not let reach that
+// host — Codex's curated plugin store. It carries no credential, adds none, refuses a request that
+// brings one, and forwards only the exact request lines the operator's adapter declared.
+func TestCredentialBrokerDownloadsWithoutACredential(t *testing.T) {
+	var sent http.Header
+	b, _ := testCredentialBroker(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		sent = request.Header.Clone()
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("pack"))}, nil
+	}))
+	b.route = CredentialBrokerRoute{Name: "codex-plugin-git", Kind: CredentialBrokerDownload, Upstream: "github.com", Port: 443,
+		Allow: []BrokerRequestLine{
+			{Method: http.MethodGet, Path: "/openai/plugins.git/info/refs", Query: "service=git-upload-pack"},
+			{Method: http.MethodPost, Path: "/openai/plugins.git/git-upload-pack"},
+		}}
+	b.secret = CredentialBrokerSecret{Name: "codex-plugin-git"}
+	b.setProxy(b.proxy.Transport)
+	send := func(method, target string, headers map[string]string) int {
+		request := httptest.NewRequest(method, target, strings.NewReader(""))
+		request.Host = CredentialBrokerAddress(0)
+		for key, value := range headers {
+			request.Header.Set(key, value)
+		}
+		recorder := httptest.NewRecorder()
+		b.handler().ServeHTTP(recorder, request)
+		return recorder.Code
+	}
+	if code := send(http.MethodGet, "/openai/plugins.git/info/refs?service=git-upload-pack", nil); code != http.StatusOK {
+		t.Fatalf("the discovery request returned %d", code)
+	}
+	if sent.Get("Authorization") != "" || sent.Get("X-Api-Key") != "" || sent.Get("Cookie") != "" {
+		t.Fatalf("a download carried a credential upstream: %#v", sent)
+	}
+	if code := send(http.MethodPost, "/openai/plugins.git/git-upload-pack", nil); code != http.StatusOK {
+		t.Fatalf("the fetch returned %d", code)
+	}
+	for name, refused := range map[string]func() int{
+		"a push": func() int { return send(http.MethodPost, "/openai/plugins.git/git-receive-pack", nil) },
+		// The discovery path serves a push too, by query alone — the half that precedes one.
+		"a push's discovery": func() int {
+			return send(http.MethodGet, "/openai/plugins.git/info/refs?service=git-receive-pack", nil)
+		},
+		"another query": func() int {
+			return send(http.MethodGet, "/openai/plugins.git/info/refs?service=git-upload-pack&x=1", nil)
+		},
+		"no query at all":       func() int { return send(http.MethodGet, "/openai/plugins.git/info/refs", nil) },
+		"another repository":    func() int { return send(http.MethodGet, "/openai/codex.git/info/refs?service=git-upload-pack", nil) },
+		"a query where none is": func() int { return send(http.MethodPost, "/openai/plugins.git/git-upload-pack?sneak=1", nil) },
+		"another method":        func() int { return send(http.MethodDelete, "/openai/plugins.git/info/refs", nil) },
+		"a request with a token": func() int {
+			return send(http.MethodPost, "/openai/plugins.git/git-upload-pack", map[string]string{"Authorization": "Bearer stolen"})
+		},
+		"a request with cookies": func() int {
+			return send(http.MethodPost, "/openai/plugins.git/git-upload-pack", map[string]string{"Cookie": "session=x"})
+		},
+	} {
+		if code := refused(); code != http.StatusForbidden {
+			t.Errorf("%s returned %d, want 403", name, code)
+		}
+	}
+}
+
+// A download route's secrets entry must be empty: a file that hands one a credential is refused, so
+// a route that fetches public bytes can never be given something to send with them.
+func TestDownloadRoutesCarryNoSecret(t *testing.T) {
+	config := testLaunch(t)
+	config.Brokers = []CredentialBrokerRoute{{Name: "codex-plugin-git", Kind: CredentialBrokerDownload, Upstream: "github.com",
+		Port: 443, Allow: []BrokerRequestLine{{Method: http.MethodGet, Path: "/openai/plugins.git/info/refs", Query: "service=git-upload-pack"}}}}
+	// A download route that names a credential, or carries a shape a fetch never takes, is refused
+	// before it ever listens — by the same judgment, made where the host builds the plan.
+	for name, bad := range map[string]CredentialBrokerRoute{
+		"a header":       {Name: "d", Kind: CredentialBrokerDownload, Upstream: "github.com", Port: 443, Header: "authorization", Allow: config.Brokers[0].Allow},
+		"a path":         {Name: "d", Kind: CredentialBrokerDownload, Upstream: "github.com", Port: 443, Path: "/x", Allow: config.Brokers[0].Allow},
+		"no lines":       {Name: "d", Kind: CredentialBrokerDownload, Upstream: "github.com", Port: 443},
+		"a dirty path":   {Name: "d", Kind: CredentialBrokerDownload, Upstream: "github.com", Port: 443, Allow: []BrokerRequestLine{{Method: http.MethodGet, Path: "/a/../b"}}},
+		"another method": {Name: "d", Kind: CredentialBrokerDownload, Upstream: "github.com", Port: 443, Allow: []BrokerRequestLine{{Method: http.MethodDelete, Path: "/a"}}},
+	} {
+		if err := CheckBrokerRoutes([]CredentialBrokerRoute{bad}); err == nil {
+			t.Errorf("the gateway accepted a download route with %s", name)
+		}
+	}
+	secrets := CredentialBrokerSecrets{Version: 2, RunID: config.RunID, Epoch: config.Epoch,
+		Routes: []CredentialBrokerSecret{{Name: "codex-plugin-git"}}}
+	data, _ := json.Marshal(secrets)
+	if _, err := ReadCredentialBrokerSecrets(bytes.NewReader(data), config); err != nil {
+		t.Fatalf("an empty download secret was refused: %v", err)
+	}
+	for name, mutate := range map[string]func(*CredentialBrokerSecret){
+		"a credential": func(s *CredentialBrokerSecret) { s.Credential = "real-token" },
+		"a stand-in":   func(s *CredentialBrokerSecret) { s.Substitute = strings.Repeat("s", 64) },
+	} {
+		changed := secrets
+		changed.Routes = []CredentialBrokerSecret{secrets.Routes[0]}
+		mutate(&changed.Routes[0])
+		data, _ := json.Marshal(changed)
+		if _, err := ReadCredentialBrokerSecrets(bytes.NewReader(data), config); err == nil {
+			t.Errorf("a download route was given %s", name)
+		}
+	}
+}
+
 // A provider streams its headers at once; an MCP server answering a tool call with JSON sends them
 // only when the tool finishes, so only the run's lifetime bounds that wait.
 func TestCredentialBrokerWaitsForAnMCPToolsResponseHeaders(t *testing.T) {

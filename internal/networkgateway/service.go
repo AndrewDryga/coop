@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -43,15 +44,36 @@ const (
 	MaxCredentialBrokerRoutes = 72
 )
 
-// A brokered route is a provider's API or one bearer-authenticated MCP server.
+// A brokered route is a provider's API, one secret-bearing MCP server, or a public download a
+// client makes on its own and the agent's policy does not grant.
 const (
 	CredentialBrokerProvider = "provider"
 	CredentialBrokerMCP      = "mcp"
+	CredentialBrokerDownload = "download"
 )
+
+// MaxBrokerRequestLines bounds the request lines one download route forwards. Two is what a git
+// fetch of one repository takes; the bound keeps a route from becoming a general proxy.
+const MaxBrokerRequestLines = 4
 
 // CredentialBrokerAddress is route i's listener on the gateway loopback the agent shares.
 func CredentialBrokerAddress(route int) string {
 	return net.JoinHostPort("127.0.0.1", strconv.Itoa(CredentialBrokerPort+route))
+}
+
+// CheckBrokerRoutes is the judgment the gateway makes of a run's routes, made HERE, where the plan
+// is built: a route it would refuse fails the whole launch configuration with one opaque reason, so
+// the host names the route instead.
+func CheckBrokerRoutes(routes []CredentialBrokerRoute) error {
+	for _, route := range routes {
+		if !route.valid() {
+			return fmt.Errorf("this run's network gateway refuses the broker route %q it was about to be given", route.Name)
+		}
+	}
+	if !validBrokerRoutes(routes, nil, nil) {
+		return errors.New("this run's network gateway refuses its set of broker routes")
+	}
+	return nil
 }
 
 // validBrokerRoutes holds each route to one exact provider endpoint, and keeps every route's
@@ -102,7 +124,7 @@ type LaunchConfig struct {
 // CredentialBrokerRoute is one exact endpoint a brokered credential reaches — a provider's API, or
 // one bearer-authenticated MCP server — not a user policy or forward-proxy rule.
 type CredentialBrokerRoute struct {
-	Name         string   `json:"name"` // the provider, or mcp-<i> for a tool server
+	Name         string   `json:"name"` // the provider, mcp-<i> for a tool server, or the download's own
 	Kind         string   `json:"kind"`
 	Upstream     string   `json:"upstream"`
 	Header       string   `json:"header"`
@@ -112,14 +134,46 @@ type CredentialBrokerRoute struct {
 	PathPrefix   bool     `json:"path_prefix,omitempty"`
 	AllowQuery   bool     `json:"allow_query,omitempty"`
 	Port         int      `json:"port"`
+	// Allow is a download route's exact request lines. One listener carries a fetch's discovery
+	// GET and its upload-pack POST, and nothing else: a third line would be a capability the
+	// operator never granted, so the set is the route, not a prefix under it.
+	Allow []BrokerRequestLine `json:"allow,omitempty"`
+}
+
+// BrokerRequestLine is one method and path a download route forwards, with the client's exact
+// query where it sends one. The query is matched whole: git's discovery path serves a FETCH and a
+// PUSH by query alone (`?service=git-upload-pack` vs `git-receive-pack`), so "any query" on that
+// path would carry the first half of a push.
+type BrokerRequestLine struct {
+	Method string `json:"method"`
+	Path   string `json:"path"`
+	Query  string `json:"query,omitempty"`
 }
 
 func (r CredentialBrokerRoute) valid() bool {
 	name, err := egress.NormalizeDomain(r.Upstream, false)
 	if err != nil || name != r.Upstream || r.Name == "" || len(r.Name) > 32 ||
-		strings.Trim(r.Name, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" ||
-		r.Header == "" || strings.ToLower(r.Header) != r.Header || !strings.HasPrefix(r.Path, "/") ||
-		strings.ContainsAny(r.Path, "?#\x00\r\n") || strings.ContainsAny(r.HeaderPrefix, "\x00\r\n") || r.Port != 443 {
+		strings.Trim(r.Name, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" || r.Port != 443 {
+		return false
+	}
+	if r.Kind == CredentialBrokerDownload {
+		// A download carries NO credential: the fields that name one must be empty, or a route
+		// meant to fetch public bytes could be given a secret to send with them.
+		if r.Header != "" || r.HeaderPrefix != "" || len(r.Methods) != 0 || r.Path != "" || r.PathPrefix || r.AllowQuery ||
+			len(r.Allow) == 0 || len(r.Allow) > MaxBrokerRequestLines {
+			return false
+		}
+		for i, line := range r.Allow {
+			if line.Method != http.MethodGet && line.Method != http.MethodPost || !validBrokerPath(line.Path) ||
+				strings.ContainsAny(line.Query, "#\x00\r\n") ||
+				slices.ContainsFunc(r.Allow[:i], func(seen BrokerRequestLine) bool { return seen == line }) {
+				return false
+			}
+		}
+		return true
+	}
+	if r.Header == "" || strings.ToLower(r.Header) != r.Header || !strings.HasPrefix(r.Path, "/") ||
+		strings.ContainsAny(r.Path, "?#\x00\r\n") || strings.ContainsAny(r.HeaderPrefix, "\x00\r\n") {
 		return false
 	}
 	switch r.Kind {
@@ -169,6 +223,11 @@ func mcpSecretHeader(name string) bool {
 	return !strings.HasPrefix(name, "content-") && !strings.HasPrefix(name, "proxy-") && !strings.HasPrefix(name, "mcp-")
 }
 
+// validBrokerPath is one clean absolute path, with nothing a query or fragment would hide.
+func validBrokerPath(value string) bool {
+	return strings.HasPrefix(value, "/") && !strings.ContainsAny(value, "?#\x00\r\n") && path.Clean(value) == value
+}
+
 // Admits reports whether a request line fits the route's one endpoint: its method, its exact path
 // (or one under it for a prefix route), and a query only where the adapter declared its client
 // sends one. The path must already be in its one clean form: a dot segment, a doubled slash or a
@@ -179,6 +238,11 @@ func (r CredentialBrokerRoute) Admits(method string, target *url.URL) bool {
 	if clean := path.Clean(target.Path); clean != target.Path && (r.PathPrefix || clean+"/" != target.Path) ||
 		target.RawPath != "" && target.RawPath != target.Path {
 		return false
+	}
+	if r.Kind == CredentialBrokerDownload {
+		return slices.ContainsFunc(r.Allow, func(line BrokerRequestLine) bool {
+			return line.Method == method && line.Path == target.Path && line.Query == target.RawQuery && !target.IsAbs()
+		})
 	}
 	pathMatches := target.Path == r.Path
 	if r.PathPrefix {

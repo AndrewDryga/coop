@@ -36,6 +36,46 @@ type credentialRoute struct {
 type credentialPlan struct {
 	routes []*credentialRoute
 	mcp    []*mcpRoute
+	// downloads are the public fetches a selected client makes on its own, brokered
+	// credential-free after the routes that carry one (adapter-declared: agents.BrokerDownload).
+	downloads []downloadRoute
+}
+
+// downloadRoute is one brokered public fetch, with the provider whose adapter declared it.
+type downloadRoute struct {
+	provider string
+	spec     agents.BrokerDownload
+}
+
+// downloadListener is download route k's listener index, after the provider and MCP routes.
+func (p *credentialPlan) downloadListener(k int) int { return len(p.routes) + len(p.mcp) + k }
+
+// downloadBases is each download's base URL by name, for the adapter that declared it.
+func (p *credentialPlan) downloadBases(provider string) map[string]string {
+	bases := map[string]string{}
+	for k, download := range p.downloads {
+		if download.provider == provider {
+			bases[download.spec.Name] = "http://" + networkgateway.CredentialBrokerAddress(p.downloadListener(k))
+		}
+	}
+	return bases
+}
+
+// gitRewrites are the repository URLs a brokered download serves, each with the listener serving
+// it: the box's Coop-owned git configuration sends exactly those fetches to Coop, and a client that
+// scrubs GIT_CONFIG_* from the git it spawns can be reached no other way.
+func (p *credentialPlan) gitRewrites() map[string]string {
+	if p == nil {
+		return nil
+	}
+	rewrites := map[string]string{}
+	for k, download := range p.downloads {
+		if repository := download.spec.GitRepository; repository != "" {
+			rewrites[repository] = "http://" + networkgateway.CredentialBrokerAddress(p.downloadListener(k)) +
+				strings.TrimPrefix(repository, "https://"+download.spec.Upstream)
+		}
+	}
+	return rewrites
 }
 
 func (p *credentialPlan) route(provider string) (int, *credentialRoute) {
@@ -130,6 +170,11 @@ func selectCredentialPlanWithMarkers(cfg *config.Config, spec RunSpec, markers m
 		}
 		if route != nil {
 			plan.routes = append(plan.routes, route)
+			// What that client fetches for itself, which its own policy does not grant: brokered
+			// credential-free beside the key, or every start ends in refusals nobody can act on.
+			for _, download := range route.spec.Downloads {
+				plan.downloads = append(plan.downloads, downloadRoute{provider: name, spec: download})
+			}
 		}
 	}
 	if len(plan.routes) == 0 {
@@ -299,7 +344,7 @@ func (p *credentialPlan) gatewayRoutes() []networkgateway.CredentialBrokerRoute 
 	if p == nil {
 		return nil
 	}
-	routes := make([]networkgateway.CredentialBrokerRoute, 0, len(p.routes)+len(p.mcp))
+	routes := make([]networkgateway.CredentialBrokerRoute, 0, len(p.routes)+len(p.mcp)+len(p.downloads))
 	for _, r := range p.routes {
 		routes = append(routes, networkgateway.CredentialBrokerRoute{Name: r.provider, Kind: networkgateway.CredentialBrokerProvider,
 			Upstream: r.spec.Upstream, Header: r.spec.Header, HeaderPrefix: r.spec.HeaderPrefix, Methods: []string{r.spec.Method},
@@ -314,6 +359,14 @@ func (p *credentialPlan) gatewayRoutes() []networkgateway.CredentialBrokerRoute 
 		routes = append(routes, networkgateway.CredentialBrokerRoute{Name: "mcp-" + strconv.Itoa(p.mcpListener(j)),
 			Kind: networkgateway.CredentialBrokerMCP, Upstream: r.upstream, Header: r.header, HeaderPrefix: r.prefix,
 			Methods: []string{"POST", "GET", "DELETE"}, Path: decoded, Port: 443})
+	}
+	for _, download := range p.downloads {
+		allow := make([]networkgateway.BrokerRequestLine, 0, len(download.spec.Allow))
+		for _, line := range download.spec.Allow {
+			allow = append(allow, networkgateway.BrokerRequestLine{Method: line.Method, Path: line.Path, Query: line.Query})
+		}
+		routes = append(routes, networkgateway.CredentialBrokerRoute{Name: download.spec.Name,
+			Kind: networkgateway.CredentialBrokerDownload, Upstream: download.spec.Upstream, Allow: allow, Port: 443})
 	}
 	return routes
 }
@@ -334,14 +387,20 @@ func (f *filteredExecution) prepareCredentialBroker(artifacts compositionArtifac
 		if _, err := rand.Read(random); err != nil {
 			return errors.New("create credential broker substitute")
 		}
-		f.broker.substitutes[i] = hex.EncodeToString(random)
 		var credential string
-		if i < len(f.broker.plan.routes) {
+		switch {
+		case route.Kind == networkgateway.CredentialBrokerDownload:
+			// A public fetch: no capability to mint, and nothing to send. Its entry stays empty,
+			// and the gateway refuses a secrets file that gives one either.
+			secrets.Routes = append(secrets.Routes, networkgateway.CredentialBrokerSecret{Name: route.Name})
+			continue
+		case i < len(f.broker.plan.routes):
 			credential, f.broker.plan.routes[i].credential = f.broker.plan.routes[i].credential, ""
-		} else {
+		default:
 			mcpRoute := f.broker.plan.mcp[i-len(f.broker.plan.routes)]
 			credential, mcpRoute.token = mcpRoute.token, ""
 		}
+		f.broker.substitutes[i] = hex.EncodeToString(random)
 		secrets.Routes = append(secrets.Routes, networkgateway.CredentialBrokerSecret{Name: route.Name,
 			Substitute: f.broker.substitutes[i], Credential: credential})
 	}
@@ -464,7 +523,7 @@ func (f *filteredExecution) credentialBrokerMounts(artifacts compositionArtifact
 			}
 		}
 		if route.spec.Config != nil {
-			file := route.spec.Config(f.broker.plan.baseURL(i))
+			file := route.spec.Config(agents.BrokerBases{Model: f.broker.plan.baseURL(i), Download: f.broker.plan.downloadBases(route.provider)})
 			if err := write(file.Content, file.Path, route.provider+" broker configuration"); err != nil {
 				return nil, paths, err
 			}

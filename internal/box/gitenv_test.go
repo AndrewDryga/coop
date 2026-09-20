@@ -136,17 +136,29 @@ func TestGitConfigForBoxUsesDirectHomeMounts(t *testing.T) {
 		"/home/node/"+boxGitHooksName,
 		"/home/node/"+boxGitIgnoreName,
 		"2026-01-01-some-task",
+		nil,
 	)
 	if strings.Count(gc, "[coop]\n") != 1 {
 		t.Fatalf("git config must have one coop block:\n%s", gc)
 	}
 	// Nothing assigned (interactive, raw, ACP) must stamp no task, or every commit outside a loop
 	// iteration would claim a task it does not own.
-	if bare := gitConfigForBox("coop (claude) <noreply@coop.dev>", "", "", ""); strings.Contains(bare, "task =") {
+	if bare := gitConfigForBox("coop (claude) <noreply@coop.dev>", "", "", "", nil); strings.Contains(bare, "task =") {
 		t.Errorf("unassigned run wrote a task key:\n%s", bare)
 	}
 	if strings.Count(gc, "[core]\n") != 1 {
 		t.Fatalf("git config must have one core block:\n%s", gc)
+	}
+	// A brokered download's repository is sent to Coop's listener — that ONE url, so every other
+	// repository (including another on the same host) is fetched exactly as before.
+	brokered := gitConfigForBox("", "", "", "", map[string]string{
+		"https://github.com/openai/plugins.git": "http://127.0.0.1:15581/openai/plugins.git",
+	})
+	if want := "[url \"http://127.0.0.1:15581/openai/plugins.git\"]\n\tinsteadOf = https://github.com/openai/plugins.git\n"; !strings.Contains(brokered, want) {
+		t.Fatalf("git config does not rewrite the brokered repository:\n%s", brokered)
+	}
+	if strings.Contains(gc, "insteadOf") {
+		t.Fatalf("a run with no brokered download rewrote a repository:\n%s", gc)
 	}
 	for _, want := range []string{
 		"hooksPath = /home/node/.coop-git-hooks",
@@ -171,7 +183,7 @@ func TestGitConfigForBoxPreservesGlobalIgnoreBehavior(t *testing.T) {
 		t.Fatal(err)
 	}
 	global := filepath.Join(t.TempDir(), "gitconfig")
-	if err := os.WriteFile(global, []byte(gitConfigForBox("", "", ignore, "")), 0o644); err != nil {
+	if err := os.WriteFile(global, []byte(gitConfigForBox("", "", ignore, "", nil)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", global)

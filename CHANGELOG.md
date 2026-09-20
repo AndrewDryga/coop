@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A filtered Codex run on an API key no longer ends with "Traffic to 3 remote addresses was
+  blocked". Codex's curated plugin store looked up chatgpt.com, github.com and api.github.com on
+  every start, which an API key's access does not cover, so each run reported 16 refusals nobody
+  could act on — and the only switch that stopped them turned the whole plugins feature off. Coop
+  now fetches the store for it: the featured list and the one public repository's git fetch go
+  through Coop, credential-free, on routes that carry those exact requests and nothing else (a push
+  is never carried, another repository is refused, and a request bringing a credential is refused).
+  Plugins keep working, those hosts are still not in the agent's own network policy, and any other
+  request to them is still refused and still shown.
+
 - Your MCP servers' secrets now stay outside ordinary internet boxes too, not only filtered ones.
   An open run whose MCP configuration has a secret-bearing remote server starts one small helper
   container beside the box — unprivileged, on the box's own network, removed when the run ends — and

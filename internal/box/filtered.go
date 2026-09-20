@@ -182,6 +182,11 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	if err != nil {
 		return nil, err
 	}
+	// Every route this run would hand the gateway, judged the gateway's way, here: one it would
+	// refuse fails the launch configuration whole, with a reason naming nothing.
+	if err := networkgateway.CheckBrokerRoutes(brokerPlan.gatewayRoutes()); err != nil {
+		return nil, err
+	}
 	if spec.Serve {
 		if err := brokerPlan.checkBrokerServePorts(spec.servePorts); err != nil {
 			return nil, err

@@ -275,6 +275,14 @@ func (codexAgent) CredentialEnvKeys() []string {
 	return []string{"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"}
 }
 
+// The curated plugin store's two routes, and the one repository the second serves. A push
+// (git-receive-pack) is never among the request lines above, so no route can carry one.
+const (
+	codexPluginStoreRoute = "codex-plugin-store"
+	codexPluginGitRoute   = "codex-plugin-git"
+	codexPluginRepository = "https://github.com/openai/plugins.git"
+)
+
 func (codexAgent) CredentialBroker() CredentialBrokerSpec {
 	return CredentialBrokerSpec{
 		CredentialEnv:  "OPENAI_API_KEY",
@@ -289,16 +297,40 @@ func (codexAgent) CredentialBroker() CredentialBrokerSpec {
 		// A provider of its own, not OPENAI_BASE_URL: a stored ChatGPT login would otherwise win
 		// over the key, and the broker serves plain POSTs, not the responses websocket. The managed
 		// layer carries it so the lead, every consult or delegate arm, and codex-acp all use it.
-		Config: func(baseURL string) SystemFile {
+		Config: func(bases BrokerBases) SystemFile {
+			store := bases.Download[codexPluginStoreRoute]
+			if store == "" {
+				// No listener, no rewrite: pointing the client at a base URL that is not there
+				// would break the store instead of brokering it.
+				store = "https://chatgpt.com"
+			}
 			return SystemFile{Path: codexManagedConfig, Content: codexNoUpdateChecks +
-				"model_provider = \"coop-broker\"\n\n" +
+				"model_provider = \"coop-broker\"\n" +
+				// The curated plugin store, through Coop: with an API key this client looks up
+				// chatgpt.com and github.com on every start (captured: 16 lookups), which no
+				// API-key policy grants, so every start ended in refusals nobody could act on.
+				"chatgpt_base_url = \"" + store + "/backend-api\"\n\n" +
 				"[model_providers.coop-broker]\n" +
 				"name = \"Coop credential broker\"\n" +
-				"base_url = \"" + baseURL + "\"\n" +
+				"base_url = \"" + bases.Model + "\"\n" +
 				"env_key = \"OPENAI_API_KEY\"\n" +
 				"wire_api = \"responses\"\n\n" +
 				"[features]\n" +
 				"responses_websockets = false\n"}
+		},
+		// What that store actually fetches, captured from the pinned client offline: the featured
+		// list, and a git fetch of ONE public repository. Nothing else, and no credential — the
+		// client sends none, and Coop adds none.
+		Downloads: []BrokerDownload{
+			{Name: codexPluginStoreRoute, Upstream: "chatgpt.com",
+				Allow: []BrokerRequestLine{{Method: "GET", Path: "/backend-api/plugins/featured", Query: "platform=codex"}}},
+			{Name: codexPluginGitRoute, Upstream: "github.com", GitRepository: codexPluginRepository,
+				Allow: []BrokerRequestLine{
+					// Fetch only: the same path with `service=git-receive-pack` is a push's first
+					// half, and it is not in this set.
+					{Method: "GET", Path: "/openai/plugins.git/info/refs", Query: "service=git-upload-pack"},
+					{Method: "POST", Path: "/openai/plugins.git/git-upload-pack"},
+				}},
 		},
 		Port: 443,
 	}

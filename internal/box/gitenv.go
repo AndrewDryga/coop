@@ -1,9 +1,11 @@
 package box
 
 import (
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -82,7 +84,7 @@ func buildGitConfig(name, email string) string {
 
 // gitConfigForBox is buildGitConfig with the host user's global identity, plus the optional coop
 // co-author hook, global ignore file, and trailer used inside the box.
-func gitConfigForBox(coAuthor, hooksPath, excludesPath, assignedTask string) string {
+func gitConfigForBox(coAuthor, hooksPath, excludesPath, assignedTask string, gitRewrites map[string]string) string {
 	var b strings.Builder
 	b.WriteString(buildGitConfig(hostGitGlobal("user.name"), hostGitGlobal("user.email")))
 	if hooksPath != "" || excludesPath != "" {
@@ -93,6 +95,12 @@ func gitConfigForBox(coAuthor, hooksPath, excludesPath, assignedTask string) str
 		if excludesPath != "" {
 			b.WriteString("\texcludesFile = " + excludesPath + "\n")
 		}
+	}
+	// A brokered download's repository, sent to Coop's listener instead of the host the box may not
+	// reach. ONE exact url each, so every other repository — including another on the same host —
+	// is untouched, and this stays Coop's own configuration, never the operator's.
+	for _, repository := range slices.Sorted(maps.Keys(gitRewrites)) {
+		b.WriteString("[url \"" + gitRewrites[repository] + "\"]\n\tinsteadOf = " + repository + "\n")
 	}
 	if coAuthor != "" || assignedTask != "" {
 		b.WriteString("[coop]\n")

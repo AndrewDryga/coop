@@ -994,7 +994,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 				ui.Warning("The box could not use your global Git ignore file", err.Error(), "")
 			}
 		}
-		p, err := artifacts.writeFile(artifacts.parent, gitConfigForBox(coAuthor, hooksPath, excludesPath, spec.AssignedTask))
+		p, err := artifacts.writeFile(artifacts.parent, gitConfigForBox(coAuthor, hooksPath, excludesPath, spec.AssignedTask, brokerPlan.gitRewrites()))
 		if err != nil {
 			return -1, fmt.Errorf("prepare box Git config: %w", err)
 		}

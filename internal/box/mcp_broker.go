@@ -255,7 +255,7 @@ func (p *credentialPlan) checkBrokerServePorts(serve []int) error {
 	if p == nil {
 		return nil
 	}
-	for i := range len(p.routes) + len(p.mcp) {
+	for i := range len(p.routes) + len(p.mcp) + len(p.downloads) {
 		if port := networkgateway.CredentialBrokerPort + i; slices.Contains(serve, port) {
 			return fmt.Errorf("serve port %d is one this filtered run needs to keep its credentials outside the box; serve another port", port)
 		}

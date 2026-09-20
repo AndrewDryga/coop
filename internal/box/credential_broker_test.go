@@ -41,7 +41,72 @@ func firstBrokerRouteWithMarkers(cfg *config.Config, spec RunSpec, markers map[s
 }
 
 func onePlan(route *credentialRoute) *credentialPlan {
-	return &credentialPlan{routes: []*credentialRoute{route}}
+	plan := &credentialPlan{routes: []*credentialRoute{route}}
+	for _, download := range route.spec.Downloads {
+		plan.downloads = append(plan.downloads, downloadRoute{provider: route.provider, spec: download})
+	}
+	return plan
+}
+
+// A brokered Codex key also brokers what its client fetches for itself: with an API key the pinned
+// codex looks up chatgpt.com and github.com on every start for its curated plugin store, which no
+// API-key policy grants, so each start used to end in refusals nobody could act on. Coop fetches
+// those PUBLIC bytes for it — the featured list and one repository's git fetch — with no credential
+// of any kind, and points the client at itself through its two own levers.
+func TestACodexKeyBrokersItsPluginStoreWithoutACredential(t *testing.T) {
+	cfg, spec := brokerFixture(t, "OPENAI_API_KEY=provider-secret\n")
+	spec.Agent = "codex"
+	candidate, err := firstBrokerRoute(cfg, spec)
+	if err != nil || candidate == nil {
+		t.Fatalf("broker selection = %#v, %v", candidate, err)
+	}
+	plan := onePlan(candidate)
+	routes := plan.gatewayRoutes()
+	if len(routes) != 3 {
+		t.Fatalf("a brokered codex key planned %d routes, want the key and its two downloads", len(routes))
+	}
+	store, git := routes[1], routes[2]
+	if store.Kind != networkgateway.CredentialBrokerDownload || store.Upstream != "chatgpt.com" ||
+		store.Header != "" || store.HeaderPrefix != "" {
+		t.Fatalf("the plugin store route = %#v", store)
+	}
+	if git.Upstream != "github.com" || len(git.Allow) != 2 ||
+		git.Allow[0] != (networkgateway.BrokerRequestLine{Method: "GET", Path: "/openai/plugins.git/info/refs", Query: "service=git-upload-pack"}) ||
+		git.Allow[1] != (networkgateway.BrokerRequestLine{Method: "POST", Path: "/openai/plugins.git/git-upload-pack"}) {
+		t.Fatalf("the plugin git route = %#v", git)
+	}
+	// The discovery path serves a push too, by query alone; that query is not in the set.
+	discovery, _ := url.Parse("/openai/plugins.git/info/refs?service=git-receive-pack")
+	if git.Admits("GET", discovery) {
+		t.Fatal("the git route admits a push's discovery request")
+	}
+	// Both are shapes the gateway itself accepts (it validates the whole launch configuration).
+	if err := networkgateway.CheckBrokerRoutes(routes); err != nil {
+		t.Fatalf("the gateway would refuse this run's routes: %v", err)
+	}
+	// The client's own levers: its managed layer names the store listener, and the box's
+	// Coop-owned git configuration rewrites that ONE repository (codex scrubs GIT_CONFIG_* from
+	// the git it spawns, so a file is the only way in).
+	f := &filteredExecution{broker: &credentialBrokerRun{plan: plan}}
+	artifacts := defaultCompositionArtifactOps()
+	artifacts.parent = t.TempDir()
+	_, paths, err := f.credentialBrokerMounts(artifacts, cfg.HomeInBox)
+	if err != nil {
+		t.Fatal(err)
+	}
+	managed := string(mustReadFile(t, paths[0]))
+	if want := `chatgpt_base_url = "http://` + networkgateway.CredentialBrokerAddress(1) + `/backend-api"`; !strings.Contains(managed, want) {
+		t.Fatalf("the managed layer lacks %q:\n%s", want, managed)
+	}
+	rewrites := plan.gitRewrites()
+	if len(rewrites) != 1 || rewrites["https://github.com/openai/plugins.git"] != "http://"+networkgateway.CredentialBrokerAddress(2)+"/openai/plugins.git" {
+		t.Fatalf("git rewrites = %#v", rewrites)
+	}
+	// A run with no brokered key rewrites nothing and plans no download.
+	var none *credentialPlan
+	if len(none.gitRewrites()) != 0 {
+		t.Fatal("a run without a broker rewrote a repository")
+	}
 }
 
 func TestFilteredClaudeAPIKeyUsesBrokerInsteadOfProviderPolicy(t *testing.T) {

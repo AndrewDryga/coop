@@ -115,6 +115,19 @@ retain their existing access-only copies. A remote session hands its child a sel
 way the host keeps it, in the session's private host-side config, and removes it after each turn
 and when the session closes.
 
+**A brokered client's own public downloads go through Coop too.** A client sometimes fetches
+something on its own that is not the model API and that no login grants — Codex's curated plugin
+store, which an API-key run looks up on every start (chatgpt.com, github.com and api.github.com,
+16 refused lookups a run). Coop brokers those fetches on a `download` route: no credential is sent,
+any the box offers is refused, and the route forwards only the exact request lines the adapter
+declared, query included — for Codex, `GET /backend-api/plugins/featured?platform=codex` on
+chatgpt.com, and on github.com `GET /openai/plugins.git/info/refs?service=git-upload-pack` plus
+`POST /openai/plugins.git/git-upload-pack`: a fetch of one public repository, never a push (the same
+discovery path with `service=git-receive-pack` is not in the set). The client is pointed at those listeners by its own
+configuration (Codex: `chatgpt_base_url` in its managed layer, and an `insteadOf` for that one
+repository in the box's Coop-owned git config). Those hosts are NOT added to the agent's policy, so
+anything the routes do not name is still refused and still shows in `coop net inspect`.
+
 **MCP servers' bearer tokens stay outside a filtered box too.** Each shared MCP server that
 authenticates with `bearer_token_env_var` becomes one more route of the run's broker, after the
 provider routes. The box's copy of the MCP configuration points the server at the route's loopback

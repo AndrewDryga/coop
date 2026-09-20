@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -342,18 +344,74 @@ type CredentialBrokerSpec struct {
 	AllowQuery     bool
 	ClientBasePath string
 	// Config is the system file that points every process of this client in the box — the lead,
-	// consult and delegate arms, the ACP adapter — at the broker's base URL, for a client whose
+	// consult and delegate arms, the ACP adapter — at the broker's base URLs, for a client whose
 	// BaseURLEnv alone cannot. It replaces the image's file at that path, so it repeats what the
 	// image's copy says. Nil when the environment is enough.
-	Config func(baseURL string) SystemFile
-	Port   int
+	Config func(bases BrokerBases) SystemFile
+	// Downloads are the public fetches this client makes on its own — a plugin store, not the
+	// model API — which the agent's own policy does not grant. Coop brokers them CREDENTIAL-FREE
+	// so the client keeps working without opening those hosts to the box.
+	Downloads []BrokerDownload
+	Port      int
+}
+
+// BrokerBases are the base URLs Coop assigned this run: the model route's, and each declared
+// download's by name.
+type BrokerBases struct {
+	Model    string
+	Download map[string]string
+}
+
+// MaxBrokerDownloadLines is the gateway's own bound on one download's request lines, mirrored here
+// so an adapter that declares more is refused where it is declared.
+const MaxBrokerDownloadLines = 4
+
+// BrokerDownload is one public fetch Coop makes for a client, holding it to exact request lines.
+type BrokerDownload struct {
+	// Name is the route's, lower-case with hyphens; it is how Config finds its base URL.
+	Name     string
+	Upstream string
+	// Allow is every request line this download may carry — nothing else reaches the host.
+	Allow []BrokerRequestLine
+	// GitRepository, when set, is the https repository whose fetches this route serves. The box's
+	// Coop-owned git configuration rewrites that ONE url to this listener: a client that scrubs
+	// GIT_CONFIG_* from the git it spawns (codex does) can be reached no other way.
+	GitRepository string
+}
+
+// BrokerRequestLine is one method and path a download forwards, with the exact query the client
+// sends where it sends one. Whole-query matching is not fussiness: git's discovery path serves a
+// fetch and a push by query alone, so "any query" there would carry the first half of a push.
+type BrokerRequestLine struct {
+	Method string
+	Path   string
+	Query  string
+}
+
+// Valid holds a declared download to what a credential-free route can be: one host, at least one
+// exact request line, and only the methods a fetch uses.
+func (d BrokerDownload) Valid() bool {
+	if d.Name == "" || strings.Trim(d.Name, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" || d.Upstream == "" || len(d.Allow) == 0 {
+		return false
+	}
+	if len(d.Allow) > MaxBrokerDownloadLines {
+		return false
+	}
+	for _, line := range d.Allow {
+		if line.Method != "GET" && line.Method != "POST" || !strings.HasPrefix(line.Path, "/") ||
+			path.Clean(line.Path) != line.Path || strings.ContainsAny(line.Path, "?#\x00\r\n") ||
+			strings.ContainsAny(line.Query, "#\x00\r\n") {
+			return false
+		}
+	}
+	return d.GitRepository == "" || strings.HasPrefix(d.GitRepository, "https://")
 }
 
 // Declared reports whether an adapter opted into credential brokering at all.
 func (s CredentialBrokerSpec) Declared() bool {
 	return s.CredentialEnv != "" || s.BaseURLEnv != "" || s.Upstream != "" || s.Header != "" ||
 		s.HeaderPrefix != "" || s.Method != "" || s.Path != "" || s.PathPrefix || s.AllowQuery ||
-		s.ClientBasePath != "" || s.Config != nil || s.Port != 0
+		s.ClientBasePath != "" || s.Config != nil || len(s.Downloads) != 0 || s.Port != 0
 }
 
 // Valid rejects partially declared broker shapes. Exact provider support is still qualified by
@@ -364,7 +422,16 @@ func (s CredentialBrokerSpec) Valid() bool {
 		!strings.ContainsAny(s.Path, "?#\x00\r\n") &&
 		(s.ClientBasePath == "" || strings.HasPrefix(s.ClientBasePath, "/") &&
 			!strings.HasSuffix(s.ClientBasePath, "/") && !strings.ContainsAny(s.ClientBasePath, "?#\x00\r\n")) &&
-		!strings.ContainsAny(s.HeaderPrefix, "\x00\r\n") && s.Port >= 1 && s.Port <= 65535
+		!strings.ContainsAny(s.HeaderPrefix, "\x00\r\n") && s.Port >= 1 && s.Port <= 65535 && validDownloads(s.Downloads)
+}
+
+func validDownloads(downloads []BrokerDownload) bool {
+	for i, download := range downloads {
+		if !download.Valid() || slices.ContainsFunc(downloads[:i], func(seen BrokerDownload) bool { return seen.Name == download.Name }) {
+			return false
+		}
+	}
+	return true
 }
 
 // StoredAPIKeyDetector is implemented only by adapters whose native marker can contain a
