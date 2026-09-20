@@ -29,7 +29,7 @@ func evidenceCount(value uint64) *networkview.Count { return networkview.Value(v
 func retainedRunFixture(export bool) networkstate.Inspection {
 	asOf := time.Date(2026, 9, 11, 14, 32, 39, 0, time.UTC)
 	started := asOf.Add(-41 * time.Second)
-	port := 443
+	port, listener, fromPort := 443, 15443, 51234
 	snapshot := networkview.Snapshot{
 		Version: networkview.Version, RunID: "run-7f3a", Epoch: "epoch-1", PolicyFingerprint: strings.Repeat("a", 64),
 		Mode: egress.Filtered, Sequence: 42, Terminal: true, AsOf: asOf, ElapsedMillis: 41000,
@@ -51,7 +51,11 @@ func retainedRunFixture(export bool) networkstate.Inspection {
 		Denials: []networkview.Denial{{ID: "evt-0031", Source: "gateway", Sequence: 31, Basis: "sni", DestinationID: "dest-2",
 			At: asOf.Add(-19 * time.Second), Kind: "tls_denied", Reason: "no_matching_rule", Name: "blocked.example", Peer: "203.0.113.9:443", Port: &port,
 			Candidate: &networkview.Candidate{ID: "cand-1", EvidenceID: "evt-0031", PolicyFingerprint: strings.Repeat("a", 64),
-				Rule: egress.Rule{To: egress.Destination{Domain: "blocked.example"}, Protocol: "tls", Ports: []int{443}}, AppliesTo: "project"}}},
+				Rule: egress.Rule{To: egress.Destination{Domain: "blocked.example"}, Protocol: "tls", Ports: []int{443}}, AppliesTo: "project"}},
+			// A refusal at Coop's OWN listener: it names no destination, and the client's
+			// port inside the box is the only handle on which program made it.
+			{ID: "evt-0032", Source: "guard", Sequence: 32, Basis: "observed", At: asOf.Add(-9 * time.Second),
+				Kind: "tls_denied", Reason: "tls_direct_dial_refused", Port: &listener, SourcePort: &fromPort}},
 		Alerts: []networkview.Alert{{ID: "alert-0002", Sequence: 40, Version: 1, Category: "collector_health", Severity: "warning", State: "raised",
 			FirstSeen: asOf.Add(-29 * time.Second), LastSeen: asOf, WindowMillis: 29000, Facts: networkview.AlertFacts{HealthStatus: "degraded", Reason: "socket_sample_lag"}}},
 		Loss:    networkview.Loss{Records: 0, Reasons: nil, SuppressedAlerts: 0},
@@ -132,6 +136,17 @@ func TestSessionEvidenceProjectsARetainedRunWithoutDisclosingDestinations(t *tes
 		*denial.Port != 443 || denial.SourceSequence != "31" {
 		t.Fatalf("withheld denial = %+v", denial)
 	}
+	// A refusal at Coop's own listener keeps its SOURCE through a withheld projection:
+	// a port inside the box names no endpoint, and without it a fleet reader is left
+	// with a refusal that has neither destination nor origin. It is never the
+	// destination field.
+	local := observation.Denials[1]
+	if local.SourcePort == nil || *local.SourcePort != 51234 || local.Destination != nil {
+		t.Fatalf("withheld local refusal = %+v", local)
+	}
+	if denial.SourcePort != nil {
+		t.Fatalf("a refusal that named its destination also carried a source: %+v", denial)
+	}
 	connection := observation.Connections[0]
 	if connection.Destination != nil || !connection.DestinationWithheld || connection.RuleID != nil || *connection.ReceivedBytes != "917504" {
 		t.Fatalf("withheld connection = %+v", connection)
@@ -175,6 +190,9 @@ func TestSessionEvidenceProjectsARetainedRunWithoutDisclosingDestinations(t *tes
 	if denial.Destination == nil || *denial.Destination != "blocked.example" || denial.DestinationWithheld {
 		t.Fatalf("included denial = %+v", denial)
 	}
+	if local = included.Observation.Denials[1]; local.SourcePort == nil || *local.SourcePort != 51234 || local.Destination != nil {
+		t.Fatalf("included local refusal = %+v", local)
+	}
 	connection = included.Observation.Connections[0]
 	if connection.Destination == nil || *connection.Destination != "api.example.com" || *connection.RuleID != "rule-1" {
 		t.Fatalf("included connection = %+v", connection)
@@ -196,15 +214,18 @@ func TestSessionEvidenceBoundsListsAndCountsWhatItDropped(t *testing.T) {
 		observed.Alerts = append(observed.Alerts, observed.Alerts[0])
 	}
 	reads.inspection.Observed = observed
+	// Derived from the fixture, not written down: a fixture that grows a denial must
+	// not look like a bounding bug.
+	wantOmitted := len(observed.Denials) - workerproto.MaxSessionEvidenceDenials
 	for i := 0; i < workerproto.MaxSessionEvidenceRunRefs+7; i++ {
 		reads.receipt.Runs = append(reads.receipt.Runs, reads.receipt.Runs[0])
 	}
 	out := networkEvidenceFromReads(filteredSessionFixture(), reads)
-	if len(out.Observation.Denials) != workerproto.MaxSessionEvidenceDenials || out.Observation.OmittedDenials != 6 ||
+	if len(out.Observation.Denials) != workerproto.MaxSessionEvidenceDenials || out.Observation.OmittedDenials != wantOmitted ||
 		len(out.Observation.Alerts) != workerproto.MaxSessionEvidenceAlerts || out.Observation.OmittedAlerts != 3 ||
 		out.Observation.OmittedConnections != 0 {
-		t.Fatalf("bounded observation = %d denials (%d omitted), %d alerts (%d omitted)", len(out.Observation.Denials),
-			out.Observation.OmittedDenials, len(out.Observation.Alerts), out.Observation.OmittedAlerts)
+		t.Fatalf("bounded observation = %d denials (%d omitted, want %d), %d alerts (%d omitted)", len(out.Observation.Denials),
+			out.Observation.OmittedDenials, wantOmitted, len(out.Observation.Alerts), out.Observation.OmittedAlerts)
 	}
 	if len(out.Receipt.Runs) != workerproto.MaxSessionEvidenceRunRefs || *out.Receipt.OmittedRunReferences != "11" {
 		t.Fatalf("bounded receipt = %d runs, %s omitted (daemon omitted 3 + export dropped 8)", len(out.Receipt.Runs), *out.Receipt.OmittedRunReferences)

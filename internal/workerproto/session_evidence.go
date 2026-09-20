@@ -228,6 +228,12 @@ type NetworkDenial struct {
 	Destination         *string   `json:"destination"`
 	DestinationWithheld bool      `json:"destination_withheld"`
 	Port                *int      `json:"port"`
+	// SourcePort is the client's own port for a refusal Coop's gateway made against
+	// something addressed to IT — a connection dialed straight at a listener, a
+	// message its DNS listener could not read as a query. Those name no destination,
+	// so this is the only handle on which program in the box made the attempt. It is
+	// a SOURCE: never where the attempt was going, and never rendered as one.
+	SourcePort *int `json:"source_port,omitempty"`
 }
 
 type NetworkConnection struct {

@@ -223,6 +223,8 @@ func networkObservationFromInspection(inspection networkstate.Inspection, export
 			ID: denial.ID, At: denial.At.UTC(), Kind: denial.Kind, Basis: box.NetworkDenialBasis(denial.Kind),
 			Reason: denial.Reason, Source: denial.Source, SourceSequence: countText(denial.Sequence),
 			DestinationWithheld: !exportDestinations, Port: denial.Port,
+			// Not a destination, so withholding destinations does not withhold it.
+			SourcePort: denial.SourcePort,
 		}
 		if exportDestinations {
 			row.Destination = optionalText(firstText(denial.Name, denial.Peer))

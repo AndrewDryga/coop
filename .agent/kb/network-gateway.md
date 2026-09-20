@@ -108,9 +108,10 @@ Facts the code cannot say twice, all still true:
   (`networkreport.LocalRefusal`, used by `net inspect`, `net watch`, the run listing, the box
   summary and the loop's iteration block) instead of folding them into "remote addresses". Since 2026-09-20 the event
   also carries the client's OWN port (`GuardEvent.SourcePort` → `networkview.Denial.SourcePort`,
-  rendered as "from port N inside the box"): it is the only handle on WHICH client, since there is
-  no destination to look up, and it survives a destinations-withheld projection because a port
-  inside the box names no endpoint. It is a SOURCE — never fed to `Destination()`, never counted as
+  rendered as "from port N inside the box", and carried to a fleet reader through
+  `workerproto.NetworkDenial.SourcePort`): it is the only handle on WHICH client, since there is no
+  destination to look up, and it survives a destinations-withheld projection because a port inside
+  the box names no endpoint. It is a SOURCE — never fed to `Destination()`, never counted as
   traffic.
 
 - The pinned Envoy 1.39.1 `tls_inspector` caps ClientHello at 16 KiB, so both inspection layers use
