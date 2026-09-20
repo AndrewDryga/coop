@@ -50,6 +50,12 @@ const (
 	CredentialBrokerProvider = "provider"
 	CredentialBrokerMCP      = "mcp"
 	CredentialBrokerDownload = "download"
+	// CredentialBrokerMCPSSE is the legacy SSE transport, which cannot take an exact route: the
+	// server names its own message endpoint at runtime, on a path (and query) only that connection
+	// knows. Its route admits GET on the stream's own path and POST anywhere on the SAME host, so
+	// the credential still reaches one host and nothing else. Compatibility support, removable when
+	// the server offers a streamable HTTP url.
+	CredentialBrokerMCPSSE = "mcp-sse"
 )
 
 // MaxBrokerRequestLines bounds the request lines one download route forwards. Two is what a git
@@ -179,6 +185,11 @@ func (r CredentialBrokerRoute) valid() bool {
 	switch r.Kind {
 	case CredentialBrokerProvider:
 		return slices.Equal(r.Methods, []string{"POST"})
+	case CredentialBrokerMCPSSE:
+		// The stream's own path, and the two methods the transport uses. Its breadth is in Admits,
+		// not here: nothing about this route may be widened by configuration.
+		return MCPSecretHeader(r.Header, r.HeaderPrefix) &&
+			!r.PathPrefix && !r.AllowQuery && len(r.Allow) == 0 && slices.Equal(r.Methods, []string{"GET", "POST"})
 	case CredentialBrokerMCP:
 		// A streamable-HTTP endpoint: its exact path, the methods the protocol uses (POST a
 		// message, GET the stream, DELETE the session), one secret header and no query.
@@ -243,6 +254,20 @@ func (r CredentialBrokerRoute) Admits(method string, target *url.URL) bool {
 		return slices.ContainsFunc(r.Allow, func(line BrokerRequestLine) bool {
 			return line.Method == method && line.Path == target.Path && line.Query == target.RawQuery && !target.IsAbs()
 		})
+	}
+	if r.Kind == CredentialBrokerMCPSSE {
+		// GET opens the one stream this route exists for; POST carries a message to the endpoint
+		// that stream named, which only it knows — so any clean path on this host, with its query.
+		// Nothing else: no DELETE, no second stream, and never another host.
+		switch {
+		case target.IsAbs():
+			return false
+		case method == http.MethodGet:
+			return target.Path == r.Path && target.RawQuery == ""
+		case method == http.MethodPost:
+			return true
+		}
+		return false
 	}
 	pathMatches := target.Path == r.Path
 	if r.PathPrefix {

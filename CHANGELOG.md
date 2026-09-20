@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- An MCP server on the legacy SSE transport keeps its secret outside the box too, instead of being
+  refused. That transport names its own message endpoint at runtime, so its route cannot be as
+  narrow as the rest: Coop admits the stream's own address and messages to that one host, and
+  nothing else. The launch names those servers and what to ask for instead — when the server offers
+  a streamable HTTP URL, use it and the route narrows again.
+
 - A filtered Codex run on an API key no longer ends with "Traffic to 3 remote addresses was
   blocked". Codex's curated plugin store looked up chatgpt.com, github.com and api.github.com on
   every start, which an API key's access does not cover, so each run reported 16 refusals nobody

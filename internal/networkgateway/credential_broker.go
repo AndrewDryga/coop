@@ -138,7 +138,8 @@ func newCredentialBroker(config LaunchConfig, index int, secret CredentialBroker
 // there is no lease to take and no policy to hold it to. Only MCP routes: provider keys stay a
 // filtered run's.
 func newOpenCredentialBroker(route CredentialBrokerRoute, host netip.Addr, index int, secret CredentialBrokerSecret) (*credentialBroker, error) {
-	if !route.valid() || route.Kind != CredentialBrokerMCP || secret.Name != route.Name || !host.Is4() {
+	if !route.valid() || route.Kind != CredentialBrokerMCP && route.Kind != CredentialBrokerMCPSSE ||
+		secret.Name != route.Name || !host.Is4() {
 		return nil, Failure("credential_broker_configuration_invalid")
 	}
 	port := strconv.Itoa(CredentialBrokerPort + index)
@@ -155,7 +156,7 @@ func (b *credentialBroker) setTransport(dial func(context.Context, string, strin
 	// them only when the tool finishes — minutes for a long runbook — and a 502 there makes the
 	// agent retry a mutation, so only the run's own lifetime bounds that wait.
 	headerTimeout := credentialBrokerTimeout
-	if b.route.Kind == CredentialBrokerMCP {
+	if b.route.Kind == CredentialBrokerMCP || b.route.Kind == CredentialBrokerMCPSSE {
 		headerTimeout = 0
 	}
 	transport := &http.Transport{

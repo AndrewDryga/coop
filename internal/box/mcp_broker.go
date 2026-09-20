@@ -41,8 +41,12 @@ type mcpRoute struct {
 	header, headerKey string
 	prefix            string
 	bearer            bool
-	variable          string
-	token             string
+	// sse marks the legacy transport, whose message endpoint the server names at runtime: its
+	// route admits POST anywhere on the SAME host (see CredentialBrokerMCPSSE), which is wider
+	// than every other MCP route and exists only until that server offers a streamable HTTP url.
+	sse      bool
+	variable string
+	token    string
 }
 
 // planMCPRoutes adds a route for every secret-bearing server of a run's MCP snapshot: a
@@ -75,14 +79,12 @@ func planMCPRoutes(cfg *config.Config, spec RunSpec, snapshot []byte, plan *cred
 	return plan, nil
 }
 
-// mcpRouteFor is the route for one secret-bearing server, or the sentence saying why no fixed route
-// can carry it: an SSE server names its own message endpoint at runtime, a header the broker itself
-// controls cannot carry a secret, and the broker reaches only plain https on 443, at a path it would
-// admit. A missing secret is an error its caller decides what to do with.
+// mcpRouteFor is the route for one secret-bearing server, or the sentence saying why no route can
+// carry it: a header the broker itself controls cannot carry a secret, and the broker reaches only
+// plain https on 443, at a path it would admit. A legacy SSE server gets the wider same-host route
+// its transport needs (CredentialBrokerMCPSSE). A missing secret is an error its caller decides
+// what to do with.
 func mcpRouteFor(server mcp.SecretServer, values map[string]string) (*mcpRoute, string, error) {
-	if server.Transport == "sse" {
-		return nil, fmt.Sprintf("MCP server %q uses the SSE transport, whose token Coop cannot keep outside the box; give it its streamable HTTP URL", server.Name), nil
-	}
 	// The gateway holds a secret header to names it does not control, after a bounded literal
 	// prefix; one it would reject is named HERE, so a filtered run refuses by server name instead
 	// of failing the whole launch configuration later, and an open run keeps that server as it is.
@@ -107,7 +109,7 @@ func mcpRouteFor(server mcp.SecretServer, values map[string]string) (*mcpRoute, 
 		escaped = "/"
 	}
 	return &mcpRoute{server: server.Name, upstream: parsed.Hostname(), path: escaped, header: server.Header, headerKey: server.HeaderKey,
-		prefix: server.Prefix, bearer: server.Bearer, variable: server.Variable, token: token}, "", nil
+		prefix: server.Prefix, bearer: server.Bearer, sse: server.Transport == "sse", variable: server.Variable, token: token}, "", nil
 }
 
 // effectiveMCPEnv is what an MCP token variable would hold in the box: project defaults, then the
@@ -230,6 +232,18 @@ func (p *credentialPlan) brokeredServers(address func(listener int) string) map[
 		servers[route.server] = brokered
 	}
 	return servers
+}
+
+// legacySSEServers are the brokered servers on the legacy transport, in route order: their route is
+// wider than the rest, so a launch names them and says what to ask their vendor for.
+func (p *credentialPlan) legacySSEServers() []string {
+	var names []string
+	for _, route := range p.mcpRoutesOrNil() {
+		if route.sse {
+			names = append(names, route.server)
+		}
+	}
+	return names
 }
 
 // mcpServerNames are the MCP servers the plan brokers, in route order.

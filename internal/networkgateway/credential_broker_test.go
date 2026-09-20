@@ -187,6 +187,55 @@ func TestCredentialBrokerCarriesAnMCPSecretHeader(t *testing.T) {
 	}
 }
 
+// The legacy SSE transport names its message endpoint at runtime, so its route is the one wider
+// shape: the stream's own path by GET, a message to any path of that SAME host by POST — with the
+// real credential added, the Host rewritten, and everything else refused before the upstream.
+func TestCredentialBrokerCarriesALegacySSESessionToOneHost(t *testing.T) {
+	var seen []string
+	b, _ := testCredentialBroker(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Header.Get("Authorization") != "Bearer real-secret-key" || request.Host != "mcp.example.com" {
+			t.Fatalf("brokered SSE request = %#v", request)
+		}
+		seen = append(seen, request.Method+" "+request.URL.RequestURI())
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("event: endpoint\n"))}, nil
+	}))
+	b.route = CredentialBrokerRoute{Name: "mcp-1", Kind: CredentialBrokerMCPSSE, Upstream: "mcp.example.com", Header: "authorization",
+		HeaderPrefix: "Bearer ", Methods: []string{"GET", "POST"}, Path: "/sse", Port: 443}
+	b.setProxy(b.proxy.Transport)
+	send := func(method, target, token string) int {
+		request := httptest.NewRequest(method, target, strings.NewReader(""))
+		request.Host = CredentialBrokerAddress(0)
+		request.Header.Set("Authorization", "Bearer "+token)
+		recorder := httptest.NewRecorder()
+		b.handler().ServeHTTP(recorder, request)
+		return recorder.Code
+	}
+	stand := strings.Repeat("s", 64)
+	// The stream, and a message to the endpoint only that stream knows.
+	if code := send(http.MethodGet, "/sse", stand); code != http.StatusOK {
+		t.Fatalf("the stream returned %d", code)
+	}
+	if code := send(http.MethodPost, "/messages/?session_id=abc", stand); code != http.StatusOK {
+		t.Fatalf("a message to the named endpoint returned %d", code)
+	}
+	for name, refused := range map[string][2]string{
+		"another stream":        {http.MethodGet, "/other"},
+		"a query on the stream": {http.MethodGet, "/sse?session=1"},
+		"another method":        {http.MethodDelete, "/sse"},
+		"a dirty path":          {http.MethodPost, "/a/../b"},
+	} {
+		if code := send(refused[0], refused[1], stand); code != http.StatusForbidden {
+			t.Errorf("%s returned %d, want 403", name, code)
+		}
+	}
+	if code := send(http.MethodPost, "/messages", strings.Repeat("t", 64)); code != http.StatusUnauthorized {
+		t.Fatalf("a wrong stand-in returned %d", code)
+	}
+	if !slices.Equal(seen, []string{"GET /sse", "POST /messages/?session_id=abc"}) {
+		t.Fatalf("upstream saw %q", seen)
+	}
+}
+
 // A download route fetches public bytes for a client the agent's own policy does not let reach that
 // host — Codex's curated plugin store. It carries no credential, adds none, refuses a request that
 // brings one, and forwards only the exact request lines the operator's adapter declared.
@@ -301,7 +350,11 @@ func TestCredentialBrokerWaitsForAnMCPToolsResponseHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i, want := range []time.Duration{credentialBrokerTimeout, 0} {
+	config.Brokers = append(config.Brokers, CredentialBrokerRoute{Name: "mcp-2", Kind: CredentialBrokerMCPSSE,
+		Upstream: "legacy.example.com", Header: "authorization", HeaderPrefix: "Bearer ",
+		Methods: []string{"GET", "POST"}, Path: "/sse", Port: 443})
+	// The legacy transport waits even longer than a tool call: its stream is idle between messages.
+	for i, want := range []time.Duration{credentialBrokerTimeout, 0, 0} {
 		secret := CredentialBrokerSecret{Name: config.Brokers[i].Name, Substitute: strings.Repeat("s", 64), Credential: "real-secret-key"}
 		b, err := newCredentialBroker(config, i, secret, clock, doh, NewGuardEvents(clock), ControllerClient{})
 		if err != nil {

@@ -3,7 +3,7 @@ name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
 sources: [internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/gatewayimage/image.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/forkctl/host.go]
-updated: 2026-09-19
+updated: 2026-09-20
 ---
 
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
@@ -63,8 +63,11 @@ Direct service traffic cannot bypass the proxy because the Docker network itself
 Brokered credentials use the guard too (`credential_broker.go`): one loopback listener per route of
 the run's plan, `CredentialBrokerAddress(i)` = 15580+i, each holding only its own route's substitute
 and credential (`CredentialBrokerSecrets` v2, bound to the run and gateway epoch and to each route
-by name; substitutes must differ). A route's kind decides its shape: `provider` is one POST endpoint
-with a 30 s response-header timeout; `mcp` is one streamable-HTTP endpoint — exact path,
+by name; substitutes must differ). A route's kind decides its shape — four of them: `provider` is one POST endpoint
+with a 30 s response-header timeout; `mcp-sse` is the legacy transport (GET the stream's own path,
+POST any clean path of that ONE host, since the server names its endpoint at runtime);
+`download` carries public bytes with NO credential at all, on exact method+path+query lines
+(`Allow`), refusing any credential the box brings; `mcp` is one streamable-HTTP endpoint — exact path,
 POST/GET/DELETE, one secret header (any lower-case name HTTP, a proxy or the MCP protocol does not
 own — `mcpSecretHeader`, which also refuses `x-forwarded-for`/`forwarded` because the proxy appends
 to those AFTER the director sets the credential — after a literal prefix of at most 64 bytes;
@@ -194,6 +197,8 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-09-20 — two more route kinds: `download` (public bytes, no credential, exact request lines
+  including the query) and `mcp-sse` (GET the stream's path, POST anywhere on that one host).
 - 2026-09-20 — `coop-net broker`: the same broker, in a helper beside an OPEN box, with a direct
   dialer, its own config (`OpenBrokerConfig`, MCP routes only), an address printed when its listeners
   accept, and stdin EOF as its stop signal.

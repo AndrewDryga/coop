@@ -32,6 +32,14 @@ func TestOpenBrokerConfigCarriesOnlyMCPRoutes(t *testing.T) {
 	if _, err := ReadOpenBrokerConfig(bytes.NewReader(data)); err != nil {
 		t.Fatal(err)
 	}
+	// The legacy transport's route is an MCP route too: an open run brokers it like any other.
+	legacy := valid
+	legacy.Brokers = []CredentialBrokerRoute{{Name: "mcp-0", Kind: CredentialBrokerMCPSSE, Upstream: "mcp.example.com",
+		Header: "authorization", HeaderPrefix: "Bearer ", Methods: []string{"GET", "POST"}, Path: "/sse", Port: 443}}
+	legacyData, _ := json.Marshal(legacy)
+	if _, err := ReadOpenBrokerConfig(bytes.NewReader(legacyData)); err != nil {
+		t.Fatalf("an open helper refused a legacy SSE route: %v", err)
+	}
 	for name, mutate := range map[string]func(*OpenBrokerConfig){
 		"a provider route": func(c *OpenBrokerConfig) {
 			c.Brokers = []CredentialBrokerRoute{{Name: "claude", Kind: CredentialBrokerProvider, Upstream: "api.anthropic.com",
@@ -120,6 +128,12 @@ func TestOpenBrokerServesOnlyItsOwnListener(t *testing.T) {
 	}
 	if code := send("coop-broker:15580", strings.Repeat("t", 64)); code != http.StatusUnauthorized {
 		t.Fatalf("a wrong stand-in answered %d", code)
+	}
+	// The legacy transport is an MCP route too — an open helper serves it like any other.
+	legacy := CredentialBrokerRoute{Name: "mcp-0", Kind: CredentialBrokerMCPSSE, Upstream: "mcp.example.com", Header: "authorization",
+		HeaderPrefix: "Bearer ", Methods: []string{"GET", "POST"}, Path: "/sse", Port: 443}
+	if _, err := newOpenCredentialBroker(legacy, host, 0, openBrokerSecret()); err != nil {
+		t.Fatalf("an open helper refused a legacy SSE route: %v", err)
 	}
 	provider := CredentialBrokerRoute{Name: "claude", Kind: CredentialBrokerProvider, Upstream: "api.anthropic.com", Header: "x-api-key",
 		Methods: []string{"POST"}, Path: "/v1/messages", Port: 443}

@@ -3,7 +3,7 @@ name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
 sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/box/mcp_broker.go, internal/box/open_broker.go, internal/networkgateway/open_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
-updated: 2026-09-19
+updated: 2026-09-20
 ---
 
 `COOP_MCP_FILE` is one host authority, but a box has four different consumers. `box.Run` captures
@@ -122,6 +122,16 @@ daemon renders nothing pre-spawn for it, reads the file once after `initialize` 
 id), and refuses the turn without it. A filtered session that withholds MCP drops the source's token
 names from its private env copy.
 
+**A legacy SSE server takes the one wider route** (`CredentialBrokerMCPSSE`). The SSE transport
+names its message endpoint at runtime (`event: endpoint`, usually with a per-connection query), so
+no exact route can carry it: its route admits GET on the stream's own path (no query) and POST on
+any clean path of the SAME host, with the same one secret header and the same redirect refusal.
+Decided by the human on 2026-09-20 (option B of
+2026-09-19-decide-how-coop-brokers-an-sse-mcp-server-s-secr): keep the secret outside the box, hold
+the credential to one host, never weaken the exact routes modern MCP uses, and name those servers at
+launch as removable compatibility support. `mcpRoute.sse` carries it from planning
+(`server.Transport == "sse"`) to the gateway kind; `legacySSEServers` feeds the launch line.
+
 **Open runs broker through a helper beside the box** (`box/open_broker.go`,
 `networkgateway/open_broker.go`). An open box has no gateway on its path, so `planOpenBroker` starts
 one container of the SAME gateway image running `coop-net broker` on the box's own network
@@ -169,6 +179,7 @@ adds ordinary `CommandArgs` must decide whether its nested commands need an equi
 mounting the raw snapshot for every scoped credential is not the fallback.
 
 ## Changelog
+- 2026-09-20 — a legacy SSE server is brokered on a same-host route instead of refused.
 - 2026-09-19 — open runs broker secret-bearing servers through a sibling helper; what no route can
   carry keeps today's behaviour and is named at launch.
 - 2026-09-19 — planning reads `mcp.SecretServers` (bearer or one `prefix${VAR}` header); the rewrite

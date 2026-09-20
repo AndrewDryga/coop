@@ -39,7 +39,9 @@ func (c OpenBrokerConfig) Validate() error {
 		return Failure("credential_broker_configuration_invalid")
 	}
 	for _, route := range c.Brokers {
-		if route.Kind != CredentialBrokerMCP {
+		// Both MCP transports, and nothing else: a provider key stays a filtered run's, and a
+		// download route belongs to a client the gateway itself serves.
+		if route.Kind != CredentialBrokerMCP && route.Kind != CredentialBrokerMCPSSE {
 			return Failure("credential_broker_configuration_invalid")
 		}
 	}

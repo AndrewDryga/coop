@@ -17,9 +17,9 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
-// openBrokerSnapshot has one server of every shape an open run meets: two a fixed route carries, and
-// three it cannot — an SSE server, a server with its secret in two places, and one that is not plain
-// https on 443 — plus a local server and a remote one with no secret at all.
+// openBrokerSnapshot has one server of every shape an open run meets: three Coop brokers (two on
+// exact routes, one legacy SSE on its wider same-host route), two it cannot (a secret in two places,
+// and a URL that is not plain https on 443), plus a local server and a remote one with no secret.
 const openBrokerSnapshot = `{"mcpServers":{
 	"docs":{"type":"http","url":"https://docs.example/mcp","bearer_token_env_var":"DOCS_TOKEN"},
 	"tickets":{"type":"http","url":"https://tickets.example/mcp","headers":{"X-Api-Key":"key ${TICKETS_KEY}"}},
@@ -64,26 +64,27 @@ func TestOpenRunPlansAHelperOnlyForTheSecretsItCanKeepOut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := broker.servers(); strings.Join(got, ",") != "docs,tickets" {
+	if got := broker.servers(); strings.Join(got, ",") != "docs,stream,tickets" {
 		t.Fatalf("brokered servers = %v", got)
 	}
-	if strings.Join(broker.scrub, ",") != "DOCS_TOKEN,TICKETS_KEY" {
+	if strings.Join(broker.scrub, ",") != "DOCS_TOKEN,STREAM_TOKEN,TICKETS_KEY" {
 		t.Fatalf("scrubbed variables = %v", broker.scrub)
 	}
-	for _, server := range []string{"stream", "twice", "inside"} {
+	for _, server := range []string{"twice", "inside"} {
 		if !strings.Contains(strings.Join(kept, "\n"), `"`+server+`"`) {
 			t.Errorf("the launch does not say why %q keeps its secret: %v", server, kept)
 		}
 	}
-	if len(kept) != 3 {
+	if len(kept) != 2 {
 		t.Fatalf("kept servers = %v", kept)
 	}
-	// Two stand-ins, each 64 hex, and a listener per route the box can name before one exists.
-	if len(broker.substitutes) != 2 || len(broker.substitutes[0]) != 64 || broker.substitutes[0] == broker.substitutes[1] {
+	// A stand-in per route, each 64 hex, and a listener the box can name before one exists.
+	if len(broker.substitutes) != 3 || len(broker.substitutes[0]) != 64 || broker.substitutes[0] == broker.substitutes[1] {
 		t.Fatalf("stand-ins = %v", broker.substitutes)
 	}
 	servers := broker.plan.brokeredServers(openBrokerListener)
-	if servers["docs"].URL != "http://coop-broker:15580/mcp" || servers["tickets"].URL != "http://coop-broker:15581/mcp" ||
+	if servers["docs"].URL != "http://coop-broker:15580/mcp" || servers["stream"].URL != "http://coop-broker:15581/sse" ||
+		servers["tickets"].URL != "http://coop-broker:15582/mcp" ||
 		servers["tickets"].HeaderKey != "X-Api-Key" || servers["tickets"].Prefix != "key " {
 		t.Fatalf("brokered servers = %+v", servers)
 	}
@@ -200,24 +201,24 @@ func TestOpenRunBrokersItsSecretMCPServers(t *testing.T) {
 		t.Fatalf("the box was not given the helper's address:\n%s", box)
 	}
 	env := string(mustReadFile(t, boxEnv))
-	for _, gone := range []string{"docs-secret", "tickets-secret"} {
+	for _, gone := range []string{"docs-secret", "tickets-secret", "stream-secret"} {
 		if strings.Contains(env, gone) {
 			t.Fatalf("a brokered secret entered the box: %q", env)
 		}
 	}
-	for _, want := range []string{"COOP_MCP_TOKEN_0=", "COOP_MCP_TOKEN_1=", "STREAM_TOKEN=stream-secret", "KEPT=kept"} {
+	for _, want := range []string{"COOP_MCP_TOKEN_0=", "COOP_MCP_TOKEN_1=", "COOP_MCP_TOKEN_2=", "TWICE_TOKEN=twice-secret", "KEPT=kept"} {
 		if !strings.Contains(env, want) {
 			t.Fatalf("the box environment lacks %q: %q", want, env)
 		}
 	}
 	projections := strings.Join(written, "\n")
-	for _, want := range []string{"http://coop-broker:15580/mcp", "http://coop-broker:15581/mcp", "${COOP_MCP_TOKEN_0}", `"key ${COOP_MCP_TOKEN_1}"`,
-		"https://stream.example/sse", "https://public.example/mcp"} {
+	for _, want := range []string{"http://coop-broker:15580/mcp", "http://coop-broker:15581/sse", "http://coop-broker:15582/mcp",
+		"${COOP_MCP_TOKEN_0}", `"key ${COOP_MCP_TOKEN_2}"`, "https://public.example/mcp"} {
 		if !strings.Contains(projections, want) {
 			t.Errorf("no projection names %q", want)
 		}
 	}
-	for _, gone := range []string{"docs.example", "tickets.example", "DOCS_TOKEN", "TICKETS_KEY"} {
+	for _, gone := range []string{"docs.example", "tickets.example", "stream.example", "DOCS_TOKEN", "TICKETS_KEY", "STREAM_TOKEN"} {
 		if strings.Contains(projections, gone) {
 			t.Errorf("a projection still names %q", gone)
 		}
@@ -261,12 +262,14 @@ func TestAnOpenSessionHandsOverStandInsAndNothingElse(t *testing.T) {
 		t.Fatal(err)
 	}
 	data := string(mustReadFile(t, target))
-	for _, want := range []string{"Bearer " + broker.substitutes[0], "coop-broker:15580", "Bearer stream-secret"} {
+	// A brokered server is named by its stand-in; a server Coop could not broker keeps the real
+	// value the box carries anyway.
+	for _, want := range []string{"Bearer " + broker.substitutes[0], "coop-broker:15580", "Bearer twice-secret"} {
 		if !strings.Contains(data, want) {
 			t.Errorf("the handoff lacks %q:\n%s", want, data)
 		}
 	}
-	for _, gone := range []string{"docs-secret", "tickets-secret", "docs.example"} {
+	for _, gone := range []string{"docs-secret", "tickets-secret", "stream-secret", "docs.example"} {
 		if strings.Contains(data, gone) {
 			t.Errorf("the handoff carries %q:\n%s", gone, data)
 		}

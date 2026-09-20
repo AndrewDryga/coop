@@ -122,7 +122,6 @@ func TestFilteredRunRefusesAnMCPTokenItCannotBroker(t *testing.T) {
 	for name, c := range map[string]struct {
 		env, definition string
 	}{
-		"SSE":           {"EMISAR_TOKEN=secret\n", `{"type":"sse","url":"https://emisar.example/sse","bearer_token_env_var":"EMISAR_TOKEN"}`},
 		"missing token": {"", `{"type":"http","url":"https://emisar.example/mcp","bearer_token_env_var":"EMISAR_TOKEN"}`},
 		"dirty path":    {"EMISAR_TOKEN=secret\n", `{"type":"http","url":"https://emisar.example/a/../mcp","bearer_token_env_var":"EMISAR_TOKEN"}`},
 	} {
@@ -133,6 +132,49 @@ func TestFilteredRunRefusesAnMCPTokenItCannotBroker(t *testing.T) {
 				t.Fatalf("planMCPRoutes = %v, want a refusal naming the server", err)
 			}
 		})
+	}
+}
+
+// The legacy SSE transport names its message endpoint at runtime, so its route cannot be an exact
+// one: it admits GET on the stream's own path and POST anywhere on the SAME host, and nothing else.
+// The secret still stays outside the box, which is the whole point of brokering it.
+func TestALegacySSEServerGetsItsOwnWiderRoute(t *testing.T) {
+	cfg, spec := brokerFixture(t, "EMISAR_TOKEN=secret\n")
+	plan, err := planMCPRoutes(cfg, spec, []byte(`{"mcpServers":{"emisar":{"type":"sse","url":"https://emisar.example/sse","bearer_token_env_var":"EMISAR_TOKEN"}}}`), nil)
+	if err != nil || len(plan.mcp) != 1 || !plan.mcp[0].sse {
+		t.Fatalf("plan = %+v, %v", plan, err)
+	}
+	if got := plan.legacySSEServers(); len(got) != 1 || got[0] != "emisar" {
+		t.Fatalf("legacy SSE servers = %v", got)
+	}
+	route := plan.gatewayRoutes()[0]
+	if route.Kind != networkgateway.CredentialBrokerMCPSSE {
+		t.Fatalf("route = %+v", route)
+	}
+	if err := networkgateway.CheckBrokerRoutes([]networkgateway.CredentialBrokerRoute{route}); err != nil {
+		t.Fatalf("the gateway refuses the SSE route: %v", err)
+	}
+	admits := func(method, target string) bool {
+		parsed, err := url.ParseRequestURI(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return route.Admits(method, parsed)
+	}
+	// The stream itself, and a message to the endpoint that stream named — which only it knows.
+	if !admits("GET", "/sse") || !admits("POST", "/messages/?session_id=abc") || !admits("POST", "/sse") {
+		t.Fatal("the SSE route refuses its own transport")
+	}
+	for name, refused := range map[string][2]string{
+		"another stream":  {"GET", "/other"},
+		"a stream query":  {"GET", "/sse?session=1"},
+		"another method":  {"DELETE", "/sse"},
+		"a dirty path":    {"POST", "/a/../b"},
+		"an absolute url": {"POST", "https://elsewhere.example/messages"},
+	} {
+		if admits(refused[0], refused[1]) {
+			t.Errorf("the SSE route admits %s", name)
+		}
 	}
 }
 

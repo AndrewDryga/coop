@@ -136,9 +136,20 @@ that route and run; the guard sends the real token upstream. The route admits th
 URL path and the methods the MCP protocol uses (POST, GET, DELETE), and waits as long as a tool
 call takes. The operator's own variable in Coop's env file never reaches a filtered box, whether or
 not that box loads MCP, and a session's ACP adapter is handed the stand-in. Each bearer server's
-host is withheld from the agent's own policy. A bearer server declared SSE (it names its own message
-endpoint at runtime), a missing token, or one set through `-e` stops the launch, naming the server.
-A remote session's Responder state tools ride the same kind of route.
+host is withheld from the agent's own policy. A missing token, or one set through `-e`, stops the
+launch, naming the server. A remote session's Responder state tools ride this same exact-path route.
+
+A server on the legacy SSE transport gets a wider route, because it cannot take a narrow one: it
+names its own message endpoint at runtime, on a path only that connection knows. Its route admits
+`GET` on the stream's own path and `POST` on any path of the SAME host, and nothing else — no other
+host, no other method, and still one secret header. The credential stays outside the box, which is
+the point, but the box can reach more of that host than a streamable-HTTP server's route allows, so
+the launch names those servers and says what to ask their vendor for. It is compatibility support:
+when the server offers a streamable HTTP url, use it and the route narrows again. One limit to know:
+if such a server answers with an ABSOLUTE endpoint url rather than a path, the client posts straight
+to it instead of through Coop — refused by a filtered run's policy, and carrying only the stand-in
+in an open one. It fails closed, but it reads as "that server does not work"; its streamable HTTP
+url is the fix.
 
 **Offline runs leave remote MCP servers out.** A box with no network cannot reach a server by URL,
 so an offline run drops every remote server from the box's MCP configuration and says so at launch

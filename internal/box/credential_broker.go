@@ -356,9 +356,13 @@ func (p *credentialPlan) gatewayRoutes() []networkgateway.CredentialBrokerRoute 
 		if err != nil {
 			decoded = r.path // planMCPRoutes took it from a parsed URL, so this cannot happen
 		}
+		kind, methods := networkgateway.CredentialBrokerMCP, []string{"POST", "GET", "DELETE"}
+		if r.sse {
+			kind, methods = networkgateway.CredentialBrokerMCPSSE, []string{"GET", "POST"}
+		}
 		routes = append(routes, networkgateway.CredentialBrokerRoute{Name: "mcp-" + strconv.Itoa(p.mcpListener(j)),
-			Kind: networkgateway.CredentialBrokerMCP, Upstream: r.upstream, Header: r.header, HeaderPrefix: r.prefix,
-			Methods: []string{"POST", "GET", "DELETE"}, Path: decoded, Port: 443})
+			Kind: kind, Upstream: r.upstream, Header: r.header, HeaderPrefix: r.prefix,
+			Methods: methods, Path: decoded, Port: 443})
 	}
 	for _, download := range p.downloads {
 		allow := make([]networkgateway.BrokerRequestLine, 0, len(download.spec.Allow))

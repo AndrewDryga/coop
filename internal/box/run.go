@@ -696,6 +696,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	sections.internet(cfg, spec, policy, brokerPlan.mcpServerNames()...)
 	sections.offlineMCP(offlineOmitted)
 	sections.openMCP(open.servers(), openKept)
+	sections.legacyMCP(append(brokerPlan.legacySSEServers(), open.legacySSEServers()...))
 	// Whatever a box may reach is fully known before it starts, so the launch
 	// instructions say it. An agent that learns its own boundary by being
 	// refused burns a turn and reports policy as a broken tool or a dead host.

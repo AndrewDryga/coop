@@ -243,6 +243,17 @@ func (s *launchSections) openMCP(brokered, kept []string) {
 	}
 }
 
+// legacyMCP names the brokered servers still on the legacy SSE transport. Their route is wider than
+// every other — POST anywhere on that one host — so the person who configured them is told, and
+// told what to ask for instead.
+func (s *launchSections) legacyMCP(servers []string) {
+	if !s.on || len(servers) == 0 {
+		return
+	}
+	ui.Note("  %s on the legacy SSE transport, brokered on a wider route — ask for a streamable HTTP URL: %s",
+		ui.Count(len(servers), "MCP server"), strings.Join(servers, ", "))
+}
+
 // brokerImage says why an open run's first start is slow: the helper that keeps its MCP secrets is
 // built from Coop's own gateway sources on first use.
 func (s *launchSections) brokerImage() {

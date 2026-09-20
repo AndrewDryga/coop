@@ -233,6 +233,14 @@ func (b *openBroker) env(artifacts compositionArtifactOps, source string) (strin
 	return path, nil
 }
 
+// legacySSEServers are the brokered servers still on the legacy transport; none without a broker.
+func (b *openBroker) legacySSEServers() []string {
+	if b == nil {
+		return nil
+	}
+	return b.plan.legacySSEServers()
+}
+
 // servers are the MCP servers the helper keeps secrets for, in route order; none without a broker.
 func (b *openBroker) servers() []string {
 	if b == nil {
