@@ -46,6 +46,10 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-09-20 — **+1 package `eval` (a leaf, `nil`) and +1 edge: `cli` → `eval`.** Native evals v1:
+  `internal/eval` loads/validates suite manifests, fingerprints inputs and plans a run — a pure data
+  library that imports no internal package (the CLI resolves targets/presets and hands it strings),
+  so it stays a leaf and `cli` is its only importer.
 - 2026-09-20 — **+1 edge: `testutil/liveprovider` → `box`.** The live qualification harness must
   route a brokered API-key target through the filtered gateway, and whether an account brokers a key
   is Coop's own decision (`box.AccountBrokersKey`, the same call `cli` and `sessionsvc` make) — a

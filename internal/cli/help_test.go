@@ -250,7 +250,7 @@ var wantManualOrder = []string{
 	"fork stop", "fork logs", "fork path", "fork open",
 	"up", "down",
 	"doctor", "approve", "net", "net runs", "net inspect", "net check", "net blocked",
-	"net watch", "net export", "net forget", "net setup", "net recover", "check-secrets", "sign",
+	"net watch", "net export", "net forget", "net setup", "net recover", "eval", "check-secrets", "sign",
 	"init", "build", "update", "version",
 	"acp", "sessions", "sessions serve", "sessions doctor", "sessions policies", "sessions compact", "sessions connect",
 	"prompt", "completion",

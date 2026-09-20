@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- New `coop eval` command (the foundation of native evals): author a suite that compares a preset,
+  loop config or Coop build before and after a change. `coop eval init` scaffolds a working suite,
+  `coop eval run <suite> <target|preset>...` strictly validates it and shows the exact run plan — the
+  cases, every configuration, the matrix and the deadline — before any work. This first release plans
+  and validates only; running the trials and comparing two runs land in later releases.
+
 - A run that finished cleanly is no longer occasionally reported as failed. When your workload's
   process exits, Coop asks the runtime for the container's final state — and on a busy machine that
   answer can lag a moment behind the process, or a single query can time out. Coop now waits that

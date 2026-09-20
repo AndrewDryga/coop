@@ -244,7 +244,7 @@ var manualOrder = append(append([]string{"run", "shell"}, agents.Names()...),
 	"fork stop", "fork logs", "fork path", "fork open",
 	"up", "down",
 	"doctor", "approve", "net", "net runs", "net inspect", "net check", "net blocked",
-	"net watch", "net export", "net forget", "net setup", "net recover", "check-secrets", "sign",
+	"net watch", "net export", "net forget", "net setup", "net recover", "eval", "check-secrets", "sign",
 	"init", "build", "update", "version",
 	"acp", "sessions", "sessions serve", "sessions doctor", "sessions policies", "sessions compact", "sessions connect",
 	"prompt", "completion")
@@ -1560,6 +1560,24 @@ Coop keeps your existing project files and adds anything missing.`,
 	// job a person came with — what new runs may reach, what recorded runs did, the repair coop
 	// normally does itself — and ends with the one workflow nobody guesses (edit the YAML, then
 	// approve). Every leaf page is reached as `coop net <verb> --help` and `coop help net <verb>`.
+	"eval": `coop eval — compare a preset, loop config or Coop build before and after a change
+
+RUN
+  coop eval run <suite> <target|preset>...   plan and run a suite for each configuration
+  coop eval compare <run-id> <run-id>        compare two runs of the same suite
+
+AUTHOR
+  coop eval                                  list starters and how to author your own
+  coop eval ls                               list qualified public starter suites
+  coop eval init <dir>                       scaffold a custom suite you can edit
+
+Each positional after the suite is one configuration to compare — a target
+(provider[:model][/effort][@account]) or a preset. Run the same suite before and
+after your change, then compare the two run ids.
+
+  coop eval run ./evals/suite.yaml codex:gpt-5.6/xhigh frontier --repeat 3 --timeout 60m
+  coop eval run ./evals/suite.yaml frontier --loop-config .agent/loop.yaml --timeout 60m
+`,
 	"net": `coop net — control network access and see what happened
 
 ACCESS — control what new runs can reach
@@ -1867,7 +1885,7 @@ func printHelpPage(text string) {
 // listed when every one of its pages ends itself — the family page points at its per-command pages,
 // and each command page ends with its examples or the command that follows it.
 var selfContainedHelp = map[string]bool{
-	"presets": true, "models": true, "init": true, "approve": true, "net": true,
+	"presets": true, "models": true, "init": true, "approve": true, "net": true, "eval": true,
 	"login": true, "credentials": true,
 	"tasks": true, "backlog": true, "context": true, "loop": true, "fork": true,
 	"shell": true, "acp": true, "sign": true, "prompt": true, "version": true,

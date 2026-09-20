@@ -188,6 +188,16 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		case "blocked":
 			return []string{"--run", "--json"}
 		}
+	case "eval":
+		if len(prev) == 1 {
+			return evalCommands
+		}
+		if len(prev) >= 2 && prev[1] == "run" {
+			// After the suite, complete configurations (targets/presets) and the run flags.
+			if len(prev) >= 3 {
+				return append(a.targetCandidates(cur, false, false), evalRunOptions...)
+			}
+		}
 	case "login", "credentials", "models":
 		if len(prev) == 1 {
 			return agents.Names()

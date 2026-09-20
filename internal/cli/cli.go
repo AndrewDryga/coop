@@ -325,6 +325,8 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return a.cmdApprove(rest)
 	case "net": // host-wide: restricted networking setup (no project needed)
 		return a.cmdNet(rest)
+	case "eval": // compare a preset/loop/build change before and after (no project needed)
+		return a.cmdEval(rest)
 	case "check-secrets":
 		return a.cmdCheckSecrets(rest)
 	case "build":
@@ -386,7 +388,7 @@ func (a *app) cmdBacklog(args []string) (int, error) {
 // completion menu, and the manual's coverage list. Keep in sync with the dispatch switch above.
 var topLevelCommands = []string{
 	"run", "shell", "login", "credentials", "presets", "models", "acp", "fork", "tasks", "context", "backlog",
-	"loop", "up", "down", "init", "doctor", "approve", "net", "check-secrets", "sign", "build", "update", "completion", "prompt", "sessions", "help", "version",
+	"loop", "up", "down", "init", "doctor", "approve", "net", "eval", "check-secrets", "sign", "build", "update", "completion", "prompt", "sessions", "help", "version",
 }
 
 // helpForPath prints the page for one command PATH, so `coop help tasks add` and
@@ -501,6 +503,8 @@ func familyVerbs(cmd string) ([]string, bool) {
 		return tasks.BacklogVerbs, true
 	case "net":
 		return netCommands, true
+	case "eval":
+		return evalCommands, true
 	case "sessions":
 		return sessionCommands, true
 	}
