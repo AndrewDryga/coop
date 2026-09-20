@@ -2118,11 +2118,12 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		activityRole = forkspace.ExecutionRoleWarm
 	}
 	env = append(env, "COOP_ACP_ACTIVITY_ROLE="+string(activityRole))
-	// A filtered child's MCP servers reach its credential broker, whose listeners and stand-ins only
-	// that child knows: it hands over its adapter's list, and nothing is rendered from the real
-	// private env. A restricted child is never filtered.
+	// An online child's secret-bearing MCP servers reach its credential broker — the filtered gateway's,
+	// or the helper beside an open box — whose listeners and stand-ins only that child knows: it hands
+	// over its adapter's list, and nothing is rendered from the real private env. An offline child's
+	// servers are all local, so the daemon renders its list.
 	mcpHandoff := ""
-	if bound.NetworkMode == string(egress.Filtered) && mode == agents.ModeNormal {
+	if bound.NetworkMode != string(egress.None) && mode == agents.ModeNormal {
 		mcpHandoff = sessionMCPHandoffPath(privateRoot, runID)
 		if err := removeProjectedSessionFile(mcpHandoff); err != nil {
 			return nil, acpFailure(sessionACPCredentialError, "a stale MCP handoff is unsafe")
@@ -2165,9 +2166,16 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		return nil, acpFailure(sessionACPInvalidTarget, err.Error())
 	}
 	var mcpServers []map[string]any
-	if mode != agents.ModeBare && mcpHandoff == "" {
+	switch {
+	case mode == agents.ModeBare:
 		// A bare session mounts no MCP at all: its policy withheld the shared file, and its turn
 		// can bind no endpoint, so there is nothing to ask the adapter for.
+	case mcpHandoff != "":
+		// The child renders the list, but a private copy it could not load never reaches it.
+		if _, _, err := mcp.ReadValidatedSnapshot(filepath.Join(privateRoot, "mcp.json")); err != nil {
+			return nil, errors.Join(acpFailure(sessionACPCredentialError, "private MCP projection is invalid"), err)
+		}
+	default:
 		if mcpServers, err = r.sessionACPMCPServers(agent, privateRoot); err != nil {
 			return nil, err
 		}
@@ -2841,7 +2849,7 @@ func (r *sessionTurnRunner) runACP(
 			servers, err := box.ReadSessionMCPHandoff(process.mcpHandoff, process.runID)
 			_ = removeProjectedSessionFile(process.mcpHandoff)
 			if err != nil {
-				return "", nil, session.Usage{}, errors.Join(acpFailure(sessionACPCredentialError, "the filtered child handed over no MCP servers"), err)
+				return "", nil, session.Usage{}, errors.Join(acpFailure(sessionACPCredentialError, "the session child handed over no MCP servers"), err)
 			}
 			process.mcpServers, process.mcpHandoff = servers, ""
 		}

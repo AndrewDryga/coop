@@ -125,16 +125,17 @@ func TestWithoutRemoteServersKeepsOnlyLocalOnes(t *testing.T) {
 }
 
 // A server's secret is a bearer_token_env_var or one header that is literal text then one ${VAR};
-// a literal header is no secret, and any other shape is refused by name.
+// a literal header is no secret, and any other shape comes back as unbrokerable, by name, with every
+// variable it reads.
 func TestSecretServersReadsEachSecretShape(t *testing.T) {
-	servers, err := SecretServers([]byte(`{"mcpServers":{
+	servers, unbrokerable, err := SecretServers([]byte(`{"mcpServers":{
 		"bearer":{"url":"https://a.example/mcp","bearer_token_env_var":"A_TOKEN"},
 		"key":{"url":"https://b.example/mcp","headers":{"X-Api-Key":"${B_KEY}","X-Client":"coop"}},
 		"token":{"type":"http","url":"https://c.example/mcp","headers":{"Authorization":"Token ${C_TOKEN}"}},
 		"plain":{"url":"https://d.example/mcp","headers":{"X-Client":"coop"}},
 		"local":{"command":"true"}}}`))
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || unbrokerable != nil {
+		t.Fatal(unbrokerable, err)
 	}
 	want := []SecretServer{
 		{Name: "bearer", URL: "https://a.example/mcp", Transport: "http", Header: "authorization", HeaderKey: "Authorization", Prefix: "Bearer ", Variable: "A_TOKEN", Bearer: true},
@@ -144,13 +145,18 @@ func TestSecretServersReadsEachSecretShape(t *testing.T) {
 	if !slices.Equal(servers, want) {
 		t.Fatalf("secret servers = %+v\nwant %+v", servers, want)
 	}
-	for name, definition := range map[string]string{
-		"text after the reference": `{"url":"https://x.example/mcp","headers":{"X-Key":"${K}-suffix"}}`,
-		"two references":           `{"url":"https://x.example/mcp","headers":{"X-Key":"${K}${L}"}}`,
-		"two secrets":              `{"url":"https://x.example/mcp","bearer_token_env_var":"K","headers":{"X-Key":"${L}"}}`,
+	for name, test := range map[string]struct {
+		definition string
+		variables  []string
+	}{
+		"text after the reference": {`{"url":"https://x.example/mcp","headers":{"X-Key":"${K}-suffix"}}`, []string{"K"}},
+		"two references":           {`{"url":"https://x.example/mcp","headers":{"X-Key":"${K}${L}"}}`, []string{"K", "L"}},
+		"two secrets":              {`{"url":"https://x.example/mcp","bearer_token_env_var":"K","headers":{"X-Key":"${L}"}}`, []string{"K", "L"}},
 	} {
-		if _, err := SecretServers([]byte(`{"mcpServers":{"x":` + definition + `}}`)); err == nil || !strings.Contains(err.Error(), `"x"`) {
-			t.Errorf("%s: %v", name, err)
+		servers, unbrokerable, err := SecretServers([]byte(`{"mcpServers":{"x":` + test.definition + `}}`))
+		if err != nil || servers != nil || len(unbrokerable) != 1 || unbrokerable[0].Name != "x" ||
+			!strings.Contains(unbrokerable[0].Reason, `"x"`) || !slices.Equal(unbrokerable[0].Variables, test.variables) {
+			t.Errorf("%s: %+v, %+v, %v", name, servers, unbrokerable, err)
 		}
 	}
 }

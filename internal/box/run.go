@@ -23,6 +23,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/mcp"
+	"github.com/AndrewDryga/coop/internal/networkgateway"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -682,9 +683,19 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			}
 		}
 	}
+	// An open box reaches the internet directly, so its secret-bearing MCP servers go through a helper
+	// beside it instead, and their secrets stay out of it (openBroker). A raw box loads no MCP.
+	var open *openBroker
+	var openKept []string
+	if filtered == nil && cfg.Egress == "open" && mcpPresent && len(credentialScope(cfg, spec)) != 0 {
+		if open, openKept, err = planOpenBroker(cfg, rt, spec, mcpSnapshot); err != nil {
+			return -1, err
+		}
+	}
 	sections.accounts(launchAccounts(cfg, spec, brokerPlan))
 	sections.internet(cfg, spec, policy, brokerPlan.mcpServerNames()...)
 	sections.offlineMCP(offlineOmitted)
+	sections.openMCP(open.servers(), openKept)
 	// Whatever a box may reach is fully known before it starts, so the launch
 	// instructions say it. An agent that learns its own boundary by being
 	// refused burns a turn and reports policy as a broken tool or a dead host.
@@ -764,8 +775,11 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	rawMCP := false
 	if mcpPresent {
 		var brokered map[string]mcp.BrokeredServer
-		if filtered != nil && filtered.broker != nil {
-			brokered = filtered.broker.plan.brokeredServers()
+		switch {
+		case filtered != nil && filtered.broker != nil:
+			brokered = filtered.broker.plan.brokeredServers(networkgateway.CredentialBrokerAddress)
+		case open != nil:
+			brokered = open.plan.brokeredServers(openBrokerListener)
 		}
 		path, claudePath, written, err := writeMCPSnapshots(artifacts, mcpSnapshot, brokered)
 		tmpFiles = append(tmpFiles, written...)
@@ -781,7 +795,15 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if mcpPresent {
 		snapshotPath = cfg.MCPFile
 	}
-	if err := filtered.handOffSessionMCP(spec, os.Getenv(SessionMCPHandoffEnv), snapshotPath); err != nil {
+	standIns := filtered.mcpStandIns()
+	switch {
+	case open != nil:
+		standIns = open.mcpStandIns(cfg, spec)
+	case filtered == nil:
+		// Without a broker the box carries its MCP environment itself, and its list reads it the same way.
+		standIns = mcpStandIns{kept: effectiveMCPEnv(cfg, spec)}
+	}
+	if err := handOffSessionMCP(spec, os.Getenv(SessionMCPHandoffEnv), snapshotPath, standIns); err != nil {
 		return -1, err
 	}
 	configAgents := credentialScope(cfg, spec)
@@ -1035,6 +1057,14 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		envFile = kept
 		tmpFiles = append(tmpFiles, kept)
 	}
+	if open != nil {
+		brokerEnv, err := open.env(artifacts, envFile)
+		if err != nil {
+			return -1, err
+		}
+		envFile = brokerEnv
+		tmpFiles = append(tmpFiles, brokerEnv)
+	}
 	if filtered != nil {
 		brokerEnv, err := filtered.credentialBrokerEnv(artifacts, envFile)
 		if err != nil {
@@ -1191,6 +1221,25 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	networkName := ""
 	if cfg.Egress == "open" && spec.Network && rt.Silent("network", "inspect", serviceNetwork) {
 		networkName = serviceNetwork
+	}
+	if open != nil {
+		// Its address exists only once it runs, so the helper starts here — on the box's own network,
+		// after every host artifact — and the box finds it through a hosts entry.
+		defer func() {
+			if err := open.stop(rt); err != nil {
+				ui.Warning("Coop could not remove this box's MCP credential broker", err.Error(),
+					"It holds this run's MCP secrets; remove it with: docker rm -f "+open.name())
+			}
+		}()
+		brokerCtx := spec.Ctx
+		if brokerCtx == nil {
+			brokerCtx = context.Background()
+		}
+		network := openBrokerNetwork(networkName, cfg.ExtraRunArgs, spec.ExtraArgs)
+		if err := open.start(brokerCtx, rt, spec.Repo, network, ownerLabels(spec), sections.brokerImage, privateRoots...); err != nil {
+			return finish(-1, err)
+		}
+		spec.ExtraArgs = append(spec.ExtraArgs, open.hostArgs()...)
 	}
 
 	// Sidecar discovery + same-URL forwarders: whenever the box will join the services network,
@@ -2607,37 +2656,7 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 		args = append(args, "--init")
 	}
 	args = append(args, "--label", LabelKey+"="+LabelBox)
-	// Who supervises this box: THIS process, scoped to the workspace it runs for. A host coop killed
-	// by SIGKILL never fires --rm and leaves nobody watching, so a later invocation in the same
-	// workspace reaps the box by proving this identity dead. Omitted when the host cannot produce a
-	// stable identity — an unverifiable label is worse than none, and an unlabeled box is reported,
-	// never reaped.
-	if host := supervisorLabelValue(supervisorScope(spec), os.Getpid()); host != "" {
-		args = append(args, "--label", LabelHost+"="+host)
-	}
-	if spec.RunID != "" {
-		args = append(args, "--label", LabelRun+"="+spec.RunID)
-	}
-	if spec.activityID != "" {
-		args = append(args, "--label", LabelExecution+"="+spec.activityID)
-	}
-	if spec.SupervisorID != "" {
-		// A supervised inner box: coop.supervised=1 lets build/update restart it (the
-		// editor reconnects); coop.sup=<id> lets its own supervisor kill exactly its
-		// box(es) on teardown, so nothing is orphaned.
-		args = append(args, "--label", LabelSupervised+"="+LabelOn, "--label", LabelSupervisor+"="+spec.SupervisorID)
-	}
-	if spec.ForkName != "" {
-		// Keep the human name inspectable, but reap by the repo-scoped owner. Fork names are local to
-		// a repo; using the readable label for cleanup would kill a namesake in another repository.
-		args = append(args, "--label", LabelFork+"="+spec.ForkName, "--label", LabelForkOwner+"="+spec.ForkOwner)
-		if spec.ForkGeneration != "" {
-			args = append(args, "--label", LabelForkGeneration+"="+spec.ForkGeneration)
-		}
-		if spec.ForkWorker {
-			args = append(args, "--label", LabelForkWorker+"="+LabelOn)
-		}
-	}
+	args = append(args, ownerLabels(spec)...)
 	switch mode {
 	case ttyInteractive:
 		// -e TERM propagates the host terminal type so the agents' TUIs render in
@@ -2769,6 +2788,44 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 // hostTimezone resolves the host's IANA zone name ("America/Merida"): $TZ when set,
 // else the /etc/localtime symlink, else Debian-style /etc/timezone. Empty when none
 // resolve — the box then keeps the image default (UTC).
+// ownerLabels say who owns a box, for everything that reaps one: its supervisor, run, execution and
+// fork. A helper Coop starts beside the box carries them too, so it goes wherever its box goes.
+func ownerLabels(spec RunSpec) []string {
+	var args []string
+	// Who supervises this box: THIS process, scoped to the workspace it runs for. A host coop killed
+	// by SIGKILL never fires --rm and leaves nobody watching, so a later invocation in the same
+	// workspace reaps the box by proving this identity dead. Omitted when the host cannot produce a
+	// stable identity — an unverifiable label is worse than none, and an unlabeled box is reported,
+	// never reaped.
+	if host := supervisorLabelValue(supervisorScope(spec), os.Getpid()); host != "" {
+		args = append(args, "--label", LabelHost+"="+host)
+	}
+	if spec.RunID != "" {
+		args = append(args, "--label", LabelRun+"="+spec.RunID)
+	}
+	if spec.activityID != "" {
+		args = append(args, "--label", LabelExecution+"="+spec.activityID)
+	}
+	if spec.SupervisorID != "" {
+		// A supervised inner box: coop.supervised=1 lets build/update restart it (the
+		// editor reconnects); coop.sup=<id> lets its own supervisor kill exactly its
+		// box(es) on teardown, so nothing is orphaned.
+		args = append(args, "--label", LabelSupervised+"="+LabelOn, "--label", LabelSupervisor+"="+spec.SupervisorID)
+	}
+	if spec.ForkName != "" {
+		// Keep the human name inspectable, but reap by the repo-scoped owner. Fork names are local to
+		// a repo; using the readable label for cleanup would kill a namesake in another repository.
+		args = append(args, "--label", LabelFork+"="+spec.ForkName, "--label", LabelForkOwner+"="+spec.ForkOwner)
+		if spec.ForkGeneration != "" {
+			args = append(args, "--label", LabelForkGeneration+"="+spec.ForkGeneration)
+		}
+		if spec.ForkWorker {
+			args = append(args, "--label", LabelForkWorker+"="+LabelOn)
+		}
+	}
+	return args
+}
+
 func hostTimezone() string {
 	if tz := os.Getenv("TZ"); tz != "" {
 		return tz

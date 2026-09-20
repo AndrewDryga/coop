@@ -26,6 +26,13 @@ func run() error {
 	if len(os.Args) != 2 {
 		return networkgateway.Failure("gateway_role_invalid")
 	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	// An open run's broker helper has no gateway launch configuration, only its routes.
+	switch os.Args[1] {
+	case "broker":
+		return networkgateway.RunOpenBroker(ctx, os.Stdin, os.Stdout)
+	}
 	file, err := os.Open(networkgateway.LaunchConfigPath)
 	if err != nil {
 		return networkgateway.Failure("gateway_configuration_invalid")
@@ -39,8 +46,6 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
 	switch os.Args[1] {
 	case "controller":
 		return networkgateway.RunController(ctx, config)

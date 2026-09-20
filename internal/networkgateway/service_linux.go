@@ -18,7 +18,7 @@ func verifyServiceRole(role string) error {
 	uid, caps := 65532, uint64(0)
 	if role == "controller" {
 		uid, caps = 0, 1<<12 // CAP_NET_ADMIN, never a general root capability set
-	} else if role != "guard" {
+	} else if role != "guard" && role != "broker" {
 		return Failure("gateway_role_invalid")
 	}
 	if os.Getuid() != uid || os.Geteuid() != uid || os.Getgid() != 65532 || os.Getegid() != 65532 {

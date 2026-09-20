@@ -983,7 +983,20 @@ route can carry its token — so give it its streamable HTTP URL.
 
 An offline run (`--egress none`) leaves every remote MCP server out — without internet it could not
 answer — and says so at launch; local (command) servers still work, and the remote servers' tokens
-stay out of the box. Open runs keep their current MCP handling for now.
+stay out of the box.
+
+An open run keeps its MCP secrets outside the box too. Coop starts one small helper container beside
+the box — unprivileged, on the box's own network, removed when the run ends — that holds each
+secret-bearing server's credential and answers only a per-run stand-in, exactly as the filtered
+broker does; the box's copy of the file points the server at `coop-broker` and names
+`COOP_MCP_TOKEN_<n>`. The box reaches it over plain HTTP on its container network — the default
+bridge when your project has no network of its own — so the stand-in, not the network, is what
+keeps the credential yours. The launch says which servers it covers. A server no single route can carry
+keeps working exactly as before, with its secret in the box, and the launch says which and why: an
+SSE server, a server whose secret is in two places, a URL that is not plain `https` on port 443, and
+every server when the box has no network of its own to reach a helper on (Apple's `container`
+runtime, `--network none`, `--network container:…`). A read-only session is unchanged too: its
+adapter is still handed the real token.
 
 The example's Playwright server works in the box out of the box: Chromium's system
 libraries are baked into the image, the browser binary downloads to the cache volume on

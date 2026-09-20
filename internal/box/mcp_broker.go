@@ -24,16 +24,16 @@ import (
 // 64 servers (mcp.NetworkServers) — the gateway's 72.
 const maxProviderRoutes = 8
 
-// SessionMCPHandoffEnv names the host file a filtered session child writes its final ACP
-// mcpServers list to. The daemon renders session/new from it, because only the child knows the
-// broker listeners and substitutes its adapter must be handed.
+// SessionMCPHandoffEnv names the host file a session child writes its final ACP mcpServers list to.
+// The daemon renders session/new from it, because only the child knows the broker listeners and
+// stand-ins its adapter must be handed.
 const SessionMCPHandoffEnv = "COOP_SESSION_MCP_HANDOFF"
 
 // mcpRoute is one secret-bearing MCP server a run brokers: the upstream its literal URL names, the
 // header its secret rides (lower-case for the gateway, as spelled for the snapshot) after its
-// literal prefix, and the secret — read on the host from the env the box would have carried it in,
-// and cleared once written into the broker's secret. The box reaches it as COOP_MCP_TOKEN_<i> at
-// listener i.
+// literal prefix, and the secret — read on the host from the variable the box would have carried it
+// in, and cleared once written into the broker's secret. The box reaches it as COOP_MCP_TOKEN_<i>
+// at listener i.
 type mcpRoute struct {
 	server            string
 	upstream          string
@@ -41,56 +41,73 @@ type mcpRoute struct {
 	header, headerKey string
 	prefix            string
 	bearer            bool
+	variable          string
 	token             string
 }
 
 // planMCPRoutes adds a route for every secret-bearing server of a run's MCP snapshot: a
-// bearer_token_env_var, or one header that is literal text then one ${VARIABLE}
-// (mcp.SecretServers refuses any other shape). It refuses what no fixed route can carry — an SSE
-// server (it names its own message endpoint at runtime), a URL that is not plain https on 443, a
-// path the broker would refuse — and a missing secret. Under filtered networking admission already
-// proved every definition literal, so only bearer servers reach this. (-e: mcpScrub.)
+// bearer_token_env_var, or one header that is literal text then one ${VARIABLE}. It refuses a
+// server no fixed route can carry (mcp.SecretServers, mcpRouteFor) and a missing secret. Under
+// filtered networking admission already proved every definition literal, so only bearer servers
+// reach this. (-e: mcpScrub.)
 func planMCPRoutes(cfg *config.Config, spec RunSpec, snapshot []byte, plan *credentialPlan) (*credentialPlan, error) {
-	servers, err := mcp.SecretServers(snapshot)
+	servers, unbrokerable, err := mcp.SecretServers(snapshot)
 	if err != nil {
 		return nil, err
 	}
+	if len(unbrokerable) != 0 {
+		return nil, errors.New(unbrokerable[0].Reason)
+	}
 	values := effectiveMCPEnv(cfg, spec)
 	for _, server := range servers {
-		if server.Transport == "sse" {
-			return nil, fmt.Errorf("MCP server %q uses the SSE transport, whose token Coop cannot keep outside the box; give it its streamable HTTP URL", server.Name)
+		route, reason, err := mcpRouteFor(server, values)
+		if err != nil {
+			return nil, err
 		}
-		// The gateway holds a secret header to names it does not control, after a bounded literal
-		// prefix. Refuse one it would reject here, by server name, rather than let the whole launch
-		// configuration fail later with nothing a person could act on.
-		if !networkgateway.MCPSecretHeader(server.Header, server.Prefix) {
-			return nil, fmt.Errorf("MCP server %q's %s header cannot carry its secret through Coop: that header, or the text before the secret, is one the broker itself controls", server.Name, server.HeaderKey)
-		}
-		key := server.Variable
-		token := values[key]
-		if strings.TrimSpace(token) == "" || strings.ContainsAny(token, "\x00\r\n") {
-			return nil, fmt.Errorf("MCP server %q needs %s, which has no usable value", server.Name, key)
-		}
-		parsed, err := url.Parse(server.URL)
-		if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" ||
-			parsed.Fragment != "" || parsed.Port() != "" && parsed.Port() != "443" {
-			return nil, fmt.Errorf("MCP server %q's URL must be plain https:// on port 443 for Coop to keep its secret outside the box", server.Name)
-		}
-		escaped := parsed.EscapedPath()
-		if escaped == "" {
-			escaped = "/"
-		}
-		// The broker admits only a clean path; one it would refuse must fail here, by name.
-		if clean := path.Clean(parsed.Path); parsed.Path != "" && clean != parsed.Path && clean+"/" != parsed.Path {
-			return nil, fmt.Errorf("MCP server %q's URL path must be plain — no dot segments or doubled slashes", server.Name)
+		if reason != "" {
+			return nil, errors.New(reason)
 		}
 		if plan == nil {
 			plan = &credentialPlan{}
 		}
-		plan.mcp = append(plan.mcp, &mcpRoute{server: server.Name, upstream: parsed.Hostname(), path: escaped, header: server.Header,
-			headerKey: server.HeaderKey, prefix: server.Prefix, bearer: server.Bearer, token: token})
+		plan.mcp = append(plan.mcp, route)
 	}
 	return plan, nil
+}
+
+// mcpRouteFor is the route for one secret-bearing server, or the sentence saying why no fixed route
+// can carry it: an SSE server names its own message endpoint at runtime, a header the broker itself
+// controls cannot carry a secret, and the broker reaches only plain https on 443, at a path it would
+// admit. A missing secret is an error its caller decides what to do with.
+func mcpRouteFor(server mcp.SecretServer, values map[string]string) (*mcpRoute, string, error) {
+	if server.Transport == "sse" {
+		return nil, fmt.Sprintf("MCP server %q uses the SSE transport, whose token Coop cannot keep outside the box; give it its streamable HTTP URL", server.Name), nil
+	}
+	// The gateway holds a secret header to names it does not control, after a bounded literal
+	// prefix; one it would reject is named HERE, so a filtered run refuses by server name instead
+	// of failing the whole launch configuration later, and an open run keeps that server as it is.
+	if !networkgateway.MCPSecretHeader(server.Header, server.Prefix) {
+		return nil, fmt.Sprintf("MCP server %q's %s header cannot carry its secret through Coop: that header, or the text before the secret, is one the broker itself controls", server.Name, server.HeaderKey), nil
+	}
+	parsed, err := url.Parse(server.URL)
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" ||
+		parsed.Fragment != "" || parsed.Port() != "" && parsed.Port() != "443" {
+		return nil, fmt.Sprintf("MCP server %q's URL must be plain https:// on port 443 for Coop to keep its secret outside the box", server.Name), nil
+	}
+	// The broker admits only a clean path; one it would refuse must fail here, by name.
+	if clean := path.Clean(parsed.Path); parsed.Path != "" && clean != parsed.Path && clean+"/" != parsed.Path {
+		return nil, fmt.Sprintf("MCP server %q's URL path must be plain — no dot segments or doubled slashes — for Coop to keep its secret outside the box", server.Name), nil
+	}
+	token := values[server.Variable]
+	if strings.TrimSpace(token) == "" || strings.ContainsAny(token, "\x00\r\n") {
+		return nil, "", fmt.Errorf("MCP server %q needs %s, which has no usable value", server.Name, server.Variable)
+	}
+	escaped := parsed.EscapedPath()
+	if escaped == "" {
+		escaped = "/"
+	}
+	return &mcpRoute{server: server.Name, upstream: parsed.Hostname(), path: escaped, header: server.Header, headerKey: server.HeaderKey,
+		prefix: server.Prefix, bearer: server.Bearer, variable: server.Variable, token: token}, "", nil
 }
 
 // effectiveMCPEnv is what an MCP token variable would hold in the box: project defaults, then the
@@ -195,15 +212,16 @@ func (p *credentialPlan) mcpTokenEnv(j int) string {
 	return mcp.BrokerTokenPrefix + strconv.Itoa(p.mcpListener(j))
 }
 
-// brokeredServers is how the box reaches each brokered server: its listener and its stand-in.
-func (p *credentialPlan) brokeredServers() map[string]mcp.BrokeredServer {
+// brokeredServers is how the box reaches each brokered server: its listener, as address names it, and
+// its stand-in.
+func (p *credentialPlan) brokeredServers(address func(listener int) string) map[string]mcp.BrokeredServer {
 	if p == nil || len(p.mcp) == 0 {
 		return nil
 	}
 	servers := make(map[string]mcp.BrokeredServer, len(p.mcp))
 	for j, route := range p.mcp {
 		brokered := mcp.BrokeredServer{
-			URL:      "http://" + networkgateway.CredentialBrokerAddress(p.mcpListener(j)) + route.path,
+			URL:      "http://" + address(p.mcpListener(j)) + route.path,
 			TokenEnv: p.mcpTokenEnv(j),
 		}
 		if !route.bearer {
@@ -245,43 +263,62 @@ func (p *credentialPlan) checkBrokerServePorts(serve []int) error {
 	return nil
 }
 
-// sessionMCPHandoff is what a filtered session child hands the daemon: the final ACP mcpServers
-// list for its lead adapter, bound to the run and gateway generation that minted its substitutes.
+// sessionMCPHandoff is what a session child hands the daemon: the final ACP mcpServers list for its
+// lead adapter, bound to the run and broker generation that minted its stand-ins.
 type sessionMCPHandoff struct {
 	RunID      string           `json:"run_id"`
 	Epoch      string           `json:"gateway_epoch"`
 	MCPServers []map[string]any `json:"mcpServers"`
 }
 
-// handOffSessionMCP answers the daemon's request (target, from SessionMCPHandoffEnv) when this run
-// is a filtered session child: only the child knows the listeners and substitutes, and the daemon
-// must never render its ACP list from the real private env. Any other run writes nothing.
-func (f *filteredExecution) handOffSessionMCP(spec RunSpec, target, snapshotPath string) error {
-	if f == nil || target == "" || spec.networkClient() != egress.ClientACP {
+// mcpStandIns is what a session handoff resolves the box's MCP variables with: each brokered
+// server's stand-in by the variable the box reads it from, then — in an open box — the values a
+// server Coop could not broker still reads in the box, exactly as the box holds them.
+type mcpStandIns struct {
+	epoch  string
+	values map[string]string
+	kept   map[string]string
+}
+
+func (f *filteredExecution) mcpStandIns() mcpStandIns {
+	if f == nil {
+		return mcpStandIns{}
+	}
+	standIns := mcpStandIns{epoch: f.record.Epoch, values: map[string]string{}}
+	if f.broker != nil {
+		for j := range f.broker.plan.mcpRoutesOrNil() {
+			standIns.values[f.broker.plan.mcpTokenEnv(j)] = f.broker.substitutes[f.broker.plan.mcpListener(j)]
+		}
+	}
+	return standIns
+}
+
+// handOffSessionMCP answers the daemon's request (target, from SessionMCPHandoffEnv) when this run is
+// a session child: only the child knows the listeners and stand-ins, and the daemon must never render
+// its ACP list from the real private env. Any other run writes nothing.
+func handOffSessionMCP(spec RunSpec, target, snapshotPath string, standIns mcpStandIns) error {
+	if target == "" || spec.networkClient() != egress.ClientACP {
 		return nil
 	}
 	lead, ok := agents.Get(spec.Agent)
 	if !ok {
 		return errors.New("a session's MCP handoff needs its lead agent")
 	}
-	return f.writeSessionMCPHandoff(target, spec.RunID, lead, snapshotPath)
+	return writeSessionMCPHandoff(target, spec.RunID, lead, snapshotPath, standIns)
 }
 
 // writeSessionMCPHandoff renders the lead adapter's ACP mcpServers from the box's own snapshot —
-// broker URLs and substitutes, never a real token — and writes them where the daemon asked,
-// atomically and owner-only, before the container starts.
-func (f *filteredExecution) writeSessionMCPHandoff(target, runID string, lead agents.Agent, snapshotPath string) error {
+// listeners and stand-ins for every brokered server, never a real token Coop kept out of the box —
+// and writes them where the daemon asked, atomically and owner-only, before the container starts.
+func writeSessionMCPHandoff(target, runID string, lead agents.Agent, snapshotPath string, standIns mcpStandIns) error {
 	if !filepath.IsAbs(target) {
 		return errors.New("the session's MCP handoff path must be absolute")
 	}
-	substitutes := map[string]string{}
-	if f.broker != nil {
-		for j := range f.broker.plan.mcpRoutesOrNil() {
-			substitutes[f.broker.plan.mcpTokenEnv(j)] = f.broker.substitutes[f.broker.plan.mcpListener(j)]
-		}
-	}
 	servers, err := lead.ACPMCPServers(snapshotPath, func(key string) (string, bool) {
-		value, ok := substitutes[key]
+		if value, ok := standIns.values[key]; ok {
+			return value, true
+		}
+		value, ok := standIns.kept[key]
 		return value, ok
 	})
 	if err != nil {
@@ -290,7 +327,7 @@ func (f *filteredExecution) writeSessionMCPHandoff(target, runID string, lead ag
 	if servers == nil {
 		servers = []map[string]any{}
 	}
-	data, err := json.Marshal(sessionMCPHandoff{RunID: runID, Epoch: f.record.Epoch, MCPServers: servers})
+	data, err := json.Marshal(sessionMCPHandoff{RunID: runID, Epoch: standIns.epoch, MCPServers: servers})
 	if err != nil {
 		return err
 	}
@@ -305,10 +342,10 @@ func (f *filteredExecution) writeSessionMCPHandoff(target, runID string, lead ag
 func ReadSessionMCPHandoff(path, runID string) ([]map[string]any, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
-		return nil, fmt.Errorf("the filtered child handed over no MCP servers: %w", err)
+		return nil, fmt.Errorf("the session child handed over no MCP servers: %w", err)
 	}
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() > 4<<20 {
-		return nil, errors.New("the filtered child's MCP handoff is not an owner-only regular file")
+		return nil, errors.New("the session child's MCP handoff is not an owner-only regular file")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -316,7 +353,7 @@ func ReadSessionMCPHandoff(path, runID string) ([]map[string]any, error) {
 	}
 	var handoff sessionMCPHandoff
 	if err := json.Unmarshal(data, &handoff); err != nil || handoff.RunID == "" || handoff.RunID != runID || handoff.MCPServers == nil {
-		return nil, errors.New("the filtered child's MCP handoff belongs to another run")
+		return nil, errors.New("the session child's MCP handoff belongs to another run")
 	}
 	return handoff.MCPServers, nil
 }

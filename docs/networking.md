@@ -131,7 +131,34 @@ A remote session's Responder state tools ride the same kind of route.
 so an offline run drops every remote server from the box's MCP configuration and says so at launch
 ("MCP servers that need internet are left out: …"). Local (command) servers stay, and the remote
 servers' token variables never enter the box. An offline remote session's editor adapter is
-handed only the local servers. Open runs keep their current MCP handling for now.
+handed only the local servers.
+
+**Open runs broker their MCP secrets through a helper beside the box.** An open box reaches the
+internet directly, so nothing on its path can hold a secret for it. When its MCP configuration has a
+secret-bearing remote server, Coop starts one helper container from the same gateway image
+(`coop-net broker`) on the box's own network — unprivileged (`--cap-drop ALL`, uid 65532, read-only
+root, 256 MB), labelled `coop=broker` with the box's own supervisor labels, ending with the Coop
+process that started it (it exits when its input closes, however that process ends) and reaped by
+the box sweep in the rare case one is left behind — and gives the box a hosts entry for it. The
+box's copy of the configuration points each brokered server at `http://coop-broker:1558<n>` with a
+stand-in, the helper replaces the stand-in with the real credential and dials only that server's
+host, and the operator's variable never enters the box. That hop is plain HTTP on a container
+network: when your project has no Coop-managed network the helper joins the default bridge, which
+every un-networked container on the host shares, so what protects the credential there is the
+stand-in itself — 256 bits, minted per run and accepted only on its own listener, for its own
+server's one endpoint — not the network. Coop owns the box's hosts entry for that name and refuses
+a run whose own `--add-host` would rebind it. A remote open session's child hands its
+adapter list over the same way, so the Responder's state tools are brokered too. The helper's image
+is built on first use, like a first filtered run's.
+
+An open run's helper carries MCP routes only — a provider API key still needs `--egress filtered`,
+where the gateway holds the agent to its route — and only servers a fixed route can carry. These
+keep today's behaviour, with the secret in the box, and the launch names each one: an SSE server (it
+names its own message endpoint at runtime), a server whose secret is in two places or mixes text
+with two references, a URL that is not plain `https` on port 443, and every server when the box has
+no network to reach a helper on (Apple's `container` runtime, `--network none` or
+`--network container:…` in your runtime arguments). A read-only session still hands its adapter the
+real token: its box loads no MCP at all, so there is nothing there to broker yet.
 
 A `service:` grant is a request like any other: it is approved by a human and names one service.
 For a filtered run, Coop recreates that service and its dependencies on a project-owned internal

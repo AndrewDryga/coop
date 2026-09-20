@@ -229,6 +229,28 @@ func (s *launchSections) offlineMCP(omitted []string) {
 	ui.Note("  MCP servers that need internet are left out: %s", strings.Join(omitted, ", "))
 }
 
+// openMCP says, under an open run's network section, which MCP servers keep their secrets outside
+// the box, and why any other still carries its secret inside.
+func (s *launchSections) openMCP(brokered, kept []string) {
+	if !s.on {
+		return
+	}
+	if len(brokered) > 0 {
+		ui.Note("  MCP secrets stay outside the box: %s", strings.Join(brokered, ", "))
+	}
+	for _, reason := range kept {
+		ui.Note("  %s", reason)
+	}
+}
+
+// brokerImage says why an open run's first start is slow: the helper that keeps its MCP secrets is
+// built from Coop's own gateway sources on first use.
+func (s *launchSections) brokerImage() {
+	if s.on {
+		ui.Note("  Building the image for Coop's MCP credential broker; the first build takes a few minutes")
+	}
+}
+
 // networkAllowances lists what a filtered box may reach, one row per kind of allowance, in the
 // order a person checks them: each selected provider's endpoints, the network rules a human
 // approved (the project's rules and this run's --allow-domain/--egress-rules), the MCP servers

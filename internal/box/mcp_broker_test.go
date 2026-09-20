@@ -92,7 +92,7 @@ func TestFilteredRunBrokersEveryBearerMCPServer(t *testing.T) {
 		t.Fatalf("box environment = %#v", values)
 	}
 
-	rewritten, err := mcp.RouteThroughBroker([]byte(brokeredMCPSnapshot), plan.brokeredServers())
+	rewritten, err := mcp.RouteThroughBroker([]byte(brokeredMCPSnapshot), plan.brokeredServers(networkgateway.CredentialBrokerAddress))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestSessionMCPHandoffCarriesOnlyStandInsForItsOwnRun(t *testing.T) {
 	if err := f.prepareCredentialBroker(artifacts); err != nil {
 		t.Fatal(err)
 	}
-	rewritten, err := mcp.RouteThroughBroker([]byte(brokeredMCPSnapshot), plan.brokeredServers())
+	rewritten, err := mcp.RouteThroughBroker([]byte(brokeredMCPSnapshot), plan.brokeredServers(networkgateway.CredentialBrokerAddress))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,22 +213,19 @@ func TestSessionMCPHandoffCarriesOnlyStandInsForItsOwnRun(t *testing.T) {
 	}
 	target := filepath.Join(t.TempDir(), "handoff.json")
 	child := RunSpec{Agent: "claude", RunID: "session-run-1", NetworkClient: egress.ClientACP}
-	// Only a filtered ACP child the daemon asked answers: a CLI box, an unfiltered run and a run
-	// nobody asked write nothing.
+	// Only an ACP child the daemon asked answers: a CLI box and a run nobody asked write nothing.
 	cli := child
 	cli.NetworkClient = egress.ClientCLI
-	var unfiltered *filteredExecution
 	for name, handOff := range map[string]func() error{
-		"a CLI box":         func() error { return f.handOffSessionMCP(cli, target, snapshot) },
-		"an unfiltered run": func() error { return unfiltered.handOffSessionMCP(child, target, snapshot) },
-		"an unasked run":    func() error { return f.handOffSessionMCP(child, "", snapshot) },
+		"a CLI box":      func() error { return handOffSessionMCP(cli, target, snapshot, f.mcpStandIns()) },
+		"an unasked run": func() error { return handOffSessionMCP(child, "", snapshot, f.mcpStandIns()) },
 	} {
 		err := handOff()
 		if _, statErr := os.Stat(target); err != nil || !errors.Is(statErr, os.ErrNotExist) {
 			t.Fatalf("%s handed over MCP servers: %v", name, err)
 		}
 	}
-	if err := f.handOffSessionMCP(child, target, snapshot); err != nil {
+	if err := handOffSessionMCP(child, target, snapshot, f.mcpStandIns()); err != nil {
 		t.Fatal(err)
 	}
 	if data := string(mustReadFile(t, target)); strings.Contains(data, "emisar-secret") ||
@@ -372,7 +369,7 @@ func TestMCPSnapshotsAreWrittenOnlyAfterTheBrokerRewrite(t *testing.T) {
 	}
 	artifacts := defaultCompositionArtifactOps()
 	artifacts.parent = t.TempDir()
-	path, claudePath, written, err := writeMCPSnapshots(artifacts, []byte(brokeredMCPSnapshot), plan.brokeredServers())
+	path, claudePath, written, err := writeMCPSnapshots(artifacts, []byte(brokeredMCPSnapshot), plan.brokeredServers(networkgateway.CredentialBrokerAddress))
 	if err != nil || len(written) != 2 {
 		t.Fatalf("writeMCPSnapshots = %v, %v", written, err)
 	}
@@ -527,7 +524,7 @@ func TestPlanMCPRoutesCarriesAHeaderSecret(t *testing.T) {
 	if routes[0].Header != "x-api-key" || routes[0].HeaderPrefix != "key " || routes[1].Header != "authorization" || routes[1].HeaderPrefix != "Token " {
 		t.Fatalf("header routes = %+v", routes)
 	}
-	routed, err := mcp.RouteThroughBroker(snapshot, plan.brokeredServers())
+	routed, err := mcp.RouteThroughBroker(snapshot, plan.brokeredServers(networkgateway.CredentialBrokerAddress))
 	if err != nil {
 		t.Fatal(err)
 	}

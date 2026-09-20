@@ -73,7 +73,10 @@ func SurveyOrphanBoxes(ctx context.Context, rt runtime.Runtime, workspace string
 //
 // It removes by the orphan's own LabelHost value — the same exact-label reap `coop fork stop` uses
 // — so the removal can only ever reach containers that carry the dead supervisor's identity AND
-// this workspace's scope, even if the runtime's view changed since the survey.
+// this workspace's scope, even if the runtime's view changed since the survey. A dead supervisor's
+// MCP credential broker helper (`coop=broker`, same labels, holding that run's MCP secrets) goes
+// with its box: it is looked for only once a box of that supervisor is already proven orphaned, so
+// a sweep that finds nothing still costs exactly one listing.
 func ReapOrphanBoxes(ctx context.Context, rt runtime.Runtime, workspace string) (int, error) {
 	survey, err := SurveyOrphanBoxes(ctx, rt, workspace)
 	if err != nil {
@@ -81,10 +84,12 @@ func ReapOrphanBoxes(ctx context.Context, rt runtime.Runtime, workspace string) 
 	}
 	removed := 0
 	for _, host := range supervisorLabelValues(survey.Orphans) {
-		n, err := rt.RemoveByLabels(ctx, map[string]string{LabelKey: LabelBox, LabelHost: host})
-		removed += n
-		if err != nil {
-			return removed, err
+		for _, kind := range []string{LabelBox, LabelBroker} {
+			n, err := rt.RemoveByLabels(ctx, map[string]string{LabelKey: kind, LabelHost: host})
+			removed += n
+			if err != nil {
+				return removed, err
+			}
 		}
 	}
 	return removed, nil

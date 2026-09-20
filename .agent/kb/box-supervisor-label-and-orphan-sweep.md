@@ -2,8 +2,8 @@
 name: box-supervisor-label-and-orphan-sweep
 description: Every box records the host process supervising it, and only a provably dead one authorizes a reap — scoped to the workspace that launched it
 subsystem: box
-sources: [internal/box/sweep.go, internal/box/run.go, internal/cli/boxsweep.go, internal/cli/doctor.go, internal/runtime/runtime.go]
-updated: 2026-09-03
+sources: [internal/box/sweep.go, internal/box/run.go, internal/box/open_broker.go, internal/cli/boxsweep.go, internal/cli/doctor.go, internal/runtime/runtime.go]
+updated: 2026-09-19
 ---
 A box outlives the coop that started it whenever that coop dies by SIGKILL: `--rm` is the docker
 CLIENT's promise, no Go `defer` runs, and no PID 1 inside the box can help (that limit, and why a
@@ -38,7 +38,16 @@ sweep has no such input, and adding one would resurrect the bug the label exists
 
 `box.ReapOrphanBoxes` removes by the dead supervisor's own exact label (`RemoveByLabels`), the same
 plumbing `coop fork stop` uses, so the removal can only reach containers carrying that identity AND
-that scope. It runs from `app.sweepOrphanBoxes` (memoized once per repo per process) at the entry
+that scope.
+
+A dead supervisor's `coop=broker` MCP credential broker helper (`box/open_broker.go`, same
+`ownerLabels`, holding that run's MCP secrets) is removed with its box — but only once a box of that
+supervisor is already proven orphaned, so a sweep that finds nothing still costs exactly ONE
+listing: the scripted process E2Es pin that count. Ordinarily the helper never gets that far: it
+runs with an open stdin pipe, so it exits and `--rm` removes it the moment its coop does. Its
+private directory (`coop-broker-*`, holding the run's real credentials) is a `tempPrefixes` entry,
+so `ReapOrphanTempEntries` clears one a kill left behind. `SurveyOrphanBoxes`, and so `coop doctor`,
+reports boxes only. It runs from `app.sweepOrphanBoxes` (memoized once per repo per process) at the entry
 points that already reap: loop start, fork start, and `coop build`/`update`'s recycle. Failure there
 is deliberately silent — the
 command's own box work reports a broken runtime loudly, and Apple's `container` CLI has no label
@@ -61,6 +70,7 @@ Traps:
   exact-owner reap.
 
 ## Changelog
+- 2026-09-19 — the reap also covers an open run's `coop=broker` helper, by the same supervisor label.
 - 2026-09-03 — replaced post-build's silent count/kill path with bounded diagnostic queries and
   exact-label removal; verified the pull-only orphan sweep remains intentionally best-effort.
 - 2026-08-25 — removed Fleet from the current sweep-entry and runtime-call inventory after the

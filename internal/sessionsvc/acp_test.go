@@ -494,20 +494,22 @@ func (s delayedCompleteTurnStore) CompleteTurn(ctx context.Context, req session.
 
 // An ACP session's MCP servers arrive in the session/new parameter or not at all: the adapter
 // takes no flags, so the mounted mcp.json that --mcp-config points the claude CLI at is invisible
-// to it. Production ran that way — 706 tool calls from claude sessions, not one of them mcp.*.
+// to it. Production ran that way — 706 tool calls from claude sessions, not one of them mcp.*. An
+// open session's list is its child's — the helper's listener and a stand-in — never a token the
+// daemon holds or the private env carries.
 func TestAClaudeACPSessionIsHandedTheSharedMCPServers(t *testing.T) {
-	// The token must come from the session's own projected env file, not from whatever the
-	// controller process happens to be holding.
 	t.Setenv("EMISAR_TOKEN", "ambient-token")
 	fixture := newSessionACPFixture(t, "normal", "claude@work")
 	first := fixture.submit(t, "first prompt")
 	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, first); err != nil {
 		t.Fatal(err)
 	}
-	want := `[{"headers":[{"name":"Authorization","value":"Bearer observe-only"}],` +
-		`"name":"emisar","type":"http","url":"https://example.invalid/mcp"}]`
+	want := `[{"headers":[{"name":"Authorization","value":"Bearer stand-in"}],"name":"emisar","type":"http","url":"http://127.0.0.1:15580/mcp"}]`
 	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != want {
 		t.Fatalf("session/new mcpServers = %s, want %s", got, want)
+	}
+	if log := readFile(t, fixture.childLog); strings.Contains(log, "observe-only") || strings.Contains(log, "ambient-token") {
+		t.Fatal("a real token reached the adapter")
 	}
 
 	bound, err := fixture.store.GetSession(context.Background(), fixture.session.ID)
@@ -558,10 +560,12 @@ func TestAFilteredSessionIsHandedOnlyItsBrokerStandIns(t *testing.T) {
 		t.Fatalf("session/load mcpServers = %s, want the session/new list %s", got, want)
 	}
 
-	silent := newSessionACPFixtureOn(t, "no-mcp-handoff", "claude@work", agents.ModeNormal, egress.Filtered)
-	leased := silent.submit(t, "first prompt")
-	if _, err := silent.runner.Run(contextWithTurnDeadline(t), silent.session, leased); err == nil || !strings.Contains(err.Error(), "handed over no MCP servers") {
-		t.Fatalf("a filtered child without a handoff = %v, want the turn refused", err)
+	for _, network := range []egress.Mode{egress.Filtered, egress.Open} {
+		silent := newSessionACPFixtureOn(t, "no-mcp-handoff", "claude@work", agents.ModeNormal, network)
+		leased := silent.submit(t, "first prompt")
+		if _, err := silent.runner.Run(contextWithTurnDeadline(t), silent.session, leased); err == nil || !strings.Contains(err.Error(), "handed over no MCP servers") {
+			t.Fatalf("a %s child without a handoff = %v, want the turn refused", network, err)
+		}
 	}
 }
 
@@ -631,8 +635,7 @@ func TestACodexSessionIsHandedItsMountedMCPInventory(t *testing.T) {
 	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leased); err != nil {
 		t.Fatal(err)
 	}
-	want := `[{"headers":[{"name":"Authorization","value":"Bearer observe-only"}],` +
-		`"name":"emisar","type":"http","url":"https://example.invalid/mcp"}]`
+	want := `[{"headers":[{"name":"Authorization","value":"Bearer stand-in"}],"name":"emisar","type":"http","url":"http://127.0.0.1:15580/mcp"}]`
 	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != want {
 		t.Fatalf("codex session/new mcpServers = %s, want %s", got, want)
 	}
@@ -3011,12 +3014,15 @@ func TestSessionACPChildHelper(t *testing.T) {
 	_ = os.WriteFile(privateNative, []byte("native"), 0o600)
 
 	scenario := os.Getenv("COOP_TEST_SESSION_SCENARIO")
-	// A filtered child's box.Run hands over its adapter's MCP list — broker URLs and stand-ins —
-	// before the adapter can answer initialize.
+	// An online child's box.Run hands over its adapter's MCP list — broker URLs and stand-ins —
+	// before the adapter can answer initialize: none when its private copy names no server.
 	if handoff := os.Getenv(box.SessionMCPHandoffEnv); handoff != "" && scenario != "no-mcp-handoff" {
-		data, _ := json.Marshal(map[string]any{"run_id": os.Getenv("COOP_SESSION_RUN_ID"), "gateway_epoch": "epoch",
-			"mcpServers": []map[string]any{{"type": "http", "name": "emisar", "url": "http://127.0.0.1:15580/mcp",
-				"headers": []map[string]any{{"name": "Authorization", "value": "Bearer stand-in"}}}}})
+		servers := []map[string]any{{"type": "http", "name": "emisar", "url": "http://127.0.0.1:15580/mcp",
+			"headers": []map[string]any{{"name": "Authorization", "value": "Bearer stand-in"}}}}
+		if private, err := os.ReadFile(filepath.Join(os.Getenv("COOP_CONFIG_DIR"), "mcp.json")); err != nil || !strings.Contains(string(private), `"emisar"`) {
+			servers = []map[string]any{}
+		}
+		data, _ := json.Marshal(map[string]any{"run_id": os.Getenv("COOP_SESSION_RUN_ID"), "gateway_epoch": "epoch", "mcpServers": servers})
 		if os.WriteFile(handoff, data, 0o600) != nil {
 			os.Exit(2)
 		}

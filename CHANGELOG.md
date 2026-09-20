@@ -4,6 +4,18 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Your MCP servers' secrets now stay outside ordinary internet boxes too, not only filtered ones.
+  An open run whose MCP configuration has a secret-bearing remote server starts one small helper
+  container beside the box — unprivileged, on the box's own network, removed when the run ends — and
+  the box's copy of the configuration points that server at the helper with a stand-in valid only
+  for this run; the helper adds the real credential on the way out and reaches only that server. The
+  launch lists the servers it covers. A remote session's adapter is handed the stand-ins the same
+  way, the Responder's state tools included. A server no single route can carry keeps working as it
+  did, with its secret in the box, and the launch says which and why: an SSE server, a secret in two
+  places, a URL that is not plain https on port 443, and every server when the box has no network of
+  its own (Apple's container runtime, `--network none`, `--network container:…`). A read-only
+  session is unchanged: its adapter is still handed the real token.
+
 - A decision you already answered is never asked again or lost. `coop tasks block` refuses a plain
   block on a task whose decision you answered, quoting your answer. A new question, from the CLI or
   an agent in a box, keeps the decision it replaces in the task's log.md — your answer, or a
@@ -11,7 +23,6 @@
   writes can carry a `**Resolution:**` line, which would make its own question read as answered. A
   blocked task that already carries your answer shows as answered, with the command that finishes
   it (`coop tasks unblock <id>`), in `coop tasks` and `coop tasks decisions`.
-
 - Two Coop versions on one machine no longer rebuild each other's box. Coop's shared base is now
   tagged by the box definition it was built from, `coop-box:<definition>`, instead of one
   `coop-box:latest`, so each version keeps and runs its own; `coop build` and `coop update` name the

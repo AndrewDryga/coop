@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -48,23 +49,28 @@ type CredentialBrokerSecret struct {
 }
 
 func ReadCredentialBrokerSecrets(reader io.Reader, config LaunchConfig) (CredentialBrokerSecrets, error) {
+	return readBrokerSecrets(reader, config.RunID, config.Epoch, config.Brokers)
+}
+
+// readBrokerSecrets reads the secrets of routes, bound to one run and one broker generation.
+func readBrokerSecrets(reader io.Reader, runID, epoch string, routes []CredentialBrokerRoute) (CredentialBrokerSecrets, error) {
 	invalid := Failure("credential_broker_configuration_invalid")
 	data, err := io.ReadAll(io.LimitReader(reader, maxCredentialBrokerSecret+1))
-	if err != nil || len(data) == 0 || len(data) > maxCredentialBrokerSecret || len(config.Brokers) == 0 {
+	if err != nil || len(data) == 0 || len(data) > maxCredentialBrokerSecret || len(routes) == 0 {
 		return CredentialBrokerSecrets{}, invalid
 	}
 	var value CredentialBrokerSecrets
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&value) != nil || decoder.Decode(new(any)) != io.EOF ||
-		value.Version != 2 || value.RunID != config.RunID || value.Epoch != config.Epoch || len(value.Routes) != len(config.Brokers) {
+		value.Version != 2 || value.RunID != runID || value.Epoch != epoch || len(value.Routes) != len(routes) {
 		return CredentialBrokerSecrets{}, invalid
 	}
 	// A substitute opens exactly one listener: were two routes to share one, a capability issued
 	// for one account would unlock the other's key.
 	substitutes := make(map[string]bool, len(value.Routes))
 	for i, route := range value.Routes {
-		if route.Name != config.Brokers[i].Name || len(route.Substitute) < 32 || len(route.Substitute) > 256 ||
+		if route.Name != routes[i].Name || len(route.Substitute) < 32 || len(route.Substitute) > 256 ||
 			len(route.Credential) < 8 || len(route.Credential) > 32<<10 || route.Substitute == route.Credential || substitutes[route.Substitute] ||
 			strings.ContainsAny(route.Substitute, "\x00\r\n") || strings.ContainsAny(route.Credential, "\x00\r\n") {
 			return CredentialBrokerSecrets{}, invalid
@@ -76,7 +82,8 @@ func ReadCredentialBrokerSecrets(reader io.Reader, config LaunchConfig) (Credent
 
 type credentialBroker struct {
 	route      CredentialBrokerRoute
-	address    string // this route's own listener
+	address    string // this route's own listener, as every request must name it (Host)
+	listen     string // where it listens when that is not address: an open helper's own IP
 	secret     CredentialBrokerSecret
 	clock      *BootClock
 	resolver   *Resolver
@@ -110,16 +117,38 @@ func newCredentialBroker(config LaunchConfig, index int, secret CredentialBroker
 	}
 	b := &credentialBroker{route: route, address: CredentialBrokerAddress(index), secret: secret, clock: clock, resolver: resolver,
 		controller: controller, events: events, slots: make(chan struct{}, maxCredentialBrokerFlows)}
+	b.setTransport(b.dial)
+	return b, nil
+}
+
+// newOpenCredentialBroker is route index of an open run's helper: listening on the helper's own
+// address, it dials the route's one upstream directly — an open box's traffic passes no gateway, so
+// there is no lease to take and no policy to hold it to. Only MCP routes: provider keys stay a
+// filtered run's.
+func newOpenCredentialBroker(route CredentialBrokerRoute, host netip.Addr, index int, secret CredentialBrokerSecret) (*credentialBroker, error) {
+	if !route.valid() || route.Kind != CredentialBrokerMCP || secret.Name != route.Name || !host.Is4() {
+		return nil, Failure("credential_broker_configuration_invalid")
+	}
+	port := strconv.Itoa(CredentialBrokerPort + index)
+	// It listens on its own address and answers to the NAME the box was given: the box's MCP
+	// configuration is written before this helper exists, so the name is what can be written down.
+	b := &credentialBroker{route: route, address: net.JoinHostPort(OpenBrokerHost, port), listen: net.JoinHostPort(host.String(), port),
+		secret: secret, events: NewGuardEvents(nil), slots: make(chan struct{}, maxCredentialBrokerFlows)}
+	b.setTransport(b.dialDirect)
+	return b, nil
+}
+
+func (b *credentialBroker) setTransport(dial func(context.Context, string, string) (net.Conn, error)) {
 	// A provider streams its headers at once. An MCP server answering a tool call with JSON sends
 	// them only when the tool finishes — minutes for a long runbook — and a 502 there makes the
 	// agent retry a mutation, so only the run's own lifetime bounds that wait.
 	headerTimeout := credentialBrokerTimeout
-	if route.Kind == CredentialBrokerMCP {
+	if b.route.Kind == CredentialBrokerMCP {
 		headerTimeout = 0
 	}
 	transport := &http.Transport{
 		Proxy:                  nil,
-		DialContext:            b.dial,
+		DialContext:            dial,
 		TLSClientConfig:        &tls.Config{MinVersion: tls.VersionTLS12, ServerName: b.route.Upstream},
 		ForceAttemptHTTP2:      true,
 		DisableCompression:     true,
@@ -133,7 +162,6 @@ func newCredentialBroker(config LaunchConfig, index int, secret CredentialBroker
 	}
 	b.transport = transport
 	b.setProxy(transport)
-	return b, nil
 }
 
 func (b *credentialBroker) setProxy(transport http.RoundTripper) {
@@ -211,7 +239,11 @@ func (b *credentialBroker) handler() http.Handler {
 }
 
 func (b *credentialBroker) Serve(ctx context.Context, ready func()) error {
-	listener, err := net.Listen("tcp4", b.address)
+	address := b.address
+	if b.listen != "" {
+		address = b.listen
+	}
+	listener, err := net.Listen("tcp4", address)
 	if err != nil {
 		return Failure("credential_broker_listener_unavailable")
 	}
@@ -290,6 +322,19 @@ func (b *credentialBroker) dial(ctx context.Context, network, address string) (n
 	}
 	if conn.SetWriteDeadline(deadline) != nil || writeAll(conn, header) != nil || conn.SetWriteDeadline(time.Time{}) != nil {
 		_ = conn.Close()
+		return nil, Failure("credential_broker_upstream_unavailable")
+	}
+	return conn, nil
+}
+
+// dialDirect is an open helper's dial: the route's one upstream on 443, resolved by the helper's own
+// resolver. TLS still verifies the upstream's name, so a lying resolver gets no credential.
+func (b *credentialBroker) dialDirect(ctx context.Context, network, address string) (net.Conn, error) {
+	if network != "tcp" && network != "tcp4" && network != "tcp6" || address != net.JoinHostPort(b.route.Upstream, "443") {
+		return nil, Failure("credential_broker_request_refused")
+	}
+	conn, err := (&net.Dialer{Timeout: credentialBrokerTimeout}).DialContext(ctx, network, address)
+	if err != nil {
 		return nil, Failure("credential_broker_upstream_unavailable")
 	}
 	return conn, nil

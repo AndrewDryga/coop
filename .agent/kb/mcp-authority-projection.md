@@ -2,7 +2,7 @@
 name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
-sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/box/mcp_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
+sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/box/mcp_broker.go, internal/box/open_broker.go, internal/networkgateway/open_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
 updated: 2026-09-19
 ---
 
@@ -122,6 +122,31 @@ daemon renders nothing pre-spawn for it, reads the file once after `initialize` 
 id), and refuses the turn without it. A filtered session that withholds MCP drops the source's token
 names from its private env copy.
 
+**Open runs broker through a helper beside the box** (`box/open_broker.go`,
+`networkgateway/open_broker.go`). An open box has no gateway on its path, so `planOpenBroker` starts
+one container of the SAME gateway image running `coop-net broker` on the box's own network
+(`openBrokerNetwork`: Coop's joined services net, else the runtime arguments' `--network`, else
+`bridge` — which a `--network host` box reaches too), labelled `coop=broker` plus the box's
+`ownerLabels`, and gives the box `--add-host=coop-broker:<its address>`. The address exists only
+after it starts, which is after the snapshot is written — hence the NAME: every route is
+`http://coop-broker:1558<i>` in the snapshot, and the helper's Host check compares that name, while
+it listens on its one IPv4 (`oneIPv4`) and PRINTS that address once every listener accepts — the one
+line the host waits for, so readiness costs no extra runtime call. It runs like the task channel
+(`docker run --rm -i`, `StartHelper`): stdin EOF — this coop exiting, however it ends — stops it and
+`--rm` removes it, with `stop` (label removal) and the box sweep only as backstops. Its config is `/run/coop-open-broker.json` (MCP routes only — a provider
+key stays filtered-only) and its secrets the same `/run/coop-credential-broker.json`. The dial is
+direct (`dialDirect`: the route's upstream on 443, TLS still verifying the name) — no lease, no
+Envoy, no policy.
+UNLIKE filtered, an open run never refuses a server it cannot broker: an SSE server, a secret in two
+places (`mcp.SecretServers` returns it as `UnbrokerableServer`), a URL that is not plain https on
+443, or any server when the box cannot reach a helper (not Docker, `--network none`,
+`--network container:`) keeps TODAY's behaviour — its variable stays in the box env — and the launch
+names it (`sections.openMCP`). Only brokered variables are scrubbed, and a variable a kept server
+also reads stays. A session child hands its list over in open mode too (the daemon asks whenever the
+session is not offline), and `mcpStandIns.kept` lets a kept server's real value still be inlined, as
+the daemon used to. Read-only sessions are unchanged — their box loads no MCP, so nothing there can
+broker yet.
+
 **Offline runs drop every remote server** (`box.Run`, `sessionsvc` `captureSessionMCP`). A box on
 `--network none` cannot reach one, so `mcp.WithoutRemoteServers` removes each server with a `url`
 before any projection, `mcpScrub`'s names leave the env (and a `-e` of one is refused, as under
@@ -144,6 +169,8 @@ adds ordinary `CommandArgs` must decide whether its nested commands need an equi
 mounting the raw snapshot for every scoped credential is not the fallback.
 
 ## Changelog
+- 2026-09-19 — open runs broker secret-bearing servers through a sibling helper; what no route can
+  carry keeps today's behaviour and is named at launch.
 - 2026-09-19 — planning reads `mcp.SecretServers` (bearer or one `prefix${VAR}` header); the rewrite
   turns a header secret into `prefix${COOP_MCP_TOKEN_<i>}` where it is written.
 - 2026-09-19 — offline runs drop every remote server (`mcp.WithoutRemoteServers`, one rewrite before

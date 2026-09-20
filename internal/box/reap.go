@@ -24,6 +24,11 @@ const reapMinimumAge = time.Hour
 var tempPrefixes = []string{
 	"coop-mcp-", "coop-decoy-", "coop-decoy-dir-", "coop-githooks-",
 	"coop-audit-trees-", "coop-skills-", "coop-test-task-leases-",
+	// An open run's MCP credential broker keeps the run's real credentials here, so a killed
+	// coop must not leave them behind. The mount check below lists a BOX's mounts, and the
+	// helper is not a box — the hour of grace, and the container holding the bind-mounted file
+	// open until it exits with its coop, are what keep a live run's directory safe.
+	"coop-broker-",
 }
 
 // mountLister is the part of the runtime reaping needs, named here so this can

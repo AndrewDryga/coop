@@ -32,28 +32,38 @@ type SecretServer struct {
 	Bearer                              bool
 }
 
+// UnbrokerableServer is a remote server whose secret takes a shape no single brokered header could
+// carry — two secrets, text after the reference, two references in one value — with the sentence
+// that says so and every variable it reads a secret from.
+type UnbrokerableServer struct {
+	Name, Reason string
+	Variables    []string
+}
+
 // SecretServers lists a validated snapshot's remote servers that carry a secret, sorted by name: a
 // bearer_token_env_var (the Authorization header after "Bearer "), or one header whose whole value
 // is literal text followed by one ${VARIABLE}. A literal header is not a secret and stays as
-// written. Any other shape — two secrets, text after the reference, two references in one value —
-// is refused by name: no single brokered header could carry it.
-func SecretServers(snapshot []byte) ([]SecretServer, error) {
+// written. A server whose secret takes any other shape comes back in unbrokerable instead, for the
+// caller to refuse or leave as it is.
+func SecretServers(snapshot []byte) (servers []SecretServer, unbrokerable []UnbrokerableServer, err error) {
 	if len(bytes.TrimSpace(snapshot)) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
-	_, servers, err := loadServerViewsData("MCP snapshot", snapshot)
+	_, definitions, err := loadServerViewsData("MCP snapshot", snapshot)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var result []SecretServer
-	for _, name := range slices.Sorted(maps.Keys(servers)) {
-		s := servers[name]
+	for _, name := range slices.Sorted(maps.Keys(definitions)) {
+		s := definitions[name]
 		if s.URL == "" {
 			continue
 		}
 		var secrets []SecretServer
+		var variables []string
+		reason := ""
 		if s.BearerTokenEnvVar != "" {
 			secrets = append(secrets, SecretServer{Header: "authorization", HeaderKey: "Authorization", Prefix: "Bearer ", Variable: s.BearerTokenEnvVar, Bearer: true})
+			variables = append(variables, s.BearerTokenEnvVar)
 		}
 		for _, key := range slices.Sorted(maps.Keys(s.Headers)) {
 			value := envValueString(s.Headers[key])
@@ -61,17 +71,24 @@ func SecretServers(snapshot []byte) ([]SecretServer, error) {
 			if len(references) == 0 {
 				continue
 			}
+			variables = append(variables, references...)
 			prefix, _, _ := strings.Cut(value, "${")
 			if len(references) != 1 || value != prefix+"${"+references[0]+"}" {
-				return nil, fmt.Errorf("MCP server %q's %s header must be literal text then one ${VARIABLE}, so Coop can keep the secret outside the box", name, key)
+				reason = fmt.Sprintf("MCP server %q's %s header must be literal text then one ${VARIABLE}, so Coop can keep the secret outside the box", name, key)
+				continue
 			}
 			secrets = append(secrets, SecretServer{Header: strings.ToLower(key), HeaderKey: key, Prefix: prefix, Variable: references[0]})
 		}
-		if len(secrets) == 0 {
+		if reason == "" && len(secrets) > 1 {
+			reason = fmt.Sprintf("MCP server %q carries %d secrets; Coop can keep one per server outside the box", name, len(secrets))
+		}
+		if reason != "" {
+			slices.Sort(variables)
+			unbrokerable = append(unbrokerable, UnbrokerableServer{Name: name, Reason: reason, Variables: slices.Compact(variables)})
 			continue
 		}
-		if len(secrets) > 1 {
-			return nil, fmt.Errorf("MCP server %q carries %d secrets; Coop can keep one per server outside the box", name, len(secrets))
+		if len(secrets) == 0 {
+			continue
 		}
 		transport := s.Type
 		if transport == "" {
@@ -79,9 +96,9 @@ func SecretServers(snapshot []byte) ([]SecretServer, error) {
 		}
 		secret := secrets[0]
 		secret.Name, secret.URL, secret.Transport = name, s.URL, transport
-		result = append(result, secret)
+		servers = append(servers, secret)
 	}
-	return result, nil
+	return servers, unbrokerable, nil
 }
 
 // CredentialReferences names every variable a snapshot reads a secret from — each
