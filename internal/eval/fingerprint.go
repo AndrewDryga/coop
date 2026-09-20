@@ -31,7 +31,9 @@ type hasher struct{ h hash.Hash }
 
 func newHasher() *hasher { return &hasher{h: sha256.New()} }
 
-func (w *hasher) text(label, value string) *hasher {
+func (w *hasher) text(label, value string) *hasher { return w.bytes(label, []byte(value)) }
+
+func (w *hasher) bytes(label string, value []byte) *hasher {
 	// label\0len(value)\0value — the label keeps two fields with the same bytes but different
 	// meaning (an instruction vs a verifier path) from being interchangeable, and the length keeps
 	// two adjacent fields from running together.
@@ -39,7 +41,7 @@ func (w *hasher) text(label, value string) *hasher {
 	w.h.Write([]byte{0})
 	w.h.Write([]byte(strconv.Itoa(len(value))))
 	w.h.Write([]byte{0})
-	w.h.Write([]byte(value))
+	w.h.Write(value)
 	return w
 }
 

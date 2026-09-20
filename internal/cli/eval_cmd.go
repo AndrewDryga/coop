@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/eval"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -101,7 +103,30 @@ func (a *app) evalRun(args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	renderEvalPlan(plan)
+	// Resolve the loop config to freeze: the suite's own loop_config is relative to the suite (the
+	// loader validated it does not escape or pass a symlink), but a --loop-config OVERRIDE is the
+	// operator's explicit path — CWD-relative like any CLI path argument, and trusted as their own
+	// file — so the two resolve against different roots.
+	loopConfigPath := ""
+	if suite.IsLoop() {
+		if opts.LoopConfigOverride != "" {
+			if loopConfigPath, err = filepath.Abs(opts.LoopConfigOverride); err != nil {
+				return 1, err
+			}
+		} else {
+			loopConfigPath = filepath.Join(suite.Dir, filepath.Clean(suite.LoopConfig))
+		}
+	}
+	build := a.evalBuildIdentity() // one digest of the binary, shared by every configuration
+	frozen := make([]eval.FrozenConfig, 0, len(configs))
+	for _, c := range configs {
+		f, ferr := a.freezeConfiguration(c, suite, loopConfigPath, build)
+		if ferr != nil {
+			return 1, ferr
+		}
+		frozen = append(frozen, f)
+	}
+	renderEvalPlan(plan, frozen)
 	fmt.Println()
 	fmt.Println("Planning only: trial execution and comparison ship in a later Coop release.")
 	return 0, nil
@@ -129,6 +154,11 @@ func (a *app) resolveEvalConfigurations(positionals []string) ([]eval.Configurat
 			t, err := agents.ParseTarget(who)
 			if err != nil {
 				return nil, err
+			}
+			// A pinned @account must exist, refused by name before any work — the same promise every
+			// other launch makes. A bare target (no account) is left to the provider's own defaults.
+			if acct := t.Account(); acct != "" && !slices.Contains(box.EffectiveProfiles(a.cfg, t.Provider), acct) {
+				return nil, fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", t.Provider, acct, t.Provider, acct)
 			}
 			configs = append(configs, eval.Configuration{Kind: eval.ConfigTarget, Label: t.String()})
 			continue
@@ -249,18 +279,20 @@ func positiveInt(flag, value string) (int, error) {
 // renderEvalPlan shows the matrix before any work: the suite, its cases, every configuration, the
 // repetitions, the effective workers and the total deadline. Resource, reviewer, image, network and
 // cache detail resolve at preparation (a later milestone) and are named as such rather than faked.
-func renderEvalPlan(p *eval.Plan) {
+func renderEvalPlan(p *eval.Plan, frozen []eval.FrozenConfig) {
 	kind := "agent"
 	if p.Suite.IsLoop() {
 		kind = "loop"
 	}
-	fmt.Printf("Suite: %s (%s runner, %d case(s))\n", p.Suite.Name, kind, len(p.Suite.Cases))
+	fmt.Printf("Suite: %s (%s runner, %d case(s)) [workload %s]\n", p.Suite.Name, kind, len(p.Suite.Cases),
+		eval.WorkloadFingerprint(p.Suite).Short())
 	if p.Suite.IsLoop() {
 		fmt.Printf("Loop config: %s\n", p.LoopConfig)
 	}
 	fmt.Println("Configurations:")
-	for _, c := range p.Configs {
-		fmt.Printf("  - %s (%s)\n", c.Label, c.Kind)
+	for i, c := range p.Configs {
+		fmt.Printf("  - %-28s (%s) [config %s, build %s]\n", c.Label, c.Kind,
+			frozen[i].Fingerprint().Short(), frozen[i].Build)
 	}
 	fmt.Printf("Matrix: %d case(s) x %d configuration(s) x %d repeat(s) = %d trial(s)\n",
 		len(p.Suite.Cases), len(p.Configs), p.Repeat, p.Trials())
