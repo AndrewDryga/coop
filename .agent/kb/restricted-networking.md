@@ -3,7 +3,7 @@ name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
 sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, docs/networking.md, internal/sessionsvc/acp.go]
-updated: 2026-09-19
+updated: 2026-09-20
 ---
 
 `coop <agent> --egress filtered` runs the box behind a per-run gateway. Five boring layers stand
@@ -154,8 +154,10 @@ Traps:
   `ClientImage` — the derived image is recorded beside it as `ProjectImage`
   (`networkstate/execution.go:75`), evidence of what ran, never authority. The preflight smoke may
   never carry one; it qualifies the client image itself.
-- Extra runtime arguments (`COOP_RUN_ARGS`, `coop … -- …`) are reduced to bind mounts and
-  `-e KEY=VALUE`; anything else is refused by name (`box/filtered_mounts.go:25`). The gateway, not
+- Extra runtime arguments (`COOP_RUN_ARGS`, `coop … -- …`) are reduced to bind mounts, `-e KEY=VALUE`
+  and `--label KEY=VALUE` (metadata: fleet accounting, a live test's reaping key — it changes neither
+  what the box knows nor what it reaches, and `validateMounts` already admits it); anything else is
+  refused by name (`box/filtered_mounts.go:25`). The gateway, not
   the environment, is the boundary — and a bind that IS or CONTAINS the runtime's control surface
   (`/var/run`, `/run`, `/proc`, `/sys`, `/dev`, `/`, the bound endpoint's socket) is refused too
   (`box/filtered_mounts.go:429`): one curl over a daemon socket starts a container no gateway sees.
@@ -240,6 +242,8 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-20 — COOP_RUN_ARGS now also admits `--label KEY=VALUE` under filtered (metadata only);
+  a live-test supervisor reaps its filtered boxes by label the same as an open one.
 - 2026-09-19 — bearer MCP servers ride the broker under filtered networking.
 - 2026-09-19 — the broker serves every selected API-key account (one route and listener per
   provider, lead to ACP and remote sessions); the Codex hookup moved from lead-only `-c` argv to a

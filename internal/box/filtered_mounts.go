@@ -13,12 +13,12 @@ import (
 )
 
 // filteredExtraArgs reduces COOP_RUN_ARGS and a run's own extra arguments to
-// the two things a filtered launch can still honor: bind mounts and explicit
-// environment assignments. A mount becomes an ordinary extra mount — the same
-// exposure, parent and inode checks apply. An environment variable is not a
-// network decision at all: the GATEWAY is the boundary, so a review run's
-// `-e COOP_REVIEW=1` changes what the workload knows, never what it can reach.
-// Anything else is refused BY NAME: a runtime argument this release has not
+// the three things a filtered launch can still honor: bind mounts, explicit
+// environment assignments and labels. A mount becomes an ordinary extra mount —
+// the same exposure, parent and inode checks apply. An environment variable is
+// not a network decision at all: the GATEWAY is the boundary, so a review run's
+// `-e COOP_REVIEW=1` changes what the workload knows, never what it can reach;
+// a label changes neither. Anything else is refused BY NAME: a runtime argument this release has not
 // qualified could hand the workload another network, another user or another
 // capability, and a filtered run that quietly dropped it would enforce a policy
 // the operator never chose.
@@ -35,8 +35,13 @@ func filteredExtraArgs(configured, spec []string) ([]string, error) {
 		case "-v", "--volume", "--mount":
 		case "-e", "--env":
 			want = "a KEY=VALUE assignment"
+		case "-l", "--label":
+			// Metadata on the agent container — fleet accounting, a test supervisor's reaping
+			// key. It changes neither what the box knows nor what it can reach, and the container
+			// allowlist (validateMounts) already admits it; only this filter refused it.
+			want = "a KEY=VALUE label"
 		default:
-			return nil, fmt.Errorf("a filtered box takes only bind mounts and KEY=VALUE environment in COOP_RUN_ARGS; %q is neither — drop it, or run without --egress filtered", name)
+			return nil, fmt.Errorf("a filtered box takes only bind mounts, KEY=VALUE environment and labels in COOP_RUN_ARGS; %q is none of those — drop it, or run without --egress filtered", name)
 		}
 		value := inline
 		if !hasInline {
@@ -58,6 +63,11 @@ func filteredExtraArgs(configured, spec []string) ([]string, error) {
 				return nil, err
 			}
 			out = append(out, "-e", value)
+		case "-l", "--label":
+			if err := checkLabelAssignment(value); err != nil {
+				return nil, err
+			}
+			out = append(out, "--label", value)
 		default:
 			out = append(out, "-v", value)
 		}
@@ -75,6 +85,17 @@ func checkEnvAssignment(value string) error {
 	}
 	if key == "" || strings.ContainsAny(value, "\x00\r\n") {
 		return errors.New("-e needs a plain KEY=VALUE assignment, on one line")
+	}
+	return nil
+}
+
+// checkLabelAssignment holds a label to the same one-line KEY=VALUE shape as an environment
+// assignment. Docker would accept a bare KEY as an empty label; a filtered run refuses the
+// ambiguity the same way it refuses `-e HOME`.
+func checkLabelAssignment(value string) error {
+	key, _, ok := strings.Cut(value, "=")
+	if !ok || key == "" || strings.ContainsAny(value, "\x00\r\n") {
+		return fmt.Errorf("--label needs a plain KEY=VALUE assignment, on one line; %q is not", value)
 	}
 	return nil
 }

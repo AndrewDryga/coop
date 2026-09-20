@@ -24,6 +24,9 @@ func TestFilteredExtraArgsAcceptEveryBindSpelling(t *testing.T) {
 		{"env", []string{"-e", "COOP_REVIEW=1"}, []string{"-e", "COOP_REVIEW=1"}},
 		{"env long", []string{"--env", "K=v"}, []string{"-e", "K=v"}},
 		{"env inline", []string{"--env=K=a=b"}, []string{"-e", "K=a=b"}},
+		{"label", []string{"--label", "team=infra"}, []string{"--label", "team=infra"}},
+		{"label short", []string{"-l", "coop.live-test=abc"}, []string{"--label", "coop.live-test=abc"}},
+		{"label inline", []string{"--label=k=v=w"}, []string{"--label", "k=v=w"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -50,6 +53,8 @@ func TestFilteredExtraArgsRefuseEverythingElseByName(t *testing.T) {
 		"--mount type=tmpfs,target=/t":    "--mount type=tmpfs",
 		"--mount type=bind,source=/src":   "source= and target=",
 		"--mount type=bind,fake=1,src=/a": `"fake"`,
+		"--label team":                    "--label needs a plain KEY=VALUE",
+		"--label =x":                      "--label needs a plain KEY=VALUE",
 	}
 	for given, want := range cases {
 		t.Run(given, func(t *testing.T) {
@@ -88,6 +93,9 @@ func TestFilteredExtraArgsCombineConfigAndRunArguments(t *testing.T) {
 	}
 	if _, err := filteredExtraArgs([]string{"-e"}, nil); err == nil {
 		t.Error("a dangling -e was accepted")
+	}
+	if _, err := filteredExtraArgs([]string{"--label"}, nil); err == nil {
+		t.Error("a dangling --label was accepted")
 	}
 }
 

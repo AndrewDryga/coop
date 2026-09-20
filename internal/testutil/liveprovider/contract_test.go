@@ -418,6 +418,66 @@ func TestProcessEnvironmentAddsOnlyAValidatedSupervisorLabel(t *testing.T) {
 	}
 }
 
+// A brokered API key runs only behind the filtered gateway, so the host's network authority
+// travels with `filtered` — into any workflow's child, a consult ring, or an ACP supervisor —
+// and never one without the other.
+func TestHostNetworkStateTravelsWithFilteredIntoEveryProcessKind(t *testing.T) {
+	layout, err := procharness.NewLayout(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	revokePath := filepath.Join(filepath.Dir(layout.Config), ".coop-live-revoked-00000000000000000000000000000000")
+	host := filepath.Join(t.TempDir(), "state")
+	child := ChildSpec{
+		Path: "/safe/bin", Target: "gemini", Marker: "MARKER", ResultFile: filepath.Join(layout.State, "result.json"),
+		AttemptFile: filepath.Join(layout.State, "attempted"), Supervisor: "supervisor", ControlFD: 3, RevokePath: revokePath,
+		Runtime: RuntimeSettings{Name: "docker"},
+	}
+	for _, workflow := range []string{"prompt", "loop", "resume", "network"} {
+		spec := child
+		spec.Workflow, spec.NetworkStateHome = workflow, host
+		if workflow == "resume" {
+			spec.Stage, spec.SessionFile = "fresh", filepath.Join(layout.State, "provider-session-id")
+		}
+		env, err := ChildEnvironment(layout, spec)
+		if err != nil {
+			t.Fatalf("%s child with host network state: %v", workflow, err)
+		}
+		joined := strings.Join(env, "\n")
+		for _, required := range []string{"COOP_EGRESS=filtered", "XDG_STATE_HOME=" + host} {
+			if !strings.Contains(joined, required) {
+				t.Errorf("%s child environment missing %q", workflow, required)
+			}
+		}
+		if strings.Contains(joined, "COOP_EGRESS=open") {
+			t.Errorf("%s child is open AND filtered", workflow)
+		}
+	}
+	relative := child
+	relative.NetworkStateHome = "state"
+	if _, err := ChildEnvironment(layout, relative); err == nil {
+		t.Fatal("a relative host state path was accepted")
+	}
+	open := child
+	if env, err := ChildEnvironment(layout, open); err != nil || !strings.Contains(strings.Join(env, "\n"), "COOP_EGRESS=open") {
+		t.Fatalf("a child without host network state must stay open: %v", err)
+	}
+
+	env, err := ProcessEnvironment(layout, "/safe/bin", RuntimeSettings{Name: "docker"}, ProcessSpec{Supervisor: "acp-live-123", Filtered: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(env, "\n")
+	if !strings.Contains(joined, "COOP_EGRESS=filtered") || !strings.Contains(joined, "COOP_RUN_ARGS=--label "+SupervisorLabelKey+"=acp-live-123") {
+		t.Fatalf("filtered ACP process lost its posture or its reaping label: %s", joined)
+	}
+	// The live process registry owns the state root, so an ACP supervisor keeps the disposable
+	// one and qualifies it itself; the host store is never handed to it.
+	if strings.Contains(joined, "XDG_STATE_HOME="+host) {
+		t.Fatal("an ACP process was handed the host's state home")
+	}
+}
+
 func TestCaptureRuntimeConnectionEnvUsesExactRuntimeAllowlist(t *testing.T) {
 	ambient := map[string]string{
 		"DOCKER_HOST": "unix:///docker.sock", "DOCKER_CONFIG": "/unsafe/docker-config",

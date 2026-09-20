@@ -20,6 +20,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
@@ -89,6 +90,27 @@ func SelectionForTarget(cfg *config.Config, target agents.Target) (Selection, er
 		Provider: target.Provider, Account: account,
 		SourceDefault: account == cfg.DefaultProfileOf(target.Provider),
 	}, nil
+}
+
+// BrokersKey reports whether a selection's credential is an API key Coop serves through the
+// filtered gateway's broker rather than a sign-in it mounts. That is the ONLY way Coop runs an API
+// key, so a live suite launches such a target — and every launch whose scope includes one —
+// behind this host's filtered gateway; a signed-in account keeps the open path the suite was
+// written for. Asked of the real host configuration, before the credential is projected.
+func BrokersKey(cfg *config.Config, selection Selection) (bool, error) {
+	return box.AccountBrokersKey(cfg, selection.Provider, selection.Account)
+}
+
+// AnyBrokersKey is BrokersKey over every selection a process will reach: one brokered key in a
+// consult ring, or in an ACP session's switchable scope, puts the whole launch behind the gateway.
+func AnyBrokersKey(cfg *config.Config, selections []Selection) (bool, error) {
+	for _, selection := range selections {
+		brokered, err := BrokersKey(cfg, selection)
+		if err != nil || brokered {
+			return brokered, err
+		}
+	}
+	return false, nil
 }
 
 // SelectionsForTargets expands account ladders into the exact unique credential accounts a live

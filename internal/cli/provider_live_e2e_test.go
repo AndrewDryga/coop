@@ -22,6 +22,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/liveprovider"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
@@ -245,7 +246,14 @@ func runProviderLiveCompatibility(
 		PreflightReason: preflightReason, CIDDir: cidDir,
 		ControlFD: 3, RevokePath: revokePath, Runtime: runtimeSettings,
 	}
-	if workflow == liveWorkflowNetwork {
+	// The network workflow is filtered by definition. Any other workflow is filtered for a
+	// target whose credential is a brokered API key — the gateway's broker is the only way
+	// Coop runs one — and stays on the open path it was written for otherwise.
+	brokered, err := liveprovider.BrokersKey(realConfig, selection)
+	if err != nil {
+		return fail(false, liveprovider.ReasonHarnessFailed, "credential_kind")
+	}
+	if workflow == liveWorkflowNetwork || brokered {
 		childSpec.NetworkStateHome = hostStateHome()
 	}
 	env, err := liveprovider.ChildEnvironment(layout, childSpec)
@@ -404,6 +412,25 @@ func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, 
 		return skip(liveprovider.ReasonMissingRuntime)
 	}
 	image := box.ImageForRepo(cfg.RepoOverride, cfg.BaseImage, cfg.ImageOverride)
+	// A brokered API key runs behind the filtered gateway (the parent set COOP_EGRESS for it):
+	// one admission for every launch here, as a loop or an ACP session makes, and no --cidfile —
+	// a filtered launch refuses that by name, so the supervisor label alone reaps these boxes.
+	var capture *box.CapturedEgress
+	cidArgs := func(phase string) []string { return liveCIDArgs(rt, cidDir, phase) }
+	if cfg.Egress == "filtered" {
+		filtered := egress.Filtered
+		capture, err = box.AdmitNetwork(cfg, rt, box.RunSpec{
+			Repo: cfg.RepoOverride, Agent: target.Provider, AgentCommand: true, Homes: true,
+		}, box.NetworkAdmission{InvocationMode: &filtered})
+		if err != nil {
+			if errors.Is(err, box.ErrNetworkSetupFailed) {
+				return skip(liveprovider.ReasonMissingImage)
+			}
+			return harnessFail(false, "network_admission")
+		}
+		defer capture.Close()
+		cidArgs = func(string) []string { return nil }
+	}
 
 	versionOut := liveprovider.NewBoundedBuffer(64 << 10)
 	versionErr := liveprovider.NewBoundedBuffer(64 << 10)
@@ -417,7 +444,7 @@ func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, 
 		Image: image, Repo: cfg.RepoOverride, Cmd: []string{interactive[0], "--version"},
 		Agent: target.Provider, Batch: true, RepoReadOnly: true, Quiet: true,
 		SupervisorID: supervisor, Stdout: versionOut, Stderr: versionErr, Ctx: versionCtx,
-		ExtraArgs: liveCIDArgs(rt, cidDir, "version"),
+		ExtraArgs: cidArgs("version"), CapturedEgress: capture,
 	})
 	versionTimedOut := errors.Is(runErr, context.DeadlineExceeded)
 	cancelVersion()
@@ -499,7 +526,7 @@ func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, 
 		Agent: target.Provider, AgentCommand: true, Batch: true, RepoReadOnly: repoReadOnly, Quiet: true,
 		Homes: true, Network: false, Cache: false, SupervisorID: supervisor,
 		Stdout: stdout, Stderr: stderr, Ctx: promptCtx,
-		ExtraArgs: liveCIDArgs(rt, cidDir, "prompt"),
+		ExtraArgs: cidArgs("prompt"), CapturedEgress: capture,
 		TaskTools: taskTools,
 	})
 	promptTimedOut := errors.Is(runErr, context.DeadlineExceeded)
@@ -547,8 +574,9 @@ func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, 
 }
 
 // hostStateHome is where this host keeps `coop net setup`'s owner-private
-// record. Only the network workflow reads it, and only to launch behind the
-// qualification a human already made on this machine.
+// record. A filtered child reads it — the network workflow, or any workflow
+// running a brokered API key — and only to launch behind the qualification a
+// human already made on this machine.
 func hostStateHome() string {
 	if value := os.Getenv("XDG_STATE_HOME"); value != "" {
 		return value

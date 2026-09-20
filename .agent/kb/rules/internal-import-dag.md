@@ -46,6 +46,11 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-09-20 — **+1 edge: `testutil/liveprovider` → `box`.** The live qualification harness must
+  route a brokered API-key target through the filtered gateway, and whether an account brokers a key
+  is Coop's own decision (`box.AccountBrokersKey`, the same call `cli` and `sessionsvc` make) — a
+  harness that re-derived it would be a second copy of the sandbox's authority. `liveprovider` is a
+  test-support package (no production importer), `box` never imports it, so the edge adds no cycle.
 - 2026-09-15 — **+2 edges: `loop` → `contextc, project`.** The loop's compact review packet
   resolves only the changed files' configured context routes; importing the route model and its
   bounded file collector directly keeps review setup in the loop engine and adds no cycle.

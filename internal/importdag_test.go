@@ -76,7 +76,7 @@ var allowedEdges = map[string][]string{
 	"tasks":                 {"box", "config", "forkspace", "processidentity", "project", "taskstate", "ui"},
 	"taskstate":             nil,
 	"testutil/gitrepo":      nil,
-	"testutil/liveprovider": {"agent", "config", "liveprocess", "processidentity", "testutil/procharness"},
+	"testutil/liveprovider": {"agent", "box", "config", "liveprocess", "processidentity", "testutil/procharness"},
 	"testutil/procharness":  nil,
 	"testutil/wait":         nil,
 	"testutil/workertls":    nil,

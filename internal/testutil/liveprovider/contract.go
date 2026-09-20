@@ -557,10 +557,13 @@ type ChildSpec struct {
 	ControlFD       int
 	RevokePath      string
 	Runtime         RuntimeSettings
-	// NetworkStateHome is the HOST's state home, and only the network workflow
-	// may name it: a filtered launch needs this host's own `coop net setup`
-	// qualification, which is owner-private and keyed — a disposable state tree
-	// cannot hold one. Credentials, repository and home stay isolated either way.
+	// NetworkStateHome is the HOST's state home. Naming it puts every box the child
+	// launches behind this host's filtered gateway: a filtered launch needs the host's
+	// own `coop net setup` qualification, which is owner-private and keyed — a
+	// disposable state tree cannot hold one. The network workflow must name it; any
+	// other workflow names it for a target that brokers an API key (BrokersKey), since
+	// the gateway's broker is the only way Coop runs one. Credentials, repository and
+	// home stay isolated either way.
 	NetworkStateHome string
 }
 
@@ -609,11 +612,9 @@ func ChildEnvironment(layout procharness.Layout, spec ChildSpec) ([]string, erro
 		return nil, errors.New("live resume authority granted to another workflow")
 	}
 	if spec.NetworkStateHome != "" {
-		if workflow != "network" || !filepath.IsAbs(spec.NetworkStateHome) {
-			return nil, errors.New("live host network state granted to another workflow")
+		if err := grantHostNetworkState(values, spec.NetworkStateHome); err != nil {
+			return nil, err
 		}
-		values["XDG_STATE_HOME"] = spec.NetworkStateHome
-		values["COOP_EGRESS"] = "filtered"
 	} else if workflow == "network" {
 		return nil, errors.New("the live network workflow needs this host's network qualification")
 	}
@@ -683,6 +684,19 @@ func ConsultChildEnvironment(layout procharness.Layout, spec ConsultChildSpec) (
 	return encodeEnvironment(values)
 }
 
+// grantHostNetworkState points a child at the host's network authority store and makes every
+// launch in it filtered. The two travel together: filtered without the store would rebuild the
+// qualification into a throwaway tree, and the store without filtered would grant authority
+// nothing uses.
+func grantHostNetworkState(values map[string]string, stateHome string) error {
+	if !filepath.IsAbs(stateHome) {
+		return errors.New("live host network state must be an absolute path")
+	}
+	values["XDG_STATE_HOME"] = stateHome
+	values["COOP_EGRESS"] = "filtered"
+	return nil
+}
+
 func containsProvider(targets []agents.Target, provider string) bool {
 	for _, target := range targets {
 		if target.Provider == provider {
@@ -694,20 +708,30 @@ func containsProvider(targets []agents.Target, provider string) bool {
 
 // ProcessSpec is the authority granted to a live ACP supervisor. ProcessDir is a private,
 // append-only registry activated only when the tagged binary also receives ControlFD.
+// Filtered puts the supervisor's boxes behind a filtered gateway — for a provider whose
+// credential is a brokered API key. The state home stays the disposable one the live
+// process registry requires, so the supervisor qualifies that tree itself on first launch
+// (a `coop net setup` into it) rather than borrowing the host's record.
 type ProcessSpec struct {
 	Supervisor string
 	ProcessDir string
 	ControlFD  int
+	Filtered   bool
 }
 
 // ProcessEnvironment is the shared allowlist-only environment for a live test process. It grants
 // runtime connectivity and the isolated Coop layout, but no ambient Coop overrides or provider keys.
 func ProcessEnvironment(layout procharness.Layout, path string, runtime RuntimeSettings, spec ProcessSpec) ([]string, error) {
 	values := processEnvironmentValues(layout, path, runtime)
+	if spec.Filtered {
+		values["COOP_EGRESS"] = "filtered"
+	}
 	if spec.Supervisor != "" {
 		if !liveprocess.ValidCleanupID(spec.Supervisor) {
 			return nil, errors.New("invalid live process supervisor")
 		}
+		// A label is one of the three runtime arguments a filtered launch admits, so the
+		// reaping key rides the same way on either path.
 		values["COOP_RUN_ARGS"] = "--label " + SupervisorLabelKey + "=" + spec.Supervisor
 	}
 	if spec.ProcessDir != "" || spec.ControlFD != 0 {
@@ -722,6 +746,28 @@ func ProcessEnvironment(layout procharness.Layout, path string, runtime RuntimeS
 		values[liveprocess.CleanupIDEnv] = spec.Supervisor
 	}
 	return encodeEnvironment(values)
+}
+
+// LinkDockerPlugins lets a process with an isolated home find the Docker CLI's plugins: a filtered
+// launch that has to qualify its own state tree runs `net setup`, which builds with Buildx, and
+// Docker discovers Buildx under $HOME/.docker/cli-plugins — empty in a disposable home. Only the
+// plugin DIRECTORY is linked (executables), never config.json (registry logins) or anything else
+// under ~/.docker; Coop's own build already exposes nothing but the resolved plugin binary. A host
+// with no plugin directory is left alone — its `net setup` fails the same way it would by hand.
+func LinkDockerPlugins(layout procharness.Layout) error {
+	hostHome, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	plugins := filepath.Join(hostHome, ".docker", "cli-plugins")
+	if info, err := os.Stat(plugins); err != nil || !info.IsDir() {
+		return nil
+	}
+	dir := filepath.Join(layout.Home, ".docker")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return os.Symlink(plugins, filepath.Join(dir, "cli-plugins"))
 }
 
 // NewProcessControl creates the authenticated descriptor shared by tagged live helpers. ACP also

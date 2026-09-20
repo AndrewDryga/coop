@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
@@ -137,6 +138,10 @@ type liveACP struct {
 	cidDir      string
 	processDir  string
 	credentials *liveprovider.Prepared
+	// filtered means this supervisor runs behind the gateway for a brokered API key, so its
+	// scope is frozen to that one provider's admitted accounts. A preset whose ladder needs
+	// another provider is then correctly unavailable — the toolbar assertions account for it.
+	filtered bool
 }
 
 func startLiveACP(t *testing.T, provider string, requiredProviders ...string) *liveACP {
@@ -180,9 +185,25 @@ func startLiveACP(t *testing.T, provider string, requiredProviders ...string) *l
 	if err != nil {
 		failLiveACPSetup(t, "process_control")
 	}
+	// A provider whose credential is a brokered API key runs only behind the filtered gateway,
+	// so its supervisor is started filtered; it qualifies the disposable state tree itself on
+	// first launch. A signed-in provider keeps the open path this suite was written for.
+	brokered, err := liveprovider.AnyBrokersKey(coopE2ERealConfig, selections)
+	if err != nil {
+		control.Close()
+		failLiveACPSetup(t, "credential_kind")
+	}
+	if brokered {
+		// The supervisor qualifies its disposable state tree itself (a `net setup`), and that
+		// builds with the Docker Buildx plugin its isolated home would otherwise not find.
+		if err := liveprovider.LinkDockerPlugins(processLayout); err != nil {
+			control.Close()
+			failLiveACPSetup(t, "docker_plugins")
+		}
+	}
 	environment, err := liveprovider.ProcessEnvironment(
 		processLayout, os.Getenv("PATH"), coopE2ERuntimeSettings, liveprovider.ProcessSpec{
-			Supervisor: supervisor, ProcessDir: processDir, ControlFD: 3,
+			Supervisor: supervisor, ProcessDir: processDir, ControlFD: 3, Filtered: brokered,
 		},
 	)
 	if err != nil {
@@ -227,7 +248,7 @@ func startLiveACP(t *testing.T, provider string, requiredProviders ...string) *l
 		cmd: cmd, stdin: stdin, client: c, stderr: stderr, done: done,
 		runtime: coopE2ERuntime, supervisor: supervisor,
 		cleanupRoot: processLayout.Root, cidDir: processLayout.State,
-		processDir: processDir, credentials: credentials,
+		processDir: processDir, credentials: credentials, filtered: brokered,
 	}
 	t.Cleanup(func() { live.stop(t) })
 	return live
@@ -239,6 +260,11 @@ func (a *liveACP) diagnostic(phase string, err error) string {
 
 func (a *liveACP) fail(t *testing.T, phase string, err error) {
 	t.Helper()
+	// The diagnostic line is the shareable record and carries no process output. The bounded
+	// stderr behind it is what a person needs to see WHY, so it is echoed on request only.
+	if os.Getenv("COOP_ACP_LIVE_STDERR") == "1" {
+		t.Logf("live ACP stderr (bounded, truncated=%t):\n%s", a.stderr.Truncated(), a.stderr.String())
+	}
 	t.Fatalf("live ACP failure: %s", a.diagnostic(phase, err))
 }
 
@@ -824,6 +850,19 @@ func TestPresetOwnsSelectorState(t *testing.T) {
 	}
 }
 
+// fixturePresetLead is the provider that leads the only preset in the live-test repo (frontier).
+// A filtered singleton scoped to a different provider cannot load it, so its Preset dropdown is
+// correctly hidden; deriving the lead from the preset itself keeps this in step if frontier's lead
+// moves.
+func fixturePresetLead(t *testing.T) string {
+	t.Helper()
+	p, err := preset.Load(coopE2ERepo, "", "frontier")
+	if err != nil {
+		t.Fatalf("load fixture preset: %v", err)
+	}
+	return p.Lead().Provider
+}
+
 func TestLiveProviderConformance(t *testing.T) {
 	cwd := coopE2ERepo
 	for _, provider := range agents.Names() {
@@ -852,8 +891,28 @@ func TestLiveProviderConformance(t *testing.T) {
 				live.fail(t, "session_new_result", nil)
 			}
 			options := liveConfigOptions(t, live, response)
-			for _, id := range []string{"coop_preset", "coop_account"} {
+			// A filtered supervisor is scoped to this one brokered provider, so a preset whose ladder
+			// needs ANOTHER provider is unavailable and its sole-"none" selector is hidden. The test
+			// repo's only preset is fixturePresetLead-led, so a filtered singleton shows the Preset
+			// dropdown only when it is that provider. An open singleton offers every repo preset
+			// unfiltered, so it always shows it. Account stays either way — auto plus its account.
+			presetVisible := !live.filtered || provider == fixturePresetLead(t)
+			required := []string{"coop_account"}
+			if presetVisible {
+				required = append(required, "coop_preset")
+			} else if _, shown := options["coop_preset"]; shown {
+				live.fail(t, "filtered_preset_toolbar", nil)
+			}
+			for _, id := range required {
 				if _, ok := options[id]; !ok {
+					if os.Getenv("COOP_ACP_LIVE_STDERR") == "1" {
+						present := make([]string, 0, len(options))
+						for optID := range options {
+							present = append(present, optID)
+						}
+						sort.Strings(present)
+						t.Logf("toolbar missing %q; present: %v", id, present)
+					}
 					live.fail(t, "toolbar", nil)
 				}
 			}

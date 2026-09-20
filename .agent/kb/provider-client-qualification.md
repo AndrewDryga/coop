@@ -3,7 +3,7 @@ name: provider-client-qualification
 description: every box runs one locked client set; make provider-qualify records a strict live qualification (no record or gate yet — why) — the conformance rows, where each is proven, the gaps, the bump procedure
 subsystem: agent
 sources: [internal/agent/locked_clients.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go]
-updated: 2026-09-19
+updated: 2026-09-20
 ---
 
 **One manifest.** `locked-clients/package.json` + `package-lock.json` (embedded) and each adapter's
@@ -27,9 +27,28 @@ client). **No record exists yet, so no gate enforces one:** on 2026-09-19 the st
 not pass on any host: Gemini's only portable account family is an API key, which needs filtered
 networking, while the open, consult and ACP suites run open (Gemini OAuth is host-bound). The
 broker now serves a key to a consult peer, an ACP session and a remote session on filtered
-networking; routing API-key targets through the filtered gateway in every suite, the first record
-and the gate that fails a pin move without a matching one land with the follow-up task
+networking, AND the CLI live suites and the singleton ACP suite now route a brokered-key target
+through the host's filtered gateway automatically: the harness asks
+`liveprovider.BrokersKey`/`AnyBrokersKey` per selection, and when the answer is yes it grants the
+child the host's network state and `COOP_EGRESS=filtered` (a signed-in account keeps the open path).
+The shared CLI child (`provider-live`, `-resume`, `-loop`) and `startLiveACP` are wired; the consult
+ring is NOT yet (its edge spec would hit the broker's "run the agent itself" gate — deferred with the
+consult live proof). Proven live 2026-09-20 on the reference host: Gemini's API key passes
+`provider-live-e2e` (prompt through the gateway) and the full `TestLiveProviderConformance/gemini` ACP
+run (initialize, session/new, prompt, model switch, SIGHUP replay, resumed prompt — all filtered).
+Two things the routing needed: a filtered launch now also admits `--label KEY=VALUE` in COOP_RUN_ARGS
+(the live supervisor's reaping key; [[restricted-networking]]), and an ACP supervisor with an isolated
+home links the host's `~/.docker/cli-plugins` so its self-run `coop net setup` finds Buildx. STILL
+OPEN before the record is written and the gate lands: a brokered Gemini's resume and loop live proofs,
+the consult-ring wiring + proof, the cross-provider-carry and preset-selector ACP tests with a
+brokered provider, and claude/grok need a fresh token before a full strict run — tracked by task
 (`2026-09-19-close-the-live-conformance-gaps-in-provider-qual`).
+
+A filtered singleton's toolbar has NO Preset dropdown when the repo's only preset needs another
+provider: the supervisor freezes the scope to the one brokered provider (`LimitNetworkTargets`), so
+`networkPresetAllowed` filters a codex-led preset out, its selector collapses to sole-"none", and
+`visibleConfigOptions` hides it. Correct, and the ACP conformance test now expects it for a filtered
+session (an OPEN singleton still shows every repo preset, unfiltered by lead capability).
 
 **Conformance rows** (D = deterministic in `make check`, L = the paid run; all four providers unless
 noted — mapped 2026-09-19 by reading the tests):
@@ -90,6 +109,10 @@ host re-run filtered setup once — a filtered launch does it itself, an editor 
 `coop net setup`.
 
 ## Changelog
+- 2026-09-20 — every live suite auto-routes a brokered API-key target through the filtered gateway
+  (BrokersKey/AnyBrokersKey); Gemini proven live on provider-live-e2e and ACP conformance. Recorded
+  the filtered-singleton toolbar (no Preset when no in-scope preset), the --label admission and the
+  Buildx plugin link an isolated ACP home needs.
 - 2026-09-19 — pinned how each client sends a header secret; grok's `mcp doctor` is not a capture.
 - 2026-09-19 — added the MCP request-line pins and their capture.
 - 2026-09-19 — the broker serves consult peers, ACP and remote sessions on filtered networking;

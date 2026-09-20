@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A filtered run now keeps a `--label` you set in `COOP_RUN_ARGS`, the way it already keeps a bind
+  mount or a `-e KEY=VALUE`. A label is metadata on the box — it changes neither what the box knows
+  nor what it can reach — so refusing it only forced tools that tag their boxes (fleet accounting, a
+  test's own reaping key) to choose between a label and `--egress filtered`. Anything that is not a
+  mount, an environment assignment or a label is still refused by name.
+
 - When Coop's gateway refuses something a program in the box sent straight to it, Coop now says
   which port inside the box it came from — in `coop net inspect`, `coop net watch`, `--json`, and
   the evidence a remote session exports. There is no destination to look up for those, so that port
