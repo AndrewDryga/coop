@@ -17,7 +17,7 @@ import (
 )
 
 // evalCommands are the `coop eval` verbs, in help order.
-var evalCommands = []string{"ls", "run", "compare", "init"}
+var evalCommands = []string{"ls", "runs", "run", "compare", "init"}
 
 // evalRunOptions are the flags `coop eval run` accepts after its positionals.
 var evalRunOptions = []string{"--jobs", "--repeat", "--timeout", "--loop-config"}
@@ -34,6 +34,8 @@ func (a *app) cmdEval(args []string) (int, error) {
 	switch verb {
 	case "ls":
 		return a.evalList(rest)
+	case "runs":
+		return a.evalRuns(rest)
 	case "run":
 		return a.evalRun(rest)
 	case "compare":
@@ -73,6 +75,41 @@ func (a *app) evalList(args []string) (int, error) {
 	fmt.Println("Public starter suites:")
 	for _, s := range starters {
 		fmt.Printf("  %-24s %s\n", s.ID, s.Summary)
+	}
+	return 0, nil
+}
+
+// evalRuns lists recorded runs, newest first, so a user can find the two ids to compare.
+func (a *app) evalRuns(args []string) (int, error) {
+	if err := rejectArgs("eval runs", args); err != nil {
+		return 2, err
+	}
+	root, err := evalStateRoot()
+	if err != nil {
+		return 1, err
+	}
+	ids, err := eval.ListRuns(root)
+	if err != nil {
+		return 1, err
+	}
+	if len(ids) == 0 {
+		fmt.Println("No eval runs recorded yet.")
+		return 0, nil
+	}
+	fmt.Println("Recorded runs (newest first):")
+	for _, id := range ids {
+		run, rerr := eval.LoadRun(root, id)
+		if rerr != nil {
+			fmt.Printf("  %s\n", id)
+			continue
+		}
+		sealed := ""
+		if _, ok, serr := eval.LoadSummary(root, id); serr != nil {
+			sealed = " (unreadable summary)"
+		} else if !ok {
+			sealed = " (interrupted)"
+		}
+		fmt.Printf("  %-32s %s%s\n", id, run.Suite, sealed)
 	}
 	return 0, nil
 }
@@ -174,13 +211,63 @@ func (a *app) resolveEvalConfigurations(positionals []string) ([]eval.Configurat
 	return configs, nil
 }
 
-// evalCompare pairs two run ids. Runs are produced by trial execution, which does not exist yet, so
-// milestone 1 refuses cleanly rather than pretending to have results.
+// evalCompare pairs two sealed runs of the same suite and shows the paired before/after report:
+// coverage, pass counts, per-case wins and regressions. It refuses to merge two runs of different
+// workloads into one score, and refuses an interrupted (unsealed) run.
 func (a *app) evalCompare(args []string) (int, error) {
 	if len(args) != 2 {
 		return 2, ui.MissingArgument("<run-id> <run-id>", "coop eval compare", "coop eval compare <run-id> <run-id>")
 	}
-	return 1, fmt.Errorf("no eval runs exist yet: run execution and comparison ship in a later Coop release")
+	root, err := evalStateRoot()
+	if err != nil {
+		return 1, err
+	}
+	cmp, err := eval.Compare(root, args[0], args[1])
+	if err != nil {
+		return 1, err
+	}
+	renderEvalComparison(cmp)
+	return 0, nil
+}
+
+// renderEvalComparison prints a comparison: each run's coverage and counts, then per-case pairing.
+func renderEvalComparison(c *eval.Comparison) {
+	fmt.Printf("Comparing %s (before) vs %s (after)\n", c.BaseID, c.NewID)
+	if c.Mismatch != "" {
+		fmt.Printf("\n⚠ %s\n", c.Mismatch)
+	}
+	line := func(label string, o eval.ConfigOutcome) {
+		// Lead with passed / REQUESTED (never / covered): a pending or errored trial stays in the
+		// denominator, so a run can't look better by not finishing. Coverage is a separate figure.
+		fmt.Printf("  %-7s %v: %d/%d passed; coverage %d/%d graded; failed %d, error %d, timed out %d, pending %d\n",
+			label, o.Configs, o.Passed, o.Requested, o.Covered(), o.Requested, o.Failed, o.Errored, o.TimedOut, o.Pending)
+	}
+	fmt.Println()
+	line("before", c.Base)
+	line("after", c.New)
+	if c.Base.Covered() < c.Base.Requested || c.New.Covered() < c.New.Requested {
+		fmt.Println("⚠ coverage is incomplete; with unfinished trials there is no definitive winner")
+	}
+	if c.Mismatch != "" || len(c.Cases) == 0 {
+		return
+	}
+	fmt.Println("\nPer case (before → after; summed over configurations):")
+	for _, cc := range c.Cases {
+		fmt.Printf("  %-24s passed %d→%d  failed %d→%d  error %d→%d\n",
+			cc.Case, cc.Base.Passed, cc.New.Passed, cc.Base.Failed, cc.New.Failed, cc.Base.Errored, cc.New.Errored)
+	}
+}
+
+// evalStateRoot is the owner-private eval results directory, outside every candidate mount.
+func evalStateRoot() (string, error) {
+	if base := os.Getenv("XDG_STATE_HOME"); base != "" {
+		return filepath.Join(base, "coop", "eval"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve user home: %w", err)
+	}
+	return filepath.Join(home, ".local", "state", "coop", "eval"), nil
 }
 
 // evalInit scaffolds a custom suite: a working agent example and a documented loop example, so a

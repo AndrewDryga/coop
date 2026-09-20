@@ -1426,6 +1426,9 @@ RUN
   coop eval run <suite> <target|preset>...   plan and run a suite for each configuration
   coop eval compare <run-id> <run-id>        compare two runs of the same suite
 
+INSPECT
+  coop eval runs                             list recorded runs (find the ids to compare)
+
 AUTHOR
   coop eval                                  list starters and how to author your own
   coop eval ls                               list qualified public starter suites
