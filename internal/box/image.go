@@ -608,7 +608,13 @@ func buildProjectOnBase(ctx context.Context, rt runtime.Runtime, repo string, en
 	}
 	_ = idFile.Close()
 	defer os.Remove(idFile.Name())
-	args := projectBuildArgs(dir, dfRel, tag, base, true, false)
+	// This build's own mark: the project it is for, so a later build of the same project can tell
+	// its predecessors from an image someone else built into that name (reclaim.go).
+	var labels []string
+	if project := derivedImageProject(tag); project != "" {
+		labels = append(labels, derivedImageLabel+"="+project)
+	}
+	args := projectBuildArgs(dir, dfRel, tag, base, true, false, labels...)
 	code, runErr := rt.Run(nil, nil, stderr, append([]string{"build", "--iidfile", idFile.Name()}, args[1:]...)...)
 	if runErr != nil {
 		return "", "", false, runErr
@@ -626,7 +632,7 @@ func buildProjectOnBase(ctx context.Context, rt runtime.Runtime, repo string, en
 // staged ctx, tagged img. When the Dockerfile inherits coop's base (usesBase), it passes the base as
 // a build-arg and, on --fresh, uses --no-cache WITHOUT --pull — the base is a local image tag, not a
 // registry ref, so --pull would fail trying to fetch it. An external FROM still gets --pull on fresh.
-func projectBuildArgs(ctx, dfRel, img, baseImage string, usesBase, fresh bool) []string {
+func projectBuildArgs(ctx, dfRel, img, baseImage string, usesBase, fresh bool, labels ...string) []string {
 	args := []string{"build"}
 	if fresh {
 		args = append(args, "--no-cache")
@@ -636,6 +642,9 @@ func projectBuildArgs(ctx, dfRel, img, baseImage string, usesBase, fresh bool) [
 	}
 	if usesBase {
 		args = append(args, "--build-arg", "COOP_BASE_IMAGE="+baseImage)
+	}
+	for _, label := range labels {
+		args = append(args, "--label", label)
 	}
 	return append(args, "-t", img, "-f", filepath.Join(ctx, dfRel), ctx)
 }

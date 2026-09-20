@@ -2,7 +2,7 @@
 name: box-base-image-tags
 description: Coop's shared base is tagged by its box definition so two Coop versions on one host keep their own; why there is no :latest alias, how an upgrade is repaired, and what stays shared
 subsystem: box
-sources: [internal/box/reclaim.go, internal/box/image.go, internal/box/staleness.go, internal/box/locked_image.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/cli/cli.go, internal/cli/build_cmd.go, internal/cli/session_cmd.go, internal/forkctl/host.go, internal/forkctl/merge.go]
+sources: [internal/box/reclaim.go, internal/box/derived_image.go, internal/box/filtered.go, internal/box/image.go, internal/box/staleness.go, internal/box/locked_image.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/cli/cli.go, internal/cli/build_cmd.go, internal/cli/session_cmd.go, internal/forkctl/host.go, internal/forkctl/merge.go]
 updated: 2026-09-20
 ---
 
@@ -42,8 +42,15 @@ no posture-aware check follows. A merge or session review gate builds it through
 Still shared: a project image (`coop-<repo>`, from `.agent/Dockerfile`) keeps one name, so two
 versions still take turns on it, and a project box built on an older base keeps those clients until
 `coop build` — `checkCoopBox` never replaces a project's image. A superseded base IS reclaimed now
-(`reclaim.go`), but only after 14 days with no recorded use and no container referencing it; a
-project's own derived image (`<project>-filtered:<16hex>`) still accumulates.
+(`reclaim.go`), but only after 14 days with no recorded use and no container referencing it. A
+project's own derived image is reclaimed by the same rule, with one extra proof: that repository is
+the PROJECT's name, so only images carrying the `coop.derived=<project>` label the build applies are
+candidates — an image an operator built into the same name is never one, and neither is one Coop
+built before it started marking them (remove those by hand). Note WHAT supersedes one:
+`filteredProjectTag` hashes the LOCKED CLIENT IMAGE, not the Dockerfile, so editing
+`.agent/Dockerfile` rewrites the same tag (the old image goes dangling, which `docker image prune`
+already took); a tagged predecessor appears when the client image changes — a Coop upgrade, or
+`coop net setup` again.
 
 A use record is per *user* (`~/.config/coop/image-use/`, `Config.BoxHome`), while the images are
 per *daemon*. On the
@@ -54,6 +61,8 @@ record, so the 14 days start then), and an image any container still references 
 stopped, whoever owns it — is kept.
 
 ## Changelog
+- 2026-09-20 — a project's own derived images join the reclaim, recognized by the `coop.derived`
+  label their build now applies (never by the `-filtered` name alone).
 - 2026-09-20 — a build reclaims its family's superseded images (`box/reclaim.go`): 14 days without a
   recorded use and no container referencing it. Every launch records its image (`MarkImageUsed`),
   which is what keeps a second installed Coop's base alive; `:latest`, an operator's own image and

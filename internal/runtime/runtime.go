@@ -502,6 +502,31 @@ func (r Runtime) ImageTags(ctx context.Context, repository string) ([]string, er
 	return tags, nil
 }
 
+// ImageTagsLabeled is ImageTags narrowed to the images carrying one exact `key=value` label. A
+// repository name alone says nothing about who built an image — a project's own `<name>-filtered`
+// could be anyone's — so a caller that removes by family asks this instead.
+func (r Runtime) ImageTagsLabeled(ctx context.Context, repository, label string) ([]string, error) {
+	if r.kind() == runtimeAppleContainer || repository == "" || label == "" ||
+		strings.HasPrefix(repository, "-") || strings.HasPrefix(label, "-") || !strings.Contains(label, "=") {
+		return nil, nil
+	}
+	out, err := contextCommand(ctx, r.Name, "image", "ls", "--filter", "label="+label,
+		"--format", "{{.Repository}}:{{.Tag}}", repository).Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("run: %s image ls %s: %w", r.Name, repository, commandOutputError(err, nil))
+	}
+	var tags []string
+	for _, line := range strings.Fields(string(out)) {
+		if strings.HasPrefix(line, repository+":") && !strings.HasSuffix(line, ":<none>") {
+			tags = append(tags, line)
+		}
+	}
+	return tags, nil
+}
+
 // ImageInUse reports whether any container — running or stopped — was created from image. An
 // ambiguous answer is an error: removing an image a stopped container still needs would break the
 // run that made it.

@@ -272,12 +272,14 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	// smoke is deliberately excluded: it qualifies the locked image itself, and
 	// what it proves must be that image, not a project's layers on top of it.
 	if smoke == nil {
-		derived, err := filteredProjectImage(ctx, rt, f.docker, f.store, spec, candidate)
+		derived, derivedTag, err := filteredProjectImage(ctx, rt, cfg, f.docker, f.store, spec, candidate)
 		if err != nil {
 			return f, err
 		}
 		if derived != "" {
 			f.image = derived
+			// The box runs it by ID, so its TAG is what a later build of this project weighs.
+			f.builtTags = append(f.builtTags, derivedTag)
 		}
 	}
 	f.publish, servePorts, f.serveEnv = filteredPublish(cfg, spec, hostPortFree)

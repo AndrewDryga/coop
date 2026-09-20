@@ -1587,8 +1587,10 @@ names it), so two Coop versions on one machine each keep their own instead of re
 shared tag in turn; a launch after an upgrade builds the new one itself. A plain `docker build` of
 this file needs that tag passed in (`--build-arg COOP_BASE_IMAGE=coop-box:<definition>`, listed by
 `docker image ls coop-box`). A build also reclaims the images it superseded: one Coop tags by its
-definition (`coop-box`, `coop-clients`, `coop-network`) that no run has used in 14 days and no
-container references is removed, and the build says which. Every launch records the image it used,
+definition (`coop-box`, `coop-clients`, `coop-network`, and — when a filtered run builds your
+project's own box image — `<project>-filtered`, tagged by the client image it was built on) that no
+run has used in 14 days and no container references is removed, and the build says which. Images
+built before Coop reclaimed them carry no mark of its own, so they are never candidates. Every launch records the image it used,
 so a second Coop version you still run keeps its own base — and an image of your own is never
 touched, whatever it is tagged.
 </details>

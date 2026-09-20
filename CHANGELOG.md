@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Your project's own box image stops piling up too. A filtered run builds your `.agent/Dockerfile`
+  on Coop's client image and tags the result by WHICH client image that was, so every Coop upgrade
+  (and every `coop net setup`) left the previous one behind, tagged. That family is now reclaimed by
+  the same rule as Coop's shared images — nothing removed until 14 days with no run using it and no
+  container referencing it. It is recognized by a label Coop's build applies, not by the name: an
+  image you built yourself into the same name is never touched, and images built before this
+  version carry no label, so remove those by hand once if you want the space back.
+
 - A read-only remote session keeps its MCP secrets outside its box too. Its box deliberately loads
   nothing from the project, so there was nothing there to broker from and the real token rode inline
   in the list the session hands its adapter — the one place a restricted box's secrets could still

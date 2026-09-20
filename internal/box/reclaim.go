@@ -36,6 +36,32 @@ const (
 // own COOP_BASE_IMAGE is never one of them, whatever it is tagged.
 var reclaimFamilies = []string{ManagedBaseRepository, lockedClientRepository, gatewayimage.Repository}
 
+// derivedImageLabel marks an image Coop built from a project's own box Dockerfile, with the project
+// it was built for as the value. Those images are tagged per definition like the shared families
+// (`<project>-filtered:<16 hex>`), so they accumulate the same way — but their repository is the
+// PROJECT's name, which says nothing about who built it. The label is what makes one Coop's to
+// remove: a `my-app-filtered` image an operator built by hand carries none and is never a candidate.
+const derivedImageLabel = "coop.derived"
+
+// derivedImageTagSuffix is what `filteredProjectTag` appends to a project's name.
+const derivedImageTagSuffix = "-filtered"
+
+// derivedImageProject names the project a derived image was built for, or "" when img is not one.
+func derivedImageProject(img string) string {
+	repository, tag, ok := strings.Cut(img, ":")
+	if !ok || len(tag) != 16 || strings.Trim(tag, "0123456789abcdef") != "" {
+		return ""
+	}
+	if strings.Contains(repository, "/") {
+		return "" // a registry path is somebody else's; Coop's own names never have one
+	}
+	project, ok := strings.CutSuffix(repository, derivedImageTagSuffix)
+	if !ok || project == "" {
+		return ""
+	}
+	return project
+}
+
 func imageUsePath(cfg *config.Config, img string) string {
 	return filepath.Join(cfg.BoxHome, imageUseDirName, safeImageFileName(img))
 }
@@ -62,6 +88,12 @@ func markImageUsed(cfg *config.Config, img string) {
 // this file ever removes. A `:latest` or any other tag of those repositories is left alone: Coop
 // no longer creates one, and an operator may be pinning it.
 func reclaimable(img string) bool {
+	if derivedImageProject(img) != "" {
+		// Shape only. Whether this one is COOP's is a question for the runtime (the label), asked
+		// before anything is removed; recording the use of an image that turns out to be an
+		// operator's costs nothing.
+		return true
+	}
 	repository, tag, ok := strings.Cut(img, ":")
 	if !ok || len(tag) != 32 || strings.Trim(tag, "0123456789abcdef") != "" {
 		return false
@@ -74,6 +106,17 @@ func reclaimable(img string) bool {
 	return false
 }
 
+// reclaimCandidates lists the images this rule may weigh against keep: every tag of keep's shared
+// family, or — for a project's derived image — only the ones carrying Coop's own label, since that
+// repository is the project's name and anyone may have built into it.
+func reclaimCandidates(ctx context.Context, rt runtime.Runtime, keep string) ([]string, error) {
+	family, _, _ := strings.Cut(keep, ":")
+	if project := derivedImageProject(keep); project != "" {
+		return rt.ImageTagsLabeled(ctx, family, derivedImageLabel+"="+project)
+	}
+	return rt.ImageTags(ctx, family)
+}
+
 // reclaimSupersededImages removes the images of keep's family that nothing has used for
 // reclaimAfter and no container references, and returns what it removed, in tag order. keep itself
 // always stays, as does any image whose last use this Coop — or another one on this host — recorded
@@ -84,8 +127,7 @@ func reclaimSupersededImages(ctx context.Context, rt runtime.Runtime, cfg *confi
 		return nil, nil
 	}
 	markImageUsed(cfg, keep)
-	family, _, _ := strings.Cut(keep, ":")
-	tags, err := rt.ImageTags(ctx, family)
+	tags, err := reclaimCandidates(ctx, rt, keep)
 	if err != nil {
 		return nil, err
 	}
@@ -93,8 +135,11 @@ func reclaimSupersededImages(ctx context.Context, rt runtime.Runtime, cfg *confi
 	cutoff := now.Add(-reclaimAfter)
 	var removed []string
 	var failures []error
+	family, _, _ := strings.Cut(keep, ":")
 	for _, tag := range tags {
-		if tag == keep || !reclaimable(tag) {
+		// A candidate is one of KEEP's own family. The queries above already narrow to it; this is
+		// the same rule stated where the removal happens, so a looser query can never widen it.
+		if tag == keep || !strings.HasPrefix(tag, family+":") || !reclaimable(tag) {
 			continue
 		}
 		info, err := os.Stat(imageUsePath(cfg, tag))

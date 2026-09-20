@@ -332,3 +332,111 @@ func TestEveryLaunchRecordsTheImagesItRestsOn(t *testing.T) {
 		}
 	}
 }
+
+// A project's own box image is tagged per definition like the shared families, so a build that
+// supersedes one reclaims it — but only what COOP built for THAT project. Another project's
+// images, and an image someone built into the same name by hand, are not Coop's to remove.
+func TestReclaimTakesOnlyThisProjectsOwnDerivedImages(t *testing.T) {
+	cfg := &config.Config{BoxHome: t.TempDir()}
+	current := "coop-app-filtered:" + strings.Repeat("a", 16)
+	superseded := "coop-app-filtered:" + strings.Repeat("b", 16)
+	other := "coop-web-filtered:" + strings.Repeat("c", 16)
+	stale := time.Now().Add(-reclaimAfter - time.Hour)
+	for _, image := range []string{superseded, other} {
+		markImageUsed(cfg, image)
+		if err := os.Chtimes(imageUsePath(cfg, image), stale, stale); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The shim answers the LABEL query only — an unlabelled lookalike never reaches the scan.
+	dir := t.TempDir()
+	calls := filepath.Join(dir, "calls")
+	shim := filepath.Join(dir, "docker")
+	writeRepoFile(t, shim, "#!/bin/sh\necho \"$@\" >> "+strconv.Quote(calls)+"\n"+
+		"case \"$*\" in\n"+
+		// A runtime that answered too widely — another project's image among the candidates — must
+		// still lose it here: the scan removes only keep's own family.
+		"  *\"label=coop.derived=coop-app\"*) echo "+strconv.Quote(current)+"; echo "+strconv.Quote(superseded)+
+		"; echo "+strconv.Quote(other)+"; exit 0 ;;\n"+
+		"  *\"image ls\"*) echo UNLABELLED-QUERY; exit 0 ;;\n"+
+		"esac\nexit 0\n")
+	if err := os.Chmod(shim, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := runtime.Runtime{Name: shim}
+	removed, err := reclaimSupersededImages(context.Background(), rt, cfg, current)
+	if err != nil || len(removed) != 1 || removed[0] != superseded {
+		t.Fatalf("reclaimed %v, %v; want only this project's superseded image", removed, err)
+	}
+	recorded := string(mustReadFile(t, calls))
+	if !strings.Contains(recorded, "--filter label=coop.derived=coop-app") {
+		t.Errorf("the scan did not ask for Coop's own images:\n%s", recorded)
+	}
+	if strings.Contains(recorded, "image rm "+other) {
+		t.Errorf("another project's image was removed:\n%s", recorded)
+	}
+	if _, err := os.Stat(imageUsePath(cfg, other)); err != nil {
+		t.Errorf("another project's use record was taken with it: %v", err)
+	}
+	// The shape alone is never enough, and an ordinary image is not this family at all.
+	for name, image := range map[string]string{
+		"an operator's lookalike": "my-app-filtered:" + strings.Repeat("d", 16),
+		"this project's own":      current,
+	} {
+		if project := derivedImageProject(image); project == "" {
+			t.Errorf("%s reads as no project's image", name)
+		}
+	}
+	for name, image := range map[string]string{
+		"a plain image":       "postgres:16",
+		"a floating tag":      "coop-app-filtered:latest",
+		"the wrong tag width": "coop-app-filtered:" + strings.Repeat("a", 32),
+		"no project at all":   "-filtered:" + strings.Repeat("a", 16),
+		"a registry path":     "ghcr.io/me/app-filtered:" + strings.Repeat("a", 16),
+		"the suffix inside":   "my-filtered-app:" + strings.Repeat("a", 16),
+	} {
+		if project := derivedImageProject(image); project != "" {
+			t.Errorf("%s reads as project %q's image", name, project)
+		}
+	}
+}
+
+// The tag a derived build writes and the label it carries are the ones the reclaim looks for.
+func TestDerivedImagesCarryTheLabelTheReclaimAsksFor(t *testing.T) {
+	tag := filteredProjectTag("/src/app", "sha256:"+strings.Repeat("e", 64))
+	project := derivedImageProject(tag)
+	if project == "" {
+		t.Fatalf("a derived build writes %q, which the reclaim does not recognize", tag)
+	}
+	// The build itself must apply it — not just the argument builder when asked.
+	scratch := t.TempDir()
+	calls := filepath.Join(scratch, "calls")
+	script := filepath.Join(scratch, "docker")
+	writeRepoFile(t, script, "#!/bin/sh\necho \"$@\" >> "+strconv.Quote(calls)+"\n"+
+		"while [ $# -gt 0 ]; do\n  if [ \"$1\" = --iidfile ]; then echo sha256:"+strings.Repeat("a", 64)+" > \"$2\"; fi\n  shift\ndone\n")
+	if err := os.Chmod(script, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	writeRepoFile(t, filepath.Join(repo, ".agent", "Dockerfile"), "ARG COOP_BASE_IMAGE\nFROM ${COOP_BASE_IMAGE}\n")
+	entries, err := buildContextSelection(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := buildProjectOnBase(context.Background(), runtime.Runtime{Name: script}, repo, entries,
+		".agent/Dockerfile", tag, "coop-clients:"+strings.Repeat("f", 32), nil); err != nil {
+		t.Fatal(err)
+	}
+	if built := string(mustReadFile(t, calls)); !strings.Contains(built, "--label coop.derived="+project+" -t "+tag) {
+		t.Errorf("the build does not mark the image as Coop's: %q", built)
+	}
+	// A filtered launch runs this image by ID, so the tag is what it records — and a recorded use
+	// is the only thing that spares an image from the next build.
+	if !reclaimable(tag) {
+		t.Errorf("a launch would not record %q as used, so the next build would take it", tag)
+	}
+	// An ordinary project build takes no label, so `coop build` is byte-identical to before.
+	if plain := strings.Join(projectBuildArgs("/ctx", ".agent/Dockerfile", "coop-app", "coop-box:x", true, false), " "); strings.Contains(plain, "--label") {
+		t.Errorf("an ordinary project build gained a label: %q", plain)
+	}
+}

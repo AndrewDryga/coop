@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -73,11 +74,12 @@ func filteredProjectTag(repo, lockedImage string) string {
 }
 
 // filteredProjectImage builds this project's box Dockerfile on the locked client
-// image and returns the built image's ID once both proofs hold. It returns ""
-// for a project with no Dockerfile, which runs the locked image itself.
-func filteredProjectImage(ctx context.Context, rt runtime.Runtime, docker filteredDocker, store *networkstate.Store, spec RunSpec, candidate networkstate.CandidateSpec) (string, error) {
+// image and returns the built image's ID once both proofs hold, with the tag it
+// carries — the name a later build weighs, since the box runs it by ID. Both are
+// "" for a project with no Dockerfile, which runs the locked image itself.
+func filteredProjectImage(ctx context.Context, rt runtime.Runtime, cfg *config.Config, docker filteredDocker, store *networkstate.Store, spec RunSpec, candidate networkstate.CandidateSpec) (image, imageTag string, err error) {
 	if spec.Login {
-		return "", nil // sign-in uses the locked client, never the project's build instructions
+		return "", "", nil // sign-in uses the locked client, never the project's build instructions
 	}
 	repo := projectPolicyRepo(spec)
 	// The PROJECT's Dockerfile, not the workspace's: a remote session's box
@@ -85,19 +87,19 @@ func filteredProjectImage(ctx context.Context, rt runtime.Runtime, docker filter
 	// directory a human approved, not to the copy an agent has been writing in.
 	dfRel := filteredProjectDockerfile(repo)
 	if dfRel == "" {
-		return "", nil
+		return "", "", nil
 	}
 	definition, _, closure, err := lockedImageDefinition(agents.ClientPlatform{
 		OS: candidate.Runtime.OS, Architecture: candidate.Runtime.Architecture, Libc: candidate.Libc})
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	// Docker cannot build FROM an image ID, so the build gets the locked image's
 	// pinned tag — and this resolves that tag to the qualified ID first, so a
 	// replaced tag is caught here rather than deep inside a build. The layer
 	// proof below is the backstop either way.
 	if id, _, err := docker.Image(ctx, definition.Tag); err != nil || id != candidate.ClientImage {
-		return "", errors.New("the images this host was set up with disappeared while the box was starting — run it again")
+		return "", "", errors.New("the images this host was set up with disappeared while the box was starting — run it again")
 	}
 	tag := filteredProjectTag(repo, candidate.ClientImage)
 	// Unlike `coop build`, this build is not a human action — a filtered launch
@@ -111,26 +113,26 @@ func filteredProjectImage(ctx context.Context, rt runtime.Runtime, docker filter
 	}
 	entries, err := buildContextSelection(ctx, repo)
 	if err != nil {
-		return "", fmt.Errorf("reading the build context of this project's %s: %w", dfRel, err)
+		return "", "", fmt.Errorf("reading the build context of this project's %s: %w", dfRel, err)
 	}
 	// A build of exactly these inputs already passed its proofs here: run that image instead of
 	// staging and building the same thing again. It is proven again all the same, from the memos.
 	if store != nil {
 		tree, err := contextDigest(ctx, repo, entries, nil)
 		if err != nil {
-			return "", fmt.Errorf("reading the build context of this project's %s: %w", dfRel, err)
+			return "", "", fmt.Errorf("reading the build context of this project's %s: %w", dfRel, err)
 		}
 		if image := store.ProjectBuild(tag, projectBuildInputs(tree, candidate, closure, definition.Tag, tag, dfRel)); image != "" {
 			if id, _, err := docker.Image(ctx, image); err == nil && id == image {
 				if err := proveDerivedImage(ctx, docker, store, candidate.ClientImage, image, closure, dfRel); err != nil {
-					return "", err
+					return "", "", err
 				}
 				if !spec.Quiet {
 					ui.Section("Project box")
 					ui.Note("  Using %s", dfRel)
 					ui.Pass("Unchanged since its last build")
 				}
-				return image, nil
+				return image, tag, nil
 			}
 		}
 	}
@@ -144,23 +146,33 @@ func filteredProjectImage(ctx context.Context, rt runtime.Runtime, docker filter
 	}
 	built, staged, reusable, err := buildProjectOnBase(ctx, rt, repo, entries, dfRel, tag, definition.Tag, buildErrOut)
 	if err != nil {
-		return "", fmt.Errorf("this project's %s did not build on coop's client image: %w", dfRel, err)
+		return "", "", fmt.Errorf("this project's %s did not build on coop's client image: %w", dfRel, err)
 	}
 	if !spec.Quiet {
 		ui.Pass("Project box built")
 	}
 	if id, _, err := docker.Image(ctx, built); err != nil || id != built {
-		return "", fmt.Errorf("the image %s built from this project's %s cannot be read back — run it again", tag, dfRel)
+		return "", "", fmt.Errorf("the image %s built from this project's %s cannot be read back — run it again", tag, dfRel)
 	}
 	if err := proveDerivedImage(ctx, docker, store, candidate.ClientImage, built, closure, dfRel); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if store != nil && reusable {
 		// Keyed by what this build staged, not by the check above: a tree edited in between must not
 		// pair the old inputs with the new image. A failed write costs the next launch a build.
 		_ = store.RememberProjectBuild(tag, projectBuildInputs(staged, candidate, closure, definition.Tag, tag, dfRel), built)
 	}
-	return built, nil
+	// This project's own images are tagged by the client image they were built on, so a Coop
+	// upgrade (or another `coop net setup`) leaves the last one tagged behind. A launch that
+	// actually ran the build reclaims those by the same rule the shared families use — only what
+	// carries this project's label, only after nothing has used it for reclaimAfter. A launch that
+	// reused a remembered image returns above and scans nothing.
+	reclaimAfterBuild(ctx, rt, cfg, tag, nil, func(line string) {
+		if !spec.Quiet {
+			ui.Note("  %s", line)
+		}
+	})
+	return built, tag, nil
 }
 
 // proveDerivedImage refuses everything the built image cannot show it inherited.

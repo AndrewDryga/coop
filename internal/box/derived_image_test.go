@@ -284,7 +284,7 @@ func TestPinnedClientFilesCoverEveryEntryPointOnce(t *testing.T) {
 func TestFilteredProjectImageSkipsAProjectWithoutADockerfile(t *testing.T) {
 	_, d := filteredFixture(t)
 	repo := t.TempDir()
-	image, err := filteredProjectImage(context.Background(), runtime.Runtime{Name: "must-not-execute"}, d, nil,
+	image, _, err := filteredProjectImage(context.Background(), runtime.Runtime{Name: "must-not-execute"}, nil, d, nil,
 		RunSpec{Repo: repo}, fixtureCandidate())
 	if image != "" || err != nil {
 		t.Fatal("a project without a Dockerfile built an image", image, err)
@@ -295,12 +295,12 @@ func TestFilteredProjectImageSkipsAProjectWithoutADockerfile(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repo, ".agent", "Dockerfile")); err != nil {
 		t.Fatal(err)
 	}
-	image, err = filteredProjectImage(context.Background(), runtime.Runtime{Name: "must-not-execute"}, d, nil,
+	image, _, err = filteredProjectImage(context.Background(), runtime.Runtime{Name: "must-not-execute"}, nil, d, nil,
 		RunSpec{Repo: repo, Login: true}, fixtureCandidate())
 	if image != "" || err != nil {
 		t.Fatal("login tried to inspect or build the project's Dockerfile", image, err)
 	}
-	image, err = filteredProjectImage(context.Background(), runtime.Runtime{Name: "must-not-execute"}, d, nil,
+	image, _, err = filteredProjectImage(context.Background(), runtime.Runtime{Name: "must-not-execute"}, nil, d, nil,
 		RunSpec{Repo: repo}, fixtureCandidate())
 	if image != "" || err == nil || !strings.Contains(err.Error(), "disappeared while the box was starting") {
 		t.Fatal("a missing client image was built on anyway", image, err)

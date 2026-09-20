@@ -12,6 +12,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
@@ -317,8 +318,11 @@ func TestFilteredProjectImageReusesAnUnchangedBuild(t *testing.T) {
 	d.mu.Unlock()
 	repo, write := gitProject(t, reusableDockerfile)
 
-	// The runtime's build writes the id in produced to its --iidfile and counts itself.
+	// The runtime's build writes the id in produced to its --iidfile and counts itself, and every
+	// invocation is recorded: a launch that REUSED a remembered image must not scan for images to
+	// reclaim, and this is where that stays true.
 	scratch := t.TempDir()
+	reuseCfg := &config.Config{BoxHome: t.TempDir()}
 	produced, count := filepath.Join(scratch, "produced"), filepath.Join(scratch, "builds")
 	setProduced := func(image string) {
 		t.Helper()
@@ -328,7 +332,9 @@ func TestFilteredProjectImageReusesAnUnchangedBuild(t *testing.T) {
 	}
 	setProduced(fixtureBuiltImage)
 	script := filepath.Join(scratch, "docker")
-	body := "#!/bin/sh\nprintf 'build\\n' >> '" + count + "'\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = --iidfile ]; then cat '" + produced + "' > \"$2\"; fi\n  shift\ndone\n"
+	calls := filepath.Join(scratch, "calls")
+	body := "#!/bin/sh\necho \"$@\" >> '" + calls + "'\ncase \"$1 $2\" in \"image ls\") exit 0 ;; esac\n" +
+		"printf 'build\\n' >> '" + count + "'\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = --iidfile ]; then cat '" + produced + "' > \"$2\"; fi\n  shift\ndone\n"
 	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -336,18 +342,28 @@ func TestFilteredProjectImageReusesAnUnchangedBuild(t *testing.T) {
 		data, _ := os.ReadFile(count)
 		return strings.Count(string(data), "build\n")
 	}
+	scans := func() int {
+		data, _ := os.ReadFile(calls)
+		return strings.Count(string(data), "image ls")
+	}
 	launch := func(ctx context.Context, withStore bool) (string, error) {
 		store := f.store
 		if !withStore {
 			store = nil
 		}
-		return filteredProjectImage(ctx, runtime.Runtime{Name: script}, d, store, RunSpec{Repo: repo, Quiet: true}, fixtureCandidate())
+		image, _, err := filteredProjectImage(ctx, runtime.Runtime{Name: script}, reuseCfg, d, store, RunSpec{Repo: repo, Quiet: true}, fixtureCandidate())
+		return image, err
 	}
 	expect := func(step string, withStore bool, image string, wantBuilds int) {
 		t.Helper()
 		got, err := launch(context.Background(), withStore)
 		if err != nil || got != image || builds() != wantBuilds {
 			t.Fatalf("%s: image %q (%v) after %d builds, want %q after %d", step, got, err, builds(), image, wantBuilds)
+		}
+		// One scan per build and none per reuse: a launch that changed nothing must not go looking
+		// for images to reclaim.
+		if scans() != wantBuilds {
+			t.Fatalf("%s: %d reclaim scans after %d builds", step, scans(), wantBuilds)
 		}
 	}
 
