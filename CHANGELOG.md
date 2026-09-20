@@ -29,7 +29,12 @@
   --timeout 2h`, change something, run it again, compare. Each loop case runs as its own process, so
   one scenario reaching its deadline never disturbs another running beside it.
 
-  The public starter catalog lands in a later release; author your own with `coop eval init`.
+  One starter ships: `coop eval run core <target|preset>... --timeout 35m`. Three small tasks, each
+  with a NEAR MISS its verifier deliberately rejects — the count that was hardcoded from the bug
+  report rather than computed, the new option added by breaking the one that already worked, the
+  failing check made to pass by weakening the check. A case every configuration passes tells you
+  nothing, so each grader was run against a correct solution and against each near miss before the
+  starter shipped.
 
 - A run that finished cleanly is no longer occasionally reported as failed. When your workload's
   process exits, Coop asks the runtime for the container's final state — and on a busy machine that

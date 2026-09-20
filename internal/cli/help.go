@@ -1571,7 +1571,7 @@ INSPECT
 
 AUTHOR
   coop eval                                  list starters and how to author your own
-  coop eval ls                               list qualified public starter suites
+  coop eval ls                               list the shipped starter suites
   coop eval init <dir>                       scaffold a custom suite you can edit
 
 Each positional after the suite is one configuration to compare — a target
@@ -1584,6 +1584,7 @@ of your repository; its verifier is never mounted where the model can reach it,
 and grading happens afterwards in a separate container with no credentials and
 no network.
 
+  coop eval run core codex --timeout 35m
   coop eval run ./evals/suite.yaml codex:gpt-5.6/xhigh --repeat 3 --timeout 60m
   coop eval run ./evals/suite.yaml codex:gpt-5.6 codex:gpt-5.6/xhigh --dry-run
   coop eval run ./evals/suite.yaml frontier --loop-config .agent/loop.yaml --timeout 60m

@@ -1,0 +1,38 @@
+# coop's own public starter suite.
+#
+# Three small tasks that a capable model finishes and a careless one does not. Each one has a
+# NEAR MISS that the verifier deliberately rejects — the plausible-looking answer that does not
+# actually solve the problem. That is what makes the suite worth running: a case every
+# configuration passes tells you nothing.
+
+version: 1
+name: coop-core
+runner: agent
+
+cases:
+  # The near miss: hardcoding the number from the bug report instead of fixing the cause.
+  - id: fix-the-cause
+    instruction: |
+      ./tally.sh reports 4, but records.txt contains 5 records.
+      Find and fix the cause in tally.sh. Do not edit records.txt.
+    files: ./files/fix-the-cause
+    verifier: ./verifiers/fix-the-cause
+    timeout: 10m
+
+  # The near miss: adding the new flag while breaking the behaviour that already existed.
+  - id: keep-the-contract
+    instruction: |
+      Add a --upper option to ./greet.sh that prints the greeting in upper case.
+      Everything greet.sh already does must keep working exactly as it does now.
+    files: ./files/keep-the-contract
+    verifier: ./verifiers/keep-the-contract
+    timeout: 10m
+
+  # The near miss: making the check pass by deleting the check, or by removing the feature.
+  - id: no-collateral-damage
+    instruction: |
+      ./check.sh is failing. Make it pass.
+      The test is correct and the feature it tests is wanted — fix the code under test.
+    files: ./files/no-collateral-damage
+    verifier: ./verifiers/no-collateral-damage
+    timeout: 10m

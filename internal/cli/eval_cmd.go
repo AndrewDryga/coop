@@ -75,6 +75,7 @@ func (a *app) evalList(args []string) (int, error) {
 		return 0, nil
 	}
 	fmt.Println("Public starter suites:")
+	defer fmt.Println("\nRun one:  coop eval run " + starters[0].ID + " <target|preset>... --timeout 35m")
 	for _, s := range starters {
 		fmt.Printf("  %-24s %s\n", s.ID, s.Summary)
 	}
@@ -256,10 +257,18 @@ func renderEvalSummary(id string, s eval.RunSummary) {
 // resolveEvalSuite loads a suite from a filesystem path or, later, a shipped starter id. Milestone 1
 // resolves a path; a bare starter id that is not a path is refused by name until the catalog ships.
 func (a *app) resolveEvalSuite(ref string) (*eval.Suite, error) {
-	if starter, ok := eval.StarterPath(ref); ok {
+	root, err := evalStateRoot()
+	if err != nil {
+		return nil, err
+	}
+	starter, ok, err := eval.StarterPath(ref, root)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
 		ref = starter
 	} else if !strings.ContainsAny(ref, "/.") {
-		return nil, fmt.Errorf("no starter suite %q is qualified yet; give a path to your own suite.yaml", ref)
+		return nil, fmt.Errorf("no starter suite %q exists; run `coop eval ls` to see them, or give a path to your own suite.yaml", ref)
 	}
 	return eval.Load(ref)
 }
