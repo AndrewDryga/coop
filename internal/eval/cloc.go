@@ -183,8 +183,8 @@ const clocTimeout = 2 * time.Minute
 // special file, recording them), then runs cloc on that. So a candidate's symlink can neither make
 // cloc read outside the workspace nor steer the count, and a missing/empty tree is an explicit
 // result, not a silent zero. Best-effort at the call site: a run error is a measurement gap.
-func MeasureSize(ctx context.Context, dir string) (SizeMetrics, error) {
-	proj, skipped, err := projectRegularFiles(dir)
+func MeasureSize(ctx context.Context, dir string, ignore ...string) (SizeMetrics, error) {
+	proj, skipped, err := projectRegularFiles(dir, ignore...)
 	if err != nil {
 		return SizeMetrics{}, err
 	}
@@ -232,7 +232,7 @@ func MeasureDiff(ctx context.Context, before, after string) (SizeDiff, error) {
 // relative paths, and returns the temp dir plus the relative paths it SKIPPED (symlinks, devices,
 // sockets — anything not a regular file or directory). A missing or non-directory src is an error,
 // so an unmeasurable input is never mistaken for an empty one.
-func projectRegularFiles(src string) (string, []string, error) {
+func projectRegularFiles(src string, ignore ...string) (string, []string, error) {
 	info, err := os.Stat(src)
 	if err != nil {
 		return "", nil, fmt.Errorf("measure %q: %w", src, err)
@@ -254,6 +254,12 @@ func projectRegularFiles(src string) (string, []string, error) {
 			return err
 		}
 		if rel == "." {
+			return nil
+		}
+		if isIgnored(rel, ignore) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		fi, err := d.Info()

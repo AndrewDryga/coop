@@ -145,7 +145,7 @@ func snapshotSymlink(root, path, target string) error {
 // unsupported model looks like from outside, and grading an untouched workspace would record a
 // confident FAIL for a trial where the model never got to work. `.git` is excluded because the
 // initial commit is Coop's own and says nothing about the candidate.
-func TreeSignature(dir string) (string, error) {
+func TreeSignature(dir string, ignore ...string) (string, error) {
 	h := sha256.New()
 	var entries []string
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, walkErr error) error {
@@ -158,6 +158,14 @@ func TreeSignature(dir string) (string, error) {
 		}
 		if strings.EqualFold(d.Name(), ".git") && d.IsDir() {
 			return filepath.SkipDir
+		}
+		// Harness bookkeeping is not the candidate's work: the queue it was handed, the preset being
+		// evaluated, the loop's own telemetry. Counting them would make every loop trial look busy.
+		if isIgnored(rel, ignore) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		info, err := d.Info()
 		if err != nil || !info.Mode().IsRegular() {
@@ -174,4 +182,16 @@ func TreeSignature(dir string) (string, error) {
 		fmt.Fprintf(h, "%d:%s", len(e), e)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// isIgnored reports whether a workspace-relative path is one of the ignored roots, or inside one.
+func isIgnored(rel string, ignore []string) bool {
+	clean := filepath.ToSlash(filepath.Clean(rel))
+	for _, ig := range ignore {
+		ig = filepath.ToSlash(filepath.Clean(ig))
+		if clean == ig || strings.HasPrefix(clean, ig+"/") {
+			return true
+		}
+	}
+	return false
 }

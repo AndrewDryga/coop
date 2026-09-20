@@ -208,7 +208,24 @@ func (a *app) executeEvalRun(plan *eval.Plan, frozen []eval.FrozenConfig) (int, 
 	if !box.ImageExists(a.rt, image) {
 		return 1, fmt.Errorf("the box image %s is not built yet — run: coop build", image)
 	}
-	runner := &trialRunner{app: a, suite: plan.Suite, workRoot: workRoot, image: image}
+	// Stage every preset configuration once, so each trial materializes identical bytes into its own
+	// workspace (a fixture repository has no .agent/presets of its own).
+	presets := map[string]string{}
+	for _, c := range plan.Configs {
+		if c.Kind != eval.ConfigPreset {
+			continue
+		}
+		loaded, perr := a.loadRunPreset(c.Label)
+		if perr != nil {
+			return 1, perr
+		}
+		staged, serr := eval.StagePreset(loaded.Dir, filepath.Join(workRoot, "presets"), c.Label)
+		if serr != nil {
+			return 1, serr
+		}
+		presets[c.Label] = staged
+	}
+	runner := &trialRunner{app: a, suite: plan.Suite, workRoot: workRoot, image: image, presets: presets}
 	fmt.Printf("Running %s (%d trials)…\n", store.ID(), len(plan.Suite.Cases)*len(plan.Configs)*plan.Repeat)
 	summary, err := eval.Execute(context.Background(), plan, frozen, store, runner.run, time.Now)
 	if err != nil {

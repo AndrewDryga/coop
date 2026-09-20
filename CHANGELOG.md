@@ -21,7 +21,15 @@
   with coverage shown separately, so an incomplete run can never read as a clean sweep. Change size
   is measured with cloc and reported beside correctness, never folded into it.
 
-  Agent suites run today; loop scenarios and the public starter catalog land in later releases.
+  A suite runs one of two things per case. An `agent` case is a single headless attempt: one
+  instruction, one workspace, one verdict. A `loop` case is a whole `coop loop` — a fixture
+  repository, an ordinary task queue and a loop recipe — worked until the queue drains or the budget
+  runs out, then graded. That is what lets you compare two PRESETS, or two loop configs, or the same
+  one before and after a change to Coop itself: `coop eval run ./scenarios/suite.yaml frontier
+  --timeout 2h`, change something, run it again, compare. Each loop case runs as its own process, so
+  one scenario reaching its deadline never disturbs another running beside it.
+
+  The public starter catalog lands in a later release; author your own with `coop eval init`.
 
 - A run that finished cleanly is no longer occasionally reported as failed. When your workload's
   process exits, Coop asks the runtime for the container's final state — and on a busy machine that

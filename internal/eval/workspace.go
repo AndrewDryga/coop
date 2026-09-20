@@ -221,3 +221,98 @@ func runGit(ctx context.Context, dir, home string, args ...string) (string, erro
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
+
+// TasksRoot is where a Coop queue lives inside a repository. A loop scenario's queue template is
+// materialized here, in the trial's own workspace — never in the developer's live queue, which is
+// the whole reason a scenario ships a template instead of pointing at one.
+const TasksRoot = ".agent/tasks"
+
+// MaterializeQueue copies a case's queue template into dest's .agent/tasks. The template is an
+// ordinary queue — state directories with task folders — so an author writes exactly what they
+// would hand a real loop, and the loop under test discovers it the ordinary way.
+//
+// It is copied with the same rules as a fixture: no `.git` travels, and a symlink that escapes the
+// template is refused rather than followed. An empty template is refused too — a loop scenario with
+// no tasks measures nothing, and would look like a clean sweep when it finished immediately.
+func MaterializeQueue(template, dest string) error {
+	info, err := os.Stat(template)
+	if err != nil {
+		return fmt.Errorf("queue template %q: %w", template, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("queue template %q is not a directory", template)
+	}
+	root, err := filepath.EvalSymlinks(template)
+	if err != nil {
+		return fmt.Errorf("resolve queue template %q: %w", template, err)
+	}
+	// The queue must have work waiting in 00_todo. A template that is empty — or whose tasks are all
+	// already done — makes the loop report "nothing actionable" and exit cleanly, which would then be
+	// graded as a real result: a confident number from a scenario that never ran.
+	todo := filepath.Join(root, "00_todo")
+	if empty, err := hasNoEntries(todo); err != nil {
+		return fmt.Errorf("queue template %q has no 00_todo directory; a loop scenario needs work waiting: %w", template, err)
+	} else if empty {
+		return fmt.Errorf("queue template %q has no tasks in 00_todo; a loop scenario with nothing to do measures nothing", template)
+	}
+	target := filepath.Join(dest, TasksRoot)
+	// A fixture that ships its own queue would silently merge with the scenario's, and the loop
+	// would work tasks the scenario never meant to include.
+	if _, err := os.Stat(target); err == nil {
+		return fmt.Errorf("the fixture already contains %s; a scenario's queue must be the only one", TasksRoot)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return err
+	}
+	return copyTree(root, target)
+}
+
+func hasNoEntries(dir string) (bool, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false, err
+	}
+	return len(entries) == 0, nil
+}
+
+// PresetsRoot is where a repository keeps its presets. A loop scenario's preset is materialized
+// here, inside the trial's own workspace.
+const PresetsRoot = ".agent/presets"
+
+// StagePreset copies a preset folder into a run-local staging directory, ONCE per run. Every trial
+// then materializes from the staged copy, so all trials in a run — and both sides of a comparison —
+// use byte-identical preset bytes even if the operator edits the real preset while the run is going.
+// It is the execution counterpart of freezing the preset's fingerprint.
+func StagePreset(presetDir, stageRoot, name string) (string, error) {
+	dest := filepath.Join(stageRoot, name)
+	if _, err := os.Stat(dest); err == nil {
+		return dest, nil // already staged for this run
+	}
+	root, err := filepath.EvalSymlinks(presetDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve preset %q: %w", name, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
+		return "", err
+	}
+	if err := copyTree(root, dest); err != nil {
+		return "", fmt.Errorf("stage preset %q: %w", name, err)
+	}
+	return dest, nil
+}
+
+// MaterializePreset places a staged preset into a trial workspace where `coop loop <name>` will find
+// it. A preset normally lives in the operator's repository or their global directory; a trial's
+// workspace is a fresh fixture that has neither, so without this the loop could not resolve the very
+// thing the scenario exists to compare.
+func MaterializePreset(staged, dest, name string) error {
+	target := filepath.Join(dest, PresetsRoot, name)
+	// A fixture shipping a preset of the same name would shadow the one under evaluation.
+	if _, err := os.Stat(target); err == nil {
+		return fmt.Errorf("the fixture already contains %s/%s, which would shadow the preset being evaluated", PresetsRoot, name)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return err
+	}
+	return copyTree(staged, target)
+}

@@ -37,15 +37,15 @@ type trialRunner struct {
 	suite    *eval.Suite
 	image    string // the trusted image: the candidate's attempt AND the grader run from it
 	workRoot string // per-run scratch root; each trial gets its own subdirectory
-	runBox   boxRunner
+	// presets maps a preset configuration's label to its staged copy, captured once per run so every
+	// trial materializes the same bytes.
+	presets map[string]string
+	runBox  boxRunner
 }
 
 // run executes one trial and always returns a status — never an error — because a run records why a
 // trial has no verdict rather than aborting the sweep.
 func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
-	if r.suite.IsLoop() {
-		return eval.TrialResult{Status: eval.TrialError, Detail: "loop scenarios are not executable yet; this run's cases need an agent suite"}
-	}
 	dir := filepath.Join(r.workRoot, trialSlug(t))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fail(ctx, "could not create the trial directory: "+err.Error())
@@ -53,19 +53,41 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 
 	// 1. The private workspace. PrepareWorkspace returns the synthetic initial COMMIT, not the path —
 	// the workspace is the destination we named.
+	// An agent case starts from its `files`; a loop scenario starts from its `fixture` repository.
+	// Either way PrepareWorkspace gives the trial a private tree with a synthetic initial commit and
+	// none of the author's history.
+	source := t.Case.Files
+	if r.suite.IsLoop() {
+		source = t.Case.Fixture
+	}
 	workspace := filepath.Join(dir, "workspace")
-	if _, err := eval.PrepareWorkspace(ctx, filepath.Join(r.suite.Dir, t.Case.Files), workspace); err != nil {
+	if _, err := eval.PrepareWorkspace(ctx, filepath.Join(r.suite.Dir, source), workspace); err != nil {
 		return fail(ctx, "could not prepare the workspace: "+err.Error())
 	}
 
-	// 2. Size before the candidate touches anything. A measurement gap is recorded, never a zero.
-	before, beforeErr := eval.MeasureSize(ctx, workspace)
-	// And a signature of the initial tree, so we can tell afterwards whether the candidate did
-	// anything at all (see the untouched-workspace check below).
-	beforeSig, _ := eval.TreeSignature(workspace)
+	// 2. A loop scenario needs its queue, preset and recipe in place BEFORE the baseline is taken,
+	// or the harness's own files would read as candidate work — inflating the change size and
+	// defeating the untouched-workspace check below.
+	if r.suite.IsLoop() {
+		if err := r.materializeLoopScenario(t, workspace); err != nil {
+			return fail(ctx, "could not materialize the scenario: "+err.Error())
+		}
+	}
 
-	// 3. The attempt. This is the only paid step.
-	att, err := r.attempt(ctx, t, workspace)
+	// 3. Size before the candidate touches anything, and a signature of the initial tree so we can
+	// tell afterwards whether it did anything at all. Both ignore the harness's own bookkeeping:
+	// the queue's state moves and the loop's telemetry are not the candidate's code.
+	ignore := harnessPaths(r.suite.IsLoop())
+	before, beforeErr := eval.MeasureSize(ctx, workspace, ignore...)
+	beforeSig, _ := eval.TreeSignature(workspace, ignore...)
+
+	// 4. The attempt. This is the only paid step: one headless agent call, or — for a loop scenario
+	// — a whole bounded `coop loop` working the case's queue.
+	attempt := r.attempt
+	if r.suite.IsLoop() {
+		attempt = r.runLoopTrial
+	}
+	att, err := attempt(ctx, t, workspace)
 	if err != nil {
 		return fail(ctx, joinDetail("the attempt could not run: "+err.Error(), att.detail))
 	}
@@ -81,14 +103,14 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 	// like from out here, and calling that a FAIL would put a confident zero on a trial where the
 	// model never got to work. It is recorded as a harness error instead, with the agent's own words.
 	if att.code != 0 {
-		if sig, sigErr := eval.TreeSignature(workspace); sigErr == nil && beforeSig != "" && sig == beforeSig {
+		if sig, sigErr := eval.TreeSignature(workspace, ignore...); sigErr == nil && beforeSig != "" && sig == beforeSig {
 			return fail(ctx, joinDetail(
 				fmt.Sprintf("the agent exited %d having changed nothing in the workspace, so there is no work to grade — recorded as a harness error, not a model failure", att.code),
 				att.detail))
 		}
 	}
 
-	// 4. The candidate's box has exited, so the workspace is quiet: snapshot it. A non-zero agent
+	// 5. The candidate's box has exited, so the workspace is quiet: snapshot it. A non-zero agent
 	// exit is NOT decided here — the verifier decides whether the work is good, because an agent
 	// that exits non-zero may still have done the job (and one that exits 0 may not have).
 	snap, err := eval.SnapshotWorkspace(workspace, filepath.Join(dir, "snapshot"))
@@ -96,14 +118,14 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 		return fail(ctx, "could not snapshot the workspace for grading: "+err.Error())
 	}
 
-	// 5. Grade the snapshot in the sandbox.
+	// 6. Grade the snapshot in the sandbox.
 	res := r.app.gradeSnapshot(ctx, gradeRequest{
 		Image: r.image, Workspace: snap.Dir, Verifier: filepath.Join(r.suite.Dir, t.Case.Verifier), CaseID: t.Case.ID,
 	}, r.runBox)
 
-	// 6. Size after, reported BESIDE the verdict. Size never changes a verdict: a smaller wrong
+	// 7. Size after, reported BESIDE the verdict. Size never changes a verdict: a smaller wrong
 	// answer is not better than a larger right one.
-	after, afterErr := eval.MeasureSize(ctx, snap.Dir)
+	after, afterErr := eval.MeasureSize(ctx, snap.Dir, ignore...)
 	res.Detail = joinDetail(res.Detail, sizeNote(before, beforeErr, after, afterErr, snap.Skipped))
 
 	// A trial that PASSED needs no evidence kept — its workspace is megabytes of "it worked". One
@@ -276,6 +298,17 @@ func sizeNote(before eval.SizeMetrics, beforeErr error, after eval.SizeMetrics, 
 		parts = append(parts, fmt.Sprintf("%d workspace entries could not be snapshotted (%s)", n, strings.Join(named, ", ")))
 	}
 	return strings.Join(parts, "; ")
+}
+
+// harnessPaths are the workspace paths that belong to the harness rather than the candidate, and so
+// are excluded from both the change-size figures and the did-anything-happen check. A loop scenario
+// adds the queue (whose folders move as tasks are worked) and the loop's telemetry; the preset and
+// the recipe are materialized before the baseline, so they cancel out on their own.
+func harnessPaths(isLoop bool) []string {
+	if !isLoop {
+		return nil
+	}
+	return []string{eval.TasksRoot, ".agent/runs"}
 }
 
 // fail turns a step failure into the right status. An expired budget is a TIMEOUT wherever it is
