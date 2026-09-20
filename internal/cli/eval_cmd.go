@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,12 +21,13 @@ import (
 var evalCommands = []string{"ls", "runs", "run", "compare", "init"}
 
 // evalRunOptions are the flags `coop eval run` accepts after its positionals.
-var evalRunOptions = []string{"--jobs", "--repeat", "--timeout", "--loop-config"}
+var evalRunOptions = []string{"--jobs", "--repeat", "--timeout", "--loop-config", "--dry-run"}
 
 // cmdEval is the `coop eval` family: run a suite, compare two runs, list starters, scaffold a
-// custom suite. v1 milestone 1 wires parsing, strict validation and the run PLAN — it resolves every
-// target/preset and loads the suite before showing what would run, and refuses bad input here, so no
-// invalid request ever reaches a provider. Trial execution and comparison land in later milestones.
+// custom suite. Every request is fully resolved and validated BEFORE anything launches — the suite,
+// each target/preset, every flag — so no invalid request ever reaches a provider, and the plan is
+// always shown first (`--dry-run` stops there). Agent suites execute; loop scenarios and the public
+// starter catalog land in later milestones.
 func (a *app) cmdEval(args []string) (int, error) {
 	if len(args) == 0 {
 		return a.evalOverview()
@@ -115,8 +117,9 @@ func (a *app) evalRuns(args []string) (int, error) {
 }
 
 // evalRun parses `coop eval run <suite> <target|preset>... [flags]`, resolves every positional and
-// the suite once, and shows the plan. It launches nothing in milestone 1 — but it does ALL the
-// validation, so a bad suite, target, preset or flag is refused before any run is attempted.
+// the suite once, shows the plan, and then works the matrix. ALL validation happens before the plan
+// is printed, so a bad suite, target, preset or flag is refused before any provider work; `--dry-run`
+// stops after the plan, which is the last point before money is spent.
 func (a *app) evalRun(args []string) (int, error) {
 	suitePath, positionals, opts, err := parseEvalRunArgs(args)
 	if err != nil {
@@ -165,8 +168,63 @@ func (a *app) evalRun(args []string) (int, error) {
 	}
 	renderEvalPlan(plan, frozen)
 	fmt.Println()
-	fmt.Println("Planning only: trial execution and comparison ship in a later Coop release.")
+	if opts.DryRun {
+		fmt.Println("Dry run: nothing was launched.")
+		return 0, nil
+	}
+	return a.executeEvalRun(plan, frozen)
+}
+
+// executeEvalRun creates the run record, works the whole matrix and prints the sealed summary. Every
+// trial's workspace lives under one scratch root that is removed when the run ends — the durable
+// record is the store's, not a pile of temp directories.
+func (a *app) executeEvalRun(plan *eval.Plan, frozen []eval.FrozenConfig) (int, error) {
+	root, err := evalStateRoot()
+	if err != nil {
+		return 1, err
+	}
+	store, err := eval.CreateRun(root, eval.NewRunRecord(plan, frozen, time.Now()))
+	if err != nil {
+		return 1, err
+	}
+	// Trial working directories live UNDER the run, not in a temp dir that vanishes: a trial that
+	// did not pass leaves its graded workspace behind for the user to look at, and it is removed
+	// with the run's own record rather than on the way out of this function.
+	workRoot := filepath.Join(store.Dir(), "work")
+	if err := os.MkdirAll(workRoot, 0o700); err != nil {
+		return 1, err
+	}
+	defer os.Remove(workRoot) // succeeds only when every trial passed and removed its own directory
+
+	runner := &trialRunner{
+		app: a, suite: plan.Suite, workRoot: workRoot,
+		image: box.ImageForRepo("", a.cfg.BaseImage, a.cfg.ImageOverride),
+	}
+	fmt.Printf("Running %s (%d trials)…\n", store.ID(), len(plan.Suite.Cases)*len(plan.Configs)*plan.Repeat)
+	summary, err := eval.Execute(context.Background(), plan, frozen, store, runner.run, time.Now)
+	if err != nil {
+		return 1, err
+	}
+	renderEvalSummary(store.ID(), summary)
 	return 0, nil
+}
+
+// renderEvalSummary prints a finished run the same honest way a comparison does: passes over the
+// FULL requested matrix, with coverage as its own figure, so an incomplete run can never read as a
+// clean sweep.
+func renderEvalSummary(id string, s eval.RunSummary) {
+	covered := s.Counts[eval.TrialPassed] + s.Counts[eval.TrialFailed]
+	fmt.Printf("\nRun %s: %d/%d passed; coverage %d/%d graded\n",
+		id, s.Counts[eval.TrialPassed], s.Requested, covered, s.Requested)
+	for _, st := range []eval.TrialStatus{eval.TrialFailed, eval.TrialError, eval.TrialTimedOut, eval.TrialPending} {
+		if n := s.Counts[st]; n > 0 {
+			fmt.Printf("  %-9s %d\n", st, n)
+		}
+	}
+	if covered < s.Requested {
+		fmt.Println("⚠ coverage is incomplete — trials without a graded verdict are not passes or failures")
+	}
+	fmt.Printf("\nCompare it with another run: coop eval compare <other-run> %s\n", id)
 }
 
 // resolveEvalSuite loads a suite from a filesystem path or, later, a shipped starter id. Milestone 1
@@ -337,6 +395,12 @@ func parseEvalRunArgs(args []string) (suite string, positionals []string, opts e
 				return "", nil, opts, ui.InvalidOptionValue(v, arg, cmd, "not a positive duration", "60m")
 			}
 			opts.Timeout = d
+		case arg == "--dry-run":
+			if seen[arg] {
+				return "", nil, opts, ui.RepeatedOption(arg, cmd)
+			}
+			seen[arg] = true
+			opts.DryRun = true
 		case arg == "--loop-config":
 			if opts.LoopConfigOverride, err = takeValue(arg, &i); err != nil {
 				return "", nil, opts, err

@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -1128,4 +1129,27 @@ func loadDefaultsFile(path string) map[string]string {
 		}
 	}
 	return out
+}
+
+// Clone returns a copy that can be mutated without touching the original. A plain `*cfg` is NOT
+// enough: Config carries per-run maps (the explicitly-set keys, and the per-agent profile, model and
+// effort tiers), and a shallow copy shares them — so a caller that "copied the config" to change one
+// run's model would silently change every other holder's too, and a concurrent one would race.
+// Callers that run several configurations side by side (coop eval) rely on this.
+func (c *Config) Clone() *Config {
+	if c == nil {
+		return nil
+	}
+	out := *c
+	out.conf = maps.Clone(c.conf)
+	out.explicit = maps.Clone(c.explicit)
+	out.activeProfiles = maps.Clone(c.activeProfiles)
+	out.defaultProfiles = maps.Clone(c.defaultProfiles)
+	out.activeModels = maps.Clone(c.activeModels)
+	out.targetModels = maps.Clone(c.targetModels)
+	out.fallbackModels = maps.Clone(c.fallbackModels)
+	out.activeEfforts = maps.Clone(c.activeEfforts)
+	out.targetEfforts = maps.Clone(c.targetEfforts)
+	out.fallbackEfforts = maps.Clone(c.fallbackEfforts)
+	return &out
 }

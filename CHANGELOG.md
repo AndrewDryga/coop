@@ -4,11 +4,24 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
-- New `coop eval` command (the foundation of native evals): author a suite that compares a preset,
-  loop config or Coop build before and after a change. `coop eval init` scaffolds a working suite,
-  `coop eval run <suite> <target|preset>...` strictly validates it and shows the exact run plan — the
-  cases, every configuration, the matrix and the deadline — before any work. This first release plans
-  and validates only; running the trials and comparing two runs land in later releases.
+- New `coop eval` command (native evals): measure whether a change to a preset, a loop config or
+  Coop itself actually made your agents better, instead of guessing. `coop eval init` scaffolds a
+  working suite; `coop eval run <suite> <target|preset>...` validates everything up front, prints the
+  exact plan — the cases, every configuration, the matrix and the deadline — then runs it; `coop eval
+  runs` lists what you have recorded and `coop eval compare <run-id> <run-id>` shows the before/after,
+  per case. `--dry-run` stops after the plan, the last point before a run spends anything.
+
+  Each case runs in a private workspace built from the suite's own files, with none of your
+  repository's history in it. The case's verifier is hidden eval material: it is never mounted
+  anywhere the model can reach, and the suite loader refuses a suite that puts one inside the files
+  the model is given. Grading happens after the model's container has exited, against an immutable
+  snapshot, in a separate container with no model credentials and no network — so a verifier cannot
+  be steered, and cannot spend your quota either. A verifier that crashes is reported as a grading
+  error, never as a model failure, and a run always reports passes over the full requested matrix
+  with coverage shown separately, so an incomplete run can never read as a clean sweep. Change size
+  is measured with cloc and reported beside correctness, never folded into it.
+
+  Agent suites run today; loop scenarios and the public starter catalog land in later releases.
 
 - A run that finished cleanly is no longer occasionally reported as failed. When your workload's
   process exits, Coop asks the runtime for the container's final state — and on a busy machine that

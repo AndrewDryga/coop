@@ -37,6 +37,9 @@ type Options struct {
 	// LoopConfigOverride replaces a loop suite's loop_config for this run, so two loop recipes can be
 	// compared through separate runs. Empty means use the suite's own loop_config. Agent suites refuse it.
 	LoopConfigOverride string
+	// DryRun shows the plan and stops. It exists because the plan is the last point before money is
+	// spent: an operator should be able to see exactly what a run would do without doing it.
+	DryRun bool
 }
 
 // Plan is the fixed matrix a run will execute: every (case x configuration x repetition) is one

@@ -302,3 +302,31 @@ func NewRunID(now time.Time, workload Fingerprint) string {
 	}
 	return now.UTC().Format("20060102T150405Z") + "-" + tag
 }
+
+// NewRunRecord builds the record that identifies a run from its plan and frozen configurations, so
+// a caller never hand-assembles the fingerprints a later comparison keys on. The workload
+// fingerprint comes from the PARSED suite, and each configuration carries its own fingerprint and
+// the Coop build it ran under.
+func NewRunRecord(plan *Plan, frozen []FrozenConfig, now time.Time) RunRecord {
+	rec := RunRecord{
+		Schema:    runSchema,
+		CreatedAt: now.UTC(),
+		Suite:     plan.Suite.Name,
+		Runner:    plan.Suite.Runner,
+		Workload:  string(WorkloadFingerprint(plan.Suite)),
+		Repeat:    plan.Repeat,
+		Jobs:      plan.Jobs,
+		TimeoutMS: plan.Timeout.Milliseconds(),
+	}
+	for _, c := range plan.Suite.Cases {
+		rec.Cases = append(rec.Cases, c.ID)
+	}
+	for _, f := range frozen {
+		rec.Configs = append(rec.Configs, RunConfig{
+			Kind: f.Kind, Label: f.Label,
+			Fingerprint: string(f.Fingerprint()), Build: f.Build.Version,
+		})
+	}
+	rec.ID = NewRunID(now, Fingerprint(rec.Workload))
+	return rec
+}

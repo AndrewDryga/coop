@@ -1,0 +1,260 @@
+package cli
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+
+	"github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/eval"
+)
+
+// One trial, end to end. The order of these steps IS the isolation contract, so it is written once,
+// here, rather than assembled per call site:
+//
+//  1. materialize a private workspace from the case's files — no source history, no host paths, and
+//     never the verifier (which lives outside every candidate mount);
+//  2. measure its size BEFORE the candidate touches it;
+//  3. run the candidate's attempt in a box with its own credentials, bounded by the trial deadline;
+//  4. snapshot the finished workspace — the candidate's box has exited, so nothing is still writing;
+//  5. grade the SNAPSHOT in a fresh, credential-free, network-free sandbox;
+//  6. measure the snapshot and attach net growth beside the verdict, never folded into it.
+//
+// Step 3 is the only step that spends money, and every step after it is deliberately independent of
+// what the candidate did to its own container: a candidate that breaks its shell, its interpreter or
+// its network cannot break or steer its own grading.
+
+// trialRunner is the eval.TrialFunc's receiver: everything one run needs to execute a trial. It is
+// built once per run by the CLI, so eval stays a leaf and this keeps the box/agent knowledge.
+type trialRunner struct {
+	app      *app
+	suite    *eval.Suite
+	image    string // the trusted image: the candidate's attempt AND the grader run from it
+	workRoot string // per-run scratch root; each trial gets its own subdirectory
+	runBox   boxRunner
+}
+
+// run executes one trial and always returns a status — never an error — because a run records why a
+// trial has no verdict rather than aborting the sweep.
+func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
+	if r.suite.IsLoop() {
+		return eval.TrialResult{Status: eval.TrialError, Detail: "loop scenarios are not executable yet; this run's cases need an agent suite"}
+	}
+	dir := filepath.Join(r.workRoot, trialSlug(t))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fail(ctx, "could not create the trial directory: "+err.Error())
+	}
+
+	// 1. The private workspace. PrepareWorkspace returns the synthetic initial COMMIT, not the path —
+	// the workspace is the destination we named.
+	workspace := filepath.Join(dir, "workspace")
+	if _, err := eval.PrepareWorkspace(ctx, filepath.Join(r.suite.Dir, t.Case.Files), workspace); err != nil {
+		return fail(ctx, "could not prepare the workspace: "+err.Error())
+	}
+
+	// 2. Size before the candidate touches anything. A measurement gap is recorded, never a zero.
+	before, beforeErr := eval.MeasureSize(ctx, workspace)
+
+	// 3. The attempt. This is the only paid step.
+	att, err := r.attempt(ctx, t, workspace)
+	if err != nil {
+		return fail(ctx, joinDetail("the attempt could not run: "+err.Error(), att.detail))
+	}
+	if att.limited {
+		// The provider refused — an expired login, a rate limit, a quota. The model never got to
+		// try, so grading its untouched workspace would record a FAIL that is really our problem.
+		return fail(ctx, joinDetail("the provider refused the attempt (rate limit, quota or sign-in), so there is nothing to grade", att.detail))
+	}
+
+	// 4. The candidate's box has exited, so the workspace is quiet: snapshot it. A non-zero agent
+	// exit is NOT decided here — the verifier decides whether the work is good, because an agent
+	// that exits non-zero may still have done the job (and one that exits 0 may not have).
+	snap, err := eval.SnapshotWorkspace(workspace, filepath.Join(dir, "snapshot"))
+	if err != nil {
+		return fail(ctx, "could not snapshot the workspace for grading: "+err.Error())
+	}
+
+	// 5. Grade the snapshot in the sandbox.
+	res := r.app.gradeSnapshot(ctx, gradeRequest{
+		Image: r.image, Workspace: snap.Dir, Verifier: filepath.Join(r.suite.Dir, t.Case.Verifier), CaseID: t.Case.ID,
+	}, r.runBox)
+
+	// 6. Size after, reported BESIDE the verdict. Size never changes a verdict: a smaller wrong
+	// answer is not better than a larger right one.
+	after, afterErr := eval.MeasureSize(ctx, snap.Dir)
+	res.Detail = joinDetail(res.Detail, sizeNote(before, beforeErr, after, afterErr, snap.Skipped))
+
+	// A trial that PASSED needs no evidence kept — its workspace is megabytes of "it worked". One
+	// that did not is exactly what a user needs to look at, so its snapshot stays under the run and
+	// the detail says where. (The live workspace goes either way: the snapshot is what was graded.)
+	if res.Status == eval.TrialPassed {
+		os.RemoveAll(dir)
+	} else {
+		os.RemoveAll(workspace) // the pre-grading copy is redundant once the snapshot exists
+		res.Detail = joinDetail(res.Detail, "graded workspace kept at "+snap.Dir)
+	}
+	return res
+}
+
+// attemptOutcome is what one candidate run tells us. `limited` means the PROVIDER refused (expired
+// sign-in, rate limit, quota) — the model never worked, so this is a harness fact, not a result.
+type attemptOutcome struct {
+	detail  string
+	limited bool
+}
+
+// attempt runs the candidate once. It returns an error only when the box could not be launched or
+// was killed — a non-zero exit is normal and left to the verifier, because an agent that exits
+// non-zero may still have done the job.
+func (r *trialRunner) attempt(ctx context.Context, t eval.Trial, workspace string) (attemptOutcome, error) {
+	// A CLONE of the config, not `*r.app.cfg`: Config carries per-run maps, and a shallow copy shares
+	// them — so one trial's model/effort/profile would leak into the next, which may be evaluating
+	// the OTHER configuration, and concurrent workers would race on one map.
+	cfg := r.app.cfg.Clone()
+	agentName, err := applyEvalConfiguration(cfg, t.Config)
+	if err != nil {
+		return attemptOutcome{}, err
+	}
+	adapter, ok := agent.Get(agentName)
+	if !ok {
+		return attemptOutcome{}, fmt.Errorf("unknown agent %q in configuration %q", agentName, t.Config.Label)
+	}
+
+	// Bounded capture: a candidate can print forever, and a trial must not be able to exhaust the
+	// host's memory. Only the tail is kept — that is where a refusal or a final message is.
+	out, errOut := &tailBuffer{max: 64 << 10}, &tailBuffer{max: 64 << 10}
+	var stdout io.Writer = out
+	probe := adapter.PlainOutputProbe()
+	if probe != nil {
+		stdout = io.MultiWriter(out, probe) // the adapter's own recognizer of a provider refusal
+	}
+	spec := box.RunSpec{
+		Ctx:   ctx,
+		Image: r.image,
+		Repo:  workspace,
+		// The same mount point the grader uses, so anything the candidate wrote with an absolute
+		// path still resolves when its work is graded.
+		Workdir: gradeWorkspaceDir,
+		Cmd:     adapter.Headless(cfg, t.Case.Instruction),
+		Agent:   agentName,
+		Batch:   true,
+		Quiet:   true,
+		// The candidate DOES get its credentials — it has to call its model. This is the one place
+		// in an eval where they are mounted; the grader never sees them.
+		Homes: cfg.Homes,
+		// No shared cache volume: it persists between trials, so one candidate could leave something
+		// there for the next — which may be the other configuration.
+		Cache:  false,
+		Stdout: stdout,
+		Stderr: errOut,
+	}
+	run := r.runBox
+	if run == nil {
+		run = func(s box.RunSpec) (int, error) { return box.Run(cfg, r.app.rt, s) }
+	}
+	code, err := run(spec)
+	res := attemptOutcome{detail: gradeDetail(out.String(), errOut.String())}
+	if probe != nil {
+		res.limited = probe.Limited(code)
+	}
+	return res, err
+}
+
+// applyEvalConfiguration selects on cfg exactly what the configuration names, and returns the agent
+// to run. It is separate from launching so that "which credential, which model, which effort does
+// this label actually mean" is decided — and tested — in one place: a run that is LABELLED with one
+// credential but executed on another is not a wrong number, it is a comparison that means nothing.
+func applyEvalConfiguration(cfg *config.Config, c eval.FrozenConfig) (string, error) {
+	if c.Kind != eval.ConfigTarget {
+		// A preset shapes a loop — roles, delegation, fallbacks — which a single headless call does
+		// not exercise. Rather than silently evaluate only its lead, say so.
+		return "", fmt.Errorf("configuration %q is a preset; presets are compared through loop suites, so this agent suite needs bare targets", c.Label)
+	}
+	target, err := agent.ParseTarget(c.Label)
+	if err != nil {
+		return "", fmt.Errorf("configuration %q: %w", c.Label, err)
+	}
+	name := target.Provider
+	if target.Model != "" {
+		cfg.SetActiveModel(name, target.Model)
+	}
+	if target.Effort != "" {
+		cfg.SetActiveEffort(name, target.Effort)
+	}
+	// More than one account is a LADDER — fine for a loop that may rotate mid-run, but an eval
+	// measures ONE configuration, so it is refused rather than silently narrowed to the first.
+	if len(target.Accounts) > 1 {
+		return "", fmt.Errorf("configuration %q names %d accounts; an eval configuration must pin exactly one", c.Label, len(target.Accounts))
+	}
+	if acct := target.Account(); acct != "" {
+		cfg.SetActiveProfile(name, acct)
+	}
+	return name, nil
+}
+
+// tailBuffer keeps only the last max bytes written to it. os/exec copies stdout and stderr from
+// separate goroutines, so it is mutex-guarded.
+type tailBuffer struct {
+	mu  sync.Mutex
+	max int
+	buf []byte
+}
+
+func (w *tailBuffer) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.buf = append(w.buf, p...)
+	if len(w.buf) > w.max {
+		w.buf = w.buf[len(w.buf)-w.max:]
+	}
+	return len(p), nil
+}
+
+func (w *tailBuffer) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return string(w.buf)
+}
+
+// sizeNote renders the change-size figures beside the verdict, and says plainly when a measurement
+// is missing instead of printing a zero that would read as "no change".
+func sizeNote(before eval.SizeMetrics, beforeErr error, after eval.SizeMetrics, afterErr error, skipped []string) string {
+	var parts []string
+	if beforeErr != nil || afterErr != nil {
+		parts = append(parts, "change size not measured (cloc unavailable or failed)")
+	} else {
+		parts = append(parts, fmt.Sprintf("net code %+d (%d→%d lines)", eval.NetCodeGrowth(before, after), before.TotalCode(), after.TotalCode()))
+	}
+	if n := len(skipped); n > 0 {
+		named := skipped
+		if len(named) > 3 {
+			named = named[:3]
+		}
+		parts = append(parts, fmt.Sprintf("%d workspace entries could not be snapshotted (%s)", n, strings.Join(named, ", ")))
+	}
+	return strings.Join(parts, "; ")
+}
+
+// fail turns a step failure into the right status. An expired budget is a TIMEOUT wherever it is
+// noticed — during preparation, the attempt or the snapshot — because "we ran out of time" is a
+// different fact about the run than "the harness broke", and conflating them would hide a suite
+// whose case budgets are simply too small.
+func fail(ctx context.Context, detail string) eval.TrialResult {
+	if ctx != nil && ctx.Err() != nil {
+		return eval.TrialResult{Status: eval.TrialTimedOut, Detail: joinDetail("the trial ran out of its budget", detail)}
+	}
+	return eval.TrialResult{Status: eval.TrialError, Detail: detail}
+}
+
+// trialSlug is a filesystem-safe, collision-free directory name for one trial. Case ids are already
+// validated to a safe alphabet; the configuration label is not (it carries ':' and '/'), so it is
+// reduced to its index — the run record maps index back to label.
+func trialSlug(t eval.Trial) string {
+	return fmt.Sprintf("%s-c%d-r%d", t.Case.ID, t.ConfigIndex, t.Repetition)
+}

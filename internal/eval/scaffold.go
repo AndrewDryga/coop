@@ -75,8 +75,37 @@ const scaffoldVerifierNote = `# Independent verifier
 
 This directory is the case's INDEPENDENT final grader. It is never mounted into the
 evaluated model's workspace — it must not appear in the candidate's files, Git history,
-images or tools. v1 runs it in a clean sandbox after the candidate has stopped.
+images or tools. Coop runs it in a clean sandbox after the candidate has stopped.
 
-Milestone 1 ships the suite schema and planning only; wire your grader once trial
-execution and grading land.
+## Write one
+
+Add ` + "`verify.sh`" + ` here (or an executable ` + "`verify`" + `). It runs with the graded
+workspace at /workspace and this directory at /coop-verifier, in a container with no
+model credentials and no network.
+
+    #!/bin/sh
+    # exit 0 = passed, exit 1 = did not pass, anything else = the grader itself broke
+    test -f /workspace/answer.txt || exit 1
+    grep -q "hello" /workspace/answer.txt || exit 1
+
+## The three exit codes matter
+
+  0  the candidate met the case
+  1  the candidate did not meet the case
+  *  the GRADER broke (crash, missing dependency, killed) — recorded as a grading
+     error, never as a model failure, so a broken verifier can never look like a
+     regression
+
+That last row is why a verifier should end in a check that exits 0 or 1, not in a
+build tool with its own exit codes: ` + "`make test`" + ` exits 2 on a missing target and
+` + "`cargo test`" + ` exits 101, both of which read as "the grader broke". Write
+` + "`make test || exit 1`" + ` when you mean "this failing is a fail".
+
+## What the grader sees
+
+The workspace is an immutable SNAPSHOT taken after the candidate exited, including
+its ` + "`.git`" + ` — so you can check whether it committed, and what. Writing into
+/workspace is fine: it is a copy, and nothing the verifier does changes what was
+recorded. Files the candidate left as symlinks pointing outside the workspace are
+not carried into the snapshot.
 `

@@ -1438,7 +1438,14 @@ Each positional after the suite is one configuration to compare — a target
 (provider[:model][/effort][@account]) or a preset. Run the same suite before and
 after your change, then compare the two run ids.
 
-  coop eval run ./evals/suite.yaml codex:gpt-5.6/xhigh frontier --repeat 3 --timeout 60m
+Every run prints its plan first. --dry-run stops there, which is the last point
+before a run spends anything. Each case gets a private workspace with no history
+of your repository; its verifier is never mounted where the model can reach it,
+and grading happens afterwards in a separate container with no credentials and
+no network.
+
+  coop eval run ./evals/suite.yaml codex:gpt-5.6/xhigh --repeat 3 --timeout 60m
+  coop eval run ./evals/suite.yaml codex:gpt-5.6 codex:gpt-5.6/xhigh --dry-run
   coop eval run ./evals/suite.yaml frontier --loop-config .agent/loop.yaml --timeout 60m
 
 ==============================================================================
