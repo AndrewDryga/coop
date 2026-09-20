@@ -2,7 +2,7 @@
 name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
-sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/box/mcp_broker.go, internal/box/open_broker.go, internal/networkgateway/open_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
+sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/box/mcp_broker.go, internal/box/open_broker.go, internal/box/restricted.go, internal/networkgateway/open_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
 updated: 2026-09-20
 ---
 
@@ -153,9 +153,18 @@ places (`mcp.SecretServers` returns it as `UnbrokerableServer`), a URL that is n
 `--network container:`) keeps TODAY's behaviour — its variable stays in the box env — and the launch
 names it (`sections.openMCP`). Only brokered variables are scrubbed, and a variable a kept server
 also reads stays. A session child hands its list over in open mode too (the daemon asks whenever the
-session is not offline), and `mcpStandIns.kept` lets a kept server's real value still be inlined, as
-the daemon used to. Read-only sessions are unchanged — their box loads no MCP, so nothing there can
-broker yet.
+session is not offline and the mode is not bare), and `mcpStandIns.kept` lets a kept server's real
+value still be inlined, as the daemon used to. A READ-ONLY session brokers the same way
+(`box/restricted.go`): the daemon asks it for a handoff, and its child — which mounts no MCP file
+and loads nothing from the project — reads only the daemon's own projection (through the shared
+`validateMCPSourceIsolation`) to plan the helper, scrub the env and render the list. The restricted
+profile admits exactly one `--add-host`, the planned `plan.brokerHost`, so the helper is reachable
+without widening the allowlist, and the helper's private directory is proven outside the repository
+AND every companion the box mounts (its `secrets.json` is cleartext). Because that box loads no MCP
+file, `mcpScrub`'s names leave its environment whether they were brokered or not — the list the
+daemon sends resolves from the projection, not from the box's env. A HAND-RUN `--readonly` brokers
+nothing: the gate is the handoff env AND an ACP session client, so a stale variable in a shell
+cannot start a helper holding the real tokens. A bare session has none to load.
 
 **Offline runs drop every remote server** (`box.Run`, `sessionsvc` `captureSessionMCP`). A box on
 `--network none` cannot reach one, so `mcp.WithoutRemoteServers` removes each server with a `url`
@@ -179,6 +188,8 @@ adds ordinary `CommandArgs` must decide whether its nested commands need an equi
 mounting the raw snapshot for every scoped credential is not the fallback.
 
 ## Changelog
+- 2026-09-20 — a read-only session brokers its MCP secrets through the same sibling helper; its
+  child owns the helper (the daemon owns neither the box nor the hosts entry it needs).
 - 2026-09-20 — a legacy SSE server is brokered on a same-host route instead of refused.
 - 2026-09-19 — open runs broker secret-bearing servers through a sibling helper; what no route can
   carry keeps today's behaviour and is named at launch.

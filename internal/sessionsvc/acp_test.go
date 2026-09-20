@@ -569,6 +569,43 @@ func TestAFilteredSessionIsHandedOnlyItsBrokerStandIns(t *testing.T) {
 	}
 }
 
+// A READ-ONLY session is handed its child's stand-ins too. Its box loads no project MCP, but the
+// servers this daemon projects for it are the user's own: until now their real token rode inline in
+// session/new, which is the one place a restricted box's secrets could still leak.
+func TestAReadOnlySessionIsHandedOnlyItsBrokerStandIns(t *testing.T) {
+	fixture := newSessionACPFixtureOn(t, "normal", "claude@work", agents.ModeReadOnly, egress.Open)
+	first := fixture.submit(t, "first prompt")
+	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, first); err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"headers":[{"name":"Authorization","value":"Bearer stand-in"}],"name":"emisar","type":"http","url":"http://127.0.0.1:15580/mcp"}]`
+	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != want {
+		t.Fatalf("session/new mcpServers = %s, want %s", got, want)
+	}
+	if strings.Contains(readFile(t, fixture.childLog), "observe-only") {
+		t.Fatal("the private env's real token reached a read-only session's adapter")
+	}
+	if handoffs, _ := filepath.Glob(filepath.Join(fixture.private, "mcp-handoff-*.json")); len(handoffs) != 0 {
+		t.Fatalf("the daemon left the handoff behind: %v", handoffs)
+	}
+	// A child that hands over nothing fails the turn rather than falling back to the private env.
+	silent := newSessionACPFixtureOn(t, "no-mcp-handoff", "claude@work", agents.ModeReadOnly, egress.Open)
+	leased := silent.submit(t, "first prompt")
+	if _, err := silent.runner.Run(contextWithTurnDeadline(t), silent.session, leased); err == nil ||
+		!strings.Contains(err.Error(), "handed over no MCP servers") {
+		t.Fatalf("a read-only child without a handoff = %v, want the turn refused", err)
+	}
+	// A bare session has no MCP at all, so it is asked for none: nothing to hand over, nothing sent.
+	bare := newSessionACPFixtureOn(t, "normal", "claude@work", agents.ModeBare, egress.Open)
+	bareTurn := bare.submit(t, "first prompt")
+	if _, err := bare.runner.Run(contextWithTurnDeadline(t), bare.session, bareTurn); err != nil {
+		t.Fatal(err)
+	}
+	if got := sessionACPRequestMCPServers(t, bare.childLog, "session/new"); got != "[]" {
+		t.Fatalf("a bare session/new carried mcpServers = %s", got)
+	}
+}
+
 // A filtered session that withholds the shared MCP file brokers none of its servers, so the env its
 // child starts from carries none of their token variables — while an open one keeps today's env.
 func TestAFilteredSessionWithoutSharedMCPDropsItsTokenVariables(t *testing.T) {

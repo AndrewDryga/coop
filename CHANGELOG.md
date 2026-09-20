@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A read-only remote session keeps its MCP secrets outside its box too. Its box deliberately loads
+  nothing from the project, so there was nothing there to broker from and the real token rode inline
+  in the list the session hands its adapter — the one place a restricted box's secrets could still
+  leak. Its child now starts the same helper an ordinary open run gets, and the session sends
+  stand-ins for every server Coop can broker; one it cannot (the same shapes an open run names at
+  launch) still rides in as before. Either way the box itself now carries none of those variables:
+  it loads no MCP file, so nothing in it could use them. A read-only run you start yourself still
+  loads no MCP at all, and a bare session has none either way.
+
 - Coop's shared images no longer pile up. Since each is tagged by the definition it
   was built from, an upgrade left the previous one tagged — and a plain `docker image prune` reclaims only dangling
   images, so a few 3 GB bases could sit there forever. A build now removes the images of that same

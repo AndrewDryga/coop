@@ -15,6 +15,8 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/gatewayimage"
+	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -197,9 +199,10 @@ You run inside a coop container that IS your sandbox and security boundary, in R
 - The only writable places are private, disposable scratch: your home directory (` + homeInBox + `)
   and /tmp. Both start empty, live in memory, and are discarded when the run ends; copy files
   there to experiment. Nothing you write is kept or handed back — your answer is the only output.
-- Nothing from the project is loaded on your behalf: no MCP servers, hooks, skills, project
-  settings, services or toolchain provisioning. The image's own tools are ready: node, npm,
-  python, pip, git, gcc/make, jq, rg, fd, curl.
+- Nothing from the project is loaded on your behalf: no project MCP servers, hooks, skills,
+  settings, services or toolchain provisioning. (A remote session is handed your OWN MCP servers
+  by the client outside the box, brokered, so their secrets stay out here.) The image's own tools
+  are ready: node, npm, python, pip, git, gcc/make, jq, rg, fd, curl.
 - OS-level sandboxing (bubblewrap) is intentionally absent. A "bubblewrap is required" notice
   is expected, not a bug — don't investigate or work around it, just proceed.
 - Files that look like secrets (.env*, *.key, *.pem, id_rsa*, .ssh, …) are shadowed with empty
@@ -336,13 +339,16 @@ type restrictedPlan struct {
 	workdir string
 	tmpfs   map[string]bool
 	sources map[string]bool
+	// brokerHost is the one --add-host this profile admits: the entry a read-only session's box
+	// finds its own MCP credential broker through. Empty for every other restricted run.
+	brokerHost string
 }
 
 // validateRestrictedOptions proves the final options against the plan. It is an allowlist on
 // purpose: an option this profile has not admitted refuses the launch by name, so a mount or flag
 // added to the shared assembly later cannot widen a restricted run without being admitted here.
 func validateRestrictedOptions(options []string, plan restrictedPlan) error {
-	readOnly := 0
+	readOnly, brokerHosts := 0, 0
 	tmpfs := map[string]bool{}
 	for i := 0; i < len(options); i++ {
 		opt := options[i]
@@ -351,6 +357,10 @@ func validateRestrictedOptions(options []string, plan restrictedPlan) error {
 			continue
 		case "--read-only":
 			readOnly++
+			continue
+		}
+		if plan.brokerHost != "" && opt == plan.brokerHost {
+			brokerHosts++
 			continue
 		}
 		if i+1 >= len(options) {
@@ -395,6 +405,9 @@ func validateRestrictedOptions(options []string, plan restrictedPlan) error {
 	}
 	if len(tmpfs) != len(plan.tmpfs) {
 		return errors.New("restricted launch: a planned scratch tmpfs is missing")
+	}
+	if plan.brokerHost != "" && brokerHosts != 1 {
+		return fmt.Errorf("restricted launch: %d hosts entries for the MCP credential broker, want 1", brokerHosts)
 	}
 	return nil
 }
@@ -508,6 +521,67 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 		}
 	}
 
+	// A read-only SESSION reaches the MCP servers the daemon projected for it, and their secrets
+	// belong outside its box like every other run's: the same helper an ordinary open run gets
+	// (open_broker.go) runs beside this one, and the daemon's session/new carries only stand-ins.
+	// Only a session asks for this — the daemon sets the handoff env — so a hand-run `--readonly`
+	// still loads no MCP at all, and nothing from the PROJECT is read here either way: this snapshot
+	// is the daemon's own projection of the user's servers, which this session reached inline until
+	// now. A bare session has no MCP to reach.
+	var open *openBroker
+	var openKept, mcpScrubNames []string
+	sessionMCP, snapshotPath := "", ""
+	if mode == agents.ModeReadOnly && spec.networkClient() == egress.ClientACP {
+		sessionMCP = os.Getenv(SessionMCPHandoffEnv)
+	}
+	if sessionMCP != "" {
+		// The same isolation the ordinary launch proves: a source inside the repository this box
+		// mounts, or inside a credential home, is refused rather than read.
+		source := cfg.MCPFile
+		if source != "" {
+			if source, err = validateMCPSourceIsolation(cfg, spec); err != nil {
+				return -1, err
+			}
+		}
+		snapshot, present, err := mcp.ReadValidatedSnapshot(source)
+		if err != nil {
+			return -1, fmt.Errorf("mcp.json: %w", err)
+		}
+		if present {
+			snapshotPath = source
+		}
+		if present && cfg.Egress == "open" && len(scope) != 0 {
+			if open, openKept, err = planOpenBroker(cfg, rt, spec, snapshot); err != nil {
+				return -1, err
+			}
+			markImageUsed(cfg, gatewayimage.Tag())
+		}
+		if open != nil {
+			// The list the daemon will send names the helper's listeners, so it is rendered from a
+			// snapshot routed through them — a host file this run owns, never mounted into the box.
+			path, _, written, err := writeMCPSnapshots(artifacts, snapshot, open.plan.brokeredServers(openBrokerListener))
+			tmpFiles = append(tmpFiles, written...)
+			if err != nil {
+				return -1, err
+			}
+			snapshotPath = path
+		}
+		standIns := mcpStandIns{kept: effectiveMCPEnv(cfg, spec)}
+		if open != nil {
+			standIns = open.mcpStandIns(cfg, spec)
+		}
+		if err := handOffSessionMCP(spec, sessionMCP, snapshotPath, standIns); err != nil {
+			return -1, err
+		}
+		// This box loads no MCP file, so no MCP variable has a consumer inside it — including one
+		// belonging to a server no route could carry. The list the daemon sends resolves from the
+		// projection, not from this environment, so dropping every name the configured file
+		// references costs the session nothing and keeps the secrets out either way.
+		if mcpScrubNames, err = mcpScrub(cfg, spec); err != nil {
+			return -1, err
+		}
+	}
+
 	cmd := spec.Cmd
 	if spec.Agent != "" {
 		ag, ok := agents.Get(spec.Agent)
@@ -556,8 +630,53 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	if envTmp != "" {
 		tmpFiles = append(tmpFiles, envTmp)
 	}
+	if kept, err := dropEnvNames(artifacts, envFile, mcpScrubNames); err != nil {
+		return -1, err
+	} else if kept != envFile {
+		envFile = kept
+		tmpFiles = append(tmpFiles, kept)
+	}
+	if open != nil {
+		brokerEnv, err := open.env(artifacts, envFile)
+		if err != nil {
+			return -1, err
+		}
+		envFile = brokerEnv
+		tmpFiles = append(tmpFiles, brokerEnv)
+	}
 	if err := rt.EnsureDaemon(); err != nil {
 		return -1, err
+	}
+	if mode == agents.ModeBare {
+		sections.secrets(0) // nothing mounted, nothing to hide — said rather than skipped
+	}
+	sections.accounts(launchAccounts(cfg, spec, nil))
+	sections.internet(cfg, spec, nil)
+	sections.openMCP(open.servers(), openKept)
+	sections.legacyMCP(open.legacySSEServers())
+	if open != nil {
+		// Its address exists only once it runs, so the helper starts here — after every host
+		// artifact — and the box finds it through the one hosts entry the profile admits.
+		defer func() {
+			if err := open.stop(rt); err != nil {
+				ui.Warning("Coop could not remove this box's MCP credential broker", err.Error(),
+					"It holds this run's MCP secrets; remove it with: docker rm -f "+open.name())
+			}
+		}()
+		brokerCtx := spec.Ctx
+		if brokerCtx == nil {
+			brokerCtx = context.Background()
+		}
+		privateRoots := append(ConfigExposureRoots(cfg), projectPolicyRepo(spec))
+		for _, companion := range spec.CompanionRepositories {
+			privateRoots = append(privateRoots, companion.HostPath)
+		}
+		network := openBrokerNetwork("", cfg.ExtraRunArgs, spec.ExtraArgs)
+		if err := open.start(brokerCtx, rt, spec.Repo, network, ownerLabels(spec), sections.brokerImage, privateRoots...); err != nil {
+			return -1, err
+		}
+		plan.brokerHost = open.hostArgs()[0]
+		extras = append(extras, plan.brokerHost)
 	}
 
 	// The shared assembly on a spec with every optional exposure off: no homes (so no credential
@@ -598,11 +717,6 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	if spec.OnRuntimeLaunch != nil {
 		spec.OnRuntimeLaunch()
 	}
-	if mode == agents.ModeBare {
-		sections.secrets(0) // nothing mounted, nothing to hide — said rather than skipped
-	}
-	sections.accounts(launchAccounts(cfg, spec, nil))
-	sections.internet(cfg, spec, nil)
 	sections.starting()
 	if spec.Ctx != nil {
 		code, runErr := rt.RunInterruptible(spec.Ctx, stdin, stdout, stderr, args...)

@@ -2120,10 +2120,12 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 	env = append(env, "COOP_ACP_ACTIVITY_ROLE="+string(activityRole))
 	// An online child's secret-bearing MCP servers reach its credential broker — the filtered gateway's,
 	// or the helper beside an open box — whose listeners and stand-ins only that child knows: it hands
-	// over its adapter's list, and nothing is rendered from the real private env. An offline child's
-	// servers are all local, so the daemon renders its list.
+	// over its adapter's list, and nothing is rendered from the real private env. That holds for a
+	// READ-ONLY session too: its box loads no project MCP, but the servers this daemon projects for it
+	// are the user's own, and their secrets belong outside the box like everyone else's. An offline
+	// child's servers are all local, so the daemon renders its list; a bare session has none at all.
 	mcpHandoff := ""
-	if bound.NetworkMode != string(egress.None) && mode == agents.ModeNormal {
+	if bound.NetworkMode != string(egress.None) && (mode == agents.ModeNormal || mode == agents.ModeReadOnly) {
 		mcpHandoff = sessionMCPHandoffPath(privateRoot, runID)
 		if err := removeProjectedSessionFile(mcpHandoff); err != nil {
 			return nil, acpFailure(sessionACPCredentialError, "a stale MCP handoff is unsafe")

@@ -11,6 +11,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/gatewayimage"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
@@ -467,6 +468,28 @@ func TestValidateRestrictedOptions(t *testing.T) {
 	if err := validateRestrictedOptions(good, plan); err != nil {
 		t.Fatalf("planned options refused: %v", err)
 	}
+	// The one hosts entry this profile admits, and only when the launch planned one: the box's own
+	// MCP credential broker. A second entry — or any entry nobody planned — refuses the launch.
+	brokered := restrictedPlan{workdir: plan.workdir, tmpfs: plan.tmpfs, sources: plan.sources,
+		brokerHost: "--add-host=coop-broker:172.18.0.5"}
+	if err := validateRestrictedOptions(append(slices.Clone(good), brokered.brokerHost), brokered); err != nil {
+		t.Fatalf("the planned broker entry was refused: %v", err)
+	}
+	for name, options := range map[string][]string{
+		"no entry at all":     good,
+		"a second entry":      append(slices.Clone(good), brokered.brokerHost, brokered.brokerHost),
+		"somewhere else":      append(slices.Clone(good), "--add-host=coop-broker:10.0.0.1"),
+		"another name":        append(slices.Clone(good), "--add-host=api.example:10.0.0.1"),
+		"an unplanned broker": append(slices.Clone(good), brokered.brokerHost),
+	} {
+		against := brokered
+		if name == "an unplanned broker" {
+			against = plan
+		}
+		if err := validateRestrictedOptions(options, against); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
 	bad := map[string][]string{
 		"writable bind":     {"-v", "/repo:/w"},
 		"unplanned source":  {"-v", "/etc:/w:ro"},
@@ -634,6 +657,231 @@ func TestRunReadOnlyRefusesAScratchPathRepository(t *testing.T) {
 		_, err := Run(cfg, dockerRecorder(t, filepath.Join(t.TempDir(), "runtime-args")), spec)
 		if err == nil || !strings.Contains(err.Error(), "box's own scratch") {
 			t.Fatalf("repo %s: err = %v, want the scratch-path refusal", repo, err)
+		}
+	}
+}
+
+// readOnlySessionShim is a Docker that answers as the real one does for the helper a read-only
+// session's box needs: the image is present, the helper names the address it listens on and then
+// holds its stdin open, and every invocation's argv is recorded.
+func readOnlySessionShim(t *testing.T, calls, boxEnv string) runtime.Runtime {
+	t.Helper()
+	shim := filepath.Join(t.TempDir(), "docker")
+	writeRepoFile(t, shim, "#!/bin/sh\necho \"$@\" >> "+strconv.Quote(calls)+"\n"+
+		"case \"$1 $2\" in \"image inspect\") echo "+gatewayimage.Fingerprint()+"; exit 0 ;; esac\n"+
+		"case \"$*\" in *\" broker\") echo 172.18.0.5; cat > /dev/null; exit 0 ;; esac\n"+
+		"case \"$1\" in network) exit 1 ;; ps) exit 0 ;; esac\n"+
+		"prev=\nfor a in \"$@\"; do [ \"$prev\" = --env-file ] && cat \"$a\" > "+strconv.Quote(boxEnv)+"; prev=$a; done\n")
+	if err := os.Chmod(shim, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return runtime.Runtime{Name: shim}
+}
+
+// readOnlySessionFixture is the child the session daemon launches for a read-only session: the
+// restricted profile, an ACP adapter, and the daemon's request for the MCP list it will send.
+func readOnlySessionFixture(t *testing.T) (*config.Config, RunSpec) {
+	t.Helper()
+	run := openBrokerFixtureWithEnv(t, openBrokerEnv)
+	cfg := run.cfg
+	cfg.BaseImage = "coop-box"
+	profile := cfg.AgentDir("claude")
+	if err := os.MkdirAll(profile, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeRepoFile(t, filepath.Join(profile, ".credentials.json"), restrictedClaudeLogin)
+	claude, _ := agents.Get("claude")
+	spec := run.spec
+	spec.Image, spec.Workdir, spec.Mode = cfg.BaseImage, "/workspace", agents.ModeReadOnly
+	spec.Cmd, spec.AgentCommand = claude.ACP(cfg), false
+	spec.NetworkClient, spec.RunID = egress.ClientACP, "session-run-1"
+	return cfg, spec
+}
+
+// A read-only session's secret-bearing MCP servers reach a helper beside its box, exactly as an
+// ordinary open run's do: the box is given the helper's address and stand-ins, the list the daemon
+// will send names the helper's listeners, and no real token enters either.
+func TestAReadOnlySessionBrokersItsMCPSecretsToo(t *testing.T) {
+	cfg, spec := readOnlySessionFixture(t)
+	dir := t.TempDir()
+	calls, boxEnv := filepath.Join(dir, "calls"), filepath.Join(dir, "box-env")
+	handoff := filepath.Join(dir, "handoff.json")
+	t.Setenv(SessionMCPHandoffEnv, handoff)
+	if code, err := Run(cfg, readOnlySessionShim(t, calls, boxEnv), spec); err != nil || code != 0 {
+		t.Fatalf("read-only session child = %d, %v", code, err)
+	}
+	helper, box := "", ""
+	for _, line := range strings.Split(strings.TrimSpace(string(mustReadFile(t, calls))), "\n") {
+		switch {
+		case strings.Contains(line, "--name coop-broker-"):
+			helper = line
+		case strings.Contains(line, "--label coop=box"):
+			box = line
+		}
+	}
+	if !strings.Contains(helper, "--label coop=broker") || !strings.Contains(helper, gatewayimage.Tag()+" broker") {
+		t.Fatalf("no helper ran beside the read-only box:\n%s", helper)
+	}
+	if !strings.Contains(box, "--add-host=coop-broker:172.18.0.5") {
+		t.Fatalf("the box was not given the helper's address:\n%s", box)
+	}
+	// The profile still holds: nothing writable, and the hosts entry did not smuggle anything else in.
+	for _, forbidden := range []string{"--privileged", "--cap-add", "--add-host=coop-broker:172.18.0.5 --add-host"} {
+		if strings.Contains(box, forbidden) {
+			t.Errorf("the read-only box was started with %q:\n%s", forbidden, box)
+		}
+	}
+	env := string(mustReadFile(t, boxEnv))
+	for _, gone := range []string{"docs-secret", "tickets-secret", "stream-secret"} {
+		if strings.Contains(env, gone) {
+			t.Fatalf("a brokered secret entered the read-only box: %q", env)
+		}
+	}
+	if !strings.Contains(env, "COOP_MCP_TOKEN_0=") {
+		t.Fatalf("the read-only box's environment lacks its stand-ins: %q", env)
+	}
+	// A restricted box loads no MCP file, so no MCP variable has a consumer in it — not even one
+	// belonging to a server no route could carry. Every name the configured file references goes.
+	for _, gone := range []string{"TWICE_TOKEN", "TWICE_KEY", "INSIDE_TOKEN"} {
+		if strings.Contains(env, gone) {
+			t.Errorf("the read-only box's environment still carries %q: %q", gone, env)
+		}
+	}
+	if !strings.Contains(env, "KEPT=kept") {
+		t.Errorf("the read-only box lost an ordinary variable: %q", env)
+	}
+	// What the daemon will send as session/new: listeners and stand-ins, never the private env.
+	list := string(mustReadFile(t, handoff))
+	for _, want := range []string{"coop-broker:15580", "session-run-1", "Bearer twice-secret"} {
+		if !strings.Contains(list, want) {
+			t.Errorf("the handoff lacks %q:\n%s", want, list)
+		}
+	}
+	for _, gone := range []string{"docs-secret", "tickets-secret", "stream-secret", "docs.example"} {
+		if strings.Contains(list, gone) {
+			t.Errorf("the handoff carries %q:\n%s", gone, list)
+		}
+	}
+}
+
+// A hand run is not a session, whatever its environment says. The handoff variable belongs to the
+// daemon; a stale one in an operator's shell must not make `coop <agent> --readonly` read the real
+// MCP file, start a helper holding those tokens, or give its box a route to one.
+func TestAHandRunReadOnlyLaunchStillLoadsNoMCP(t *testing.T) {
+	cfg, spec := readOnlySessionFixture(t)
+	spec.NetworkClient, spec.RunID = "", ""
+	spec.Cmd, spec.AgentCommand = []string{"claude"}, true
+	dir := t.TempDir()
+	calls, boxEnv := filepath.Join(dir, "calls"), filepath.Join(dir, "box-env")
+	handoff := filepath.Join(dir, "handoff.json")
+	t.Setenv(SessionMCPHandoffEnv, handoff)
+	if code, err := Run(cfg, readOnlySessionShim(t, calls, boxEnv), spec); err != nil || code != 0 {
+		t.Fatalf("read-only run = %d, %v", code, err)
+	}
+	recorded := string(mustReadFile(t, calls))
+	for _, gone := range []string{"coop-broker", "--add-host", "coop=broker"} {
+		if strings.Contains(recorded, gone) {
+			t.Fatalf("a hand-run readonly launch started a broker (%q):\n%s", gone, recorded)
+		}
+	}
+	if _, err := os.Stat(handoff); !os.IsNotExist(err) {
+		t.Fatalf("a hand-run readonly launch answered a handoff nobody asked for: %v", err)
+	}
+}
+
+// What a read-only session gets when Coop can broker nothing — every server unbrokerable — is
+// exactly today's behaviour, stated rather than assumed: no helper, and the list the daemon sends
+// carries the real value, as it did before any of this. Its box still carries neither.
+func TestAReadOnlySessionWithNothingToBrokerKeepsTodaysList(t *testing.T) {
+	run := openBrokerFixtureWithEnv(t, "TWICE_TOKEN=twice-secret\nTWICE_KEY=twice-key\nKEPT=kept\n")
+	cfg := run.cfg
+	// Only the server whose secret sits in two places: no fixed route can carry it.
+	writeRepoFile(t, cfg.MCPFile, `{"mcpServers":{"twice":{"type":"http","url":"https://twice.example/mcp",`+
+		`"bearer_token_env_var":"TWICE_TOKEN","headers":{"X-Key":"${TWICE_KEY}"}}}}`)
+	cfg.BaseImage = "coop-box"
+	profile := cfg.AgentDir("claude")
+	if err := os.MkdirAll(profile, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeRepoFile(t, filepath.Join(profile, ".credentials.json"), restrictedClaudeLogin)
+	claude, _ := agents.Get("claude")
+	spec := run.spec
+	spec.Image, spec.Workdir, spec.Mode = cfg.BaseImage, "/workspace", agents.ModeReadOnly
+	spec.Cmd, spec.AgentCommand = claude.ACP(cfg), false
+	spec.NetworkClient, spec.RunID = egress.ClientACP, "session-run-2"
+	dir := t.TempDir()
+	calls, boxEnv := filepath.Join(dir, "calls"), filepath.Join(dir, "box-env")
+	handoff := filepath.Join(dir, "handoff.json")
+	t.Setenv(SessionMCPHandoffEnv, handoff)
+	if code, err := Run(cfg, readOnlySessionShim(t, calls, boxEnv), spec); err != nil || code != 0 {
+		t.Fatalf("read-only session child = %d, %v", code, err)
+	}
+	if strings.Contains(string(mustReadFile(t, calls)), "--name coop-broker-") {
+		t.Error("a helper ran for a server no route can carry")
+	}
+	if list := string(mustReadFile(t, handoff)); !strings.Contains(list, "Bearer twice-secret") {
+		t.Errorf("the unbrokerable server lost the value it has always been sent:\n%s", list)
+	}
+	if env := string(mustReadFile(t, boxEnv)); strings.Contains(env, "twice-secret") || strings.Contains(env, "twice-key") {
+		t.Errorf("the box carries a secret it cannot use: %q", env)
+	}
+}
+
+// A session whose policy withheld the MCP file still gets an answer: an empty list, not silence —
+// the daemon fails the turn when its child hands over nothing.
+func TestAReadOnlySessionWithoutMCPHandsOverAnEmptyList(t *testing.T) {
+	cfg, spec := readOnlySessionFixture(t)
+	if err := os.Remove(cfg.MCPFile); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	handoff := filepath.Join(dir, "handoff.json")
+	t.Setenv(SessionMCPHandoffEnv, handoff)
+	if code, err := Run(cfg, readOnlySessionShim(t, filepath.Join(dir, "calls"), filepath.Join(dir, "box-env")), spec); err != nil || code != 0 {
+		t.Fatalf("read-only session child = %d, %v", code, err)
+	}
+	list := string(mustReadFile(t, handoff))
+	if !strings.Contains(list, `"mcpServers":[]`) {
+		t.Errorf("a session without MCP was handed %s", list)
+	}
+}
+
+// The helper's private directory holds every brokered secret in cleartext, so it may never be
+// allocated inside anything this box can see — the repository OR a companion the read-only run
+// mounts beside it. TMPDIR is the operator's, so this is a real configuration, not a contrivance.
+func TestAReadOnlySessionKeepsItsHelperOutOfEveryMountedRepository(t *testing.T) {
+	for name, inside := range map[string]bool{"a companion it mounts": true, "a directory it does not": false} {
+		cfg, spec := readOnlySessionFixture(t)
+		companion, err := filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec.CompanionRepositories = []CompanionRepository{
+			{Name: "design", HostPath: companion, BaseCommit: strings.Repeat("a", 40)},
+		}
+		tmp := t.TempDir()
+		if inside {
+			tmp = filepath.Join(companion, "tmp")
+			if err := os.MkdirAll(tmp, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		t.Setenv("TMPDIR", tmp)
+		dir := t.TempDir()
+		calls := filepath.Join(dir, "calls")
+		handoff := filepath.Join(dir, "handoff.json")
+		t.Setenv(SessionMCPHandoffEnv, handoff)
+		code, err := Run(cfg, readOnlySessionShim(t, calls, filepath.Join(dir, "box-env")), spec)
+		recorded, _ := os.ReadFile(calls)
+		started := strings.Contains(string(recorded), "--name coop-broker-")
+		if inside {
+			if err == nil || started {
+				t.Errorf("%s: the helper's secrets were allowed inside it (code %d, err %v)", name, code, err)
+			}
+			continue
+		}
+		if err != nil || code != 0 || !started {
+			t.Errorf("%s: the helper did not run (code %d, err %v)", name, code, err)
 		}
 	}
 }

@@ -181,8 +181,15 @@ keep today's behaviour, with the secret in the box, and the launch names each on
 names its own message endpoint at runtime), a server whose secret is in two places or mixes text
 with two references, a URL that is not plain `https` on port 443, and every server when the box has
 no network to reach a helper on (Apple's `container` runtime, `--network none` or
-`--network container:…` in your runtime arguments). A read-only session still hands its adapter the
-real token: its box loads no MCP at all, so there is nothing there to broker yet.
+`--network container:…` in your runtime arguments).
+
+A read-only remote session brokers the same way. Its box loads nothing from the project — no MCP
+file, no hooks, no skills — but the servers the daemon projects for it are your own, so its child
+starts the same helper beside the box, and the list the session sends its adapter names the helper
+and a stand-in for every server Coop can broker. One it cannot (the shapes listed above) is sent as
+it always was. The box itself carries none of those variables either way: it loads no MCP file, so
+nothing in it could read them. A read-only run you start yourself (`coop <agent> --readonly`) is
+unchanged: no session asks it for that list, so it loads no MCP at all. A bare session has none.
 
 A `service:` grant is a request like any other: it is approved by a human and names one service.
 For a filtered run, Coop recreates that service and its dependencies on a project-owned internal
