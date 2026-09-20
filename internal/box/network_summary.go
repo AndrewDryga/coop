@@ -42,9 +42,15 @@ type NetworkReport struct {
 	// recording a destination.
 	Raw        string
 	RawPackets uint64
-	Alerts     []string
-	Event      string // the evidence id `coop net blocked --run` can open, when one was retained
-	Truncate   bool
+	// Gateway counts the refusals at Coop's OWN listeners — a connection dialed
+	// straight at the guard, a frame its DNS listener could not read as a query.
+	// They are kept apart from Denials because they name no destination: folding
+	// them in would report Coop's own plumbing as somewhere the box could not
+	// reach (networkreport.LocalRefusal).
+	Gateway  int
+	Alerts   []string
+	Event    string // the evidence id `coop net blocked --run` can open, when one was retained
+	Truncate bool
 }
 
 // NetworkDenial is one refused destination as the retained evidence recorded
@@ -53,8 +59,12 @@ type NetworkReport struct {
 // across runs — the loop's closing summary — never has to parse a rendered line.
 type NetworkDenial struct {
 	Destination string
-	Basis       string // dns | tls | socket | admission | unknown
-	Count       int
+	// Name is the destination only when the evidence actually named it. A lookup
+	// command built from a withheld or absent name cannot run, so a caller that
+	// offers one uses this rather than Destination.
+	Name  string
+	Basis string // dns | tls | socket | admission | unknown
+	Count int
 }
 
 func (d NetworkDenial) String() string {
@@ -71,7 +81,7 @@ func (d NetworkDenial) String() string {
 // list, but it IS the boundary being hit: reporting "nothing was refused" over
 // a nonzero kernel counter would be the one thing this summary must never say.
 func (r NetworkReport) Quiet() bool {
-	return len(r.Denials) == 0 && len(r.Alerts) == 0 && r.RawPackets == 0
+	return len(r.Denials) == 0 && len(r.Alerts) == 0 && r.RawPackets == 0 && r.Gateway == 0
 }
 
 // networkRunReport folds a run's retained evidence into the lines a human reads
@@ -83,6 +93,10 @@ func networkRunReport(runID string, snapshot networkview.Snapshot) NetworkReport
 	var ordered []*NetworkDenial // first-seen order, which is the order evidence arrived
 	first, drafted := "", ""
 	for _, denial := range snapshot.Denials {
+		if networkreport.LocalRefusal(denial) {
+			out.Gateway++
+			continue
+		}
 		basis := denialBasis(denial.Kind)
 		where := denial.Name
 		if where == "" {
@@ -104,7 +118,7 @@ func networkRunReport(runID string, snapshot networkview.Snapshot) NetworkReport
 			existing.Count++
 			continue
 		}
-		group := &NetworkDenial{Destination: where, Basis: basis, Count: 1}
+		group := &NetworkDenial{Destination: where, Name: denial.Name, Basis: basis, Count: 1}
 		groups[key] = group
 		ordered = append(ordered, group)
 	}

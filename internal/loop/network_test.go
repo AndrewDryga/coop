@@ -104,8 +104,8 @@ func TestNetworkLogPrintsBetweenIterationsNotDuringOne(t *testing.T) {
 	report := box.NetworkReport{
 		RunID: "run-1",
 		Denials: []box.NetworkDenial{
-			{Destination: "a.example", Basis: "dns", Count: 4},
-			{Destination: "b.example", Basis: "tls", Count: 1},
+			{Destination: "a.example", Name: "a.example", Basis: "dns", Count: 4},
+			{Destination: "b.example", Name: "b.example", Basis: "tls", Count: 1},
 		},
 		Alerts: []string{"denial_burst (warning): open over 5000ms, threshold 20 denials"},
 		Event:  "ev-9",
@@ -279,5 +279,46 @@ func TestLoopRefusesAnUnqualifiedNetworkBeforeAnyBox(t *testing.T) {
 	// serve it, so admission refuses at the runtime preflight and names Docker.
 	if !strings.Contains(err.Error(), "restricted networking needs docker") {
 		t.Errorf("refusal %q does not name the real reason", err)
+	}
+}
+
+// A refusal at Coop's OWN gateway is not a place the box could not reach, and the
+// loop must not say it was: the iteration block a human watches has to agree with
+// `coop net inspect`, which reports those separately. And a refusal whose name the
+// evidence never had earns no lookup command — one built from "name withheld"
+// cannot run.
+func TestNetworkLogSeparatesCoopsOwnGatewayAndOffersNoUnrunnableLookup(t *testing.T) {
+	log := newNetworkLog()
+	log.setStage("Task attempt 2")
+	report := box.NetworkReport{RunID: "run-2", Gateway: 5,
+		Denials: []box.NetworkDenial{{Destination: "name withheld", Basis: "tls", Count: 2}}}
+	log.record(report)
+	out := captureStderr(t, log.finishIteration)
+	for _, want := range []string{
+		"⚠ Task attempt 2 could not reach 1 remote address",
+		"⚠ Coop's own gateway refused 5 requests from inside the box",
+		"No destination was recorded, so no rule would have allowed these.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("iteration block %q is missing %q", out, want)
+		}
+	}
+	if strings.Contains(out, "could not reach 6") || strings.Contains(out, "name withheld · TLS · blocked 2 times\n  Explain") {
+		t.Errorf("the gateway's own refusals were counted as somewhere the box could not reach:\n%s", out)
+	}
+	if strings.Contains(out, "Explain:") {
+		t.Errorf("the block offers a lookup with no name to look up:\n%s", out)
+	}
+	// A report that is ONLY the gateway's own refusals still prints — and still is
+	// not traffic.
+	quiet := newNetworkLog()
+	quiet.setStage("Task attempt 3")
+	quiet.record(box.NetworkReport{RunID: "run-3", Gateway: 1})
+	only := captureStderr(t, quiet.finishIteration)
+	if !strings.Contains(only, "⚠ Coop's own gateway refused 1 request from inside the box") {
+		t.Errorf("a gateway-only iteration said nothing:\n%s", only)
+	}
+	if strings.Contains(only, "could not reach") {
+		t.Errorf("a gateway-only iteration claimed the box could not reach something:\n%s", only)
 	}
 }

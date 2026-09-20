@@ -447,6 +447,77 @@ func TestInspectRefusalsCoalesceAndKeepTheExplainAction(t *testing.T) {
 	}
 }
 
+// A refusal at Coop's OWN listeners names no destination: a client in the box
+// dialed the guard's port, or sent its DNS listener something it could not read
+// as a query. Filing those under "traffic to a remote address was blocked" buries
+// the rows that ARE about the internet behind a destination nobody can act on.
+func TestInspectSeparatesRefusalsAtCoopsOwnListeners(t *testing.T) {
+	port := 15443
+	inspection := netTestClean()
+	inspection.Observed.Denials = []networkview.Denial{
+		{ID: "d1", Source: "guard", Kind: "dns_denied", Reason: "dns_query_invalid"},
+		{ID: "d2", Source: "guard", Kind: "dns_denied", Reason: "dns_query_invalid"},
+		{ID: "d3", Source: "guard", Kind: "tls_denied", Reason: "tls_direct_dial_refused", Port: &port},
+		{ID: "d4", Source: "guard", Kind: "tls_denied", Reason: "tls_direct_dial_refused", Port: &port},
+		{ID: "d5", Source: "guard", Kind: "tls_denied", Reason: "tls_direct_dial_refused", Port: &port},
+		{ID: "d6", Source: "guard", Kind: "dns_denied", Reason: "unapproved_name", Name: "unapproved.example.org"},
+		// The reason alone never decides it: evidence that names where the attempt was
+		// going is traffic, whatever the gateway could not read about it.
+		{ID: "d7", Source: "guard", Kind: "dns_denied", Reason: "dns_query_invalid", Name: "named.example.org"},
+	}
+	got := renderNetRun(networkreport.View{ID: netTestRun}, inspection)
+	want := "\n⚠ Traffic to 2 remote addresses was blocked\n" +
+		"  unapproved.example.org · DNS\n" +
+		"  named.example.org · DNS — dns_query_invalid\n" +
+		"To see why: coop net blocked unapproved.example.org --run e644f07a\n" +
+		"\n⚠ Coop's own gateway refused 5 requests from inside the box\n" +
+		"  TLS — a connection made straight to the gateway's own port ×3\n" +
+		"  DNS — a message the gateway could not read as a query ×2\n" +
+		"  no destination was ever recorded, so no rule would have allowed these\n"
+	if !strings.Contains(got, want) {
+		t.Fatalf("local refusals:\n%s\nwant to contain:\n%s", got, want)
+	}
+	if strings.Contains(got, "unknown destination") {
+		t.Errorf("a refusal with no destination was still reported as one:\n%s", got)
+	}
+	// A destination the evidence WITHHELD is still a destination: only the id
+	// survives projection, and that is what keeps a redacted run's traffic in the
+	// traffic summary.
+	inspection.Observed.Denials = append(inspection.Observed.Denials,
+		networkview.Denial{ID: "d8", Source: "guard", Kind: "tls_denied", Reason: "tls_direct_dial_refused", DestinationID: "abc123", Port: &port})
+	got = renderNetRun(networkreport.View{ID: netTestRun}, inspection)
+	if !strings.Contains(got, "⚠ Traffic to 3 remote addresses was blocked\n") ||
+		!strings.Contains(got, "⚠ Coop's own gateway refused 5 requests from inside the box\n") {
+		t.Errorf("a withheld destination was swallowed as a local refusal:\n%s", got)
+	}
+	// Alone, they are the only exception — and still not "traffic". A refused raw
+	// packet alongside is a kernel tally with no destination either, and keeps its
+	// own sentence rather than joining them.
+	inspection.Observed.Denials = inspection.Observed.Denials[:5]
+	inspection.Observed.Counters.DeniedPackets = networkview.Value(2)
+	got = renderNetRun(networkreport.View{ID: netTestRun}, inspection)
+	if strings.Contains(got, "Traffic to") || strings.Contains(got, "coop net blocked") {
+		t.Errorf("refusals at Coop's own listeners read as blocked traffic:\n%s", got)
+	}
+	for _, want := range []string{
+		"⚠ 2 raw packets were blocked with no remote address recorded\n",
+		"⚠ Coop's own gateway refused 5 requests from inside the box\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	// One of each reads in the singular, without a repeat count.
+	inspection.Observed.Denials = inspection.Observed.Denials[:1]
+	inspection.Observed.Counters.DeniedPackets = networkview.Value(0)
+	got = renderNetRun(networkreport.View{ID: netTestRun}, inspection)
+	if !strings.Contains(got, "⚠ Coop's own gateway refused 1 request from inside the box\n") ||
+		!strings.Contains(got, "  DNS — a message the gateway could not read as a query\n") ||
+		strings.Contains(got, "×1") {
+		t.Errorf("a single refusal did not read in the singular:\n%s", got)
+	}
+}
+
 // Acceptance: the interactive box's inline result and standalone inspect are
 // ONE projection — the same aggregate, the same destinations and the same
 // exception body from the same snapshot. Only the heading and the destination

@@ -86,13 +86,29 @@ lease/Envoy path.
 Facts the code cannot say twice, all still true:
 
 - The upstream PORT is the kernel's, never the client's. `policy.Domain(name, port)` runs in the
-  guard (`guard.go:173`), again in the controller before any element is installed
-  (`controller.go:198`), and leases are `ipv4_addr . inet_service` pairs (`ip daddr . tcp dport
+  guard (`guard.go:252`), again in the controller before any element is installed
+  (`controller.go:222`), and leases are `ipv4_addr . inet_service` pairs (`ip daddr . tcp dport
   @leases4 accept`), so one address on two granted ports is two leases. A connection whose original
   destination IS the listener was dialed straight at the guard — nothing redirected it, so it
-  declares no port — and is refused as `tls_direct_dial_refused` and counted (`guard.go:144`). That
+  declares no port — and is refused as `tls_direct_dial_refused` and counted (`guard.go:188`). That
   is spec §5's "a direct dial cannot select an upstream port", and it is why the guard's own egress
   rule is port-agnostic only for ESTABLISHED flows.
+
+- **`tls_direct_dial_refused` and `dns_query_invalid` carry no destination.** The box shares the
+  gateway's namespace, so anything in it can dial `127.0.0.1:15443`/`:15353` directly; the guard
+  refuses the first (no redirect ⇒ no declared port) and cannot read the second as a query. A direct
+  dial never declared a destination and an unreadable query never named one — which is NOT the same
+  as "nothing was trying to leave": a client whose DNS is merely malformed (a missing TCP length
+  prefix, an oversized datagram, a multi-question query — `guard.go:459`, `:491`, `resolver.go:398`)
+  was trying to resolve a real name. Investigated
+  2026-09-19/20 (task `…-find-why-a-filtered-run-s-teardown-can-record-di`): a run's 4+4 burst was
+  read as a teardown artifact, but the evidence timeline put it 49 s into a 78 s run, 0.6 s before a
+  SUCCESSFUL connection to the same host — and a live repro (a box dialing both listeners) produced
+  exactly those two reasons mid-run. So every surface now separates them from blocked traffic
+  (`networkreport.LocalRefusal`, used by `net inspect`, `net watch`, the run listing, the box
+  summary and the loop's iteration block) instead of folding them into "remote addresses". What the
+  evidence still does NOT say is which client dialed: these events carry no peer
+  (`collector.go` sets one only when a name was known).
 
 - The pinned Envoy 1.39.1 `tls_inspector` caps ClientHello at 16 KiB, so both inspection layers use
   the same bound (`hello.go:18`, `envoy.go:37`).
@@ -197,6 +213,8 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-09-20 — recorded what `tls_direct_dial_refused`/`dns_query_invalid` actually mean (a client
+  talking to Coop's own listeners, not egress) and that the report no longer counts them as traffic.
 - 2026-09-20 — two more route kinds: `download` (public bytes, no credential, exact request lines
   including the query) and `mcp-sse` (GET the stream's path, POST anywhere on that one host).
 - 2026-09-20 — `coop-net broker`: the same broker, in a helper beside an OPEN box, with a direct

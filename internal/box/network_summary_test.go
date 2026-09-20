@@ -171,3 +171,41 @@ func TestRunReportCountsRawRefusalsAsHittingTheBoundary(t *testing.T) {
 		t.Error("a measured zero was reported as a refusal")
 	}
 }
+
+// A refusal at Coop's OWN listeners is counted apart from the destinations a run
+// could not reach: it names none. The summary still has something to say — an
+// iteration that only hit the gateway is not quiet — and the destination it does
+// list keeps the name a lookup command needs.
+func TestRunReportKeepsCoopsOwnGatewayOutOfTheDestinations(t *testing.T) {
+	port := 15443
+	snapshot := networkview.Snapshot{Denials: []networkview.Denial{
+		{ID: "d1", Kind: "tls_denied", Reason: "tls_direct_dial_refused", Port: &port},
+		{ID: "d2", Kind: "tls_denied", Reason: "tls_direct_dial_refused", Port: &port},
+		{ID: "d3", Kind: "dns_denied", Reason: "dns_query_invalid"},
+		{ID: "d4", Kind: "dns_denied", Reason: "unapproved_name", Name: "blocked.example"},
+	}}
+	report := networkRunReport("run1", snapshot)
+	if report.Gateway != 3 {
+		t.Errorf("counted %d refusals at Coop's own gateway, want 3", report.Gateway)
+	}
+	if len(report.Denials) != 1 || report.Denials[0].Destination != "blocked.example" || report.Denials[0].Name != "blocked.example" {
+		t.Fatalf("destinations = %+v, want only the named one", report.Denials)
+	}
+	for _, denial := range report.Denials {
+		if denial.Destination == "name withheld" {
+			t.Errorf("a refusal that named nothing was reported as a destination: %+v", denial)
+		}
+	}
+	// Only the gateway's own refusals: still not quiet, still no destination.
+	only := networkRunReport("run1", networkview.Snapshot{Denials: snapshot.Denials[:3]})
+	if only.Quiet() || len(only.Denials) != 0 || only.Gateway != 3 {
+		t.Errorf("gateway-only report = %+v, want 3 gateway refusals and no destinations", only)
+	}
+	// A destination the evidence withheld is still a destination, and carries no
+	// name for a lookup to use.
+	withheld := networkRunReport("run1", networkview.Snapshot{Denials: []networkview.Denial{
+		{ID: "d5", Kind: "tls_denied", Reason: "tls_direct_dial_refused", DestinationID: "abc123", Port: &port}}})
+	if withheld.Gateway != 0 || len(withheld.Denials) != 1 || withheld.Denials[0].Name != "" {
+		t.Errorf("withheld destination = %+v, want one unnamed destination", withheld)
+	}
+}

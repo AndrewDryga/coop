@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A filtered run no longer reports Coop's own gateway as blocked internet traffic. A program in the
+  box can dial the gateway's own ports directly — Coop refuses that, and refuses a DNS message it
+  cannot read as a query — but neither one names a destination, so filing them under "traffic to a
+  remote address was blocked", beside a lookup command that cannot run, buried the rows that really
+  are about the internet. They now read as what they are, under their own line, in every place a run
+  is reported: `coop net inspect`, `coop net watch`, the run listing, and a loop's iteration block.
+
 - Your project's own box image stops piling up too. A filtered run builds your `.agent/Dockerfile`
   on Coop's client image and tags the result by WHICH client image that was, so every Coop upgrade
   (and every `coop net setup`) left the previous one behind, tagged. That family is now reclaimed by

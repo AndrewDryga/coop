@@ -499,6 +499,9 @@ func runExceptions(p ui.Palette, view View, inspection networkstate.Inspection) 
 	if blocked := blockedWarning(p, view, inspection.Observed); blocked != nil {
 		out = append(out, *blocked)
 	}
+	if gateway := gatewayRefusalWarning(inspection.Observed); gateway != nil {
+		out = append(out, *gateway)
+	}
 	if alerts := alertWarning(inspection.Observed); alerts != nil {
 		out = append(out, *alerts)
 	}
@@ -599,8 +602,29 @@ func refusalReasonText(reason string) string {
 	return reason
 }
 
+// LocalRefusal reports whether a denial is the gateway refusing something
+// addressed to IT. A connection dialed straight at the guard declared no
+// destination (nothing redirected it), and a frame the DNS listener could not
+// read as a query carried no name either — so neither can be attributed to
+// anywhere, and counting them as "traffic to a remote address" would teach a
+// reader to skim the rows that ARE about the internet. It is not a claim about
+// intent: a client whose DNS is merely malformed WAS trying to resolve a name.
+func LocalRefusal(denial networkview.Denial) bool {
+	if denial.Name != "" || denial.Peer != "" || denial.DestinationID != "" {
+		return false
+	}
+	return denial.Kind == "tls_denied" && denial.Reason == "tls_direct_dial_refused" ||
+		denial.Kind == "dns_denied" && denial.Reason == "dns_query_invalid"
+}
+
 func blockedWarning(p ui.Palette, view View, observed networkview.Snapshot) *warning {
-	groups := RefusalGroups(observed.Denials)
+	var remote []networkview.Denial
+	for _, denial := range observed.Denials {
+		if !LocalRefusal(denial) {
+			remote = append(remote, denial)
+		}
+	}
+	groups := RefusalGroups(remote)
 	packets := uint64(0)
 	if observed.Counters != nil && observed.Counters.DeniedPackets != nil {
 		packets = uint64(*observed.Counters.DeniedPackets)
@@ -612,7 +636,7 @@ func blockedWarning(p ui.Palette, view View, observed networkview.Snapshot) *war
 	// rows beneath say how. Raw packets are a kernel tally, never attributed:
 	// the filter drops a refused datagram without recording where it was going.
 	var destinations []string
-	for _, denial := range observed.Denials {
+	for _, denial := range remote {
 		destinations = appendUnique(destinations, Destination(denial.Name, denial.Peer, denial.DestinationID))
 	}
 	// "Traffic" is the subject, so the verb never changes with the count.
@@ -621,11 +645,7 @@ func blockedWarning(p ui.Palette, view View, observed networkview.Snapshot) *war
 		out.headline = Plural(packets, "raw packet") + " " + was(int(min(packets, 2))) + " blocked with no remote address recorded"
 	}
 	for _, group := range groups {
-		row := group.Label
-		if group.Count > 1 {
-			row += " ×" + strconv.Itoa(group.Count)
-		}
-		out.rows = append(out.rows, row)
+		out.rows = append(out.rows, times(group.Label, group.Count))
 	}
 	if len(groups) != 0 && packets != 0 {
 		out.rows = append(out.rows, Plural(packets, "raw packet")+" "+was(int(min(packets, 2)))+" blocked with no remote address recorded")
@@ -649,6 +669,45 @@ func blockedWarning(p ui.Palette, view View, observed networkview.Snapshot) *war
 		out.footer = append(out.footer, p.Dim("To allow it: add the rule shown by `coop net blocked`, then run `coop approve` on the host"))
 	}
 	return out
+}
+
+// gatewayRefusalWarning is the local half of blockedWarning: what a client in the
+// box sent to Coop's own listeners and the gateway would not answer. It names no
+// destination because there was none, and offers no rule to add for the same
+// reason — an approval could not have allowed it.
+func gatewayRefusalWarning(observed networkview.Snapshot) *warning {
+	total, dialed, unreadable := 0, 0, 0
+	for _, denial := range observed.Denials {
+		if !LocalRefusal(denial) {
+			continue
+		}
+		total++
+		if denial.Kind == "tls_denied" {
+			dialed++
+			continue
+		}
+		unreadable++ // dns_denied: LocalRefusal admits no other kind
+	}
+	if total == 0 {
+		return nil
+	}
+	out := &warning{headline: "Coop's own gateway refused " + ui.Count(total, "request") + " from inside the box"}
+	if dialed != 0 {
+		out.rows = append(out.rows, times("TLS — a connection made straight to the gateway's own port", dialed))
+	}
+	if unreadable != 0 {
+		out.rows = append(out.rows, times("DNS — a message the gateway could not read as a query", unreadable))
+	}
+	out.rows = append(out.rows, "no destination was ever recorded, so no rule would have allowed these")
+	return out
+}
+
+// times is one row with its repeat count, the way a refusal row carries it.
+func times(row string, count int) string {
+	if count > 1 {
+		return row + " ×" + strconv.Itoa(count)
+	}
+	return row
 }
 
 func alertWarning(observed networkview.Snapshot) *warning {

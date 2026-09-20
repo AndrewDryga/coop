@@ -669,7 +669,15 @@ func netRunOutcome(inspection networkstate.Inspection) string {
 			allowed = "no external connections"
 		}
 	}
-	if blocked := len(observed.Denials); blocked != 0 {
+	blocked, gateway := 0, 0
+	for _, denial := range observed.Denials {
+		if networkreport.LocalRefusal(denial) {
+			gateway++
+			continue
+		}
+		blocked++
+	}
+	if blocked != 0 {
 		if observed.Loss.DetailTruncated {
 			return allowed + " · at least " + ui.Count(blocked, "blocked attempt")
 		}
@@ -677,6 +685,10 @@ func netRunOutcome(inspection networkstate.Inspection) string {
 	}
 	if counters := observed.Counters; counters != nil && counters.DeniedPackets != nil && *counters.DeniedPackets != 0 {
 		return allowed + " · " + networkreport.Plural(uint64(*counters.DeniedPackets), "raw packet") + " blocked"
+	}
+	if gateway != 0 {
+		// Nowhere to go and nothing to allow: say what it was, not "blocked".
+		return allowed + " · " + ui.Count(gateway, "request") + " refused at the gateway"
 	}
 	return allowed
 }
@@ -1255,12 +1267,24 @@ func netWatchDelta(previous, current networkstate.Inspection, id string) []strin
 		}
 	}
 	var blocked []string
-	for _, group := range networkreport.RefusalGroups(fresh.Denials) {
+	local := 0
+	remote := fresh.Denials[:0:0]
+	for _, denial := range fresh.Denials {
+		if networkreport.LocalRefusal(denial) {
+			local++
+			continue
+		}
+		remote = append(remote, denial)
+	}
+	for _, group := range networkreport.RefusalGroups(remote) {
 		line := "Blocked " + group.Label
 		if group.Count > 1 {
 			line += " · " + ui.Count(group.Count, "attempt")
 		}
 		blocked = append(blocked, line)
+	}
+	if local != 0 {
+		blocked = append(blocked, "Refused at Coop's own gateway · "+ui.Count(local, "request"))
 	}
 	lines = append(lines, netWatchBound(blocked, "More events recorded", id)...)
 	for _, alert := range previous.Observed.Alerts {

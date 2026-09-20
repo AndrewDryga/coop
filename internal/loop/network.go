@@ -146,6 +146,12 @@ func printNetworkIteration(r box.NetworkReport, stage string) {
 		ui.Alert(fmt.Sprintf("%s could not reach %s", stage, ui.Count(total, "remote address", "remote addresses")),
 			strings.Join(rows, "\n"), explainRow(r)...)
 	}
+	if r.Gateway > 0 {
+		// Not somewhere the box could not reach: something in it addressed Coop's own
+		// gateway. `coop net inspect` says the same, so the two never disagree.
+		ui.Alert(fmt.Sprintf("Coop's own gateway refused %s from inside the box", ui.Count(r.Gateway, "request")),
+			"No destination was recorded, so no rule would have allowed these.")
+	}
 	if r.RawPackets > 0 {
 		// No destination was recorded for these, so the block says so instead of inventing one —
 		// but the attempt did meet the boundary, and that absence is itself evidence.
@@ -164,10 +170,17 @@ func printNetworkIteration(r box.NetworkReport, stage string) {
 // exact run that recorded it. It is omitted when no destination was retained: a lookup with
 // nothing to look up is worse than no pointer at all.
 func explainRow(r box.NetworkReport) [][2]string {
-	if len(r.Denials) == 0 || r.RunID == "" {
+	if r.RunID == "" {
 		return nil
 	}
-	return [][2]string{{"Explain:", "coop net blocked " + r.Denials[0].Destination + " --run " + r.RunID}}
+	for _, denial := range r.Denials {
+		// The lookup takes a NAME. A refusal whose destination the evidence withheld —
+		// or never had — would make a command that cannot run.
+		if denial.Name != "" {
+			return [][2]string{{"Explain:", "coop net blocked " + denial.Name + " --run " + r.RunID}}
+		}
+	}
+	return nil
 }
 
 // denialRow is one refused destination as a person reads it: where the box tried to go, where the
