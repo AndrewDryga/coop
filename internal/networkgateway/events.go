@@ -23,8 +23,15 @@ type GuardEvent struct {
 	// Port is the connection's original destination port as the kernel recorded
 	// it: the upstream port of a registered flow, and the port a refused attempt
 	// was made on.
-	Port   int
-	Reason string
+	Port int
+	// SourcePort is the client's own port on the loopback side of a refusal the
+	// guard made against something addressed to IT — a connection dialed straight
+	// at a listener, a DNS message it could not read. Those events name no
+	// destination, so this is the only handle a human has on WHICH client did it;
+	// paired with the run's socket inventory it names the process. It is never a
+	// destination and must never be rendered as one.
+	SourcePort int
+	Reason     string
 }
 
 type GuardTotals struct {

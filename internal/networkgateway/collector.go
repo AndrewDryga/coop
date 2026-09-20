@@ -265,6 +265,12 @@ func (c *Collector) ingest(guards []GuardEvent, gt GuardTotals, proxies []EnvoyE
 			if event.Name != "" {
 				row.DestinationID = c.opaque("destination", event.Name)
 			}
+			if event.SourcePort != 0 {
+				// Only the gateway's own refusals carry one, and only they need it:
+				// a refusal that names where it was going is found by that name.
+				source := event.SourcePort
+				row.SourcePort = &source
+			}
 			if event.Kind == "tls_denied" && event.Port != 0 {
 				// The port a refused attempt was made on is the kernel's redirect
 				// record, so it is evidence like the name — including when it is

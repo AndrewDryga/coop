@@ -200,7 +200,8 @@ func (g *Guard) forward(ctx context.Context, client net.Conn, dataSocket string)
 	defer cancel()
 	destination, err := g.destination(client)
 	if err != nil {
-		g.events.emit(GuardEvent{Kind: "tls_denied", Port: int(destination.Port()), Reason: safeReason(err)})
+		g.events.emit(GuardEvent{Kind: "tls_denied", Port: int(destination.Port()),
+			SourcePort: clientPort(client), Reason: safeReason(err)})
 		return
 	}
 	port := int(destination.Port())
@@ -448,6 +449,28 @@ func pipeBoth(a, b net.Conn) {
 	workers.Wait()
 }
 
+// clientPort is the port the client sent FROM, or 0 when the connection cannot
+// say. Only the port: the address is this namespace's loopback, and naming it
+// again would read like a destination.
+func clientPort(conn net.Conn) int {
+	if conn == nil {
+		return 0
+	}
+	return sourcePort(conn.RemoteAddr())
+}
+
+// sourcePort is clientPort for an address the listener already has — a datagram's
+// sender, which no connection holds.
+func sourcePort(from net.Addr) int {
+	switch remote := from.(type) {
+	case *net.TCPAddr:
+		return remote.Port
+	case *net.UDPAddr:
+		return remote.Port
+	}
+	return 0
+}
+
 func (g *Guard) dnsTCP(ctx context.Context, conn net.Conn) {
 	for range 32 {
 		if err := conn.SetDeadline(time.Now().Add(DNSQueryTimeout)); err != nil {
@@ -459,14 +482,14 @@ func (g *Guard) dnsTCP(ctx context.Context, conn net.Conn) {
 		}
 		length := int(binary.BigEndian.Uint16(prefix[:]))
 		if length < 12 || length > MaxDNSMessage {
-			g.events.emit(GuardEvent{Kind: "dns_denied", Reason: "dns_query_invalid"})
+			g.events.emit(GuardEvent{Kind: "dns_denied", Reason: "dns_query_invalid", SourcePort: clientPort(conn)})
 			return
 		}
 		query := make([]byte, length)
 		if _, err := io.ReadFull(conn, query); err != nil {
 			return
 		}
-		reply := g.dnsAnswer(ctx, query)
+		reply := g.dnsAnswer(ctx, query, clientPort(conn))
 		if len(reply) == 0 {
 			return
 		}
@@ -490,7 +513,8 @@ func (g *Guard) dnsUDP(ctx context.Context, conn net.PacketConn) error {
 			return Failure("gateway_listener_stopped")
 		}
 		if n > MaxDNSMessage {
-			g.events.emit(GuardEvent{Kind: "dns_denied", Reason: "dns_query_invalid"})
+			// A datagram carries its sender, so the same handle holds for UDP.
+			g.events.emit(GuardEvent{Kind: "dns_denied", Reason: "dns_query_invalid", SourcePort: sourcePort(peer)})
 			continue
 		}
 		select {
@@ -501,7 +525,7 @@ func (g *Guard) dnsUDP(ctx context.Context, conn net.PacketConn) error {
 		}
 		workers.Go(func() {
 			defer func() { <-slots }()
-			reply := g.dnsAnswer(ctx, buffer[:n])
+			reply := g.dnsAnswer(ctx, buffer[:n], sourcePort(peer))
 			if len(reply) > 0 {
 				_, _ = conn.WriteTo(reply, peer)
 			}
@@ -509,7 +533,7 @@ func (g *Guard) dnsUDP(ctx context.Context, conn net.PacketConn) error {
 	}
 }
 
-func (g *Guard) dnsAnswer(ctx context.Context, query []byte) []byte {
+func (g *Guard) dnsAnswer(ctx context.Context, query []byte, source int) []byte {
 	reply, reason := g.resolver.Answer(ctx, query)
 	if reason != "" {
 		// Only normalized question metadata is retained, never raw DNS bytes. A
@@ -526,7 +550,15 @@ func (g *Guard) dnsAnswer(ctx context.Context, query []byte) []byte {
 		if reason == "unapproved_name" || reason == "dns_type_unsupported" || reason == "dns_name_invalid" || reason == "dns_query_invalid" {
 			kind = "dns_denied"
 		}
-		g.events.emit(GuardEvent{Kind: kind, Name: name, Reason: reason})
+		event := GuardEvent{Kind: kind, Name: name, Reason: reason}
+		if reason == "dns_query_invalid" {
+			// This is where MOST unreadable queries land: the framing was fine and the
+			// content was not, so there is no name — and the sender's port is the only
+			// handle on which client sent it. A refusal that DID name where it was
+			// going is found by that name and carries no source.
+			event.SourcePort = source
+		}
+		g.events.emit(event)
 	}
 	return reply
 }

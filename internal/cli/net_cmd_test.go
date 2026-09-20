@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -452,12 +453,12 @@ func TestInspectRefusalsCoalesceAndKeepTheExplainAction(t *testing.T) {
 // as a query. Filing those under "traffic to a remote address was blocked" buries
 // the rows that ARE about the internet behind a destination nobody can act on.
 func TestInspectSeparatesRefusalsAtCoopsOwnListeners(t *testing.T) {
-	port := 15443
+	port, from, alsoFrom := 15443, 51234, 51235
 	inspection := netTestClean()
 	inspection.Observed.Denials = []networkview.Denial{
-		{ID: "d1", Source: "guard", Kind: "dns_denied", Reason: "dns_query_invalid"},
-		{ID: "d2", Source: "guard", Kind: "dns_denied", Reason: "dns_query_invalid"},
-		{ID: "d3", Source: "guard", Kind: "tls_denied", Reason: "tls_direct_dial_refused", Port: &port},
+		{ID: "d1", Source: "guard", Kind: "dns_denied", Reason: "dns_query_invalid", SourcePort: &from},
+		{ID: "d2", Source: "guard", Kind: "dns_denied", Reason: "dns_query_invalid", SourcePort: &from},
+		{ID: "d3", Source: "guard", Kind: "tls_denied", Reason: "tls_direct_dial_refused", Port: &port, SourcePort: &alsoFrom},
 		{ID: "d4", Source: "guard", Kind: "tls_denied", Reason: "tls_direct_dial_refused", Port: &port},
 		{ID: "d5", Source: "guard", Kind: "tls_denied", Reason: "tls_direct_dial_refused", Port: &port},
 		{ID: "d6", Source: "guard", Kind: "dns_denied", Reason: "unapproved_name", Name: "unapproved.example.org"},
@@ -473,6 +474,10 @@ func TestInspectSeparatesRefusalsAtCoopsOwnListeners(t *testing.T) {
 		"\n⚠ Coop's own gateway refused 5 requests from inside the box\n" +
 		"  TLS — a connection made straight to the gateway's own port ×3\n" +
 		"  DNS — a message the gateway could not read as a query ×2\n" +
+		// The only handle on which client did it — and it is a SOURCE, never listed
+		// among the destinations above. It comes before the line that closes the
+		// section, because it is the one thing a reader can act on.
+		"  from ports 51234, 51235 inside the box\n" +
 		"  no destination was ever recorded, so no rule would have allowed these\n"
 	if !strings.Contains(got, want) {
 		t.Fatalf("local refusals:\n%s\nwant to contain:\n%s", got, want)
@@ -507,14 +512,26 @@ func TestInspectSeparatesRefusalsAtCoopsOwnListeners(t *testing.T) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
 	}
-	// One of each reads in the singular, without a repeat count.
+	// One of each reads in the singular, without a repeat count — one port included.
 	inspection.Observed.Denials = inspection.Observed.Denials[:1]
 	inspection.Observed.Counters.DeniedPackets = networkview.Value(0)
 	got = renderNetRun(networkreport.View{ID: netTestRun}, inspection)
 	if !strings.Contains(got, "⚠ Coop's own gateway refused 1 request from inside the box\n") ||
 		!strings.Contains(got, "  DNS — a message the gateway could not read as a query\n") ||
-		strings.Contains(got, "×1") {
+		!strings.Contains(got, "  from port 51234 inside the box\n") || strings.Contains(got, "×1") {
 		t.Errorf("a single refusal did not read in the singular:\n%s", got)
+	}
+	// More ports than one row should carry: the rest are a count, not a wall.
+	var many []networkview.Denial
+	for i := range networkreport.MaxRefusalSources + 3 {
+		source := 40000 + i
+		many = append(many, networkview.Denial{ID: fmt.Sprintf("m%d", i), Source: "guard", Kind: "tls_denied",
+			Reason: "tls_direct_dial_refused", Port: &port, SourcePort: &source})
+	}
+	inspection.Observed.Denials = many
+	got = renderNetRun(networkreport.View{ID: netTestRun}, inspection)
+	if !strings.Contains(got, "  from ports 40000, 40001, 40002, 40003, 40004, 40005, and 3 more inside the box\n") {
+		t.Errorf("a burst of sources did not bound its row:\n%s", got)
 	}
 }
 

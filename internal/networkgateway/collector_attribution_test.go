@@ -379,3 +379,35 @@ func TestCollectorMaintenanceRemnantNeedsItsOwnBoundIdentity(t *testing.T) {
 		})
 	}
 }
+
+// A refusal at the gateway's own listener reaches the evidence with the client's
+// own port and NOTHING that reads as a destination: the report has to be able to
+// tell "who, inside the box" from "where it was going", which it never had.
+func TestCollectorCarriesTheSourceOfItsOwnRefusals(t *testing.T) {
+	c, now := collectorFixture(t)
+	c.ingest([]GuardEvent{
+		{Sequence: 1, BootAt: *now, At: time.Unix(100, 0), Kind: "tls_denied", Reason: "tls_direct_dial_refused", Port: 15443, SourcePort: 51234},
+		{Sequence: 2, BootAt: *now, At: time.Unix(100, 0), Kind: "dns_denied", Reason: "dns_query_invalid", SourcePort: 51235},
+		// An ordinary refusal names where it was going and carries no source.
+		{Sequence: 3, BootAt: *now, At: time.Unix(100, 0), Kind: "tls_denied", Reason: "unapproved_name", Name: "blocked.example", Port: 443},
+	}, GuardTotals{Sequence: 3}, nil, EnvoyTotals{})
+	publishFixture(c, *now, nil)
+	denials := c.snapshot.Denials
+	if len(denials) != 3 {
+		t.Fatalf("recorded %d refusals, want 3", len(denials))
+	}
+	for i, want := range []int{51234, 51235} {
+		if denials[i].SourcePort == nil || *denials[i].SourcePort != want {
+			t.Errorf("refusal %d source port = %v, want %d", i, denials[i].SourcePort, want)
+		}
+		if denials[i].Name != "" || denials[i].DestinationID != "" {
+			t.Errorf("a refusal at Coop's own listener named a destination: %+v", denials[i])
+		}
+	}
+	if denials[2].SourcePort != nil {
+		t.Errorf("a refusal that names its destination also carried a source: %+v", denials[2])
+	}
+	if denials[2].DestinationID == "" {
+		t.Error("an ordinary refusal lost its destination")
+	}
+}

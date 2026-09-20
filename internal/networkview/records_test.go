@@ -54,11 +54,17 @@ func TestPartialMetricsRemainUnknownAndBadRatesCannotBeSealed(t *testing.T) {
 
 func TestReceiptProjectionDoesNotLeakPrivateEndpointsCandidatesOrDigest(t *testing.T) {
 	privateName := "secret-project.internal.example.com"
+	localPort := 51234
 	privatePeer := "10.42.19.12:443"
 	rule := egress.Rule{To: egress.Destination{Domain: privateName}, Protocol: "tls", Ports: []int{443}}
 	private := Receipt{Version: Version, ID: "receipt", StartedAt: time.Now(), Finality: "final", Completeness: "partial", DigestScope: "owner-local",
 		Snapshot: Snapshot{Version: Version, RunID: "run", Projection: "owner-local", Connections: []Connection{{ID: "flow", Name: privateName, Service: "web", Peer: privatePeer, RuleID: "private-rule"}},
-			Denials:  []Denial{{ID: "event", Name: privateName, Service: "worker", Candidate: &Candidate{ID: "candidate", Rule: rule}}},
+			Denials: []Denial{
+				{ID: "event", Name: privateName, Service: "worker", Candidate: &Candidate{ID: "candidate", Rule: rule}},
+				// A refusal at the gateway's own listener: no destination to withhold, and
+				// the client's own port is what ties it to the process that made it.
+				{ID: "local", Kind: "tls_denied", Reason: "tls_direct_dial_refused", SourcePort: &localPort},
+			},
 			Counters: &Counters{SentBytes: Value(1<<53 + 1)}, Loss: Loss{Unknown: true}}}
 	if err := private.SealDigest(); err != nil {
 		t.Fatal(err)
@@ -85,6 +91,14 @@ func TestReceiptProjectionDoesNotLeakPrivateEndpointsCandidatesOrDigest(t *testi
 	}
 	if private.Snapshot.Connections[0].Name != privateName || private.Snapshot.Denials[0].Candidate == nil {
 		t.Fatal("projection mutated owner-local receipt")
+	}
+	// Withholding destinations does not withhold a source INSIDE the box: it names
+	// no endpoint, and it is the only handle on which client made the attempt.
+	if source := redacted.Snapshot.Denials[1].SourcePort; source == nil || *source != 51234 {
+		t.Fatalf("redaction dropped the refusal's source port: %v", source)
+	}
+	if !strings.Contains(string(data), `"source_port":51234`) {
+		t.Fatalf("the projected receipt does not carry the source port: %s", data)
 	}
 	exported, err := private.Project(true)
 	if err != nil {

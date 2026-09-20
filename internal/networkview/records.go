@@ -163,20 +163,25 @@ type Candidate struct {
 }
 
 type Denial struct {
-	ID            string     `json:"id"`
-	Source        string     `json:"source"`
-	Sequence      Count      `json:"source_sequence"`
-	Basis         string     `json:"basis"`
-	DestinationID string     `json:"destination_id,omitempty"`
-	At            time.Time  `json:"at"`
-	Kind          string     `json:"kind"`
-	Reason        string     `json:"reason"`
-	Name          string     `json:"name,omitempty"`
-	Service       string     `json:"service,omitempty"`
-	Peer          string     `json:"peer,omitempty"`
-	Port          *int       `json:"port,omitempty"`
-	Candidate     *Candidate `json:"candidate,omitempty"`
-	Withheld      bool       `json:"destination_withheld,omitempty"`
+	ID            string    `json:"id"`
+	Source        string    `json:"source"`
+	Sequence      Count     `json:"source_sequence"`
+	Basis         string    `json:"basis"`
+	DestinationID string    `json:"destination_id,omitempty"`
+	At            time.Time `json:"at"`
+	Kind          string    `json:"kind"`
+	Reason        string    `json:"reason"`
+	Name          string    `json:"name,omitempty"`
+	Service       string    `json:"service,omitempty"`
+	Peer          string    `json:"peer,omitempty"`
+	Port          *int      `json:"port,omitempty"`
+	// SourcePort is the client's own port, kept only for a refusal the gateway
+	// made against something addressed to IT: those name no destination, so this
+	// is what ties one to the process that made it. It is not a destination and
+	// is never rendered as one.
+	SourcePort *int       `json:"source_port,omitempty"`
+	Candidate  *Candidate `json:"candidate,omitempty"`
+	Withheld   bool       `json:"destination_withheld,omitempty"`
 }
 
 type AlertFacts struct {
@@ -300,7 +305,10 @@ func (s Snapshot) Project(exportDestinations bool) Snapshot {
 	}
 	for _, d := range s.Denials {
 		row := Denial{ID: d.ID, Source: d.Source, Sequence: d.Sequence, Basis: d.Basis, DestinationID: d.DestinationID,
-			At: d.At, Kind: d.Kind, Reason: d.Reason, Service: d.Service, Port: clone(d.Port), Withheld: !exportDestinations}
+			At: d.At, Kind: d.Kind, Reason: d.Reason, Service: d.Service, Port: clone(d.Port),
+			// The source port says which client in the box made the attempt, never where
+			// it was going, so withholding destinations does not withhold it.
+			SourcePort: clone(d.SourcePort), Withheld: !exportDestinations}
 		if exportDestinations {
 			row.Name = d.Name
 			row.Peer = d.Peer

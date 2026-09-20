@@ -259,6 +259,12 @@ func validateDiagnosticDenial(d networkview.Denial, fingerprint string) error {
 	if d.Sequence == 0 || d.At.IsZero() || d.DestinationID != "" && !lowerHex(d.DestinationID, 32) {
 		return bad
 	}
+	// The client's own port is a source inside the box, not a destination, so it is
+	// admitted for any kind — but it is still a port, and a retained one that is not
+	// is not evidence.
+	if d.SourcePort != nil && (*d.SourcePort < 1 || *d.SourcePort > 65535) {
+		return bad
+	}
 	switch d.Source {
 	case "guard":
 		if d.Basis != "observed" || !slices.Contains([]string{"tls_denied", "dns_denied", "admission_failed"}, d.Kind) {

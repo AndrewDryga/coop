@@ -106,9 +106,12 @@ Facts the code cannot say twice, all still true:
   SUCCESSFUL connection to the same host — and a live repro (a box dialing both listeners) produced
   exactly those two reasons mid-run. So every surface now separates them from blocked traffic
   (`networkreport.LocalRefusal`, used by `net inspect`, `net watch`, the run listing, the box
-  summary and the loop's iteration block) instead of folding them into "remote addresses". What the
-  evidence still does NOT say is which client dialed: these events carry no peer
-  (`collector.go` sets one only when a name was known).
+  summary and the loop's iteration block) instead of folding them into "remote addresses". Since 2026-09-20 the event
+  also carries the client's OWN port (`GuardEvent.SourcePort` → `networkview.Denial.SourcePort`,
+  rendered as "from port N inside the box"): it is the only handle on WHICH client, since there is
+  no destination to look up, and it survives a destinations-withheld projection because a port
+  inside the box names no endpoint. It is a SOURCE — never fed to `Destination()`, never counted as
+  traffic.
 
 - The pinned Envoy 1.39.1 `tls_inspector` caps ClientHello at 16 KiB, so both inspection layers use
   the same bound (`hello.go:18`, `envoy.go:37`).
@@ -213,6 +216,8 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-09-20 — those two refusals now carry the client's loopback source port, through the
+  collector and the projection, rendered as a source rather than a destination.
 - 2026-09-20 — recorded what `tls_direct_dial_refused`/`dns_query_invalid` actually mean (a client
   talking to Coop's own listeners, not egress) and that the report no longer counts them as traffic.
 - 2026-09-20 — two more route kinds: `download` (public bytes, no credential, exact request lines

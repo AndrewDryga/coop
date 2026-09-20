@@ -495,6 +495,11 @@ func TestGuardRefusesADirectDialToItsListener(t *testing.T) {
 		events[0].Reason != "tls_direct_dial_refused" || events[0].Port != int(listener) || events[0].Name != "" {
 		t.Fatalf("direct dial accounting: %#v %#v", totals, events)
 	}
+	// This refusal names no destination, so the client's own port is the only thing
+	// that ties it to the process that made it.
+	if want := client.LocalAddr().(*net.TCPAddr).Port; events[0].SourcePort != want {
+		t.Errorf("source port %d, want the dialing client's %d", events[0].SourcePort, want)
+	}
 	queries, _ := fixture.guard.resolver.MaintenanceCounts()
 	if queries != 0 {
 		t.Fatal("a direct dial reached the resolver")
@@ -570,7 +575,7 @@ func TestGuardServesBoundedDNSOverTCPAndUDP(t *testing.T) {
 	}
 	bomb := make([]byte, 12)
 	binary.BigEndian.PutUint16(bomb[4:6], 65535)
-	if reply := fixture.guard.dnsAnswer(context.Background(), bomb); reply != nil {
+	if reply := fixture.guard.dnsAnswer(context.Background(), bomb, 0); reply != nil {
 		t.Fatal("header bomb accepted by diagnostic parser")
 	}
 	events, totals := fixture.guard.events.Drain(MaxGuardEvents)
@@ -695,7 +700,7 @@ func TestGuardRefusedSingleLabelQueryIsNamedByItsLabel(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		reply := fixture.guard.dnsAnswer(context.Background(), wire)
+		reply := fixture.guard.dnsAnswer(context.Background(), wire, 0)
 		var answer dnsmessage.Message
 		if err := answer.Unpack(reply); err != nil || answer.RCode != dnsmessage.RCodeRefused {
 			t.Fatalf("%q was not refused: %v %#v", c.question, err, answer)
@@ -726,5 +731,85 @@ func TestLeaseContentionEndsWithTheAdmissionBudget(t *testing.T) {
 	})
 	if err != Failure("gateway_lease_capacity") || asks < 2 {
 		t.Fatalf("a busy controller ended with %v after %d asks", err, asks)
+	}
+}
+
+// A message the DNS listener cannot read as a query names nothing either, so it
+// carries the same handle: the port the client sent it from. Both transports,
+// because a datagram's sender is as findable as a connection's.
+func TestGuardRecordsWhoSentAnUnreadableQuery(t *testing.T) {
+	fixture := startGuardFixture(t)
+	tcp, err := net.Dial("tcp4", fixture.dns.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tcp.Close() })
+	_ = tcp.SetDeadline(time.Now().Add(wait.Deadline))
+	if err := writeAll(tcp, []byte{0, 5, 'h', 'e', 'l', 'l', 'o'}); err != nil { // a length no query can have
+		t.Fatal(err)
+	}
+	var discard [1]byte
+	_, _ = tcp.Read(discard[:]) // the guard closes after refusing; the read just waits for it
+	udp, err := net.Dial("udp4", fixture.udp.LocalAddr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = udp.Close() })
+	if err := writeAll(udp, make([]byte, MaxDNSMessage+1)); err != nil { // bigger than any query
+		t.Fatal(err)
+	}
+	// The framing extremes above are the rare case. The ORDINARY unreadable query is
+	// one whose length is fine and whose content is not — 40 bytes of something that
+	// is not DNS at all — and it takes the answer path, which must carry the sender
+	// too or the common case is the one with nothing to act on.
+	junkTCP, err := net.Dial("tcp4", fixture.dns.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = junkTCP.Close() })
+	_ = junkTCP.SetDeadline(time.Now().Add(wait.Deadline))
+	junk := []byte("GET /not-a-dns-query HTTP/1.1\r\nHost: x\r\n\r\n")
+	if err := writeAll(junkTCP, append([]byte{byte(len(junk) >> 8), byte(len(junk))}, junk...)); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = junkTCP.Read(discard[:])
+	junkUDP, err := net.Dial("udp4", fixture.udp.LocalAddr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = junkUDP.Close() })
+	if err := writeAll(junkUDP, junk); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(wait.Deadline)
+	var refusals []GuardEvent
+	for time.Now().Before(deadline) && len(refusals) < 4 {
+		events, _ := fixture.guard.events.Drain(MaxGuardEvents)
+		for _, event := range events {
+			if event.Kind == "dns_denied" && event.Reason == "dns_query_invalid" {
+				refusals = append(refusals, event)
+			}
+		}
+		if len(refusals) < 4 {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if len(refusals) != 4 {
+		t.Fatalf("recorded %d unreadable queries, want two per transport: %#v", len(refusals), refusals)
+	}
+	// Order follows the sends: bad framing on each transport, then unreadable content.
+	senders := []int{tcp.LocalAddr().(*net.TCPAddr).Port, udp.LocalAddr().(*net.UDPAddr).Port,
+		junkTCP.LocalAddr().(*net.TCPAddr).Port, junkUDP.LocalAddr().(*net.UDPAddr).Port}
+	names := []string{"framed tcp", "framed udp", "unreadable tcp", "unreadable udp"}
+	for i, want := range senders {
+		found := slices.ContainsFunc(refusals, func(e GuardEvent) bool { return e.SourcePort == want })
+		if !found {
+			t.Errorf("no refusal came from the %s sender's port %d: %#v", names[i], want, refusals)
+		}
+	}
+	for _, refusal := range refusals {
+		if refusal.Name != "" || refusal.Port != 0 {
+			t.Errorf("an unreadable query named a destination: %#v", refusal)
+		}
 	}
 }

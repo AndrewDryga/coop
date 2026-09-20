@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- When Coop's gateway refuses something a program in the box sent straight to it, `coop net inspect`
+  (and `coop net watch`, and `--json`) now says which port inside the box it came from. There is no
+  destination to look up for those, so that port — with `ss`/`lsof` in the box, or the run's socket
+  inventory — is how you find the program that did it. It is reported as a source, never as
+  somewhere the box tried to reach.
+
 - A filtered run no longer reports Coop's own gateway as blocked internet traffic. A program in the
   box can dial the gateway's own ports directly — Coop refuses that, and refuses a DNS message it
   cannot read as a query — but neither one names a destination, so filing them under "traffic to a

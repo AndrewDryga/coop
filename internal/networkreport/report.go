@@ -677,11 +677,15 @@ func blockedWarning(p ui.Palette, view View, observed networkview.Snapshot) *war
 // reason — an approval could not have allowed it.
 func gatewayRefusalWarning(observed networkview.Snapshot) *warning {
 	total, dialed, unreadable := 0, 0, 0
+	var sources []string
 	for _, denial := range observed.Denials {
 		if !LocalRefusal(denial) {
 			continue
 		}
 		total++
+		if denial.SourcePort != nil && *denial.SourcePort != 0 {
+			sources = appendUnique(sources, strconv.Itoa(*denial.SourcePort))
+		}
 		if denial.Kind == "tls_denied" {
 			dialed++
 			continue
@@ -698,9 +702,30 @@ func gatewayRefusalWarning(observed networkview.Snapshot) *warning {
 	if unreadable != 0 {
 		out.rows = append(out.rows, times("DNS — a message the gateway could not read as a query", unreadable))
 	}
+	// The only handle on WHICH client: the port it sent from, inside the box. It
+	// comes BEFORE the line about rules — it is the one thing a reader can act on,
+	// and that line closes the section. Bounded, because a client that retries can
+	// spend a great many ports.
+	if len(sources) != 0 {
+		shown := sources[:min(len(sources), MaxRefusalSources)]
+		noun := "port"
+		if len(sources) > 1 {
+			noun = "ports"
+		}
+		row := "from " + noun + " " + strings.Join(shown, ", ")
+		if len(sources) > len(shown) {
+			row += ", and " + strconv.Itoa(len(sources)-len(shown)) + " more"
+		}
+		out.rows = append(out.rows, row+" inside the box")
+	}
 	out.rows = append(out.rows, "no destination was ever recorded, so no rule would have allowed these")
 	return out
 }
+
+// MaxRefusalSources bounds the ports one row names. Six is the widest burst worth
+// reading; past that the count is the fact, and `--json` keeps every one.
+// MaxRefusalSources is exported so a test can build the overflow case from it.
+const MaxRefusalSources = 6
 
 // times is one row with its repeat count, the way a refusal row carries it.
 func times(row string, count int) string {
