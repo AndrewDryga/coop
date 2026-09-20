@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -163,6 +164,83 @@ func fileIsTerminal(file *os.File) bool {
 // becomes an error. Overridden in tests.
 var slowStartupAfter = 15 * time.Second
 
+// confirmExitBudget bounds how long, after the client returns, coop waits for the daemon to
+// settle the container into a terminal state. It is the difference between "the answer is
+// slow" (retry within this) and "there is no answer" (fail closed after it). confirmExitPollInterval
+// is how often the terminal truth is re-read inside that budget.
+var (
+	confirmExitBudget       = 5 * time.Second
+	confirmExitPollInterval = 100 * time.Millisecond
+)
+
+// terminalVerdict is what one inspect of a finished workload's container says: its exit is
+// confirmed, the state has not settled yet (retry), or it is a state no wait can fix (fail closed).
+type terminalVerdict int
+
+const (
+	terminalConfirmed terminalVerdict = iota
+	terminalTransient
+	terminalUnrecoverable
+)
+
+// classifyTerminal maps one inspect result to a verdict and names the condition it saw. A container
+// created and started by coop (never `--rm`; teardown is explicit) settles into exited/dead a beat
+// after the client returns, so a still-running, paused, unsettled or slow-to-answer probe is
+// transient and worth another read; a container that is GONE or has RESTARTED is a truth no retry
+// changes. The reason travels into the error so "unconfirmed" always says which of the seven it was.
+func classifyTerminal(value DockerContainer, present bool, err error) (terminalVerdict, string) {
+	switch {
+	case err != nil:
+		return terminalTransient, "the inspect did not answer (" + err.Error() + ")"
+	case !present:
+		return terminalUnrecoverable, "the container is gone — it was removed before its exit could be read"
+	case value.RestartCount != 0:
+		return terminalUnrecoverable, "the container restarted outside its epoch"
+	case value.State.Running:
+		return terminalTransient, "the container is still running"
+	case value.State.Paused:
+		return terminalTransient, "the container is paused"
+	case value.State.StartedAt.IsZero():
+		// The client's `start --attach` has already returned, and coop runs its boxes with
+		// `--restart no`; a zero start time now means the daemon never ran the workload, and
+		// nothing will set it later. The healthy race this retries is running→exited, which
+		// always has a start time — so a missing one is a truth, not a slow answer.
+		return terminalUnrecoverable, "the container never started"
+	case !slices.Contains([]string{"exited", "dead"}, value.State.Status):
+		return terminalTransient, "the container status is " + value.State.Status + ", not yet exited"
+	default:
+		return terminalConfirmed, ""
+	}
+}
+
+// confirmWorkloadExit polls a finished workload's container for a confirmed terminal state,
+// retrying a transient one on tick until deadline. It returns the last inspected container either
+// way; on failure the error names the condition that persisted AND joins the raw inspect error, so
+// a caller's errors.Is (context.Canceled, a docker error) still matches. Pure over its inputs —
+// inspect, tick and deadline are all injected — so every branch is exercised without a real daemon.
+func confirmWorkloadExit(inspect func() (DockerContainer, bool, error), tick <-chan time.Time, deadline <-chan struct{}) (DockerContainer, error) {
+	var lastErr error
+	unconfirmed := func(reason string) error {
+		return errors.Join(fmt.Errorf("Docker attachment ended without a confirmed workload outcome (%s); cleanup remains required", reason), lastErr)
+	}
+	for {
+		value, present, err := inspect()
+		lastErr = err
+		verdict, reason := classifyTerminal(value, present, err)
+		switch verdict {
+		case terminalConfirmed:
+			return value, nil
+		case terminalUnrecoverable:
+			return value, unconfirmed(reason)
+		}
+		select {
+		case <-deadline:
+			return value, unconfirmed(reason)
+		case <-tick:
+		}
+	}
+}
+
 // StartAttached attaches before the daemon starts the workload. onStarted is
 // called once, only after daemon evidence, including a fast-exited workload. A
 // client error/cancel is not proof of container death: caller owns exact teardown.
@@ -242,11 +320,28 @@ func (d *Docker) StartAttached(ctx context.Context, ref DockerRef, stdin io.Read
 			if ctx.Err() != nil {
 				return -1, errors.Join(ctx.Err(), outcome.err, startupErr)
 			}
-			probe, stop := context.WithTimeout(ctx, 2*time.Second)
-			value, present, err := d.InspectContainer(probe, ref)
-			stop()
-			if err != nil || !present || value.State.Running || value.State.Paused || !slices.Contains([]string{"exited", "dead"}, value.State.Status) || value.State.StartedAt.IsZero() || value.RestartCount != 0 {
-				return -1, errors.Join(outcome.err, startupErr, err, errors.New("Docker attachment ended without a confirmed workload outcome; cleanup remains required"))
+			// The client returned, so the workload has finished — but on a loaded host the
+			// daemon takes a moment to settle the container from running to exited, and a
+			// single probe that catches it mid-transition, times out, or loses a race is a
+			// slow answer, not a failed run. Poll the terminal truth within a bounded budget:
+			// retry a transient state, fail closed only on a definitive one (gone, restarted)
+			// or the deadline, and name which condition persisted so this is never a mystery.
+			confirm := time.NewTicker(confirmExitPollInterval)
+			budget, cancelBudget := context.WithTimeout(ctx, confirmExitBudget)
+			value, confirmErr := confirmWorkloadExit(
+				func() (DockerContainer, bool, error) {
+					probe, stop := context.WithTimeout(ctx, 2*time.Second)
+					defer stop()
+					return d.InspectContainer(probe, ref)
+				},
+				confirm.C, budget.Done(),
+			)
+			confirm.Stop()
+			cancelBudget()
+			if confirmErr != nil {
+				// A cancel that landed mid-confirmation reads as a run of unanswered inspects; join
+				// ctx.Err() so the caller still sees context.Canceled, not only "unconfirmed".
+				return -1, errors.Join(ctx.Err(), outcome.err, startupErr, confirmErr)
 			}
 			if ctx.Err() != nil {
 				return -1, errors.Join(ctx.Err(), outcome.err, startupErr)

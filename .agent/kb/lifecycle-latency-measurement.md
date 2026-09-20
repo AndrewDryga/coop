@@ -75,11 +75,15 @@ an approved project is unobtainable at acceptable cost — use the bare control 
   0/48 in the project under `$HOME`; but a standalone probe of 12 plain launches in each of a `/tmp`
   and a `$HOME` one-file repo saw 0/24, so it is not the path alone, and the two bench workspaces
   differ in more than their path. Predates this batch. Unexplained.
-- **A healthy run is occasionally reported failed** — `Docker attachment ended without a confirmed
-  workload outcome` — about 1 sample in 18 in this repo on a loaded host, with nothing left behind.
-  One terminal inspect at `internal/runtime/docker_lifecycle.go:245-249` did not confirm an exited
-  container; a slow inspect, a `--rm` container already auto-removed, or a not-yet-terminal state
-  all print this, and which one it was is not captured.
+- **A healthy run WAS occasionally reported failed** — `Docker attachment ended without a confirmed
+  workload outcome` — about 1 sample in 18 on a loaded host, with nothing left behind. Fixed
+  2026-09-20 (task `2026-09-20-stop-calling-a-healthy-run-failed-when-one-inspe`):
+  `internal/runtime/docker_lifecycle.go` no longer decides on one 2 s probe. `classifyTerminal`
+  sorts an inspect into confirmed / transient (retry) / unrecoverable, and `confirmWorkloadExit`
+  polls within a 5 s budget, so a slow inspect or a container caught mid-transition
+  (running→exited) is retried; the message now names which condition persisted, and a genuine
+  never-confirmed run still fails closed. (StartAttached containers are never `--rm` — teardown is
+  explicit — so `!present` there is definitively "removed", not an auto-remove race.)
 - **The first `filtered_start` sample in a fresh workspace is setup, not steady state** (22 s vs
   ~2.5 s). Warm with one throwaway sample before a measured run, and warm BOTH arms the same way.
 - **A stop number below ~0.04 s is the probe's resolution**, not the product's: two runtime queries
@@ -92,6 +96,8 @@ an approved project is unobtainable at acceptable cost — use the bare control 
 until 2026-09-20's paired A/B put a number against it. Both now state the number.
 
 ## Changelog
+- 2026-09-20 — the "healthy run reported failed" trap is fixed (classifyTerminal + confirmWorkloadExit
+  poll the terminal state within a budget); restated as fixed, not open.
 - 2026-09-20 — created while proving the agent-lifecycle batch
   (task 2026-09-15-prove-agent-lifecycle-speedups-preserve-existing). Recorded the paired method,
   the invalid bisect, the overlapping knob probes, the version-stamp trap, the approved-project

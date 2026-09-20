@@ -51,6 +51,7 @@ type dockerFixture struct {
 	Layers                    []string
 	Copy                      string
 	CopyBody                  string
+	SettleAt                  time.Time
 }
 
 func fixtureDocker(t *testing.T, value dockerFixture) (Runtime, string) {
@@ -202,6 +203,10 @@ func TestDockerFixtureProcess(t *testing.T) {
 			if fixture.Container == nil || fixture.Mode == "inspect-fail" || fixture.Mode == "list-fail" {
 				os.Exit(1)
 			}
+			if fixture.Mode == "settling" && !fixture.SettleAt.IsZero() && time.Now().After(fixture.SettleAt) {
+				fixture.Container.State = DockerContainerState{Status: "exited", StartedAt: fixture.Container.State.StartedAt, FinishedAt: time.Now().UTC(), ExitCode: settlingExitCode}
+				store()
+			}
 			emit(fixture.Container)
 		case "ls":
 			if fixture.Mode == "list-fail" {
@@ -231,6 +236,13 @@ func TestDockerFixtureProcess(t *testing.T) {
 			fixture.Container.State = DockerContainerState{Status: "exited", StartedAt: time.Now().UTC(), FinishedAt: time.Now().UTC(), ExitCode: 7}
 			if fixture.Mode == "detach" || fixture.Mode == "hold" {
 				fixture.Container.State.Status, fixture.Container.State.Running = "running", true
+			}
+			if fixture.Mode == "settling" {
+				// The client returns, but the daemon reports the container as still running for a
+				// short window before it settles to exited — the reported flake, reproduced. Every
+				// inspect in that window reads running; after it, the settled exit.
+				fixture.Container.State = DockerContainerState{Status: "running", Running: true, StartedAt: time.Now().UTC()}
+				fixture.SettleAt = time.Now().Add(300 * time.Millisecond)
 			}
 			fixture.Mutations++
 			fixture.ClientPID = os.Getpid()
@@ -463,6 +475,9 @@ func TestDockerInspectionNeverConfusesFailureWithAbsence(t *testing.T) {
 func TestDockerAttachedStartCapturesFirstOutputAndDaemonOutcome(t *testing.T) {
 	for _, mode := range []string{"normal", "detach"} {
 		t.Run(mode, func(t *testing.T) {
+			// A detached client leaves the container running, so confirmation never settles and
+			// waits out its whole budget before failing closed — shrink it so the test does not.
+			defer swapConfirmExitBudget(200 * time.Millisecond)()
 			rt, _ := fixtureDocker(t, dockerFixture{Mode: mode, Container: dockerFixtureContainer()})
 			d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
 			if err != nil {
