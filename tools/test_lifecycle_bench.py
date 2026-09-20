@@ -7,6 +7,7 @@ and the report that a later comparison reads back.
 """
 
 import json
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -200,6 +201,77 @@ class ProviderSwitchTest(unittest.TestCase):
         trace = "12:00:00.500 | warm pool: gemini@personal parked"
         self.assertTrue(bench.pool_ready(trace, "gemini"))
         self.assertFalse(bench.pool_ready(trace, "codex"))
+
+
+class FakeRuntime:
+    """A runtime that answers `ps`/`volume ls` from a fixed world and records what it was asked.
+
+    Every stop number this tool publishes means "nothing the run owned is left". That claim is only
+    as good as what the question covers, so the question itself is what these tests pin.
+    """
+
+    def __init__(self, containers=(), volumes=()):
+        self.containers, self.volumes = list(containers), list(volumes)
+        self.commands: list[list[str]] = []
+
+    def __call__(self, cmd, env=None, timeout=None, cwd=None):
+        self.commands.append(cmd)
+        label = cmd[cmd.index("--filter") + 1] if "--filter" in cmd else ""
+        if cmd[1:3] == ["volume", "ls"]:
+            names = [n for n, owner in self.volumes if owner == label]
+        elif cmd[1] == "ps":
+            names = [n for n, owner in self.containers if owner == label]
+        else:
+            names = []
+        return subprocess.CompletedProcess(cmd, 0, stdout="\n".join(names), stderr="")
+
+
+class OwnershipTest(unittest.TestCase):
+    """A filtered launch owns more than the agent box, and a stop that only counts boxes lies."""
+
+    GATEWAY = "label=coop.network.run"
+    BOX = "label=coop=box"
+
+    def setUp(self):
+        self.real_run = bench.run
+        self.addCleanup(lambda: setattr(bench, "run", self.real_run))
+
+    def use(self, fake):
+        bench.run = fake
+        return fake
+
+    def test_a_gateway_left_behind_is_not_reported_as_nothing_left(self):
+        # The exact failure this tool exists to catch: the agent box is gone, its gateway is not.
+        fake = self.use(FakeRuntime(containers=[("guard1", self.GATEWAY)],
+                                    volumes=[("ipc1", self.GATEWAY)]))
+        self.assertEqual(bench.owned("docker"), {"c:guard1", "v:ipc1"})
+        asked = {c[1] if c[1] != "volume" else "volume ls" for c in fake.commands}
+        self.assertEqual(asked, {"ps", "volume ls"}, "both containers AND volumes must be asked about")
+
+    def test_ownership_spans_both_label_families(self):
+        self.use(FakeRuntime(containers=[("box1", self.BOX), ("ctrl1", self.GATEWAY)],
+                             volumes=[("obs1", self.GATEWAY)]))
+        self.assertEqual(bench.owned("docker"), {"c:box1", "c:ctrl1", "v:obs1"})
+
+    def test_a_surviving_volume_means_not_gone(self):
+        # Containers clear immediately; the volume never does. A stop is not over until both are.
+        self.use(FakeRuntime(volumes=[("ipc1", self.GATEWAY)]))
+        self.assertFalse(bench.wait_until_gone("docker", set(), 0.2))
+
+    def test_gone_when_nothing_new_remains(self):
+        self.use(FakeRuntime())
+        self.assertTrue(bench.wait_until_gone("docker", set(), 1.0))
+
+    def test_what_was_already_there_is_not_this_run_s_leftover(self):
+        # Another project's stopped containers are not evidence against this run.
+        self.use(FakeRuntime(containers=[("someone-elses", self.BOX)]))
+        self.assertTrue(bench.wait_until_gone("docker", {"c:someone-elses"}, 1.0))
+
+    def test_cleanup_removes_a_volume_as_a_volume(self):
+        fake = self.use(FakeRuntime())
+        bench.remove_owned("docker", {"c:box1", "v:ipc1"})
+        self.assertIn(["docker", "rm", "-f", "box1"], fake.commands)
+        self.assertIn(["docker", "volume", "rm", "-f", "ipc1"], fake.commands)
 
 
 if __name__ == "__main__":

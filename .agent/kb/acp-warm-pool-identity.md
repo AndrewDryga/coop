@@ -3,7 +3,7 @@ name: acp-warm-pool-identity
 description: coop acp parks one box per signed-in provider the session is not using and lends it to a switch only on an identical identity — plain target at the default model/effort, same account, same box image; prove a hit from the trace, never from timing
 subsystem: acp
 sources: [internal/acpctl/warm.go, internal/acpctl/resume.go, internal/acpctl/control.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/runtime/runtime.go, tools/lifecycle_bench.py]
-updated: 2026-09-19
+updated: 2026-09-20
 ---
 `coop acp` keeps a parked box (`acpctl.WarmPool`) for each signed-in provider the session is not
 using. After every factory spawn — the first one included, which is what fans the pool out —
@@ -34,7 +34,9 @@ and the slot stays empty, because `Reap` — editor close, SIGHUP reload — wai
 and for any eviction's stop. The pool warms the others as the lead's own box starts (and again after
 every spawn), and is off when the image's id cannot be read (Apple container): no box could be proved
 current, so none would be lent. Parked boxes resolve their account like the selector's Auto
-(`ResolveNetworkTarget`) in open and filtered sessions alike.
+(`ResolveNetworkTarget`) in open and filtered sessions alike. Filling is not free: on 2026-09-20's
+build the editor's `initialize` measured ~0.23 s (~40%) slower than at 57b4ea96 and `COOP_ACP_WARM=0`
+gave about two thirds back — see [[lifecycle-latency-measurement]] for the method and the open cause.
 
 **Evidence, not timing.** With `COOP_ACP_TRACE=1` the trace says `spawn: warm box for P@A` or
 `spawn: cold box for P@A` for each spawn, `warm pool: P@A parked` when a box parks (started, not
@@ -52,6 +54,8 @@ deferred reap waits for that same teardown. Measured on a filtered project with 
 editor close → everything gone in ~1.4 s.
 
 ## Changelog
+- 2026-09-20 — recorded the measured cost of filling on the editor handshake, with the
+  measurement card that owns the evidence.
 - 2026-09-19 — stop: Stopping hook, cancelled fills, concurrent reap
 - 2026-09-19 — rewritten from acp-warm-pool-serves-only-bare-targets: identity-matched reuse, image
   check, rebalance; the measured miss it replaced is recorded in task 2026-09-18-measure-editor-warm-…

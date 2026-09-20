@@ -101,6 +101,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [fork-candidate-review-rounds](fork-candidate-review-rounds.md) — immutable reviewed fork snapshots, the replayable current manifest, fresh candidate-wide signoff, and zero-ahead merge bookkeeping
 - [acp-preset-owns-toolbar](acp-preset-owns-toolbar.md) — active ACP presets own the whole lead target and refuse stale Provider/Account editor replays
 - [acp-warm-pool-identity](acp-warm-pool-identity.md) — the editor warm pool lends a parked box only to an identical switch (plain target, default model/effort, same account and image); prove hits from the trace
+- [lifecycle-latency-measurement](lifecycle-latency-measurement.md) — pair the two builds and alternate them for any start/stop claim; never bisect a noisy wall-clock metric single-shot; build the comparison binary outside the checkout or its version stamp lies; an old binary cannot start in an approved project
 - [acp-auth-is-provider-account-scoped](acp-auth-is-provider-account-scoped.md) — initialize capability truth and successful authentication belong to one provider account
 - [acp-scripted-e2e](acp-scripted-e2e.md) — test the real ACP supervisor/control/proxy path with a scripted runtime and isolated state
 - [acp-replay-publication](acp-replay-publication.md) — publish replacement native bindings atomically before releasing held editor work

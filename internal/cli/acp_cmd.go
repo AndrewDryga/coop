@@ -514,15 +514,19 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 		}
 		return child, err
 	})
-	// After any spawn — Run's first one included, which fans the pool out in the background, so startup
-	// latency is unchanged — the pool re-centres on the provider now in use: warm the others, the one
-	// just left included, and drop a spare of the active one.
+	// After any spawn — Run's first one included — the pool re-centres on the provider now in use:
+	// warm the others, the one just left included, and drop a spare of the active one.
 	rebalance := func(active string) {
 		go func() { pool.Rebalance(active, ctrl.SpawnableProviders(active)) }()
 	}
 	// Warm the others while the lead's own box starts, as before any switch: the first spawn's
 	// rebalance repeats it (a fill already held or in flight is skipped), and a lead that waits out a
 	// reset, or fails, still leaves the providers it could switch to ready.
+	//
+	// Not free: initialize, the request the editor waits on, measured +0.23 s (~40%) slower than
+	// 57b4ea96 on 2026-09-20 (paired A/B), and COOP_ACP_WARM=0 gives about two thirds of it back.
+	// 57b4ea96 fanned out concurrently too, so the cost is in what a fill does now, not in filling
+	// here — which part is not yet known.
 	rebalance(ctrl.LeadProvider())
 	factory := func(ctx context.Context) (*acpproxy.Child, error) {
 		t, psName, ok := ctrl.SpawnTarget()
