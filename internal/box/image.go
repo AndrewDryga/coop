@@ -673,6 +673,9 @@ func buildBaseImage(rt runtime.Runtime, cfg *config.Config, fresh bool, version 
 		return err
 	}
 	StampImageMeta(cfg, cfg.BaseImage, version) // record builder + definition so a later run can flag skew/age
+	// The image this build replaces is still tagged by ITS definition, so nothing else would ever
+	// remove it. Another Coop still using one keeps it, because its launches record that use.
+	reclaimAfterBuild(context.Background(), rt, cfg, cfg.BaseImage, stdout, nil)
 	return nil
 }
 

@@ -2,8 +2,8 @@
 name: box-base-image-tags
 description: Coop's shared base is tagged by its box definition so two Coop versions on one host keep their own; why there is no :latest alias, how an upgrade is repaired, and what stays shared
 subsystem: box
-sources: [internal/box/image.go, internal/box/staleness.go, internal/box/locked_image.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/cli/cli.go, internal/cli/build_cmd.go, internal/cli/session_cmd.go, internal/forkctl/host.go, internal/forkctl/merge.go]
-updated: 2026-09-19
+sources: [internal/box/reclaim.go, internal/box/image.go, internal/box/staleness.go, internal/box/locked_image.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/cli/cli.go, internal/cli/build_cmd.go, internal/cli/session_cmd.go, internal/forkctl/host.go, internal/forkctl/merge.go]
+updated: 2026-09-20
 ---
 
 `COOP_BASE_IMAGE` defaults to the bare repository `coop-box`, which `box.ResolveBaseImage` (run
@@ -41,8 +41,21 @@ no posture-aware check follows. A merge or session review gate builds it through
 
 Still shared: a project image (`coop-<repo>`, from `.agent/Dockerfile`) keeps one name, so two
 versions still take turns on it, and a project box built on an older base keeps those clients until
-`coop build` — `checkCoopBox` never replaces a project's image. Superseded bases are never removed
-automatically; they accumulate like `coop-clients:<definition>`.
+`coop build` — `checkCoopBox` never replaces a project's image. A superseded base IS reclaimed now
+(`reclaim.go`), but only after 14 days with no recorded use and no container referencing it; a
+project's own derived image (`<project>-filtered:<16hex>`) still accumulates.
+
+A use record is per *user* (`~/.config/coop/image-use/`, `Config.BoxHome`), while the images are
+per *daemon*. On the
+usual one-user host that is the same thing; where two users share one Docker, each sees only its own
+records, so A's build can reclaim an image B still runs weekly (B's next launch rebuilds it). What
+stops that being routine: nothing without a record is ever removed on sight (first sight SEEDS the
+record, so the 14 days start then), and an image any container still references — running or
+stopped, whoever owns it — is kept.
 
 ## Changelog
+- 2026-09-20 — a build reclaims its family's superseded images (`box/reclaim.go`): 14 days without a
+  recorded use and no container referencing it. Every launch records its image (`MarkImageUsed`),
+  which is what keeps a second installed Coop's base alive; `:latest`, an operator's own image and
+  any non-definition tag are never candidates.
 - 2026-09-19 — created with the per-definition base tag.

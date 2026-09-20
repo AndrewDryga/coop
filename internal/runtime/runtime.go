@@ -479,6 +479,59 @@ func (r Runtime) ImageID(image string) string {
 	return id
 }
 
+// ImageTags lists every local tag of one repository, as `repository:tag`. Apple container reads as
+// none: coop builds no image there through this path. A query failure is an error, never an empty
+// list — a caller that removes what it does not see must not read a broken runtime as "nothing".
+func (r Runtime) ImageTags(ctx context.Context, repository string) ([]string, error) {
+	if r.kind() == runtimeAppleContainer || repository == "" || strings.HasPrefix(repository, "-") {
+		return nil, nil
+	}
+	out, err := contextCommand(ctx, r.Name, "image", "ls", "--format", "{{.Repository}}:{{.Tag}}", repository).Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("run: %s image ls %s: %w", r.Name, repository, commandOutputError(err, nil))
+	}
+	var tags []string
+	for _, line := range strings.Fields(string(out)) {
+		if strings.HasPrefix(line, repository+":") && !strings.HasSuffix(line, ":<none>") {
+			tags = append(tags, line)
+		}
+	}
+	return tags, nil
+}
+
+// ImageInUse reports whether any container — running or stopped — was created from image. An
+// ambiguous answer is an error: removing an image a stopped container still needs would break the
+// run that made it.
+func (r Runtime) ImageInUse(ctx context.Context, image string) (bool, error) {
+	if r.kind() == runtimeAppleContainer || image == "" || strings.HasPrefix(image, "-") {
+		return true, nil // unknown reads as in use: never remove on a guess
+	}
+	ids, err := r.containerIDsContext(ctx, true, "ancestor="+image)
+	if err != nil {
+		return true, err
+	}
+	return len(ids) != 0, nil
+}
+
+// RemoveImage removes one image by tag. It never forces: an image a container still references
+// stays, and the caller has already proven none does.
+func (r Runtime) RemoveImage(ctx context.Context, image string) error {
+	if image == "" || strings.HasPrefix(image, "-") {
+		return errors.New("image reference is empty")
+	}
+	out, err := contextCommand(ctx, r.Name, "image", "rm", image).CombinedOutput()
+	if err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		return fmt.Errorf("run: %s image rm %s: %w", r.Name, image, commandOutputError(err, out))
+	}
+	return nil
+}
+
 // NetworkIDs lists the ids of the networks matching every filter (`label=key`, `label=key=value`,
 // `name=<regex>`), running or not. Apple container has no compose and no networks coop creates,
 // so it reads as none. A query failure stays an error, never an empty list.

@@ -135,7 +135,7 @@ func SetupNetwork(ctx context.Context, cfg *config.Config, rt runtime.Runtime, o
 func qualifyNetworkHost(ctx context.Context, cfg *config.Config, rt runtime.Runtime, store *networkstate.Store, project string, out, errOut io.Writer) (networkstate.Qualification, error) {
 	started := time.Now()
 	p := setupPalette(out)
-	candidate, clients, err := setupImages(ctx, rt, store, p, out, errOut)
+	candidate, clients, err := setupImages(ctx, cfg, rt, store, p, out, errOut)
 	if err != nil {
 		return networkstate.Qualification{}, err
 	}
@@ -182,7 +182,7 @@ func setupPalette(out io.Writer) ui.Palette {
 // A rebuild of unchanged inputs is a Docker cache hit, so the honest distinction
 // the operator cares about is whether the image existed before this run — and
 // that is what the transcript says, in one sentence, before any build output.
-func setupImages(ctx context.Context, rt runtime.Runtime, store *networkstate.Store, p ui.Palette, out, errOut io.Writer) (networkstate.CandidateSpec, []networkstate.QualifiedClient, error) {
+func setupImages(ctx context.Context, cfg *config.Config, rt runtime.Runtime, store *networkstate.Store, p ui.Palette, out, errOut io.Writer) (networkstate.CandidateSpec, []networkstate.QualifiedClient, error) {
 	// Setup is the one path that may create runtime state, so it binds with
 	// launch authority. Admission keeps the read-only inventory binding.
 	docker, err := runtime.BindDocker(ctx, rt, "", "")
@@ -212,6 +212,13 @@ func setupImages(ctx context.Context, rt runtime.Runtime, store *networkstate.St
 	candidate, err := BuildNetworkCandidate(ctx, docker, buildOut, buildErr)
 	if err != nil {
 		return networkstate.CandidateSpec{}, nil, err
+	}
+	// Setup builds two images Coop tags by their definition, so it reclaims the ones it superseded
+	// — the same rule as the base build, and the same protection for a Coop still using one.
+	for _, image := range []string{definition.Tag, gatewayimage.Tag()} {
+		reclaimAfterBuild(ctx, rt, cfg, image, nil, func(line string) {
+			fmt.Fprintf(out, "  %s\n", p.Dim(line))
+		})
 	}
 	if note := setupClientFiles(ctx, docker, store, candidate, closure); note != "" {
 		fmt.Fprintf(out, "  %s\n", p.Dim(note))

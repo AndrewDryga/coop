@@ -19,6 +19,9 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
+// lockedClientRepository holds the qualified client sets, one tag per definition.
+const lockedClientRepository = "coop-clients"
+
 // BuildNetworkCandidate is explicit host setup, never a fallback during launch.
 // It returns the actual image pair construction produced; only the qualification
 // that proves it is ever persisted, so a failed build grants no launch authority
@@ -103,7 +106,7 @@ func lockedImageDefinition(platform agents.ClientPlatform) (runtime.DockerBuild,
 	}
 	digest := sha256.Sum256(identity)
 	definition := hex.EncodeToString(digest[:])
-	spec.Tag = "coop-clients:" + definition[:32]
+	spec.Tag = lockedClientRepository + ":" + definition[:32]
 	spec.Labels = map[string]string{"coop.clients.definition": definition, "coop.clients.closure": closure.Digest, "coop.clients.libc": platform.Libc}
 	return spec, contextBytes.Bytes(), closure, nil
 }

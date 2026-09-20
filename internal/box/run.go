@@ -22,6 +22,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/consult"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/gatewayimage"
 	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/AndrewDryga/coop/internal/networkgateway"
 	"github.com/AndrewDryga/coop/internal/preset"
@@ -691,6 +692,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		if open, openKept, err = planOpenBroker(cfg, rt, spec, mcpSnapshot); err != nil {
 			return -1, err
 		}
+		// The helper beside the box runs the gateway image by tag, so this run keeps it alive the
+		// same way a filtered run keeps the pair it was set up with.
+		markImageUsed(cfg, gatewayimage.Tag())
 	}
 	sections.accounts(launchAccounts(cfg, spec, brokerPlan))
 	sections.internet(cfg, spec, policy, brokerPlan.mcpServerNames()...)
@@ -1008,6 +1012,10 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if err := rt.EnsureDaemon(); err != nil {
 		return -1, err
 	}
+	// Every image Coop built that this launch rests on counts as used, not just the one the box
+	// runs: a filtered box runs its client image by ID, and a project image's own base is the
+	// managed one. A later build of each family keeps what was recorded here (reclaim.go).
+	markLaunchImages(cfg, append([]string{spec.Image, cfg.BaseImage}, filtered.builtImageTags()...)...)
 	if spec.Homes {
 		if err := ensureAgentDefaults(cfg, spec, workdir); err != nil {
 			return -1, err

@@ -2,9 +2,9 @@
 name: destructive-confirm-gate
 description: "every unrecoverable delete routes through the one shared `ui.DestroyGate`"
 scope: security
-sources: [internal/ui/confirm.go]
+sources: [internal/ui/confirm.go, internal/box/reclaim.go]
 check: "none"
-updated: 2026-09-13
+updated: 2026-09-20
 ---
 
 # Every unrecoverable delete goes through the one shared confirmation gate
@@ -43,6 +43,12 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
   decision the networking contract says only a human makes. It is stricter where it counts — no
   `--yes` at all, a terminal required, default No. Reach for the gate whenever redoing the thing
   needs anything more than one command.
+- Narrow exception: an image Coop built for itself is not user state. A build reclaims the images it
+  superseded (`internal/box/reclaim.go`) with no prompt, because the thing removed is rebuilt by the
+  one command that removed it and nothing the user authored is in it. It earns that by being narrow:
+  only a repository Coop tags by definition, only after 14 days with no recorded use, never on first
+  sight, never one a container still references, and never `-f`. An image of the user's own —
+  whatever it is tagged — stays.
 - Narrow exception: `<task>/tmp/` is lifecycle-declared disposable scratch, not retained user state.
   Reaching done may remove exactly that containment-checked child without a second prompt (the loop
   cannot prompt), but it must preserve `artifacts/` and every other task file, refuse path escape or
@@ -52,6 +58,9 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
 See also [[destructive-verb-rm]] (the verb is named `rm`) and [[bare-subcommand-shows-help]].
 
 ## Changelog
+- 2026-09-20 — named Coop's own superseded images as a narrow exception when the build-time reclaim
+  landed. Swept the tree for other unprompted deletes: the rest are this rule's declared exceptions
+  (`<task>/tmp/`, `coop net forget`) or already gated.
 - 2026-09-13 — updated the recoverable approval path to `coop approve`; the confirmation boundary
   is unchanged.
 - 2026-09-11 — clarified future-tense previews and short confirmations after the user rejected

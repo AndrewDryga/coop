@@ -416,6 +416,10 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	if err := checkRestrictedSpec(cfg, rt, spec, mode); err != nil {
 		return -1, err
 	}
+	// A restricted box runs the managed base and nothing else (checkRestrictedSpec proves it), and
+	// every session the daemon starts comes through here — so this is where those runs record the
+	// base as used, or a second Coop's build would reclaim it out from under them (reclaim.go).
+	markLaunchImages(cfg, spec.Image, cfg.BaseImage)
 	// assembleOptions appends COOP_RUN_ARGS from the config it is handed, so the admitted form
 	// rides a copy; this run's own arguments are normalized in place.
 	runArgs, err := restrictedRuntimeArgs(cfg.ExtraRunArgs, mode, "COOP_RUN_ARGS")

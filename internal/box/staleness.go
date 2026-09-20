@@ -111,8 +111,12 @@ var baseDefHash = sync.OnceValue(func() string {
 })
 
 func imageMetaPath(cfg *config.Config, img string) string {
-	safe := strings.NewReplacer("/", "_", ":", "_").Replace(img)
-	return filepath.Join(cfg.BoxHome, "image-meta", safe)
+	return filepath.Join(cfg.BoxHome, "image-meta", safeImageFileName(img))
+}
+
+// safeImageFileName is one image reference as a file name, for the records Coop keeps per image.
+func safeImageFileName(img string) string {
+	return strings.NewReplacer("/", "_", ":", "_").Replace(img)
 }
 
 // StampImageMeta records which coop version built the shared base image and the hash of

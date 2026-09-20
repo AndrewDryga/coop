@@ -36,7 +36,10 @@ func Fingerprint() string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
-func Tag() string { return "coop-network:" + Fingerprint()[:32] }
+// Repository holds the network helper images, one tag per source fingerprint.
+const Repository = "coop-network"
+
+func Tag() string { return Repository + ":" + Fingerprint()[:32] }
 
 // Context returns a small trusted tar stream. No filesystem is traversed during
 // an operator build; source freshness is checked by the canonical developer gate.

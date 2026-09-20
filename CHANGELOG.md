@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Coop's shared images no longer pile up. Since each is tagged by the definition it
+  was built from, an upgrade left the previous one tagged — and a plain `docker image prune` reclaims only dangling
+  images, so a few 3 GB bases could sit there forever. A build now removes the images of that same
+  family (`coop-box`, `coop-clients`, `coop-network`) that no run has used in 14 days and no
+  container references, and says which it removed. Every launch records the image it used, so a
+  second Coop version you still run keeps its base; an image of your own is never touched.
+
 - An MCP server on the legacy SSE transport keeps its secret outside the box too, instead of being
   refused. That transport names its own message endpoint at runtime, so its route cannot be as
   narrow as the rest: Coop admits the stream's own address and messages to that one host, and

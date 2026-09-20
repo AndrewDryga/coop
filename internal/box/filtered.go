@@ -82,7 +82,10 @@ type filteredExecution struct {
 	// It is coop-owned, holds only the coop socket, and is mounted read-only, so it is exempt from
 	// the workload volume-exposure check the same way this run's generated files are — its backing
 	// mountpoint lives inside the daemon VM and is not a host path an agent could redirect.
-	taskVolume  string
+	taskVolume string
+	// builtTags are the per-definition tags of the images Coop built for this filtered host. The
+	// box runs them by ID, so these are the only names a later build can weigh (reclaim.go).
+	builtTags   []string
 	broker      *credentialBrokerRun
 	mcpScrub    []string        // the configured MCP file's token variables, kept out of the box env
 	authMarkers map[string]bool // frozen before admission; agent-writable profile state cannot widen env authority
@@ -262,6 +265,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 		}
 	}
 	f.image = candidate.ClientImage
+	f.builtTags = []string{clientImageTag(candidate.ClientDefinition), gatewayImageTag(candidate.GatewaySource)}
 	// A project that ships its own box Dockerfile runs its own image, built on
 	// the locked client image and proven derived from it with its clients intact
 	// (derived_image.go) — before any container of this run exists. The preflight
@@ -480,4 +484,13 @@ func (f *filteredExecution) accept(ctx context.Context, snapshot networkview.Sna
 	return f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
 		return f.store.AcceptSnapshot(ctx, r.ID, r.Revision, snapshot)
 	})
+}
+
+// builtImageTags names the per-definition images this filtered launch rests on, so a later build
+// counts them as used. A run that is not filtered rests on none.
+func (f *filteredExecution) builtImageTags() []string {
+	if f == nil {
+		return nil
+	}
+	return f.builtTags
 }
