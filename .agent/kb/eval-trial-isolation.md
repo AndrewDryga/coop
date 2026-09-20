@@ -3,7 +3,7 @@ name: eval-trial-isolation
 description: What isolates one coop eval trial from the next and from the grader — and why the obvious credential fix would break authentication
 subsystem: eval
 sources: [internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_loop.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/box/run.go, internal/box/mounts.go, internal/agent/codex.go]
-updated: 2026-09-20
+updated: 2026-09-21
 ---
 
 `coop eval` measures configurations against each other, so its whole value rests on two trials
@@ -57,5 +57,21 @@ What remains shared is the credential material itself plus whatever new files a 
 write into that directory. Before "fixing" that, read this section again: the fix that looks right
 breaks authentication for every provider at once.
 
+## Sizing a loop scenario, and one trap
+
+Measured on the shipped `queue` starter with `codex`: ten small tasks drained in **43 minutes**
+(00:08:04 → 00:51:25) inside its 90m case budget. Budget generously — a trial that runs out of time
+is recorded as a TIMEOUT, which is honest but useless for comparison, and a slower configuration
+hitting the wall would otherwise read as a weaker one.
+
+The trap: the queue does NOT move monotonically into `99_done`. Part way through that run, all ten
+tasks sat in `10_in_progress` with `99_done` EMPTY — the loop's own signoff reopening work — and the
+trial still ended in a clean pass. So a loop verifier must count BEHAVIOUR, never folder positions: a
+folder-counting grader would have scored that same workspace as zero while the tool under test was
+already fully correct. The shipped verifier runs each subcommand on inputs no task mentions, which is
+also why it cannot be satisfied by a loop that moves folders without finishing anything.
+
 ## Changelog
 - 2026-09-20 — created while landing `coop eval` execution, grading and loop scenarios.
+- 2026-09-21 — added loop-scenario sizing (43 min for ten tasks) and the signoff-reopening trap,
+  from the full-length qualification run of the `queue` starter.
