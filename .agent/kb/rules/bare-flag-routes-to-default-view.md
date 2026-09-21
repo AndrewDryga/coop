@@ -2,9 +2,9 @@
 name: bare-flag-routes-to-default-view
 description: "a leading flag where a subcommand goes routes to the group's default listing"
 scope: cli-grammar
-sources: [internal/tasks/queue.go, internal/tasks/cmd.go, internal/tasks/backlog.go]
+sources: [internal/tasks/queue.go, internal/tasks/cmd.go, internal/tasks/backlog.go, internal/tasks/queue_validation_test.go]
 check: "none"
-updated: 2026-08-10
+updated: 2026-09-22
 ---
 
 # A bare leading flag routes to the group's default view
@@ -23,6 +23,9 @@ text is longest and least relevant to what they asked.
 - Normalize in the group dispatcher BEFORE routing: after pulling value-flags like `--tasks`,
   if the first remaining token starts with `-` (and isn't the lone `-`), prepend the default
   verb (`ls`). The normal flag validator then names the supported flags on a typo.
+- Validate structured arguments before single- versus multi-queue dispatch or id lookup. Routing
+  a flag to the default view does not make an unsupported flag valid; queue count must not change
+  whether malformed input prints a listing or which usage error it reports.
 - Only for groups with a *listing* default (today: `tasks`, `backlog`). A group whose bare form
   shows help has no listing flags to route — this is the flag-shaped sibling of
   bare-subcommand-shows-help.md.
@@ -30,6 +33,11 @@ text is longest and least relevant to what they asked.
   rule; check it whenever a list command grows flags.
 
 ## Changelog
+- 2026-09-22 — found and repaired validation bypasses in aggregate backlog and structured task
+  dispatch. One/two-queue regression covers flags, extra arguments, lookup ordering and the
+  backlog-specific missing-item hint. The old backlog test explicitly accepted ignored flags
+  in an umbrella; corrected that expectation while retaining valid rollup/promotion coverage.
+  Both listing-default groups were swept; their standalone validators remain intact.
 - 2026-07-17 — created
 - 2026-08-06 — card metadata added (format v1); body unchanged
 - 2026-08-09 — validate-on-write backfill: swept internal/cli/tasks.go's `cmdTasks` (confirmed the

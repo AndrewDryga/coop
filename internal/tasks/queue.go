@@ -308,6 +308,13 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 	if len(rest) > 0 {
 		sub = rest[0]
 	}
+	// Aggregate commands may never reach CmdTasksFolder, and id routing performs a lookup first.
+	// Reject malformed structured arguments before either path (and before taking a done lock).
+	if spec, ok := taskArgSpecs[sub]; ok {
+		if err := validateArgs("tasks "+sub, rest[1:], spec); err != nil {
+			return 2, err
+		}
+	}
 	if sub == "watch" {
 		// The live board watches the queue(s) themselves draining, task-centric across however many
 		// are configured and including active forks.
@@ -566,14 +573,14 @@ func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (i
 // the id is absent everywhere, or matches in more than one queue. Explicit or monorepo queues may
 // still contain duplicate ids, so acting on an arbitrary one would silently touch the wrong tree.
 func queueOfTask(repo string, rels []string, id string) (string, error) {
-	return queueOfTaskWith(repo, rels, id, ReadTaskTree)
+	return queueOfTaskWith(repo, rels, id, "coop tasks", ReadTaskTree)
 }
 
 // queueOfTaskWith is queueOfTask parametrized by the per-queue reader, so the lifecycle tree
 // (readTaskTree) and the backlog drawer (readBacklog) share one resolver. read maps a queue root to
-// its items; everything else — exact-beats-substring precedence, the absent/ambiguous errors — is common.
-func queueOfTaskWith(repo string, rels []string, id string, read func(string) ([]Item, error)) (string, error) {
-	hit, err := findTaskAcrossQueuesWith(repo, rels, id, read)
+// its items; listCommand names the matching listing in missing-item guidance.
+func queueOfTaskWith(repo string, rels []string, id, listCommand string, read func(string) ([]Item, error)) (string, error) {
+	hit, err := findTaskAcrossQueuesWith(repo, rels, id, listCommand, read)
 	return hit.rel, err
 }
 
@@ -586,7 +593,7 @@ func FindTaskAcrossQueues(repo string, rels []string, id string) (Item, error) {
 	if id == "" {
 		return Item{}, errors.New("need a task id (run 'coop tasks' to list)")
 	}
-	hit, err := findTaskAcrossQueuesWith(repo, rels, id, ReadTaskTree)
+	hit, err := findTaskAcrossQueuesWith(repo, rels, id, "coop tasks", ReadTaskTree)
 	return hit.task, err
 }
 
@@ -595,7 +602,7 @@ type queueTask struct {
 	task Item
 }
 
-func findTaskAcrossQueuesWith(repo string, rels []string, id string, read func(string) ([]Item, error)) (queueTask, error) {
+func findTaskAcrossQueuesWith(repo string, rels []string, id, listCommand string, read func(string) ([]Item, error)) (queueTask, error) {
 	var exact, subs []queueTask
 	for _, rel := range rels {
 		items, err := read(filepath.Join(repo, rel))
@@ -619,7 +626,7 @@ func findTaskAcrossQueuesWith(repo string, rels []string, id string, read func(s
 	case 1:
 		return pick[0], nil
 	case 0:
-		return queueTask{}, fmt.Errorf("no task matching %q in any of the %d configured queues (run 'coop tasks' to list)", id, len(rels))
+		return queueTask{}, fmt.Errorf("no task matching %q in any of the %d configured queues (run '%s' to list)", id, len(rels), listCommand)
 	}
 	where := make([]string, len(pick))
 	for i, h := range pick {

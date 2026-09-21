@@ -39,8 +39,8 @@ func CmdBacklog(cfg *config.Config, args []string) (int, error) {
 	}
 	// A leading flag is the default listing with that flag: `coop backlog --foo` means `coop
 	// backlog ls --foo`, not a subcommand named "--foo". --tasks is already pulled out, so
-	// anything flag-shaped still at the front is an ls flag (validated as one downstream, once ls
-	// takes any). See rule bare-flag-routes-to-default-view.
+	// anything flag-shaped still at the front is an ls flag, validated before queue dispatch.
+	// See rule bare-flag-routes-to-default-view.
 	if len(rest) > 0 && strings.HasPrefix(rest[0], "-") && rest[0] != "-" {
 		rest = append([]string{"ls"}, rest...)
 	}
@@ -55,6 +55,11 @@ func CmdBacklog(cfg *config.Config, args []string) (int, error) {
 	sub := ""
 	if len(rest) > 0 {
 		sub = rest[0]
+	}
+	if spec, ok := backlogArgSpecs[sub]; ok {
+		if err := validateArgs("backlog "+sub, rest[1:], spec); err != nil {
+			return 2, err
+		}
 	}
 	if len(rels) > 1 {
 		// A monorepo configures several queues (the same set coop tasks/loop drain), each with its own
@@ -251,7 +256,7 @@ func backlogAcrossQueues(repo string, rels []string, rest []string) (int, error)
 // queueOfBacklogTask finds which configured queue's xx_backlog holds the id — the backlog analog of
 // queueOfTask, sharing its exact/substring precedence and duplicate-across-queues handling.
 func queueOfBacklogTask(repo string, rels []string, id string) (string, error) {
-	return queueOfTaskWith(repo, rels, id, ReadBacklog)
+	return queueOfTaskWith(repo, rels, id, "coop backlog", ReadBacklog)
 }
 
 // exampleQueue is the queue an ambiguous `coop backlog add` suggests: a real configured one, and
