@@ -54,6 +54,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 `sources` does that.
 
 ## Index
+- [shell-completion-current-word](shell-completion-current-word.md) — current-word replacement and the Bash 3.2 COMP_WORDS/IFS trap in generated completion
 - [restricted-networking](restricted-networking.md) — the layers between an `--egress filtered` flag and `docker run`, where authority lives (never a repo, never a box), the precedence ladder, and what a filtered run refuses
 - [network-gateway](network-gateway.md) — the controller/guard pair that enforces a capture: nftables capture and grants, SNI and DNS admission, what observation measures versus counts, exact-owned cleanup
 - [network-consumers](network-consumers.md) — how the loop, direct runs and remote sessions consume ONE frozen capture, and which `coop net` verb reads which evidence

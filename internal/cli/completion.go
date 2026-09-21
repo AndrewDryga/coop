@@ -19,11 +19,31 @@ import (
 // are local filesystem reads (fork dirs, task ids, credential profiles); nothing hits a container.
 
 const bashCompletion = `# Coop Bash completion.
+# Candidate lookup is best-effort; a failed lookup must not block the shell.
 # Generate: coop completion bash > ~/.config/coop/completion.bash
 # Source this file from ~/.bashrc.
 _coop() {
-  local IFS=$'\n'
-  COMPREPLY=($(coop __complete "${COMP_WORDS[@]:1:COMP_CWORD}" 2>/dev/null))
+  local candidate word prefix='' i last
+  local -a words=()
+  # Bash 4+ splits a target's colon into its own word; Bash 3.2 keeps it joined.
+  for ((i=1; i<=COMP_CWORD; i++)); do
+    word=${COMP_WORDS[i]}
+    last=$((${#words[@]}-1))
+    if ((last >= 0)) && [[ $word == : || ${COMP_WORDS[i-1]} == : ]]; then
+      words[last]+=$word
+    else
+      words+=("$word")
+    fi
+  done
+  word=${words[${#words[@]}-1]:-}
+  if [[ ${COMP_WORDBREAKS:-} == *:* && $word == *:* ]]; then
+    prefix=${word%:*}:
+  fi
+  COMPREPLY=()
+  while IFS= read -r candidate; do
+    # Readline replaces only the suffix after the last word-breaking colon.
+    COMPREPLY+=("${candidate#"$prefix"}")
+  done < <(coop __complete "${words[@]}" 2>/dev/null)
 }
 complete -o default -F _coop coop
 `
@@ -70,15 +90,6 @@ func (a *app) cmdComplete(words []string) (int, error) {
 		prev = words[:len(words)-1]
 	}
 	cands := a.completionCandidatesFor(prev, cur)
-	// Zsh invokes completion for an already-complete command without adding a trailing
-	// empty word (`coop loop<TAB>`). Advance that exact command into its next slot so the
-	// first Tab is useful; a partial word still completes against the top-level list.
-	if len(prev) == 0 && cur != "" {
-		if next := a.completionCandidatesFor([]string{cur}, ""); len(next) > 0 {
-			cands = next
-			cur = ""
-		}
-	}
 	for _, c := range cands {
 		if strings.HasPrefix(c, cur) {
 			fmt.Println(c)

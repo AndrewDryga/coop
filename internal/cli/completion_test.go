@@ -157,17 +157,23 @@ func TestCompletionTargetsAccountsAndPresets(t *testing.T) {
 	}
 }
 
-func TestCompletionAdvancesExactCommand(t *testing.T) {
+func TestCompletionKeepsTheCurrentWord(t *testing.T) {
 	a := &app{cfg: &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir()}}
 
-	for _, words := range [][]string{{"loop"}, {"loop", ""}} {
+	for _, tc := range []struct {
+		words []string
+		want  string
+	}{
+		{[]string{"loop"}, "loop\n"},
+		{[]string{"loop", ""}, "claude\n"},
+	} {
 		out := captureCompletionOutput(t, func() {
-			if code, err := a.cmdComplete(words); code != 0 || err != nil {
-				t.Fatalf("cmdComplete(%q) = (%d, %v)", words, code, err)
+			if code, err := a.cmdComplete(tc.words); code != 0 || err != nil {
+				t.Fatalf("cmdComplete(%q) = (%d, %v)", tc.words, code, err)
 			}
 		})
-		if !strings.Contains(out, "claude\n") || strings.Contains(out, "\nloop\n") {
-			t.Errorf("cmdComplete(%q) did not advance to target candidates:\n%s", words, out)
+		if !strings.Contains(out, tc.want) || (len(tc.words) == 1 && out != tc.want) {
+			t.Errorf("cmdComplete(%q) must complete the current word, want %q:\n%s", tc.words, tc.want, out)
 		}
 	}
 
@@ -178,6 +184,81 @@ func TestCompletionAdvancesExactCommand(t *testing.T) {
 	})
 	if !strings.Contains(out, "loop\n") {
 		t.Errorf("partial top-level command did not complete loop:\n%s", out)
+	}
+}
+
+func TestBashCompletionPreservesWordsAndCandidates(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash unavailable")
+	}
+	for _, cur := range []string{"", "cod"} {
+		t.Run("current="+cur, func(t *testing.T) {
+			// The backend rejects a merged "loop " argument and returns candidates whose spaces
+			// and glob syntax must survive literally. macOS /bin/bash exercises Bash 3.2 here.
+			script := `coop() {
+  [ "$#" -eq 3 ] && [ "$1" = __complete ] && [ "$2" = loop ] && [ "$3" = "$current" ] || return 97
+  printf '%s\n' 'codex' 'two words' '*'
+}
+`
+			// Pass the current token as an argument, not interpolated shell source.
+			script = "current=$1\n" + script + bashCompletion + `
+COMP_WORDS=(coop loop "$current")
+COMP_CWORD=2
+_coop
+printf '<%s>\n' "${COMPREPLY[@]}"
+`
+			cmd := exec.Command(bash, "--noprofile", "--norc", "-c", script, "completion-test", cur)
+			cmd.Dir = t.TempDir()
+			if err := os.WriteFile(filepath.Join(cmd.Dir, "would-expand"), nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + cmd.Dir}
+			out, err := cmd.CombinedOutput()
+			if err != nil || string(out) != "<codex>\n<two words>\n<*>\n" {
+				t.Fatalf("generated Bash completion lost words/candidates: %v\n%s", err, out)
+			}
+		})
+	}
+}
+
+func TestBashCompletionModelWordBreaks(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash unavailable")
+	}
+	for _, tc := range []struct {
+		name, query, breaks, want string
+		words                     []string
+	}{
+		{"joined partial", "codex:q", ":", "qualified", []string{"coop", "loop", "codex:q"}},
+		{"split partial", "codex:q", ":", "qualified", []string{"coop", "loop", "codex", ":", "q"}},
+		{"joined empty", "codex:", ":", "qualified", []string{"coop", "loop", "codex:"}},
+		{"split empty", "codex:", ":", "qualified", []string{"coop", "loop", "codex", ":"}},
+		{"custom word breaks", "codex:q", "", "codex:qualified", []string{"coop", "loop", "codex:q"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			script := bashCompletion + `
+query=$1
+COMP_WORDBREAKS=$2
+shift 2
+COMP_WORDS=("$@")
+COMP_CWORD=$((${#COMP_WORDS[@]}-1))
+coop() {
+  [ "$#" -eq 3 ] && [ "$1" = __complete ] && [ "$2" = loop ] && [ "$3" = "$query" ] || return 97
+  printf '%s\n' 'codex:qualified'
+}
+_coop
+printf '<%s>\n' "${COMPREPLY[@]}"
+`
+			args := append([]string{"--noprofile", "--norc", "-c", script, "completion-test", tc.query, tc.breaks}, tc.words...)
+			cmd := exec.Command(bash, args...)
+			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir()}
+			out, err := cmd.CombinedOutput()
+			if err != nil || string(out) != "<"+tc.want+">\n" {
+				t.Fatalf("generated Bash model completion: %v\n%s", err, out)
+			}
+		})
 	}
 }
 
