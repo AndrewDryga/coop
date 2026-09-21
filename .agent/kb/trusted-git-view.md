@@ -2,8 +2,8 @@
 name: trusted-git-view
 description: host git runs under a coop-owned GIT_DIR view with an allowlisted config, so a repository's filter/textconv/merge drivers never execute on the host; what the view carries, what must run on the real git dir, and the recovery consequences
 subsystem: forkspace
-sources: [internal/forkspace/gitview.go, internal/forkspace/gitview_config.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/git_test.go]
-updated: 2026-09-21
+sources: [internal/forkspace/gitview.go, internal/forkspace/gitview_config.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go]
+updated: 2026-09-22
 ---
 
 Every repository coop touches on the host is agent-writable (the box binds `.git` read-write), and
@@ -49,7 +49,20 @@ Session workspace clones use the view itself as their local transport source. A 
 no-checkout clone plus an exact fetch of the validated commit avoids racing mutable loose-object
 files without exposing the source repository's executable Git configuration.
 
+Immutable commit comparisons that must include changed gitlinks use both
+`--ignore-submodules=dirty` and `--submodule=short`. The first overrides the view's conservative
+`diff.ignoreSubmodules=all`; the second pins old/new commit IDs rather than honoring a host
+`diff.submodule=diff` preference. Inline diffs start another Git inside the submodule, outside
+the trusted parent view, and the parent's `--no-ext-diff`/`--no-textconv` flags do not protect
+that child. The loop regression proves a submodule-local named diff driver runs in a raw
+inline-diff positive control but never during production review. The loop's working-tree reads
+keep their existing restrictions.
+
 ## Changelog
+- 2026-09-22 — restored gitlink paths, routing, stats and patches in loop commit reviews while
+  forcing short submodule output. A real initialized-submodule fixture plus a mutation control
+  demonstrates host driver execution if only the short-format pin is removed. Swept the loop's
+  immutable comparisons; all three now retain dependency updates without entering the child.
 - 2026-09-21 — moved the loop's status, review snapshot and NUL-path reads onto the trusted view.
   Fixed flags alone still executed an agent-installed clean filter on the host; the loop regression
   checks all three paths and exact whitespace-bearing filenames against a working raw-Git control.

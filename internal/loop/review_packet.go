@@ -60,7 +60,8 @@ func reviewPatch(repo string, cs loopChangeSet) string {
 	if len(commits) == 0 {
 		return ""
 	}
-	args := []string{"show", "--no-ext-diff", "--no-textconv", "--format=commit %H %s", "--unified=2"}
+	// Inline submodule diffs spawn Git inside the submodule, beyond the trusted parent view.
+	args := []string{"show", "--ignore-submodules=dirty", "--submodule=short", "--no-ext-diff", "--no-textconv", "--format=commit %H %s", "--unified=2"}
 	args = append(args, commits...)
 	args = append(args, "--")
 	return truncate(gitOut(repo, args...), 10000)

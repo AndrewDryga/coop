@@ -367,7 +367,7 @@ func loopChanges(repo, base, head string, gateSources []string) loopChangeSet {
 	cs := loopChangeSet{
 		misc:                misc,
 		subsystems:          subsystemsOf(rangeFiles(repo, rng)),
-		stat:                strings.TrimSpace(gitOut(repo, "diff", "--stat", rng)),
+		stat:                strings.TrimSpace(gitOut(repo, "diff", "--ignore-submodules=dirty", "--submodule=short", "--stat", rng)),
 		gateSources:         slices.Clone(gateSources),
 		invalidTaskBindings: err != nil || invalid,
 	}
@@ -395,7 +395,7 @@ func finalVerificationChanges(repo, base string, gateSources []string) (loopChan
 
 // rangeFiles lists every file changed across a commit range.
 func rangeFiles(repo, rng string) []string {
-	return gitNULPaths(repo, "diff", "--name-only", "-z", rng)
+	return gitNULPaths(repo, "diff", "--ignore-submodules=dirty", "--submodule=short", "--name-only", "-z", rng)
 }
 
 // gitNULPaths reads exact paths from a hardened Git command, failing soft like gitOut.
