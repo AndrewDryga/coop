@@ -77,9 +77,17 @@ noted — mapped 2026-09-19 by reading the tests):
   "no first output from <provider> rotates and completes") plus grok's foreground-tool and tool-cap
   cases — a start timeout is read from each client's OWN first-output shape, so one provider going
   quiet proves nothing about another. **Still no live decoding.**
-- quota classification — D pinned ACP signals, ACP rate-limit recovery with each provider's real
-  shape (loop/consult/delegate fixtures print generic text). **No live proof** (a real limit
-  cannot be triggered on demand; the shapes are captured from the pinned clients).
+- quota classification — D pinned ACP signals per provider (claude `errorKind=rate_limit`, codex
+  `usageLimitExceeded`, gemini `RESOURCE_EXHAUSTED`, grok `http_status=402`), ACP rate-limit recovery,
+  AND `internal/ladder/limit_test.go` over REAL captured prose: claude's weekly subscription limit,
+  codex's usage-limit and model-at-capacity notices, gemini's output limit and max-tokens finish
+  reason, plus negatives (a 429 inside a larger number, a `codexErrorInfo` field NAME alone).
+  The loop fixtures printing generic text is CORRECT, not a gap: `ladder.DetectIterationLimit` is
+  provider-agnostic prose matching, so the fixture proves the loop's REACTION (rotate account, then
+  provider) while the ladder corpus proves DETECTION against what the clients really emit.
+  **Open: no captured loop-path sample for grok's credits exhaustion — its 402 is pinned only on the
+  ACP path, and its 429 reads as "Rate limited", which the broad keyword case covers. No live proof:
+  a real limit cannot be triggered on demand.**
 - helper discovery — D consult/delegate/preset/native-role matrices; L `native-roles-e2e`,
   `provider-consult-live-e2e-all` (wrapper called directly). **No live delegate proof.**
 - account switching — D DirectMatrix account selection, ACP rotation. **No live proof.**
