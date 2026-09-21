@@ -147,11 +147,23 @@ func TestProviderConsultLiveCompatibility(t *testing.T) {
 		emitConsultLiveSummary(t, strict, targets, failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "credential_revocation"))
 		return
 	}
-	env, err := liveprovider.ConsultChildEnvironment(layout, liveprovider.ConsultChildSpec{
+	childSpec := liveprovider.ConsultChildSpec{
 		Path: os.Getenv("PATH"), Marker: marker, Targets: targets, Strict: strict,
 		ResultFile: resultFile, AttemptDir: attemptDir, Supervisor: supervisor, CIDDir: cidDir,
 		PreflightReasons: preflight, ControlFD: 3, RevokePath: revokePath, Runtime: runtimeSettings,
-	})
+	}
+	// One brokered API key anywhere in the ring puts the WHOLE ring behind this host's filtered
+	// gateway — the gateway's broker is the only way Coop serves such a key, and the lead consults
+	// its peers from inside one launch. A ring of signed-in accounts keeps the open path.
+	brokered, err := liveprovider.AnyBrokersKey(realConfig, selections)
+	if err != nil {
+		emitConsultLiveSummary(t, strict, targets, failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "credential_kind"))
+		return
+	}
+	if brokered {
+		childSpec.NetworkStateHome = hostStateHome()
+	}
+	env, err := liveprovider.ConsultChildEnvironment(layout, childSpec)
 	if err != nil {
 		emitConsultLiveSummary(t, strict, targets, failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "child_environment"))
 		return

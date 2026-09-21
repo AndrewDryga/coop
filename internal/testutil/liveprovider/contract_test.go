@@ -301,6 +301,63 @@ func TestChildEnvironmentIsAllowlistOnly(t *testing.T) {
 	}
 }
 
+// The consult ring runs behind this host's filtered gateway when any target in it brokers an API
+// key — the same grant the CLI children get, because the gateway's broker is the only way Coop ever
+// serves such a key. The refusals have to match too: a relative state home is not a state home, and
+// a ring that names none stays open.
+func TestConsultChildRunsBehindTheHostGatewayWhenAsked(t *testing.T) {
+	layout, err := procharness.NewLayout(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	attemptDir := filepath.Join(layout.State, "consult-attempts")
+	cidDir := filepath.Join(layout.State, "consult-cids")
+	for _, dir := range []string{attemptDir, cidDir} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	targets, _, err := ParseTargets("all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	revokePath := filepath.Join(filepath.Dir(layout.Config), ".coop-live-revoked-00000000000000000000000000000000")
+	child := ConsultChildSpec{
+		Path: "/safe/bin", Marker: "CONSULT_MARKER_123", Targets: targets,
+		ResultFile: filepath.Join(layout.State, "consult-result.json"), AttemptDir: attemptDir,
+		Supervisor: "consult-live-123", CIDDir: cidDir, ControlFD: 3, RevokePath: revokePath,
+		Runtime: RuntimeSettings{Name: "docker"},
+	}
+
+	host := filepath.Join(t.TempDir(), "state")
+	filtered := child
+	filtered.NetworkStateHome = host
+	env, err := ConsultChildEnvironment(layout, filtered)
+	if err != nil {
+		t.Fatalf("consult child with host network state: %v", err)
+	}
+	joined := strings.Join(env, "\n")
+	for _, required := range []string{"COOP_EGRESS=filtered", "XDG_STATE_HOME=" + host} {
+		if !strings.Contains(joined, required) {
+			t.Errorf("consult child environment missing %q", required)
+		}
+	}
+	if strings.Contains(joined, "COOP_EGRESS=open") {
+		t.Error("the consult child is open AND filtered")
+	}
+
+	relative := child
+	relative.NetworkStateHome = "state"
+	if _, err := ConsultChildEnvironment(layout, relative); err == nil {
+		t.Fatal("a relative host state path was accepted")
+	}
+
+	if env, err := ConsultChildEnvironment(layout, child); err != nil ||
+		!strings.Contains(strings.Join(env, "\n"), "COOP_EGRESS=open") {
+		t.Fatalf("a consult child without host network state must stay open: %v", err)
+	}
+}
+
 func TestConsultChildEnvironmentIsFixedAndAllowlistOnly(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "AMBIENT_TOKEN_CANARY")
 	t.Setenv("COOP_GROK_CMD", "AMBIENT_CMD_CANARY")

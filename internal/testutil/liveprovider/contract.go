@@ -576,6 +576,11 @@ type ConsultChildSpec struct {
 	ControlFD                                                int
 	RevokePath                                               string
 	Runtime                                                  RuntimeSettings
+	// NetworkStateHome is the HOST's state home, and means here exactly what it means for a
+	// ChildSpec: every box this child launches runs behind this host's filtered gateway. The ring
+	// needs it for the same reason the CLI children do — a brokered API key is only ever served by
+	// that gateway's broker, so without this a ring containing one cannot run at all.
+	NetworkStateHome string
 }
 
 // ChildEnvironment builds an allowlist-only environment. It never reads os.Environ; callers must
@@ -681,6 +686,11 @@ func ConsultChildEnvironment(layout procharness.Layout, spec ConsultChildSpec) (
 		}
 	}
 	values["COOP_TEST_CONSULT_LIVE_TARGETS"] = strings.Join(targets, ",")
+	if spec.NetworkStateHome != "" {
+		if err := grantHostNetworkState(values, spec.NetworkStateHome); err != nil {
+			return nil, err
+		}
+	}
 	return encodeEnvironment(values)
 }
 

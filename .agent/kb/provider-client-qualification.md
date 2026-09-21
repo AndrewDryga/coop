@@ -31,9 +31,16 @@ networking, AND the CLI live suites and the singleton ACP suite now route a brok
 through the host's filtered gateway automatically: the harness asks
 `liveprovider.BrokersKey`/`AnyBrokersKey` per selection, and when the answer is yes it grants the
 child the host's network state and `COOP_EGRESS=filtered` (a signed-in account keeps the open path).
-The shared CLI child (`provider-live`, `-resume`, `-loop`) and `startLiveACP` are wired; the consult
-ring is NOT yet (its edge spec would hit the broker's "run the agent itself" gate — deferred with the
-consult live proof). Proven live 2026-09-20 on the reference host: Gemini's API key passes
+The shared CLI child (`provider-live`, `-resume`, `-loop`), `startLiveACP` AND the consult ring are
+wired. The ring's earlier deferral blamed the broker's "run the agent itself" gate, and that was
+WRONG — worth knowing, because it parked mechanical work behind an imagined design problem. That gate
+(`internal/box/credential_broker.go`) refuses only when `!spec.AgentCommand && networkClient !=
+ClientACP`, and a consult run's spec sets `AgentCommand: agent != ""` while carrying its `ConsultLead`
+and `Peers`, so it never applied. What was actually missing was one field: `ChildSpec` has
+`NetworkStateHome`, which `grantHostNetworkState` turns into `XDG_STATE_HOME` + `COOP_EGRESS=filtered`,
+and `ConsultChildSpec` did not have it, so the ring could not be put behind the gateway at all. One
+brokered key anywhere in the ring now filters the whole launch, since the lead consults its peers from
+inside one box. Proven live 2026-09-20 on the reference host: Gemini's API key passes
 `provider-live-e2e` (prompt through the gateway) and the full `TestLiveProviderConformance/gemini` ACP
 run (initialize, session/new, prompt, model switch, SIGHUP replay, resumed prompt — all filtered).
 Two things the routing needed: a filtered launch now also admits `--label KEY=VALUE` in COOP_RUN_ARGS
@@ -176,6 +183,9 @@ host re-run filtered setup once — a filtered launch does it itself, an editor 
 `coop net setup`.
 
 ## Changelog
+- 2026-09-21 — the consult ring routes a brokered key through the gateway; its "run the agent
+  itself" deferral was a misreading, and the real gap was a missing NetworkStateHome on
+  ConsultChildSpec. Live proof still owed by the paid run.
 - 2026-09-21 — the recorder learned per-suite provider scope, so `skills-e2e`, `mcp-e2e` and
   `native-roles-e2e` now enter the record; `mcp-e2e` carries claude's omission as part of it.
 - 2026-09-21 — `native-roles-e2e` probes from outside the home too; its control shows grok reads
