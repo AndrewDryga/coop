@@ -2,8 +2,8 @@
 name: provider-client-qualification
 description: every box runs one locked client set; make provider-qualify records a strict live qualification (no record or gate yet — why) — the conformance rows, where each is proven, the gaps, the bump procedure
 subsystem: agent
-sources: [internal/agent/locked_clients.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go]
-updated: 2026-09-20
+sources: [internal/agent/locked_clients.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go]
+updated: 2026-09-21
 ---
 
 **One manifest.** `locked-clients/package.json` + `package-lock.json` (embedded) and each adapter's
@@ -50,8 +50,10 @@ provider: the supervisor freezes the scope to the one brokered provider (`LimitN
 `visibleConfigOptions` hides it. Correct, and the ACP conformance test now expects it for a filtered
 session (an OPEN singleton still shows every repo preset, unfiltered by lead capability).
 
-**Conformance rows** (D = deterministic in `make check`, L = the paid run; all four providers unless
-noted — mapped 2026-09-19 by reading the tests):
+**Conformance rows** (D = deterministic in `make check`; R = the real pinned client, run OFFLINE in
+the locked image with `--network none` — free, but outside `make check` because it needs the image
+`coop net setup` builds; L = the paid run that calls a model; all four providers unless noted —
+mapped 2026-09-19 by reading the tests):
 - start — D `TestProviderScriptedProcessSmoke`, `TestProviderScriptedDirectMatrix`, ACP switch matrix;
   L `provider-live-e2e-all`, `acp-e2e`.
 - resume — D `TestResume`, fork session process, ACP target replay, consult continuity;
@@ -64,7 +66,19 @@ noted — mapped 2026-09-19 by reading the tests):
   shared `.agent/skills` reaches each skills-capable client at its OWN `$HOME/.<provider>/skills`,
   writable, from a synthesized copy — and is absent for a client that does not discover skills. The
   provider fixture now pins that shape (`validateSkillsMount`), so the mount cannot change silently.
-  **Still no LIVE proof that a client loads the skill it finds there.**
+  R `skills-e2e` closes most of the other half — that each client reads that directory — by asking
+  the client itself, offline: codex `skills/list` over its app-server stdio JSON-RPC, `gemini skills
+  list` and `grok inspect --json` all NAME the skill, so those three are real discovery proofs.
+  Claude is weaker and labelled so: it has no offline command that reports loaded skills (`claude
+  skills list` needs an account), so the row runs `plugin validate ~/.claude --json --strict`, which
+  proves its tooling finds and parses `skills/` at the mounted layout, not that its runtime loads it.
+  Two guards keep a row from passing for the wrong reason: the probe runs from a working directory
+  that is NOT the home, because all of these clients also discover `<cwd>/.<agent>/skills` as a
+  project skill and report the same absolute path (a probe run from `$HOME` would keep passing for a
+  client that dropped the user-level root — the regression the test exists to catch); and a decoy at
+  `~/.<agent>/notskills` must appear in NO report, written in the shape that client would report
+  (frontmatter-less for claude, or the guard rules out nothing). Move the real skill off the mounted
+  path and all four rows fail.
 - MCP — D per-route unit tests (claude's `--strict-mcp-config` argv among them) AND
   `TestProviderScriptedSharedMCPReachesEveryClient` (process level, per provider): an operator's
   shared MCP file reaches every client, read-only, at a path that client reads. Asserted on the
@@ -88,8 +102,10 @@ noted — mapped 2026-09-19 by reading the tests):
   **Open: no captured loop-path sample for grok's credits exhaustion — its 402 is pinned only on the
   ACP path, and its 429 reads as "Rate limited", which the broad keyword case covers. No live proof:
   a real limit cannot be triggered on demand.**
-- helper discovery — D consult/delegate/preset/native-role matrices; L `native-roles-e2e`,
-  `provider-consult-live-e2e-all` (wrapper called directly). **No live delegate proof.**
+- helper discovery — D consult/delegate/preset/native-role matrices; R `native-roles-e2e` (each
+  pinned client reads back the role Coop rendered; no PAID call — gemini's row does attempt one with
+  a dummy key and reads the debug line printed before it fails); L `provider-consult-live-e2e-all`
+  (wrapper called directly). **No live delegate proof.**
 - account switching — D DirectMatrix account selection, ACP rotation, AND
   `TestProviderScriptedLoopRotatesAccountsBeforeProviders` (process level, every provider): a limit
   on one account rotates to the SAME provider's second account before any other provider, and each
@@ -135,6 +151,13 @@ host re-run filtered setup once — a filtered launch does it itself, an editor 
 `coop net setup`.
 
 ## Changelog
+- 2026-09-21 — the skills row's live gap closed OFFLINE: `skills-e2e` asks each pinned client what it
+  loaded from `~/.<agent>/skills`, no model call. Split the row legend (R) from the paid run, because
+  `native-roles-e2e` was filed under L while making no paid call. Both offline suites now run FIRST
+  in `provider-qualify`, so a red there cannot arrive after every provider has answered paid prompts. Two non-obvious findings: codex
+  exposes its skill catalog only to the model (`skills.list`), but its app-server answers the same
+  `skills/list` over stdio JSON-RPC, and claude's validator reports ONLY what it objects to — a valid
+  skill leaves `contents: []`, identical to an empty directory, so a canary is the only usable signal.
 - 2026-09-20 — every live suite auto-routes a brokered API-key target through the filtered gateway
   (BrokersKey/AnyBrokersKey); Gemini proven live on provider-live-e2e and ACP conformance. Recorded
   the filtered-singleton toolbar (no Preset when no in-scope preset), the --label admission and the
