@@ -208,9 +208,9 @@ func TestComposedLaunchCreatesABoxWithBothBoundaries(t *testing.T) {
 	}
 }
 
-// The two refusals that keep a composed box from being wider than a restricted one, driven through
-// the same seam.
-func TestComposedLaunchRefusesAProjectImageAndABrokeredKey(t *testing.T) {
+// The refusal that keeps a composed box from being wider than a restricted one: a project's own
+// image must never become the filesystem the profile is a contract about.
+func TestComposedLaunchRefusesAProjectImage(t *testing.T) {
 	sections := newLaunchSections(RunSpec{Quiet: true})
 	spec := RunSpec{Repo: t.TempDir(), Quiet: true, Ctx: context.Background()}
 	started, stopped := false, ""
@@ -223,40 +223,82 @@ func TestComposedLaunchRefusesAProjectImageAndABrokeredKey(t *testing.T) {
 		t.Errorf("a project image reached a restricted box: %v", err)
 	}
 
-	f2, _ := filteredFixture(t)
-	f2.broker = &credentialBrokerRun{}
-	_, err = launchRestrictedFiltered(f2, spec, sections, nil, []string{"true"},
-		nil, io.Discard, io.Discard, &started, nil, &stopped)
-	if err == nil || !strings.Contains(err.Error(), "credential broker") {
-		t.Errorf("a brokered key was accepted without the broker wiring: %v", err)
+}
+
+// The session handoff is where an operator's MCP secrets would reach a box, and a filtered run must
+// resolve NOTHING from the real environment. This asserts the decision directly rather than through
+// a launch — the previous version of this test went through `Run`, and when the gateway preparation
+// moved earlier it silently began SKIPPING instead of asserting, which is how a security guard rots
+// inside a green suite.
+func TestAFilteredSessionResolvesNoRealMCPSecrets(t *testing.T) {
+	cfg, spec := readOnlySessionFixture(t)
+
+	// Open, no broker: the real values are what the servers need, and there is nothing to hide them
+	// from — this is the baseline that makes the filtered case below a real difference.
+	cfg.Egress = "open"
+	if open := sessionStandIns(cfg, spec, nil); len(open.kept) == 0 {
+		t.Fatal("the open baseline keeps nothing, so the filtered case below proves nothing")
+	}
+
+	// Filtered: nothing kept, so no ${VAR} header or bearer token can resolve to a real secret.
+	cfg.Egress = "filtered"
+	got := sessionStandIns(cfg, spec, nil)
+	if len(got.kept) != 0 {
+		t.Errorf("a filtered session would resolve %d real value(s) into the box's server list: %v", len(got.kept), got.kept)
 	}
 }
 
 // The acceptance criterion this closes: "filtered mode keeps credentials outside the box".
 //
-// An API key used to be refused for these modes, because a restricted run assembles no broker and
-// the only place left for the key would be the box itself. Composed with the gateway there IS a
-// broker, so the key can stay outside it — and this asserts that it did: the raw secret appears in
-// neither the box's environment nor any file the launch mounts into it.
-func TestComposedRunKeepsABrokeredKeyOutsideTheBox(t *testing.T) {
+// Asserted on the ENV FILE THE BOX RECEIVES, not on the plan that decides it. The first version of
+// this test read the host-side env map and exempted ANTHROPIC_API_KEY by name, so it would have
+// passed while the raw key rode into the container — the review caught that, and the difference is
+// the whole point: the box gets a substitute and the broker's address, and the secret is absent.
+func TestComposedRunKeepsABrokeredKeyOutOfTheBoxEnv(t *testing.T) {
 	const secret = "raw-provider-secret"
 	cfg, _ := brokerFixture(t, "ANTHROPIC_API_KEY="+secret+"\n")
 	spec := RunSpec{Agent: "claude", AgentCommand: true, Homes: true, Mode: agents.ModeReadOnly}
 
-	// The plan is what decides whether the key is brokered at all; under the gateway it must be.
 	plan, err := selectCredentialPlan(cfg, spec)
 	if err != nil || plan == nil || len(plan.routes) != 1 {
 		t.Fatalf("the key was not brokered under the gateway: %+v, %v", plan, err)
 	}
-	if got := plan.routes[0].spec.CredentialEnv; got != "ANTHROPIC_API_KEY" {
-		t.Fatalf("brokered the wrong variable: %q", got)
+
+	f, _ := filteredFixture(t)
+	f.broker = &credentialBrokerRun{plan: plan}
+	artifacts := defaultCompositionArtifactOps()
+	artifacts.parent = f.runfiles
+	if err := f.prepareCredentialBroker(artifacts); err != nil {
+		t.Fatalf("prepare the broker: %v", err)
 	}
-	// And the route carries the key for the BROKER to hold, never as something the box is handed:
-	// the env the box receives names the broker, and the secret itself is not in it.
-	env := effectiveMCPEnv(cfg, spec)
-	for name, value := range env {
-		if strings.Contains(value, secret) && name != "ANTHROPIC_API_KEY" {
-			t.Errorf("the raw key leaked into %s", name)
-		}
+
+	// The env file as assembled for the box, then rewritten by the broker.
+	envFile, _, err := prepareBoxEnvFile(cfg, spec, artifacts, nil)
+	if err != nil {
+		t.Fatalf("assemble the box env: %v", err)
+	}
+	raw, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), secret) {
+		t.Fatal("the fixture's key is not in the assembled env, so the rewrite below proves nothing")
+	}
+	brokered, err := f.credentialBrokerEnv(artifacts, envFile)
+	if err != nil {
+		t.Fatalf("rewrite the env for the broker: %v", err)
+	}
+	body, err := os.ReadFile(brokered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), secret) {
+		t.Errorf("the raw key rode into the box:\n%s", body)
+	}
+	if !strings.Contains(string(body), "ANTHROPIC_API_KEY=") {
+		t.Errorf("the box was left with no key at all, brokered or otherwise:\n%s", body)
+	}
+	if !strings.Contains(string(body), "ANTHROPIC_BASE_URL=http://") {
+		t.Errorf("the box was not pointed at the broker:\n%s", body)
 	}
 }

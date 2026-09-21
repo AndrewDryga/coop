@@ -620,19 +620,7 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 			}
 			snapshotPath = path
 		}
-		standIns := mcpStandIns{kept: effectiveMCPEnv(cfg, spec)}
-		switch {
-		case open != nil:
-			standIns = open.mcpStandIns(cfg, spec)
-		case cfg.Egress == "filtered":
-			// Under the gateway there is no open broker to route a secret through, and the handoff
-			// resolves ${VAR} headers and bearer tokens from whatever it is given — so handing it the
-			// real environment would put the operator's MCP secrets in the box's session list, which
-			// a filtered run never does (it brokers them or refuses the launch). Nothing kept: a
-			// server that needs a secret drops out of the list, a public one still works.
-			standIns = mcpStandIns{}
-		}
-		if err := handOffSessionMCP(spec, sessionMCP, snapshotPath, standIns); err != nil {
+		if err := handOffSessionMCP(spec, sessionMCP, snapshotPath, sessionStandIns(cfg, spec, open)); err != nil {
 			return -1, err
 		}
 	}
@@ -868,4 +856,27 @@ func restrictedAssemblyNetwork(cfg *config.Config) string {
 		return ""
 	}
 	return "none"
+}
+
+// sessionStandIns decides what the session handoff may resolve a secret FROM. The handoff expands
+// ${VAR} headers and bearer tokens out of whatever map it is handed, and the daemon sends the result
+// into the box — so this is the decision that keeps an operator's MCP secrets out of a session list,
+// and it is a function so a test can make it directly rather than through a launch.
+//
+//   - an OPEN run with a broker resolves to the broker's stand-ins: the servers work, the secrets stay
+//     with the helper beside the box;
+//   - a FILTERED run has no open broker to route through, so it keeps NOTHING. A server that needs a
+//     secret drops out of the list; a public one still works. Handing it the real environment would
+//     put those secrets in the box, which is the one thing a filtered run never does;
+//   - anything else is an open run without secret-bearing servers, where the real values are what the
+//     servers need and there is nothing to protect them from.
+func sessionStandIns(cfg *config.Config, spec RunSpec, open *openBroker) mcpStandIns {
+	switch {
+	case open != nil:
+		return open.mcpStandIns(cfg, spec)
+	case cfg.Egress == "filtered":
+		return mcpStandIns{}
+	default:
+		return mcpStandIns{kept: effectiveMCPEnv(cfg, spec)}
+	}
 }
