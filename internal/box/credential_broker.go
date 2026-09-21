@@ -187,7 +187,7 @@ func selectCredentialPlanWithMarkers(cfg *config.Config, spec RunSpec, markers m
 		return nil, fmt.Errorf("%s API-key brokering serves agents, not this command; run the agent itself", credentialBrokerAgentName(first.provider))
 	}
 	if spec.Mode.Restricted() {
-		return nil, fmt.Errorf("%s %s needs filtered networking, which the read-only and bare modes cannot use yet; sign in with the provider instead", credentialBrokerAgentName(first.provider), first.spec.CredentialEnv)
+		return nil, fmt.Errorf("%s %s needs the credential broker, which a read-only or bare run does not assemble; sign in with the provider instead", credentialBrokerAgentName(first.provider), first.spec.CredentialEnv)
 	}
 	if len(plan.routes) > maxProviderRoutes {
 		return nil, fmt.Errorf("one run can protect at most %d API-key accounts", maxProviderRoutes)

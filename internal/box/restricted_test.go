@@ -373,14 +373,16 @@ func TestRunRestrictedRefusesWhatItDoesNotEnforce(t *testing.T) {
 			return runtime.Runtime{}
 		}, "unknown execution mode"},
 		{"apple container", func(cfg *config.Config, spec *RunSpec) runtime.Runtime { return runtime.Runtime{Name: "container"} }, "docker only"},
-		{"filtered egress", func(cfg *config.Config, spec *RunSpec) runtime.Runtime {
+		// Filtered is no longer refused outright — it composes. Each HALF without the other still is,
+		// because either alone means a boundary the caller asked for would not be there.
+		{"filtered without the frozen rules", func(cfg *config.Config, spec *RunSpec) runtime.Runtime {
 			cfg.Egress = "filtered"
 			return runtime.Runtime{}
-		}, "restricted networking"},
-		{"filtered capture", func(cfg *config.Config, spec *RunSpec) runtime.Runtime {
+		}, "needs the rules admission froze for it"},
+		{"frozen rules without filtered", func(cfg *config.Config, spec *RunSpec) runtime.Runtime {
 			spec.CapturedEgress = &CapturedEgress{}
 			return runtime.Runtime{}
-		}, "restricted networking"},
+		}, "not running filtered"},
 		{"project image", func(cfg *config.Config, spec *RunSpec) runtime.Runtime {
 			spec.Image = "coop-myrepo"
 			return runtime.Runtime{}

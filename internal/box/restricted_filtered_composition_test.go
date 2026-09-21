@@ -2,6 +2,8 @@ package box
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -66,6 +68,101 @@ func TestRestrictedScratchIsOwnedByTheFilteredAgentUser(t *testing.T) {
 	for i, arg := range profile {
 		if arg == "--tmpfs" && i+1 < len(profile) && !strings.Contains(profile[i+1], want) {
 			t.Errorf("scratch %q is not owned by the agent user (%s)", profile[i+1], want)
+		}
+	}
+}
+
+// The network the restricted assembly names, by posture. Small, but it is the decision that made
+// the first attempt at this composition unable to start at all: the assembly named `--network none`
+// while the launch appends `--network container:<controller>`, and Docker accepts that pair at
+// create and then refuses to start it.
+func TestRestrictedAssemblyUnderFilteredNamesNoNetwork(t *testing.T) {
+	// The launch joins the controller's namespace itself. A --network here would leave the box with
+	// both that and this one: Docker accepts the pair at create and then refuses to start, so the
+	// composed run would die with an error about a network that does not exist.
+	if got := restrictedAssemblyNetwork(&config.Config{Egress: "filtered"}); got != "" {
+		t.Errorf("filtered assembles --network %q; the launch owns the namespace", got)
+	}
+	// And the other postures still fail closed / use the plain bridge exactly as before.
+	if got := restrictedAssemblyNetwork(&config.Config{Egress: "none"}); got != "none" {
+		t.Errorf("offline network = %q, want none", got)
+	}
+	if got := restrictedAssemblyNetwork(&config.Config{Egress: "open"}); got != "" {
+		t.Errorf("open network = %q, want the plain bridge", got)
+	}
+}
+
+// The composed pair is accepted, each half alone is refused, and bare is refused because it has no
+// project for a network policy to be about.
+func TestComposedRestrictedFilteredAdmission(t *testing.T) {
+	rt := runtime.Runtime{Name: "docker"}
+	base := func() (*config.Config, RunSpec) {
+		return &config.Config{HomeInBox: "/home/node", BaseImage: "coop-box:x"},
+			RunSpec{Image: "coop-box:x", Repo: "/Users/dev/checkout"}
+	}
+	for _, tc := range []struct {
+		name    string
+		egress  string
+		capture bool
+		mode    agents.ExecutionMode
+		want    string
+	}{
+		{"read-only composes with filtered", "filtered", true, agents.ModeReadOnly, ""},
+		{"filtered without frozen rules", "filtered", false, agents.ModeReadOnly, "needs the rules admission froze for it"},
+		{"frozen rules without filtered", "open", true, agents.ModeReadOnly, "not running filtered"},
+		{"bare has no project for a policy", "filtered", true, agents.ModeBare, "no project for a filtered policy"},
+		{"read-only still runs open", "open", false, agents.ModeReadOnly, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, spec := base()
+			cfg.Egress = tc.egress
+			if tc.capture {
+				spec.CapturedEgress = &CapturedEgress{}
+			}
+			if tc.mode == agents.ModeBare {
+				spec.Repo = ""
+			}
+			err := checkRestrictedSpec(cfg, rt, spec, tc.mode)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("refused: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// A read-only SESSION under the gateway must not hand the operator's real MCP secrets to the box.
+//
+// The session handoff resolves ${VAR} headers and bearer tokens from whatever environment it is
+// given, and an OPEN run gives it the broker's stand-ins. Under filtered there is no open broker —
+// so before this was fixed the handoff was given the real environment, and a filtered run ended up
+// carrying secrets that a filtered run is precisely the mode that never carries: it brokers them or
+// refuses the launch. This is the one axis on which the composed sandbox was wider than filtered
+// alone, and the test exists because the composition is what made those sessions start at all.
+func TestAFilteredReadOnlySessionHandsOverNoRealMCPSecrets(t *testing.T) {
+	cfg, spec := readOnlySessionFixture(t)
+	cfg.Egress = "filtered"
+	spec.CapturedEgress = &CapturedEgress{}
+
+	dir := t.TempDir()
+	handoff := filepath.Join(dir, "handoff.json")
+	t.Setenv(SessionMCPHandoffEnv, handoff)
+	// The launch itself cannot complete here — preparing the gateway needs a real daemon — but the
+	// handoff is written before that, which is exactly the artifact under test.
+	_, _ = Run(cfg, readOnlySessionShim(t, filepath.Join(dir, "calls"), filepath.Join(dir, "box-env")), spec)
+
+	body, err := os.ReadFile(handoff)
+	if err != nil {
+		t.Skipf("no session handoff was written: %v", err)
+	}
+	for _, secret := range []string{"docs-secret", "tickets-secret", "stream-secret"} {
+		if strings.Contains(string(body), secret) {
+			t.Errorf("the session list handed the box a real MCP secret (%s):\n%s", secret, body)
 		}
 	}
 }

@@ -15,6 +15,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/gatewayimage"
 	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -78,8 +79,23 @@ func checkRestrictedSpec(cfg *config.Config, rt runtime.Runtime, spec RunSpec, m
 	if !rt.SupportsRestrictedFilesystem() {
 		return fmt.Errorf("a %s run is qualified on docker only; %s is not", mode, filepath.Base(rt.Name))
 	}
-	if spec.CapturedEgress != nil || spec.networkSmoke != nil || cfg.Egress == "filtered" {
-		return fmt.Errorf("a %s run is not qualified under restricted networking — run it with --egress open or none", mode)
+	// Filtered networking COMPOSES with a restricted run (runRestrictedFiltered): the profile is a
+	// FILESYSTEM contract and the gateway is a NETWORK one, and the launch that owns the gateway is
+	// shared rather than copied. What stays refused is each half without the other — either one alone
+	// means the caller asked for a boundary that would not be there.
+	if spec.networkSmoke != nil {
+		return fmt.Errorf("a %s run does not run the network setup probe, which qualifies the shared image rather than this box", mode)
+	}
+	if cfg.Egress == "filtered" && spec.CapturedEgress == nil {
+		return fmt.Errorf("a %s run under --egress filtered needs the rules admission froze for it", mode)
+	}
+	if cfg.Egress != "filtered" && spec.CapturedEgress != nil {
+		return fmt.Errorf("a %s run carries frozen network rules but is not running filtered", mode)
+	}
+	// Bare has no repository, so it has no project for the gateway's policy to be about; the CLI
+	// refuses the pair already and the box layer says so too rather than resolving it to a cwd.
+	if mode == agents.ModeBare && cfg.Egress == "filtered" {
+		return fmt.Errorf("a %s run has no project for a filtered policy to apply to — use --read-only, or drop --egress filtered", mode)
 	}
 	// The repository mounts at its own host path; the profile's scratch tmpfs are fixed paths.
 	// A repository that IS one of them (a run from /tmp outside any checkout) would ask the
@@ -567,19 +583,27 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 			snapshotPath = path
 		}
 		standIns := mcpStandIns{kept: effectiveMCPEnv(cfg, spec)}
-		if open != nil {
+		switch {
+		case open != nil:
 			standIns = open.mcpStandIns(cfg, spec)
+		case cfg.Egress == "filtered":
+			// Under the gateway there is no open broker to route a secret through, and the handoff
+			// resolves ${VAR} headers and bearer tokens from whatever it is given — so handing it the
+			// real environment would put the operator's MCP secrets in the box's session list, which
+			// a filtered run never does (it brokers them or refuses the launch). Nothing kept: a
+			// server that needs a secret drops out of the list, a public one still works.
+			standIns = mcpStandIns{}
 		}
 		if err := handOffSessionMCP(spec, sessionMCP, snapshotPath, standIns); err != nil {
 			return -1, err
 		}
-		// This box loads no MCP file, so no MCP variable has a consumer inside it — including one
-		// belonging to a server no route could carry. The list the daemon sends resolves from the
-		// projection, not from this environment, so dropping every name the configured file
-		// references costs the session nothing and keeps the secrets out either way.
-		if mcpScrubNames, err = mcpScrub(cfg, spec); err != nil {
-			return -1, err
-		}
+	}
+	// Every restricted box, session or not, loads no MCP file — so no MCP variable has a consumer
+	// inside it, and dropping every name the configured file references costs nothing. This used to
+	// run only for a session, which left a plain `--read-only` run holding those tokens in its
+	// environment; under the gateway that was weaker than a filtered run, which always strips them.
+	if mcpScrubNames, err = mcpScrub(cfg, spec); err != nil {
+		return -1, err
 	}
 
 	cmd := spec.Cmd
@@ -685,10 +709,7 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	plain := spec
 	plain.Homes, plain.Cache, plain.Network, plain.Serve, plain.ShareACPSessions = false, false, false, false, false
 	plain.servePorts, plain.servePlan = nil, nil
-	network := "none" // egress fails closed exactly as in assembleArgs; open means the plain bridge
-	if cfg.Egress == "open" {
-		network = ""
-	}
+	network := restrictedAssemblyNetwork(cfg)
 	tty := decideTTY(spec, ui.IsTerminal(os.Stdin))
 	limits := append(boxLimits(cfg, rt), filesystem...)
 	options := assembleOptions(cfg, rt.SupportsInit(), plain, mounts, decoy, decoyDir, workdir, tty, false,
@@ -697,9 +718,6 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	if err := validateRestrictedOptions(options, plan); err != nil {
 		return -1, err
 	}
-	args := append([]string{"run", "--rm"}, options...)
-	args = append(append(args, spec.Image), cmd...)
-
 	var stdin io.Reader
 	if tty == ttyInteractive || tty == ttyStdinOnly {
 		stdin = os.Stdin
@@ -714,9 +732,16 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	if err := ctxStep(spec.Ctx, "argument assembly"); err != nil {
 		return -1, err
 	}
+	if cfg.Egress == "filtered" {
+		// The hook marks the launch boundary; the filtered launch fires it itself, after the gateway
+		// is up. Firing here as well would start a caller's start-deadline before bring-up.
+		return runRestrictedFiltered(cfg, rt, spec, sections, options, cmd, stdin, stdout, stderr, &started)
+	}
 	if spec.OnRuntimeLaunch != nil {
 		spec.OnRuntimeLaunch()
 	}
+	args := append([]string{"run", "--rm"}, options...)
+	args = append(append(args, spec.Image), cmd...)
 	sections.starting()
 	if spec.Ctx != nil {
 		code, runErr := rt.RunInterruptible(spec.Ctx, stdin, stdout, stderr, args...)
@@ -745,4 +770,72 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 		sections.stopped(stopReason(code, nil, nil))
 	}
 	return code, runErr
+}
+
+// runRestrictedFiltered runs an already-assembled restricted box inside the filtered gateway.
+//
+// The two sandboxes answer different questions and neither subsumes the other: the restricted
+// profile decides what the agent may WRITE (nothing persistent), the gateway decides what it may
+// REACH. So the restricted assembly keeps building the box exactly as it does for an open run, and
+// the filtered launch — which owns the controller, the guard, the volumes, the receipt and the one
+// shared teardown — starts and ends it. Neither the gateway nor the ending is copied here.
+func runRestrictedFiltered(cfg *config.Config, rt runtime.Runtime, spec RunSpec, sections *launchSections,
+	options, cmd []string, stdin io.Reader, stdout, stderr io.Writer, started *bool) (exitCode int, result error) {
+	var interrupt *hostInterrupt
+	if spec.Ctx == nil {
+		// A filtered box is torn down by THIS process, so an interrupt has to arrive as a
+		// cancellation the teardown can act on — and the teardown names the signal it was.
+		spec.Ctx, interrupt = newHostInterrupt()
+	}
+	filtered, err := prepareFilteredExecution(spec.Ctx, cfg, rt, spec, spec.CapturedEgress, "", nil, sections)
+	// A failed preparation can still own published intent, so the teardown is registered on the
+	// execution whenever there IS one — before the error is acted on, exactly as Run does.
+	stopped := ""
+	var teardownErr error
+	if filtered != nil {
+		defer func() {
+			result, teardownErr = filtered.teardown(spec, sections, forkspace.ExecutionRecord{}, exitCode, result, stopped, interrupt)
+			// Only a clean teardown may mark the result explained. A cleanup failure joined onto a
+			// cancellation still satisfies errors.Is(_, context.Canceled), so silencing it here would
+			// leave a leaked gateway, guard or volume with nothing printed about it anywhere.
+			if teardownErr == nil {
+				result = sections.explained(result, interrupt)
+			}
+		}()
+	}
+	if err != nil {
+		return -1, err
+	}
+	// The gateway's own image substitution must not reach a restricted box: prepareFilteredExecution
+	// skips a project's derived image for these modes (filtered.go), and this proves it did, because
+	// the image is what the filesystem profile is a contract ABOUT.
+	if filtered.record.ProjectImage != "" {
+		return -1, fmt.Errorf("a restricted run cannot use this project's own box image (%s)", filtered.record.ProjectImage)
+	}
+	// A brokered API key needs the broker wiring the ordinary filtered path sets up, which a
+	// restricted run does not assemble. Refused in the open rather than failing later as a
+	// confusing binding error.
+	if filtered.broker != nil {
+		return -1, fmt.Errorf("a restricted run cannot route an API key through the credential broker — sign in with the provider, or drop --egress filtered")
+	}
+	spec.Image = filtered.image // the qualified client image, by digest, never a repo image
+	spec.Cmd = cmd
+	sections.starting()
+	code, launchErr := filtered.launch(spec.Ctx, spec, options, stdin, stdout, stderr)
+	if *started = filtered.started(); *started {
+		stopped = stopReason(code, launchErr, interrupt)
+	}
+	return code, launchErr
+}
+
+// restrictedAssemblyNetwork is the --network this assembly names, by posture. Offline fails closed
+// exactly as assembleArgs does; open means the plain bridge. Filtered names NOTHING, because the
+// filtered launch joins the controller's namespace itself — naming one here would leave the box with
+// both `--network none` and `--network container:<controller>`, which Docker accepts at create and
+// then refuses to start.
+func restrictedAssemblyNetwork(cfg *config.Config) string {
+	if cfg.Egress == "open" || cfg.Egress == "filtered" {
+		return ""
+	}
+	return "none"
 }

@@ -543,7 +543,7 @@ func TestCredentialBrokerRefusesWhatItCannotServe(t *testing.T) {
 	}
 	cfg, _ = brokerFixture(t, "ANTHROPIC_API_KEY=raw-provider-secret\n")
 	restricted := RunSpec{Agent: "claude", AgentCommand: true, Homes: true, Mode: agents.ModeReadOnly}
-	if plan, err := selectCredentialPlan(cfg, restricted); err == nil || plan != nil || !strings.Contains(err.Error(), "read-only and bare modes cannot use yet") {
+	if plan, err := selectCredentialPlan(cfg, restricted); err == nil || plan != nil || !strings.Contains(err.Error(), "does not assemble") {
 		t.Fatalf("a restricted run's key = %+v, %v", plan, err)
 	}
 }
