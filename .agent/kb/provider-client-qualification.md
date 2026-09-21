@@ -63,8 +63,11 @@ noted — mapped 2026-09-19 by reading the tests):
 - MCP — D per-route unit tests (claude's `--strict-mcp-config` argv among them);
   L `provider-loop-live-e2e-all` (Coop's task tools). **The user's shared MCP servers are never
   exercised live, and no process-level test asserts them.**
-- tool lifecycle — D `loop/streamjson_activity_test.go` per provider; watchdog process test for
-  claude/codex/grok (**not gemini**). **No live decoding.**
+- tool lifecycle — D `loop/streamjson_activity_test.go` per provider; watchdog process test now
+  covers a silent start for claude, gemini and grok (`TestProviderScriptedLoopWatchdogProcess`,
+  "no first output from <provider> rotates and completes") plus grok's foreground-tool and tool-cap
+  cases — a start timeout is read from each client's OWN first-output shape, so one provider going
+  quiet proves nothing about another. **Still no live decoding.**
 - quota classification — D pinned ACP signals, ACP rate-limit recovery with each provider's real
   shape (loop/consult/delegate fixtures print generic text). **No live proof** (a real limit
   cannot be triggered on demand; the shapes are captured from the pinned clients).

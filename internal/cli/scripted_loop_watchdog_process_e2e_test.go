@@ -184,6 +184,51 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
+	// The same silence, through the two providers the process-level watchdog never covered. A
+	// start timeout is decided from the provider's OWN first-output shape, so "claude went quiet"
+	// proves nothing about gemini: each client's stream is decoded by different code, and a decoder
+	// that never reports activity would make a healthy provider look wedged (or a wedged one look
+	// busy). Cheap to run, and it is the row the qualification map had marked unproven.
+	for _, silent := range []struct{ quiet, rescue string }{
+		{"gemini", "codex"},
+		{"grok", "codex"},
+	} {
+		t.Run("no first output from "+silent.quiet+" rotates and completes", func(t *testing.T) {
+			setLoopWatchdogDeadlines(t, suite, "start=2s,idle=20s,tool=30s")
+			resetLoopProcessRepo(t, suite)
+			taskID := "watchdog-silent-" + silent.quiet
+			seedLoopProcessTask(t, suite.layout.Repo, taskID)
+			targets := []string{
+				loopRecoveryTarget(silent.quiet, "silent-model", "work"),
+				loopRecoveryTarget(silent.rescue, "rescue-model", "work"),
+			}
+			writeLoopRecoveryPreset(t, suite.layout.Repo, "watchdog-start-"+silent.quiet, targets)
+			attempts := []loopProcessAttempt{
+				{Target: targets[0], Stage: "work", Result: "wait"},
+				{Target: targets[1], Stage: "work", Result: "complete"},
+			}
+			suite.reset(t, loopRecoveryScenario(taskID, attempts))
+			result := runLoopRecovery(t, suite, "watchdog-start-"+silent.quiet)
+			output := visibleProcessText(result.Stdout + result.Stderr)
+			if result.Err != nil || result.ExitCode != 0 ||
+				!strings.Contains(output, "Stopped an unresponsive task attempt") ||
+				!strings.Contains(output, "Starting a fresh attempt with ") ||
+				strings.Contains(output, "Task attempt failed") {
+				t.Fatalf("%s silent start = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
+					silent.quiet, result.ExitCode, result.Err, result.Stdout, result.Stderr)
+			}
+			parsed, _ := agents.ParseTarget(targets[1])
+			assertLoopProcessResult(t, suite, silent.rescue, taskID, parsed.Model, parsed.Effort, parsed.Account(), suite.repoHead, 2, false)
+			records := readLoopStageRecords(t, suite)
+			if len(records) != 2 ||
+				records[0].Stage != "work" || records[0].Outcome != "provider_start_timeout" || records[0].Provider != silent.quiet ||
+				records[1].Stage != "work" || records[1].Outcome != "success" || records[1].Provider != silent.rescue {
+				t.Fatalf("%s silent start telemetry = %#v", silent.quiet, records)
+			}
+			assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		})
+	}
+
 	t.Run("held host setup is not provider silence", func(t *testing.T) {
 		setLoopWatchdogDeadlines(t, suite, "start=2s,idle=20s,tool=30s")
 		resetLoopProcessRepo(t, suite)
