@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -431,6 +432,11 @@ func (a *app) ensureACPImage() error {
 // child (COOP_ACP_INNER set so the child runs the box, not another supervisor). When
 // the child's container dies, acpproxy starts a new child and replays the ACP
 // handshake, so the editor never sees a disconnect (see internal/acpproxy).
+// leadAnswerGrace is how long the warm fan-out waits for the editor's initialize to be answered
+// before starting anyway. It is a backstop for a lead that never answers, not a delay anyone should
+// feel: a provider switch is a human decision, many seconds away, and the fills take about a second.
+const leadAnswerGrace = 3 * time.Second
+
 func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) {
 	self, err := os.Executable()
 	if err != nil {
@@ -516,18 +522,43 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	})
 	// After any spawn — Run's first one included — the pool re-centres on the provider now in use:
 	// warm the others, the one just left included, and drop a spare of the active one.
-	rebalance := func(active string) {
+	rebalanceNow := func(active string) {
 		go func() { pool.Rebalance(active, ctrl.SpawnableProviders(active)) }()
 	}
-	// Warm the others while the lead's own box starts, as before any switch: the first spawn's
-	// rebalance repeats it (a fill already held or in flight is skipped), and a lead that waits out a
-	// reset, or fails, still leaves the providers it could switch to ready.
+	// Before the editor has its initialize answer, warming waits. A spawn that happens in that window
+	// is the LEAD's own, and re-centring the pool on it would start the very fan-out being deferred —
+	// so the gate, not the call site, decides. Every later spawn is a switch, where the editor is not
+	// blocked on anything and re-centring immediately is what keeps the next switch warm.
+	var fanOutOpen atomic.Bool
+	rebalance := func(active string) {
+		if fanOutOpen.Load() {
+			rebalanceNow(active)
+		}
+	}
+	// Warm the others so a later provider switch swaps to a hot adapter — but NOT while the editor is
+	// still waiting for its initialize answer.
 	//
-	// Not free: initialize, the request the editor waits on, measured +0.23 s (~40%) slower than
-	// 57b4ea96 on 2026-09-20 (paired A/B), and COOP_ACP_WARM=0 gives about two thirds of it back.
-	// 57b4ea96 fanned out concurrently too, so the cost is in what a fill does now, not in filling
-	// here — which part is not yet known.
-	rebalance(ctrl.LeadProvider())
+	// Filling here used to start three more containers in the same millisecond as the lead's own, and
+	// the lead's adapter then booted on a machine busy starting them. Measured 2026-09-21 on this
+	// host: the whole initialize is ~0.97 s with the pool on versus ~0.81 s with COOP_ACP_WARM=0,
+	// while the time BEFORE the first spawn is identical (~0.12 s either way) — so the cost is not
+	// coop's own startup work, it is contention with the fan-out. Deferring the fan-out until the
+	// editor has been answered keeps the pool (a switch is a human decision away, many seconds later)
+	// and gives the editor its answer at the unwarmed speed.
+	//
+	// The fallback matters as much as the deferral: a lead that never answers — a box that waits out
+	// a reset, or fails outright — must still leave the other providers ready, which is what the
+	// eager fill was really for. So whichever comes first wins, and it happens exactly once.
+	var fanOut sync.Once
+	startFanOut := func() {
+		fanOut.Do(func() {
+			fanOutOpen.Store(true)
+			rebalanceNow(ctrl.LeadProvider())
+		})
+	}
+	ctrl.OnInitialized(startFanOut)
+	fanOutFallback := time.AfterFunc(leadAnswerGrace, startFanOut)
+	defer fanOutFallback.Stop()
 	factory := func(ctx context.Context) (*acpproxy.Child, error) {
 		t, psName, ok := ctrl.SpawnTarget()
 		if err := ctrl.ValidateNetworkTarget(t, psName); err != nil {

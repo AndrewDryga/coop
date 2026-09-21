@@ -73,6 +73,7 @@ func normalizeACPSelection(sel Selection) Selection {
 // because the transcript sits on a shared, credential-independent store.
 type Control struct {
 	cfg             *config.Config              // for expanding a selected preset's model ladder into rotation targets
+	onInitialized   func()                      // deferred work to start once the editor has its initialize answer
 	host            Host                        // injected seams (rotation/models-cache/wait policy) — internal/cli owns the real implementations
 	repo            string                      // repo root, to load a preset selected from the toolbar
 	lead            string                      // the CURRENT lead agent — re-derived on a provider switch (see retarget)
@@ -221,6 +222,7 @@ func (c *Control) Hooks() *acpproxy.Hooks {
 		SessionReady:          c.sessionReady,
 		InjectedResponse:      c.injectedResponse,
 		ChildReset:            c.childReset,
+		Initialized:           c.initialized,
 		FromEditor:            c.fromEditor,
 		PromptForwarded:       c.promptForwarded,
 		PromptHeld:            c.promptHeld,
@@ -3084,4 +3086,15 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b[i:])
+}
+
+// OnInitialized registers work to run once the editor's initialize has been answered. It is how the
+// CLI keeps preparation that only a LATER request needs — warming other providers — off the critical
+// path of the one request an editor actually waits on.
+func (c *Control) OnInitialized(fn func()) { c.onInitialized = fn }
+
+func (c *Control) initialized() {
+	if c.onInitialized != nil {
+		c.onInitialized()
+	}
 }

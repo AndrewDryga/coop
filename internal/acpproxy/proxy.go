@@ -77,6 +77,11 @@ type Hooks struct {
 	// ChildReset tells the control layer that the current child generation ended, so request-scoped
 	// state that cannot survive a restart can be discarded.
 	ChildReset func()
+	// Initialized fires ONCE, just after the editor's initialize has been answered successfully. It
+	// exists so work that only a LATER request needs — warming other providers, for instance — can be
+	// started off the critical path of the one request an editor blocks on. Called on its own
+	// goroutine, so a slow hook cannot delay the editor.
+	Initialized func()
 	// FromEditor inspects an editor→agent line before it's forwarded. handled=true → the proxy does
 	// NOT forward the original line to the adapter (coop handled it); resp (if non-nil) is written back
 	// to the editor; toAdapter (if non-nil) is written to the current adapter INSTEAD of the original
@@ -561,11 +566,15 @@ type proxy struct {
 	forceBySess    map[string]*forceChain                      // adapter session id -> active setting chain
 	forceFailed    map[string]string                           // adapter session id -> setting failure; prompts fail loudly
 
-	hooks        *Hooks          // coop's control layer (nil → pure pass-through)
-	bindings     BindingStore    // durable thread bindings (RunOpts.Bindings); nil = in-memory only
-	bindingQueue []bindingChange // store writes staged under mu, flushed by flushBindings once it is released
-	intentional  atomic.Bool     // set before a coop-driven restart so the loop doesn't count it as a failure
-	reloading    atomic.Bool     // reject requests after the reload boundary instead of losing them to exec
+	hooks *Hooks // coop's control layer (nil → pure pass-through)
+	// announcedInitialized keeps Hooks.Initialized a once-per-process signal: it means "the editor
+	// has been answered", not "a child initialized", so a restart or a provider switch must not
+	// re-fire it.
+	announcedInitialized bool
+	bindings             BindingStore    // durable thread bindings (RunOpts.Bindings); nil = in-memory only
+	bindingQueue         []bindingChange // store writes staged under mu, flushed by flushBindings once it is released
+	intentional          atomic.Bool     // set before a coop-driven restart so the loop doesn't count it as a failure
+	reloading            atomic.Bool     // reject requests after the reload boundary instead of losing them to exec
 }
 
 // Snapshot is the proxy's re-establishable session state, carried across a supervisor re-exec (a
@@ -1155,6 +1164,9 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 		// Force-setting responses own their controlMu scope in handleInjectedResponseFrom, including
 		// any held prompt they release. Do not acquire it twice; normal responses hold it here.
 		injectedResponse := h.isResponse() && strings.HasPrefix(string(trimQuotes(h.ID)), InjectPrefix)
+		// Armed under the lock when this line is the successful initialize response; fired after the
+		// write below, so the hook means "the editor has its answer".
+		announceInitialized := false
 		responseControl := h.isResponse() && !injectedResponse
 		if responseControl {
 			p.controlMu.Lock()
@@ -1223,6 +1235,14 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 					p.initResult = clone(h.Result)
 					p.authMethods = authenticationMethodIDs(h.Result)
 					p.initGeneration = generation
+					// Deferred work may start once the editor HAS the answer — which is a few lines
+					// below, after the write. Arming it here (under the lock, where "this line is the
+					// successful initialize response" is known) and firing it there keeps the hook's
+					// promise exact: not "we computed the answer", but "the editor has it".
+					if !p.announcedInitialized && p.hooks != nil && p.hooks.Initialized != nil {
+						p.announcedInitialized = true
+						announceInitialized = true
+					}
 				case "authenticate":
 					if setupOp.methodID != "" {
 						if p.authentication == nil {
@@ -1330,6 +1350,9 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 		}
 		if len(out) > 0 {
 			_, _ = p.out.Write(out)
+		}
+		if announceInitialized {
+			go p.hooks.Initialized() // the editor is unblocked; deferred startup work may run now
 		}
 		// A coop-driven restart requested from the wire (e.g. a rate-limit auto-rotation): forward the
 		// line first (so the editor's request is answered), then tear the box down — Run respawns it on

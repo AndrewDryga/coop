@@ -3,7 +3,7 @@ name: acp-warm-pool-identity
 description: coop acp parks one box per signed-in provider the session is not using and lends it to a switch only on an identical identity — plain target at the default model/effort, same account, same box image; prove a hit from the trace, never from timing
 subsystem: acp
 sources: [internal/acpctl/warm.go, internal/acpctl/resume.go, internal/acpctl/control.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/runtime/runtime.go, tools/lifecycle_bench.py]
-updated: 2026-09-20
+updated: 2026-09-21
 ---
 `coop acp` keeps a parked box (`acpctl.WarmPool`) for each signed-in provider the session is not
 using. After every factory spawn — the first one included, which is what fans the pool out —
@@ -31,12 +31,16 @@ base/project image only, so a mid-session re-qualification or an edited Dockerfi
 
 A warm spawn never waits: on an account still waiting out a rate limit (`Control.Cooling`) it is refused
 and the slot stays empty, because `Reap` — editor close, SIGHUP reload — waits for every spawn in flight
-and for any eviction's stop. The pool warms the others as the lead's own box starts (and again after
-every spawn), and is off when the image's id cannot be read (Apple container): no box could be proved
-current, so none would be lent. Parked boxes resolve their account like the selector's Auto
-(`ResolveNetworkTarget`) in open and filtered sessions alike. Filling is not free: on 2026-09-20's
-build the editor's `initialize` measured ~0.23 s (~40%) slower than at 57b4ea96 and `COOP_ACP_WARM=0`
-gave about two thirds back — see [[lifecycle-latency-measurement]] for the method and the open cause.
+and for any eviction's stop. The pool warms the others once the editor's initialize has been ANSWERED — not
+while the lead's own box is starting — and again after every later spawn; it is off when the image's
+id cannot be read (Apple container): no box could be proved current, so none would be lent. Parked boxes resolve their account like the selector's Auto
+(`ResolveNetworkTarget`) in open and filtered sessions alike. Filling used to start beside the lead, and that cost the editor ~0.23 s (~40%) on its
+`initialize` — not in coop's own startup work, which measured identical either way, but in the lead's
+adapter booting while three more containers started. It is deferred behind `Hooks.Initialized` (with
+a 3 s fallback, so a lead that never answers still leaves the others ready), measured back at
+-0.268 s over 6 paired rounds with the warm hit rate intact (3/3). The lesson generalizes: anything
+only a LATER request needs must not run beside the one an editor blocks on. See
+[[lifecycle-latency-measurement]] for the paired method.
 
 **Evidence, not timing.** With `COOP_ACP_TRACE=1` the trace says `spawn: warm box for P@A` or
 `spawn: cold box for P@A` for each spawn, `warm pool: P@A parked` when a box parks (started, not
