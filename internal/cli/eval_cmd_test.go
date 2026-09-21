@@ -25,6 +25,7 @@ func TestParseEvalRunArgs(t *testing.T) {
 		{"loop config override", []string{"./s.yaml", "frontier", "--timeout", "60m", "--loop-config", ".agent/loop.yaml"}, "./s.yaml", []string{"frontier"}, 1, 1, time.Hour, ".agent/loop.yaml", false},
 		// A run needs an explicit --timeout: it covers preparation, work, grading and cleanup.
 		{"no timeout", []string{"./s.yaml", "codex"}, "", nil, 0, 0, 0, "", true},
+		{"dry run still needs timeout", []string{"./s.yaml", "codex", "--dry-run"}, "", nil, 0, 0, 0, "", true},
 		{"missing flag value", []string{"./s.yaml", "codex", "--jobs"}, "", nil, 0, 0, 0, "", true},
 		{"repeated flag", []string{"./s.yaml", "codex", "--jobs", "2", "--jobs", "3", "--timeout", "10m"}, "", nil, 0, 0, 0, "", true},
 		{"zero jobs", []string{"./s.yaml", "codex", "--jobs", "0", "--timeout", "10m"}, "", nil, 0, 0, 0, "", true},
@@ -48,6 +49,27 @@ func TestParseEvalRunArgs(t *testing.T) {
 					c.args, suite, configs, opts.Jobs, opts.Repeat, opts.Timeout, opts.LoopConfigOverride)
 			}
 		})
+	}
+}
+
+func TestEvalHelpRunExamplesParse(t *testing.T) {
+	examples, dryRuns := 0, 0
+	for _, line := range strings.Split(commandHelp["eval"], "\n") {
+		args, ok := strings.CutPrefix(strings.TrimSpace(line), "coop eval run ")
+		if !ok || strings.Contains(args, "<") {
+			continue // the command index is syntax, not a runnable example
+		}
+		examples++
+		_, _, opts, err := parseEvalRunArgs(strings.Fields(args))
+		if err != nil {
+			t.Errorf("documented example %q: %v", line, err)
+		}
+		if opts.DryRun {
+			dryRuns++
+		}
+	}
+	if examples == 0 || dryRuns == 0 {
+		t.Fatal("eval help needs runnable examples, including a spend-free dry run")
 	}
 }
 

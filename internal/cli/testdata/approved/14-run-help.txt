@@ -19,7 +19,8 @@ OPTIONS
 
   Put Coop options before --. Everything after it belongs to your command.
   --readonly and --bare cannot be combined.
-  These two modes require Docker and --egress open or none.
+  These two modes require Docker.
+  --bare requires --egress open or none; --readonly also supports filtered.
 
 NETWORK ACCESS
   filtered  allow traffic permitted by approved network rules

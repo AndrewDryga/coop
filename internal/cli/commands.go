@@ -275,9 +275,9 @@ func (a *app) restrictedImage() (img string, code int, err error) {
 // runRestrictedInBox is the launch behind --readonly and --bare. Both run the shared base image
 // under box's restricted filesystem profile and neither publishes activity, starts services or
 // signs on exit — there is nothing a read-only checkout could have committed. Readonly resolves
-// the repository like every other launch and admits its network posture the same way (a filtered
-// result is refused by box.Run: the modes are not qualified under it). Bare resolves no project at
-// all — it must work outside any Git repository — so it takes only an open or offline --egress.
+// the repository like every other launch and admits its network posture the same way, including
+// filtered networking. Bare resolves no project at all — it must work outside any Git repository —
+// so it takes only an open or offline --egress.
 func (a *app) runRestrictedInBox(cmd []string, agent string) (int, error) {
 	mode := a.mode
 	img, code, err := a.restrictedImage()

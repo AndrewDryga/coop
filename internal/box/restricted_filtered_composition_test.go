@@ -14,11 +14,9 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
-// Read-only/bare and --egress filtered are two sandbox assemblies that a restricted run currently
-// refuses to combine (checkRestrictedSpec). Composing them must NOT mean standing up a second
-// gateway: the rule for that work is "do not create a second sandbox system", and the gateway is the
-// system. So the composition has to run the restricted FILESYSTEM profile through the EXISTING
-// filtered launch, which creates its agent box with runtime.CreateContainer.
+// Read-only runs compose their restricted FILESYSTEM profile with the EXISTING filtered launch,
+// which creates its agent box with runtime.CreateContainer. Bare shares the filesystem profile but
+// stays refused by checkRestrictedSpec because it has no project for network admission.
 //
 // That path validates its options against a strict allowlist and refuses anything else outright. If
 // the restricted profile contained one option the allowlist did not admit, the composition would be
@@ -112,7 +110,7 @@ func TestComposedRestrictedFilteredAdmission(t *testing.T) {
 		{"read-only composes with filtered", "filtered", true, agents.ModeReadOnly, ""},
 		{"filtered without frozen rules", "filtered", false, agents.ModeReadOnly, "needs the rules admission froze for it"},
 		{"frozen rules without filtered", "open", true, agents.ModeReadOnly, "not running filtered"},
-		{"bare has no project for a policy", "filtered", true, agents.ModeBare, "no project for a filtered policy"},
+		{"bare has no project for a policy", "filtered", true, agents.ModeBare, "use --readonly, or drop --egress filtered"},
 		{"read-only still runs open", "open", false, agents.ModeReadOnly, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

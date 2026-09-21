@@ -3,7 +3,7 @@ name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
 sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/box/mcp_broker.go, internal/box/open_broker.go, internal/box/restricted.go, internal/networkgateway/open_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
-updated: 2026-09-20
+updated: 2026-09-22
 ---
 
 `COOP_MCP_FILE` is one host authority, but a box has four different consumers. `box.Run` captures
@@ -112,8 +112,8 @@ variable to `COOP_MCP_TOKEN_<i>` (renaming is required — two servers sharing o
 need two stand-ins), so generated configs, claude's file and a session's ACP list all follow it. The
 operator's variables — every name the CONFIGURED file references, read from the source even for a
 box that loads no MCP (`mcpScrubNames`) — are dropped from a filtered box's env, and the
-`COOP_MCP_TOKEN_` prefix is reserved in operator input (`ReadValidatedSnapshot`). An SSE bearer
-server, a missing token or one set through `-e` refuses by name. The pinned claude IGNORES
+`COOP_MCP_TOKEN_` prefix is reserved in operator input (`ReadValidatedSnapshot`). A missing token
+or one set through `-e` refuses by name; SSE uses the wider route described below. The pinned claude IGNORES
 `bearer_token_env_var` (captured 2026-09-19: no Authorization at all) and expands `${VAR}` in a
 header, so claude's mount is `mcp.ClaudeView` — the snapshot with each bearer turned into
 `Authorization: Bearer ${NAME}` — in every non-restricted mode (restricted modes mount no MCP file). A filtered SESSION child writes its lead adapter's
@@ -147,8 +147,8 @@ line the host waits for, so readiness costs no extra runtime call. It runs like 
 key stays filtered-only) and its secrets the same `/run/coop-credential-broker.json`. The dial is
 direct (`dialDirect`: the route's upstream on 443, TLS still verifying the name) — no lease, no
 Envoy, no policy.
-UNLIKE filtered, an open run never refuses a server it cannot broker: an SSE server, a secret in two
-places (`mcp.SecretServers` returns it as `UnbrokerableServer`), a URL that is not plain https on
+UNLIKE filtered, an open run never refuses a server it cannot broker: a secret in two places
+(`mcp.SecretServers` returns it as `UnbrokerableServer`), a URL that is not plain https on
 443, or any server when the box cannot reach a helper (not Docker, `--network none`,
 `--network container:`) keeps TODAY's behaviour — its variable stays in the box env — and the launch
 names it (`sections.openMCP`). Only brokered variables are scrubbed, and a variable a kept server
@@ -188,6 +188,8 @@ adds ordinary `CommandArgs` must decide whether its nested commands need an equi
 mounting the raw snapshot for every scoped credential is not the fallback.
 
 ## Changelog
+- 2026-09-22 — removed stale SSE refusal/fallback sentences that contradicted the implemented
+  same-host route below. Rechecked MCP route planning and open readonly-session handoff tests.
 - 2026-09-20 — a read-only session brokers its MCP secrets through the same sibling helper; its
   child owns the helper (the daemon owns neither the box nor the hosts entry it needs).
 - 2026-09-20 — a legacy SSE server is brokered on a same-host route instead of refused.

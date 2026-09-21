@@ -4,7 +4,7 @@ description: protect credentials at the run boundary; teammates share selected r
 scope: security
 sources: [AGENTS.md, internal/box/credential_broker.go, internal/box/network_bundles.go]
 check: go test ./internal/box -run 'TestCredentialBrokerServesEveryTeammateShape|TestCredentialBrokerRoutesEveryProviderKeyAndLeavesSignedInTeammates|TestCredentialBrokerBindsEachBoxToItsOwnAccount'
-updated: 2026-09-19
+updated: 2026-09-22
 ---
 
 # Protect credentials at the run boundary, not between teammates
@@ -40,6 +40,10 @@ agents.
 
 ## Changelog
 
+- 2026-09-22 — rechecked the selected-route boundary and restricted composition: direct Claude
+  readonly/filtered runs now share the broker plan and receive only a substitute. The older
+  restricted-mode limitation below is historical; bare and restricted remote-session policies
+  still refuse filtered. No rule change; the existing broker checks remain authoritative.
 - 2026-09-19 — the violations are fixed: one plan of provider routes per run (lead, peers, roles),
   served to direct, loop, preset, consult/delegate, ACP and remote-session runs; the check runs the
   teammate-shape, mixed-provider and per-box-account tests. A box holds one account per provider

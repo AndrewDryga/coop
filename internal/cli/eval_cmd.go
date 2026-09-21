@@ -26,8 +26,7 @@ var evalRunOptions = []string{"--jobs", "--repeat", "--timeout", "--loop-config"
 // cmdEval is the `coop eval` family: run a suite, compare two runs, list starters, scaffold a
 // custom suite. Every request is fully resolved and validated BEFORE anything launches — the suite,
 // each target/preset, every flag — so no invalid request ever reaches a provider, and the plan is
-// always shown first (`--dry-run` stops there). Agent suites execute; loop scenarios and the public
-// starter catalog land in later milestones.
+// always shown first (`--dry-run` stops there).
 func (a *app) cmdEval(args []string) (int, error) {
 	if len(args) == 0 {
 		return a.evalOverview()
@@ -49,7 +48,7 @@ func (a *app) cmdEval(args []string) (int, error) {
 	}
 }
 
-// evalOverview is bare `coop eval`: the shipped starters (none yet) and how to author your own.
+// evalOverview is bare `coop eval`: the shipped starters and how to author your own.
 func (a *app) evalOverview() (int, error) {
 	fmt.Println("coop eval — compare a preset, loop config or Coop build before and after a change")
 	fmt.Println()
@@ -58,12 +57,11 @@ func (a *app) evalOverview() (int, error) {
 	}
 	fmt.Println()
 	fmt.Println("Author your own:  coop eval init ./evals/my-suite")
-	fmt.Println("Run one:          coop eval run <suite> <target|preset>...")
+	fmt.Println("Run one:          coop eval run <suite> <target|preset>... --timeout 60m")
 	return 0, nil
 }
 
-// evalList shows the shipped starter catalog. It is empty until the public starters are qualified
-// (a later milestone), so today it names that and points at custom authoring rather than pretending.
+// evalList shows the shipped starter catalog, with custom authoring as the fallback when empty.
 func (a *app) evalList(args []string) (int, error) {
 	if err := rejectArgs("eval ls", args); err != nil {
 		return 2, err
@@ -71,7 +69,7 @@ func (a *app) evalList(args []string) (int, error) {
 	starters := eval.Starters()
 	if len(starters) == 0 {
 		fmt.Println("No public starter suites are qualified yet.")
-		fmt.Println("Run a custom suite:  coop eval run ./evals/my-suite/suite.yaml <target|preset>...")
+		fmt.Println("Run a custom suite:  coop eval run ./evals/my-suite/suite.yaml <target|preset>... --timeout 60m")
 		return 0, nil
 	}
 	fmt.Println("Public starter suites:")
@@ -127,10 +125,10 @@ func (a *app) evalRun(args []string) (int, error) {
 		return 2, err
 	}
 	if suitePath == "" {
-		return 2, ui.MissingArgument("<suite>", "coop eval run", "coop eval run <suite> <target|preset>...")
+		return 2, ui.MissingArgument("<suite>", "coop eval run", "coop eval run <suite> <target|preset>... --timeout 60m")
 	}
 	if len(positionals) == 0 {
-		return 2, ui.MissingArgument("<target|preset>", "coop eval run", "coop eval run "+suitePath+" <target|preset>...")
+		return 2, ui.MissingArgument("<target|preset>", "coop eval run", "coop eval run "+suitePath+" <target|preset>... --timeout 60m")
 	}
 	suite, err := a.resolveEvalSuite(suitePath)
 	if err != nil {
@@ -384,7 +382,7 @@ func (a *app) evalInit(args []string) (int, error) {
 		return 1, err
 	}
 	fmt.Printf("Wrote a starter suite to %s\n", dir)
-	fmt.Printf("Edit it, then:  coop eval run %s <target|preset>...\n", manifest)
+	fmt.Printf("Edit it, then:  coop eval run %s <target|preset>... --timeout 60m\n", manifest)
 	return 0, nil
 }
 

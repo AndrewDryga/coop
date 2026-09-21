@@ -17,7 +17,8 @@ OPTIONS
   --egress-rules <path>   load network rules from a file
 
   --readonly and --bare cannot be combined.
-  These two modes require Docker and --egress open or none.
+  These two modes require Docker.
+  --bare requires --egress open or none; --readonly also supports filtered.
 
 USING THE SHELL
   The shell opens in your project inside the box.

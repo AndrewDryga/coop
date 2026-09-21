@@ -3,7 +3,7 @@ name: task-state-is-the-folder
 description: a task's state IS its directory; a bare `mv` to a missing state dir silently corrupts the queue
 subsystem: tasks
 sources: [internal/tasks/dir.go, internal/tasks/cmd.go, internal/tasks/queue.go, internal/tasks/projection.go, internal/cli/context.go]
-updated: 2026-09-05
+updated: 2026-09-22
 ---
 A task is a folder, and its STATE is which directory it sits in: `00_todo/` `10_in_progress/`
 `50_blocked/` `99_done/` (the numeric prefix only sorts `ls` in lifecycle order). Moving the folder
@@ -24,14 +24,18 @@ valid removals still use the shared confirmation gate and existing lease/authori
 
 ID-addressed commands, including `release`, share the cross-queue resolver: unique exact identity
 beats fragments, duplicate matches refuse with queue-selection guidance. Release then uses the
-ordinary single-queue handler: it clears a human claim without moving the task, and cannot clear a
-sandbox assignment. Explicit `--tasks` overrides configured queues and project-derived discovery.
+ordinary single-queue handler: it returns an in-progress task to todo and clears the caller's
+claim, preserving progress and handoff notes. It cannot clear a sandbox assignment or another live
+process's claim. Update `state.md` before handing work back, as the CLI help instructs.
+Explicit `--tasks` overrides configured queues and project-derived discovery.
 `coop context --task` retains the selected Item from that same resolver instead of flattening
 queues, which would let MatchTask choose the first duplicate exact ID. It validates original
 argument boundaries before extracting queue flags, then resolves task metadata before optional
 Git status; task paths still append last so route reasons and scope ordering stay stable.
 
 ## Changelog
+- 2026-09-22 — corrected release's lifecycle description against `tasksFolderRelease`: it returns
+  active work to todo, preserves handoff notes, and refuses competing live claims and sandbox owners.
 - 2026-09-05 — shared context task identity resolution and repeatable selectors; regressed
   duplicate/exact precedence, malformed syntax/metadata before Git and unchanged scope reasons.
 - 2026-09-05 — wired release through aggregate identity resolution; verified derived/configured/

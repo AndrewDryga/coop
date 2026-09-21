@@ -27,9 +27,9 @@ import (
 // writable places are run-private tmpfs scratch (the box home, /tmp, and bare's empty cwd), and
 // every host path that enters the box enters read-only. Nothing the normal launch mounts writable
 // exists here — no credential home, no dependency cache, no asdf volume, no synthesized skills, no
-// shared ACP transcripts — and nothing the project defines is loaded: no project policy, env,
-// services, hooks, MCP or toolchain provisioning. Readonly mounts the selected repository and its
-// approved companions read-only; bare mounts no repository at all.
+// shared ACP transcripts — and no project env, services, hooks, MCP or toolchain provisioning.
+// Readonly mounts the selected repository and its approved companions read-only; its network policy
+// is admitted separately. Bare mounts no repository at all.
 //
 // The provider still needs its login and first-run defaults, and it writes into its home, so it
 // cannot simply be handed the host profile read-only. Instead the run builds a SEED on the host —
@@ -95,7 +95,7 @@ func checkRestrictedSpec(cfg *config.Config, rt runtime.Runtime, spec RunSpec, m
 	// Bare has no repository, so it has no project for the gateway's policy to be about; the CLI
 	// refuses the pair already and the box layer says so too rather than resolving it to a cwd.
 	if mode == agents.ModeBare && cfg.Egress == "filtered" {
-		return fmt.Errorf("a %s run has no project for a filtered policy to apply to — use --read-only, or drop --egress filtered", mode)
+		return fmt.Errorf("a %s run has no project for a filtered policy to apply to — use --readonly, or drop --egress filtered", mode)
 	}
 	// The repository mounts at its own host path; the profile's scratch tmpfs are fixed paths.
 	// A repository that IS one of them (a run from /tmp outside any checkout) would ask the
@@ -626,7 +626,7 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	}
 	// Every restricted box, session or not, loads no MCP file — so no MCP variable has a consumer
 	// inside it, and dropping every name the configured file references costs nothing. This used to
-	// run only for a session, which left a plain `--read-only` run holding those tokens in its
+	// run only for a session, which left a plain `--readonly` run holding those tokens in its
 	// environment; under the gateway that was weaker than a filtered run, which always strips them.
 	if mcpScrubNames, err = mcpScrub(cfg, spec); err != nil {
 		return -1, err

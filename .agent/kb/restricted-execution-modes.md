@@ -2,8 +2,8 @@
 name: restricted-execution-modes
 description: readonly and bare share one tmpfs-only filesystem profile; the provider is seeded through a read-only bind OUTSIDE the tmpfs home, because a bind under it would be root-owned; over ACP the provider's switches ride session/new, not the adapter's argv
 subsystem: box
-sources: [internal/box/restricted.go, internal/box/restricted_filtered_composition_test.go, internal/box/filtered_cleanup.go, internal/box/run.go, internal/agent/agent.go, internal/agent/claude.go, internal/cli/help.go, internal/cli/commands.go, internal/cli/exposure_flags.go, internal/cli/acp_cmd.go, internal/cli/fork_cmd.go, internal/runtime/runtime.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/network.go, internal/session/records.go]
-updated: 2026-09-21
+sources: [internal/box/restricted.go, internal/box/restricted_filtered_composition_test.go, internal/box/filtered.go, internal/box/filtered_cleanup.go, internal/box/run.go, internal/agent/agent.go, internal/agent/claude.go, internal/cli/help.go, internal/cli/commands.go, internal/cli/exposure_flags.go, internal/cli/acp_cmd.go, internal/cli/fork_cmd.go, internal/runtime/runtime.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/network.go, internal/session/records.go]
+updated: 2026-09-22
 ---
 
 `RunSpec.Mode` (`agents.ExecutionMode`: normal, readonly, bare; empty is normal) is fixed at
@@ -14,8 +14,9 @@ path leaves out. Normal launches are byte-identical to before (`TestAssembleArgs
 
 The profile: `--read-only` root; owned tmpfs at the box home and `/tmp` (bare adds `/workspace`
 as its cwd), each `rw,exec,nosuid,nodev,uid=1000,gid=1000,size=1g` (`exec` spelled out: Docker's tmpfs default is noexec, which broke `./script` and built test binaries in the live probe) — 1000 is the base image's `node`, which is why
-restricted runs refuse any image but `cfg.BaseImage`; readonly's repo and companions `:ro`;
-one read-only seed bind at `/coop/seed`; no other `-v`. `validateRestrictedOptions` proves the
+restricted runs accept `cfg.BaseImage` at entry and never a project/custom image (filtered launch
+substitutes its managed client image); readonly's repo and companions `:ro`; one read-only seed
+bind at `/coop/seed`, plus run-owned read-only broker configuration when needed. `validateRestrictedOptions` proves the
 assembled options against that plan as an allowlist, so a mount added to `assembleOptions` later
 refuses a restricted launch by name instead of widening it.
 
@@ -43,13 +44,16 @@ Caller flags that hand tools or settings back are refused by name. Every other a
 that same method (`restrictedModesOffered`, internal/cli/help.go) before it prints the
 `--readonly`/`--bare` rows, so qualifying an adapter publishes its own help and an unqualified one
 never advertises a flag its launch would reject. Docker is the only runtime
-(`Runtime.SupportsRestrictedFilesystem`); `--egress filtered`, peers, presets, shared ACP
+(`Runtime.SupportsRestrictedFilesystem`); peers, presets, shared ACP
 transcripts, an editor supervisor, maintenance commands under an agent scope, review stages,
 `COOP_IMAGE` and runtime arguments beyond `-e KEY=VALUE` are refused, never dropped — a host-wide
 `COOP_RUN_ARGS` bind (this host mounts Go caches) is the common refusal; the message names the
 one-run escape, an empty `COOP_RUN_ARGS=` in front of the command.
+Direct readonly runs compose with filtered networking; bare has no project to admit a policy for
+and still refuses it. Restricted remote-session policies also refuse filtered networking.
 
-Live-qualified on this host's Docker 29.4 with claude 2.1.267 (task artifacts `exposure-*.log`):
+Historical live qualification (2026-09-10) on this host's Docker 29.4 with claude 2.1.267
+(task artifacts `exposure-*.log`; not a claim about the current locked clients or filtered composition):
 repo, root and seed writes fail with EROFS, `git commit` fails on `index.lock`, scratch writes and
 executables work, no `coop-cache`/`coop-asdf`, bare's cwd is an empty owned tmpfs with no host path
 present, readonly claude reads the repo and cannot write it, bare claude answers and states it has
@@ -114,6 +118,9 @@ a tool call. What the API half still does not do: register activity for a restri
 gemini or grok — each refuses by name until a live run proves its adapter's switch.
 
 ## Changelog
+- 2026-09-22 — corrected current filtered composition and image/credential handling against the
+  launch implementation and composition tests. Bare and remote-session policy refusals remain;
+  earlier native live evidence stays explicitly historical, not extended to untested combinations.
 - 2026-09-11 — noted that per-agent help now derives the `--readonly`/`--bare` rows from
   `RestrictedCommand` itself, so the qualification and its documentation cannot disagree. Added
   internal/cli/help.go to `sources`.
@@ -126,46 +133,29 @@ gemini or grok — each refuses by name until a live run proves its adapter's sw
 - 2026-09-10 — created with the modes (phase 1, local half). Verified against the sources above and
   the goldens in `internal/box/restricted_test.go`.
 
-## Composing with `--egress filtered` — settled design, and the traps found trying it
+## Composing readonly with `--egress filtered`
 
-A restricted run refuses `--egress filtered` today. Composing them is qualified work in progress;
-this section exists so the next attempt does not re-derive any of it.
+`runRestricted` now composes the restricted filesystem assembly with the existing filtered launch
+and its shared `filteredExecution.teardown`. Direct readonly admission still reads the project's
+network requests; it does not load project environment, start services, or use a project image.
+A filtered policy with service grants is refused because this path supplies no Compose file.
+Bare is refused both by the CLI and `checkRestrictedSpec`; restricted remote-session policies are
+separately refused by `validateRestrictedSessionPolicy` and the session admission path.
 
-**The design.** The restricted assembly keeps building the box (its FILESYSTEM contract) and hands
-the options to the EXISTING filtered launch, which owns the gateway and — since 2026-09-21 — one
-shared `filteredExecution.teardown`. Not the reverse: routing restricted through the main path would
-mean re-suppressing every exposure restricted exists to remove, forever. The rule "do not create a
-second sandbox system" decides the gateway; the teardown extraction is what stops the OTHER
-duplication, and it landed separately, proven neutral.
+The first composition attempt exposed five traps, now handled by the implementation:
 
-**Two preconditions, proven** (`restricted_filtered_composition_test.go`): the restricted profile is
-admissible on the filtered create path's strict option allowlist (`--read-only` and `--tmpfs` are
-both listed), and `restrictedBoxUID` equals the `--user 1000:1000` the filtered launch hardcodes —
-two numbers in different files that nothing else relates, and whose divergence would make the
-composed box unable to write its own home.
+1. `restrictedAssemblyNetwork` names no network under filtered. The filtered launch alone joins
+   the controller's namespace; an extra `--network none` would prevent a usable composed box.
+2. `prepareFilteredExecution` skips project images for restricted modes, and both the caller and
+   launch check that `record.ProjectImage` is empty before using the managed client image.
+3. A non-nil filtered execution is registered for teardown before its preparation error is checked,
+   because late preparation failures may already own gateway resources.
+4. Preparation and `prepareCredentialBroker` precede environment assembly. MCP token variables are
+   scrubbed; the box receives the provider key's substitute, never the reusable key. This permits
+   direct Claude API-key readonly runs without qualifying other providers' restricted switches.
+5. Bare refuses filtered even with a supplied capture; it never falls back to the caller's cwd.
 
-**What a first attempt got wrong** (security-reviewed, reverted — all still open):
-
-1. `runRestricted` sets `network = "none"` unless egress is open, so the options carried
-   `--network none` while the launch appends `--network container:<controller>`. Verified on Docker
-   29.4: creation succeeds with `NetworkMode=none`, then the launch's own verification refuses it.
-   Fails closed, but the composed run cannot start. Pass `""` under filtered — the launch owns the
-   netns — and teach `validateRestrictedOptions` to expect `--network` ABSENT there.
-2. **More permissive than restricted alone:** `prepareFilteredExecution` substitutes a project
-   `.agent/Dockerfile` image, which the composed run then executed. `checkRestrictedSpec` exists
-   precisely to refuse a project image. Skip the project image when the mode is restricted and
-   assert `record.ProjectImage == ""` afterwards.
-3. `prepareFilteredExecution` returns a LIVE execution alongside an error for ~8 late failures and
-   documents that the caller must still clean it up. Defer the teardown whenever it is non-nil.
-4. **Weaker than filtered alone on one axis:** the composed path never applied `filtered.mcpScrub`,
-   which filtered-alone uses to keep MCP bearer tokens out of the box; and `prepareCredentialBroker`
-   was never called, so a brokerable key failed closed with a misleading error. Applying the scrub
-   needs the filtered preparation to happen BEFORE the env file is assembled.
-5. `checkRestrictedSpec` admitting bare+filtered leaves `spec.Repo == ""` resolving the project
-   policy to the caller's cwd. The CLI still refuses it; decide explicitly at the box layer too.
-
-**The testing trap, which is the real lesson.** The composed test asserted on
-`restrictedFilesystemArgs` and passed with findings 1, 2 and 4 all present. A test here must DRIVE
-the assembly — `runRestricted` with `Egress: "filtered"` against the fake `filteredDocker` the
-filtered suite already uses — and assert the created container's actual options, plus one that makes
-the preparation fail late and asserts cleanup ran.
+The composition tests pin both the option allowlist and scratch UID, and drive the filtered launch
+against its fake Docker daemon to inspect the created container's namespace and read-only root.
+They also inspect the actual brokered env file, not just a credential plan. These are local
+regressions, not live provider qualification. Preserve that distinction when extending the modes.

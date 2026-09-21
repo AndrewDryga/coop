@@ -99,7 +99,8 @@ OPTIONS
 
   Put Coop options before --. Everything after it belongs to your command.
   --readonly and --bare cannot be combined.
-  These two modes require Docker and --egress open or none.
+  These two modes require Docker.
+  --bare requires --egress open or none; --readonly also supports filtered.
 
 NETWORK ACCESS
   filtered  allow traffic permitted by approved network rules
@@ -130,7 +131,8 @@ OPTIONS
   --egress-rules <path>   load network rules from a file
 
   --readonly and --bare cannot be combined.
-  These two modes require Docker and --egress open or none.
+  These two modes require Docker.
+  --bare requires --egress open or none; --readonly also supports filtered.
 
 USING THE SHELL
   The shell opens in your project inside the box.
@@ -1440,15 +1442,15 @@ Each positional after the suite is one configuration to compare — a target
 (provider[:model][/effort][@account]) or a preset. Run the same suite before and
 after your change, then compare the two run ids.
 
-Every run prints its plan first. --dry-run stops there, which is the last point
-before a run spends anything. Each case gets a private workspace with no history
-of your repository; its verifier is never mounted where the model can reach it,
-and grading happens afterwards in a separate container with no credentials and
-no network.
+Every run requires --timeout, including a dry run, and prints its plan first.
+--dry-run stops after the plan, before a run spends anything. Each case gets a
+private workspace with no history of your repository; its verifier is never
+mounted where the model can reach it, and grading happens afterwards in a separate
+container with no credentials and no network.
 
   coop eval run core codex --timeout 35m
   coop eval run ./evals/suite.yaml codex:gpt-5.6/xhigh --repeat 3 --timeout 60m
-  coop eval run ./evals/suite.yaml codex:gpt-5.6 codex:gpt-5.6/xhigh --dry-run
+  coop eval run ./evals/suite.yaml codex:gpt-5.6 codex:gpt-5.6/xhigh --timeout 60m --dry-run
   coop eval run ./evals/suite.yaml frontier --loop-config .agent/loop.yaml --timeout 60m
 
 ==============================================================================

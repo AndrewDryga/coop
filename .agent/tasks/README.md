@@ -219,7 +219,7 @@ retaining to `artifacts/` first. All three directories are git-ignored, so they 
 
 ## Rules
 
-- One task = one outcome = one commit. The move to `99_done/` ships in that commit.
+- One task = one outcome = one commit (the code change). The `99_done/` move itself is local — the queue is gitignored.
 - Claim with `coop tasks claim <id>` BEFORE you start.
 - Blocked? `coop tasks block <id>`, then fill in `50_blocked/<id>/decision.md`.
 - Finish with `coop tasks done <id>` — the task is **moved** to `99_done/`, never deleted; Coop

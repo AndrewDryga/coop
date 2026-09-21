@@ -3,7 +3,7 @@ name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
 sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, docs/networking.md, internal/sessionsvc/acp.go]
-updated: 2026-09-20
+updated: 2026-09-22
 ---
 
 `coop <agent> --egress filtered` runs the box behind a per-run gateway. Five boring layers stand
@@ -205,8 +205,10 @@ Traps:
   provider's API to a sign-in and withhold it for a key — a loop or preset ladder mixing them is
   refused, an editor session offers one kind per provider (`acpNetworkScope`). Grok's pinned
   client has no qualified API base override, and every alternate API-key variable, a key only a
-  native credential file holds, open/offline egress and read-only/bare mode refuse before the
-  runtime. Ordinary OAuth/access-token files keep their existing handling and are not called
+  native credential file holds, and API-key runs with open/offline egress or bare mode refuse before
+  the runtime. Direct Claude readonly runs now compose with filtered and broker `ANTHROPIC_API_KEY`;
+  restricted remote-session policies still reject filtered. See [[restricted-execution-modes]].
+  Ordinary OAuth/access-token files keep their existing handling and are not called
   broker-protected; restricted and session projections retain their existing access-only copies
   — a remote session instead hands its child an API key in the private config's host-side vault or
   env (`projectSessionKey`), removed after the turn and again by the session janitor. A sign-in box
@@ -218,7 +220,7 @@ Traps:
   enter any filtered box, and each bearer server's host is withheld from the agent's own grants. A
   direct grant of such a host needs no refusal — the box never holds the token. Details and the
   session handoff: [[mcp-authority-projection]].
-- A filtered box renews its own OAuth login: it mounts the provider profile like an open box
+- A normal filtered box renews its own OAuth login: it mounts the provider profile like an open box
   (`box/run.go`, the `-v` of `cfg.AgentDir`), and every bundle carries the refresh host (Claude
   `platform.claude.com`, Codex `auth.openai.com`, Grok `auth.x.ai`, whose token endpoint is
   `/oauth2/token`). So `RequirePortable` — the access token must outlive
@@ -242,6 +244,8 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-22 — corrected the API-key and OAuth statements for direct readonly composition against
+  `restricted.go` and its composition tests; retained the bare and restricted remote-session limits.
 - 2026-09-20 — COOP_RUN_ARGS now also admits `--label KEY=VALUE` under filtered (metadata only);
   a live-test supervisor reaps its filtered boxes by label the same as an open one.
 - 2026-09-19 — bearer MCP servers ride the broker under filtered networking.

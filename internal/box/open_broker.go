@@ -53,9 +53,9 @@ type openBroker struct {
 	stderr      *tailBuffer
 }
 
-// planOpenBroker plans an open run's broker: a route for every secret-bearing server a fixed route
-// can carry. A server it cannot carry — SSE, a secret in two places, a URL other than plain https on
-// 443, or any server when the box cannot reach a helper — keeps its secret in the box as before, and
+// planOpenBroker plans an open run's broker: a route for every secret-bearing server it can carry,
+// including the wider same-host route for legacy SSE. A server with a secret in two places, a URL
+// other than plain https on 443, or no reachable helper keeps its secret in the box as before, and
 // kept says which and why for the launch to show. Nil without a route.
 func planOpenBroker(cfg *config.Config, rt runtime.Runtime, spec RunSpec, snapshot []byte) (broker *openBroker, kept []string, err error) {
 	servers, unbrokerable, err := mcp.SecretServers(snapshot)

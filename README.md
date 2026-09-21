@@ -80,6 +80,7 @@ git clone https://github.com/AndrewDryga/coop && cd coop && make install   # fro
 ```
 </details>
 
+<a name="verifying-a-download"></a>
 <details><summary><b>Verifying a download</b></summary>
 
 The one-line command executes the mutable `main/install.sh` first, so that bootstrap
@@ -93,7 +94,7 @@ falling back to the checksum alone. Without cosign it says the signature was not
 
 For verification *before* executing project code, download the release artifacts by
 hand. Set `VER` and `ASSET` for your platform — e.g.
-`VER=v0.1.0 ASSET=coop_0.1.0_darwin_arm64.tar.gz`:
+`VER=v8.1.0 ASSET=coop_8.1.0_darwin_arm64.tar.gz`:
 
 ```bash
 base="https://github.com/AndrewDryga/coop/releases/download/$VER"
@@ -312,24 +313,27 @@ coop claude --bare -- -p "..."          # Q&A with no repo, no project context, 
 coop run --readonly -- sh -c 'touch x'  # the same profile around a raw command: the probe
 ```
 
-Both run the shared base image under one restricted filesystem profile: the container root is
+Both use a Coop-managed image under one restricted filesystem profile: the container root is
 read-only, the only writable places are run-private in-memory scratch (the box home and `/tmp`,
 plus an empty `/workspace` for bare) that is discarded when the run ends, and every host path
 that enters the box enters read-only. Nothing the normal launch mounts writable exists here — no
-credential home, no dependency cache, no asdf volume, no skills copy, no ACP transcripts — and
-nothing the project defines is loaded: no `.agent/project.yaml` policy or env, services, hooks,
-MCP servers or `.tool-versions` provisioning. The provider gets a seed instead of its home: the
-access-only projection of the selected login (refresh authority stays on the host), its first-run
-defaults, and a note stating the mode's contract, copied into the tmpfs home before it starts.
+credential home, no dependency cache, no asdf volume, no skills copy, no ACP transcripts. Project
+environment, services, hooks, MCP servers and `.tool-versions` provisioning are not loaded.
+Read-only runs still use the normal project network approval and admission flow. The provider
+gets a seed instead of its home: the access-only projection of the selected login (refresh
+authority stays on the host), its first-run defaults, and a note stating the mode's contract,
+copied into the tmpfs home before it starts.
 
 `--readonly` mounts the repository (git history included) and any approved companions read-only,
 so the agent can read, search and run experiments in scratch; `--bare` mounts no repository and
 adds the provider's own no-tools switch, so the model's request carries no tool — the conversation
 in, the answer out. Both refuse what they cannot enforce rather than launching on a promise: they
-run on Docker only, `claude` is the qualified provider, `--peer`, presets, `COOP_IMAGE` and
-`--egress filtered` are refused, and a `COOP_RUN_ARGS` entry other than `-e KEY=VALUE` stops the
-launch by name. The answer is the run's only output; a run that needs artifacts back is a normal
-run.
+run on Docker only, native restricted modes are offered only for `claude`, and `--peer`, presets
+and `COOP_IMAGE` are refused. A `COOP_RUN_ARGS` entry other than `-e KEY=VALUE` stops the launch
+by name. Direct `--readonly` runs support `--egress filtered`; `--bare` accepts only open or
+offline networking. Restricted runs do not start services, so a filtered policy with service
+grants is refused. Remote-session policies using either restricted mode still reject filtered
+networking. The answer is the run's only output; a run that needs artifacts back is a normal run.
 
 ### Your git identity, not the box's
 
@@ -603,14 +607,15 @@ using them, including installations created by older versions.
 | Gemini | `GEMINI_API_KEY`, `GOOGLE_API_KEY` | `GEMINI_API_KEY` is brokered; Vertex `GOOGLE_API_KEY` is refused |
 | Grok | `XAI_API_KEY` | refused because the pinned Grok client has no qualified API base override |
 
-The brokered cases above work in every filtered run (`--egress filtered`): a direct agent, loop
+The brokered cases above work in normal filtered runs (`--egress filtered`): a direct agent, loop
 workers and reviewers, peers, preset roles, consult and delegate helpers, editor (ACP) sessions and
 remote sessions. Every teammate of that provider in the box uses the one key through the broker, and
 signed-in accounts of other providers mix freely; one filtered policy cannot switch a provider
-between an API key and a sign-in. Open and offline API-key runs are refused, and so are read-only
-and bare mode, which cannot use filtered networking yet: Coop never falls back to putting the
-reusable key in a box. Provider-native OAuth/access-token files keep their existing behavior and
-are not claimed as API-key brokered.
+between an API key and a sign-in. Direct Claude `--readonly --egress filtered` runs can also broker
+`ANTHROPIC_API_KEY`. API-key runs using open/offline networking, login or bare mode are refused;
+remote-session policies using restricted modes still reject filtered networking. Coop never falls
+back to putting the reusable key in a box. Provider-native OAuth/access-token files keep their
+existing behavior and are not claimed as API-key brokered.
 
 `KEY=value` stores a value in the file; a bare `KEY` imports its value when it exists in Coop's
 ambient environment. An unset bare import is omitted, while a set import or assignment wins over
@@ -978,8 +983,9 @@ it and sends it upstream, while the box's copy of the file points the server at 
 and names a Coop-owned stand-in variable (`COOP_MCP_TOKEN_<n>`) valid only for that server and run.
 Your own variable in Coop's env file (`SENTRY_TOKEN` above) never reaches a filtered box, whether
 or not the box loads MCP; a session's ACP adapter is handed the stand-in, never the token. A bearer
-server declared SSE is refused there — it names its own message endpoint at runtime, so no fixed
-route can carry its token — so give it its streamable HTTP URL.
+server using legacy SSE gets a wider route: `GET` on its stream path and `POST` on any clean path of
+the same host. Its token still stays outside the box. The launch names this compatibility support;
+prefer the server's streamable HTTP URL when available, which uses an exact-path route.
 
 An offline run (`--egress none`) leaves every remote MCP server out — without internet it could not
 answer — and says so at launch; local (command) servers still work, and the remote servers' tokens
@@ -992,11 +998,12 @@ broker does; the box's copy of the file points the server at `coop-broker` and n
 `COOP_MCP_TOKEN_<n>`. The box reaches it over plain HTTP on its container network — the default
 bridge when your project has no network of its own — so the stand-in, not the network, is what
 keeps the credential yours. The launch says which servers it covers. A server no single route can carry
-keeps working exactly as before, with its secret in the box, and the launch says which and why: an
-SSE server, a server whose secret is in two places, a URL that is not plain `https` on port 443, and
+keeps working exactly as before, with its secret in the box, and the launch says which and why:
+a server whose secret is in two places, a URL that is not plain `https` on port 443, and
 every server when the box has no network of its own to reach a helper on (Apple's `container`
-runtime, `--network none`, `--network container:…`). A read-only session is unchanged too: its
-adapter is still handed the real token.
+runtime, `--network none`, `--network container:…`). Read-only sessions on open networking use the
+same helper; their adapters receive stand-ins for the servers it covers, with the same fallbacks
+for servers it cannot broker.
 
 The example's Playwright server works in the box out of the box: Chromium's system
 libraries are baked into the image, the browser binary downloads to the cache volume on

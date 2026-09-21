@@ -107,9 +107,11 @@ The pinned Grok client has no qualified API base override, so `XAI_API_KEY` is r
 alternate token variables, Gemini's Vertex `GOOGLE_API_KEY`, and Codex's alternate
 key/access-token variables are also refused rather than entering a box.
 
-API-key runs using open/offline networking, login, or read-only/bare mode (which cannot use filtered
-networking yet) stop before launch. Configured custom provider base URLs stop as well, and so does a
-key only a client's own credential file holds. Ordinary provider-native OAuth/access-token files
+Direct Claude `--readonly --egress filtered` runs can also broker `ANTHROPIC_API_KEY`; this does
+not qualify other providers' restricted modes. API-key runs using open/offline networking, login
+or bare mode stop before launch. Remote-session policies using restricted modes still reject
+filtered networking. Configured custom provider base URLs stop as well, and so does a key only a
+client's own credential file holds. Ordinary provider-native OAuth/access-token files
 keep their existing handling and are not broker-protected; restricted and session projections
 retain their existing access-only copies. A remote session hands its child a selected API key the
 way the host keeps it, in the session's private host-side config, and removes it after each turn
@@ -170,16 +172,16 @@ host, and the operator's variable never enters the box. That hop is plain HTTP o
 network: when your project has no Coop-managed network the helper joins the default bridge, which
 every un-networked container on the host shares, so what protects the credential there is the
 stand-in itself — 256 bits, minted per run and accepted only on its own listener, for its own
-server's one endpoint — not the network. Coop owns the box's hosts entry for that name and refuses
+server's route — not the network. Coop owns the box's hosts entry for that name and refuses
 a run whose own `--add-host` would rebind it. A remote open session's child hands its
 adapter list over the same way, so the Responder's state tools are brokered too. The helper's image
 is built on first use, like a first filtered run's.
 
 An open run's helper carries MCP routes only — a provider API key still needs `--egress filtered`,
-where the gateway holds the agent to its route — and only servers a fixed route can carry. These
-keep today's behaviour, with the secret in the box, and the launch names each one: an SSE server (it
-names its own message endpoint at runtime), a server whose secret is in two places or mixes text
-with two references, a URL that is not plain `https` on port 443, and every server when the box has
+where the gateway holds the agent to its route. It uses exact routes for streamable HTTP and the
+same-host route described above for legacy SSE. These keep today's behaviour, with the secret in
+the box, and the launch names each one: a server whose secret is in two places or mixes text with
+two references, a URL that is not plain `https` on port 443, and every server when the box has
 no network to reach a helper on (Apple's `container` runtime, `--network none` or
 `--network container:…` in your runtime arguments).
 
