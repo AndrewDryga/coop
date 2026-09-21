@@ -57,6 +57,15 @@ What remains shared is the credential material itself plus whatever new files a 
 write into that directory. Before "fixing" that, read this section again: the fix that looks right
 breaks authentication for every provider at once.
 
+## Distinguishing no work from an unsuccessful attempt
+
+After a nonzero candidate exit, the no-work shortcut compares two successful workspace signatures.
+The signature includes paths, modes, regular-file bytes and literal symlink targets, excluding Git
+and harness bookkeeping. Same-length edits and executable-bit or link changes still reach grading.
+Reads are bounded by `SnapshotLimit`; unreadable or oversized content makes comparison unavailable,
+so it cannot claim the candidate changed nothing. Links are not followed and special files are not
+opened. The normal snapshot and verifier decide the outcome when comparison is unavailable.
+
 ## Sizing a loop scenario, and one trap
 
 Measured on the shipped `queue` starter with `codex`: ten small tasks drained in **43 minutes**
@@ -72,6 +81,9 @@ already fully correct. The shipped verifier runs each subcommand on inputs no ta
 also why it cannot be satisfied by a loop that moves folders without finishing anything.
 
 ## Changelog
+- 2026-09-21 — replaced path/size-only no-work detection with bounded content and metadata
+  comparison. Regression proves a same-length edit after exit 1 reaches the grader; unchanged
+  attempts still take the no-work route, and unreadable inputs never produce a usable signature.
 - 2026-09-20 — created while landing `coop eval` execution, grading and loop scenarios.
 - 2026-09-21 — added loop-scenario sizing (43 min for ten tasks) and the signoff-reopening trap,
   from the full-length qualification run of the `queue` starter.

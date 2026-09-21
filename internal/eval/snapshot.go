@@ -2,11 +2,10 @@ package eval
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 )
 
@@ -136,31 +135,30 @@ func snapshotSymlink(root, path, target string) error {
 	return os.Symlink(dest, target)
 }
 
-// TreeSignature summarizes a workspace's content-bearing files — every regular file outside `.git`,
-// by relative path and size — so two moments can be compared cheaply. It answers exactly one
-// question: did anything happen here?
+// TreeSignature compares workspace paths, modes, file contents and symlink targets outside
+// .git and ignored harness paths. Timestamps are intentionally excluded: touching a file or
+// reading it must not count as candidate work.
 //
-// That question matters because "the agent exited non-zero and changed NOTHING" is almost never
-// evidence about the model. It is what a refused request, an expired login, a missing binary or an
-// unsupported model looks like from outside, and grading an untouched workspace would record a
-// confident FAIL for a trial where the model never got to work. `.git` is excluded because the
-// initial commit is Coop's own and says nothing about the candidate.
+// A nonzero candidate exit with an unchanged workspace is treated as a harness error instead
+// of graded work. Incomplete reads therefore return an error, never an unchanged signature.
+// Hashing is bounded by the same byte limit as the snapshot that will be graded.
 func TreeSignature(dir string, ignore ...string) (string, error) {
-	h := sha256.New()
-	var entries []string
+	w := newHasher()
+	var read int64
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return nil // unreadable entries cannot be compared; they are the same on both sides
+			return walkErr
 		}
 		rel, err := filepath.Rel(dir, path)
-		if err != nil || rel == "." {
+		if err != nil {
+			return err
+		}
+		if rel == "." {
 			return nil
 		}
 		if strings.EqualFold(d.Name(), ".git") && d.IsDir() {
 			return filepath.SkipDir
 		}
-		// Harness bookkeeping is not the candidate's work: the queue it was handed, the preset being
-		// evaluated, the loop's own telemetry. Counting them would make every loop trial look busy.
 		if isIgnored(rel, ignore) {
 			if d.IsDir() {
 				return filepath.SkipDir
@@ -168,20 +166,43 @@ func TreeSignature(dir string, ignore ...string) (string, error) {
 			return nil
 		}
 		info, err := d.Info()
-		if err != nil || !info.Mode().IsRegular() {
-			return nil
+		if err != nil {
+			return err
 		}
-		entries = append(entries, fmt.Sprintf("%s:%d", rel, info.Size()))
+		w.text("path", filepath.ToSlash(rel)).text("mode", info.Mode().String())
+		switch {
+		case info.Mode().IsRegular():
+			if info.Size() > SnapshotLimit-read {
+				return fmt.Errorf("workspace exceeds the %d GiB signature limit at %q", SnapshotLimit>>30, rel)
+			}
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+			h := sha256.New()
+			n, err := io.Copy(h, io.LimitReader(file, SnapshotLimit-read+1))
+			if err != nil {
+				return err
+			}
+			read += n
+			if read > SnapshotLimit {
+				return fmt.Errorf("workspace exceeds the %d GiB signature limit at %q", SnapshotLimit>>30, rel)
+			}
+			w.bytes("content", h.Sum(nil))
+		case info.Mode()&os.ModeSymlink != 0:
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			w.text("link", target)
+		}
 		return nil
 	})
 	if err != nil {
 		return "", err
 	}
-	sort.Strings(entries)
-	for _, e := range entries {
-		fmt.Fprintf(h, "%d:%s", len(e), e)
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return string(w.sum()), nil
 }
 
 // isIgnored reports whether a workspace-relative path is one of the ignored roots, or inside one.
