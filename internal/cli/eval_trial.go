@@ -13,6 +13,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/eval"
+	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
 // One trial, end to end. The order of these steps IS the isolation contract, so it is written once,
@@ -104,7 +105,7 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 	// model never got to work. It is recorded as a harness error instead, with the agent's own words.
 	// A blocked loop is a result even without source edits: its human decision lives in the queue,
 	// which the signature deliberately ignores. The verifier still decides whether that result passes.
-	blockedLoop := r.suite.IsLoop() && att.code == loopExitBlocked
+	blockedLoop := r.suite.IsLoop() && att.code == loopExitBlocked && loopQueueBlocked(workspace)
 	if att.code != 0 && !blockedLoop {
 		if sig, sigErr := eval.TreeSignature(workspace, ignore...); sigErr == nil && beforeSig != "" && sig == beforeSig {
 			return fail(ctx, joinDetail(
@@ -151,6 +152,18 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 		res.Detail = joinDetail(res.Detail, "graded workspace kept at "+snap.Dir)
 	}
 	return res
+}
+
+// Exit 3 is also a possible custom-command failure, so it needs the engine's blocked-only queue
+// evidence. The candidate has stopped. QueueCounts rejects links within the queue; check its
+// candidate-controlled ancestor too, before reading anything through it.
+func loopQueueBlocked(workspace string) bool {
+	info, err := os.Lstat(filepath.Join(workspace, ".agent"))
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	counts, _, err := tasks.QueueCounts(filepath.Join(workspace, eval.TasksRoot))
+	return err == nil && counts.Blocked > 0 && counts.Todo+counts.Doing == 0
 }
 
 // attemptOutcome is what one candidate run tells us. `limited` means the PROVIDER refused (expired

@@ -79,6 +79,7 @@ func TestTrialRunnerKeepsIncompleteAttemptsUngraded(t *testing.T) {
 	}{
 		{"unchanged agent exit 3 is not a blocked loop", false, 3},
 		{"unchanged loop failure", true, 1},
+		{"custom loop command exits 3 without blocking", true, 3},
 		{"loop startup refusal", true, 2},
 		{"interrupted loop", true, 130},
 	} {
@@ -103,6 +104,81 @@ func TestTrialRunnerKeepsIncompleteAttemptsUngraded(t *testing.T) {
 			res := r.run(context.Background(), trialFor(suite))
 			if graded || res.Status != eval.TrialError {
 				t.Fatalf("graded=%v status=%s detail=%s; want ungraded error", graded, res.Status, res.Detail)
+			}
+		})
+	}
+}
+
+func TestLoopTrialExitThreeNeedsBlockedOutcome(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	restore := loopExecutable
+	t.Cleanup(func() { loopExecutable = restore })
+	const blockAnother = "mkdir -p .agent/tasks/50_blocked/another\n" +
+		"printf '# Another task\\n' > .agent/tasks/50_blocked/another/task.md\n"
+	for _, tc := range []struct {
+		name   string
+		script string
+		graded bool
+	}{
+		{"blocked plus todo", blockAnother, false},
+		{"blocked plus in progress", blockAnother + "mkdir -p .agent/tasks/10_in_progress\nmv .agent/tasks/00_todo/add-a-flag .agent/tasks/10_in_progress/\n", false},
+		{"missing queue", "mv .agent/tasks .agent/runs\n", false},
+		{"empty queue", "mv .agent/tasks .agent/runs\nmkdir .agent/tasks\n", false},
+		{"done only", "mkdir -p .agent/tasks/99_done\nmv .agent/tasks/00_todo/add-a-flag .agent/tasks/99_done/\n", false},
+		{"unsafe blocked metadata", "mkdir -p .agent/tasks/50_blocked\nmv .agent/tasks/00_todo/add-a-flag .agent/tasks/50_blocked/\nmkdir .agent/tasks/50_blocked/add-a-flag/decision.md\n", false},
+		{"source edits remain gradeable", "printf 'package main\\nfunc main() { println(1) }\\n' > main.go\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			shim := filepath.Join(t.TempDir(), "coop-shim")
+			if err := os.WriteFile(shim, []byte("#!/bin/sh\nset -eu\n"+tc.script+"exit 3\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			loopExecutable = func() (string, error) { return shim, nil }
+			suite := loopSuite(t)
+			graded := false
+			r := newTrialRunner(t, suite, func(spec box.RunSpec) (int, error) {
+				graded = true
+				return 1, nil // admission to grading is not a passing verdict
+			})
+			res := r.run(context.Background(), trialFor(suite))
+			want := eval.TrialError
+			if tc.graded {
+				want = eval.TrialFailed
+			}
+			if graded != tc.graded || res.Status != want {
+				t.Fatalf("graded=%v status=%s detail=%s; want graded=%v status=%s", graded, res.Status, res.Detail, tc.graded, want)
+			}
+		})
+	}
+}
+
+func TestLoopQueueBlockedRejectsLinkedPaths(t *testing.T) {
+	for _, linked := range []string{
+		".agent", ".agent/tasks", ".agent/tasks/50_blocked", ".agent/tasks/50_blocked/choice",
+	} {
+		t.Run(linked, func(t *testing.T) {
+			workspace := t.TempDir()
+			taskDir := filepath.Join(workspace, ".agent/tasks/50_blocked/choice")
+			if err := os.MkdirAll(taskDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(taskDir, "task.md"), []byte("# Choose an option\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if !loopQueueBlocked(workspace) {
+				t.Fatal("fixture was not a blocked-only queue before linking")
+			}
+			path := filepath.Join(workspace, linked)
+			external := filepath.Join(t.TempDir(), "outside-workspace")
+			if err := os.Rename(path, external); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(external, path); err != nil {
+				t.Fatal(err)
+			}
+			if loopQueueBlocked(workspace) {
+				t.Fatal("external queue content was accepted through a candidate-controlled link")
 			}
 		})
 	}

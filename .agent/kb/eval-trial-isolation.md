@@ -66,11 +66,13 @@ Reads are bounded by `SnapshotLimit`; unreadable or oversized content makes comp
 so it cannot claim the candidate changed nothing. Links are not followed and special files are not
 opened. The normal snapshot and verifier decide the outcome when comparison is unavailable.
 
-A loop stopped on a human decision (exit 3) bypasses this shortcut: its only work may be a task
-move and decision under `.agent/tasks`, which signatures intentionally ignore. The grading snapshot
-includes that queue state, and the independent verifier still decides pass or fail. An unchanged
-agent exiting 3 is not a blocked loop; ordinary failed attempts and startup/interruption errors
-retain their existing ungraded outcome.
+A loop stopped on a human decision bypasses this shortcut: its only work may be a task move and
+decision under `.agent/tasks`, which signatures intentionally ignore. Exit 3 alone is insufficient:
+a custom work command can return it on failure. The exception requires a readable, confined queue
+with blocked tasks and no actionable work; linked `.agent`/queue/state/task paths are not evidence.
+The grading snapshot includes the queue, and the independent verifier still decides pass or fail.
+An unchanged agent exiting 3 is not a blocked loop; ordinary failed attempts and startup/interruption
+errors retain their existing ungraded outcome. Source changes still reach grading independently.
 
 ## Sizing a loop scenario, and one trap
 
@@ -87,6 +89,9 @@ already fully correct. The shipped verifier runs each subcommand on inputs no ta
 also why it cannot be satisfied by a loop that moves folders without finishing anything.
 
 ## Changelog
+- 2026-09-22 — required actual blocked-only queue evidence for exit3, which a custom command may
+  also return on failure. Integrated regressions cover raw exit3, actionable/missing/empty/done/unsafe
+  queues, unchanged genuine blocking and changed source; linked ancestor/queue paths are rejected.
 - 2026-09-22 — exempted recognized blocked-loop outcomes from the no-work shortcut. Integrated
   subprocess tests prove queue-only blocking reaches both accepting and rejecting graders, while
   unchanged failed agents/loops, startup refusal and interruption stay ungraded.
