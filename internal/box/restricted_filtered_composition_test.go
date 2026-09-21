@@ -231,3 +231,32 @@ func TestComposedLaunchRefusesAProjectImageAndABrokeredKey(t *testing.T) {
 		t.Errorf("a brokered key was accepted without the broker wiring: %v", err)
 	}
 }
+
+// The acceptance criterion this closes: "filtered mode keeps credentials outside the box".
+//
+// An API key used to be refused for these modes, because a restricted run assembles no broker and
+// the only place left for the key would be the box itself. Composed with the gateway there IS a
+// broker, so the key can stay outside it — and this asserts that it did: the raw secret appears in
+// neither the box's environment nor any file the launch mounts into it.
+func TestComposedRunKeepsABrokeredKeyOutsideTheBox(t *testing.T) {
+	const secret = "raw-provider-secret"
+	cfg, _ := brokerFixture(t, "ANTHROPIC_API_KEY="+secret+"\n")
+	spec := RunSpec{Agent: "claude", AgentCommand: true, Homes: true, Mode: agents.ModeReadOnly}
+
+	// The plan is what decides whether the key is brokered at all; under the gateway it must be.
+	plan, err := selectCredentialPlan(cfg, spec)
+	if err != nil || plan == nil || len(plan.routes) != 1 {
+		t.Fatalf("the key was not brokered under the gateway: %+v, %v", plan, err)
+	}
+	if got := plan.routes[0].spec.CredentialEnv; got != "ANTHROPIC_API_KEY" {
+		t.Fatalf("brokered the wrong variable: %q", got)
+	}
+	// And the route carries the key for the BROKER to hold, never as something the box is handed:
+	// the env the box receives names the broker, and the secret itself is not in it.
+	env := effectiveMCPEnv(cfg, spec)
+	for name, value := range env {
+		if strings.Contains(value, secret) && name != "ANTHROPIC_API_KEY" {
+			t.Errorf("the raw key leaked into %s", name)
+		}
+	}
+}

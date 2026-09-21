@@ -541,10 +541,18 @@ func TestCredentialBrokerRefusesWhatItCannotServe(t *testing.T) {
 	if plan, err := selectCredentialPlan(cfg, peer); err == nil || plan != nil || !strings.Contains(err.Error(), "cannot be brokered yet") {
 		t.Fatalf("a Grok peer's key = %+v, %v", plan, err)
 	}
+	// A restricted run composed with the gateway CAN broker: the key stays with the broker outside
+	// the box while the profile still owns the filesystem. Without the gateway there is nowhere for
+	// the key to live but the box, which is the one place it must not be — so that is still refused.
 	cfg, _ = brokerFixture(t, "ANTHROPIC_API_KEY=raw-provider-secret\n")
 	restricted := RunSpec{Agent: "claude", AgentCommand: true, Homes: true, Mode: agents.ModeReadOnly}
-	if plan, err := selectCredentialPlan(cfg, restricted); err == nil || plan != nil || !strings.Contains(err.Error(), "does not assemble") {
-		t.Fatalf("a restricted run's key = %+v, %v", plan, err)
+	if plan, err := selectCredentialPlan(cfg, restricted); err != nil || plan == nil || len(plan.routes) != 1 {
+		t.Fatalf("a restricted run under the gateway should broker its key: %+v, %v", plan, err)
+	}
+	openCfg, _ := brokerFixture(t, "ANTHROPIC_API_KEY=raw-provider-secret\n")
+	openCfg.Egress = "open"
+	if plan, err := selectCredentialPlan(openCfg, restricted); err == nil || plan != nil || !strings.Contains(err.Error(), "does not assemble") {
+		t.Fatalf("an OPEN restricted run must still refuse a key: %+v, %v", plan, err)
 	}
 }
 

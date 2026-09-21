@@ -436,6 +436,7 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	// hid, the one Internet access section, the agent's name, and why the box stopped. A bare run
 	// mounts no repository, so it has nothing to hide and says so.
 	sections := newLaunchSections(spec)
+	var restrictedInterrupt *hostInterrupt
 	started := false
 	defer func() {
 		if !started {
@@ -460,6 +461,43 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	cfg = &admitted
 	if spec.ExtraArgs, err = restrictedRuntimeArgs(spec.ExtraArgs, mode, "its own runtime arguments"); err != nil {
 		return -1, err
+	}
+	// Under the gateway, prepare it BEFORE anything is generated. Two reasons, both ordering:
+	// the credential broker refuses unless this run's artifacts already live in its runfiles, and
+	// every generated file a filtered box mounts is supposed to live there anyway. Preparing here
+	// also means the broker exists by the time the credential plan is chosen, which is what lets a
+	// composed run hold an API key OUTSIDE the box instead of refusing it.
+	var filtered *filteredExecution
+	var filteredStopped string
+	if cfg.Egress == "filtered" {
+		if spec.Ctx == nil {
+			spec.Ctx, restrictedInterrupt = newHostInterrupt()
+		}
+		var prepErr error
+		filtered, prepErr = prepareFilteredExecution(spec.Ctx, cfg, rt, spec, spec.CapturedEgress, "", nil, sections)
+		if filtered != nil {
+			// A failed preparation can still own published intent, so its ending is registered
+			// before the error is acted on — the same shape Run uses.
+			defer func() {
+				var teardownErr error
+				result, teardownErr = filtered.teardown(spec, sections, forkspace.ExecutionRecord{}, exitCode, result, filteredStopped, restrictedInterrupt)
+				if teardownErr == nil {
+					result = sections.explained(result, restrictedInterrupt)
+				}
+			}()
+		}
+		if prepErr != nil {
+			return -1, prepErr
+		}
+		// The gateway substitutes its own image; a project's derived one must never become the
+		// filesystem a restricted profile is a contract about (filtered.go skips it for these modes).
+		if filtered.record.ProjectImage != "" {
+			return -1, fmt.Errorf("a %s run cannot use this project's own box image (%s)", mode, filtered.record.ProjectImage)
+		}
+		artifacts.parent = filtered.runfiles
+		if err := filtered.prepareCredentialBroker(artifacts); err != nil {
+			return -1, err
+		}
 	}
 	if _, err := selectCredentialPlan(cfg, spec); err != nil {
 		return -1, err
@@ -660,6 +698,17 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 		envFile = kept
 		tmpFiles = append(tmpFiles, kept)
 	}
+	if filtered != nil {
+		// The key stays with the gateway's broker; the box gets its address and a stand-in.
+		brokerEnv, err := filtered.credentialBrokerEnv(artifacts, envFile)
+		if err != nil {
+			return -1, err
+		}
+		if brokerEnv != envFile {
+			envFile = brokerEnv
+			tmpFiles = append(tmpFiles, brokerEnv)
+		}
+	}
 	if open != nil {
 		brokerEnv, err := open.env(artifacts, envFile)
 		if err != nil {
@@ -706,6 +755,18 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	// The shared assembly on a spec with every optional exposure off: no homes (so no credential
 	// bind, skills, transcripts, instruction or git mounts), no cache or asdf volume, no services
 	// network, no published port. What the profile adds rides in the limits slot and in extras.
+	if filtered != nil {
+		brokerMounts, brokerPaths, err := filtered.credentialBrokerMounts(artifacts, cfg.HomeInBox)
+		if err != nil {
+			return -1, err
+		}
+		tmpFiles = append(tmpFiles, brokerPaths...)
+		for _, m := range brokerMounts {
+			// Named in the plan, or validateRestrictedOptions refuses a mount it cannot account for.
+			plan.sources[m.host] = true
+			extras = append(extras, "-v", m.host+":"+m.box+":ro")
+		}
+	}
 	plain := spec
 	plain.Homes, plain.Cache, plain.Network, plain.Serve, plain.ShareACPSessions = false, false, false, false, false
 	plain.servePorts, plain.servePlan = nil, nil
@@ -732,10 +793,12 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	if err := ctxStep(spec.Ctx, "argument assembly"); err != nil {
 		return -1, err
 	}
-	if cfg.Egress == "filtered" {
-		// The hook marks the launch boundary; the filtered launch fires it itself, after the gateway
-		// is up. Firing here as well would start a caller's start-deadline before bring-up.
-		return runRestrictedFiltered(cfg, rt, spec, sections, options, cmd, stdin, stdout, stderr, &started)
+	if filtered != nil {
+		// The gateway was prepared before any artifact was generated (see above), so this is only
+		// the launch: the hook marks the launch boundary and the filtered launch fires it itself,
+		// after bring-up.
+		return launchRestrictedFiltered(filtered, spec, sections, options, cmd, stdin, stdout, stderr,
+			&started, restrictedInterrupt, &filteredStopped)
 	}
 	if spec.OnRuntimeLaunch != nil {
 		spec.OnRuntimeLaunch()
@@ -772,43 +835,6 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	return code, runErr
 }
 
-// runRestrictedFiltered runs an already-assembled restricted box inside the filtered gateway.
-//
-// The two sandboxes answer different questions and neither subsumes the other: the restricted
-// profile decides what the agent may WRITE (nothing persistent), the gateway decides what it may
-// REACH. So the restricted assembly keeps building the box exactly as it does for an open run, and
-// the filtered launch — which owns the controller, the guard, the volumes, the receipt and the one
-// shared teardown — starts and ends it. Neither the gateway nor the ending is copied here.
-func runRestrictedFiltered(cfg *config.Config, rt runtime.Runtime, spec RunSpec, sections *launchSections,
-	options, cmd []string, stdin io.Reader, stdout, stderr io.Writer, started *bool) (exitCode int, result error) {
-	var interrupt *hostInterrupt
-	if spec.Ctx == nil {
-		// A filtered box is torn down by THIS process, so an interrupt has to arrive as a
-		// cancellation the teardown can act on — and the teardown names the signal it was.
-		spec.Ctx, interrupt = newHostInterrupt()
-	}
-	filtered, err := prepareFilteredExecution(spec.Ctx, cfg, rt, spec, spec.CapturedEgress, "", nil, sections)
-	// A failed preparation can still own published intent, so the teardown is registered on the
-	// execution whenever there IS one — before the error is acted on, exactly as Run does.
-	stopped := ""
-	var teardownErr error
-	if filtered != nil {
-		defer func() {
-			result, teardownErr = filtered.teardown(spec, sections, forkspace.ExecutionRecord{}, exitCode, result, stopped, interrupt)
-			// Only a clean teardown may mark the result explained. A cleanup failure joined onto a
-			// cancellation still satisfies errors.Is(_, context.Canceled), so silencing it here would
-			// leave a leaked gateway, guard or volume with nothing printed about it anywhere.
-			if teardownErr == nil {
-				result = sections.explained(result, interrupt)
-			}
-		}()
-	}
-	if err != nil {
-		return -1, err
-	}
-	return launchRestrictedFiltered(filtered, spec, sections, options, cmd, stdin, stdout, stderr, started, interrupt, &stopped)
-}
-
 // launchRestrictedFiltered is everything after the gateway is prepared: the two refusals that keep a
 // composed box from being wider than a restricted one, and the launch itself. Split from the
 // preparation so it can be driven by the filtered suite's fake daemon — the preparation is
@@ -821,12 +847,6 @@ func launchRestrictedFiltered(filtered *filteredExecution, spec RunSpec, section
 	// the image is what the filesystem profile is a contract ABOUT.
 	if filtered.record.ProjectImage != "" {
 		return -1, fmt.Errorf("a restricted run cannot use this project's own box image (%s)", filtered.record.ProjectImage)
-	}
-	// A brokered API key needs the broker wiring the ordinary filtered path sets up, which a
-	// restricted run does not assemble. Refused in the open rather than failing later as a
-	// confusing binding error.
-	if filtered.broker != nil {
-		return -1, fmt.Errorf("a restricted run cannot route an API key through the credential broker — sign in with the provider, or drop --egress filtered")
 	}
 	spec.Image = filtered.image // the qualified client image, by digest, never a repo image
 	spec.Cmd = cmd
