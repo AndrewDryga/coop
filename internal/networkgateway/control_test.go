@@ -299,9 +299,16 @@ func TestReadinessPollingDoesNotKeepDeadGuardAlive(t *testing.T) {
 	for {
 		select {
 		case <-done:
-			if time.Since(started) < HeartbeatTimeout-100*time.Millisecond || c.Ready() {
-				t.Fatal("liveness cutoff was early or not terminal")
+			// Two different failures, asserted separately. An EARLY cutoff is the security claim
+			// itself — an observer polling ready must not be able to end a live guard's authority
+			// sooner than the declared window — so that one stays exact.
+			if elapsed := time.Since(started); elapsed < HeartbeatTimeout-100*time.Millisecond {
+				t.Fatalf("liveness cutoff came early: %s into a %s window", elapsed, HeartbeatTimeout)
 			}
+			// Readiness going terminal is a different claim, and it settles just AFTER the control
+			// loop returns. Sampling it once here read a race as a liveness violation and failed a
+			// full gate run under load; wait for it instead, which still fails if it never turns.
+			wait.For(t, "readiness to go terminal", func() bool { return !c.Ready() })
 			return
 		case <-ticker.C:
 			_ = client.Ready(ctx)
