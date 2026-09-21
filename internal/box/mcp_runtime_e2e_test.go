@@ -4,6 +4,7 @@ package box
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -115,6 +116,9 @@ func TestRuntimeSharedMCPServersAreReachedByEveryProbeableClient(t *testing.T) {
 			t.Setenv("COOP_CONFIG_DIR", t.TempDir())
 			t.Setenv("COOP_CONF", write(""))
 
+			// rendered is what the last run placed, kept so a failure can look at the configuration it
+			// actually ran with instead of guessing.
+			var rendered []agents.MCPMount
 			// run renders one client's configuration from a shared file and reports what the server saw.
 			run := func(t *testing.T, sharedFile string) string {
 				t.Helper()
@@ -139,6 +143,7 @@ func TestRuntimeSharedMCPServersAreReachedByEveryProbeableClient(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(source, "bin", "mcpprobe"), body, 0o755); err != nil {
 					t.Fatal(err)
 				}
+				rendered = projection.Mounts
 				written := 0
 				for _, mount := range projection.Mounts {
 					rel, err := filepath.Rel(boxHome, mount.BoxPath)
@@ -179,7 +184,8 @@ func TestRuntimeSharedMCPServersAreReachedByEveryProbeableClient(t *testing.T) {
 			lines := strings.Fields(strings.ReplaceAll(strings.TrimSpace(seen), "answered initialize", "answered-initialize"))
 			switch {
 			case !slices.Contains(lines, "server-process-started"):
-				t.Fatalf("%s never launched the operator's MCP server:\n%s", test.provider, seen)
+				t.Fatalf("%s never launched the operator's MCP server%s:\n%s",
+					test.provider, folderTrustHint(rendered), seen)
 			case !slices.Contains(lines, "launched"):
 				t.Fatalf("%s launched the server but its configured env never reached it, so the server "+
 					"could not report anything:\n%s", test.provider, seen)
@@ -206,4 +212,41 @@ func TestRuntimeSharedMCPServersAreReachedByEveryProbeableClient(t *testing.T) {
 			}
 		})
 	}
+}
+
+// folderTrustHint explains a never-launched server when the rendered configuration is the reason.
+//
+// Gemini suppresses every user-level MCP server in a folder it does not trust, so Coop writes
+// `security.folderTrust.enabled=false` into its settings (`disableGeminiFolderTrust`). Lose that and
+// this suite goes red with a message about MCP, which sends the reader to the MCP config — the one
+// place where nothing is wrong. So the failure asks the settings it actually ran with.
+//
+// It reads the rendered content rather than keying off the provider: only gemini's projection is
+// JSON with that key, so codex's and grok's TOML simply never match, and the hint cannot outlive the
+// setting it describes. Silence when the setting IS disabled is the point — a hint on every failure
+// is noise, and would send the next reader down this path for an unrelated break.
+func folderTrustHint(mounts []agents.MCPMount) string {
+	for _, mount := range mounts {
+		var settings struct {
+			MCPServers map[string]any `json:"mcpServers"`
+			Security   *struct {
+				FolderTrust *struct {
+					Enabled *bool `json:"enabled"`
+				} `json:"folderTrust"`
+			} `json:"security"`
+		}
+		if err := json.Unmarshal([]byte(mount.Content), &settings); err != nil || settings.MCPServers == nil {
+			// Not the file that carries the servers: codex's and grok's projections are TOML, and
+			// gemini's own extra JSON mounts have no servers in them. Keying off the servers rather
+			// than the provider keeps this from firing on a healthy run.
+			continue
+		}
+		trust := settings.Security
+		if trust == nil || trust.FolderTrust == nil || trust.FolderTrust.Enabled == nil || *trust.FolderTrust.Enabled {
+			return " — and its rendered settings do not turn folder trust OFF, which suppresses every" +
+				" user-level MCP server in an untrusted folder; check disableGeminiFolderTrust before" +
+				" looking at the MCP configuration"
+		}
+	}
+	return ""
 }
