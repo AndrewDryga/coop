@@ -1212,7 +1212,8 @@ coop's proxy sits between the editor and the box and owns the session:
   with their supported provider-native credentials, Grok with its OAuth login, and Claude, Codex
   and Gemini API keys (kept on the host behind Coop's broker) support filtered ACP. A session offers
   a provider's accounts of one kind, its API keys or its sign-ins, since one policy cannot grant
-  both. Gemini OAuth and Vertex AI credentials require open networking. Switching providers never
+  both. Gemini OAuth and Vertex AI are not qualified for filtered ACP; Vertex `GOOGLE_API_KEY`
+  is refused in every network mode. Switching providers never
   widens the session's network access, and explicitly requesting an unsupported provider or preset
   still fails before launch.
 
@@ -1922,7 +1923,7 @@ when a tool needs current joined state.
 | **"no container runtime found"** | Install Docker or Apple [`container`](https://github.com/apple/container) (macOS 26+), then `coop build && coop doctor`. Force one with `COOP_RUNTIME=docker`. |
 | **"image … isn't built — run 'coop build'"** | `coop build` (shared base), or `coop build` in a repo with a `.agent/Dockerfile` (its own image). |
 | **Login hangs or "usage limit reached"** | `coop login <agent>` re-runs the sign-in (paste-code, no browser). Hit a subscription limit? It resets on a schedule — wait, or `coop login` into another account. The unattended loop waits out the reset on its own; a [Zed session](#drive-it-from-zed-acp) rotates to your next signed-in account and re-sends by itself. |
-| **Gemini says its Google sign-in client is no longer supported** | Google retired Gemini CLI access for individual Google accounts. Run `coop login gemini[@<name>]` and paste a Gemini API key from the displayed AI Studio link; Coop does not launch that retired Google flow. Enterprise Gemini CLI and Vertex credentials remain separate provider-supported options and are not supported with `--egress filtered`. |
+| **Gemini says its Google sign-in client is no longer supported** | Google retired Gemini CLI access for individual Google accounts. Run `coop login gemini[@<name>]` and paste a Gemini API key from the displayed AI Studio link; Coop does not launch that retired Google flow. Enterprise Gemini CLI and Vertex credentials remain separate provider-supported options and are not supported with `--egress filtered`. Coop refuses Vertex `GOOGLE_API_KEY` in every network mode. |
 | **Agent seems stuck / a detached loop won't quit** | `coop fork logs <name> -f` to watch it; `coop fork stop <name>` to stop a detached loop. A foreground run is just Ctrl-C. |
 | **"permission denied" writing `~/.cache` / build or test caches** | The shared cache volume initialized root-owned. Recreate it: `docker volume rm coop-cache` (or your runtime's equivalent), then `coop build`. |
 | **`go`/`gofmt`: "No version is set for command go"** | The box provisions toolchains from `.tool-versions` via asdf — add the required `golang` version there so it's installed and shimmed. Set `COOP_NO_ASDF=1` to skip provisioning. |
@@ -2036,7 +2037,7 @@ live quota.
 |---|---|
 | `missing_runtime`, `missing_image`, `missing_cli`, `missing_credential` | Install/build/sign in, then rerun. No paid request started. |
 | `credential_refresh_required` | Re-authenticate the selected account; its projected access token cannot outlive the deadline. |
-| `credential_not_portable` | Select a portable provider credential. For a Gemini API key, use `provider-network-live-e2e`; Vertex `GOOGLE_API_KEY` works only with open networking. |
+| `credential_not_portable` | Select a portable provider credential. For Gemini live probes, use an env-backed `GEMINI_API_KEY` account. Live suites automatically use filtered networking for supported API keys; `GOOGLE_API_KEY` is refused even with open networking. |
 | `ring_prerequisite` | Repair the named prerequisite. The consult ring admitted zero paid calls. |
 | `failed` with `attempted=true` | Treat as an upstream CLI/provider compatibility failure; reproduce syntax/policy with the deterministic fixture. |
 | `repository_changed`, `source_changed`, `cleanup_failed`, `harness_failed` | Treat as a local isolation/harness defect; these override provider success. |

@@ -576,18 +576,22 @@ vault/                   <span class="t"># a directory — hidden whole</span></
 <span class="k">coop</span> login claude@personal   <span class="t"># …and a third</span>
 <span class="k">coop</span> credentials             <span class="t"># list them + which are signed in</span></pre>
                     <p>
-                        API-token users can put provider keys in
-                        <code>~/.config/coop/agents/env</code>. Accepted keys are
-                        <code>ANTHROPIC_API_KEY</code>,
-                        <code>ANTHROPIC_AUTH_TOKEN</code>, and
-                        <code>CLAUDE_CODE_OAUTH_TOKEN</code> for Claude;
-                        <code>OPENAI_API_KEY</code> for Codex;
-                        <code>GEMINI_API_KEY</code> or
-                        <code>GOOGLE_API_KEY</code> for Gemini; and
-                        <code>XAI_API_KEY</code> for Grok. Coop recognizes an
-                        env-only login as the provider's default credential and
-                        scopes every accepted key like a file-backed login. A
-                        bare key imports an existing ambient value; if it is
+                        API-key users can put <code>ANTHROPIC_API_KEY</code>
+                        for Claude, <code>OPENAI_API_KEY</code> for Codex, or
+                        <code>GEMINI_API_KEY</code> for Gemini in
+                        <code>~/.config/coop/agents/env</code>. These keys require
+                        <code>--egress filtered</code>: Coop keeps the reusable
+                        key outside the box and gives the agent a substitute.
+                        Alternate Claude and Codex token variables, Vertex
+                        <code>GOOGLE_API_KEY</code>, and Grok's
+                        <code>XAI_API_KEY</code> are refused. See the
+                        <a href="https://github.com/AndrewDryga/coop#authentication">credential reference</a>
+                        for supported sign-in and API-key paths.
+                    </p>
+                    <p>
+                        Coop recognizes an env-only login as the provider's
+                        default credential. A bare key imports an existing
+                        ambient value; if it is
                         unset, the entry is omitted. A present import or later
                         assignment wins over earlier entries. The env token is
                         one effective default credential, not a substitute for
@@ -614,11 +618,10 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         >.
                     </p>
                     <p>
-                        Only the <em>active</em> credential is ever mounted into
-                        the box, so a running agent sees just the account it's
-                        using — never your whole vault. Switching mid-run loses
-                        nothing: each iteration is a fresh run, and the queue
-                        plus git carry the progress.
+                        Each provider uses only its selected account; brokered
+                        API keys remain outside the box. A loop carries progress
+                        through its queue and repository when it rotates accounts:
+                        each iteration starts a fresh run.
                     </p>
                 </section>
 
