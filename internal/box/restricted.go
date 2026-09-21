@@ -806,6 +806,16 @@ func runRestrictedFiltered(cfg *config.Config, rt runtime.Runtime, spec RunSpec,
 	if err != nil {
 		return -1, err
 	}
+	return launchRestrictedFiltered(filtered, spec, sections, options, cmd, stdin, stdout, stderr, started, interrupt, &stopped)
+}
+
+// launchRestrictedFiltered is everything after the gateway is prepared: the two refusals that keep a
+// composed box from being wider than a restricted one, and the launch itself. Split from the
+// preparation so it can be driven by the filtered suite's fake daemon — the preparation is
+// filtered-alone's code and is tested there, while THIS is where the composition's own decisions are.
+func launchRestrictedFiltered(filtered *filteredExecution, spec RunSpec, sections *launchSections,
+	options, cmd []string, stdin io.Reader, stdout, stderr io.Writer,
+	started *bool, interrupt *hostInterrupt, stopped *string) (int, error) {
 	// The gateway's own image substitution must not reach a restricted box: prepareFilteredExecution
 	// skips a project's derived image for these modes (filtered.go), and this proves it did, because
 	// the image is what the filesystem profile is a contract ABOUT.
@@ -823,7 +833,7 @@ func runRestrictedFiltered(cfg *config.Config, rt runtime.Runtime, spec RunSpec,
 	sections.starting()
 	code, launchErr := filtered.launch(spec.Ctx, spec, options, stdin, stdout, stderr)
 	if *started = filtered.started(); *started {
-		stopped = stopReason(code, launchErr, interrupt)
+		*stopped = stopReason(code, launchErr, interrupt)
 	}
 	return code, launchErr
 }

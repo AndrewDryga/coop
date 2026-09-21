@@ -1,7 +1,9 @@
 package box
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -164,5 +166,68 @@ func TestAFilteredReadOnlySessionHandsOverNoRealMCPSecrets(t *testing.T) {
 		if strings.Contains(string(body), secret) {
 			t.Errorf("the session list handed the box a real MCP secret (%s):\n%s", secret, body)
 		}
+	}
+}
+
+// A composed launch, driven for real against the filtered suite's fake daemon: the restricted
+// profile has to survive the hand-off into the gateway's own container creation, and exactly one
+// network may be named.
+//
+// The first attempt at this composition had a test that read the profile and passed while the
+// composed box could not start at all. This one reads what was actually CREATED.
+func TestComposedLaunchCreatesABoxWithBothBoundaries(t *testing.T) {
+	f, d := filteredFixture(t)
+	cfg := &config.Config{HomeInBox: "/home/node", BaseImage: "coop-box:x", Egress: "filtered"}
+	options := restrictedFilesystemArgs(cfg, agents.ModeReadOnly)
+	sections := newLaunchSections(RunSpec{Quiet: true})
+
+	started, stopped := false, ""
+	spec := RunSpec{Repo: t.TempDir(), Workdir: "/workspace", Quiet: true, Ctx: context.Background()}
+	_, _ = launchRestrictedFiltered(f, spec, sections, options, []string{"true"},
+		nil, io.Discard, io.Discard, &started, nil, &stopped)
+
+	created, ok := d.containers[f.ref("agent").Name]
+	if !ok {
+		t.Fatalf("no agent container was created; the daemon saw %v", d.log)
+	}
+	// The gateway's boundary: the box joins the controller's namespace, and only that.
+	if want := "container:" + f.ref("controller").ID; created.NetworkMode != want {
+		t.Errorf("network mode = %q, want %q", created.NetworkMode, want)
+	}
+	// The restricted boundary, as the daemon received it.
+	if !created.ReadonlyRootfs {
+		t.Error("the composed box's root is writable; the restricted profile did not survive the hand-off")
+	}
+	for _, scratch := range []string{cfg.HomeInBox, "/tmp"} {
+		if _, ok := created.Tmpfs[scratch]; !ok {
+			t.Errorf("the composed box has no owned scratch at %s: %v", scratch, created.Tmpfs)
+		}
+	}
+	if created.AutoRemove {
+		t.Error("the composed box was created with --rm; the filtered launch owns its removal")
+	}
+}
+
+// The two refusals that keep a composed box from being wider than a restricted one, driven through
+// the same seam.
+func TestComposedLaunchRefusesAProjectImageAndABrokeredKey(t *testing.T) {
+	sections := newLaunchSections(RunSpec{Quiet: true})
+	spec := RunSpec{Repo: t.TempDir(), Quiet: true, Ctx: context.Background()}
+	started, stopped := false, ""
+
+	f, _ := filteredFixture(t)
+	f.record.ProjectImage = "coop-myrepo:derived"
+	_, err := launchRestrictedFiltered(f, spec, sections, nil, []string{"true"},
+		nil, io.Discard, io.Discard, &started, nil, &stopped)
+	if err == nil || !strings.Contains(err.Error(), "project's own box image") {
+		t.Errorf("a project image reached a restricted box: %v", err)
+	}
+
+	f2, _ := filteredFixture(t)
+	f2.broker = &credentialBrokerRun{}
+	_, err = launchRestrictedFiltered(f2, spec, sections, nil, []string{"true"},
+		nil, io.Discard, io.Discard, &started, nil, &stopped)
+	if err == nil || !strings.Contains(err.Error(), "credential broker") {
+		t.Errorf("a brokered key was accepted without the broker wiring: %v", err)
 	}
 }
