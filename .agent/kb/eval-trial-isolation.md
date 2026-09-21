@@ -3,7 +3,7 @@ name: eval-trial-isolation
 description: What isolates one coop eval trial from the next and from the grader — and why the obvious credential fix would break authentication
 subsystem: eval
 sources: [internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_loop.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/box/run.go, internal/box/mounts.go, internal/agent/codex.go]
-updated: 2026-09-21
+updated: 2026-09-22
 ---
 
 `coop eval` measures configurations against each other, so its whole value rests on two trials
@@ -66,6 +66,12 @@ Reads are bounded by `SnapshotLimit`; unreadable or oversized content makes comp
 so it cannot claim the candidate changed nothing. Links are not followed and special files are not
 opened. The normal snapshot and verifier decide the outcome when comparison is unavailable.
 
+A loop stopped on a human decision (exit 3) bypasses this shortcut: its only work may be a task
+move and decision under `.agent/tasks`, which signatures intentionally ignore. The grading snapshot
+includes that queue state, and the independent verifier still decides pass or fail. An unchanged
+agent exiting 3 is not a blocked loop; ordinary failed attempts and startup/interruption errors
+retain their existing ungraded outcome.
+
 ## Sizing a loop scenario, and one trap
 
 Measured on the shipped `queue` starter with `codex`: ten small tasks drained in **43 minutes**
@@ -81,6 +87,9 @@ already fully correct. The shipped verifier runs each subcommand on inputs no ta
 also why it cannot be satisfied by a loop that moves folders without finishing anything.
 
 ## Changelog
+- 2026-09-22 — exempted recognized blocked-loop outcomes from the no-work shortcut. Integrated
+  subprocess tests prove queue-only blocking reaches both accepting and rejecting graders, while
+  unchanged failed agents/loops, startup refusal and interruption stay ungraded.
 - 2026-09-21 — replaced path/size-only no-work detection with bounded content and metadata
   comparison. Regression proves a same-length edit after exit 1 reaches the grader; unchanged
   attempts still take the no-work route, and unreadable inputs never produce a usable signature.

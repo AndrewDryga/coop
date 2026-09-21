@@ -102,7 +102,10 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 	// plus a non-zero exit, is what an unsupported model, an expired login or a missing binary looks
 	// like from out here, and calling that a FAIL would put a confident zero on a trial where the
 	// model never got to work. It is recorded as a harness error instead, with the agent's own words.
-	if att.code != 0 {
+	// A blocked loop is a result even without source edits: its human decision lives in the queue,
+	// which the signature deliberately ignores. The verifier still decides whether that result passes.
+	blockedLoop := r.suite.IsLoop() && att.code == loopExitBlocked
+	if att.code != 0 && !blockedLoop {
 		if sig, sigErr := eval.TreeSignature(workspace, ignore...); sigErr == nil && beforeSig != "" && sig == beforeSig {
 			return fail(ctx, joinDetail(
 				fmt.Sprintf("the agent exited %d having changed nothing in the workspace, so there is no work to grade — recorded as a harness error, not a model failure", att.code),
