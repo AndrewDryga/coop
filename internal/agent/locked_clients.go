@@ -400,3 +400,28 @@ func QualifiedClientSet() (lock string, clients map[string][]string, err error) 
 // FileNames returns paths in archive order, useful for deterministic
 // build contexts. Files and Clients are fresh per closure, never mutable globals.
 func (c ClientClosure) FileNames() []string { return slices.Sorted(maps.Keys(c.Files)) }
+
+// QualificationMismatch explains why a committed qualification does not describe the client set this
+// binary would actually build. It is the check a gate runs so a pin cannot move without re-running
+// the paid conformance suites: a client bump, a dependency bump, or a platform that lost coverage.
+// Empty means the record matches.
+func QualificationMismatch(q Qualification, lock string, clients map[string][]string) string {
+	if q.Lock != lock {
+		return fmt.Sprintf("the locked dependency set changed (record %.12s…, built %.12s…): re-run make provider-qualify", q.Lock, lock)
+	}
+	for platform, want := range clients {
+		got, ok := q.Clients[platform]
+		if !ok {
+			return fmt.Sprintf("platform %s has no qualified client set in the record", platform)
+		}
+		if !slices.Equal(got, want) {
+			return fmt.Sprintf("platform %s qualified %v but this binary builds %v", platform, got, want)
+		}
+	}
+	for platform := range q.Clients {
+		if _, ok := clients[platform]; !ok {
+			return fmt.Sprintf("the record qualifies platform %s, which this binary no longer builds", platform)
+		}
+	}
+	return ""
+}
