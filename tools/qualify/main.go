@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -30,7 +31,14 @@ const record = "internal/agent/locked-clients/qualification.json"
 
 // suites names each Makefile target provider-qualify runs and how its per-provider result is read:
 // a summary prefix, or the test whose one-subtest-per-provider results must all pass.
-var suites = []struct{ name, summary, test string }{
+//
+// scope is for the offline client suites, which prove a row directly against the pinned clients and
+// so can be honest about a client that cannot answer at all. A live suite must leave it empty: every
+// provider answers a paid prompt or the run does not qualify.
+var suites = []struct {
+	name, summary, test string
+	scope               []string
+}{
 	{name: "provider-live-e2e-all", summary: liveprovider.SummaryPrefix},
 	{name: "provider-live-e2e-effort", summary: liveprovider.SummaryPrefix}, // -targets: each example model at high effort
 	{name: "provider-resume-live-e2e-all", summary: liveprovider.ResumeSummaryPrefix},
@@ -39,6 +47,12 @@ var suites = []struct{ name, summary, test string }{
 	{name: "provider-network-live-e2e-all", summary: liveprovider.NetworkSummaryPrefix},
 	{name: "acp-e2e", test: "TestLiveProviderConformance"},
 	{name: "native-roles-e2e", test: "TestRuntimeNativeRolesAreDiscoveredByEveryPinnedClient"},
+	{name: "skills-e2e", test: "TestRuntimeSharedSkillsAreDiscoveredByEveryPinnedClient"},
+	// Claude is out of scope here, and the omission is the record's: Coop hands claude its MCP
+	// servers with --mcp-config on the main invocation, which no offline command exercises, so its
+	// connection is not proven by this suite. See internal/box/mcp_runtime_e2e_test.go.
+	{name: "mcp-e2e", test: "TestRuntimeSharedMCPServersAreReachedByEveryProbeableClient",
+		scope: []string{"codex", "gemini", "grok"}},
 }
 
 // qualifyEffort is the level the model+effort run asks every provider for.
@@ -107,9 +121,9 @@ func run(logs string) error {
 		}
 		var results map[string]string
 		if suite.summary != "" {
-			results, err = summaryResults(lines, suite.summary, pinned)
+			results, err = summaryResults(lines, suite.summary, pinned, suite.scope)
 		} else {
-			results, err = testResults(lines, suite.test)
+			results, err = testResults(lines, suite.test, suite.scope)
 		}
 		if err != nil {
 			return fmt.Errorf("%s: %w", suite.name, err)
@@ -180,7 +194,7 @@ func pinnedCLIVersions() (map[string]string, error) {
 
 // summaryResults reads a suite's last summary line: strict, every provider passed once, each on
 // the pinned CLI version.
-func summaryResults(lines []string, prefix string, pinned map[string]string) (map[string]string, error) {
+func summaryResults(lines []string, prefix string, pinned map[string]string, scope []string) (map[string]string, error) {
 	var raw string
 	for _, line := range lines {
 		if _, after, ok := strings.Cut(line, prefix); ok {
@@ -222,11 +236,11 @@ func summaryResults(lines []string, prefix string, pinned map[string]string) (ma
 		}
 		results[result.Provider] = result.CLIVersion
 	}
-	return results, everyProvider(results)
+	return results, everyProvider(results, scope)
 }
 
 // testResults reads a suite without a summary: each provider's subtest passed, and nothing failed.
-func testResults(lines []string, test string) (map[string]string, error) {
+func testResults(lines []string, test string, scope []string) (map[string]string, error) {
 	results := make(map[string]string)
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -238,17 +252,28 @@ func testResults(lines []string, test string) (map[string]string, error) {
 			results[provider] = liveprovider.StatusPassed
 		}
 	}
-	return results, everyProvider(results)
+	return results, everyProvider(results, scope)
 }
 
-func everyProvider(results map[string]string) error {
-	for _, name := range agents.Names() {
+// everyProvider requires a passing result from each provider in scope — every registered one unless
+// the suite declares otherwise, and never a provider that is not registered at all.
+func everyProvider(results map[string]string, scope []string) error {
+	want := agents.Names()
+	if len(scope) > 0 {
+		for _, name := range scope {
+			if !slices.Contains(agents.Names(), name) {
+				return fmt.Errorf("scoped to %s, which is not a registered provider", name)
+			}
+		}
+		want = scope
+	}
+	for _, name := range want {
 		if results[name] == "" {
 			return fmt.Errorf("no passing result for %s", name)
 		}
 	}
-	if len(results) != len(agents.Names()) {
-		return fmt.Errorf("results for %d providers, want %d", len(results), len(agents.Names()))
+	if len(results) != len(want) {
+		return fmt.Errorf("results for %d providers, want %d", len(results), len(want))
 	}
 	return nil
 }

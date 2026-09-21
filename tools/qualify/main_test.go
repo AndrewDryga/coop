@@ -38,7 +38,7 @@ func TestSummaryResultsRequireEveryProviderOnThePinnedCLI(t *testing.T) {
 		t.Fatalf("pinned CLI versions = %v", pinned)
 	}
 	good := passedEverywhere(t, pinned)
-	results, err := summaryResults([]string{"=== RUN x", summaryLine(t, true, good)}, liveprovider.SummaryPrefix, pinned)
+	results, err := summaryResults([]string{"=== RUN x", summaryLine(t, true, good)}, liveprovider.SummaryPrefix, pinned, nil)
 	if err != nil || results["grok"] != pinned["grok"] {
 		t.Fatalf("a strict, all-passed run = %v, %v", results, err)
 	}
@@ -58,7 +58,7 @@ func TestSummaryResultsRequireEveryProviderOnThePinnedCLI(t *testing.T) {
 		{"a provider missing", []string{summaryLine(t, true, good[1:])}, "no passing result for " + good[0].Provider},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := summaryResults(test.lines, liveprovider.SummaryPrefix, pinned); err == nil || !strings.Contains(err.Error(), test.want) {
+			if _, err := summaryResults(test.lines, liveprovider.SummaryPrefix, pinned, nil); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("err = %v, want %q", err, test.want)
 			}
 		})
@@ -71,14 +71,60 @@ func TestTestResultsRequireEveryProviderSubtest(t *testing.T) {
 	for _, name := range agents.Names() {
 		lines = append(lines, "    --- PASS: TestX/"+name+" (1.00s)")
 	}
-	if results, err := testResults(append(lines, "--- PASS: TestX (4.00s)"), "TestX"); err != nil || len(results) != len(agents.Names()) {
+	if results, err := testResults(append(lines, "--- PASS: TestX (4.00s)"), "TestX", nil); err != nil || len(results) != len(agents.Names()) {
 		t.Fatalf("all subtests passed = %v, %v", results, err)
 	}
-	if _, err := testResults(lines[1:], "TestX"); err == nil {
+	if _, err := testResults(lines[1:], "TestX", nil); err == nil {
 		t.Fatal("a missing provider was qualified")
 	}
-	if _, err := testResults(append(lines, "--- FAIL: TestOther (0.00s)"), "TestX"); err == nil {
+	if _, err := testResults(append(lines, "--- FAIL: TestOther (0.00s)"), "TestX", nil); err == nil {
 		t.Fatal("a failing run was qualified")
+	}
+}
+
+// A scoped suite records exactly the providers it claims. The scope is the record's own statement
+// about what went unproven, so it has to be as strict in both directions as the default: a provider
+// it names must pass, one it does not name must not appear, and a name no adapter answers to is a
+// typo that would otherwise silently shrink what qualification means.
+func TestScopedSuitesRecordExactlyTheProvidersTheyClaim(t *testing.T) {
+	scope := []string{"codex", "grok"}
+	var lines []string
+	for _, name := range scope {
+		lines = append(lines, "    --- PASS: TestX/"+name+" (1.00s)")
+	}
+	results, err := testResults(lines, "TestX", scope)
+	if err != nil || len(results) != len(scope) {
+		t.Fatalf("a scoped suite with every provider in scope = %v, %v", results, err)
+	}
+	if _, err := testResults(lines[1:], "TestX", scope); err == nil {
+		t.Fatal("a provider the suite claims to cover was allowed to be missing")
+	}
+	extra := append(lines, "    --- PASS: TestX/claude (1.00s)")
+	if _, err := testResults(extra, "TestX", scope); err == nil {
+		t.Fatal("a provider outside the declared scope was recorded anyway")
+	}
+	// The typo has to be caught even when the log OBLIGES it: a suite whose subtest is named after a
+	// provider no adapter answers to otherwise satisfies every count and records a provider that does
+	// not exist.
+	typo := []string{"    --- PASS: TestX/codex (1.00s)", "    --- PASS: TestX/not-a-provider (1.00s)"}
+	if _, err := testResults(typo, "TestX", []string{"codex", "not-a-provider"}); err == nil {
+		t.Fatal("a scope naming an unregistered provider was accepted")
+	}
+	// The default is unchanged: no scope still means every registered provider.
+	if _, err := testResults(lines, "TestX", nil); err == nil {
+		t.Fatal("an unscoped suite qualified without every provider")
+	}
+}
+
+// Every suite's declared scope has to name real providers, or the record would quietly claim less
+// than it says while the recorder stays green.
+func TestEverySuiteScopeNamesRegisteredProviders(t *testing.T) {
+	for _, suite := range suites {
+		for _, name := range suite.scope {
+			if _, ok := agents.Get(name); !ok {
+				t.Errorf("suite %s is scoped to %q, which no adapter answers to", suite.name, name)
+			}
+		}
 	}
 }
 

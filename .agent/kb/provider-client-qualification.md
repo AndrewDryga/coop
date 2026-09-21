@@ -52,10 +52,12 @@ session (an OPEN singleton still shows every repo preset, unfiltered by lead cap
 
 **Conformance rows** (D = deterministic in `make check`; R = the real pinned client, run OFFLINE in
 the locked image with `--network none` — free, but outside `make check` because it needs the image
-`coop net setup` builds. An R suite GATES `provider-qualify` (it runs first, and a red aborts before
-a single paid prompt) but does NOT enter `qualification.json`: `tools/qualify` reads a fixed suite
-list and `everyProvider` demands a pass from every registered provider, which an R suite that skips
-claude by design can never satisfy. Recording them needs per-suite provider scope in the recorder; L = the paid run that calls a model; all four providers unless noted —
+`coop net setup` builds. An R suite both GATES `provider-qualify` — it runs first, so a red aborts
+before a single paid prompt — and ENTERS `qualification.json`, through a per-suite `scope` in
+`tools/qualify`: a suite that cannot cover a client names the ones it does, and the record then
+states plainly what went unproven instead of implying every provider passed. Scope is for offline
+client suites only; a live suite leaves it empty, because every provider must answer a paid prompt or
+the run does not qualify; L = the paid run that calls a model; all four providers unless noted —
 mapped 2026-09-19 by reading the tests):
 - start — D `TestProviderScriptedProcessSmoke`, `TestProviderScriptedDirectMatrix`, ACP switch matrix;
   L `provider-live-e2e-all`, `acp-e2e`.
@@ -174,6 +176,8 @@ host re-run filtered setup once — a filtered launch does it itself, an editor 
 `coop net setup`.
 
 ## Changelog
+- 2026-09-21 — the recorder learned per-suite provider scope, so `skills-e2e`, `mcp-e2e` and
+  `native-roles-e2e` now enter the record; `mcp-e2e` carries claude's omission as part of it.
 - 2026-09-21 — `native-roles-e2e` probes from outside the home too; its control shows grok reads
   project scope as well as user scope, the other three only user scope.
 - 2026-09-21 — the shared-MCP row's connection gap closed OFFLINE for codex, gemini and grok
