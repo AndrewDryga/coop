@@ -1,15 +1,16 @@
 package loop
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
@@ -399,7 +400,11 @@ func rangeFiles(repo, rng string) []string {
 
 // gitNULPaths reads exact paths from a hardened Git command, failing soft like gitOut.
 func gitNULPaths(repo string, args ...string) []string {
-	out, err := exec.Command("git", gitArgs(repo, args)...).Output()
+	cmd, err := forkspace.GitCommand(context.Background(), repo, args...)
+	if err != nil {
+		return nil
+	}
+	out, err := cmd.Output()
 	if err != nil {
 		return nil
 	}

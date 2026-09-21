@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -8,17 +9,6 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 )
-
-// gitArgs builds `git -C dir <hardening> <args>`. The hardening goes first so a caller's own
-// trailing -c flags (e.g. forkspace.TrustedSignArgs) still win — git's last -c for a key takes
-// effect. The list itself lives in internal/forkspace, next to the clone that creates a fork, so
-// the whole repo has exactly one hardening set to audit; internal/cli, internal/forkctl,
-// internal/tasks and internal/sessionsvc each keep their own copy of these thin runners atop the
-// same list (see internal/forkctl/git.go's comment) rather than exporting one across a package
-// boundary.
-func gitArgs(dir string, args []string) []string {
-	return append(append([]string{"-C", dir}, forkspace.GitHardening...), args...)
-}
 
 // gitOut runs `git -C dir <args>` hardened and returns trimmed stdout, or "" on error. Every repo
 // coop runs git against is agent-writable, so hardening is the default; to read a value coop will
@@ -37,7 +27,11 @@ func gitOut(dir string, args ...string) string {
 // looks clean). The message carries git's own stderr — os/exec caps that capture at 32KB — because a
 // caller surfacing this to a human has nothing else to explain the failure with.
 func gitOutErr(dir string, args ...string) (string, error) {
-	out, err := exec.Command("git", gitArgs(dir, args)...).Output()
+	cmd, err := forkspace.GitCommand(context.Background(), dir, args...)
+	if err != nil {
+		return "", err
+	}
+	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
