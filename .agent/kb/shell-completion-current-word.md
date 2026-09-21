@@ -2,8 +2,8 @@
 name: shell-completion-current-word
 description: Shell completion replaces the current word, and Bash 3.2 needs IFS kept away from the COMP_WORDS slice
 subsystem: cli
-sources: [internal/cli/completion.go, internal/cli/completion_test.go]
-updated: 2026-09-21
+sources: [internal/cli/completion.go, internal/cli/completion_test.go, internal/cli/approved_runtime_output_test.go, internal/cli/testdata/approved/75-completion-bash.txt]
+updated: 2026-09-22
 ---
 
 `coop __complete` receives every word after `coop` through the word being edited, including an
@@ -27,7 +27,16 @@ that would alter other commands' completion, and users may have deliberately cus
 backend, not a handwritten replica. Backend tests pin exact-word versus next-slot semantics;
 the existing Zsh PTY regression separately covers its command-local correction suppression.
 
+The complete emitted script is also pinned by `TestApprovedCompletionScripts`, including its
+executable body, in `testdata/approved/75-completion-bash.txt`. A reviewed behavior change must
+update that transcript as well; a behavioral test pass alone does not prove the CLI gate passes.
+Review the full mismatch, not only its reported first differing line, and retain the byte-exact
+assertion. Preserve the fixture's editorial approval or explicit delegated-decision boundary.
+
 ## Changelog
+- 2026-09-22 — repaired the omitted approved transcript under the campaign's delegated routine
+  editorial authority. The before-failing exact-output check expected the old executable body,
+  not just an older header; no production behavior or output assertion was relaxed.
 - 2026-09-21 — reproduced empty and partial completion failures on Bash 3.2 and removed backend
   exact-command auto-advancement. The same script is also exercised on Linux Bash during audit.
   Actual typed model completion exposed both colon shapes on Bash 3.2 and 5.2; covered local
