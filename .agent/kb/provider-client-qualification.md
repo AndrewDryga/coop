@@ -123,7 +123,10 @@ mapped 2026-09-19 by reading the tests):
   ACP path, and its 429 reads as "Rate limited", which the broad keyword case covers. No live proof:
   a real limit cannot be triggered on demand.**
 - helper discovery — D consult/delegate/preset/native-role matrices; R `native-roles-e2e` (each
-  pinned client reads back the role Coop rendered; no PAID call — gemini's row does attempt one with
+  pinned client reads back the role Coop rendered, probed from a working directory outside the home
+  so project scope cannot answer for the user-level root — control: plant the role only under
+  `<cwd>/.<agent>/agents` and claude, codex and gemini all fail, while grok passes because it
+  discovers project scope as well; no PAID call — gemini's row does attempt one with
   a dummy key and reads the debug line printed before it fails); L `provider-consult-live-e2e-all`
   (wrapper called directly). **No live delegate proof.**
 - account switching — D DirectMatrix account selection, ACP rotation, AND
@@ -171,6 +174,8 @@ host re-run filtered setup once — a filtered launch does it itself, an editor 
 `coop net setup`.
 
 ## Changelog
+- 2026-09-21 — `native-roles-e2e` probes from outside the home too; its control shows grok reads
+  project scope as well as user scope, the other three only user scope.
 - 2026-09-21 — the shared-MCP row's connection gap closed OFFLINE for codex, gemini and grok
   (`mcp-e2e`), asserted from the server's side; claude cannot be probed offline and is recorded as
   the remaining live gap with the evidence, so nobody re-derives it.

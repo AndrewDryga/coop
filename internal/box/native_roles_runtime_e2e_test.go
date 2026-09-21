@@ -96,7 +96,10 @@ func TestRuntimeNativeRolesAreDiscoveredByEveryPinnedClient(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			script := `mkdir -p /tmp/h && cp -R /src/. /tmp/h/ && cd /tmp/h && ` + test.check + ` 2>&1`
+			// The probe runs from a directory that is NOT the home: these clients also discover
+			// <cwd>/.<agent>/agents as project-scope roles, so a run from $HOME would keep passing for
+			// a client that had dropped the user-level root entirely — the regression this catches.
+			script := `mkdir -p /tmp/h /tmp/w && cp -R /src/. /tmp/h/ && cd /tmp/w && ` + test.check + ` 2>&1`
 			out, _ := exec.CommandContext(ctx, rt.Name, "run", "--rm", "--network", "none", "-e", "HOME=/tmp/h",
 				"-v", source+":/src:ro", "--entrypoint", "sh", definition.Tag, "-c", script).CombinedOutput()
 			if !test.found(string(out)) {
