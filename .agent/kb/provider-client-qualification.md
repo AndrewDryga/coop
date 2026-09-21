@@ -59,7 +59,12 @@ noted — mapped 2026-09-19 by reading the tests):
 - cancel — D DirectMatrix "cancellation", `TestScriptedACPCancelAndContinue`; L `acp-e2e`.
 - model + effort — D DirectMatrix argv/env, loop lifecycle matrix; L `provider-live-e2e-effort`
   (`tools/qualify -targets`: each `ExampleModel` at high effort).
-- skills — D `TestSynthSkillsMounts` (mount plan only). **No process-level or live proof.**
+- skills — D `TestSynthSkillsMounts` (the mount plan) AND
+  `TestProviderScriptedSharedSkillsReachEveryCapableClient` (process level, per provider): the repo's
+  shared `.agent/skills` reaches each skills-capable client at its OWN `$HOME/.<provider>/skills`,
+  writable, from a synthesized copy — and is absent for a client that does not discover skills. The
+  provider fixture now pins that shape (`validateSkillsMount`), so the mount cannot change silently.
+  **Still no LIVE proof that a client loads the skill it finds there.**
 - MCP — D per-route unit tests (claude's `--strict-mcp-config` argv among them);
   L `provider-loop-live-e2e-all` (Coop's task tools). **The user's shared MCP servers are never
   exercised live, and no process-level test asserts them.**

@@ -636,6 +636,12 @@ func validateMountPolicy(root string, run runCommand, providerHomes []string) er
 			}
 			continue
 		}
+		if provider, ok := skillsMountProvider(m.Target); ok {
+			if err := validateSkillsMount(root, provider, m, providerHomes); err != nil {
+				return err
+			}
+			continue
+		}
 		if !m.ReadOnly {
 			return fmt.Errorf("unexpected writable mount %q:%q", m.Source, m.Target)
 		}
@@ -1461,4 +1467,31 @@ func exitFixtureAlias(label string, err error) {
 		os.Exit(status.Code)
 	}
 	fatalf("%s: %v", label, err)
+}
+
+// skillsMountProvider recognizes a shared-skills mount: /home/node/.<provider>/skills.
+func skillsMountProvider(target string) (string, bool) {
+	dir, base := filepath.Split(filepath.Clean(target))
+	if base != "skills" {
+		return "", false
+	}
+	return credentialMountProvider(strings.TrimRight(dir, string(filepath.Separator)))
+}
+
+// validateSkillsMount pins the contract for the repo's shared `.agent/skills`: it arrives at the
+// client's OWN skills directory, from a synthesized copy under fixture temp state, and WRITABLE —
+// a client that installs a skill into its skills dir must not be broken by a read-only mount, and
+// the copy is what keeps the host's tree clean when it does.
+func validateSkillsMount(root, provider string, m mount, providerHomes []string) error {
+	if !slices.Contains(providerHomes, provider) {
+		return fmt.Errorf("skills mount for %q is outside scenario provider_homes", provider)
+	}
+	if m.ReadOnly {
+		return fmt.Errorf("skills mount %q:%q must be writable", m.Source, m.Target)
+	}
+	rel, err := filepath.Rel(filepath.Join(root, "tmp"), m.Source)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("skills mount source %q is not a synthesized copy in fixture temp state", m.Source)
+	}
+	return nil
 }
