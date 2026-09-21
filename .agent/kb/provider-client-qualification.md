@@ -2,7 +2,7 @@
 name: provider-client-qualification
 description: every box runs one locked client set; make provider-qualify records a strict live qualification (no record or gate yet — why) — the conformance rows, where each is proven, the gaps, the bump procedure
 subsystem: agent
-sources: [internal/agent/locked_clients.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go]
+sources: [internal/agent/locked_clients.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go]
 updated: 2026-09-21
 ---
 
@@ -52,7 +52,10 @@ session (an OPEN singleton still shows every repo preset, unfiltered by lead cap
 
 **Conformance rows** (D = deterministic in `make check`; R = the real pinned client, run OFFLINE in
 the locked image with `--network none` — free, but outside `make check` because it needs the image
-`coop net setup` builds; L = the paid run that calls a model; all four providers unless noted —
+`coop net setup` builds. An R suite GATES `provider-qualify` (it runs first, and a red aborts before
+a single paid prompt) but does NOT enter `qualification.json`: `tools/qualify` reads a fixed suite
+list and `everyProvider` demands a pass from every registered provider, which an R suite that skips
+claude by design can never satisfy. Recording them needs per-suite provider scope in the recorder; L = the paid run that calls a model; all four providers unless noted —
 mapped 2026-09-19 by reading the tests):
 - start — D `TestProviderScriptedProcessSmoke`, `TestProviderScriptedDirectMatrix`, ACP switch matrix;
   L `provider-live-e2e-all`, `acp-e2e`.
@@ -84,8 +87,25 @@ mapped 2026-09-19 by reading the tests):
   shared MCP file reaches every client, read-only, at a path that client reads. Asserted on the
   SERVER NAMES the generated config carries, which the provider fixture captures at launch time —
   coop deletes those files when the run ends, so a test that looked afterwards would find nothing.
-  L `provider-loop-live-e2e-all` (Coop's task tools). **The user's shared MCP servers are still not
-  exercised LIVE — nothing proves a client connects to one.**
+  L `provider-loop-live-e2e-all` (Coop's task tools). R `mcp-e2e` proves the client then REACHES the
+  server, for codex, gemini and grok: a stdio server is a child process, not a network peer, so this
+  runs offline. The witness is the server itself (`internal/box/testdata/mcpprobe` logs every
+  JSON-RPC method it receives). What separates a real handshake from an announced one is ORDER, not
+  presence: the probe sits on its initialize RESULT and logs `answered initialize` only after writing
+  it, so a client that sends `notifications/initialized` without reading the result lands before that
+  line and fails. Presence alone proves nothing — a client could write both back to back, which is
+  what the codex driver here does deliberately. The configs come from Coop's own adapters
+  (`agents.Agent.MCP`), not hand-written, and codex connects from NO `codex mcp` subcommand — `mcp
+  list` prints config without launching anything; its app-server's `mcpServerStatus/list` launches
+  them. The failure path is IN the suite: each row re-runs with an empty `mcpServers` and nothing may
+  start. One control run by hand, worth knowing: flipping `security.folderTrust.enabled` back to true
+  fails gemini ALONE, so that generated setting is the only thing keeping an operator's servers from
+  being silently suppressed in a box's untrusted folder, and the gemini row is its standing test.
+  **Claude's connection is still LIVE-only and cannot be probed offline: Coop hands it servers with
+  `--mcp-config` on the main invocation; `claude mcp list` rejects that flag outright, accepts and
+  ignores it before the subcommand, and otherwise reads the `mcpServers` key of its own user config.
+  Coop DOES write that file (onboarding, bypass and trust keys, under CLAUDE_CONFIG_DIR) but never
+  writes servers into it.** Its delivery stays pinned at process level.
 - tool lifecycle — D `loop/streamjson_activity_test.go` per provider; watchdog process test now
   covers a silent start for claude, gemini and grok (`TestProviderScriptedLoopWatchdogProcess`,
   "no first output from <provider> rotates and completes") plus grok's foreground-tool and tool-cap
@@ -151,6 +171,9 @@ host re-run filtered setup once — a filtered launch does it itself, an editor 
 `coop net setup`.
 
 ## Changelog
+- 2026-09-21 — the shared-MCP row's connection gap closed OFFLINE for codex, gemini and grok
+  (`mcp-e2e`), asserted from the server's side; claude cannot be probed offline and is recorded as
+  the remaining live gap with the evidence, so nobody re-derives it.
 - 2026-09-21 — the skills row's live gap closed OFFLINE: `skills-e2e` asks each pinned client what it
   loaded from `~/.<agent>/skills`, no model call. Split the row legend (R) from the paid run, because
   `native-roles-e2e` was filed under L while making no paid call. Both offline suites now run FIRST

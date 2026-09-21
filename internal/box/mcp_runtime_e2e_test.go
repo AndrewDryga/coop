@@ -1,0 +1,211 @@
+//go:build boxruntimee2e
+
+package box
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/runtime"
+)
+
+// An operator's shared MCP server is supposed to be REACHABLE by every client that can be asked, not
+// merely mentioned in a config Coop wrote. The process-level test proves the file arrives at a path
+// the client reads; this proves the client then launches that server and agrees a protocol with it —
+// offline, because a stdio server is a child process, not a network peer.
+//
+// The server is the witness: `testdata/mcpprobe` logs every JSON-RPC method it receives, so the
+// assertion is made from the SERVER's side. What separates a real handshake from an announced one is
+// ORDER, not presence: the probe sits on its initialize RESULT for half a second and logs
+// `answered initialize` only after writing it, so a client that fires `notifications/initialized`
+// without reading the result lands before that line and fails here. Presence alone would pass for a
+// client that talked past the server entirely — this test's own codex driver writes initialize and
+// initialized back to back, which is exactly the shape being ruled out.
+//
+// The configuration is rendered by Coop's own adapters (`agents.Agent.MCP`), not written by hand, so
+// a change that breaks the generated shape fails here instead of in production.
+//
+// CLAUDE IS ABSENT ON PURPOSE — do not "fix" it by adding a row. Coop gives claude its servers with
+// `--mcp-config <snapshot> --strict-mcp-config` on the main invocation, and that path cannot run
+// offline: `claude mcp list` rejects `--mcp-config` outright ("unknown option"), and passing it
+// before the subcommand is accepted and then ignored ("No MCP servers configured", probe never
+// launched). `claude mcp list` reads the `mcpServers` key of its own user config instead — and while
+// Coop does write that file (onboarding, bypass and trust keys, under CLAUDE_CONFIG_DIR), it
+// deliberately never writes servers there. So claude's connection stays a LIVE gap; its delivery is
+// pinned at process level.
+//
+// Needs the locked client image, which `coop net setup` builds; run it with `make mcp-e2e`.
+func TestRuntimeSharedMCPServersAreReachedByEveryProbeableClient(t *testing.T) {
+	rt, err := runtime.Detect(os.Getenv("COOP_RUNTIME"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	docker, err := runtime.InspectDocker(ctx, rt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer docker.Close()
+	binding := networkRuntimeBinding(docker.Info(), docker.Endpoint())
+	definition, _, _, err := lockedImageDefinition(agents.ClientPlatform{OS: binding.OS, Architecture: binding.Architecture, Libc: "glibc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := docker.Image(ctx, definition.Tag); err != nil {
+		t.Fatalf("the locked client image %s is not on this daemon; run `coop net setup` first: %v", definition.Tag, err)
+	}
+	const (
+		boxHome   = "/tmp/h" // a throwaway HOME, so nothing of the operator's is in play
+		boxCwd    = "/tmp/w" // ...and a working directory outside it (see skills-e2e for why)
+		boxServer = boxHome + "/bin/mcpprobe"
+		boxLog    = boxHome + "/probe.log"
+		boxTouch  = boxHome + "/.mcpprobe-launched"
+		marker    = "--- what the server saw ---"
+	)
+
+	// The witness, built for the image's platform.
+	probe := filepath.Join(t.TempDir(), "mcpprobe")
+	build := exec.CommandContext(ctx, "go", "build", "-o", probe, "./testdata/mcpprobe")
+	build.Env = append(os.Environ(), "GOOS="+binding.OS, "GOARCH="+binding.Architecture, "CGO_ENABLED=0")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build the probe server: %v\n%s", err, out)
+	}
+
+	// Two shared files: the operator's, naming that server, and an empty one for the control.
+	write := func(body string) string {
+		path := filepath.Join(t.TempDir(), "mcp.json")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	shared := write(`{"mcpServers":{"coop-probe":{"type":"stdio","command":"` + boxServer +
+		`","args":[],"env":{"COOP_PROBE_LOG":"` + boxLog + `"}}}}`)
+	noServers := write(`{"mcpServers":{}}`)
+
+	for _, test := range []struct{ provider, check string }{
+		// Codex will not connect from any `codex mcp` subcommand — `mcp list` prints the config
+		// without launching anything. Its app-server's `mcpServerStatus/list` does launch them, and
+		// speaks no model.
+		{"codex", `export CODEX_HOME="$HOME/.codex"; { printf '%s\n' ` +
+			`'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"coop-probe","title":"coop-probe","version":"1"}}}' ` +
+			`'{"jsonrpc":"2.0","method":"initialized","params":{}}' ` +
+			`'{"jsonrpc":"2.0","id":2,"method":"mcpServerStatus/list","params":{}}'; sleep 15; } | timeout 60 codex app-server`},
+		// No GEMINI_CLI_TRUST_WORKSPACE here on purpose: gemini suppresses user-level MCP servers in
+		// an untrusted folder, and what keeps that from silently disabling every operator server in a
+		// real box is `security.folderTrust.enabled=false` in the settings Coop generates. Reading the
+		// server's log after `gemini mcp list` is therefore also the standing test of that setting —
+		// flip it back to true and this row, and only this row, goes red.
+		{"gemini", `timeout 60 gemini mcp list`},
+		{"grok", `timeout 60 grok mcp doctor`},
+	} {
+		t.Run(test.provider, func(t *testing.T) {
+			ag, ok := agents.Get(test.provider)
+			if !ok {
+				t.Fatalf("no adapter registered for %q", test.provider)
+			}
+			// Render from a scratch configuration, not this host's: the adapters merge the operator's
+			// own agent settings and honour COOP_* keys, so a real coop.conf would both read what this
+			// test must never project into a container and make the rendered file differ per machine.
+			t.Setenv("COOP_CONFIG_DIR", t.TempDir())
+			t.Setenv("COOP_CONF", write(""))
+
+			// run renders one client's configuration from a shared file and reports what the server saw.
+			run := func(t *testing.T, sharedFile string) string {
+				t.Helper()
+				cfg, err := config.Load()
+				if err != nil {
+					t.Fatal(err)
+				}
+				cfg.HomeInBox = boxHome
+				cfg.MCPFile = sharedFile
+				projection, err := ag.MCP(cfg, boxCwd)
+				if err != nil {
+					t.Fatalf("render %s's MCP configuration: %v", test.provider, err)
+				}
+				source := t.TempDir()
+				if err := os.MkdirAll(filepath.Join(source, "bin"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				body, err := os.ReadFile(probe)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(source, "bin", "mcpprobe"), body, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				written := 0
+				for _, mount := range projection.Mounts {
+					rel, err := filepath.Rel(boxHome, mount.BoxPath)
+					if err != nil || strings.HasPrefix(rel, "..") {
+						// Never skip quietly: the row would then fail as "never launched" and blame the
+						// client for a config this test declined to place.
+						t.Fatalf("%s renders %s outside the probe's home, so this test cannot place it",
+							test.provider, mount.BoxPath)
+					}
+					target := filepath.Join(source, filepath.FromSlash(rel))
+					if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(target, []byte(mount.Content), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					written++
+				}
+				if written == 0 {
+					t.Fatalf("%s renders no MCP configuration at all from a shared file", test.provider)
+				}
+				script := `mkdir -p ` + boxHome + ` ` + boxCwd + ` && cp -R /src/. ` + boxHome + `/ && cd ` + boxCwd +
+					` && { ` + test.check + `; } 2>&1 | tail -6; echo '` + marker + `'; ` +
+					`test -e ` + boxTouch + ` && echo server-process-started; cat ` + boxLog + ` 2>/dev/null`
+				out, _ := exec.CommandContext(ctx, rt.Name, "run", "--rm", "--network", "none", "-e", "HOME="+boxHome,
+					"-v", source+":/src:ro", "--entrypoint", "sh", definition.Tag, "-c", script).CombinedOutput()
+				report := string(out)
+				// LastIndex, not Cut: if a client ever echoed the marker, splitting on the first one
+				// would fold its own output into the server's.
+				at := strings.LastIndex(report, marker)
+				if at < 0 {
+					t.Fatalf("the probe script never finished — no report from %s:\n%s", test.provider, report)
+				}
+				return report[at+len(marker):]
+			}
+
+			seen := run(t, shared)
+			lines := strings.Fields(strings.ReplaceAll(strings.TrimSpace(seen), "answered initialize", "answered-initialize"))
+			switch {
+			case !slices.Contains(lines, "server-process-started"):
+				t.Fatalf("%s never launched the operator's MCP server:\n%s", test.provider, seen)
+			case !slices.Contains(lines, "launched"):
+				t.Fatalf("%s launched the server but its configured env never reached it, so the server "+
+					"could not report anything:\n%s", test.provider, seen)
+			case !slices.Contains(lines, "initialize"):
+				t.Fatalf("%s launched the server and never opened the handshake:\n%s", test.provider, seen)
+			case !slices.Contains(lines, "notifications/initialized"):
+				t.Fatalf("%s opened the handshake and never confirmed it:\n%s", test.provider, seen)
+			// Checked before the order comparison below, which a MISSING line would otherwise satisfy
+			// vacuously: slices.Index returns -1, and every real position sorts after it.
+			case !slices.Contains(lines, "answered-initialize"):
+				t.Fatalf("%s got no initialize answer from the server, so there is nothing its "+
+					"confirmation could have been a response to:\n%s", test.provider, seen)
+			case slices.Index(lines, "notifications/initialized") < slices.Index(lines, "answered-initialize"):
+				t.Fatalf("%s confirmed the handshake BEFORE reading the server's answer, so the two never "+
+					"agreed a protocol — it announced one:\n%s", test.provider, seen)
+			}
+
+			// The failure path, tested: with no server in the operator's file, nothing may start. Without
+			// this, every assertion above would pass just as well against a client that launches
+			// something on its own.
+			if control := run(t, noServers); strings.Contains(control, "server-process-started") {
+				t.Fatalf("%s started the probe server with none configured, so reaching it proves nothing "+
+					"about the operator's file:\n%s", test.provider, control)
+			}
+		})
+	}
+}

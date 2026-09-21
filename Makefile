@@ -196,7 +196,7 @@ provider-qualify: ## PAID: qualify the locked clients on every provider and reco
 # The two offline suites run FIRST: they need only the image the setup step just built and call no
 # model, so a red there costs nothing — behind the paid suites, the same red would arrive after every
 # provider had already answered real prompts.
-	for suite in native-roles-e2e skills-e2e \
+	for suite in native-roles-e2e skills-e2e mcp-e2e \
 	             provider-live-e2e-all provider-resume-live-e2e-all provider-loop-live-e2e-all provider-consult-live-e2e-all \
 	             provider-network-live-e2e-all acp-e2e; do \
 	  echo "== $$suite"; \
@@ -223,6 +223,9 @@ native-roles-e2e: ## Each pinned client loads the native roles coop renders (nee
 skills-e2e: ## Each pinned client discovers the shared skills coop projects (needs the locked client image: coop net setup)
 	@go test -tags boxruntimee2e -run '^TestRuntimeSharedSkillsAreDiscoveredByEveryPinnedClient$$' -count=1 -v ./internal/box/
 
+mcp-e2e: ## Every pinned client reaches an operator's shared MCP server (needs the locked client image: coop net setup)
+	@go test -tags boxruntimee2e -run '^TestRuntimeSharedMCPServersAreReachedByEveryProbeableClient$$' -count=1 -v ./internal/box/
+
 box-runtime-e2e: ## Init/reaping, signal, and entrypoint descendant-supervision contracts (set COOP_RUNTIME=docker)
 	@test -n "$$COOP_RUNTIME" || { echo 'COOP_RUNTIME is required (for example: COOP_RUNTIME=docker make box-runtime-e2e)'; exit 2; }
 	@go test -tags boxruntimee2e -run '^TestRuntime(Init|Entrypoint|Compose)' -count=1 -v ./internal/box/
@@ -234,4 +237,4 @@ clean: ## Remove build artifacts
 help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
-.PHONY: build install test cover lint staticcheck-version govulncheck-version vuln shellcheck require-python3 snapshot doctor docs docs-check align casts casts-check tools-test rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all provider-qualify acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e box-runtime-e2e clean help
+.PHONY: build install test cover lint staticcheck-version govulncheck-version vuln shellcheck require-python3 snapshot doctor docs docs-check align casts casts-check tools-test rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all provider-qualify acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e clean help
