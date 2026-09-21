@@ -25,7 +25,7 @@ import (
 func TestLoopCompletionMCPRepair(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
-	for _, scenario := range []string{"same session", "explicit no change", "no change after refusal", "resume after exit", "unconfirmed commit", "failed move", "unfinished checklist", "two correction cap", "unsupported session", "abnormal exit"} {
+	for _, scenario := range []string{"same session", "explicit no change", "no change after refusal", "edit after no-change completion", "resume after exit", "unconfirmed commit", "failed move", "unfinished checklist", "two correction cap", "unsupported session", "abnormal exit"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Setenv("XDG_STATE_HOME", t.TempDir())
 			repo, git := gitrepo.New(t)
@@ -33,6 +33,9 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 			git("add", ".gitignore")
 			git("commit", "-m", "base")
 			base := gitOut(repo, "rev-parse", "HEAD")
+			if scenario == "edit after no-change completion" {
+				writeTaskFile(t, filepath.Join(repo, "inherited.txt"), "inherited work\n")
+			}
 			id := "decision"
 			writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, id, "task.md"), "# Decision\n- [x] required acceptance checks passed\n")
 			writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, id, "state.md"), "# State — Decision\n\n**Status:** in progress\n**Done so far:** verified\n**Next action:** complete\n**Traps:** none\n")
@@ -96,7 +99,7 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 					return result
 				}
 				request("initialize", map[string]any{"protocolVersion": "2024-11-05", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "test", "version": "0"}})
-				noChange := scenario == "explicit no change"
+				noChange := scenario == "explicit no change" || scenario == "edit after no-change completion"
 				complete := func() map[string]any {
 					args := map[string]any{"id": id}
 					if noChange {
@@ -106,7 +109,7 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 					}
 					return request("tools/call", map[string]any{"name": "tasks_complete", "arguments": args})
 				}
-				if attempts == 1 && scenario != "unfinished checklist" && scenario != "explicit no change" {
+				if attempts == 1 && scenario != "unfinished checklist" && !noChange {
 					if reply := complete(); reply["isError"] != true {
 						t.Fatalf("no-commit completion accepted: %v", reply)
 					}
@@ -117,10 +120,17 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 				if scenario == "two correction cap" || scenario == "unsupported session" {
 					// Keep exiting normally without a terminal action. Coop must stop after two
 					// exact-session corrections instead of starting a fresh worker forever.
-				} else if scenario == "explicit no change" || scenario == "no change after refusal" {
+				} else if noChange || scenario == "no change after refusal" {
 					noChange = true
 					if reply := complete(); reply["isError"] == true {
 						t.Fatalf("explicit no-change completion refused: %v", reply)
+					}
+					if scenario == "edit after no-change completion" {
+						status := gitOut(repo, "status", "--porcelain", "--untracked-files=all")
+						writeTaskFile(t, filepath.Join(repo, "inherited.txt"), "changed after completion\n")
+						if got := gitOut(repo, "status", "--porcelain", "--untracked-files=all"); got != status {
+							t.Fatal("fixture must leave status labels unchanged")
+						}
 					}
 				} else if scenario != "resume after exit" || attempts == 2 {
 					if attempts == 1 || scenario == "resume after exit" {
@@ -158,6 +168,22 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 			output := captureStderr(t, func() {
 				code, err = c.Run(RunSpec{Repo: repo, Image: "fixture", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard, MaxTasks: 1, Rotation: ladder.NewRotation([]agents.Target{target("claude", "test")})})
 			})
+			if scenario == "edit after no-change completion" {
+				if code == 0 || err == nil || attempts != 1 {
+					t.Fatalf("post-completion mutation accepted: %d, %v, %d attempts", code, err, attempts)
+				}
+				if current, ok, err := tasks.CurrentTask(filepath.Join(repo, tasksRoot), id); err != nil || !ok || current.State != tasks.StateInProgress {
+					t.Fatalf("changed task was not restored: %v, %v, %v", current, ok, err)
+				}
+				body, readErr := os.ReadFile(filepath.Join(repo, "inherited.txt"))
+				if readErr != nil || string(body) != "changed after completion\n" || gitOut(repo, "rev-parse", "HEAD") != base {
+					t.Fatalf("denial lost the user's work/history: %q, %v", body, readErr)
+				}
+				if strings.Contains(output, "Task completed:") || strings.Contains(output, "All tasks passed") {
+					t.Fatalf("post-completion mutation claimed success: %s", output)
+				}
+				return
+			}
 			if scenario == "two correction cap" {
 				if code != 1 || err == nil || attempts != 3 || !strings.Contains(err.Error(), "after 2 terminal corrections") {
 					t.Fatalf("terminal correction cap = %d, %v, %d attempts", code, err, attempts)

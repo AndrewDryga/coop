@@ -3,112 +3,242 @@ package tasks
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
-// CheckoutFingerprint answers the question a no-change completion actually turns on: did anything
-// about this checkout's CONTENT change?
-//
-// `git status --porcelain` cannot answer it. Its lines name a path and a state, so a worker that
-// starts a task with supported pre-existing work — a modified file, something staged — can rewrite
-// those bytes, leave the line reading `M internal/loop/loop.go` exactly as it was, and claim it
-// changed nothing. Both the pre-move check and the post-exit one compared those labels, so such an
-// edit reached completion without ever being reviewed as a change.
-//
-// The fingerprint covers the three places content can hide:
-//
-//   - the status lines themselves, so a new path or a changed state still fails;
-//   - `git diff` and `git diff --cached`, which carry the actual bytes of every tracked change,
-//     unstaged and staged;
-//   - untracked files, which no diff sees.
-//
-// The diffs are taken with `--binary`, or a changed image or archive would render as the content-free
-// "Binary files differ" and slip through; with `--no-textconv` and `--no-ext-diff`, so a
-// repository-defined driver can neither mask the bytes nor execute on the host; and with
-// `--ignore-submodules=dirty`, so this never descends into an agent-writable child repository.
+// CheckoutFingerprint binds a no-change completion to the index and actual checkout bytes.
+// Status labels and diffs miss same-status edits and files hidden by index flags. Git supplies
+// metadata only; direct rooted reads avoid filters, textconv and recursive submodule drivers.
 func CheckoutFingerprint(repo string) (string, error) {
-	sum := sha256.New()
-	section := func(name, body string) {
-		fmt.Fprintf(sum, "\x00%s\x00%s", name, body)
-	}
-	status, err := gitOutErr(repo, "status", "--porcelain", "--untracked-files=all")
-	if err != nil {
-		return "", fmt.Errorf("inspect checkout state: %w", err)
-	}
-	section("status", status)
-	for _, diff := range []struct {
-		name string
-		args []string
-	}{
-		{"worktree", []string{"diff", "--binary", "--no-textconv", "--no-ext-diff", "--ignore-submodules=dirty"}},
-		{"index", []string{"diff", "--cached", "--binary", "--no-textconv", "--no-ext-diff", "--ignore-submodules=dirty"}},
-	} {
-		body, err := gitOutErr(repo, diff.args...)
-		if err != nil {
-			return "", fmt.Errorf("inspect %s content: %w", diff.name, err)
-		}
-		section(diff.name, body)
-	}
-	untracked, err := untrackedFingerprint(repo)
+	root, err := os.OpenRoot(repo)
 	if err != nil {
 		return "", err
 	}
-	section("untracked", untracked)
+	defer root.Close()
+	return checkoutFingerprint(repo, root, nil)
+}
+
+func checkoutFingerprint(repo string, root *os.Root, ancestors []os.FileInfo) (string, error) {
+	identity, err := root.Stat(".")
+	if err != nil {
+		return "", err
+	}
+	for _, ancestor := range ancestors {
+		if os.SameFile(identity, ancestor) {
+			return "", fmt.Errorf("recursive checkout at %s", repo)
+		}
+	}
+	ancestors = append(ancestors, identity)
+	checkIdentity := func() error {
+		current, err := os.Stat(repo)
+		if err != nil {
+			return err
+		}
+		if !os.SameFile(identity, current) {
+			return fmt.Errorf("checkout changed while inspecting %s", repo)
+		}
+		return nil
+	}
+	if err := checkIdentity(); err != nil {
+		return "", err
+	}
+	head, err := gitRawOutErr(repo, "rev-parse", "--verify", "--quiet", "HEAD")
+	if err != nil {
+		// An initialized, unborn nested repository is normal. Other Git failures are not
+		// evidence of an empty checkout.
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+			return "", err
+		}
+		ref, refErr := gitRawOutErr(repo, "symbolic-ref", "--quiet", "HEAD")
+		if refErr != nil {
+			return "", errors.Join(err, refErr)
+		}
+		head = "unborn:" + ref
+	}
+	status, err := gitRawOutErr(repo, "status", "--porcelain", "-z", "--untracked-files=all", "--ignore-submodules=all")
+	if err != nil {
+		return "", err
+	}
+	index, err := gitRawOutErr(repo, "ls-files", "--stage", "-v", "-z")
+	if err != nil {
+		return "", err
+	}
+	untracked, err := gitRawOutErr(repo, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return "", err
+	}
+	if err := checkIdentity(); err != nil {
+		return "", err
+	}
+	sum := sha256.New()
+	// Porcelain also captures intent-to-add, which is not exposed by ls-files --stage -v.
+	fingerprintFields(sum, head, status, index, untracked)
+	seen := make(map[string]bool)
+	for _, record := range strings.Split(index, "\x00") {
+		if record == "" {
+			continue
+		}
+		header, path, ok := strings.Cut(record, "\t")
+		fields := strings.Fields(header)
+		if !ok || len(fields) != 4 {
+			return "", fmt.Errorf("invalid checkout index entry %q", record)
+		}
+		if seen[path] {
+			continue // All stages are bound above; read the worktree path only once.
+		}
+		seen[path] = true
+		digest, err := checkoutPathFingerprint(repo, root, path, true, fields[1] == "160000", ancestors)
+		if err != nil {
+			return "", fmt.Errorf("inspect tracked %q: %w", path, err)
+		}
+		fingerprintFields(sum, path, digest)
+	}
+	for _, path := range strings.Split(untracked, "\x00") {
+		if path == "" {
+			continue
+		}
+		// Git reports an opaque nested repository with a trailing slash.
+		nested := strings.HasSuffix(path, "/")
+		digest, err := checkoutPathFingerprint(repo, root, strings.TrimSuffix(path, "/"), false, nested, ancestors)
+		if err != nil {
+			return "", fmt.Errorf("inspect untracked %q: %w", path, err)
+		}
+		fingerprintFields(sum, path, digest)
+	}
+	if err := checkIdentity(); err != nil {
+		return "", err
+	}
 	return hex.EncodeToString(sum.Sum(nil)), nil
 }
 
-// untrackedFingerprint digests every untracked file's content, which the diffs above never see.
-//
-// It reads them itself rather than asking Git to hash them, for one reason: an untracked SYMLINK
-// must be fingerprinted by where it points, never by what it points AT. Following one would read a
-// file outside the repository — the confinement this checkout's isolation rests on — and would also
-// make an unrelated change on the host look like a change inside the task.
-func untrackedFingerprint(repo string) (string, error) {
-	listing, err := gitOutErr(repo, "ls-files", "--others", "--exclude-standard", "-z")
-	if err != nil {
-		return "", fmt.Errorf("list untracked content: %w", err)
+func fingerprintFields(dst io.Writer, fields ...string) {
+	for _, field := range fields {
+		fmt.Fprintf(dst, "%d:", len(field))
+		io.WriteString(dst, field)
 	}
-	sum := sha256.New()
-	for _, rel := range strings.Split(listing, "\x00") {
-		if rel == "" {
+}
+
+// Open each real ancestor separately: an inherited directory-to-symlink replacement is valid
+// dirty work, but its literal target must be bound instead of following it outside the checkout.
+func checkoutPathFingerprint(repo string, root *os.Root, rel string, tracked, nested bool, ancestors []os.FileInfo) (string, error) {
+	rel = filepath.FromSlash(rel)
+	if !filepath.IsLocal(rel) || filepath.Clean(rel) != rel || rel == "." {
+		return "", fmt.Errorf("invalid checkout path %q", rel)
+	}
+	parent, err := root.OpenRoot(".")
+	if err != nil {
+		return "", err
+	}
+	defer func() { parent.Close() }()
+	parts := strings.Split(rel, string(filepath.Separator))
+	for i, name := range parts {
+		info, err := parent.Lstat(name)
+		if err != nil {
+			if tracked && errors.Is(err, os.ErrNotExist) {
+				return "missing", nil
+			}
+			return "", err
+		}
+		if i < len(parts)-1 && info.IsDir() {
+			next, err := openRealSubroot(parent, name)
+			if err != nil {
+				return "", err
+			}
+			parent.Close()
+			parent = next
 			continue
 		}
-		path := filepath.Join(repo, filepath.FromSlash(rel))
-		info, err := os.Lstat(path)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue // raced away between the listing and here; the status line already covers it
-			}
-			return "", fmt.Errorf("inspect untracked %s: %w", rel, err)
-		}
-		fmt.Fprintf(sum, "\x00%s\x00%d\x00", rel, info.Mode()&os.ModeType)
-		switch {
-		case info.Mode()&os.ModeSymlink != 0:
-			target, err := os.Readlink(path)
+		if i == len(parts)-1 && info.IsDir() && nested {
+			child, err := openRealSubroot(parent, name)
 			if err != nil {
-				return "", fmt.Errorf("read untracked link %s: %w", rel, err)
+				return "", err
 			}
-			io.WriteString(sum, target)
-		case info.Mode().IsRegular():
-			file, err := os.Open(path)
-			if err != nil {
-				if os.IsNotExist(err) {
-					continue
+			defer child.Close()
+			metadata, err := child.Lstat(".git")
+			if errors.Is(err, os.ErrNotExist) && tracked {
+				// A deinitialized submodule has an empty mountpoint. A populated directory
+				// without metadata is not an examined child and cannot authorize completion.
+				dir, err := child.Open(".")
+				if err != nil {
+					return "", err
 				}
-				return "", fmt.Errorf("read untracked %s: %w", rel, err)
+				_, readErr := dir.ReadDir(1)
+				closeErr := dir.Close()
+				if errors.Is(readErr, io.EOF) && closeErr == nil {
+					return "uninitialized submodule", nil
+				}
+				return "", errors.Join(errors.New("submodule has content but no Git metadata"), readErr, closeErr)
 			}
-			_, copyErr := io.Copy(sum, file)
-			file.Close()
-			if copyErr != nil {
-				return "", fmt.Errorf("read untracked %s: %w", rel, copyErr)
+			if err != nil {
+				return "", err
 			}
+			if !metadata.IsDir() && !metadata.Mode().IsRegular() {
+				return "", errors.New("nested checkout Git metadata is not a file or directory")
+			}
+			digest, err := checkoutFingerprint(filepath.Join(repo, rel), child, ancestors)
+			if err != nil {
+				return "", err
+			}
+			// Git uses a pathname rather than our held descriptor. Revalidate real ancestry
+			// as well as the child's own identity after inspecting it.
+			current, err := openRealSubroot(root, rel)
+			if err != nil {
+				return "", err
+			}
+			after, statErr := current.Stat(".")
+			closeErr := current.Close()
+			if statErr != nil || closeErr != nil {
+				return "", errors.Join(statErr, closeErr)
+			}
+			if !os.SameFile(info, after) {
+				return "", errors.New("nested checkout changed while inspecting it")
+			}
+			return "repository:" + digest, nil
 		}
-		// Anything else (a device, a socket) has no content a task could smuggle code through, and
-		// its presence is already in the status line.
+		digest, err := checkoutEntryFingerprint(parent, name, info)
+		return fmt.Sprintf("entry:%d:%s", i, digest), err
 	}
+	return "", errors.New("empty checkout path")
+}
+
+func checkoutEntryFingerprint(root *os.Root, name string, before os.FileInfo) (string, error) {
+	sum := sha256.New()
+	fingerprintFields(sum, fmt.Sprint(before.Mode()))
+	switch {
+	case before.Mode()&os.ModeSymlink != 0:
+		target, err := root.Readlink(name)
+		if err != nil {
+			return "", err
+		}
+		fingerprintFields(sum, target)
+	case before.Mode().IsRegular():
+		file, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			return "", err
+		}
+		opened, err := file.Stat()
+		if err != nil || !opened.Mode().IsRegular() || !os.SameFile(before, opened) {
+			file.Close()
+			return "", errors.Join(errors.New("checkout file changed while opening it"), err)
+		}
+		n, readErr := io.Copy(sum, io.LimitReader(file, opened.Size()+1))
+		after, statErr := file.Stat()
+		closeErr := file.Close()
+		if err := errors.Join(readErr, statErr, closeErr); err != nil {
+			return "", err
+		}
+		if n != opened.Size() || after.Size() != opened.Size() || after.Mode() != before.Mode() || !after.ModTime().Equal(opened.ModTime()) {
+			return "", errors.New("checkout file changed while reading it")
+		}
+	}
+	// Directories, sockets and devices bind their type/mode, never an open that can block.
 	return hex.EncodeToString(sum.Sum(nil)), nil
 }

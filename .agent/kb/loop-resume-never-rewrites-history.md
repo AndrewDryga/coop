@@ -2,7 +2,7 @@
 name: loop-resume-never-rewrites-history
 description: a leaked box descendant un-completes committed work; resuming it later must never amend a non-HEAD commit, because that reparents the whole branch and cannot pass validation
 subsystem: loop
-sources: [internal/tasks/audit.go, internal/tasks/completion_recovery.go, internal/loop/completion.go, internal/loop/prompts.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/box/image.go, internal/box/run.go]
+sources: [internal/tasks/audit.go, internal/tasks/completion_recovery.go, internal/tasks/completion_fingerprint.go, internal/loop/completion.go, internal/loop/prompts.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/box/image.go, internal/box/run.go]
 updated: 2026-09-22
 ---
 A completed, committed task can land back in the queue with its work already in history. The chain,
@@ -78,12 +78,15 @@ checkout/index state, with no existing binding for this task. Unchanged pre-exis
 work is allowed — UNCHANGED IN CONTENT, which `git status` cannot establish. Its lines carry a path
 and a state, so an agent that inherits a dirty or staged file can rewrite those bytes, leave the line
 reading exactly as before, and claim it changed nothing; both the pre-move and post-exit checks
-compared those labels. `tasks.CheckoutFingerprint` digests the status lines plus `git diff` and
-`git diff --cached` (with `--binary`, or a changed archive reads as the content-free "Binary files
-differ"; `--no-textconv`/`--no-ext-diff`, so a repository driver can neither mask bytes nor execute;
-`--ignore-submodules=dirty`, so it never descends into an agent-writable child) plus every untracked
-file's content, read directly so an untracked SYMLINK is digested by where it points and never
-followed off the checkout. Human decisions remain blocked; no-change outcomes never substitute for
+compared those labels. `tasks.CheckoutFingerprint` binds raw NUL-delimited status and semantic index
+entries, then hashes tracked and nonignored untracked bytes, modes and literal symlink targets
+through held roots. It reads tracked paths even with assume-unchanged/skip-worktree flags. Git
+supplies metadata only: content diffs can both hide flagged files and execute a submodule's own
+drivers under a host inline-diff preference. Initialized children are fingerprinted with their own
+trusted Git view; empty uninitialized gitlinks are supported, but populated children without Git
+metadata fail closed. Ignored untracked output is excluded. A checked snapshot is not a filesystem
+transaction, so the post-exit comparison remains necessary even after a successful MCP call.
+Human decisions remain blocked; no-change outcomes never substitute for
 unfinished work or a failed gate. Host-authorized audit rework retains its separate authority.
 
 Assigned `tasks_complete` validates the binding before moving the folder so the same agent can
@@ -95,6 +98,9 @@ original diff from protected-gate review and signoff. The final report distingui
 completed work. See [[loop-completion-refusals-keep-work-moving]].
 
 ## Changelog
+- 2026-09-22 — replaced the initial diff-based guard after regressions demonstrated hidden-index,
+  whitespace-path and executable-mode bypasses plus submodule host execution. Rooted reads preserve
+  unchanged dirty/deleted/link states; tests also deny edits after the successful completion call.
 - 2026-09-22 — the no-change guard compares CONTENT, not status labels: a same-status rewrite of
   inherited dirty/staged/untracked work used to complete without review.
 - 2026-09-22 — aligned stale refusal, recovery decision and state guidance with the existing

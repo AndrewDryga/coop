@@ -28,6 +28,12 @@ func gitOut(dir string, args ...string) string {
 // back as an error instead of an empty string (used by the ref-authority window's HEAD re-read,
 // where "git broke" must not pass for "git said nothing").
 func gitOutErr(dir string, args ...string) (string, error) {
+	out, err := gitRawOutErr(dir, args...)
+	return strings.TrimSpace(out), err
+}
+
+// NUL-delimited paths and other exact-byte output must not pass through TrimSpace.
+func gitRawOutErr(dir string, args ...string) (string, error) {
 	cmd, err := forkspace.GitCommand(context.Background(), dir, args...)
 	if err != nil {
 		return "", err
@@ -42,5 +48,5 @@ func gitOutErr(dir string, args ...string) (string, error) {
 		}
 		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 	}
-	return strings.TrimSpace(string(out)), nil
+	return string(out), nil
 }
