@@ -90,7 +90,13 @@ noted — mapped 2026-09-19 by reading the tests):
   a real limit cannot be triggered on demand.**
 - helper discovery — D consult/delegate/preset/native-role matrices; L `native-roles-e2e`,
   `provider-consult-live-e2e-all` (wrapper called directly). **No live delegate proof.**
-- account switching — D DirectMatrix account selection, ACP rotation. **No live proof.**
+- account switching — D DirectMatrix account selection, ACP rotation, AND
+  `TestProviderScriptedLoopRotatesAccountsBeforeProviders` (process level, every provider): a limit
+  on one account rotates to the SAME provider's second account before any other provider, and each
+  hop is recorded against the account that actually hit it. The order is the claim — reverse the
+  ladder and it fails. Loop-path rotation was claude-only before, proven through its structured
+  credit-limit stream, which left the ORDER untested for the other three. **No live proof: it needs
+  a second signed-in account per provider on the qualifying host.**
 - clean completion — D loop lifecycle matrix; L `provider-loop-live-e2e-all`.
 
 **Bumping a client.** Edit `package.json` and regenerate the lock (`npm install

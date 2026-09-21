@@ -902,3 +902,59 @@ func loopTraceHasAttempt(trace []*processTrace) bool {
 	}
 	return false
 }
+
+// Account rotation on the loop path, for EVERY provider.
+//
+// A limit is usually an account's, not a provider's: the same client on a second signed-in account
+// is the cheapest way to keep draining, and only when those run out is switching provider the right
+// move. That order was proven at process level for claude alone — through its structured
+// credit-limit stream — which left the ordering itself untested for the other three.
+//
+// The limit here is the ordinary prose one every provider produces, which is also what
+// ladder.DetectIterationLimit actually reads: there is no per-provider branch in it, so this is the
+// real mechanism rather than a claude-shaped stand-in.
+func TestProviderScriptedLoopRotatesAccountsBeforeProviders(t *testing.T) {
+	suite := newDirectProcessSuite(t)
+
+	for _, provider := range suite.providers {
+		rescue := ""
+		for _, other := range suite.providers {
+			if other != provider {
+				rescue = other
+				break
+			}
+		}
+		t.Run(provider, func(t *testing.T) {
+			resetLoopProcessRepo(t, suite)
+			t.Cleanup(func() { logLoopProcessFailure(t, suite) })
+			taskID := "accounts-" + provider
+			seedLoopProcessTask(t, suite.layout.Repo, taskID)
+			targets := []string{
+				loopRecoveryTarget(provider, "accounts-"+provider, "personal"),
+				loopRecoveryTarget(provider, "accounts-"+provider, "work"),
+				loopRecoveryTarget(rescue, "accounts-"+rescue, "work"),
+			}
+			writeLoopRecoveryPreset(t, suite.layout.Repo, "accounts-"+provider, targets)
+			attempts := []loopProcessAttempt{
+				{Target: targets[0], Stage: "work", Result: "rate-limit"},
+				{Target: targets[1], Stage: "work", Result: "rate-limit"},
+				{Target: targets[2], Stage: "work", Result: "complete"},
+			}
+			suite.reset(t, loopRecoveryScenario(taskID, attempts))
+			result := runLoopRecovery(t, suite, "accounts-"+provider)
+			if result.Err != nil || result.ExitCode != 0 {
+				t.Fatalf("%s account rotation = exit %d err %v\nstderr:\n%s", provider, result.ExitCode, result.Err, result.Stderr)
+			}
+			// The order is the claim: the SECOND account of the same provider is tried before any
+			// other provider, and each hop is recorded against the account that actually hit the limit.
+			records := readLoopStageRecords(t, suite)
+			if len(records) != 3 ||
+				records[0].Provider != provider || records[0].Account != "personal" || records[0].Outcome != "rate_limit" ||
+				records[1].Provider != provider || records[1].Account != "work" || records[1].Outcome != "rate_limit" ||
+				records[2].Provider != rescue || records[2].Outcome != "success" {
+				t.Fatalf("%s rotation telemetry = %#v", provider, records)
+			}
+			assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+		})
+	}
+}
