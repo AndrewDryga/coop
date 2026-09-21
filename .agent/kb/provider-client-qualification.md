@@ -65,9 +65,13 @@ noted — mapped 2026-09-19 by reading the tests):
   writable, from a synthesized copy — and is absent for a client that does not discover skills. The
   provider fixture now pins that shape (`validateSkillsMount`), so the mount cannot change silently.
   **Still no LIVE proof that a client loads the skill it finds there.**
-- MCP — D per-route unit tests (claude's `--strict-mcp-config` argv among them);
-  L `provider-loop-live-e2e-all` (Coop's task tools). **The user's shared MCP servers are never
-  exercised live, and no process-level test asserts them.**
+- MCP — D per-route unit tests (claude's `--strict-mcp-config` argv among them) AND
+  `TestProviderScriptedSharedMCPReachesEveryClient` (process level, per provider): an operator's
+  shared MCP file reaches every client, read-only, at a path that client reads. Asserted on the
+  SERVER NAMES the generated config carries, which the provider fixture captures at launch time —
+  coop deletes those files when the run ends, so a test that looked afterwards would find nothing.
+  L `provider-loop-live-e2e-all` (Coop's task tools). **The user's shared MCP servers are still not
+  exercised LIVE — nothing proves a client connects to one.**
 - tool lifecycle — D `loop/streamjson_activity_test.go` per provider; watchdog process test now
   covers a silent start for claude, gemini and grok (`TestProviderScriptedLoopWatchdogProcess`,
   "no first output from <provider> rotates and completes") plus grok's foreground-tool and tool-cap

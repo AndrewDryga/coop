@@ -67,6 +67,11 @@ type mount struct {
 	Target   string `json:"target"`
 	ReadOnly bool   `json:"read_only"`
 	Named    bool   `json:"named,omitempty"`
+	// MCPServers are the server names a generated MCP config carries, read WHILE the launch is
+	// happening — coop removes these generated files when the run ends, so a test that looked
+	// afterwards would find nothing. Only server names, never a config's other contents, so this
+	// cannot become a way for the trace to collect whatever a box was handed.
+	MCPServers []string `json:"mcp_servers,omitempty"`
 }
 
 type envTrace struct {
@@ -484,6 +489,9 @@ func parseRun(root, image string, args []string, provider string, providerHomes 
 				var m mount
 				m, err = parseMount(root, value)
 				if err == nil {
+					if mcpConfigTarget(m.Target) {
+						m.MCPServers = mcpServerNames(m.Source)
+					}
 					run.Mounts = append(run.Mounts, m)
 				}
 			case "--env-file":
@@ -1494,4 +1502,53 @@ func validateSkillsMount(root, provider string, m mount, providerHomes []string)
 		return fmt.Errorf("skills mount source %q is not a synthesized copy in fixture temp state", m.Source)
 	}
 	return nil
+}
+
+// mcpConfigTarget reports whether a box path is a client's MCP configuration.
+func mcpConfigTarget(target string) bool {
+	switch filepath.Base(target) {
+	case ".mcp.json", "config.toml", "settings.json":
+		return true
+	}
+	return false
+}
+
+// mcpServerNames extracts the server names a generated MCP config declares. The three clients use
+// three formats (claude JSON `mcpServers`, codex/grok TOML `[mcp_servers.<name>]`, gemini JSON
+// `mcpServers`), so this reads names rather than parsing each dialect: it is evidence for a test,
+// not a parser anything depends on.
+func mcpServerNames(path string) []string {
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) > 1<<20 {
+		return nil
+	}
+	text := string(data)
+	var names []string
+	seen := map[string]bool{}
+	add := func(name string) {
+		if name != "" && !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	// TOML: [mcp_servers.<name>] / [mcpServers.<name>]
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		for _, prefix := range []string{"[mcp_servers.", "[mcpServers."} {
+			if strings.HasPrefix(line, prefix) && strings.HasSuffix(line, "]") {
+				add(strings.Trim(strings.TrimSuffix(strings.TrimPrefix(line, prefix), "]"), `"`))
+			}
+		}
+	}
+	// JSON: {"mcpServers": {"<name>": {...}}}
+	var doc struct {
+		MCPServers map[string]json.RawMessage `json:"mcpServers"`
+	}
+	if json.Unmarshal(data, &doc) == nil {
+		for name := range doc.MCPServers {
+			add(name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }

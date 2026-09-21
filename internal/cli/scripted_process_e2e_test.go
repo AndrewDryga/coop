@@ -85,6 +85,9 @@ type processMount struct {
 	Target   string `json:"target"`
 	ReadOnly bool   `json:"read_only"`
 	Named    bool   `json:"named"`
+	// MCPServers are the server names a generated MCP config carried at launch time; coop removes
+	// those files when the run ends, so the fixture reads them while they exist.
+	MCPServers []string `json:"mcp_servers"`
 }
 
 type processEnv struct {
