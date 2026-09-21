@@ -626,40 +626,10 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 		filtered, err = prepareFilteredExecution(spec.Ctx, cfg, rt, spec, spec.CapturedEgress, composeFile, spec.networkSmoke, sections)
 		if filtered != nil {
+			// One implementation, called from every path that starts a filtered launch — see
+			// filteredExecution.teardown for why it must not be copied into a second launcher.
 			defer func() {
-				workload := filtered.workloadOutcome(exitCode, result, spec.Ctx.Err() != nil)
-				// This process owns the box, its gateway, its volumes and its receipt: none of it
-				// is --rm, so the stop is only real once cleanup says so. A teardown slow enough
-				// to look like a hang says what it is waiting on while it runs.
-				settled := func() {}
-				if stopped != "" {
-					settled = sections.stopping()
-				}
-				gone, cleanupErr := filtered.cleanup(workload)
-				settled()
-				if execution.ID != "" && gone {
-					cleanupErr = errors.Join(cleanupErr, forkspace.EndExecution(spec.ActivityRepo, execution))
-				}
-				result, teardownErr = errors.Join(result, cleanupErr), cleanupErr
-				// After sealing, so the summary reports the receipt's own
-				// evidence rather than a snapshot cleanup was still amending.
-				// The hook fires in every mode — the loop and every quiet
-				// embedding surface the same facts in their own output — while
-				// the full run projection belongs to an interactive box that
-				// reached its main process: before that there is no traffic to
-				// report, and the failure is the whole story.
-				report := filtered.report()
-				if report.RunID != "" && spec.OnNetworkReport != nil {
-					spec.OnNetworkReport(report)
-				}
-				if sections.interactive && filtered.started() {
-					// Only a confirmed removal earns the completed sentence; a cleanup that
-					// could not finish leaves the box's fate to the error it just returned.
-					if gone && cleanupErr == nil {
-						sections.stopped(stopped)
-					}
-					filtered.printRun()
-				}
+				result, teardownErr = filtered.teardown(spec, sections, execution, exitCode, result, stopped, interrupt)
 			}()
 		}
 		if err != nil {

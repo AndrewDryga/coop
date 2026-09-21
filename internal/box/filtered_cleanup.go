@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"io"
 	"sync"
 
@@ -320,4 +321,51 @@ func (f *filteredExecution) removeResource(evidence *networkstate.Evidence, role
 	return f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
 		return evidence.ConfirmResourceGone(ctx, r.ID, r.Revision, r.DaemonID, role, ref.Name, ref.ID)
 	})
+}
+
+// teardown is the filtered launch's own ending, lifted out of Run so it has ONE implementation.
+// This process owns the box, its gateway, its volumes and its receipt and none of it is --rm, so
+// every path that starts a filtered launch has to finish it exactly this way — which is precisely
+// why it must not be copied into a second launcher (a restricted run composing with filtered) that
+// would then drift from it.
+//
+// It takes the caller's final exit code, error and stop reason, and returns the error to report plus
+// the teardown error the caller records; everything else it needs it already owns.
+func (f *filteredExecution) teardown(spec RunSpec, sections *launchSections, execution forkspace.ExecutionRecord,
+	exitCode int, result error, stopped string, interrupt *hostInterrupt) (reported error, teardownErr error) {
+	workload := f.workloadOutcome(exitCode, result, spec.Ctx.Err() != nil)
+	// This process owns the box, its gateway, its volumes and its receipt: none of it
+	// is --rm, so the stop is only real once cleanup says so. A teardown slow enough
+	// to look like a hang says what it is waiting on while it runs.
+	settled := func() {}
+	if stopped != "" {
+		settled = sections.stopping()
+	}
+	gone, cleanupErr := f.cleanup(workload)
+	settled()
+	if execution.ID != "" && gone {
+		cleanupErr = errors.Join(cleanupErr, forkspace.EndExecution(spec.ActivityRepo, execution))
+	}
+	result, teardownErr = errors.Join(result, cleanupErr), cleanupErr
+	// After sealing, so the summary reports the receipt's own
+	// evidence rather than a snapshot cleanup was still amending.
+	// The hook fires in every mode — the loop and every quiet
+	// embedding surface the same facts in their own output — while
+	// the full run projection belongs to an interactive box that
+	// reached its main process: before that there is no traffic to
+	// report, and the failure is the whole story.
+	report := f.report()
+	if report.RunID != "" && spec.OnNetworkReport != nil {
+		spec.OnNetworkReport(report)
+	}
+	if sections.interactive && f.started() {
+		// Only a confirmed removal earns the completed sentence; a cleanup that
+		// could not finish leaves the box's fate to the error it just returned.
+		if gone && cleanupErr == nil {
+			sections.stopped(stopped)
+		}
+		f.printRun()
+	}
+
+	return result, teardownErr
 }
