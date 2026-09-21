@@ -25,15 +25,16 @@ import (
 func TestLoopCompletionMCPRepair(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
-	for _, scenario := range []string{"same session", "explicit no change", "resume after exit", "unconfirmed commit", "failed move", "unfinished checklist", "two correction cap", "unsupported session", "abnormal exit"} {
+	for _, scenario := range []string{"same session", "explicit no change", "no change after refusal", "resume after exit", "unconfirmed commit", "failed move", "unfinished checklist", "two correction cap", "unsupported session", "abnormal exit"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Setenv("XDG_STATE_HOME", t.TempDir())
 			repo, git := gitrepo.New(t)
 			writeTaskFile(t, filepath.Join(repo, ".gitignore"), ".agent/\n")
 			git("add", ".gitignore")
 			git("commit", "-m", "base")
+			base := gitOut(repo, "rev-parse", "HEAD")
 			id := "decision"
-			writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, id, "task.md"), "# Decision\n- [x] verified no source change is required\n")
+			writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, id, "task.md"), "# Decision\n- [x] required acceptance checks passed\n")
 			writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, id, "state.md"), "# State — Decision\n\n**Status:** in progress\n**Done so far:** verified\n**Next action:** complete\n**Traps:** none\n")
 			if scenario == "unfinished checklist" {
 				writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, id, "task.md"), "# Decision\n- [ ] required verification is still pending\n")
@@ -95,9 +96,10 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 					return result
 				}
 				request("initialize", map[string]any{"protocolVersion": "2024-11-05", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "test", "version": "0"}})
+				noChange := scenario == "explicit no change"
 				complete := func() map[string]any {
 					args := map[string]any{"id": id}
-					if scenario == "explicit no change" {
+					if noChange {
 						args["outcome"] = "already_satisfied"
 						args["reason"] = "The existing base implementation meets the task."
 						args["evidence"] = "The required checklist and focused inspection passed."
@@ -115,13 +117,16 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 				if scenario == "two correction cap" || scenario == "unsupported session" {
 					// Keep exiting normally without a terminal action. Coop must stop after two
 					// exact-session corrections instead of starting a fresh worker forever.
-				} else if scenario == "explicit no change" {
+				} else if scenario == "explicit no change" || scenario == "no change after refusal" {
+					noChange = true
 					if reply := complete(); reply["isError"] == true {
 						t.Fatalf("explicit no-change completion refused: %v", reply)
 					}
 				} else if scenario != "resume after exit" || attempts == 2 {
 					if attempts == 1 || scenario == "resume after exit" {
-						git("commit", "--allow-empty", "--only", "-m", "Keep the existing contract\n\nVerified acceptance; no source change required.\n\nCoop-Task: "+id)
+						writeTaskFile(t, filepath.Join(repo, "answer.txt"), "implemented\n")
+						git("add", "answer.txt")
+						git("commit", "-m", "Implement the contract\n\nCoop-Task: "+id)
 					}
 					if scenario == "failed move" {
 						obstruction := filepath.Join(repo, tasksRoot, tasks.StateDone, id)
@@ -183,38 +188,57 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 				return
 			}
 			wantAttempts := 2
-			if scenario == "same session" || scenario == "explicit no change" {
+			if scenario == "same session" || scenario == "explicit no change" || scenario == "no change after refusal" {
 				wantAttempts = 1
 			}
 			if code != 0 || err != nil || attempts != wantAttempts {
 				t.Fatalf("MCP loop = %d, %v, %d attempts; want 0, nil, %d", code, err, attempts, wantAttempts)
 			}
+			if scenario == "explicit no change" || scenario == "no change after refusal" {
+				if head := gitOut(repo, "rev-parse", "HEAD"); head != base {
+					t.Fatalf("no-change completion advanced HEAD: %s -> %s", base, head)
+				}
+				log, err := os.ReadFile(filepath.Join(repo, tasksRoot, stateDone, id, "log.md"))
+				if err != nil || !strings.Contains(string(log), "The existing base implementation meets the task.") || !strings.Contains(string(log), "The required checklist and focused inspection passed.") {
+					t.Fatalf("no-change completion lost its evidence: %s, %v", log, err)
+				}
+			}
 		})
 	}
 }
 
-func TestAssignedCompletionDecisionRecordPreservesUnrelatedIndex(t *testing.T) {
+func TestAssignedNoChangeCompletionPreservesUnrelatedIndex(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	repo, git := gitrepo.New(t)
 	git("commit", "--allow-empty", "-m", "base")
 	base := gitOut(repo, "rev-parse", "HEAD")
-	if err := checkAssignedCompletion(repo, base, "decision", nil, nil); err == nil {
-		t.Fatal("a log-only claim without a decision commit was accepted")
-	}
 	if err := os.WriteFile(filepath.Join(repo, "unrelated.txt"), []byte("another task\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	git("add", "unrelated.txt")
-	git("commit", "--allow-empty", "--only", "-m", "Keep the existing coverage pointer\n\nThe spec already links its tested contract. No source change is needed.\nVerified the existing pointer and the documentation gate.\n\nCoop-Task: decision")
-	if err := checkAssignedCompletion(repo, base, "decision", nil, nil); err != nil {
-		t.Fatalf("meaningful decision commit refused: %v", err)
+	baseline := gitOut(repo, "status", "--porcelain", "--untracked-files=all")
+	stagedBefore := gitOut(repo, "diff", "--cached")
+	if err := checkAssignedCompletion(repo, base, "decision", nil, nil); err == nil {
+		t.Fatal("ordinary implementation completion without a binding was accepted")
+	} else {
+		for _, want := range []string{"tasks_complete", "already_satisfied", "could_not_reproduce", "wont_fix", "reason", "evidence", "tasks_block"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("refusal omitted no-change recovery %q: %v", want, err)
+			}
+		}
+		if strings.Contains(err.Error(), "--allow-empty") {
+			t.Errorf("refusal still prescribes a fake commit: %v", err)
+		}
 	}
-	if diff := gitOut(repo, "diff", "--name-only", base, "HEAD"); diff != "" {
-		t.Fatalf("decision changed source: %s", diff)
+	if err := checkNoChangeCompletion(repo, base, "decision", baseline); err != nil {
+		t.Fatalf("explicit no-change completion refused: %v", err)
 	}
-	if staged := gitOut(repo, "diff", "--cached", "--name-only"); staged != "unrelated.txt" {
-		t.Fatalf("decision disturbed unrelated index: %q", staged)
+	if head := gitOut(repo, "rev-parse", "HEAD"); head != base {
+		t.Fatalf("no-change completion advanced history: %s", head)
+	}
+	if staged := gitOut(repo, "diff", "--cached"); staged != stagedBefore {
+		t.Fatalf("no-change completion disturbed unrelated index: %q", staged)
 	}
 }
 

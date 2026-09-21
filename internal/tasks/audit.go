@@ -2601,7 +2601,7 @@ func RestoreQueuedCompletion(task QueuedTask, audit bool) error {
 		}
 	}
 	dir := filepath.Join(task.Root, StateInProgress, id)
-	note := fmt.Sprintf("completion rejected: expected exactly one commit with one matching %s trailer in the iteration's range and exactly one reachable binding overall; %s; rewrite or squash duplicate bindings down to one, then re-run `coop loop`", CoopTaskTrailer, taskBindingRecovery(id))
+	note := fmt.Sprintf("implementation completion rejected: expected exactly one commit with one matching %s trailer in the iteration's range and exactly one reachable binding overall; %s; rewrite or squash duplicate bindings down to one, then re-run `coop loop`", CoopTaskTrailer, taskBindingRecovery(id))
 	normalize := normalizeRejectedTaskState
 	if audit {
 		note = fmt.Sprintf("completion rejected: %s; then re-run `coop loop`", auditBindingRecovery(id))
@@ -2735,9 +2735,9 @@ func normalizeRejectedTaskState(id, taskDir string) error {
 		id,
 		taskDir,
 		"in progress — completion rejected",
-		"repair the commit binding, then re-run `coop loop`",
+		"repair the commit binding or record an eligible no-change outcome, then re-run `coop loop`",
 		"completion was rejected as unbindable",
-		"the task needs exactly one matching Coop-Task trailer",
+		"implementation needs exactly one matching Coop-Task trailer; no-change completion needs an explicit outcome with reason and evidence",
 	)
 }
 
@@ -2757,7 +2757,7 @@ func UnbindableCompletionError(ids []string, restoreErr error) error {
 	for _, id := range ids {
 		recoveries = append(recoveries, fmt.Sprintf("%s: %s", id, taskBindingRecovery(id)))
 	}
-	msg := fmt.Sprintf("completion rejected for task(s) %s: the new commit range and reachable HEAD each need exactly one commit with one parseable `%s: <id>` trailer per task; task(s) restored to in_progress — %s; rewrite/squash duplicate bindings down to one, then re-run `coop loop`", strings.Join(ids, ", "), CoopTaskTrailer, strings.Join(recoveries, "; "))
+	msg := fmt.Sprintf("implementation completion rejected for task(s) %s: the new commit range and reachable HEAD each need exactly one commit with one parseable `%s: <id>` trailer per task; task(s) restored to in_progress — %s; rewrite/squash duplicate bindings down to one, then re-run `coop loop`", strings.Join(ids, ", "), CoopTaskTrailer, strings.Join(recoveries, "; "))
 	if restoreErr != nil {
 		return fmt.Errorf("%s; recovery bookkeeping also failed: %w", msg, restoreErr)
 	}
@@ -2771,7 +2771,7 @@ func UnbindableCompletionError(ids []string, restoreErr error) error {
 // rewrite to count.
 func taskBindingRecovery(id string) string {
 	return fmt.Sprintf(
-		"if no commit exists and acceptance permits a no-code decision, verify the required checks and record the conclusion and evidence in one `git commit --allow-empty --only` with a Coop-Task trailer; "+
+		"if this task has no existing binding and no source or Git history changed in this attempt, verify its requirements and use tasks_complete with outcome already_satisfied, or could_not_reproduce/wont_fix for an investigation, plus concrete reason and evidence; do not create an empty commit or report unfinished work as complete; human decisions use tasks_block; "+
 			"if the implementation commit is HEAD and only lacks the trailer, amend its message without touching the index "+
 			"(`git commit --amend --only --no-edit --trailer %q`); if a commit carrying that trailer is already "+
 			"reachable but is NOT HEAD, do not rewrite it — that reparents every commit after it — and never add a "+

@@ -3,7 +3,7 @@ name: loop-resume-never-rewrites-history
 description: a leaked box descendant un-completes committed work; resuming it later must never amend a non-HEAD commit, because that reparents the whole branch and cannot pass validation
 subsystem: loop
 sources: [internal/tasks/audit.go, internal/tasks/completion_recovery.go, internal/loop/completion.go, internal/loop/prompts.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/box/image.go, internal/box/run.go]
-updated: 2026-09-13
+updated: 2026-09-22
 ---
 A completed, committed task can land back in the queue with its work already in history. The chain,
 observed twice in emisar on 2026-08-01:
@@ -30,9 +30,10 @@ Step 4 is safe ONLY while that commit is still HEAD. Deeper it is a trap, which 
 
 So when the binding is not HEAD, the resume line says STOP and routes to `coop tasks block`.
 
-**Do not "fix" this by accepting a zero-commit completion.** `unbindableTasks` fails a no-HEAD-change
-completion closed on purpose: a zero-commit close is valid only under FRESH host audit authority, so
-forged task prose claiming a reopen cannot buy one. The e2e
+**Do not bypass the existing binding with a no-change outcome.** For this already-bound
+interrupted task, a zero-new-commit close requires FRESH host audit authority. Explicit no-change
+outcomes reject a task with an existing binding, so forged task prose claiming a reopen cannot
+buy one. The e2e
 `verification-only audit re-close needs fresh host authority` guards exactly that, and relaxing the
 range check breaks it. `Coop-Recovery` is never parsed by any code — it exists only to make an
 in-range commit exist.
@@ -67,13 +68,15 @@ need reviewed isolation. Mutation-test ownership checks and original-state captu
 any restoration hook, so a dirty-source refusal cannot trigger a HEAD restore. These are agent
 instructions, not a runtime guarantee that every generated shell command follows them.
 
-## No-code decisions and refused completion
+## No-change outcomes and refused completion
 
-A task can legitimately permit a decision without a source change. If it has no existing binding,
-the normal work prompt prescribes a meaningful `git commit --allow-empty --only` carrying the
-conclusion, acceptance evidence, actual verification and one `Coop-Task` trailer. This preserves
-unrelated staged work and the one-commit contract; it never substitutes for unfinished acceptance.
-Host-authorized verification-only audit rework still creates no commit.
+A task may already be satisfied, or an investigation may conclude `could_not_reproduce` or
+`wont_fix`. The assigned agent calls `tasks_complete` with that explicit outcome (`already_satisfied`
+for existing implementation), concrete `reason` and `evidence` after required verification. It
+does not fabricate an empty task commit. The host requires unchanged iteration history and
+checkout/index state, with no existing binding for this task. Unchanged pre-existing unrelated
+work is allowed. Human decisions remain blocked; no-change outcomes never substitute for
+unfinished work or a failed gate. Host-authorized audit rework retains its separate authority.
 
 Assigned `tasks_complete` validates the binding before moving the folder so the same agent can
 repair it. A successful exit after an ordinary no-commit refusal gets one fresh attempt only when
@@ -84,6 +87,10 @@ original diff from protected-gate review and signoff. The final report distingui
 completed work. See [[loop-completion-refusals-keep-work-moving]].
 
 ## Changelog
+- 2026-09-22 — aligned stale refusal, recovery decision and state guidance with the existing
+  explicit no-change API. Same-session MCP repair now proves refusal followed by evidence-backed
+  no-change completion without advancing HEAD. Preserved unrelated staged work and denied changed
+  history, new dirty work and existing task bindings. Implementation-repair fixtures use real edits.
 - 2026-09-13 — repaired shared resume/staging guidance after ignored-task-folder Git failures;
   removed blanket discard and casual worktree advice. Prompt and hermetic Git recipe tests cover
   foreign index/content preservation and preflight refusal before restoration hooks.

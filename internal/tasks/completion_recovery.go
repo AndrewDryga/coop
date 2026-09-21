@@ -92,19 +92,19 @@ func ParkUncommittedCompletion(task QueuedTask) error {
 		}
 	}
 	if err := WriteDecision(dir, id, task.Item.Title, Decision{
-		Question: "Two attempts claimed completion without a task-bound commit. No source or Git history changed, so Coop preserved the task as unfinished and continued the queue.",
+		Question: "Two attempts claimed completion without a task-bound commit or an accepted no-change outcome. No source or Git history changed, so Coop preserved the task as unfinished and continued the queue.",
 		Options: []string{
-			"A — confirm a no-code outcome is allowed: verify the acceptance and required checks, record the actual conclusion in one meaningful decision commit, then retry.",
+			"A — confirm an eligible no-change outcome: review the acceptance and required checks, then unblock for completion through tasks_complete with outcome, reason and evidence; create no commit.",
 			"B — clarify unfinished implementation or missing acceptance: update the task and unblock it for another attempt.",
 		},
-		Recommendation: "Inspect the evidence in log.md and choose A only if all acceptance is genuinely met; an empty receipt cannot substitute for unfinished work or a failed gate.",
+		Recommendation: "Inspect the evidence in log.md. Choose A only when required checks passed and the recorded conclusion satisfies the task: already_satisfied for existing implementation, or could_not_reproduce/wont_fix for an investigation. Unfinished work, failed gates and unresolved human choices remain open.",
 	}); err != nil {
 		return rollback(err)
 	}
 	if err := AppendTaskLogStrict(dir, "host parked this task after two no-commit completion refusals; no completion was accepted and the clean checkout is safe for the next task"); err != nil {
 		return rollback(err)
 	}
-	if err := NormalizeTaskState(id, dir, "blocked — completion needs a commit", "resolve decision.md, then explicitly unblock this task", "completion was refused twice without source or history changes", "this task is not complete; preserve its acceptance and required gates"); err != nil {
+	if err := NormalizeTaskState(id, dir, "blocked — completion needs clarification", "resolve decision.md, then explicitly unblock this task", "completion was refused twice without source or history changes", "this task is not complete; preserve its acceptance and required gates"); err != nil {
 		return rollback(err)
 	}
 	return nil

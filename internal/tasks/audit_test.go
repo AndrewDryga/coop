@@ -2612,12 +2612,12 @@ func TestBoundTaskCommitIsHead(t *testing.T) {
 // before this was forbidden by name.
 func TestTaskBindingRecoveryNeverPrescribesDeepRewrite(t *testing.T) {
 	r := taskBindingRecovery("my-task")
-	for _, forbidden := range []string{"replay its descendants", "reword that implementation commit"} {
+	for _, forbidden := range []string{"replay its descendants", "reword that implementation commit", "--allow-empty"} {
 		if strings.Contains(r, forbidden) {
 			t.Errorf("binding recovery still prescribes %q:\n%s", forbidden, r)
 		}
 	}
-	for _, want := range []string{"already reachable but is NOT HEAD", "do not rewrite it", "reparents every commit after it", "50_blocked/"} {
+	for _, want := range []string{"already reachable but is NOT HEAD", "do not rewrite it", "reparents every commit after it", "50_blocked/", "tasks_complete", "already_satisfied", "could_not_reproduce", "wont_fix", "reason", "evidence", "tasks_block"} {
 		if !strings.Contains(r, want) {
 			t.Errorf("binding recovery missing %q:\n%s", want, r)
 		}

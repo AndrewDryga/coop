@@ -94,6 +94,48 @@ func TestParkUncommittedCompletion(t *testing.T) {
 			if !strings.Contains(log, "Evidence to preserve") || !strings.Contains(log, previous) || !strings.Contains(log, "no completion was accepted") {
 				t.Fatalf("park lost evidence: %s", log)
 			}
+			decision := readFileString(filepath.Join(blocked, "decision.md"))
+			for _, want := range []string{"tasks_complete", "outcome", "reason", "evidence", "already_satisfied", "could_not_reproduce", "wont_fix", "unblock"} {
+				if !strings.Contains(decision, want) {
+					t.Errorf("decision omitted no-change recovery %q: %s", want, decision)
+				}
+			}
+			state := readFileString(filepath.Join(blocked, "state.md"))
+			if strings.Contains(decision, "decision commit") || strings.Contains(state, "completion needs a commit") {
+				t.Fatalf("recovery still requires a fake commit: %s\n%s", decision, state)
+			}
+		})
+	}
+}
+
+func TestNoChangeCompletionAllowed(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	for _, scenario := range []string{"unchanged", "unrelated staged", "new dirty work", "advanced history", "existing binding"} {
+		t.Run(scenario, func(t *testing.T) {
+			repo, git := gitrepo.New(t)
+			message := "base"
+			if scenario == "existing binding" {
+				message += "\n\nCoop-Task: task"
+			}
+			git("commit", "--allow-empty", "-m", message)
+			base := gitOut(repo, "rev-parse", "HEAD")
+			if scenario == "unrelated staged" {
+				writeTaskFile(t, filepath.Join(repo, "unrelated"), "preserve me\n")
+				git("add", "unrelated")
+			}
+			baseline := gitOut(repo, "status", "--porcelain", "--untracked-files=all")
+			switch scenario {
+			case "new dirty work":
+				writeTaskFile(t, filepath.Join(repo, "new-work"), "changed\n")
+			case "advanced history":
+				git("commit", "--allow-empty", "-m", "new history")
+			}
+			err := NoChangeCompletionAllowed(repo, base, gitOut(repo, "rev-parse", "HEAD"), "task", baseline)
+			wantAllowed := scenario == "unchanged" || scenario == "unrelated staged"
+			if (err == nil) != wantAllowed {
+				t.Fatalf("no-change completion %s: %v", scenario, err)
+			}
 		})
 	}
 }

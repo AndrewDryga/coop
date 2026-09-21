@@ -9,7 +9,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
-var errCompletionBinding = errors.New("completion needs a task-bound commit")
+var errCompletionBinding = errors.New("implementation completion needs a task-bound commit")
 
 const maxWorkerTerminalCorrections = 2
 
@@ -55,7 +55,7 @@ func checkAssignedCompletion(repo, base, id string, reopen *tasks.AuditReopenRec
 	if reopen != nil {
 		return fmt.Errorf("host-authorized audit rework needs zero new commits for verification-only completion, or exactly one real repair commit without a Coop-Task trailer preserving the reviewed history")
 	}
-	return fmt.Errorf("%w: exactly one new and reachable Coop-Task: %s binding is required; commit the verified work first (a permitted no-code decision uses a meaningful --allow-empty --only decision commit), or repair its missing trailer without including unrelated staged work; never add a second binding or rewrite an older task commit", errCompletionBinding, id)
+	return fmt.Errorf("%w: exactly one new and reachable Coop-Task: %s binding is required; commit the verified implementation work, or repair its missing trailer without including unrelated staged work; never add a second binding or rewrite an older task commit. If existing implementation already satisfies the task, retry tasks_complete with outcome already_satisfied; an investigation may use could_not_reproduce or wont_fix. Include concrete reason and evidence after required verification. No-change completion requires unchanged Git history and checkout/index state, with no existing task binding. Do not create an empty commit; human decisions use tasks_block", errCompletionBinding, id)
 }
 
 func checkNoChangeCompletion(repo, base, id, baselineStatus string) error {
