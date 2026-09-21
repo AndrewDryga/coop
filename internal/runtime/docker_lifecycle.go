@@ -566,3 +566,9 @@ func (d *Docker) ImageLayers(ctx context.Context, name string) (string, []string
 	}
 	return image.ID, image.Layers, nil
 }
+
+// ValidDockerCreateOptionsForTest exposes the create-path allowlist to other packages' tests. The
+// allowlist is what makes a created container's shape provable, so a package that wants to prove its
+// own options survive this path (composing the restricted filesystem profile with the filtered
+// launch) must check against the REAL list rather than a copy that can drift from it.
+func ValidDockerCreateOptionsForTest(options []string) bool { return validDockerCreateOptions(options) }
