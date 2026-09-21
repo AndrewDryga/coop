@@ -13,7 +13,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
-// Pin the complete pre-refactor output, including links, modes and hook bytes.
+// Pin the complete scaffold output, including links, modes and hook bytes.
 // Expectations are independent of the adapter descriptors they qualify.
 func TestInitAdapterManifest(t *testing.T) {
 	// File creation honors umask. Set it only in an isolated test process, never
@@ -39,11 +39,11 @@ func TestInitAdapterManifest(t *testing.T) {
 		agents []string
 		want   string
 	}{
-		{"none", nil, "ead9ddc88f0cf64e8af3d06b57877b697bad5ca8cf8c59b91a6d8ffaede93132"},
-		{"claude", []string{"claude"}, "5192397d37a5760904a5594e78877bbfcee66df5a834d62e7eafc7919194d6af"},
-		{"codex", []string{"codex"}, "efb400558ed45c372a23f45bcbcf2f6a15c99b77105c05b2c1c551085760897e"},
-		{"gemini", []string{"gemini"}, "318c7bd5272f057cf5d9dfd222bbdfe4f6f196c972c9bb7de19b11552abcf269"},
-		{"all", []string{"claude", "codex", "gemini"}, "c030de79013f332cc29ad51bbe6849c08ff8118909a5f3ae0262b670409dd1ae"},
+		{"none", nil, "7ffea328fdb4ed3188f37d5669c2adbccaf5e1746bd17bfcb1ebfb5c86d6a969"},
+		{"claude", []string{"claude"}, "6563560902e8f34c6ecd5da926d1c9d45489b6fe89d66e96e164e85cf2219e91"},
+		{"codex", []string{"codex"}, "86c6b2440a47f553f0bc8b670bf9392961c28dc3c0ce6640a5e58e610a2d874a"},
+		{"gemini", []string{"gemini"}, "5c7a65e87be98ee446724c98a83214bd257bc2d726bb712f139b341ac1707b72"},
+		{"all", []string{"claude", "codex", "gemini"}, "31e38b3f1e4019fc7a6dee620601d0bf54d42f3c13ed061bd3e9f315049d27d4"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := t.TempDir()

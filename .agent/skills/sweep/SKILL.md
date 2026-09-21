@@ -34,8 +34,9 @@ Build *to* them, then *check the diff against them*.
 ## 2. The loop — claim the next task, repeat until 00_todo/ and 10_in_progress/ are empty
 1. **Claim** — if `coop` is on PATH, run `coop tasks claim <id>`; otherwise move the task folder
    from `00_todo/` to the existing `10_in_progress/` directory yourself. Do this *first*, so a
-   parallel agent won't grab it. A task already in `10_in_progress/` is a prior attempt —
-   resume it: read its `state.md`, then `git status`/`git diff`.
+   parallel agent won't grab it. For a task already in `10_in_progress/`, read its `state.md`,
+   `log.md`, claim and current diff. Resume your continuing assignment; reconcile an older claim
+   with the user's current direction. Do not take over a separate worker's active task.
 2. **Build** — wear the hats; obey `AGENTS.md`, match `.agent/kb/rules/` and the
    surrounding style exactly. `/spec` first if it spans more than one file (writes the
    task's `spec.md`). `/verify-api` before calling anything you're not certain exists.

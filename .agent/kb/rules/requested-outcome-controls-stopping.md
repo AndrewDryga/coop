@@ -2,9 +2,9 @@
 name: requested-outcome-controls-stopping
 description: full implementation requests continue past verified slices through the requested final acceptance criteria
 scope: agent-workflow
-sources: [AGENTS.md, .agent/skills/work/SKILL.md, .agent/skills/spec/SKILL.md, .agent/skills/sweep/SKILL.md, internal/scaffold/templates/skills/work/SKILL.md, internal/scaffold/templates/skills/spec/SKILL.md]
+sources: [AGENTS.md, .agent/skills/work/SKILL.md, .agent/skills/spec/SKILL.md, .agent/skills/sweep/SKILL.md, internal/scaffold/templates/skills/work/SKILL.md, internal/scaffold/templates/skills/spec/SKILL.md, internal/scaffold/templates/skills/sweep/SKILL.md]
 check: none
-updated: 2026-09-15
+updated: 2026-09-22
 ---
 
 # Let the requested outcome control when work stops
@@ -20,6 +20,14 @@ children, keep the broad parent open until every child and its final verificatio
 completed child is not evidence that the umbrella is complete, and a later ledger with open required
 checks is direct evidence that it is not.
 
+On a continuation, reconcile the latest user direction with the task's state, log, claim and current
+worktree before deciding that someone else owns the assignment. A different or long-lived process ID
+alone does not establish a separate worker: the claim may belong to this continuing campaign. When
+the user explicitly confirms that ownership, resume the same task and reconcile its claim through
+the lifecycle command; do not ask again for authority already supplied. This never authorizes taking
+over a genuinely separate active task, stopping another worker, overwriting its changes, or ignoring
+the single-writer rule. Coordinate those workers while continuing independent authorized work.
+
 A request to finish faster changes execution, not the approved scope or verification bar. Optimize
 delegation, dependency ordering and feedback latency; do not substitute a smaller first release for
 full implementation. Staged delivery is a sequencing tool, not permission to drop later stages.
@@ -34,6 +42,11 @@ and authority boundaries: a genuine blocker requiring human input still warrants
 persistence never authorizes unrelated work, deployment, or destructive actions.
 
 ## Changelog
+- 2026-09-22 — after an audit continuation stopped on its own older process-bound claim, the human
+  clarified "You are running the audit". Swept the six listed instruction sources and the embedded
+  sweep copy: both sweep copies treated every in-progress task as a resumable prior attempt without
+  reconciling current ownership. Clarified both; the other five sources need no change. Claim
+  identity and current user authority require judgment, so no mechanical ownership shortcut added.
 - 2026-09-15 — corrected a provider-credential task that kept a broad promise while narrowing
   acceptance to one Claude path, and an audit umbrella archived with two final ledger items open.
   Swept current completed tasks: newer checklists are structurally complete, while older unchecked
