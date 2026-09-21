@@ -53,9 +53,13 @@
     var toggle = document.querySelector("[data-nav-toggle]");
     var nav = document.querySelector("[data-nav]");
     if (!toggle || !nav) return;
-    toggle.addEventListener("click", function () { nav.classList.toggle("open"); });
+    function setOpen(open) {
+      nav.classList.toggle("open", open);
+      toggle.setAttribute("aria-expanded", String(open));
+    }
+    toggle.addEventListener("click", function () { setOpen(!nav.classList.contains("open")); });
     nav.querySelectorAll("a").forEach(function (a) {
-      a.addEventListener("click", function () { nav.classList.remove("open"); });
+      a.addEventListener("click", function () { setOpen(false); });
     });
   }
 

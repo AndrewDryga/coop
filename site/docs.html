@@ -72,10 +72,10 @@
                         >co<span class="colon">:</span>op</span
                     ></a
                 >
-                <button class="nav-toggle" aria-label="Menu" data-nav-toggle>
+                <button class="nav-toggle" aria-label="Menu" aria-expanded="false" aria-controls="primary-nav" data-nav-toggle>
                     ☰
                 </button>
-                <nav class="nav-links" data-nav>
+                <nav class="nav-links" id="primary-nav" data-nav>
                     <a href="index.html#features">Features</a>
                     <a href="index.html#security">Security</a>
                     <a href="docs.html">Docs</a>
@@ -715,6 +715,7 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         Each role sets a <strong>mode</strong> that decides how
                         the lead reaches it:
                     </p>
+                    <div class="table-scroll" role="region" aria-label="Preset role modes" tabindex="0">
                     <table class="ref">
                         <tr>
                             <th>Mode</th>
@@ -755,6 +756,7 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                             </td>
                         </tr>
                     </table>
+                    </div>
                     <pre
                         class="code"
                     ><span class="t"># .agent/presets/frontier/preset.yaml</span>
@@ -925,6 +927,7 @@ roles:
                         beside it are committed with the repo, so they travel
                         with the project.
                     </p>
+                    <div class="table-scroll" role="region" aria-label="Agent folder reference" tabindex="0">
                     <table class="ref">
                         <tr>
                             <th>Path</th>
@@ -1007,6 +1010,7 @@ roles:
                             </td>
                         </tr>
                     </table>
+                    </div>
                 </section>
 
                 <section class="doc-section" id="parallel-forks">
@@ -1190,6 +1194,7 @@ roles:
                         <code>~/.config/coop/coop.conf</code>. The ones you're
                         most likely to touch:
                     </p>
+                    <div class="table-scroll" role="region" aria-label="Configuration variables" tabindex="0">
                     <table class="ref">
                         <tr>
                             <th>Variable</th>
@@ -1281,6 +1286,7 @@ roles:
                             </td>
                         </tr>
                     </table>
+                    </div>
                     <p>
                         On Docker the box additionally runs with
                         every Linux capability dropped, no-new-privileges, and a
@@ -1300,6 +1306,7 @@ roles:
                         The handful of things that trip people up, and the
                         quickest fix for each.
                     </p>
+                    <div class="table-scroll" role="region" aria-label="Troubleshooting" tabindex="0">
                     <table class="ref">
                         <tr>
                             <th>Symptom</th>
@@ -1343,6 +1350,7 @@ roles:
                             </td>
                         </tr>
                     </table>
+                    </div>
                     <p>
                         The full troubleshooting guide and every command's flags
                         are in the

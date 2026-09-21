@@ -64,10 +64,10 @@
                         >co<span class="colon">:</span>op</span
                     ></a
                 >
-                <button class="nav-toggle" aria-label="Menu" data-nav-toggle>
+                <button class="nav-toggle" aria-label="Menu" aria-expanded="false" aria-controls="primary-nav" data-nav-toggle>
                     ☰
                 </button>
-                <nav class="nav-links" data-nav>
+                <nav class="nav-links" id="primary-nav" data-nav>
                     <a href="#features">Features</a>
                     <a href="#security">Security</a>
                     <a href="docs.html">Docs</a>
@@ -112,9 +112,7 @@
                         <div class="cmd">
                             <span class="prompt">$</span>
                             <code id="install-cmd"
-                                >curl -fsSL
-                                https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh
-                                | sh</code
+                                >curl -fsSL https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh | sh</code
                             >
                             <button class="copy" data-copy="#install-cmd">
                                 Copy
@@ -616,9 +614,7 @@ roles:
                             <div class="cmd">
                                 <span class="prompt">$</span>
                                 <code id="install-cmd2"
-                                    >curl -fsSL
-                                    https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh
-                                    | sh</code
+                                    >curl -fsSL https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh | sh</code
                                 >
                                 <button class="copy" data-copy="#install-cmd2">
                                     Copy

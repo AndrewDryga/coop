@@ -302,7 +302,7 @@ pre.code::-webkit-scrollbar-corner,
 /* ======================================================================== */
 /* docs page                                                                */
 /* ======================================================================== */
-.docs { display: grid; grid-template-columns: 232px 1fr; gap: 60px; align-items: start; padding: 40px 0 72px; }
+.docs { display: grid; grid-template-columns: 232px 1fr; gap: 60px; align-items: start; padding: 40px 24px 72px; }
 .docs-side { position: sticky; top: 84px; max-height: calc(100vh - 100px); overflow-y: auto; padding: 0 6px 24px 0; }
 .docs-side h5 { color: var(--faint); font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase; margin: 22px 0 8px; font-weight: 700; }
 .docs-side h5:first-child { margin-top: 0; }
@@ -317,7 +317,7 @@ pre.code::-webkit-scrollbar-corner,
 .docs-side:hover::-webkit-scrollbar-thumb { background: rgba(154,162,175,0.42); background-clip: padding-box; }
 
 /* generous reading rhythm: narrow column, tall line-height, lots of air */
-.docs-main { min-width: 0; max-width: 740px; }
+.docs-main { min-width: 0; max-width: 740px; overflow-wrap: anywhere; }
 .docs-main > h1 { font-size: 2.45rem; margin-bottom: 14px; }
 .docs-main > .lead { font-size: 1.2rem; line-height: 1.65; color: var(--muted); margin-bottom: 10px; }
 .doc-section { padding: 54px 0; border-top: 1px solid var(--border-soft); scroll-margin-top: 84px; }
@@ -342,6 +342,7 @@ pre.code::-webkit-scrollbar-corner,
 .note.warn { background: rgba(230,169,92,0.06); border-color: rgba(230,169,92,0.25); border-left-color: var(--wood); }
 .note b { color: var(--text); }
 
+.table-scroll { max-width: 100%; overflow-x: auto; overflow-wrap: normal; }
 table.ref { width: 100%; border-collapse: collapse; margin: 18px 0 1.5rem; font-size: 0.95rem; }
 table.ref th, table.ref td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
 table.ref th { color: var(--faint); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
