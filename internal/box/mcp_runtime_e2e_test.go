@@ -93,11 +93,9 @@ func TestRuntimeSharedMCPServersAreReachedByEveryProbeableClient(t *testing.T) {
 	for _, test := range []struct{ provider, check string }{
 		// Codex will not connect from any `codex mcp` subcommand — `mcp list` prints the config
 		// without launching anything. Its app-server's `mcpServerStatus/list` does launch them, and
-		// speaks no model.
-		{"codex", `export CODEX_HOME="$HOME/.codex"; { printf '%s\n' ` +
-			`'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"coop-probe","title":"coop-probe","version":"1"}}}' ` +
-			`'{"jsonrpc":"2.0","method":"initialized","params":{}}' ` +
-			`'{"jsonrpc":"2.0","id":2,"method":"mcpServerStatus/list","params":{}}'; sleep 15; } | timeout 60 codex app-server`},
+		// speaks no model. Its stdin stays open until that reply lands, which is also what keeps the
+		// spawned server alive long enough to finish its handshake (see codexAppServerDriver).
+		{"codex", codexAppServerDriver("mcpServerStatus/list")},
 		// No GEMINI_CLI_TRUST_WORKSPACE here on purpose: gemini suppresses user-level MCP servers in
 		// an untrusted folder, and what keeps that from silently disabling every operator server in a
 		// real box is `security.folderTrust.enabled=false` in the settings Coop generates. Reading the

@@ -66,13 +66,9 @@ func TestRuntimeSharedSkillsAreDiscoveredByEveryPinnedClient(t *testing.T) {
 		{"claude", `claude plugin validate "$HOME/.claude" --json --strict`,
 			".claude/skills/coop-canary/SKILL.md"},
 		// Codex has no CLI that lists skills — discovery is model-facing (`skills.list`). Its
-		// app-server speaks the same catalog over stdio JSON-RPC with no model call, so the probe
-		// initializes it and asks `skills/list` directly.
-		{"codex", `export CODEX_HOME="$HOME/.codex"; { printf '%s\n' ` +
-			`'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"coop-probe","title":"coop-probe","version":"1"}}}' ` +
-			`'{"jsonrpc":"2.0","method":"initialized","params":{}}' ` +
-			`'{"jsonrpc":"2.0","id":2,"method":"skills/list","params":{}}'; sleep 5; } | timeout 30 codex app-server`,
-			".codex/skills/coop-review-board/SKILL.md"},
+		// app-server speaks the same catalog over stdio JSON-RPC with no model call; see
+		// codexAppServerDriver for why the driving is shared and why it waits rather than sleeps.
+		{"codex", codexAppServerDriver("skills/list"), ".codex/skills/coop-review-board/SKILL.md"},
 		{"gemini", `gemini skills list`, ".gemini/skills/coop-review-board/SKILL.md"},
 		{"grok", `grok inspect --json`, ".grok/skills/coop-review-board/SKILL.md"},
 	} {
