@@ -156,15 +156,20 @@ case ":$PATH:" in
 esac
 
 # Zsh only, and only ever as instructions: the installer never edits a shell startup file.
+# The path is the user's own ~/.config/coop, the same one `coop completion` prints. The retired
+# guidance sent them at the FIRST fpath entry instead, which is not theirs: on a clean macOS Zsh
+# it is /usr/local/share/zsh/site-functions, missing and unwritable, and where another tool's
+# completions come first, it is that tool's directory.
 # The generated integration must be SOURCED (after compinit), not merely autoloaded — the
 # `alias coop='nocorrect coop'` inside it has to exist before Zsh parses the command line, or
 # CORRECT_ALL offers to "correct" `coop codex` to the repo's own .codex/ directory.
 case "${SHELL:-}" in
   *zsh)
     printf "\n  Zsh completion (optional) — coop does not edit your shell files. Run once:\n"
-    printf "    coop completion zsh > \"\${fpath[1]}/_coop\"\n"
+    printf "    mkdir -p ~/.config/coop\n"
+    printf "    coop completion zsh > ~/.config/coop/completion.zsh\n"
     printf "  then add this to ~/.zshrc, AFTER your compinit line:\n"
-    printf "    source \"\${fpath[1]}/_coop\"\n"
+    printf "    source ~/.config/coop/completion.zsh\n"
     printf "  Spelling correction stays on everywhere; only coop's own arguments are exempt.\n\n"
     ;;
 esac

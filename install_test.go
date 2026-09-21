@@ -313,6 +313,38 @@ func TestInstallBundleRequired(t *testing.T) {
 	}
 }
 
+// The Zsh guidance has to WORK, not merely read well: the retired form sent the user at the first
+// fpath entry, which on a clean macOS Zsh is /usr/local/share/zsh/site-functions — absent and
+// unwritable — so the printed sequence failed at the redirect. This runs the printed sequence in a
+// disposable HOME with `zsh -f`, and checks the one thing sourcing is for: the nocorrect alias,
+// which autoloading alone would never define.
+func TestInstallZshGuidanceActuallyWorks(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh is not installed")
+	}
+	binary := filepath.Join(t.TempDir(), "coop")
+	if out, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build coop: %v\n%s", err, out)
+	}
+	home := t.TempDir()
+	script := "set -e\n" +
+		"mkdir -p ~/.config/coop\n" +
+		binary + " completion zsh > ~/.config/coop/completion.zsh\n" +
+		"autoload -Uz compinit; compinit -u 2>/dev/null\n" +
+		"source ~/.config/coop/completion.zsh\n" +
+		"alias coop\n"
+	cmd := exec.Command(zsh, "-f", "-c", script)
+	cmd.Env = []string{"HOME=" + home, "PATH=/usr/bin:/bin:/usr/sbin:/sbin"}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("the printed Zsh instructions failed on a clean shell: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "nocorrect coop") {
+		t.Errorf("sourcing the integration did not define the nocorrect alias:\n%s", out)
+	}
+}
+
 // TestInstallZshGuidanceOnly pins the supported Zsh setup path: the installer TELLS a Zsh user
 // where the generated integration goes — sourced after compinit, because autoloading alone never
 // runs the file's nocorrect alias — and never edits a shell startup file itself.
@@ -323,15 +355,22 @@ func TestInstallZshGuidanceOnly(t *testing.T) {
 	}
 	text := string(script)
 	for _, want := range []string{
-		`coop completion zsh > \"\${fpath[1]}/_coop\"`,
+		"mkdir -p ~/.config/coop",
+		"coop completion zsh > ~/.config/coop/completion.zsh",
 		"AFTER your compinit line",
-		`source \"\${fpath[1]}/_coop\"`,
+		"source ~/.config/coop/completion.zsh",
 		"coop does not edit your shell files",
 		"Spelling correction stays on everywhere",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("install.sh is missing the Zsh guidance %q", want)
 		}
+	}
+	// The retired form, which sent the user at ${fpath[1]}: on a clean macOS Zsh that is
+	// /usr/local/share/zsh/site-functions — absent and unwritable — and where another tool's
+	// completions come first in fpath, it is that tool's directory.
+	if strings.Contains(text, "fpath[1]") {
+		t.Error("install.sh still points Zsh users at ${fpath[1]}, which is not theirs to write")
 	}
 	// The guidance is printed, never applied: no redirect at any shell startup file.
 	for _, rc := range []string{".zshrc", ".bashrc", ".bash_profile", ".profile", ".zprofile"} {
