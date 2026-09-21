@@ -1,3 +1,4 @@
+import re
 import subprocess
 import unittest
 from html.parser import HTMLParser
@@ -12,6 +13,7 @@ class Page(HTMLParser):
         super().__init__()
         self.elements = []
         self.codes = {}
+        self.text = []
         self.code_id = None
         self.feed(path.read_text(encoding="utf-8"))
 
@@ -27,11 +29,19 @@ class Page(HTMLParser):
             self.code_id = None
 
     def handle_data(self, data):
+        self.text.append(data)
         if self.code_id:
             self.codes[self.code_id] += data
 
 
 class SiteContentTest(unittest.TestCase):
+    def test_service_examples_use_the_supported_delete_flag(self):
+        for path in (SITE.parent / "README.md", SITE / "docs.html"):
+            with self.subTest(page=path.name):
+                text = "".join(Page(path).text) if path.suffix == ".html" else path.read_text(encoding="utf-8")
+                self.assertEqual(re.findall(r"\bcoop down (?:-v|--volumes)\b", text), [])
+                self.assertTrue("coop down --delete-volumes" in text, "missing supported volume-deletion command")
+
     def test_installer_copy_targets_are_executable_one_liners(self):
         page = Page(SITE / "index.html")
         targets = [attrs["data-copy"] for _, attrs in page.elements if "data-copy" in attrs]

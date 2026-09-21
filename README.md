@@ -1702,9 +1702,10 @@ publishes it loopback-only, and runs a tiny raw-TCP forwarder inside the box so
 `COOP_SERVICE_KEYCLOAK_URL=https://localhost:<port>` (scheme from the label); `coop fork ls --json`
 lists every workspace's service URLs for host tooling.
 
-The agent never installs or hosts a database, so it can't corrupt one, and `coop down -v`
-resets to a clean slate. A shared `coop-cache` volume at `~/.cache` keeps disposable runs
-from re-downloading the world.
+Agents can change data in services they can reach; use disposable development databases.
+`coop down` stops the services and keeps their volumes. `coop down --delete-volumes` asks
+before permanently deleting the project's service volumes. A shared `coop-cache` volume
+at `~/.cache` keeps disposable runs from re-downloading the world.
 
 `.agent/compose.yml` runs on your host daemon (that's how a service becomes a real
 container), so coop validates it before every run — `coop up` and each networked launch

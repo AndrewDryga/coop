@@ -499,13 +499,13 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         oversized files on the way in.
                     </p>
                     <p>
-                        Landing brings over <em>code</em>, not queue state: a
-                        fork works a copy of the
-                        <code>.agent/tasks/</code> queue, so after a merge the
-                        parent still lists the tasks the fork finished — mark
-                        them done or remove them, and run
-                        <code>coop tasks watch</code> for the deduped view
-                        across the parent and its forks while they run.
+                        A fork loop works assigned tasks from the project's
+                        canonical <code>.agent/tasks/</code> queue, one at a
+                        time. Tasks stay in progress while the fork is reviewed;
+                        a successful reviewed merge completes the exact tasks
+                        included in its approved result. No manual task removal
+                        is needed. Use <code>coop tasks watch</code> to follow
+                        progress across the parent and its forks.
                     </p>
                     <figure class="cast-figure">
                         <div class="term">
@@ -1169,9 +1169,15 @@ roles:
                     </p>
                     <pre
                         class="code"
-                    ><span class="k">coop</span> up        <span class="t"># start the services, wait until healthy</span>
-<span class="k">coop</span> claude    <span class="t"># the box reaches each service by its Compose name</span>
-<span class="k">coop</span> down -v   <span class="t"># stop them and wipe the throwaway data</span></pre>
+                    ><span class="k">coop</span> up                    <span class="t"># start services and wait until healthy</span>
+<span class="k">coop</span> claude                <span class="t"># reach services by their Compose names</span>
+<span class="k">coop</span> down                  <span class="t"># stop services and keep their data</span>
+<span class="k">coop</span> down --delete-volumes <span class="t"># ask to permanently delete service volumes</span></pre>
+                    <p>
+                        Agents can change data in services they can reach, so
+                        use disposable development databases. Deleting service
+                        volumes requires confirmation and cannot be undone.
+                    </p>
                     <p>
                         The final <code>coop up</code> status names the exact non-empty services
                         resolved by Compose, in Compose order. If resolution fails, Coop stops
@@ -1182,7 +1188,7 @@ roles:
                         To refresh the base image underneath,
                         <code>coop update</code> rebuilds the box fresh;
                         <code>coop build</code> is the stable, pinned rebuild.
-                        Either way the agent CLIs are the versions your Coop release qualified.
+                        Both use the agent-client versions pinned by your Coop release.
                     </p>
                 </section>
 
