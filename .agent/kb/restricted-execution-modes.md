@@ -2,8 +2,8 @@
 name: restricted-execution-modes
 description: readonly and bare share one tmpfs-only filesystem profile; the provider is seeded through a read-only bind OUTSIDE the tmpfs home, because a bind under it would be root-owned; over ACP the provider's switches ride session/new, not the adapter's argv
 subsystem: box
-sources: [internal/box/restricted.go, internal/box/run.go, internal/agent/agent.go, internal/agent/claude.go, internal/cli/help.go, internal/cli/commands.go, internal/cli/exposure_flags.go, internal/cli/acp_cmd.go, internal/cli/fork_cmd.go, internal/runtime/runtime.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/network.go, internal/session/records.go]
-updated: 2026-09-11
+sources: [internal/box/restricted.go, internal/box/restricted_filtered_composition_test.go, internal/box/filtered_cleanup.go, internal/box/run.go, internal/agent/agent.go, internal/agent/claude.go, internal/cli/help.go, internal/cli/commands.go, internal/cli/exposure_flags.go, internal/cli/acp_cmd.go, internal/cli/fork_cmd.go, internal/runtime/runtime.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/network.go, internal/session/records.go]
+updated: 2026-09-21
 ---
 
 `RunSpec.Mode` (`agents.ExecutionMode`: normal, readonly, bare; empty is normal) is fixed at
@@ -125,3 +125,47 @@ gemini or grok — each refuses by name until a live run proves its adapter's sw
   proved and the host-side credential renewal a hash comparison will show.
 - 2026-09-10 — created with the modes (phase 1, local half). Verified against the sources above and
   the goldens in `internal/box/restricted_test.go`.
+
+## Composing with `--egress filtered` — settled design, and the traps found trying it
+
+A restricted run refuses `--egress filtered` today. Composing them is qualified work in progress;
+this section exists so the next attempt does not re-derive any of it.
+
+**The design.** The restricted assembly keeps building the box (its FILESYSTEM contract) and hands
+the options to the EXISTING filtered launch, which owns the gateway and — since 2026-09-21 — one
+shared `filteredExecution.teardown`. Not the reverse: routing restricted through the main path would
+mean re-suppressing every exposure restricted exists to remove, forever. The rule "do not create a
+second sandbox system" decides the gateway; the teardown extraction is what stops the OTHER
+duplication, and it landed separately, proven neutral.
+
+**Two preconditions, proven** (`restricted_filtered_composition_test.go`): the restricted profile is
+admissible on the filtered create path's strict option allowlist (`--read-only` and `--tmpfs` are
+both listed), and `restrictedBoxUID` equals the `--user 1000:1000` the filtered launch hardcodes —
+two numbers in different files that nothing else relates, and whose divergence would make the
+composed box unable to write its own home.
+
+**What a first attempt got wrong** (security-reviewed, reverted — all still open):
+
+1. `runRestricted` sets `network = "none"` unless egress is open, so the options carried
+   `--network none` while the launch appends `--network container:<controller>`. Verified on Docker
+   29.4: creation succeeds with `NetworkMode=none`, then the launch's own verification refuses it.
+   Fails closed, but the composed run cannot start. Pass `""` under filtered — the launch owns the
+   netns — and teach `validateRestrictedOptions` to expect `--network` ABSENT there.
+2. **More permissive than restricted alone:** `prepareFilteredExecution` substitutes a project
+   `.agent/Dockerfile` image, which the composed run then executed. `checkRestrictedSpec` exists
+   precisely to refuse a project image. Skip the project image when the mode is restricted and
+   assert `record.ProjectImage == ""` afterwards.
+3. `prepareFilteredExecution` returns a LIVE execution alongside an error for ~8 late failures and
+   documents that the caller must still clean it up. Defer the teardown whenever it is non-nil.
+4. **Weaker than filtered alone on one axis:** the composed path never applied `filtered.mcpScrub`,
+   which filtered-alone uses to keep MCP bearer tokens out of the box; and `prepareCredentialBroker`
+   was never called, so a brokerable key failed closed with a misleading error. Applying the scrub
+   needs the filtered preparation to happen BEFORE the env file is assembled.
+5. `checkRestrictedSpec` admitting bare+filtered leaves `spec.Repo == ""` resolving the project
+   policy to the caller's cwd. The CLI still refuses it; decide explicitly at the box layer too.
+
+**The testing trap, which is the real lesson.** The composed test asserted on
+`restrictedFilesystemArgs` and passed with findings 1, 2 and 4 all present. A test here must DRIVE
+the assembly — `runRestricted` with `Egress: "filtered"` against the fake `filteredDocker` the
+filtered suite already uses — and assert the created container's actual options, plus one that makes
+the preparation fail late and asserts cleanup ran.
