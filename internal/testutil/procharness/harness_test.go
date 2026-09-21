@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -470,5 +471,79 @@ func TestNewLayoutKeepsConfigEmptyForVaultPublication(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("environment lacks %s: %v", want, env)
+	}
+}
+
+// A leader that exits cleanly, leaving nothing behind, must never be reported as a leak.
+//
+// It used to be, intermittently. The check asked two different questions: `kill(-pid, 0)` decided
+// whether the group survived, and a later `ps` explained who survived. A leader is a member of its
+// own group and remains there as a zombie until it is reaped, so between those two questions the
+// answer could change — and the failure it produced contradicted itself in one sentence: "process
+// group N survived leader exit (nothing was left in the group by the time it was listed)".
+//
+// That is a CLEANUP assertion, so the same race could equally report success while a descendant
+// genuinely survived. Repeats because a race proven once is proven by luck.
+func TestRunDoesNotReportALeakWhenTheLeaderSimplyExits(t *testing.T) {
+	layout, err := NewLayout(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 40; i++ {
+		result := Run(context.Background(), Command{
+			Path: "/bin/sh", Args: []string{"-c", "exit 0"}, Dir: layout.Root,
+			Env: []string{"PATH=/usr/bin:/bin"}, MaxOutput: 1024,
+		})
+		if result.ExitCode != 0 || result.Err != nil {
+			t.Fatalf("run %d of a leader that left nothing behind: exit %d, err %v", i+1, result.ExitCode, result.Err)
+		}
+	}
+}
+
+// The property that fixes it: the survivor listing excludes the leader, because the leader being in
+// its own group is exactly what the old check mistook for a survivor. Proven on a real group leader
+// with a real child, so neither side of the comparison is hypothetical.
+func TestListGroupExcludesTheLeaderItself(t *testing.T) {
+	// A leader in its own process group, with one child, so the group has two members.
+	leader := exec.Command("/bin/sh", "-c", "sleep 30 & sleep 30")
+	leader.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := leader.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pid := leader.Process.Pid
+	defer func() {
+		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		_, _ = leader.Process.Wait()
+	}()
+
+	// Wait for the child to exist, so "excluding the leader" is a real subtraction rather than a
+	// comparison of two empty lists.
+	var withLeader, withoutLeader []string
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		var err error
+		if withLeader, err = listGroup(pid, true); err != nil {
+			t.Fatal(err)
+		}
+		if withoutLeader, err = listGroup(pid, false); err != nil {
+			t.Fatal(err)
+		}
+		if len(withLeader) >= 2 && len(withoutLeader) >= 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(withLeader) < 2 {
+		t.Fatalf("the group never had a leader and a child to tell apart: %v", withLeader)
+	}
+	if len(withoutLeader) != len(withLeader)-1 {
+		t.Errorf("excluding the leader removed %d rows, want exactly 1:\nwith:    %v\nwithout: %v",
+			len(withLeader)-len(withoutLeader), withLeader, withoutLeader)
+	}
+	self := strconv.Itoa(pid)
+	for _, row := range withoutLeader {
+		if fields := strings.Fields(row); len(fields) > 0 && fields[0] == self {
+			t.Errorf("the leader is still counted as a survivor of its own group:\n%v", withoutLeader)
+		}
 	}
 }

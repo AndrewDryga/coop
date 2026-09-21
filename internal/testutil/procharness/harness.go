@@ -320,15 +320,26 @@ func (p *Process) wait(ctx context.Context) Result {
 	select {
 	case err := <-p.done:
 		result.ExitCode, result.Err = processExit(err)
-		if processGroupAlive(result.PID) {
+		// Did any DESCENDANT outlive the leader? Decided from one listing that excludes the leader
+		// itself, because a leader is a member of its own group and sits there as a zombie between
+		// its exit and its reaping — the window that used to make this check report a survivor and
+		// then fail to name one.
+		if survivors, listErr := listGroup(result.PID, false); listErr != nil || len(survivors) > 0 {
 			var beforeErr error
 			if p.beforeCancel != nil {
 				beforeErr = p.beforeCancel()
 			}
-			survivors := describeGroup(result.PID, "survivors")
+			var survivorErr error
+			if listErr != nil {
+				// Undecidable, and said so: cleaning up regardless is the safe side, but the run
+				// must not be reported as a leak that was never observed.
+				survivorErr = fmt.Errorf("could not tell whether process group %d outlived its leader: %w", result.PID, listErr)
+			} else {
+				survivorErr = fmt.Errorf("process group %d survived leader exit; survivors (pid ppid pgid stat elapsed command):\n  %s",
+					result.PID, strings.Join(survivors, "\n  "))
+			}
 			signalGroup(result.PID, syscall.SIGKILL)
 			cleanupErr := waitGroupGone(result.PID, 2*time.Second)
-			survivorErr := fmt.Errorf("process group %d survived leader exit%s", result.PID, survivors)
 			result.Err = errors.Join(result.Err, beforeErr, survivorErr, cleanupErr)
 		}
 	case <-ctx.Done():
@@ -433,13 +444,34 @@ func cancelProcessGroup(pid int, done <-chan error, grace time.Duration) error {
 // instead of failing it; at most a handful of rows; and each row cut short, since a provider's
 // argv can carry a whole prompt. A failure adds evidence rather than a page of process table.
 func describeGroup(pid int, heading string) string {
+	rows, err := listGroup(pid, true)
+	if err != nil {
+		return fmt.Sprintf(" (the process table could not be read: %v)", err)
+	}
+	if len(rows) == 0 {
+		return " (nothing was left in the group by the time it was listed)"
+	}
+	return "; " + heading + " (pid ppid pgid stat elapsed command):\n  " + strings.Join(rows, "\n  ")
+}
+
+// listGroup returns the processes in pid's group from ONE reading of the process table. When
+// includeLeader is false the leader itself is left out, which is what makes the result mean
+// "descendants survived": a leader is a member of its own group, and between its exit and its reaping
+// it is still there as a zombie.
+//
+// The survivor check and the message it prints both come from this one listing on purpose. They used
+// to be two observations — `kill(-pid, 0)` to decide, then `ps` to explain — and a leader caught
+// mid-exit satisfied the first and vanished before the second, producing the self-contradiction
+// "process group N survived leader exit (nothing was left in the group by the time it was listed)".
+func listGroup(pid int, includeLeader bool) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), describeGroupTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "ps", "-A", "-o", "pid=,ppid=,pgid=,stat=,etime=,command=").Output()
 	if err != nil {
-		return fmt.Sprintf(" (the process table could not be read: %v)", err)
+		return nil, err
 	}
 	group := strconv.Itoa(pid)
+	leader := strconv.Itoa(pid)
 	var rows []string
 	for line := range strings.SplitSeq(string(out), "\n") {
 		// pid, ppid, pgid, stat and etime never contain spaces and all precede the command, so the
@@ -447,6 +479,9 @@ func describeGroup(pid int, heading string) string {
 		fields := strings.Fields(line)
 		if len(fields) < 5 || fields[2] != group {
 			continue
+		}
+		if !includeLeader && fields[0] == leader {
+			continue // the leader is in its own group; only its descendants are survivors
 		}
 		if len(rows) == describeGroupLimit {
 			rows = append(rows, "…")
@@ -458,10 +493,7 @@ func describeGroup(pid int, heading string) string {
 		}
 		rows = append(rows, row)
 	}
-	if len(rows) == 0 {
-		return " (nothing was left in the group by the time it was listed)"
-	}
-	return "; " + heading + " (pid ppid pgid stat elapsed command):\n  " + strings.Join(rows, "\n  ")
+	return rows, nil
 }
 
 // describeGroupLimit keeps a failure's evidence bounded. One straggler is the usual case and the
