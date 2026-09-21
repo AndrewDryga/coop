@@ -1,8 +1,12 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +14,119 @@ import (
 	"syscall"
 	"testing"
 )
+
+// Exercise the actual installer, including verification and extraction, without reaching the
+// network, a real runtime, the user's binary directory or their shell startup files.
+func TestInstallSetupOutcome(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not available")
+	}
+	for _, tc := range []struct {
+		name, build, doctor, calls string
+		ok                         bool
+	}{
+		{"build fails", "23", "0", "build\n", false},
+		{"doctor fails", "0", "24", "build\ndoctor\n", false},
+		{"ready", "0", "0", "build\ndoctor\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			bin := filepath.Join(root, "tools")
+			if err := os.Mkdir(bin, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"tr", "mktemp", "rm", "awk", "cut", "tar", "gzip", "dirname", "mkdir", "install", "mv", "cp"} {
+				path, err := exec.LookPath(name)
+				if err != nil {
+					t.Skipf("%s unavailable: %v", name, err)
+				}
+				if err := os.Symlink(path, filepath.Join(bin, name)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			sha, err := exec.LookPath("sha256sum")
+			if err != nil {
+				sha, err = exec.LookPath("shasum")
+			}
+			if err != nil {
+				t.Skip("no SHA-256 utility available")
+			}
+			if err := os.Symlink(sha, filepath.Join(bin, filepath.Base(sha))); err != nil {
+				t.Fatal(err)
+			}
+			write := func(path, body string, mode os.FileMode) {
+				t.Helper()
+				if err := os.WriteFile(path, []byte(body), mode); err != nil {
+					t.Fatal(err)
+				}
+			}
+			stub := `#!/bin/sh
+case "$1" in
+  version) echo fixture ;;
+  build) printf 'build\n' >> "$TEST_CALLS"; exit "$TEST_BUILD_EXIT" ;;
+  doctor) printf 'doctor\n' >> "$TEST_CALLS"; exit "$TEST_DOCTOR_EXIT" ;;
+  *) exit 97 ;;
+esac
+`
+			var archive bytes.Buffer
+			gz := gzip.NewWriter(&archive)
+			tw := tar.NewWriter(gz)
+			if err := tw.WriteHeader(&tar.Header{Name: "coop", Mode: 0o755, Size: int64(len(stub))}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tw.Write([]byte(stub)); err != nil {
+				t.Fatal(err)
+			}
+			if err := tw.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := gz.Close(); err != nil {
+				t.Fatal(err)
+			}
+			write(filepath.Join(root, "archive"), archive.String(), 0o600)
+			write(filepath.Join(root, "checksums"), fmt.Sprintf("%x  coop_9.9.9_linux_amd64.tar.gz\n", sha256.Sum256(archive.Bytes())), 0o600)
+			write(filepath.Join(bin, "uname"), "#!/bin/sh\ncase \"$1\" in -s) echo Linux;; -m) echo x86_64;; *) exit 97;; esac\n", 0o755)
+			write(filepath.Join(bin, "docker"), "#!/bin/sh\nexit 97\n", 0o755)
+			write(filepath.Join(bin, "curl"), `#!/bin/sh
+test "$#" -eq 4 && test "$1" = -fsSL && test "$3" = -o || exit 97
+case "$2" in
+  https://github.com/AndrewDryga/coop/releases/download/v9.9.9/coop_9.9.9_linux_amd64.tar.gz) cp "$TEST_ROOT/archive" "$4" ;;
+  https://github.com/AndrewDryga/coop/releases/download/v9.9.9/checksums.txt) cp "$TEST_ROOT/checksums" "$4" ;;
+  *) exit 97 ;;
+esac
+`, 0o755)
+			calls := filepath.Join(root, "calls")
+			installed := filepath.Join(root, "installed", "coop")
+			cmd := exec.Command(sh, "./install.sh")
+			cmd.Env = []string{"PATH=" + bin, "HOME=" + root, "TMPDIR=" + root, "SHELL=/bin/sh",
+				"COOP_VERSION=v9.9.9", "COOP_NO_BUILD=0", "COOP_BIN_DIR=" + filepath.Dir(installed),
+				"TEST_ROOT=" + root, "TEST_CALLS=" + calls, "TEST_BUILD_EXIT=" + tc.build, "TEST_DOCTOR_EXIT=" + tc.doctor}
+			out, err := cmd.CombinedOutput()
+			if (err == nil) != tc.ok {
+				t.Errorf("installer success = %v, want %v: %v\n%s", err == nil, tc.ok, err, out)
+			}
+			if got, err := os.ReadFile(calls); err != nil || string(got) != tc.calls {
+				t.Errorf("setup calls = %q, want %q: %v\n%s", got, tc.calls, err, out)
+			}
+			if strings.Contains(string(out), "Done. From any repo:") != tc.ok {
+				t.Errorf("final success must match setup outcome:\n%s", out)
+			}
+			if !tc.ok && (!strings.Contains(string(out), "setup is incomplete") || !strings.Contains(string(out), "coop doctor")) {
+				t.Errorf("failed setup needs an accurate recovery action:\n%s", out)
+			}
+			if tc.build != "0" && !strings.Contains(string(out), "Retry: coop build && coop doctor") {
+				t.Errorf("failed image build needs its retry action:\n%s", out)
+			}
+			if got, err := os.ReadFile(installed); err != nil || string(got) != stub {
+				t.Errorf("installed binary was not preserved: %v", err)
+			}
+			if info, err := os.Stat(installed); err != nil || info.Mode().Perm() != 0o755 {
+				t.Errorf("installed binary is not executable: %v", err)
+			}
+		})
+	}
+}
 
 // TestInstallVerifyChecksum exercises install.sh's verify_checksum helper without network: it
 // sources the script (COOP_INSTALL_LIB=1 stops it before any download) and checks that a matching

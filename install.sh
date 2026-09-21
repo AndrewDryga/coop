@@ -173,7 +173,16 @@ esac
 if [ "${COOP_NO_BUILD:-0}" = 1 ]; then
   echo "coop: skipped image build (COOP_NO_BUILD=1) — next: coop build && coop doctor"
 elif command -v container >/dev/null 2>&1 || command -v docker >/dev/null 2>&1; then
-  "$bindir/coop" build && "$bindir/coop" doctor
+  if ! "$bindir/coop" build; then
+    echo "Image build failed. The Coop binary is installed, but setup is incomplete." >&2
+    echo "Retry: coop build && coop doctor" >&2
+    exit 1
+  fi
+  if ! "$bindir/coop" doctor; then
+    echo "Setup checks failed. The Coop binary is installed, but setup is incomplete." >&2
+    echo "After fixing the reported problem, run: coop doctor" >&2
+    exit 1
+  fi
 else
   echo "coop: no container runtime found — install Docker or Apple 'container',"
   echo "      then run: coop build && coop doctor"

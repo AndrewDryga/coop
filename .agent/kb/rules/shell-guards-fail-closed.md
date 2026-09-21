@@ -4,7 +4,7 @@ description: "a shell guard checks every command's status and fails CLOSED on am
 scope: agent-workflow
 sources: [.agent/skills/sweep/queue-guard.sh, internal/scaffold/templates/skills/sweep/queue-guard.sh, internal/scaffold/queue_guard_test.go, .claude/hooks/commit-gate.sh, install.sh, install_test.go, Makefile]
 check: "go test ./internal/scaffold -run TestSweepQueueGuard"
-updated: 2026-08-29
+updated: 2026-09-21
 ---
 
 # A shell guard fails closed, and says which way it fails
@@ -33,6 +33,8 @@ from "I could not look" is worse than no guard: it reports success either way.
 **How to apply:**
 - Capture, then branch: `out=$(cmd) || { echo "…; refusing to stop." >&2; exit 2; }`. Count by
   reading lines, not by piping to `wc`.
+- `set -e` does not stop on a non-final `&&` operand. If success output follows `build && check`,
+  explicitly handle both failures so a failed build cannot fall through to "Done".
 - Say what to fix in the diagnostic. "Sweep queue guard cannot count `<path>`; refusing to stop" is
   actionable; a bare non-zero exit is not.
 - Reject the shapes you cannot verify (a symlinked queue root, an unreadable configured path) rather
@@ -49,6 +51,10 @@ Related: [[fix-the-bug-not-the-feature]] (a guard that keeps firing is fixed at 
 loosening it) and [[static-bounded-supervision]].
 
 ## Changelog
+- 2026-09-21 — full offline installer execution reproduced `build && doctor` falling through to
+  success after a failed build. Both phases now fail explicitly and retain the installed binary
+  with recovery guidance. Swept executable build/doctor chains: only install.sh had this shape;
+  other matches are user command examples. Root TestInstallSetupOutcome covers failure and success.
 - 2026-08-10 — created, promoting the `kb/inbox/shell-guards-fail-closed.md` draft that `7fd8150`
   left behind (its sibling became [[hermetic-git-tests]]). **Swept every shell surface in the repo:**
   4 `.sh` files plus the box entrypoint heredoc (`internal/box/image.go:115`). **0 violations.** Two
