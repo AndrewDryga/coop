@@ -217,7 +217,10 @@ func TestAssignedNoChangeCompletionPreservesUnrelatedIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	git("add", "unrelated.txt")
-	baseline := gitOut(repo, "status", "--porcelain", "--untracked-files=all")
+	baseline, err := tasks.CheckoutFingerprint(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
 	stagedBefore := gitOut(repo, "diff", "--cached")
 	if err := checkAssignedCompletion(repo, base, "decision", nil, nil); err == nil {
 		t.Fatal("ordinary implementation completion without a binding was accepted")
@@ -239,6 +242,37 @@ func TestAssignedNoChangeCompletionPreservesUnrelatedIndex(t *testing.T) {
 	}
 	if staged := gitOut(repo, "diff", "--cached"); staged != stagedBefore {
 		t.Fatalf("no-change completion disturbed unrelated index: %q", staged)
+	}
+}
+
+// The loop's own acceptance path, not just the authority underneath it: a worker that inherits
+// staged work, rewrites its content, and leaves every status label identical must be refused here.
+func TestAssignedNoChangeCompletionRejectsSameStatusRewrite(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo, git := gitrepo.New(t)
+	git("commit", "--allow-empty", "-m", "base")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(repo, "unrelated.txt"), []byte("another task\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "unrelated.txt")
+	baseline, err := tasks.CheckoutFingerprint(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := gitOut(repo, "status", "--porcelain", "--untracked-files=all")
+
+	// Same path, same staged state, different bytes.
+	if err := os.WriteFile(filepath.Join(repo, "unrelated.txt"), []byte("smuggled work\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "unrelated.txt")
+	if after := gitOut(repo, "status", "--porcelain", "--untracked-files=all"); after != before {
+		t.Fatalf("the fixture moved a status label, so it does not test what it claims: %q vs %q", before, after)
+	}
+	if err := checkNoChangeCompletion(repo, base, "decision", baseline); err == nil {
+		t.Fatal("a same-status content rewrite completed as no-change")
 	}
 }
 

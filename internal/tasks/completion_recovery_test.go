@@ -124,14 +124,17 @@ func TestNoChangeCompletionAllowed(t *testing.T) {
 				writeTaskFile(t, filepath.Join(repo, "unrelated"), "preserve me\n")
 				git("add", "unrelated")
 			}
-			baseline := gitOut(repo, "status", "--porcelain", "--untracked-files=all")
+			baseline, err := CheckoutFingerprint(repo)
+			if err != nil {
+				t.Fatal(err)
+			}
 			switch scenario {
 			case "new dirty work":
 				writeTaskFile(t, filepath.Join(repo, "new-work"), "changed\n")
 			case "advanced history":
 				git("commit", "--allow-empty", "-m", "new history")
 			}
-			err := NoChangeCompletionAllowed(repo, base, gitOut(repo, "rev-parse", "HEAD"), "task", baseline)
+			err = NoChangeCompletionAllowed(repo, base, gitOut(repo, "rev-parse", "HEAD"), "task", baseline)
 			wantAllowed := scenario == "unchanged" || scenario == "unrelated staged"
 			if (err == nil) != wantAllowed {
 				t.Fatalf("no-change completion %s: %v", scenario, err)

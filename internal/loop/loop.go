@@ -773,7 +773,10 @@ reviewAgain:
 			// Coop-Recovery receipt); otherwise a landed Coop-Task commit (a crash after commit before
 			// the folder-move) gets the crash/reopen disambiguation line. Empty prefix → prompt unchanged.
 			iterHead := gitOut(repo, "rev-parse", "HEAD")
-			iterStatus, statusErr := gitOutErr(repo, "status", "--porcelain", "--untracked-files=all")
+			// A CONTENT fingerprint, not a status listing: a task may inherit dirty or staged work,
+			// and comparing labels alone would let a worker rewrite those bytes and still claim it
+			// changed nothing (tasks.CheckoutFingerprint).
+			iterStatus, statusErr := tasks.CheckoutFingerprint(repo)
 			if statusErr != nil {
 				return 1, errors.Join(fmt.Errorf("capture task %s checkout state: %w", assigned.Item.ID, statusErr), lease.Release())
 			}

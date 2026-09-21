@@ -36,16 +36,19 @@ func UncommittedCompletionCanRetry(repo, base, head, id string) bool {
 }
 
 // NoChangeCompletionAllowed proves that a no-change conclusion did not smuggle code or history
-// changes into completion. Pre-existing unrelated checkout state is allowed when unchanged.
-func NoChangeCompletionAllowed(repo, base, head, id, baselineStatus string) error {
+// changes into completion. Pre-existing unrelated checkout state is allowed when unchanged — which
+// means UNCHANGED IN CONTENT: baseline is a CheckoutFingerprint, not a status listing, because an
+// agent that inherits a dirty file can rewrite it without moving a single status label.
+func NoChangeCompletionAllowed(repo, base, head, id, baseline string) error {
 	if base == "" || base != head {
 		return errors.New("no-change completion changed Git history")
 	}
-	status, err := gitOutErr(repo, "status", "--porcelain", "--untracked-files=all")
+	// Content, not labels: see CheckoutFingerprint for what `git status` alone lets through.
+	fingerprint, err := CheckoutFingerprint(repo)
 	if err != nil {
 		return fmt.Errorf("inspect no-change completion: %w", err)
 	}
-	if status != baselineStatus {
+	if fingerprint != baseline {
 		return errors.New("no-change completion changed the working tree or index")
 	}
 	commits, err := rawReachableAuditCommits(repo, head)

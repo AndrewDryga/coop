@@ -58,10 +58,10 @@ func checkAssignedCompletion(repo, base, id string, reopen *tasks.AuditReopenRec
 	return fmt.Errorf("%w: exactly one new and reachable Coop-Task: %s binding is required; commit the verified implementation work, or repair its missing trailer without including unrelated staged work; never add a second binding or rewrite an older task commit. If existing implementation already satisfies the task, retry tasks_complete with outcome already_satisfied; an investigation may use could_not_reproduce or wont_fix. Include concrete reason and evidence after required verification. No-change completion requires unchanged Git history and checkout/index state, with no existing task binding. Do not create an empty commit; human decisions use tasks_block", errCompletionBinding, id)
 }
 
-func checkNoChangeCompletion(repo, base, id, baselineStatus string) error {
+func checkNoChangeCompletion(repo, base, id, baseline string) error {
 	head, err := gitOutErr(repo, "rev-parse", "HEAD")
 	if err != nil {
 		return fmt.Errorf("read completion HEAD: %w", err)
 	}
-	return tasks.NoChangeCompletionAllowed(repo, base, head, id, baselineStatus)
+	return tasks.NoChangeCompletionAllowed(repo, base, head, id, baseline)
 }

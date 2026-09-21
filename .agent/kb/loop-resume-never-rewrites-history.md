@@ -75,7 +75,15 @@ A task may already be satisfied, or an investigation may conclude `could_not_rep
 for existing implementation), concrete `reason` and `evidence` after required verification. It
 does not fabricate an empty task commit. The host requires unchanged iteration history and
 checkout/index state, with no existing binding for this task. Unchanged pre-existing unrelated
-work is allowed. Human decisions remain blocked; no-change outcomes never substitute for
+work is allowed — UNCHANGED IN CONTENT, which `git status` cannot establish. Its lines carry a path
+and a state, so an agent that inherits a dirty or staged file can rewrite those bytes, leave the line
+reading exactly as before, and claim it changed nothing; both the pre-move and post-exit checks
+compared those labels. `tasks.CheckoutFingerprint` digests the status lines plus `git diff` and
+`git diff --cached` (with `--binary`, or a changed archive reads as the content-free "Binary files
+differ"; `--no-textconv`/`--no-ext-diff`, so a repository driver can neither mask bytes nor execute;
+`--ignore-submodules=dirty`, so it never descends into an agent-writable child) plus every untracked
+file's content, read directly so an untracked SYMLINK is digested by where it points and never
+followed off the checkout. Human decisions remain blocked; no-change outcomes never substitute for
 unfinished work or a failed gate. Host-authorized audit rework retains its separate authority.
 
 Assigned `tasks_complete` validates the binding before moving the folder so the same agent can
@@ -87,6 +95,8 @@ original diff from protected-gate review and signoff. The final report distingui
 completed work. See [[loop-completion-refusals-keep-work-moving]].
 
 ## Changelog
+- 2026-09-22 — the no-change guard compares CONTENT, not status labels: a same-status rewrite of
+  inherited dirty/staged/untracked work used to complete without review.
 - 2026-09-22 — aligned stale refusal, recovery decision and state guidance with the existing
   explicit no-change API. Same-session MCP repair now proves refusal followed by evidence-backed
   no-change completion without advancing HEAD. Preserved unrelated staged work and denied changed
