@@ -35,6 +35,18 @@ class Page(HTMLParser):
 
 
 class SiteContentTest(unittest.TestCase):
+    def test_evaluations_are_navigable_and_use_readable_code_blocks(self):
+        page = Page(SITE / "docs.html")
+        self.assertTrue(any(tag == "a" and attrs.get("href") == "#evals" for tag, attrs in page.elements))
+        self.assertEqual(sum(tag == "section" and attrs.get("id") == "evals" for tag, attrs in page.elements), 1)
+        source = (SITE / "docs.html").read_text(encoding="utf-8")
+        section = source.split('id="evals">', 1)[1].split("</section>", 1)[0]
+        blocks = re.findall(r'<pre([^>]*)>(.*?)</pre>', section, re.S)
+        self.assertEqual(len(blocks), 2)
+        for attrs, _ in blocks:
+            self.assertIn('class="code"', attrs)
+        self.assertIn("--dry-run", blocks[0][1])
+
     def test_service_examples_use_the_supported_delete_flag(self):
         for path in (SITE.parent / "README.md", SITE / "docs.html"):
             with self.subTest(page=path.name):

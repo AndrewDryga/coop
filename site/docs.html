@@ -109,6 +109,7 @@
                 <a href="#credentials">Credentials &amp; failover</a>
                 <a href="#models">Pick the model</a>
                 <a href="#presets">Presets</a>
+                <a href="#evals">Evaluations</a>
                 <h5>Run unattended</h5>
                 <a href="#loop">The loop</a>
                 <a href="#parallel-forks">Parallel forks</a>
@@ -803,6 +804,80 @@ roles:
                             file and Git history to remain unchanged.
                         </p>
                     </div>
+                </section>
+
+                <section class="doc-section" id="evals">
+                    <h2>Evaluations — did the change help?</h2>
+                    <p class="section-lead">
+                        Compare models, presets, loop recipes or Coop builds on repeatable
+                        tasks. An independent verifier grades the finished work; the model
+                        does not grade itself.
+                    </p>
+                    <h3>Start with a free preview</h3>
+                    <p>The shipped <code>core</code> suite has three small coding tasks.
+                        This command launches no container or provider and spends nothing:</p>
+                    <pre class="code"><span class="k">coop</span> eval run core codex --timeout 35m --dry-run</pre>
+                    <p>For a real run, sign in with <code>coop login codex</code> and have
+                        a working container runtime and current Coop box image. If the image
+                        is missing, run <code>coop build --egress open</code> from a directory
+                        without a project Dockerfile. Building may download dependencies.</p>
+                    <pre class="code"><span class="k">coop</span> eval run core codex --timeout 35m
+<span class="k">coop</span> eval inspect</pre>
+                    <p>A real run uses your provider account and may spend credits.
+                        A preview validates the plan, not credentials or runtime readiness.
+                        <code>--timeout</code> is a total time limit, not a money cap; each case
+                        also has its own timeout. More configurations or repetitions mean
+                        more paid work.</p>
+                    <h3>Compare before and after</h3>
+                    <ol>
+                        <li>Run a suite and inspect the result.</li>
+                        <li>Change your model, preset, loop recipe or Coop build, then run the
+                            same suite with the same number of repetitions.</li>
+                        <li>Use <code>coop eval runs</code> to find the two run IDs, then
+                            <code>coop eval compare &lt;before-id&gt; &lt;after-id&gt;</code>.
+                            The argument order decides which run is the baseline.</li>
+                    </ol>
+                    <h3>Choose a suite</h3>
+                    <ul>
+                        <li><code>core</code>: three single-agent tasks. Use provider targets,
+                            such as <code>codex:gpt-5.6/xhigh</code>, not presets.</li>
+                        <li><code>queue</code>: ten tasks through the real loop, including review
+                            and signoff. Use targets or presets; allow hours, not minutes.
+                            For your existing <code>frontier</code> preset, try
+                            <code>coop eval run queue frontier --timeout 2h</code>. Add
+                            <code>--loop-config .agent/loop.yaml</code> to test your recipe.</li>
+                        <li>Custom: <code>coop eval init ./evals/my-suite</code> creates a working
+                            example. Edit <code>suite.yaml</code>, <code>files/greeting/</code>
+                            and the separate <code>verifiers/greeting/verify.sh</code>.
+                            The verifier's README explains grading.</li>
+                    </ul>
+                    <p>Each target after the suite is a separate configuration, not a fallback.
+                        <code>--repeat 3</code> repeats every case three times;
+                        <code>--jobs 2</code> allows two agent trials at once. Loop suites
+                        run serially. See <code>coop help eval run</code> for all options.</p>
+                    <h3>Understand failures before spending again</h3>
+                    <p><code>coop eval inspect</code> reads the latest run; add a run ID to read
+                        an older one. It shows non-passing trials, their recorded causes, and
+                        where to find saved diagnostics and retained workspaces.</p>
+                    <ul>
+                        <li><code>failed</code>: the independent verifier rejected the work.</li>
+                        <li><code>error</code>: execution or grading could not produce a verdict.
+                            A provider quota refusal is not a model-quality failure.</li>
+                        <li><code>timed_out</code> or <code>pending</code>: the trial ran out of
+                            budget or did not start. Grading remains incomplete.</li>
+                    </ul>
+                    <p>An incomplete comparison has no definitive winner. For sign-in or quota
+                        refusals, check <code>coop credentials &lt;agent&gt;</code>. For timeouts,
+                        check the case's <code>suite.yaml</code> budget as well as
+                        <code>--timeout</code>. A run without a final summary may be running or
+                        interrupted: you can inspect it, but cannot compare or resume it.
+                        Rerunning is an explicit new paid invocation. Review recorded provider
+                        output for private data before sharing it.</p>
+                    <p>Each trial gets a private workspace without source Git history. The
+                        hidden verifier is kept outside model mounts and runs afterwards in a
+                        separate container without credentials or network. Operator MCP servers
+                        are not exposed to trials. Results describe this workload, not general
+                        provider parity; code size is a review signal, not a quality score.</p>
                 </section>
 
                 <section class="doc-section" id="loop">

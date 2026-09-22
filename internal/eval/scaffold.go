@@ -45,11 +45,13 @@ func Scaffold(dir string) error {
 }
 
 const scaffoldManifest = `# A custom Coop eval suite. Run it with:
-#   coop eval run ./suite.yaml <target|preset>... --timeout 30m
+#   coop eval run ./suite.yaml codex --timeout 12m --dry-run
 #
-# Each positional after the suite is one configuration to compare — a target
-# (provider[:model][/effort][@account]) or a preset. Run the same suite before
-# and after a change, then compare the two run ids.
+# Remove --dry-run to launch a real, paid evaluation. Each target after the suite
+# is a separate configuration: provider[:model][/effort][@account]. Presets need
+# a loop suite (example below). Run the same suite before and after a change,
+# then compare the two run IDs from ` + "`coop eval runs`" + `.
+# Read the latest result and any errors with ` + "`coop eval inspect`" + `.
 
 version: 1
 name: my-suite

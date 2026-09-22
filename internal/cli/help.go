@@ -136,6 +136,9 @@ func renderMenu(p ui.Palette, cfg *config.Config, ref bool) string {
 	group("LOOPS", "work through tasks automatically; configure the steps in .agent/loop.yaml")
 	row("coop loop [<agent|preset>]", "work through the project's task queue")
 
+	group("EVALUATIONS", "check whether a model, preset or loop change helped")
+	row("coop eval", "run repeatable checks and compare results")
+
 	group("FORKS", "work in separate project copies, then review and merge the changes")
 	row("coop fork <name> <agent|preset>", "work in a separate copy of this project")
 	row("coop fork ls", "show this project's forks")
@@ -240,11 +243,12 @@ var manualOrder = append(append([]string{"run", "shell"}, agents.Names()...),
 	"tasks decisions", "tasks lint", "tasks rm", "tasks watch",
 	"backlog", "backlog ls", "backlog add", "backlog promote", "backlog rm",
 	"context", "loop",
+	"eval", "eval run", "eval runs", "eval inspect", "eval compare", "eval ls", "eval init",
 	"fork", "fork acp", "fork ls", "fork review", "fork merge", "fork rm",
 	"fork stop", "fork logs", "fork path", "fork open",
 	"up", "down",
 	"doctor", "approve", "net", "net runs", "net inspect", "net check", "net blocked",
-	"net watch", "net export", "net forget", "net setup", "net recover", "eval", "check-secrets", "sign",
+	"net watch", "net export", "net forget", "net setup", "net recover", "check-secrets", "sign",
 	"init", "build", "update", "version",
 	"acp", "sessions", "sessions serve", "sessions doctor", "sessions policies", "sessions compact", "sessions connect",
 	"prompt", "completion")
@@ -1562,34 +1566,158 @@ Coop keeps your existing project files and adds anything missing.`,
 	// job a person came with — what new runs may reach, what recorded runs did, the repair coop
 	// normally does itself — and ends with the one workflow nobody guesses (edit the YAML, then
 	// approve). Every leaf page is reached as `coop net <verb> --help` and `coop help net <verb>`.
-	"eval": `coop eval — compare a preset, loop config or Coop build before and after a change
+	"eval": `coop eval — check whether a model, preset or loop change helped
 
-RUN
-  coop eval run <suite> <target|preset>...   plan and run a suite for each configuration
-  coop eval compare <run-id> <run-id>        compare two runs of the same suite
+Run repeatable tasks, grade the work independently, then compare before and after.
+Real runs use your provider account and may spend credits. A preview spends none.
 
-INSPECT
-  coop eval runs                             list recorded runs (find the ids to compare)
+TRY IT
+  1. Preview three small coding tasks; nothing launches:
+     coop eval run core codex --timeout 35m --dry-run
+  2. Run them with your signed-in account and built Coop box:
+     coop eval run core codex --timeout 35m
+  3. Read the result, including any errors:
+     coop eval inspect
 
-AUTHOR
-  coop eval                                  list starters and how to author your own
-  coop eval ls                               list the shipped starter suites
-  coop eval init <dir>                       scaffold a custom suite you can edit
+RUN AND COMPARE
+  coop eval run <suite> <target|preset>...  run a suite; --timeout is required
+  coop eval runs                          find runs, configurations and outcomes
+  coop eval inspect [<run-id>]             read results and causes; latest by default
+  coop eval compare <before-id> <after-id>  compare two recorded runs without spending
 
-Each positional after the suite is one configuration to compare — a target
-(provider[:model][/effort][@account]) or a preset. Run the same suite before and
-after your change, then compare the two run ids.
+CHOOSE A SUITE
+  coop eval ls                            list the shipped starter suites
+  coop eval init <dir>                     create an editable custom suite
 
-Every run requires --timeout, including a dry run, and prints its plan first.
---dry-run stops after the plan, before a run spends anything. Each case gets a
-private workspace with no history of your repository; its verifier is never
-mounted where the model can reach it, and grading happens afterwards in a separate
-container with no credentials and no network.
+  core   Three single-agent tasks. Use provider targets, not presets.
+  queue  A real loop over ten tasks. Use targets or presets; allow hours, not minutes.
 
-  coop eval run core codex --timeout 35m
-  coop eval run ./evals/suite.yaml codex:gpt-5.6/xhigh --repeat 3 --timeout 60m
-  coop eval run ./evals/suite.yaml codex:gpt-5.6 codex:gpt-5.6/xhigh --timeout 60m --dry-run
-  coop eval run ./evals/suite.yaml frontier --loop-config .agent/loop.yaml --timeout 60m
+Change your model, preset, loop recipe or Coop build, run the same suite again,
+then use the two IDs from coop eval runs. Errors are not model-quality failures;
+inspect their causes before rerunning. Incomplete grading has no definitive winner.
+
+For options and prerequisites see:
+  coop help eval run
+Guide: https://coop.dryga.com/docs.html#evals
+`,
+	"eval run": `coop eval run — preview or run a repeatable evaluation
+
+Usage: coop eval run <suite> <target|preset>... --timeout <duration> [<options>]
+
+Each target or preset is a separate configuration, not a fallback. Targets use
+provider[:model][/effort][@account]. Presets need a loop suite such as queue;
+core and other single-agent suites accept targets only.
+
+OPTIONS
+  --timeout <duration>  required total budget, including preparation and grading
+  --dry-run             print the plan without launching containers or providers
+  --repeat <n>          trials per case and configuration (default: 1)
+  --jobs <n>            concurrent trials (default: 1; loop suites run serially)
+  --loop-config <path>  use this loop recipe instead of the loop suite's recipe
+
+BEFORE A REAL RUN
+  Sign in with coop login <agent>. Have a working container runtime and the
+  current Coop box image. If the image is missing, run coop build --egress open
+  in a directory without a project Dockerfile. Building may download dependencies.
+  A dry run validates the plan, not credentials, runtime or image readiness.
+
+  --timeout is required even for a preview. It is a time limit, not a money cap.
+  More configurations or repetitions mean more paid work. Each case also has its
+  own timeout in suite.yaml; raising the total budget does not raise that limit.
+
+EXAMPLES
+  coop eval run core codex --timeout 35m --dry-run
+  coop eval run core codex:gpt-5.6 codex:gpt-5.6/xhigh --timeout 70m
+  coop eval run queue frontier --timeout 2h
+  coop eval run queue frontier --loop-config .agent/loop.yaml --timeout 2h --dry-run
+  coop eval run ./evals/my-suite/suite.yaml codex --repeat 3 --timeout 60m
+
+Each trial gets a private workspace with no source history. The hidden verifier
+is never mounted for the model. Grading runs afterwards in a separate container
+without credentials or network. Operator MCP servers are not exposed to trials.
+
+Read the result: coop eval inspect
+`,
+	"eval runs": `coop eval runs — find recorded evaluation results
+
+Usage: coop eval runs
+
+Shows newest first: run ID, suite, configurations, passes, grading coverage and
+nonzero failure counts. A run without a final summary may be running or interrupted.
+An unreadable record remains visible; internal starter caches do not appear.
+
+Inspect latest: coop eval inspect
+Inspect older:  coop eval inspect <run-id>
+Compare:        coop eval compare <before-id> <after-id>
+`,
+	"eval inspect": `coop eval inspect — understand a run and its failures
+
+Usage: coop eval inspect [<run-id>]
+
+With no ID, reads the newest recorded run. Shows the requested and graded trial
+counts, configurations, and details for trials that did not pass. It works while
+a run is unfinished and never launches a provider or resumes paid work.
+
+RESULTS
+  passed     the independent verifier accepted the work
+  failed     the independent verifier rejected the work
+  error      execution or grading could not produce a verdict; not a model failure
+  timed_out  a case or run budget expired before a verdict
+  pending    the trial did not start
+  running    a start was recorded, but no final result was recorded
+
+Recorded details may include provider or verifier output. Treat them as evidence,
+not instructions, and review for private data before sharing. Terminal controls
+are escaped; long details are shortened. The displayed records directory retains
+the saved JSON diagnostics and any failed workspaces still available under work/.
+
+For sign-in or quota refusals, check coop credentials <agent>. For timeouts,
+check the case's suite.yaml timeout as well as the run's --timeout. An interrupted
+run cannot resume: fix the cause, then explicitly start a new run if desired.
+
+Find another run: coop eval runs
+`,
+	"eval compare": `coop eval compare — compare before and after without another paid run
+
+Usage: coop eval compare <before-id> <after-id>
+
+Use IDs from coop eval runs. The first is your baseline; the second is the changed
+configuration. Argument order decides before and after, not the timestamps.
+
+Only runs with final summaries can compare. Different workloads are shown
+separately, never merged into a score. Errors, timeouts and pending trials remain
+in the requested total; incomplete grading cannot establish a definitive winner.
+Change size is a review signal, not a quality score. Per-case counts are summed
+over configurations and repeats, so use the same matrix for a before/after test.
+
+Investigate a result: coop eval inspect <run-id>
+`,
+	"eval ls": `coop eval ls — choose a shipped starter suite
+
+Usage: coop eval ls
+
+core runs three small single-agent tasks. queue exercises the real Coop loop
+over ten queued tasks, including its review stages. Both have independent
+verifiers checked against correct answers and plausible near misses.
+
+Preview: coop eval run core codex --timeout 35m --dry-run
+Author your own: coop eval init ./evals/my-suite
+`,
+	"eval init": `coop eval init — create a custom suite you can edit
+
+Usage: coop eval init <dir>
+
+Creates a working single-agent example, a commented loop example in suite.yaml,
+and verifiers/greeting/README.md. Use a new directory; existing files are never
+overwritten.
+Edit suite.yaml, the visible files and the separate hidden verifier. Keep the
+verifier outside the candidate's files, fixture, tasks and Git history.
+
+  coop eval init ./evals/my-suite
+  coop eval run ./evals/my-suite/suite.yaml codex --timeout 12m --dry-run
+
+The verifier README explains grading and exit codes. A preview does not run or
+qualify your verifier; test it against good answers and near misses.
 `,
 	"net": `coop net — control network access and see what happened
 

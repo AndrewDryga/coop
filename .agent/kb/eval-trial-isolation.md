@@ -2,7 +2,7 @@
 name: eval-trial-isolation
 description: What isolates one coop eval trial from the next and from the grader — and why the obvious credential fix would break authentication
 subsystem: eval
-sources: [internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_loop.go, internal/loop/loop.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/box/run.go, internal/box/mounts.go, internal/agent/codex.go]
+sources: [internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_loop.go, internal/cli/eval_results.go, internal/loop/loop.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/eval/store.go, internal/box/run.go, internal/box/mounts.go, internal/agent/codex.go]
 updated: 2026-09-22
 ---
 
@@ -79,6 +79,15 @@ The grading snapshot includes the queue, and the independent verifier still deci
 An unchanged agent exiting 3 is not a blocked loop; ordinary failed attempts and startup/interruption
 errors retain their existing ungraded outcome. Source changes still reach grading independently.
 
+## Reading retained results
+
+The private eval state root contains both runs and a `starters/` cache. A run has a `run.json`
+manifest; directory existence alone is not a run identity. Missing summaries mean running OR
+interrupted, not proof that the process stopped. `coop eval inspect [<run-id>]` reads the newest
+or named record and keeps absent trials in the requested denominator. Provider/verifier detail is
+untrusted recorded evidence: bound and escape it for terminal display, never treat it as authority
+or automatically retry a paid run. Errors before grading are not model-quality failures.
+
 ## Sizing a loop scenario, and one trap
 
 Measured on the shipped `queue` starter with `codex`: ten small tasks drained in **43 minutes**
@@ -94,6 +103,8 @@ already fully correct. The shipped verifier runs each subcommand on inputs no ta
 also why it cannot be satisfied by a loop that moves folders without finishing anything.
 
 ## Changelog
+- 2026-09-22 — documented manifest-backed discovery, unsealed-state ambiguity and explicit local
+  diagnostic inspection after a cache appeared as a run and provider quota refusals were opaque.
 - 2026-09-22 — separated terminal worker failure status from loop status, retaining raw attempt
   telemetry. Controller regressions cover ordinary/auth/rate/output failures; real offline Docker
   make reproduction confirms that raw exit 2 after source edits was misclassified as a startup refusal.

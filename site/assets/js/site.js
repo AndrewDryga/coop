@@ -75,7 +75,16 @@
         links.forEach(function (l) { l.classList.remove("active"); });
         if (map[e.target.id]) {
           map[e.target.id].classList.add("active");
-          map[e.target.id].scrollIntoView({ block: "nearest" });
+          // Scroll only the desktop sidebar. scrollIntoView also moves the page,
+          // interrupting anchor navigation; on mobile the contents are part of the page.
+          var link = map[e.target.id];
+          var side = link.parentElement;
+          if (getComputedStyle(side).position === "sticky") {
+            var item = link.getBoundingClientRect();
+            var pane = side.getBoundingClientRect();
+            if (item.top < pane.top) side.scrollTop += item.top - pane.top;
+            else if (item.bottom > pane.bottom) side.scrollTop += item.bottom - pane.bottom;
+          }
         }
       });
     }, { rootMargin: "-82px 0px -68% 0px", threshold: 0 });

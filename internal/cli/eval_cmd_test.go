@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/eval"
 )
 
 func TestParseEvalRunArgs(t *testing.T) {
@@ -54,7 +57,10 @@ func TestParseEvalRunArgs(t *testing.T) {
 
 func TestEvalHelpRunExamplesParse(t *testing.T) {
 	examples, dryRuns := 0, 0
-	for _, line := range strings.Split(commandHelp["eval"], "\n") {
+	for _, line := range strings.Split(commandHelp["eval"]+commandHelp["eval run"]+commandHelp["eval init"], "\n") {
+		if !strings.HasPrefix(line, " ") {
+			continue // a page's unindented title is not an executable example
+		}
 		args, ok := strings.CutPrefix(strings.TrimSpace(line), "coop eval run ")
 		if !ok || strings.Contains(args, "<") {
 			continue // the command index is syntax, not a runnable example
@@ -70,6 +76,91 @@ func TestEvalHelpRunExamplesParse(t *testing.T) {
 	}
 	if examples == 0 || dryRuns == 0 {
 		t.Fatal("eval help needs runnable examples, including a spend-free dry run")
+	}
+}
+
+func TestEvalDiscoveryAndFocusedHelp(t *testing.T) {
+	for _, cfg := range []*config.Config{freshConfig(t), signedInConfig(t)} {
+		if out := helpText(cfg); !strings.Contains(out, "EVALUATIONS") || !strings.Contains(out, "coop eval") {
+			t.Fatalf("eval is not discoverable from root help:\n%s", out)
+		}
+	}
+	for _, verb := range evalCommands {
+		page := "eval " + verb
+		want, ok := commandHelp[page]
+		if !ok || !strings.Contains(want, "Usage: coop "+page) {
+			t.Errorf("missing focused help for %s", page)
+			continue
+		}
+		out := captureStdout(t, func() {
+			if code, err := helpForPath([]string{"eval", verb}, &config.Config{}, true); code != 0 || err != nil {
+				t.Errorf("help %s: %d, %v", page, code, err)
+			}
+		})
+		if !strings.Contains(out, want) {
+			t.Errorf("leaf help did not route to %s", page)
+		}
+	}
+	for _, path := range []string{"README.md", "site/docs.html"} {
+		data, err := os.ReadFile(filepath.Join("..", "..", path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"eval run core codex --timeout 35m --dry-run", "eval inspect", "eval compare", "eval init", "eval runs"} {
+			if !strings.Contains(string(data), want) {
+				t.Errorf("%s lacks eval workflow entry %q", path, want)
+			}
+		}
+	}
+}
+
+func TestEvalStarterAndScaffoldHintsPreviewSupportedTargets(t *testing.T) {
+	a := &app{}
+	listing := captureStdout(t, func() {
+		if code, err := a.evalList(nil); code != 0 || err != nil {
+			t.Fatalf("ls = %d, %v", code, err)
+		}
+	})
+	if !strings.Contains(listing, "coop eval run core codex --timeout 35m --dry-run") || strings.Contains(listing, "core <target|preset>") {
+		t.Fatalf("starter hint is not a supported preview:\n%s", listing)
+	}
+	dir := filepath.Join(t.TempDir(), "my suite")
+	out := captureStdout(t, func() {
+		if code, err := a.evalInit([]string{dir}); code != 0 || err != nil {
+			t.Fatalf("init = %d, %v", code, err)
+		}
+	})
+	if !strings.Contains(out, "'"+filepath.Join(dir, "suite.yaml")+"' codex --timeout 12m --dry-run") || strings.Contains(out, "<target|preset>") {
+		t.Fatalf("scaffold hint is not a copyable supported preview:\n%s", out)
+	}
+}
+
+func TestEvalPreflightRefusesPresetBeforeRecordingAnAgentRun(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo := evalTestRepo(t)
+	writePresetFile(t, repo, "demo", "lead:\n  agent: [codex]\n")
+	a := &app{cfg: &config.Config{RepoOverride: repo, RuntimeName: "coop-no-such-runtime-xyz"}}
+	for _, dry := range []bool{true, false} {
+		args := []string{"core", "demo", "--timeout", "35m"}
+		if dry {
+			args = append(args, "--dry-run")
+		}
+		out := captureStdout(t, func() {
+			code, err := a.evalRun(args)
+			if code != 1 || err == nil || !strings.Contains(err.Error(), "loop suites") {
+				t.Errorf("unsupported agent preset (dry=%v): code %d, err %v", dry, code, err)
+			}
+		})
+		if strings.Contains(out, "Suite:") {
+			t.Errorf("unsupported configuration was advertised as executable:\n%s", out)
+		}
+	}
+	root, err := evalStateRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids, err := eval.ListRuns(root); err != nil || len(ids) != 0 {
+		t.Fatalf("refused input left run records: %v, %v", ids, err)
 	}
 }
 

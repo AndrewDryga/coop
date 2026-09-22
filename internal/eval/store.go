@@ -252,7 +252,12 @@ func ListRuns(root string) ([]string, error) {
 	}
 	var ids []string
 	for _, e := range entries {
-		if e.IsDir() {
+		if !e.IsDir() {
+			continue
+		}
+		// The starter cache shares this root. A manifest identifies a run; an unreadable
+		// manifest still belongs in the listing so a damaged record does not disappear.
+		if _, err := os.Lstat(filepath.Join(root, e.Name(), manifestName)); !errors.Is(err, os.ErrNotExist) {
 			ids = append(ids, e.Name())
 		}
 	}

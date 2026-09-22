@@ -7,6 +7,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/eval"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/tasks"
@@ -210,11 +211,16 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		if len(prev) == 1 {
 			return evalCommands
 		}
-		if len(prev) >= 2 && prev[1] == "run" {
-			// After the suite, complete configurations (targets/presets) and the run flags.
-			if len(prev) >= 3 {
-				return append(a.targetCandidates(cur, false, false), evalRunOptions...)
+		if (prev[1] == "inspect" && len(prev) == 2) || (prev[1] == "compare" && len(prev) <= 3) {
+			root, err := evalStateRoot()
+			if err != nil {
+				return nil
 			}
+			ids, _ := eval.ListRuns(root)
+			return ids
+		}
+		if prev[1] == "run" {
+			return a.evalRunCandidates(prev[2:], cur)
 		}
 	case "login", "credentials", "models":
 		if len(prev) == 1 {
@@ -242,6 +248,39 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		}
 	}
 	return nil
+}
+
+func (a *app) evalRunCandidates(args []string, cur string) []string {
+	positionals := 0
+	used := map[string]bool{}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "--") {
+			used[arg] = true
+			if arg != "--dry-run" {
+				if i+1 == len(args) {
+					return nil // the shell can complete a path; never offer models as flag values
+				}
+				i++
+			}
+		} else {
+			positionals++
+		}
+	}
+	var out []string
+	if positionals == 0 {
+		for _, s := range eval.Starters() {
+			out = append(out, s.ID)
+		}
+	} else {
+		out = appendCompletionCandidates(a.targetCandidates(cur, true, true), a.presetCandidates())
+	}
+	for _, flag := range evalRunOptions {
+		if !used[flag] {
+			out = append(out, flag)
+		}
+	}
+	return out
 }
 
 var effortCompletionLevels = []string{"low", "medium", "high", "xhigh", "max"}

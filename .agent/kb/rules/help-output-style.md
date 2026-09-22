@@ -4,7 +4,7 @@ description: "UPPERCASE help headings, aligned command rows, practical prose and
 scope: cli-output
 sources: [internal/cli/help.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/cli/presetcmd.go, internal/cli/help_test.go, internal/cli/conformance_test.go]
 check: "none"
-updated: 2026-09-13
+updated: 2026-09-22
 ---
 
 # Help output: consistent headings, useful commands, practical guidance
@@ -21,6 +21,10 @@ updated: 2026-09-13
   omit required arguments to satisfy that index limit. See [[no-color-in-width-fields]].
 - Group by the user's job. A heading may include one short explanation or concrete file path.
   Options and detailed examples belong on the focused page, not in the top-level menu.
+- A shipped command family must be discoverable from the main menu and user guides, not just
+  callable by someone who already knows its name. Connect the whole workflow: preview/run,
+  inspect outcomes, diagnose exceptions, and take the next action. Each leaf gets focused help
+  and relevant completion; an error count without a route to its cause is not useful output.
 - Explain the thing briefly, then show how to use it. Lists of concepts are actual bullets;
   sequential how-tos use numbered steps with properly nested commands/config. Do not format a
   how-to as if it were a subcommand table.
@@ -44,6 +48,12 @@ TestCLIConformance cover portions of the historical rules, not this entire contr
 their relevant coverage during implementation; `check: none` remains honest until that lands.
 
 ## Changelog
+- 2026-09-22 — user could not find evals in root help or docs, and could not diagnose three
+  errors from a comparison. Swept root/focused help, completion, README, website guide and
+  generated references: eval was missing from the menu/guides and had no result inspection.
+  Repaired together with store-backed run discovery. TestEvalDiscoveryAndFocusedHelp and
+  TestEvalCompletionFollowsTheWorkflow guard this journey; the broader editorial rule still
+  needs review, so check remains none.
 - 2026-09-13 — restored the user-approved concrete provider row (audit F14). Swept
   renderMenu's first-run, signed-in, service and reference variants plus generated
   CLI/man/llms references: RUN AGENTS had one generic-row regression; GET STARTED

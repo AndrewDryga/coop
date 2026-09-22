@@ -18,7 +18,7 @@ import (
 )
 
 // evalCommands are the `coop eval` verbs, in help order.
-var evalCommands = []string{"ls", "runs", "run", "compare", "init"}
+var evalCommands = []string{"run", "runs", "inspect", "compare", "ls", "init"}
 
 // evalRunOptions are the flags `coop eval run` accepts after its positionals.
 var evalRunOptions = []string{"--jobs", "--repeat", "--timeout", "--loop-config", "--dry-run"}
@@ -37,6 +37,8 @@ func (a *app) cmdEval(args []string) (int, error) {
 		return a.evalList(rest)
 	case "runs":
 		return a.evalRuns(rest)
+	case "inspect":
+		return a.evalInspect(rest)
 	case "run":
 		return a.evalRun(rest)
 	case "compare":
@@ -48,17 +50,9 @@ func (a *app) cmdEval(args []string) (int, error) {
 	}
 }
 
-// evalOverview is bare `coop eval`: the shipped starters and how to author your own.
+// evalOverview is bare `coop eval`: the preview, run and inspection workflow.
 func (a *app) evalOverview() (int, error) {
-	fmt.Println("coop eval — compare a preset, loop config or Coop build before and after a change")
-	fmt.Println()
-	if _, err := a.evalList(nil); err != nil {
-		return 1, err
-	}
-	fmt.Println()
-	fmt.Println("Author your own:  coop eval init ./evals/my-suite")
-	fmt.Println("Run one:          coop eval run <suite> <target|preset>... --timeout 60m")
-	return 0, nil
+	return groupHelp("eval")
 }
 
 // evalList shows the shipped starter catalog, with custom authoring as the fallback when empty.
@@ -69,14 +63,15 @@ func (a *app) evalList(args []string) (int, error) {
 	starters := eval.Starters()
 	if len(starters) == 0 {
 		fmt.Println("No public starter suites are qualified yet.")
-		fmt.Println("Run a custom suite:  coop eval run ./evals/my-suite/suite.yaml <target|preset>... --timeout 60m")
+		fmt.Println("Create a custom suite: coop eval init ./evals/my-suite")
 		return 0, nil
 	}
 	fmt.Println("Public starter suites:")
-	defer fmt.Println("\nRun one:  coop eval run " + starters[0].ID + " <target|preset>... --timeout 35m")
 	for _, s := range starters {
 		fmt.Printf("  %-24s %s\n", s.ID, s.Summary)
 	}
+	fmt.Println("\nPreview core:  coop eval run core codex --timeout 35m --dry-run")
+	fmt.Println("Compare presets with the queue suite; see 'coop help eval run'.")
 	return 0, nil
 }
 
@@ -95,23 +90,30 @@ func (a *app) evalRuns(args []string) (int, error) {
 	}
 	if len(ids) == 0 {
 		fmt.Println("No eval runs recorded yet.")
+		fmt.Println("Preview your first: coop eval run core codex --timeout 35m --dry-run")
 		return 0, nil
 	}
 	fmt.Println("Recorded runs (newest first):")
 	for _, id := range ids {
 		run, rerr := eval.LoadRun(root, id)
 		if rerr != nil {
-			fmt.Printf("  %s\n", id)
+			fmt.Printf("\n%s — unreadable record\n", evalDisplayText(id))
+			fmt.Printf("  Inspect: coop eval inspect %s\n", evalDisplayText(id))
 			continue
 		}
-		sealed := ""
-		if _, ok, serr := eval.LoadSummary(root, id); serr != nil {
-			sealed = " (unreadable summary)"
-		} else if !ok {
-			sealed = " (interrupted)"
+		fmt.Printf("\n%s  %s\n", evalDisplayText(id), evalDisplayText(run.Suite))
+		printEvalText("  ", strings.Join(evalConfigLabels(run), ", "))
+		if sum, ok, serr := eval.LoadSummary(root, id); serr != nil {
+			fmt.Println("  Unreadable summary; inspect the saved records.")
+		} else if ok {
+			printEvalText("  ", evalResultLine(*sum))
+		} else {
+			fmt.Println("  No final summary — running or interrupted.")
 		}
-		fmt.Printf("  %-32s %s%s\n", id, run.Suite, sealed)
 	}
+	fmt.Println("\nInspect latest: coop eval inspect")
+	fmt.Println("Inspect older:  coop eval inspect <run-id>")
+	fmt.Println("Compare:        coop eval compare <before-id> <after-id>")
 	return 0, nil
 }
 
@@ -137,6 +139,15 @@ func (a *app) evalRun(args []string) (int, error) {
 	configs, err := a.resolveEvalConfigurations(positionals)
 	if err != nil {
 		return 1, err
+	}
+	if !suite.IsLoop() {
+		// Preview must reject the same unsupported configurations as execution, before
+		// recording a run or preparing any workspaces. Keep one selection contract.
+		for _, c := range configs {
+			if _, err := applyEvalConfiguration(a.cfg.Clone(), eval.FrozenConfig{Kind: c.Kind, Label: c.Label}); err != nil {
+				return 1, err
+			}
+		}
 	}
 	plan, err := eval.BuildPlan(suite, configs, opts)
 	if err != nil {
@@ -239,21 +250,16 @@ func (a *app) executeEvalRun(plan *eval.Plan, frozen []eval.FrozenConfig) (int, 
 // clean sweep.
 func renderEvalSummary(id string, s eval.RunSummary) {
 	covered := s.Counts[eval.TrialPassed] + s.Counts[eval.TrialFailed]
-	fmt.Printf("\nRun %s: %d/%d passed; coverage %d/%d graded\n",
-		id, s.Counts[eval.TrialPassed], s.Requested, covered, s.Requested)
-	for _, st := range []eval.TrialStatus{eval.TrialFailed, eval.TrialError, eval.TrialTimedOut, eval.TrialPending} {
-		if n := s.Counts[st]; n > 0 {
-			fmt.Printf("  %-9s %d\n", st, n)
-		}
-	}
+	fmt.Printf("\nRun %s\n", evalDisplayText(id))
+	printEvalText("  ", evalResultLine(s))
 	if covered < s.Requested {
 		fmt.Println("⚠ coverage is incomplete — trials without a graded verdict are not passes or failures")
 	}
-	fmt.Printf("\nCompare it with another run: coop eval compare <other-run> %s\n", id)
+	fmt.Printf("\nInspect results: coop eval inspect %s\n", id)
+	fmt.Printf("Compare:         coop eval compare <before-id> %s\n", id)
 }
 
-// resolveEvalSuite loads a suite from a filesystem path or, later, a shipped starter id. Milestone 1
-// resolves a path; a bare starter id that is not a path is refused by name until the catalog ships.
+// resolveEvalSuite loads a suite from a filesystem path or a shipped starter ID.
 func (a *app) resolveEvalSuite(ref string) (*eval.Suite, error) {
 	root, err := evalStateRoot()
 	if err != nil {
@@ -323,34 +329,42 @@ func (a *app) evalCompare(args []string) (int, error) {
 
 // renderEvalComparison prints a comparison: each run's coverage and counts, then per-case pairing.
 func renderEvalComparison(c *eval.Comparison) {
-	fmt.Printf("Comparing %s (before) vs %s (after)\n", c.BaseID, c.NewID)
+	fmt.Printf("Comparison: %s\n", evalDisplayText(c.Suite))
 	if c.Mismatch != "" {
-		fmt.Printf("\n⚠ %s\n", c.Mismatch)
+		printEvalText("⚠ ", c.Mismatch)
 	}
-	line := func(label string, o eval.ConfigOutcome) {
+	line := func(label, id string, o eval.ConfigOutcome) {
 		// Lead with passed / REQUESTED (never / covered): a pending or errored trial stays in the
 		// denominator, so a run can't look better by not finishing. Coverage is a separate figure.
-		fmt.Printf("  %-7s %v: %d/%d passed; coverage %d/%d graded; failed %d, error %d, timed out %d, pending %d\n",
-			label, o.Configs, o.Passed, o.Requested, o.Covered(), o.Requested, o.Failed, o.Errored, o.TimedOut, o.Pending)
+		printEvalText(label+": ", strings.Join(o.Configs, ", "))
+		fmt.Printf("  Run: %s\n", evalDisplayText(id))
+		printEvalText("  ", evalResultLine(eval.RunSummary{Requested: o.Requested, Counts: map[eval.TrialStatus]int{
+			eval.TrialPassed: o.Passed, eval.TrialFailed: o.Failed, eval.TrialError: o.Errored,
+			eval.TrialTimedOut: o.TimedOut, eval.TrialPending: o.Pending,
+		}}))
 		if o.Size.Measured > 0 {
 			// Beside the counts, never inside them: this is a review signal, not a score.
-			fmt.Printf("          change size: net code %+d (%d→%d lines) over %d graded trial(s)\n",
-				o.Size.NetGrowth, o.Size.CodeBefore, o.Size.CodeAfter, o.Size.Measured)
+			printEvalText("  ", fmt.Sprintf("Change size: net code %+d (%d→%d lines) over %d graded trial(s)",
+				o.Size.NetGrowth, o.Size.CodeBefore, o.Size.CodeAfter, o.Size.Measured))
 		}
+		fmt.Println()
 	}
 	fmt.Println()
-	line("before", c.Base)
-	line("after", c.New)
+	line("Before", c.BaseID, c.Base)
+	line("After", c.NewID, c.New)
 	if c.Base.Covered() < c.Base.Requested || c.New.Covered() < c.New.Requested {
-		fmt.Println("⚠ coverage is incomplete; with unfinished trials there is no definitive winner")
+		fmt.Println("⚠ Incomplete grading — no definitive winner.")
+		fmt.Println("  Errors and timeouts are not model-quality failures.")
 	}
+	fmt.Printf("\nInspect before: coop eval inspect %s\n", c.BaseID)
+	fmt.Printf("Inspect after:  coop eval inspect %s\n", c.NewID)
 	if c.Mismatch != "" || len(c.Cases) == 0 {
 		return
 	}
 	fmt.Println("\nPer case (before → after; summed over configurations):")
 	for _, cc := range c.Cases {
-		fmt.Printf("  %-24s passed %d→%d  failed %d→%d  error %d→%d\n",
-			cc.Case, cc.Base.Passed, cc.New.Passed, cc.Base.Failed, cc.New.Failed, cc.Base.Errored, cc.New.Errored)
+		fmt.Printf("  %s\n", evalDisplayText(cc.Case))
+		printEvalText("    ", evalCaseResult(cc.Base)+" → "+evalCaseResult(cc.New))
 	}
 }
 
@@ -382,7 +396,8 @@ func (a *app) evalInit(args []string) (int, error) {
 		return 1, err
 	}
 	fmt.Printf("Wrote a starter suite to %s\n", dir)
-	fmt.Printf("Edit it, then:  coop eval run %s <target|preset>... --timeout 60m\n", manifest)
+	fmt.Printf("Preview it: coop eval run %s codex --timeout 12m --dry-run\n", shellWord(manifest))
+	fmt.Println("Edit suite.yaml and its fixture/verifier, then remove --dry-run to execute.")
 	return 0, nil
 }
 

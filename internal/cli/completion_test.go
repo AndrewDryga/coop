@@ -11,6 +11,42 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
+func TestEvalCompletionFollowsTheWorkflow(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	dir := seedEvalResults(t, "20260921-results", true)
+	if err := os.Mkdir(filepath.Join(filepath.Dir(dir), "starters"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := freshConfig(t)
+	if err := os.MkdirAll(cfg.AgentProfileDir("codex", "work"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: cfg}
+	for _, words := range [][]string{{"eval", "inspect"}, {"eval", "compare"}, {"eval", "compare", "before"}} {
+		got := a.completionCandidates(words)
+		if !hasCand(got, "20260921-results") || hasCand(got, "starters") {
+			t.Errorf("%v candidates = %v", words, got)
+		}
+	}
+	for _, s := range []string{"core", "queue"} {
+		if !hasCand(a.completionCandidates([]string{"eval", "run"}), s) {
+			t.Errorf("suite missing: %s", s)
+		}
+	}
+	for _, words := range [][]string{{"eval", "run", "core", "--timeout"}, {"eval", "run", "core", "--loop-config"}} {
+		if got := a.completionCandidates(words); len(got) != 0 {
+			t.Errorf("models offered as a flag value: %v", got)
+		}
+	}
+	got := a.completionCandidates([]string{"eval", "run", "core", "--timeout", "35m"})
+	if !hasCand(got, "codex") || !hasCand(got, "--dry-run") || hasCand(got, "--timeout") {
+		t.Errorf("after interleaved flag: %v", got)
+	}
+	if got := a.completionCandidatesFor([]string{"eval", "run", "core"}, "codex@"); !hasCand(got, "codex@work") {
+		t.Errorf("account target missing: %v", got)
+	}
+}
+
 func hasCand(cands []string, want string) bool {
 	return candCount(cands, want) > 0
 }

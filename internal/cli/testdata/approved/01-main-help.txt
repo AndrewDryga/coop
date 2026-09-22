@@ -30,6 +30,9 @@ TASKS — each task is a folder in .agent/tasks/
 LOOPS — work through tasks automatically; configure the steps in .agent/loop.yaml
   coop loop [<agent|preset>]        work through the project's task queue
 
+EVALUATIONS — check whether a model, preset or loop change helped
+  coop eval                         run repeatable checks and compare results
+
 FORKS — work in separate project copies, then review and merge the changes
   coop fork <name> <agent|preset>   work in a separate copy of this project
   coop fork ls                      show this project's forks

@@ -40,6 +40,7 @@ It's the working tooling behind two write-ups:
 - [The sandbox](#the-sandbox) — what's mounted · secrets shadowed · git identity · `coop doctor`
 - [Forks](#forks-hand-off-work-like-a-pr) — open · review · land work like a contractor's PR
 - [Agents & config](#agents--config) — authentication · credentials · models · presets · instructions · MCP servers
+- [Evaluations](#evaluations) — try a suite · inspect failures · compare changes
 - [Second opinions](#second-opinions---peer) — named read-only peers for hard calls
 - [Drive it from a local service](#drive-it-from-a-local-service)
 - [Drive it from Zed (ACP)](#drive-it-from-zed-acp)
@@ -214,6 +215,18 @@ spelled out here (there's room to render them).
 | Command | What it does |
 |---|---|
 | `coop loop [<target|preset>] [--tasks <path>] [--peer <target>...] [--max-tasks <n>] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue until done, then sign off (name an agent target — `claude`/`codex`/`gemini`/`grok`, with optional model/effort/account — or a preset in the same slot, whose lead supplies it); `--tasks` picks the queue (default `.agent/tasks`, repeatable); the target's model/effort or the preset's ladder set the [rotation](#picking-models); name each peer with `--peer <target>` (repeatable) so iterations may ask them read-only; `--max-tasks <n>` works a bounded batch through retries and immediate audits, then pauses before another task or final signoff; `--preflight` tidies `.agent/` state first; `--debug-on-fail` opens a box shell on a failure |
+
+**Evaluations** — check whether a change helped ([guide](#evaluations))
+
+| Command | What it does |
+|---|---|
+| `coop eval` | show the preview-first evaluation workflow |
+| `coop eval ls` | choose a shipped starter suite |
+| `coop eval run <suite> <target\|preset>... --timeout <duration> [--dry-run]` | evaluate each configuration; a dry run only previews the plan |
+| `coop eval runs` | find recorded runs by suite, configuration and outcome |
+| `coop eval inspect [<run-id>]` | read results and failure causes; latest run when no ID is given |
+| `coop eval compare <before-id> <after-id>` | compare two recorded runs, without launching providers |
+| `coop eval init <dir>` | scaffold an editable custom suite with an independent verifier |
 
 **Tasks** — a folder-per-task queue in `.agent/tasks/` ([details](#the-loop))
 
@@ -1009,6 +1022,75 @@ for servers it cannot broker.
 The example's Playwright server works in the box out of the box: Chromium's system
 libraries are baked into the image, the browser binary downloads to the cache volume on
 first use, and the server runs `--headless --no-sandbox` (the box is already the sandbox).
+
+## Evaluations
+
+Did a different model, preset, loop recipe or Coop build actually help? `coop eval` runs
+repeatable tasks and grades the finished work independently. Keep the suite and trial matrix
+the same before and after your change, then compare the recorded results.
+
+### Try it
+
+1. Preview the shipped `core` suite. This launches no container or provider and spends nothing:
+
+   ```sh
+   coop eval run core codex --timeout 35m --dry-run
+   ```
+
+2. For a real run, sign in with `coop login codex` and have a working container runtime and
+   current Coop box image. If the image is missing, run `coop build --egress open` from a
+   directory without a project Dockerfile; building may download dependencies. Then run:
+
+   ```sh
+   coop eval run core codex --timeout 35m
+   coop eval inspect
+   ```
+
+   This uses your provider account and may spend credits. A dry run validates the plan, not
+   credential, runtime or image readiness. `--timeout` is a total time limit, not a money cap;
+   each case also has its own timeout. `--repeat 3` runs each case three times, and `--jobs 2`
+   allows two agent trials at once. More configurations or repeats mean more paid work.
+
+3. Change one thing, run the same suite again, and use `coop eval runs` to find the two IDs.
+   Compare them with `coop eval compare <before-id> <after-id>`. Argument order determines
+   before and after; Coop does not infer it from timestamps.
+
+### Choose what to evaluate
+
+- `core`: three small single-agent coding tasks with independent checks and deliberate near
+  misses. Use provider targets, such as `codex:gpt-5.6/xhigh`, not presets.
+- `queue`: ten tasks worked by the real `coop loop`, including review and signoff. Use it to
+  compare presets or loop recipes; it runs serially and can take hours. For example,
+  `coop eval run queue frontier --timeout 2h` uses your existing `frontier` preset.
+  Add `--loop-config .agent/loop.yaml` to evaluate your project's recipe.
+- Your own suite: `coop eval init ./evals/my-suite` creates a working greeting example.
+  Edit `suite.yaml`, `files/greeting/` and the separate `verifiers/greeting/verify.sh`.
+  The verifier's README explains grading; the manifest includes a commented loop example.
+
+Each target or preset after the suite is a separate configuration, not a fallback. For example,
+`coop eval run core codex:gpt-5.6 codex:gpt-5.6/xhigh --timeout 70m --dry-run` previews both.
+
+### Understand a result
+
+`coop eval inspect` reads the latest run; add its ID to inspect an older one. It shows recorded
+causes for non-passing trials and the directory containing the JSON records and retained work.
+An `error` means execution or grading did not produce a verdict—not that the model failed the
+task. `failed` means the independent verifier actually rejected the work. Timeouts and trials
+that never started also leave grading incomplete; an incomplete comparison has no definitive
+winner. Code-size changes are a review signal, not a quality score.
+
+For a provider sign-in or quota refusal, check `coop credentials <agent>` before another paid
+run. For timeouts, check both the case timeout in `suite.yaml` and the run's `--timeout`.
+A run without a final summary may still be running or may have been interrupted. It can be
+inspected, but cannot be compared or resumed; any rerun is an explicit new invocation.
+Recorded diagnostics can contain private provider output: review them before sharing.
+
+Trials use private workspaces with no source Git history. Hidden verifiers stay outside model
+mounts and run afterwards in a separate, credential-free, network-free container. Operator MCP
+servers are not exposed to trials. These checks are evidence about the tested workload, not a
+promise of general provider parity or a public benchmark ranking.
+
+For all options: `coop help eval run`. For result meanings: `coop help eval inspect`.
 
 ## Second opinions (`--peer`)
 

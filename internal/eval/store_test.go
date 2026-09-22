@@ -1,10 +1,31 @@
 package eval
 
 import (
+	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
+
+func TestListRunsExcludesCachesButRetainsUnreadableRecords(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"starters/core", "empty", "20260921-broken"} {
+		if err := os.MkdirAll(filepath.Join(root, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "20260921-broken", manifestName), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateRun(root, RunRecord{ID: "20260920-valid", Suite: "core"}); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := ListRuns(root)
+	if err != nil || !slices.Equal(ids, []string{"20260921-broken", "20260920-valid"}) {
+		t.Fatalf("runs = %v, %v; only manifests identify runs, even if unreadable", ids, err)
+	}
+}
 
 func TestStoreRecordsARunItsTrialsAndSeals(t *testing.T) {
 	root := t.TempDir()

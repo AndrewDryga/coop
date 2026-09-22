@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Evaluations are now discoverable from the main help, README and website guide, with a
+  preview-first walkthrough and focused help for every eval command. `coop eval inspect`
+  explains the latest run (or a chosen ID), including bounded recorded failure causes.
+  Run listings show configurations and grading outcomes instead of internal starter caches;
+  comparisons link to inspection and include timed-out and pending cases. Shell completion
+  includes suites, presets, accounts and recorded run IDs. No paid work starts from inspection.
+  Unsupported single-agent/preset combinations now fail during preview, before creating a run.
+  Highlighting documentation links no longer interrupts desktop or mobile navigation.
+
 - Editor ACP children now keep the network mode admitted by their supervisor, including one-off
   and remembered offline settings. Initial, replacement and warm children no longer fall back
   to an absent or stale host environment setting. Filtered policy proofs are unchanged.
@@ -41,7 +50,7 @@
   --timeout 2h`, change something, run it again, compare. Each loop case runs as its own process, so
   one scenario reaching its deadline never disturbs another running beside it.
 
-  One starter ships: `coop eval run core <target|preset>... --timeout 35m`. Three small tasks, each
+  The `core` starter accepts targets: `coop eval run core <target>... --timeout 35m`. Three small tasks, each
   with a NEAR MISS its verifier deliberately rejects — the count that was hardcoded from the bug
   report rather than computed, the new option added by breaking the one that already worked, the
   failing check made to pass by weakening the check. A case every configuration passes tells you

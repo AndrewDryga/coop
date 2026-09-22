@@ -112,7 +112,7 @@ func loadSealed(root, id string) (sealedRun, error) {
 		return sealedRun{}, err
 	}
 	if !ok {
-		return sealedRun{}, fmt.Errorf("run %s is not sealed (it was interrupted); only completed runs compare", id)
+		return sealedRun{}, fmt.Errorf("run %s has no final summary (running or interrupted); only completed runs compare — inspect it with 'coop eval inspect %s'", id, id)
 	}
 	trials, err := LoadTrials(root, id)
 	if err != nil {
