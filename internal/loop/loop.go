@@ -1508,12 +1508,14 @@ reviewAgain:
 					ui.Failure(fmt.Sprintf("Stopped after %d usage-limit waits", maxLimitWaits),
 						"Every configured agent was still rate limited.",
 						[2]string{"Continue:", continueCmd})
-					return code, ui.Reported(fmt.Errorf("still rate limited after %d waits", maxLimitWaits))
+					return 1, ui.Reported(fmt.Errorf("still rate limited after %d waits", maxLimitWaits))
 				}
 				ui.Failure(fmt.Sprintf("Stopped after %d failed attempts", fails),
 					fmt.Sprintf("%s did not finish.", active),
 					[2]string{"Task:", "coop tasks path " + assigned.Item.ID})
-				return code, ui.Reported(fmt.Errorf("iteration failed %d times since the last success", fails))
+				// The worker's raw status belongs to attempt telemetry, not the loop's
+				// public exit contract (2 is usage; 3 means only blocked work remains).
+				return 1, ui.Reported(fmt.Errorf("iteration failed %d times since the last success", fails))
 			case actAuthStop:
 				// A dead credential is no reason to abandon the queue while another account can still
 				// work: mark this rung unusable for the run and switch, exactly as a rate limit does.
@@ -1528,12 +1530,12 @@ reviewAgain:
 				ui.Failure("No configured agent could sign in",
 					"Authentication failed for every available account.",
 					[2]string{"Sign in again:", loginCommand(target)})
-				return code, ui.Reported(rotationAuthenticationError(rot, target))
+				return 1, ui.Reported(rotationAuthenticationError(rot, target))
 			case actOutputStop:
 				ui.Failure(fmt.Sprintf("Stopped after %d response-limit retries", retries),
 					fmt.Sprintf("%s did not finish within the model's response limit.", active),
 					[2]string{"Task:", "coop tasks path " + assigned.Item.ID})
-				return code, ui.Reported(fmt.Errorf("iteration reached the model output limit %d times", retries))
+				return 1, ui.Reported(fmt.Errorf("iteration reached the model output limit %d times", retries))
 			}
 		}
 		// A requested stop (soft: the current iteration finished; hard: it was torn down) skips the

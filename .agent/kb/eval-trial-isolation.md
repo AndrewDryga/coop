@@ -2,7 +2,7 @@
 name: eval-trial-isolation
 description: What isolates one coop eval trial from the next and from the grader — and why the obvious credential fix would break authentication
 subsystem: eval
-sources: [internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_loop.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/box/run.go, internal/box/mounts.go, internal/agent/codex.go]
+sources: [internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_loop.go, internal/loop/loop.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/box/run.go, internal/box/mounts.go, internal/agent/codex.go]
 updated: 2026-09-22
 ---
 
@@ -66,9 +66,14 @@ Reads are bounded by `SnapshotLimit`; unreadable or oversized content makes comp
 so it cannot claim the candidate changed nothing. Links are not followed and special files are not
 opened. The normal snapshot and verifier decide the outcome when comparison is unavailable.
 
+A failed loop worker is not a loop usage error or human-blocked outcome. Exhausted work retries,
+authentication refusal and exhausted rate/output retries return loop failure (1); the original worker
+status remains in attempt telemetry. A custom `make loop-iter` can exit 2 after changing source, and
+that attempted work must reach grading rather than be mistaken for startup refusal.
+
 A loop stopped on a human decision bypasses this shortcut: its only work may be a task move and
 decision under `.agent/tasks`, which signatures intentionally ignore. Exit 3 alone is insufficient:
-a custom work command can return it on failure. The exception requires a readable, confined queue
+the queue must agree with the subprocess status. The exception requires a readable, confined queue
 with blocked tasks and no actionable work; linked `.agent`/queue/state/task paths are not evidence.
 The grading snapshot includes the queue, and the independent verifier still decides pass or fail.
 An unchanged agent exiting 3 is not a blocked loop; ordinary failed attempts and startup/interruption
@@ -89,6 +94,9 @@ already fully correct. The shipped verifier runs each subcommand on inputs no ta
 also why it cannot be satisfied by a loop that moves folders without finishing anything.
 
 ## Changelog
+- 2026-09-22 — separated terminal worker failure status from loop status, retaining raw attempt
+  telemetry. Controller regressions cover ordinary/auth/rate/output failures; real offline Docker
+  make reproduction confirms that raw exit 2 after source edits was misclassified as a startup refusal.
 - 2026-09-22 — required actual blocked-only queue evidence for exit3, which a custom command may
   also return on failure. Integrated regressions cover raw exit3, actionable/missing/empty/done/unsafe
   queues, unchanged genuine blocking and changed source; linked ancestor/queue paths are rejected.

@@ -154,8 +154,8 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 	return res
 }
 
-// Exit 3 is also a possible custom-command failure, so it needs the engine's blocked-only queue
-// evidence. The candidate has stopped. QueueCounts rejects links within the queue; check its
+// A subprocess status alone does not prove a blocked-only queue. The candidate has stopped;
+// verify that the queue agrees. QueueCounts rejects links within the queue; check its
 // candidate-controlled ancestor too, before reading anything through it.
 func loopQueueBlocked(workspace string) bool {
 	info, err := os.Lstat(filepath.Join(workspace, ".agent"))
