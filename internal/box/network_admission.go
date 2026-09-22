@@ -235,7 +235,7 @@ func checkFilteredRuntime(rt runtime.Runtime) error {
 // never downgraded to a warning and a wider policy.
 //
 // A project's own .agent/Dockerfile is NOT one of these: it is built on the
-// locked client image at launch and proven derived from it (derived_image.go).
+// locked client image explicitly and proven derived from it at launch (derived_image.go).
 // An arbitrary COOP_IMAGE cannot be — nothing qualified it, and no proof can
 // turn an unrelated image into the one this host set up.
 func checkFilteredSupport(cfg *config.Config) error {

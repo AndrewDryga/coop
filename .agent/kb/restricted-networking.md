@@ -112,11 +112,11 @@ host's filtered setup on its next launch. The base build asks the runtime for it
 Traps:
 
 - A filtered run's box is the LOCKED client image, or that image plus the project's own layers.
-  A project `.agent/Dockerfile` is built at launch with `COOP_BASE_IMAGE` set to the locked image,
+  A project `.agent/Dockerfile` is explicitly built on the host with `COOP_BASE_IMAGE` set to the locked image,
   through the ordinary project build path, under its own tag `coop-<repo>-filtered:<hash of the
-  client image>` (`box/derived_image.go:70`) — so an ordinary and a filtered build never collide and
+  client image>` (`box/derived_image.go:BuildFilteredProject`) — so an ordinary and a filtered build never collide and
   a new client image forces a rebuild. TWO proofs, both read from the BUILT image and never from the
-  Dockerfile text, gate it (`box/derived_image.go:167`): the locked image's `RootFS.Layers` must be a
+  Dockerfile text, gate it (`box/derived_image.go:proveDerivedImage`): the locked image's `RootFS.Layers` must be a
   PREFIX of the built image's, and every pinned client entry point (launcher, each `Exec` element
   including `/usr/local/bin/node`, and every `RequiredExecutables` path) must be byte-identical in
   both images. The complete `/opt/coop/clients` directory archive is also hashed, so changing,
@@ -129,27 +129,26 @@ Traps:
   complete tree. A record that is missing, damaged or for another image/root is a MISS and the image
   is read; nothing there can make a changed image pass. `COOP_IMAGE` stays refused at
   admission (`box/network_admission.go:175`): nothing qualified it and no proof can.
-- That build is run by the LAUNCH, not by a human `coop build`, and a Docker build has root and
-  ordinary network. The proofs bind what the box RUNS, not what the build may do, so an
-  agent-authored `.agent/Dockerfile` is a way out of the gateway at BUILD time (a `RUN` line can
-  post the staged context anywhere). The staged context omits every shadowed secret and `.git`
-  (`box/image.go:stageBuildContext`), and an untracked box definition is called out on the launch
-  line (`box/derived_image.go:107`) — but the trade-off is deliberate and unfenced: binding the
-  Dockerfile to `coop approve` the way a `service:` grant is bound is the open design question.
-- A launch rebuilds that image only when something it builds from changed. It hashes the exact
-  sanitized selection it would stage (`box/image.go:contextDigest` — kind, path, mode or link target,
-  bytes; the selection itself is recomputed every launch) with the locked image, client set, base
-  and output tags, Dockerfile path and buildx environment (`box/project_build.go:projectBuildInputs`),
-  and runs the image id an owner-private record names for exactly those inputs
-  (`networkstate/project_builds.go`, one record per output tag) — only if that id still exists and
-  passes both proofs again. A record is written only after a fresh build passed its proofs, keyed by
-  the digest of what that build STAGED and bound to the id `--iidfile` reported (the tag is shared by
-  every launch of the repository). Nothing is recorded for a Dockerfile with inputs the digest cannot
-  see (`dockerfileReusable`: ADD, other images, RUN flags, directives, heredocs, a linked Dockerfile
-  or ignore file) — it builds every launch. That scanner must read instructions exactly as BuildKit
-  does (continuation regex, raw joins, a byte-wise flag lexer): a reading that merges where Docker
-  splits reuses an image built from an input nobody hashed. Staging sets each file's own mode rather
-  than leaving it to the umask, so a `umask 077` shell no longer bakes 0600 files into the image.
+- The explicit filtered-build CLI cancels its context on SIGINT/SIGTERM: the runtime build owns
+  a separate process group, so terminal signals alone cannot clean it up. Cancellation stops the
+  builder and its children, removes staged inputs, and never publishes an unfinished approval.
+- Project builds are explicit under restricted networking: `coop build --egress filtered` prepares
+  the filtered image; plain `coop build` follows the effective project posture. The build itself
+  still has ordinary Docker networking, so review the Dockerfile and copied files first.
+  `filteredProjectImage` consumes only a version-2 host approval, never building on a miss. Legacy
+  version-1 automatic-build memos are not authority. Open automatic builds remain available;
+  `BuildWith` refuses automatic project builds for filtered/offline modes.
+- Approval binds the exact sanitized context (kind, path, mode/link target, bytes), daemon, locked
+  image, client closure, tags, Dockerfile path and build environment. Only an explicit build writes
+  it, after both image proofs, for the digest produced WHILE staging and the ID from `--iidfile`.
+  Publication failure fails the command. A launch requires matching inputs, a present immutable ID
+  and both proofs. The old cache-purity Dockerfile parser is gone: external inputs are fetched only
+  during the explicit build. Linked Dockerfiles/ignore files are refused BEFORE building, not just
+  excluded from cache reuse. Staging preserves source modes and excludes shadowed secrets/Git.
+- Direct, fork, loop and ACP launch checks defer ordinary-image availability until admission:
+  filtered runs need only the prepared filtered image. Offline still requires an existing ordinary
+  image, preventing an implicit runtime pull. Filtered ACP warming keys the actual approved image
+  and current build inputs, not an unrelated ordinary tag.
 - The host qualification keeps naming the LOCKED image, and so does the execution record's
   `ClientImage` — the derived image is recorded beside it as `ProjectImage`
   (`networkstate/execution.go:75`), evidence of what ran, never authority. The preflight smoke may
@@ -244,6 +243,8 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-22 — implemented the approved explicit restricted-project-build policy, preserving open
+  automatic builds. Swept automatic callers, input/approval records, recovery and ACP warm identity.
 - 2026-09-22 — corrected the API-key and OAuth statements for direct readonly composition against
   `restricted.go` and its composition tests; retained the bare and restricted remote-session limits.
 - 2026-09-20 — COOP_RUN_ARGS now also admits `--label KEY=VALUE` under filtered (metadata only);

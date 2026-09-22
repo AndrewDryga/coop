@@ -529,7 +529,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if fa.agent == "" {
 		return 2, noProviderErr("fork <name>")
 	}
-	_, img, err := a.resolveImage()
+	_, img, err := a.resolveLaunchImage(true)
 	if err != nil {
 		return -1, err
 	}
@@ -946,7 +946,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		if img, code, err = a.restrictedImage(); err != nil {
 			return code, err
 		}
-	} else if repo, img, err = a.resolveImage(); err != nil {
+	} else if repo, img, err = a.resolveLaunchImage(true); err != nil {
 		return -1, err
 	}
 	ws := forkspace.Workspace(repo, name)
@@ -1033,6 +1033,11 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		}
 	}
 	defer capture.Close()
+	if capture == nil && !a.mode.Restricted() {
+		if err := a.requireLaunchImage(img); err != nil {
+			return 1, err
+		}
+	}
 	if capture != nil {
 		spec.CapturedEgress = capture
 		// This child is the exact owner of the gateway it starts: nothing else may

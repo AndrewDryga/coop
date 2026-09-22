@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
@@ -1305,6 +1306,7 @@ func TestMergeNeutralizesForkDrivers(t *testing.T) {
 // `image inspect` fails the same way for a missing image and a dead daemon, so a merge gate blocked
 // by a stopped runtime used to demand a build that would not have helped. Name the daemon instead.
 func TestMergeGateBlamesTheDaemonNotTheImage(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	for _, tc := range []struct {
 		name     string
 		infoExit string
@@ -1341,6 +1343,7 @@ func TestMergeGateBlamesTheDaemonNotTheImage(t *testing.T) {
 // After an upgrade, Coop's own base has a new tag the gate needs: the host builds it, as a launch
 // does, instead of the merge demanding a manual build. Another image is not Coop's to build.
 func TestMergeGateBuildsCoopsBaseAfterAnUpgrade(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	built := filepath.Join(t.TempDir(), "built")
 	shim := filepath.Join(t.TempDir(), "docker")
 	script := "#!/bin/sh\n" +
@@ -1359,6 +1362,36 @@ func TestMergeGateBuildsCoopsBaseAfterAnUpgrade(t *testing.T) {
 	operator := New(&config.Config{Gate: []string{"true"}, BaseImage: base, ImageOverride: "mine:1"}, runtime.Runtime{Name: shim}, host)
 	if _, err := operator.MergeGate(t.TempDir()); calls != 1 {
 		t.Fatalf("an operator's image made the host build Coop's base (%v)", err)
+	}
+}
+
+func TestFilteredMergeGateDoesNotRequireAnOrdinaryImage(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo := initRepo(t)
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, project.File), []byte("box:\n  egress: filtered\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "Dockerfile"), []byte("ARG COOP_BASE_IMAGE\nFROM ${COOP_BASE_IMAGE}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "runtime-called")
+	shim := filepath.Join(t.TempDir(), "docker")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\ntouch '"+marker+"'\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Gate: []string{"true"}, BaseImage: "coop-box"}
+	c := New(cfg, runtime.Runtime{Name: shim}, Host{EnsureBaseImage: func() error {
+		t.Fatal("filtered gate tried to build the ordinary base")
+		return nil
+	}})
+	if img, err := c.MergeGate(repo); err != nil || img != box.ImageForRepo(repo, cfg.BaseImage, "") {
+		t.Fatalf("filtered gate required the unused ordinary image: %q / %v", img, err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("filtered gate inspected or built an ordinary image: %v", err)
 	}
 }
 

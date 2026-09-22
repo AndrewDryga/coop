@@ -304,17 +304,6 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 			return loopExitCode(cf), nil
 		}
 	}
-	if !box.ImageExists(c.rt, img) {
-		// Same rule as resolveImage: a dead daemon looks exactly like a missing image, and an
-		// overnight drain that dies on "run 'coop build'" hides the real cause until morning.
-		if err := c.rt.EnsureDaemon(); err != nil {
-			return -1, err
-		}
-		return -1, fmt.Errorf("image %q not built — run 'coop build'", img)
-	}
-	// Staleness is computed before setup narration but printed only after the stop handler exists.
-	// A missing image remains the hard failure above, never a prettier stale-image warning.
-	nudges := box.StalenessNudges(c.cfg, repo, img)
 	// Every built-in provider streams JSON that coop decodes into the same live lines — on a
 	// TTY and on redirected runs alike, since the stream also feeds the provider watchdog. Only
 	// a custom work.command keeps plain text output.
@@ -400,6 +389,23 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	}
 	defer capture.Close()
 	c.capture = capture
+	var nudges []string
+	if capture == nil {
+		if !box.ImageExists(c.rt, img) {
+			// Same rule as resolveImage: a dead daemon looks exactly like a missing image, and an
+			// overnight drain that dies on "run 'coop build'" hides the real cause until morning.
+			if err := c.rt.EnsureDaemon(); err != nil {
+				return -1, err
+			}
+			if img == c.cfg.BaseImage {
+				return -1, fmt.Errorf("image %q not built — run 'coop build --egress open' in a directory without a project Dockerfile", img)
+			}
+			return -1, fmt.Errorf("image %q not built — run 'coop build --egress open'", img)
+		}
+		// Staleness is computed before setup narration but printed only after the stop handler exists.
+		// A missing image remains the hard failure above, never a prettier stale-image warning.
+		nudges = box.StalenessNudges(c.cfg, repo, img)
+	}
 	// A per-run id keys this run's telemetry file (.agent/runs/<runid>.jsonl) — one JSON-Lines
 	// record per stage, so the harness's own behavior (which target ran, reopen/retry counts) is
 	// measurable. Best-effort throughout; a telemetry hiccup never touches the work.

@@ -126,6 +126,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [scaffold-config-reads-well](scaffold-config-reads-well.md) — scaffolded config leads every field with its comment and works as-is
 
 **Security**
+- [restricted-project-builds-are-explicit](restricted-project-builds-are-explicit.md) — restricted launches require explicit host project builds while open launches retain automatic builds
 - [eval-oracles-outside-agent-authority](eval-oracles-outside-agent-authority.md) — hidden eval material stays outside mounts, Git history, images, caches and every candidate tool path
 - [project-edits-request-access](project-edits-request-access.md) — one host approval grants requested access; check before execution and enforce agent/service permissions without approving ordinary edits
 - [coopignore-read-only-in-boxes](coopignore-read-only-in-boxes.md) — keep .coopignore readable but read-only in every box, with ordinary host editing and no policy-approval workflow

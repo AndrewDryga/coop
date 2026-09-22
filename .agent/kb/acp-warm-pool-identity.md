@@ -2,8 +2,8 @@
 name: acp-warm-pool-identity
 description: coop acp parks one box per signed-in provider the session is not using and lends it to a switch only on an identical identity — plain target at the default model/effort, same account, same box image; prove a hit from the trace, never from timing
 subsystem: acp
-sources: [internal/acpctl/warm.go, internal/acpctl/resume.go, internal/acpctl/control.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/runtime/runtime.go, tools/lifecycle_bench.py]
-updated: 2026-09-21
+sources: [internal/acpctl/warm.go, internal/acpctl/resume.go, internal/acpctl/control.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/runtime/runtime.go, internal/box/derived_image.go, tools/lifecycle_bench.py]
+updated: 2026-09-22
 ---
 `coop acp` keeps a parked box (`acpctl.WarmPool`) for each signed-in provider the session is not
 using. After every factory spawn — the first one included, which is what fans the pool out —
@@ -17,7 +17,7 @@ A switch takes the parked box only when it would start the same box cold:
   bare `Target{Provider}` and therefore NEVER served an editor switch on a host with accounts.
 - `WarmPool.Checkout(provider, account, image)`: the parked child's `Account` must equal the target's,
   and its recorded `Image` must equal the box image a cold start would use now (`Runtime.ImageID` of
-  `box.ImageForRepo`, ~10 ms). A box from a replaced image is stopped (a `coop build` mid-session); an
+  `box.ImageForRepo` for ordinary runs, `box.FilteredImageIdentity` for filtered runs). A box from a replaced image is stopped (a `coop build` mid-session); an
   unknown image ("", e.g. Apple container) reuses nothing; a box on another account stays parked.
 Why these and not more: the workspace, network capture, MCP config and roles are the supervisor's
 own and the same for both spawns.
@@ -25,9 +25,9 @@ Credentials are live profile mounts the client refreshes itself; in a filtered s
 passes `acpFilteredLaunchProof` — the same re-proof (scope, admission, auth family, portability) a cold
 launch runs after its reset wait — so reuse passes the same credential gate as a cold start. Grok
 carries its model in the launch command, so a model mismatch could not be fixed after checkout —
-hence exact matching. Known limit: in a filtered session the box runs the pinned client image (fixed
-per coop binary) or an image derived per launch from `.agent/Dockerfile`; the check compares the
-base/project image only, so a mid-session re-qualification or an edited Dockerfile is not caught.
+hence exact matching. A filtered key names the capture's pinned client image or the exact explicitly
+built project image. Changed build-context inputs, absent approval or a missing image prevent reuse;
+a new cold launch still performs the full layer/client proofs.
 
 A warm spawn never waits: on an account still waiting out a rate limit (`Control.Cooling`) it is refused
 and the slot stays empty, because `Reap` — editor close, SIGHUP reload — waits for every spawn in flight
@@ -58,6 +58,8 @@ deferred reap waits for that same teardown. Measured on a filtered project with 
 editor close → everything gone in ~1.4 s.
 
 ## Changelog
+- 2026-09-22 — filtered warming checks the actual explicitly built image and its current approved
+  inputs; removed the unrelated ordinary-image prerequisite.
 - 2026-09-20 — recorded the measured cost of filling on the editor handshake, with the
   measurement card that owns the evidence.
 - 2026-09-19 — stop: Stopping hook, cancelled fills, concurrent reap

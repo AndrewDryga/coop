@@ -20,10 +20,8 @@ import (
 func (a *app) checkCoopBox(repo, img string) error {
 	// Coop's own base comes first, sign-in included: an upgrade names a new tag, and building Coop's
 	// base is not a project build.
-	if img == a.cfg.BaseImage {
-		if err := a.ensureManagedBase(); err != nil {
-			return err
-		}
+	if err := a.requireLaunchImage(img); err != nil {
+		return err
 	}
 	if a.loginProvider != "" {
 		return nil // sign-in uses the existing image; it must not execute a project build

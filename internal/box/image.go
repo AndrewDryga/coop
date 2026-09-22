@@ -485,6 +485,9 @@ func BuildWith(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, 
 	}
 	// The CLI announces a build in the approved words (cli.announceBuild), so this legacy entry —
 	// used by an automatic rebuild inside a fork or loop launch — says only the plain fact, once.
+	if plan.Project && cfg.Egress != "" && cfg.Egress != "open" {
+		return fmt.Errorf("%s networking does not automatically build project instructions — review %s and its copied build files, then run 'coop build --egress %s' on the host; project builds use ordinary networking", cfg.Egress, plan.Dockerfile, cfg.Egress)
+	}
 	if !plan.Project {
 		ui.Note("building %s (shared base)", cfg.BaseImage)
 	} else {
@@ -590,21 +593,20 @@ func (e *StageError) Error() string { return "staging the build context: " + e.E
 func (e *StageError) Unwrap() error { return e.Err }
 
 // buildProjectOnBase builds a repository's own box Dockerfile ON TOP of base, tagged tag, through
-// the same staged context, build arguments and error mapping `coop build` uses — a filtered launch
-// changes only which base image the Dockerfile inherits, never how it is built. It stages entries
-// (buildContextSelection) and returns the id the build itself wrote, never the tag another launch of
-// this project may have moved since; the digest of the context it staged; and whether that build
-// may be reused for the same inputs (reusableProjectBuild). It never reads stdin or writes stdout:
-// an ACP session speaks JSON-RPC over both.
-func buildProjectOnBase(ctx context.Context, rt runtime.Runtime, repo string, entries []contextEntry, dfRel, tag, base string, stderr io.Writer) (image, staged string, reusable bool, err error) {
+// the same staged context and build arguments `coop build` uses. Only an explicit host build calls
+// it. The returned ID and digest describe this exact build, not a later read of the tag or checkout.
+func buildProjectOnBase(ctx context.Context, rt runtime.Runtime, repo string, entries []contextEntry, dfRel, tag, base string, stderr io.Writer) (image, staged string, err error) {
 	dir, staged, cleanup, err := stageContextEntries(ctx, repo, entries)
 	if err != nil {
-		return "", "", false, fmt.Errorf("staging the build context: %w", err)
+		return "", "", &StageError{Err: err}
 	}
 	defer cleanup()
+	if err := validateProjectBuildFiles(dir, entries, dfRel); err != nil {
+		return "", "", &StageError{Err: err}
+	}
 	idFile, err := os.CreateTemp("", "coop-build-id-")
 	if err != nil {
-		return "", "", false, err
+		return "", "", err
 	}
 	_ = idFile.Close()
 	defer os.Remove(idFile.Name())
@@ -615,17 +617,17 @@ func buildProjectOnBase(ctx context.Context, rt runtime.Runtime, repo string, en
 		labels = append(labels, derivedImageLabel+"="+project)
 	}
 	args := projectBuildArgs(dir, dfRel, tag, base, true, false, labels...)
-	code, runErr := rt.Run(nil, nil, stderr, append([]string{"build", "--iidfile", idFile.Name()}, args[1:]...)...)
+	code, runErr := rt.RunInterruptible(ctx, nil, nil, stderr, append([]string{"build", "--iidfile", idFile.Name()}, args[1:]...)...)
 	if runErr != nil {
-		return "", "", false, runErr
+		return "", "", runErr
 	}
 	if code != 0 {
-		return "", "", false, fmt.Errorf("%s build exited with status %d", filepath.Base(rt.Name), code)
+		return "", "", fmt.Errorf("%s build exited with status %d", filepath.Base(rt.Name), code)
 	}
 	if image, err = readImageID(idFile.Name()); err != nil {
-		return "", "", false, err
+		return "", "", err
 	}
-	return image, staged, reusableProjectBuild(dir, entries, dfRel), nil
+	return image, staged, nil
 }
 
 // projectBuildArgs assembles the `<runtime> build` args for a project Dockerfile at dfRel inside the

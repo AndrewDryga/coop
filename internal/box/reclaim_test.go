@@ -423,7 +423,7 @@ func TestDerivedImagesCarryTheLabelTheReclaimAsksFor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := buildProjectOnBase(context.Background(), runtime.Runtime{Name: script}, repo, entries,
+	if _, _, err := buildProjectOnBase(context.Background(), runtime.Runtime{Name: script}, repo, entries,
 		".agent/Dockerfile", tag, "coop-clients:"+strings.Repeat("f", 32), nil); err != nil {
 		t.Fatal(err)
 	}

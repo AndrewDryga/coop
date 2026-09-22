@@ -53,8 +53,8 @@ echo "RESULT CAPS $(awk '/^CapEff/{print $2}' /proc/self/status 2>/dev/null)"
 echo "RESULT PIDS $(cat /sys/fs/cgroup/pids.max 2>/dev/null || cat /sys/fs/cgroup/pids/pids.max 2>/dev/null)"
 `
 
-// doctorImage picks the image the probe runs in: the repo's own image when it is built (that is
-// the box its agents actually get), then the shared base image, then a stock alpine stand-in.
+// doctorImage picks an ordinary image for the probe: the repo's built image, then the shared base,
+// then a stock alpine stand-in. Filtered launches prove their separate image during admission.
 // real reports whether one of coop's images was found — the stand-in lacks coop's non-root USER
 // and toolchain, so the caller says so instead of printing a clean bill of health.
 func doctorImage(repo string, cfg *config.Config, exists func(string) bool) (img string, real bool) {
@@ -169,8 +169,8 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 	return code, nil
 }
 
-// doctorHeader says what is being checked, and on what. The ordinary shared image is what
-// everyone gets, so naming it every run is noise; a project image, an explicit override, or the
+// doctorHeader says what is being checked, and on what. Naming the default shared image every
+// run is noise; a project image, an explicit override, or the
 // stand-in changes WHICH checks the report covers, so those are named. A stand-in also earns the
 // notice above the report, because a partial bill of health must not read as a full one.
 func doctorHeader(runtimeName, image, baseImage string, usingReal bool) {
@@ -182,7 +182,7 @@ func doctorHeader(runtimeName, image, baseImage string, usingReal bool) {
 		ui.Note("")
 		warnBlock("No built Coop image was found",
 			"Alpine is being used for the checks below.\nThe non-root user, task channel, and settings permissions cannot be checked.",
-			"Run coop build, then coop doctor.")
+			"Run coop build --egress open, then coop doctor.")
 	}
 }
 
@@ -273,7 +273,7 @@ func doctorCheckUID(s *doctorSection, uid string, usingReal bool) {
 		s.skip("Non-root user not checked", "", 1)
 	case uid == "0":
 		s.fail("The box runs as root", "The image uses user ID 0.",
-			"Set a non-root USER in .agent/Dockerfile, then run coop build and coop doctor.")
+			"Set a non-root USER in .agent/Dockerfile, then run coop build --egress open and coop doctor.")
 	default:
 		s.pass("The box runs as a non-root user")
 	}

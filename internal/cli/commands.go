@@ -42,10 +42,9 @@ func loadProject(repoOverride string) (string, *project.Project, error) {
 // Coop's own base is built here, before any box needs it.
 func (a *app) resolveImage() (repo, img string, err error) { return a.resolveLaunchImage(false) }
 
-// resolveLaunchImage is resolveImage for a launch that checks its box once its posture is known
-// (checkCoopBox): with deferBase, an upgrade's new base is left for that check to build, because a
-// filtered box never runs it.
-func (a *app) resolveLaunchImage(deferBase bool) (repo, img string, err error) {
+// A launch defers availability until admission: filtered mode runs a separately approved image,
+// not the ordinary tag selected here. Nonfiltered callers must then requireLaunchImage.
+func (a *app) resolveLaunchImage(deferImage bool) (repo, img string, err error) {
 	repo, _, err = loadProject(a.cfg.RepoOverride)
 	if err != nil {
 		return "", "", err
@@ -57,9 +56,19 @@ func (a *app) resolveLaunchImage(deferBase bool) (repo, img string, err error) {
 	if a.loginProvider != "" && a.cfg.ImageOverride == "" {
 		img = a.cfg.BaseImage // authentication must not depend on the project's toolchain image
 	}
-	if img == a.cfg.BaseImage && !deferBase {
-		if err := a.ensureManagedBase(); err != nil {
+	if !deferImage {
+		if err := a.requireLaunchImage(img); err != nil {
 			return "", "", err
+		}
+	}
+	return repo, img, nil
+}
+
+// Offline runs need this check too: Docker's implicit pull uses host networking.
+func (a *app) requireLaunchImage(img string) error {
+	if img == a.cfg.BaseImage {
+		if err := a.ensureManagedBase(); err != nil {
+			return err
 		}
 	}
 	if !box.ImageExists(a.rt, img) {
@@ -68,13 +77,14 @@ func (a *app) resolveLaunchImage(deferBase bool) (repo, img string, err error) {
 		// command to run a build that would not have helped. Only on this branch: the happy path
 		// must not pay for an extra `docker info`.
 		if err := a.rt.EnsureDaemon(); err != nil {
-			return "", "", err
+			return err
 		}
-		if _, _, upgrade := box.ManagedBaseRepair(a.rt, a.cfg); !deferBase || img != a.cfg.BaseImage || !upgrade {
-			return "", "", fmt.Errorf("image %q not built — run 'coop build'", img)
+		if img == a.cfg.BaseImage {
+			return fmt.Errorf("image %q not built — run 'coop build --egress open' in a directory without a project Dockerfile", img)
 		}
+		return fmt.Errorf("image %q not built — run 'coop build --egress open'", img)
 	}
-	return repo, img, nil
+	return nil
 }
 
 // runInBox runs a command in the box against the current repo with the default
@@ -267,7 +277,7 @@ func (a *app) restrictedImage() (img string, code int, err error) {
 		if err := a.rt.EnsureDaemon(); err != nil { // as resolveImage: blame a stopped daemon, not the image
 			return "", -1, err
 		}
-		return "", 1, fmt.Errorf("image %q not built — run 'coop build'", img)
+		return "", 1, fmt.Errorf("image %q not built — run 'coop build --egress open' in a directory without a project Dockerfile", img)
 	}
 	return img, 0, nil
 }

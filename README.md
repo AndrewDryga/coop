@@ -362,10 +362,11 @@ coop doctor
 
 `doctor` plants a fake secret, launches the box, and checks from inside that the
 secret is unreachable and unwritable — then checks on the host that a fork carries
-neither the secret nor a pushable remote. It probes the image this repo's boxes actually
-run — the per-project image when its `.agent/Dockerfile` is built, else the shared base image —
-so a `USER root` or extra tooling in a custom Dockerfile shows up here. Run it anytime,
-especially after changing config.
+neither the secret nor a pushable remote. It probes the ordinary per-project image when
+built, else the shared base image — so a `USER root` or extra tooling in a custom Dockerfile
+shows up here. Prepare that image with `coop build --egress open`. Filtered images are
+separate: their locked clients and derivation are verified at launch, not by `doctor`.
+Run it anytime, especially after changing config.
 
 ## Forks: hand off work like a PR
 
@@ -1519,8 +1520,8 @@ agent CLIs keep running. For a baked, fully-reproducible image instead,
 ### `.agent/Dockerfile` — a per-project image
 
 ```bash
-coop init --stack asdf   # writes an asdf .agent/Dockerfile (from .tool-versions)
-coop build               # builds it, tagged coop-<repo-name> — its own image
+coop init --stack asdf # writes an asdf .agent/Dockerfile (from .tool-versions)
+coop build             # builds the image for this project's network mode
 ```
 
 A repo with its own `.agent/Dockerfile` gets its own image tag, so projects never
@@ -1538,9 +1539,14 @@ Prefer to keep the box definition elsewhere — reuse a stage of your app's exis
 separate one? Set `box.dockerfile` / `box.compose` in `.agent/project.yaml` (repo-relative
 paths); they default to `.agent/Dockerfile` and `.agent/compose.yml`.
 
-Under `--egress filtered` the same Dockerfile is built on coop's locked client image instead of the
-shared base, under its own tag, and the built image must prove it — see
-[restricted networking](docs/networking.md).
+Under `--egress filtered`, explicitly build with `coop build --egress filtered` after reviewing the
+Dockerfile and its copied build files. Plain `coop build` selects filtered automatically when that
+is the project's effective network mode. It uses Coop's locked client base and a separate image
+tag. A filtered launch reuses the exact approved image; changed build-context inputs, an upgraded
+client base or a missing image require another explicit build. Open-network launches retain
+automatic builds; offline launches do not automatically execute project build instructions.
+Explicit project builds use ordinary networking, not the run's restrictions. See
+[restricted networking](docs/networking.md) for image proofs and the build boundary.
 
 Put committed, non-secret defaults needed only inside the box under `box.env`. Values are literal
 strings; quote numeric-looking values. The user's `~/.config/coop/agents/env` overrides these
@@ -1595,7 +1601,7 @@ names it), so two Coop versions on one machine each keep their own instead of re
 shared tag in turn; a launch after an upgrade builds the new one itself. A plain `docker build` of
 this file needs that tag passed in (`--build-arg COOP_BASE_IMAGE=coop-box:<definition>`, listed by
 `docker image ls coop-box`). A build also reclaims the images it superseded: one Coop tags by its
-definition (`coop-box`, `coop-clients`, `coop-network`, and — when a filtered run builds your
+definition (`coop-box`, `coop-clients`, `coop-network`, and — when you explicitly build your
 project's own box image — `<project>-filtered`, tagged by the client image it was built on) that no
 run has used in 14 days and no container references is removed, and the build says which. Images
 built before Coop reclaimed them carry no mark of its own, so they are never candidates. Every launch records the image it used,

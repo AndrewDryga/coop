@@ -293,7 +293,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// Built AFTER the model selection: gemini's ACP command is its own binary and carries
 	// the resolved model as a flag. tool passed agents.Valid above, so this can't miss.
 	cmd := acpCommand(a.cfg, tool)
-	repo, img, err := a.resolveImage()
+	repo, img, err := a.resolveLaunchImage(true)
 	if err != nil {
 		return -1, err
 	}
@@ -343,6 +343,11 @@ func (a *app) cmdACP(args []string) (int, error) {
 		return 1, err
 	}
 	defer capture.Close()
+	if capture == nil {
+		if err := a.requireLaunchImage(img); err != nil {
+			return 1, err
+		}
+	}
 	if capture != nil {
 		if err := validateACPAccountBindings(a.cfg, spec, a.acpAccountBindings); err != nil {
 			return 1, err
@@ -402,6 +407,10 @@ func (a *app) acpBare(tool, model, profile, effort string) (int, error) {
 // reading it would swallow the editor's initialize. ui.* already writes only to stderr, so the
 // narration lands in the editor's agent log where the user can see why the first connect is slow.
 func (a *app) ensureACPImage() error {
+	if a.cfg.Egress == "filtered" {
+		_, err := box.FilteredImageIdentity(context.Background(), a.rt, a.acpCapture)
+		return err // never build the unused ordinary project tag on an editor connect
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return err
@@ -419,7 +428,9 @@ func (a *app) ensureACPImage() error {
 	}
 	ui.Heading("Checking the Coop box")
 	ui.Note("  The box image is missing.")
-	ui.Note("  Building it now…")
+	if a.cfg.Egress == "" || a.cfg.Egress == "open" {
+		ui.Note("  Building it now…")
+	}
 	if err := box.BuildWith(a.rt, a.cfg, repo, false, resolveVersion(), strings.NewReader(""), os.Stderr); err != nil {
 		return ui.CommandFailed("Could not prepare the Coop box", err.Error(),
 			[2]string{"", "Fix what the build reported above, then reconnect your editor."})
@@ -495,6 +506,10 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	// The image a box starts from now. A warm box records it and is reused only while it still is — a
 	// `coop build` mid-session must not leave a switch on the old one.
 	currentImage := func() string {
+		if a.acpCapture != nil {
+			image, _ := box.FilteredImageIdentity(context.Background(), a.rt, a.acpCapture)
+			return image
+		}
 		repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 		if err != nil {
 			return ""

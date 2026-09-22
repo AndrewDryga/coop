@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Restricted launches no longer automatically execute project Docker builds with unrestricted
+  build networking. Review the Dockerfile and copied build files, then run
+  `coop build --egress filtered` to prepare an image for filtered runs (plain `coop build` follows
+  the project's effective mode). Launches reuse its host-approved immutable image only while all
+  staged inputs and the client base match; old automatic-build records require one explicit build.
+  Open-network automatic builds remain available. Offline launches refuse automatic project builds.
+  Explicit builds still use ordinary networking, and do not grant project network permissions.
+
 - New `coop eval` command (native evals): measure whether a change to a preset, a loop config or
   Coop itself actually made your agents better, instead of guessing. `coop eval init` scaffolds a
   working suite; `coop eval run <suite> <target|preset>...` validates everything up front, prints the

@@ -21,7 +21,7 @@ Host access and privileges
 
         The image uses user ID 0.
 
-    Set a non-root USER in .agent/Dockerfile, then run coop build and coop doctor.
+    Set a non-root USER in .agent/Dockerfile, then run coop build --egress open and coop doctor.
   ✓ Linux capabilities are removed
   ✓ The process limit is enforced (4096)
 

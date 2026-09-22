@@ -205,7 +205,7 @@ func (a *app) executeEvalRun(plan *eval.Plan, frozen []eval.FrozenConfig) (int, 
 	box.ResolveBaseImage(a.cfg)
 	image := box.ImageForRepo("", a.cfg.BaseImage, a.cfg.ImageOverride)
 	if !box.ImageExists(a.rt, image) {
-		return 1, fmt.Errorf("the box image %s is not built yet — run: coop build", image)
+		return 1, fmt.Errorf("the box image %s is not built yet — run 'coop build --egress open' in a directory without a project Dockerfile", image)
 	}
 	// Stage every preset configuration once, so each trial materializes identical bytes into its own
 	// workspace (a fixture repository has no .agent/presets of its own).

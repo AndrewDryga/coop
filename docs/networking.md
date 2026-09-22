@@ -226,9 +226,13 @@ the box meets the gateway.
 
 **Your project's image, on coop's clients.** A repo whose `.agent/Dockerfile` starts with
 `ARG COOP_BASE_IMAGE` / `FROM ${COOP_BASE_IMAGE}` runs its own image in filtered mode too. The
-launch builds it with coop's locked client image as the base, under its own tag
-(`coop-<repo>-filtered:<client image>`, never the tag `coop build` writes), and reuses it until the
-Dockerfile or the client image changes. Two proofs stand between that image and the box, and
+host builds it explicitly with `coop build --egress filtered`, using coop's locked client image as
+the base under its own tag (`coop-<repo>-filtered:<client image>`). Plain `coop build` chooses this
+image when filtered is the project's effective network mode. Launches only reuse an explicitly
+built image: changed sanitized build-context inputs (including copied scripts and file modes),
+changed clients, or a missing image stop with instructions to review and build again. An old
+automatic-build cache record is not approval; existing projects need one explicit filtered build.
+Two proofs stand between that image and the box, and
 neither reads the Dockerfile — a `FROM` line is a claim about what was built, not evidence:
 
 - the locked image's layers must be the first layers of the built image, so the box is that exact
@@ -249,12 +253,16 @@ keyed by the image ID, which is a content address — a rebuilt image is a new I
 and a record that is missing, damaged or for another image is read past, never trusted. The
 comparison itself still runs on every launch.
 
-Three practical notes. The base ends as the non-root box user, so a package install needs
-`USER root` … `USER node` around it. A repo with an `.agent/Dockerfile` still needs `coop build`
-once, exactly as every other coop command in that repo does. And the filtered build is run by the
-launch, not by a human `coop build`: its `RUN` lines execute as root, with ordinary network access,
-on your Docker. The two proofs bind what the box RUNS, not what a build may do — so treat
-`.agent/Dockerfile` as the code it is, and coop says so out loud when nobody has committed it.
+The base ends as the non-root box user, so a package install needs `USER root` … `USER node`
+around it. Explicit project builds execute repository instructions with ordinary Docker build
+networking; `--egress` chooses the image to prepare, not a build-time firewall. Review the Dockerfile
+and files it copies before building. Coop stages a copy without shadowed secrets or Git metadata,
+proves the resulting image, and saves approval for the exact staged inputs outside agent mounts.
+A failed approval write is a failed command, even if Docker finished building the image.
+
+Filtered launches never execute those build instructions themselves. Open-network launches retain
+automatic project builds; offline launches refuse them. Automatic preparation of Coop's own
+embedded base, gateway and client images remains separate: it executes no repository instructions.
 
 ## Refused, with the reason you will see
 

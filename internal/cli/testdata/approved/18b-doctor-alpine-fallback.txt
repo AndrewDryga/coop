@@ -6,7 +6,7 @@ Checking the Coop box on the Docker runtime
       Alpine is being used for the checks below.
       The non-root user, task channel, and settings permissions cannot be checked.
 
-  Run coop build, then coop doctor.
+  Run coop build --egress open, then coop doctor.
 
 Protecting secrets
   ✓ .env is hidden

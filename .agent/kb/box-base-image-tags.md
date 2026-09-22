@@ -3,7 +3,7 @@ name: box-base-image-tags
 description: Coop's shared base is tagged by its box definition so two Coop versions on one host keep their own; why there is no :latest alias, how an upgrade is repaired, and what stays shared
 subsystem: box
 sources: [internal/box/reclaim.go, internal/box/derived_image.go, internal/box/filtered.go, internal/box/image.go, internal/box/staleness.go, internal/box/locked_image.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/cli/cli.go, internal/cli/build_cmd.go, internal/cli/session_cmd.go, internal/forkctl/host.go, internal/forkctl/merge.go]
-updated: 2026-09-20
+updated: 2026-09-22
 ---
 
 `COOP_BASE_IMAGE` defaults to the bare repository `coop-box`, which `box.ResolveBaseImage` (run
@@ -32,11 +32,12 @@ because an ACP child and the session daemon reach it too.
 Where it runs: an ordinary interactive launch resolves with `resolveLaunchImage(true)`, which lets
 the missing base through, and builds it in `checkCoopBox` after network admission, so a filtered box
 (it runs `coop-clients:<definition>`, whose Dockerfile shares no expensive layer with the base: the
-PATH lines differ inside the big RUN) never pays for it. Every other `resolveImage` caller (fork
-create, fork ACP, the ACP inner child), `restrictedImage` and loop start-up build it eagerly, since
-no posture-aware check follows. A merge or session review gate builds it through
+PATH lines differ inside the big RUN) never pays for it. Fork and ACP launch callers also defer
+ordinary-image availability until admission or capture reconstruction. `restrictedImage` still
+prepares the shared base eagerly; it never executes project build instructions. An ordinary merge or session review gate builds it through
 `forkctl.Host.EnsureBaseImage` (the CLI's `ensureManagedBase`; the daemon's writes to its log).
-`coop build` and `coop update` print `Image: coop-box:<definition>`. Until the next launch,
+Filtered gates defer to their captured image instead. `coop build --egress open` and `coop update`
+print `Image: coop-box:<definition>` when preparing the shared image. Until the next launch,
 `coop update --check` and `coop doctor` still report the new tag as not built.
 
 Still shared: a project image (`coop-<repo>`, from `.agent/Dockerfile`) keeps one name, so two
@@ -55,12 +56,15 @@ already took); a tagged predecessor appears when the client image changes — a 
 A use record is per *user* (`~/.config/coop/image-use/`, `Config.BoxHome`), while the images are
 per *daemon*. On the
 usual one-user host that is the same thing; where two users share one Docker, each sees only its own
-records, so A's build can reclaim an image B still runs weekly (B's next launch rebuilds it). What
+records, so A's build can reclaim an image B still runs weekly (B's next launch rebuilds the managed
+base; a filtered project image requires an explicit rebuild). What
 stops that being routine: nothing without a record is ever removed on sight (first sight SEEDS the
 record, so the 14 days start then), and an image any container still references — running or
 stopped, whoever owns it — is kept.
 
 ## Changelog
+- 2026-09-22 — filtered launches no longer require the unused ordinary project tag; only an
+  explicit host build constructs the filtered project image.
 - 2026-09-20 — a project's own derived images join the reclaim, recognized by the `coop.derived`
   label their build now applies (never by the `-filtered` name alone).
 - 2026-09-20 — a build reclaims its family's superseded images (`box/reclaim.go`): 14 days without a

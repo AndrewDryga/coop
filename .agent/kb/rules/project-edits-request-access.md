@@ -4,7 +4,7 @@ description: project configuration requests access; one host approval grants it,
 scope: security
 sources: [internal/cli/net_approve.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/box/run.go, internal/box/network_approval.go, internal/networkstate/approval_review.go, internal/networkstate/admission.go, internal/box/filtered_services.go, internal/box/composecheck.go]
 check: none
-updated: 2026-09-14
+updated: 2026-09-22
 ---
 
 # Approve added access, not ordinary development
@@ -25,12 +25,19 @@ high-level command and this enforcement boundary. This is not a mandate to appro
 
 **How to apply:** review actual startup dependencies, volume identity and read/write access, not
 just editable labels. Keep ordinary source/script/image changes, approved writes and project-owned
-storage automatic. Unused services stay stopped without triggering approval. Preserve prohibitions
-and destructive-command confirmations; do not convert them to reusable permission grants.
+storage automatic. Unused services stay stopped without triggering approval. Preserve the
+explicit restricted project-build boundary in [[restricted-project-builds-are-explicit]]:
+runtime source edits remain live, but a filtered/offline launch cannot execute a new Docker build.
+Preserve prohibitions and destructive-command confirmations; do not convert them to reusable
+permission grants.
 Tests must prove refusal before execution/mounts, same-snapshot publication/startup, and real runtime
 denial from agent-controlled services. A command rename or UI warning is not enforcement.
 
 ## Changelog
+
+- 2026-09-22 — recorded the human-approved restricted project-build exception; ordinary runtime
+  edits and service enforcement retain their existing permission contract. Swept automatic build
+  callers with the linked rule and retained open-network automatic builds.
 
 - 2026-09-14 — swept launch callers and closed missing shared admission in interactive forks, local
   fork ACP, and fork review/merge gates. The box boundary now also catches project-requested filtered

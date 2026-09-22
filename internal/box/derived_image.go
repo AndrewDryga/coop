@@ -8,12 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"sync"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -49,7 +49,7 @@ const maxPinnedClientBytes = 512 << 20
 const maxPinnedClientTreeBytes = 4 << 30
 
 // filteredProjectDockerfile returns the repo-relative box Dockerfile a filtered
-// launch must build, or "" when the project has none and the locked client image
+// launch needs an explicit build of, or "" when the project has none and the locked client image
 // runs as-is. A `box.dockerfile` naming a file that is not there is "none", the
 // same answer the ordinary build path gives it.
 func filteredProjectDockerfile(repo string) string {
@@ -65,18 +65,15 @@ func filteredProjectDockerfile(repo string) string {
 
 // filteredProjectTag names what a filtered build produces: the project's own
 // image name, marked filtered, plus the identity of the locked client image it
-// was built on. So an ordinary `coop build` and a filtered launch of the same
-// repository never write the same tag, and a new locked image (new clients, new
-// base) builds a new image instead of reusing the one before it.
+// was built on. Ordinary and filtered builds never write the same tag, and a new
+// locked image (new clients, new base) needs its own explicit project build.
 func filteredProjectTag(repo, lockedImage string) string {
 	sum := sha256.Sum256([]byte(lockedImage))
 	return ServicesProject(repo) + "-filtered:" + hex.EncodeToString(sum[:])[:16]
 }
 
-// filteredProjectImage builds this project's box Dockerfile on the locked client
-// image and returns the built image's ID once both proofs hold, with the tag it
-// carries — the name a later build weighs, since the box runs it by ID. Both are
-// "" for a project with no Dockerfile, which runs the locked image itself.
+// filteredProjectImage consumes an explicit host build, never executing repository build
+// instructions. Both results are empty without a project Dockerfile: the locked image runs as-is.
 func filteredProjectImage(ctx context.Context, rt runtime.Runtime, cfg *config.Config, docker filteredDocker, store *networkstate.Store, spec RunSpec, candidate networkstate.CandidateSpec) (image, imageTag string, err error) {
 	if spec.Login {
 		return "", "", nil // sign-in uses the locked client, never the project's build instructions
@@ -102,27 +99,17 @@ func filteredProjectImage(ctx context.Context, rt runtime.Runtime, cfg *config.C
 		return "", "", errors.New("the images this host was set up with disappeared while the box was starting — run it again")
 	}
 	tag := filteredProjectTag(repo, candidate.ClientImage)
-	// Unlike `coop build`, this build is not a human action — a filtered launch
-	// runs it. The two proofs keep the clients and the base honest, but the
-	// project's own layers are still code that runs as root at build time, so
-	// say when nobody has committed the file that defines them.
-	if !spec.Quiet && fileUntracked(repo, dfRel) {
-		ui.Warning("The project Dockerfile is not tracked by Git",
-			dfRel+" controls what is installed in the box.",
-			"Review the file before using this image.")
-	}
 	entries, err := buildContextSelection(ctx, repo)
 	if err != nil {
 		return "", "", fmt.Errorf("reading the build context of this project's %s: %w", dfRel, err)
 	}
-	// A build of exactly these inputs already passed its proofs here: run that image instead of
-	// staging and building the same thing again. It is proven again all the same, from the memos.
+	// Approval binds all staged inputs, including copied scripts, not just the Dockerfile.
 	if store != nil {
 		tree, err := contextDigest(ctx, repo, entries, nil)
 		if err != nil {
 			return "", "", fmt.Errorf("reading the build context of this project's %s: %w", dfRel, err)
 		}
-		if image := store.ProjectBuild(tag, projectBuildInputs(tree, candidate, closure, definition.Tag, tag, dfRel)); image != "" {
+		if image := store.ApprovedProjectBuild(tag, projectBuildInputs(tree, candidate, closure, definition.Tag, tag, dfRel)); image != "" {
 			if id, _, err := docker.Image(ctx, image); err == nil && id == image {
 				if err := proveDerivedImage(ctx, docker, store, candidate.ClientImage, image, closure, dfRel); err != nil {
 					return "", "", err
@@ -130,26 +117,73 @@ func filteredProjectImage(ctx context.Context, rt runtime.Runtime, cfg *config.C
 				if !spec.Quiet {
 					ui.Section("Project box")
 					ui.Note("  Using %s", dfRel)
-					ui.Pass("Unchanged since its last build")
+					ui.Pass("Unchanged since its explicit build")
 				}
 				return image, tag, nil
 			}
 		}
 	}
-	var buildErrOut io.Writer
-	if !spec.Quiet {
-		// A first build takes minutes. Silence reads as a hung launch, so the
-		// operator gets the same narration `coop build` gives them.
-		ui.Section("Building the project box")
-		ui.Note("  Using %s", dfRel)
-		buildErrOut = os.Stderr
+	return "", "", fmt.Errorf("this project's %s has no explicit build for its current inputs and client image — review the Dockerfile and copied build files, then run 'coop build --egress filtered' on the host; project builds use ordinary networking", dfRel)
+}
+
+// BuildFilteredProject is the host-only construction path behind `coop build --egress filtered`.
+// Network setup builds only embedded Coop sources; project instructions run only in this explicit
+// action. A build approval is separate from project network permissions and cannot grant access.
+func BuildFilteredProject(ctx context.Context, rt runtime.Runtime, cfg *config.Config, repo string, out, errOut io.Writer) error {
+	if err := checkFilteredRuntime(rt); err != nil {
+		return err
 	}
-	built, staged, reusable, err := buildProjectOnBase(ctx, rt, repo, entries, dfRel, tag, definition.Tag, buildErrOut)
+	canonical, _, root, exposed, _, err := networkProjectInputs(cfg, repo)
+	if err != nil {
+		return err
+	}
+	store, err := networkstate.Open(root, exposed)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	docker, err := runtime.BindDocker(ctx, rt, "", "")
+	if err != nil {
+		return err
+	}
+	defer docker.Close()
+	qualification, err := ensureNetworkQualification(ctx, func() (*networkstate.Qualification, error) {
+		return currentQualification(ctx, docker, store, egress.Snapshot{Mode: egress.Filtered}, cfg.ImageOverride)
+	}, func(ctx context.Context) error {
+		_, err := SetupNetwork(ctx, cfg, rt, out, errOut)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	if filteredProjectDockerfile(canonical) == "" {
+		return nil // setup prepared the locked image; there are no project instructions
+	}
+	_, _, err = buildFilteredProject(ctx, rt, cfg, docker, store, canonical, qualification.Candidate, errOut)
+	return err
+}
+
+func buildFilteredProject(ctx context.Context, rt runtime.Runtime, cfg *config.Config, docker filteredDocker, store *networkstate.Store, repo string, candidate networkstate.CandidateSpec, errOut io.Writer) (image, imageTag string, err error) {
+	if errOut == nil {
+		errOut = io.Discard
+	}
+	dfRel := filteredProjectDockerfile(repo)
+	definition, _, closure, err := lockedImageDefinition(agents.ClientPlatform{
+		OS: candidate.Runtime.OS, Architecture: candidate.Runtime.Architecture, Libc: candidate.Libc})
+	if err != nil {
+		return "", "", err
+	}
+	if id, _, err := docker.Image(ctx, definition.Tag); err != nil || id != candidate.ClientImage {
+		return "", "", errors.New("the locked client image changed — run 'coop net setup', then 'coop build --egress filtered' again")
+	}
+	entries, err := buildContextSelection(ctx, repo)
+	if err != nil {
+		return "", "", &StageError{Err: err}
+	}
+	tag := filteredProjectTag(repo, candidate.ClientImage)
+	built, staged, err := buildProjectOnBase(ctx, rt, repo, entries, dfRel, tag, definition.Tag, errOut)
 	if err != nil {
 		return "", "", fmt.Errorf("this project's %s did not build on coop's client image: %w", dfRel, err)
-	}
-	if !spec.Quiet {
-		ui.Pass("Project box built")
 	}
 	if id, _, err := docker.Image(ctx, built); err != nil || id != built {
 		return "", "", fmt.Errorf("the image %s built from this project's %s cannot be read back — run it again", tag, dfRel)
@@ -157,22 +191,60 @@ func filteredProjectImage(ctx context.Context, rt runtime.Runtime, cfg *config.C
 	if err := proveDerivedImage(ctx, docker, store, candidate.ClientImage, built, closure, dfRel); err != nil {
 		return "", "", err
 	}
-	if store != nil && reusable {
-		// Keyed by what this build staged, not by the check above: a tree edited in between must not
-		// pair the old inputs with the new image. A failed write costs the next launch a build.
-		_ = store.RememberProjectBuild(tag, projectBuildInputs(staged, candidate, closure, definition.Tag, tag, dfRel), built)
+	// Bind what was actually staged, not a later read of a concurrently edited checkout.
+	if err := store.ApproveProjectBuild(tag, projectBuildInputs(staged, candidate, closure, definition.Tag, tag, dfRel), built); err != nil {
+		return "", "", fmt.Errorf("project image built, but its approval could not be saved: %w; fix host state permissions and run 'coop build --egress filtered' again", err)
 	}
 	// This project's own images are tagged by the client image they were built on, so a Coop
-	// upgrade (or another `coop net setup`) leaves the last one tagged behind. A launch that
-	// actually ran the build reclaims those by the same rule the shared families use — only what
-	// carries this project's label, only after nothing has used it for reclaimAfter. A launch that
-	// reused a remembered image returns above and scans nothing.
+	// upgrade leaves the last one tagged behind. Only an explicit build reclaims predecessors.
 	reclaimAfterBuild(ctx, rt, cfg, tag, nil, func(line string) {
-		if !spec.Quiet {
-			ui.Note("  %s", line)
-		}
+		fmt.Fprintln(errOut, line)
 	})
 	return built, tag, nil
+}
+
+// FilteredImageIdentity identifies the prepared image for an editor warm pool. It grants no
+// launch authority: each cold box still proves its layers and clients. A parked box may be reused
+// only while both its immutable image and the host-approved project inputs remain current.
+func FilteredImageIdentity(ctx context.Context, rt runtime.Runtime, capture *CapturedEgress) (string, error) {
+	if capture == nil || capture.Store == nil {
+		return "", errors.New("filtered image identity requires a host capture")
+	}
+	q, err := capture.Store.Qualification(capture.QualificationID)
+	if err != nil {
+		return "", err
+	}
+	docker, err := runtime.BindDocker(ctx, rt, q.Candidate.Runtime.Endpoint, q.Candidate.Runtime.DaemonID)
+	if err != nil {
+		return "", err
+	}
+	defer docker.Close()
+	image := q.Candidate.ClientImage
+	if dfRel := filteredProjectDockerfile(capture.Project); dfRel != "" {
+		definition, _, closure, err := lockedImageDefinition(agents.ClientPlatform{
+			OS: q.Candidate.Runtime.OS, Architecture: q.Candidate.Runtime.Architecture, Libc: q.Candidate.Libc})
+		if err != nil {
+			return "", err
+		}
+		entries, err := buildContextSelection(ctx, capture.Project)
+		if err != nil {
+			return "", err
+		}
+		tree, err := contextDigest(ctx, capture.Project, entries, nil)
+		if err != nil {
+			return "", err
+		}
+		tag := filteredProjectTag(capture.Project, image)
+		image = capture.Store.ApprovedProjectBuild(tag, projectBuildInputs(tree, q.Candidate, closure, definition.Tag, tag, dfRel))
+		if image == "" {
+			return "", fmt.Errorf("review %s and its copied build files, then run 'coop build --egress filtered' on the host", dfRel)
+		}
+	}
+	id, _, err := docker.Image(ctx, image)
+	if err != nil || id != image {
+		return "", errors.New("the prepared filtered image is missing — run 'coop build --egress filtered' on the host")
+	}
+	return image, nil
 }
 
 // proveDerivedImage refuses everything the built image cannot show it inherited.

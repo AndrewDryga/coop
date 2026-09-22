@@ -141,6 +141,15 @@ func (c *Control) MergeGate(repo string) (string, error) {
 		return "", err
 	}
 	img := box.ImageForRepo(repo, c.cfg.BaseImage, c.cfg.ImageOverride)
+	access, err := box.ProjectNetworkAccess(context.Background(), c.cfg, repo)
+	if err != nil {
+		return "", err
+	}
+	if access.Mode == "filtered" {
+		// Admission in runGateMode proves the separately approved filtered image. Requiring
+		// the ordinary tag here would strand a project prepared with `coop build --egress filtered`.
+		return img, nil
+	}
 	if img == c.cfg.BaseImage {
 		if err := c.host.ensureBaseImage(); err != nil {
 			return "", err
@@ -152,7 +161,7 @@ func (c *Control) MergeGate(repo string) (string, error) {
 		if err := c.rt.EnsureDaemon(); err != nil {
 			return "", err
 		}
-		return "", fmt.Errorf("a merge gate is set but image %q isn't built — run 'coop build'", img)
+		return "", fmt.Errorf("a merge gate is set but image %q isn't built — run 'coop build --egress open'", img)
 	}
 	return img, nil
 }

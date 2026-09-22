@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -21,37 +24,92 @@ import (
 // lose work, and it picks up the new image the next time it starts.
 
 func (a *app) cmdBuild(args []string) (int, error) {
-	if err := rejectArgs("build", args); err != nil {
+	mode, err := parseBuildMode(args)
+	if err != nil {
 		return 2, err
+	}
+	retry := "coop build"
+	if mode != nil {
+		retry += " --egress " + string(*mode)
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
 	}
+	if mode == nil {
+		access, err := box.ProjectNetworkAccess(context.Background(), a.cfg, repo)
+		if err != nil {
+			return 1, err
+		}
+		mode = &access.Mode
+	}
+	if *mode == egress.Filtered {
+		// Only the source observation is shared with the ordinary build plan. Its image and
+		// base-preparation fields do not describe the locked filtered image resolved below.
+		plan, err := box.PlanBuild(a.rt, a.cfg, repo, false)
+		if err != nil {
+			return 1, buildFailure("Could not build the filtered box image", err, a.rt.Name, "coop build --egress filtered")
+		}
+		warnUntrackedBuild(plan)
+		ui.Note("Preparing the filtered box image")
+		if plan.Project {
+			ui.Note("  Dockerfile: %s", plan.Dockerfile)
+		}
+		ui.Note("  Project builds use ordinary networking, not the run's network restrictions.")
+		ui.Note("  Review the Dockerfile and copied build files before building.")
+		// Install after ordinary preflight: only the filtered builder's detached process group
+		// needs explicit cancellation, while foreground probes still receive terminal signals.
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
+		if err := box.BuildFilteredProject(ctx, a.rt, a.cfg, repo, os.Stdout, os.Stderr); err != nil {
+			return 1, buildFailure("Could not build the filtered box image", err, a.rt.Name, "coop build --egress filtered")
+		}
+		ui.OK("Filtered box image ready")
+		return a.reportRecycle(repo, "Box image built", "coop build --egress filtered")
+	}
 	plan, err := box.PlanBuild(a.rt, a.cfg, repo, false)
 	if err != nil {
-		return 1, buildFailure("Could not build the box image", err, a.rt.Name, "coop build")
+		return 1, buildFailure("Could not build the box image", err, a.rt.Name, retry)
 	}
 	announceBuild(plan, "Building the Coop box", "Building the project box")
 	if err := box.BuildPlanned(a.rt, a.cfg, repo, plan, false, resolveVersion(), os.Stdin, os.Stdout); err != nil {
 		ui.Note("")
-		return 1, buildFailure("Could not build the box image", err, a.rt.Name, "coop build")
+		return 1, buildFailure("Could not build the box image", err, a.rt.Name, retry)
 	}
 	ui.Note("")
 	ui.OK("Box image built")
-	return a.reportRecycle(repo, "Box image built", "coop build")
+	return a.reportRecycle(repo, "Box image built", retry)
+}
+
+// --egress chooses the image a later run needs; it is not a build-time network sandbox.
+func parseBuildMode(args []string) (*egress.Mode, error) {
+	var mode *egress.Mode
+	for i := 0; i < len(args); {
+		value, count, match, err := flagValue(args, i, "--egress")
+		if !match {
+			return nil, ui.UnexpectedArgument(args[i], "coop build", "coop build [--egress <mode>]")
+		}
+		if err != nil {
+			return nil, ui.MissingOptionValue("--egress", "coop build", "coop build --egress filtered")
+		}
+		if mode != nil {
+			return nil, ui.RepeatedOption("--egress", "coop build")
+		}
+		parsed, err := egress.ParseMode(value)
+		if err != nil {
+			return nil, ui.InvalidOptionValue(value, "--egress", "coop build", "Choose filtered, open or none.", "coop build --egress filtered")
+		}
+		mode = &parsed
+		i += count
+	}
+	return mode, nil
 }
 
 // announceBuild says which image is about to be built and from what. The shared base has no
 // Dockerfile of the project's own, so it names only its tag — one per box definition, so a reader
 // can tell which Coop's base this is; a project build also names the exact configured path.
 func announceBuild(plan box.BuildPlan, baseTitle, projectTitle string) {
-	if plan.Untracked {
-		warnBlock("The box Dockerfile is not tracked in Git",
-			plan.Dockerfile+" controls what runs in the box.",
-			"Review this file before using the rebuilt box.")
-		ui.Note("")
-	}
+	warnUntrackedBuild(plan)
 	if !plan.Project {
 		ui.Note("%s", baseTitle)
 		ui.Note("  Image:      %s", plan.Image)
@@ -64,6 +122,15 @@ func announceBuild(plan box.BuildPlan, baseTitle, projectTitle string) {
 	ui.Note("")
 	if plan.BaseFirst {
 		ui.Note("The shared Coop image must be built first.")
+		ui.Note("")
+	}
+}
+
+func warnUntrackedBuild(plan box.BuildPlan) {
+	if plan.Untracked {
+		warnBlock("The box Dockerfile is not tracked in Git",
+			plan.Dockerfile+" controls what runs in the box.",
+			"Review this file before using the rebuilt box.")
 		ui.Note("")
 	}
 }

@@ -113,6 +113,13 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		return appendCompletionCandidates(topLevelCommands, a.targetCandidates(cur, false, true), a.presetCandidates())
 	}
 	switch prev[0] {
+	case "build":
+		if len(prev) == 1 {
+			return []string{"--egress"}
+		}
+		if len(prev) == 2 && prev[1] == "--egress" {
+			return []string{"filtered", "open", "none"}
+		}
 	case "fork":
 		if len(prev) == 1 { // a verb, or a fork to re-enter
 			repo, _ := box.ResolveRepo(a.cfg.RepoOverride)

@@ -891,8 +891,8 @@ func TestForkACPRejectsUnsafeReadOnlySessionOutputRootBeforeBoxLaunch(t *testing
 	if code != -1 || runErr == nil || !strings.Contains(runErr.Error(), "output root is unsafe") {
 		t.Fatalf("forkACP = (%d, %v), want unsafe output-root refusal", code, runErr)
 	}
-	if args, err := os.ReadFile(recorder); err != nil || strings.Contains(string(args), "\nrun ") || strings.HasPrefix(string(args), "run ") {
-		t.Fatalf("unsafe output root reached box launch: %q, %v", args, err)
+	if _, err := os.Stat(recorder); !os.IsNotExist(err) {
+		t.Fatalf("unsafe output root reached runtime inspection or launch: %v", err)
 	}
 }
 
@@ -934,8 +934,8 @@ func TestLocalForkACPUsesSharedNetworkAdmission(t *testing.T) {
 	if code != 1 || err == nil || !strings.Contains(err.Error(), "Review it: coop approve") {
 		t.Fatalf("local fork ACP without approval = (%d, %v)", code, err)
 	}
-	if data, readErr := os.ReadFile(recorder); readErr != nil || strings.Contains("\n"+string(data), "\nrun ") {
-		t.Fatalf("pending fork ACP reached box runtime: %q, %v", data, readErr)
+	if _, err := os.Stat(recorder); !os.IsNotExist(err) {
+		t.Fatalf("pending fork ACP reached runtime inspection or launch: %v", err)
 	}
 }
 

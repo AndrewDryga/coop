@@ -8,10 +8,9 @@ import (
 	"errors"
 )
 
-// projectBuildRecord remembers the image one filtered project build produced and the digest of
-// every input that build read. A launch whose inputs hash the same runs that exact image id instead
-// of staging and building again. It is a memo, not authority: the launch still proves the image it
-// runs, a record for other inputs is a miss, and a miss builds.
+// projectBuildRecord approves the immutable image an explicit host build produced from these
+// inputs. A restricted launch never builds on a miss. Version 1 was an automatic-build cache,
+// not human authority, and cannot authorize reuse under this policy.
 //
 // There is one record per output tag — one project on one locked client image — so a tree that
 // keeps changing (a loop commits every iteration) replaces its record instead of accumulating them.
@@ -36,9 +35,9 @@ func (s *Store) projectBuildID(tag string) (string, error) {
 
 func projectBuildRecordName(id string) string { return "projectbuild-" + id + ".json" }
 
-// ProjectBuild returns the image this host last built for tag from exactly these inputs, or "" when
-// it remembers none: missing, unreadable, foreign or built from other inputs, each is a miss.
-func (s *Store) ProjectBuild(tag, inputs string) string {
+// ApprovedProjectBuild returns an explicitly built image for exactly these inputs, or "" when
+// approval is missing, unreadable, foreign, legacy or for other inputs.
+func (s *Store) ApprovedProjectBuild(tag, inputs string) string {
 	if s.intactAuthority() != nil || !lowerHex(inputs, 64) {
 		return ""
 	}
@@ -51,16 +50,16 @@ func (s *Store) ProjectBuild(tag, inputs string) string {
 		return ""
 	}
 	var record projectBuildRecord
-	if strictJSON(data, &record) != nil || record.Version != 1 || record.ID != id || record.Tag != tag ||
+	if strictJSON(data, &record) != nil || record.Version != 2 || record.ID != id || record.Tag != tag ||
 		record.Inputs != inputs || !imageDigest(record.Image) {
 		return ""
 	}
 	return record.Image
 }
 
-// RememberProjectBuild records a build that just passed its proofs, replacing the tag's previous
-// record. A write that fails costs the next launch a build, never a wrong image.
-func (s *Store) RememberProjectBuild(tag, inputs, image string) error {
+// ApproveProjectBuild records an explicit host build after its proofs, replacing the tag's previous
+// approval. Callers must report publication failure: an image built without this record is not ready.
+func (s *Store) ApproveProjectBuild(tag, inputs, image string) error {
 	if err := s.intactAuthority(); err != nil {
 		return err
 	}
@@ -71,7 +70,7 @@ func (s *Store) RememberProjectBuild(tag, inputs, image string) error {
 	if !lowerHex(inputs, 64) || !imageDigest(image) {
 		return errors.New("a project build record needs an inputs digest and an image id")
 	}
-	data, err := json.Marshal(projectBuildRecord{Version: 1, ID: id, Tag: tag, Inputs: inputs, Image: image})
+	data, err := json.Marshal(projectBuildRecord{Version: 2, ID: id, Tag: tag, Inputs: inputs, Image: image})
 	if err != nil {
 		return err
 	}

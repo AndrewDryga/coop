@@ -4,7 +4,7 @@ description: "every unrecoverable delete routes through the one shared `ui.Destr
 scope: security
 sources: [internal/ui/confirm.go, internal/box/reclaim.go, internal/box/derived_image.go]
 check: "none"
-updated: 2026-09-20
+updated: 2026-09-22
 ---
 
 # Every unrecoverable delete goes through the one shared confirmation gate
@@ -43,8 +43,8 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
   decision the networking contract says only a human makes. It is stricter where it counts — no
   `--yes` at all, a terminal required, default No. Reach for the gate whenever redoing the thing
   needs anything more than one command.
-- Narrow exception: an image Coop built for itself is not user state. A build — or a filtered launch
-  that builds a project's own box image (`internal/box/derived_image.go`) — reclaims the images it
+- Narrow exception: an image Coop built for itself is not user state. A build — including an explicit
+  filtered project build (`internal/box/derived_image.go`) — reclaims the images it
   superseded (`internal/box/reclaim.go`) with no prompt, because the thing removed is rebuilt by the
   same command that removed it and nothing the user authored is in it. It earns that by being narrow:
   only a repository Coop tags by definition (a project's own also carrying the label Coop's build
@@ -61,6 +61,8 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
 See also [[destructive-verb-rm]] (the verb is named `rm`) and [[bare-subcommand-shows-help]].
 
 ## Changelog
+- 2026-09-22 — filtered launches now consume an explicit build and never reclaim images. The
+  existing narrow exception stays on the explicit build path; swept derived_image.go and reclaim.go.
 - 2026-09-20 — the exception now covers a filtered LAUNCH that builds a project's own box image, so
   an unattended loop iteration may remove one; the preconditions are unchanged and are the reason.
 - 2026-09-20 — named Coop's own superseded images as a narrow exception when the build-time reclaim
