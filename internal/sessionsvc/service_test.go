@@ -1908,6 +1908,11 @@ func TestSessionServiceLogsSanitizedOperationFailureWithCorrelationID(t *testing
 		failed, _ = service.Store().GetOperationByID(context.Background(), op.ID)
 		return failed.State == session.OperationFailed
 	})
+	// The failure receipt precedes its log. Join the asynchronous writer before
+	// reading the buffer; observing the receipt alone does not synchronize it.
+	if err := service.Stop(); err != nil {
+		t.Fatal(err)
+	}
 	output := logs.String()
 	if !strings.Contains(output, `"operation_id":"`+op.ID+`"`) ||
 		!strings.Contains(output, `"method":"CreateRemoteSession"`) ||

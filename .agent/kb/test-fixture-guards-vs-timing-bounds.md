@@ -62,7 +62,16 @@ foreground sleep may add the latter between listings, hiding an excluded leader 
 Publish one child's PID, keep the leader in builtin `wait`, and assert those known identities.
 Do not compare dynamic status/elapsed columns or loosen production cleanup assertions.
 
+**A persisted receipt is not a joined writer.** An asynchronous session operation records its
+failure before writing its diagnostic. Observing that terminal receipt does not make an injected
+`bytes.Buffer` safe to read or ensure the log exists yet. Stop and join the service before reading
+the capture (`TestSessionServiceLogsSanitizedOperationFailureWithCorrelationID`); a buffer mutex
+alone would still permit an empty-log assertion. Keep correlation and redaction assertions intact.
+
 ## Changelog
+- 2026-09-22 — the canonical race gate caught a log-buffer read before its background writer
+  completed. Joined the service before inspection; swept both session-service logger captures,
+  leaving the synchronous HTTP request fixture unchanged.
 - 2026-09-22 — reproduced the process-group exclusion fixture race in the canonical race gate
   and focused repetitions; synchronized one child and asserted exact leader/child identities.
 - 2026-09-13 — reproduced an ordinary session fixture refusing allocation under the host's 24.7 GB
