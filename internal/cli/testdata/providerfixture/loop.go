@@ -98,7 +98,7 @@ func validateLoopResult(index int, stage, result string) error {
 			result == "background-drained" || result == "background-timeout" ||
 			result == "background-drained-complete" || result == "background-timeout-after-restored-completion" ||
 			result == "tool-wait" || result == "tool-gated-complete" || result == "forged-flood-wait" ||
-			result == "progress-gated-complete" || result == "uncommitted-complete" || result == "decision-complete" {
+			result == "progress-gated-complete" || result == "uncommitted-complete" || result == "uncommitted-dirty-complete" || result == "decision-complete" {
 			return nil
 		}
 	case "between", "signoff", "verify":
@@ -196,7 +196,7 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			return 1, "", err
 		}
 		return waitLoopSignal(root, trace)
-	case "complete", "complete-tool-failure", "complete-delay", "complete-gated", "complete-reopen-archive", "complete-host-reopen-archive", "complete-forged-archive-binding", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-changed-descendant", "verify-only", "verify-only-after-block", "second-binding", "background-drained-complete", "uncommitted-complete", "decision-complete":
+	case "complete", "complete-tool-failure", "complete-delay", "complete-gated", "complete-reopen-archive", "complete-host-reopen-archive", "complete-forged-archive-binding", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-changed-descendant", "verify-only", "verify-only-after-block", "second-binding", "background-drained-complete", "uncommitted-complete", "uncommitted-dirty-complete", "decision-complete":
 		outcome := attempt.Result
 		if outcome == "complete" || outcome == "complete-tool-failure" || outcome == "complete-delay" || outcome == "complete-gated" || outcome == "complete-reopen-archive" || outcome == "complete-host-reopen-archive" || outcome == "complete-forged-archive-binding" || outcome == "complete-extra-unbound" || outcome == "complete-extra-bound" || outcome == "complete-extra-finalized" || outcome == "complete-wait" || outcome == "background-drained-complete" {
 			outcome = ""
@@ -1298,15 +1298,17 @@ func serveLoopWorker(root, provider, taskID, target, outcome string) error {
 		if err != nil {
 			return fmt.Errorf("write loop change: %w", err)
 		}
-		if err := runLoopGit(repo, "add", "--", change); err != nil {
-			return err
-		}
-		commitArgs := []string{"commit", "-q", "-m", "fixture: complete " + provider + " loop task"}
-		if outcome == "" {
-			commitArgs = append(commitArgs, "-m", "Coop-Task: "+taskID)
-		}
-		if err := runLoopGit(repo, commitArgs...); err != nil {
-			return err
+		if outcome != "uncommitted-dirty-complete" {
+			if err := runLoopGit(repo, "add", "--", change); err != nil {
+				return err
+			}
+			commitArgs := []string{"commit", "-q", "-m", "fixture: complete " + provider + " loop task"}
+			if outcome == "" {
+				commitArgs = append(commitArgs, "-m", "Coop-Task: "+taskID)
+			}
+			if err := runLoopGit(repo, commitArgs...); err != nil {
+				return err
+			}
 		}
 	}
 

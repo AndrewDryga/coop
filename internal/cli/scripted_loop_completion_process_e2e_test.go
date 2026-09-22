@@ -95,7 +95,7 @@ func TestProviderScriptedLoopResumesTerminalCorrectionInPlace(t *testing.T) {
 
 func TestProviderScriptedLoopCompletionRepair(t *testing.T) {
 	suite := newDirectProcessSuite(t)
-	for _, scenario := range []string{"repairs decision", "parks and continues", "preserves dirty source", "static terminal", "static quota wait", "human terminal"} {
+	for _, scenario := range []string{"repairs decision", "parks and continues", "preserves inherited untracked source", "preserves inherited staged source", "rejects worker source changes", "static terminal", "static quota wait", "human terminal"} {
 		t.Run(scenario, func(t *testing.T) {
 			resetLoopProcessRepo(t, suite)
 			t.Cleanup(func() { logLoopProcessFailure(t, suite) })
@@ -120,9 +120,17 @@ func TestProviderScriptedLoopCompletionRepair(t *testing.T) {
 					loopProcessAttempt{Target: target, Stage: "work", Result: "uncommitted-complete"},
 					loopProcessAttempt{TaskID: nextID, Target: target, Stage: "work", Result: "complete"},
 					loopProcessAttempt{TaskID: nextID, Target: target, Stage: "signoff", Result: "pass"})
-			case "preserves dirty source":
+			case "preserves inherited untracked source", "preserves inherited staged source", "rejects worker source changes":
 				if err := os.WriteFile(filepath.Join(suite.layout.Repo, "unrelated.txt"), []byte("preserve me\n"), 0o600); err != nil {
 					t.Fatal(err)
+				}
+				if scenario == "preserves inherited staged source" {
+					loopProcessGit(t, suite, "add", "unrelated.txt")
+				}
+				if scenario == "rejects worker source changes" {
+					attempts[0].Result = "uncommitted-dirty-complete"
+				} else {
+					attempts = append(attempts, loopProcessAttempt{Target: target, Stage: "work", Result: "decision-complete"})
 				}
 			default:
 				attempts = append(attempts, loopProcessAttempt{Target: target, Stage: "work", Result: "decision-complete"})
@@ -131,6 +139,8 @@ func TestProviderScriptedLoopCompletionRepair(t *testing.T) {
 				Version: 6, Provider: "claude", ProviderHomes: agents.Names(),
 				Loop: loopProcessPlan{TaskID: id, Attempts: attempts},
 			})
+			inheritedStatus := loopProcessGit(t, suite, "status", "--porcelain", "--untracked-files=all")
+			inheritedIndex := loopProcessGit(t, suite, "diff", "--cached", "--binary")
 			command := procharness.Command{
 				Path: suite.coopBin, Args: []string{"loop", target, "--max-tasks", maxTasks, "--no-preflight", "--no-mcp"},
 				Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
@@ -153,17 +163,47 @@ func TestProviderScriptedLoopCompletionRepair(t *testing.T) {
 			result := procharness.Run(ctx, command)
 			cancel()
 			output := result.Stdout + result.Stderr
-			if scenario == "preserves dirty source" {
-				if result.ExitCode == 0 || !strings.Contains(output, "completion rejected") || strings.Contains(output, "automatic repair") {
+			trace := readProcessTrace(t, suite.layout.Trace)
+			assertLoopTraceProcessesGone(t, trace)
+			providerStarts := 0
+			for _, event := range trace {
+				if event.Source == "provider" && event.Event == "start" {
+					providerStarts++
+				}
+			}
+			if providerStarts != len(attempts) {
+				t.Fatalf("provider starts = %d, want %d", providerStarts, len(attempts))
+			}
+			if strings.HasPrefix(scenario, "preserves inherited") || scenario == "rejects worker source changes" {
+				if got := readProcessFile(t, filepath.Join(suite.layout.Repo, "unrelated.txt")); got != "preserve me\n" {
+					t.Fatalf("inherited source changed: %q", got)
+				}
+				if got := loopProcessGit(t, suite, "diff", "--cached", "--binary"); got != inheritedIndex {
+					t.Fatalf("inherited index changed: %s", got)
+				}
+			}
+			if scenario == "rejects worker source changes" {
+				if result.ExitCode != 1 || result.Err != nil || !strings.Contains(output, "completion rejected") || strings.Contains(output, "starting one repair attempt") {
 					t.Fatalf("dirty refusal = %+v", result)
 				}
-				if got := readProcessFile(t, filepath.Join(suite.layout.Repo, "unrelated.txt")); got != "preserve me\n" {
-					t.Fatalf("dirty source changed: %q", got)
+				if got := readProcessFile(t, filepath.Join(suite.layout.Repo, "loop-claude.txt")); got != "completed by claude\n" {
+					t.Fatalf("worker source was not preserved: %q", got)
 				}
-				if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, id)) {
+				if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, id)) || pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, id)) {
 					t.Fatal("dirty task was not preserved in progress")
 				}
+				if head := loopProcessGit(t, suite, "rev-parse", "HEAD"); head != suite.repoHead {
+					t.Fatalf("refusal advanced HEAD: %s", head)
+				}
+				if commits := tasks.CommitsForTask(suite.layout.Repo, "", id); len(commits) != 0 {
+					t.Fatalf("refusal fabricated a task binding: %v", commits)
+				}
 				return
+			}
+			if strings.HasPrefix(scenario, "preserves inherited") {
+				if got := loopProcessGit(t, suite, "status", "--porcelain", "--untracked-files=all"); got != inheritedStatus {
+					t.Fatalf("inherited checkout changed: %s", got)
+				}
 			}
 			wantExit := 0
 			if scenario == "parks and continues" {
@@ -224,7 +264,6 @@ func TestProviderScriptedLoopCompletionRepair(t *testing.T) {
 			if scenario == "human terminal" && (!strings.Contains(output, "\x1b[K") || !strings.Contains(output, "\x1b[J") || !strings.Contains(output, target) || !strings.Contains(output, "Task completed:")) {
 				t.Fatalf("human terminal lost its live UI or task/provider/result identity: %q", output)
 			}
-			assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
 		})
 	}
 }

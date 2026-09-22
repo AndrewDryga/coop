@@ -2,8 +2,8 @@
 name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
-sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/loop/loop.go, internal/loop/iteration.go, internal/tasks/audit.go, internal/cli/fork_cmd.go, internal/forkctl/meta.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/tasks/lease.go, internal/loop/streamjson.go, internal/loop/telemetry.go, internal/loop/review.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_loop_handoff_telemetry_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
-updated: 2026-09-19
+sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/loop/loop.go, internal/loop/iteration.go, internal/tasks/audit.go, internal/cli/fork_cmd.go, internal/forkctl/meta.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/tasks/lease.go, internal/loop/streamjson.go, internal/loop/telemetry.go, internal/loop/review.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_completion_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_loop_handoff_telemetry_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/main_test.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
+updated: 2026-09-22
 ---
 
 `make provider-scripted-e2e` builds fresh Coop and fixture executables inside a disposable root,
@@ -67,6 +67,16 @@ terminal boundary for streaming and two-stage Ctrl-C behavior.
 Unbound-completion denials also prove host recovery never follows provider-created task metadata
 links outside the repository. A finalization failure restores the task to in-progress, and the
 state-link case reruns the loop to repair the commit binding, clean scratch, and finish normally.
+
+Completion-repair process rows distinguish unchanged inherited untracked/staged work from source
+created by the worker after the first task baseline. Unchanged inheritance permits one repair and
+preserves its bytes and index; a new uncommitted worker file denies repair, stays intact, and leaves
+the task in progress without advancing HEAD or adding a binding. Both paths assert exact provider
+attempt counts and process cleanup; the accepted repair also checks its stage telemetry. The closed
+`uncommitted-dirty-complete` outcome uses the existing rooted, create-only fixture writer without
+staging or committing. The successful repair
+action still uses a bound empty fixture commit: these rows prove repair admission/preservation,
+not explicit no-change MCP acceptance, which has separate controller and task-channel coverage.
 
 The recovery matrix drives the real external controller through authentication, provider and output
 limits, ordinary errors, exact diagnostic phrases in assistant prose, malformed/truncated streams,
@@ -136,6 +146,8 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-09-22 — split completion recovery's stale clean-only expectation into unchanged inherited
+  untracked/staged positives and a worker-created dirty denial, including cleanup on the denial path.
 - 2026-09-19 — a deadline now names what was still running; recorded the unexplained grok-resume
   pair stall and the load-only overflow slowness.
 - 2026-09-19 — the native-role degradation row became two: a native role mounts in every provider's

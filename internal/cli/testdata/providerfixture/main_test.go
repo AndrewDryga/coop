@@ -559,7 +559,7 @@ func TestReadLoopScenarioAcceptsOnlyClosedV6Attempts(t *testing.T) {
 	if err := write(valid); err != nil {
 		t.Fatalf("valid loop scenario rejected: %v", err)
 	}
-	for _, result := range []string{"complete-delay", "complete-gated", "complete-reopen-archive", "complete-host-reopen-archive", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-changed-descendant", "verify-only", "verify-only-after-block", "second-binding", "rate-limit", "rate-limit-short", "output-limit", "authentication", "ordinary", "ambiguous-limit-prose", "ambiguous-auth-prose", "malformed", "truncated", "wait", "progress-wait", "tool-wait", "tool-gated-complete", "progress-gated-complete"} {
+	for _, result := range []string{"complete-delay", "complete-gated", "complete-reopen-archive", "complete-host-reopen-archive", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-changed-descendant", "verify-only", "verify-only-after-block", "second-binding", "rate-limit", "rate-limit-short", "output-limit", "authentication", "ordinary", "ambiguous-limit-prose", "ambiguous-auth-prose", "malformed", "truncated", "wait", "progress-wait", "tool-wait", "tool-gated-complete", "progress-gated-complete", "uncommitted-complete", "uncommitted-dirty-complete", "decision-complete"} {
 		body := strings.Replace(valid, `"result":"complete"`, `"result":"`+result+`"`, 1)
 		if err := write(body); err != nil {
 			t.Fatalf("closed loop result %q rejected: %v", result, err)
@@ -579,6 +579,11 @@ func TestReadLoopScenarioAcceptsOnlyClosedV6Attempts(t *testing.T) {
 		}
 	}
 	for _, stage := range []string{"between", "signoff", "verify"} {
+		body := strings.Replace(valid, `"stage":"work"`, `"stage":"`+stage+`"`, 1)
+		body = strings.Replace(body, `"result":"complete"`, `"result":"uncommitted-dirty-complete"`, 1)
+		if err := write(body); err == nil {
+			t.Errorf("work-only uncommitted mutation accepted for %s", stage)
+		}
 		for _, result := range []string{"pass", "pass-with-descendant", "reopen", "reopen-gated", "reopen-authentication", "reopen-ordinary", "rate-limit", "output-limit", "authentication", "ordinary", "malformed", "truncated", "wait", "progress-wait"} {
 			body := strings.Replace(valid, `"stage":"work"`, `"stage":"`+stage+`"`, 1)
 			body = strings.Replace(body, `"result":"complete"`, `"result":"`+result+`"`, 1)
