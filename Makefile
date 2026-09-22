@@ -140,7 +140,7 @@ provider-scripted-e2e: ## Deterministic all-provider process e2e (no runtime or 
 	@go test -tags providere2e -run '^TestProviderScripted' -count=1 -timeout 20m -v ./internal/cli/
 
 live-process-control: ## Deterministic denial tests for tagged live-test process ownership
-	@go test -race -tags providerlivee2e,cooplivetest -run '^Test(LiveACPProcess|LiveInterruptible|LiveRunInterruptible|ProviderConsultLiveContract|ProviderLoopLiveContract|ProviderResumeLiveContract)' -count=1 ./internal/cli/ ./internal/acpctl/ ./internal/runtime/
+	@go test -race -tags providerlivee2e,cooplivetest -run '^Test(LiveACPProcess|LiveInterruptible|LiveRunInterruptible|ProviderConsultLiveContract|ProviderLoopLiveContract|ProviderResumeLiveContract|ProviderNetworkLiveContract|ProviderLiveStreamContract|ProviderAccountsLiveContract)' -count=1 ./internal/cli/ ./internal/acpctl/ ./internal/runtime/ ./internal/loop/
 	@tmp="$$(mktemp)"; trap 'rm -f "$$tmp"' 0; go test -c -tags acpe2e -o "$$tmp" ./internal/acpproxy/
 
 provider-live-e2e: ## Opt-in read-only upstream CLI probe (set COOP_LIVE_TARGETS=provider,...)
@@ -161,11 +161,11 @@ provider-resume-live-e2e-all: ## Strict two-process native session resume for ev
 
 provider-network-live-e2e: ## Opt-in credentialed provider probe THROUGH the restricted gateway (set COOP_LIVE_TARGETS=provider,...)
 	@test -n "$$COOP_LIVE_TARGETS" || { echo 'COOP_LIVE_TARGETS is required (for example: claude,codex@work)'; exit 2; }
-	@go test -timeout 30m -tags providerlivee2e,cooplivetest -run '^TestProviderNetworkLiveCompatibility$$' -count=1 -v ./internal/cli/
+	@go test -timeout 55m -tags providerlivee2e,cooplivetest -run '^TestProviderNetworkLiveCompatibility$$' -count=1 -v ./internal/cli/
 
 provider-network-live-e2e-all: ## Strict filtered-egress provider probe for every registered provider
 	@COOP_LIVE_TARGETS="$${COOP_LIVE_TARGETS:-all}" COOP_LIVE_REQUIRE_ALL=1 \
-		go test -timeout 30m -tags providerlivee2e,cooplivetest -run '^TestProviderNetworkLiveCompatibility$$' -count=1 -v ./internal/cli/
+		go test -timeout 55m -tags providerlivee2e,cooplivetest -run '^TestProviderNetworkLiveCompatibility$$' -count=1 -v ./internal/cli/
 
 provider-loop-live-e2e: ## Opt-in one-attempt live provider task completion (set COOP_LIVE_TARGETS=provider,...)
 	@test -n "$$COOP_LIVE_TARGETS" || { echo 'COOP_LIVE_TARGETS is required (for example: codex,gemini@work)'; exit 2; }
@@ -183,6 +183,13 @@ provider-consult-live-e2e-all: ## Strict real coop-consult probe for every provi
 	@COOP_LIVE_TARGETS="$${COOP_LIVE_TARGETS:-all}" COOP_LIVE_REQUIRE_ALL=1 \
 		go test -timeout 30m -tags providerlivee2e,cooplivetest -run '^TestProviderConsultLiveCompatibility$$' -count=1 -v ./internal/cli/
 
+provider-accounts-live-e2e-all: ## PAID: real loop recovery for each provider with two configured accounts
+	@COOP_LIVE_TARGETS=all go test -timeout 55m -tags providerlivee2e,cooplivetest -run '^TestProviderAccountsLiveCompatibility$$' -count=1 -v ./internal/loop/
+
+provider-delegate-live-e2e-all: ## Strict write-capable coop-delegate probe for every provider
+	@COOP_LIVE_TARGETS="$${COOP_LIVE_TARGETS:-all}" COOP_LIVE_REQUIRE_ALL=1 \
+		go test -timeout 30m -tags providerlivee2e,cooplivetest -run '^TestProviderDelegateLiveCompatibility$$' -count=1 -v ./internal/cli/
+
 # Qualifies the locked clients before a pin moves (package.json/package-lock.json, an adapter's
 # LockedClients): it rebuilds this host's box and filtered setup from the working tree, runs every
 # strict live suite against them, and records the result. PAID — every provider answers real
@@ -193,12 +200,12 @@ provider-qualify: ## PAID: qualify the locked clients on every provider and reco
 	go build -o "$$logs/coop" . && mkdir "$$logs/repo" \
 	  && (cd "$$logs/repo" && git init -q && "$$logs/coop" build && "$$logs/coop" net setup) < /dev/null > "$$logs/setup.log" 2>&1 \
 	  || { tail -n 40 "$$logs/setup.log"; exit 1; }; \
-# The two offline suites run FIRST: they need only the image the setup step just built and call no
+# The three offline suites run FIRST: they need only the image the setup step just built and call no
 # model, so a red there costs nothing — behind the paid suites, the same red would arrive after every
 # provider had already answered real prompts.
 	for suite in native-roles-e2e skills-e2e mcp-e2e \
-	             provider-live-e2e-all provider-resume-live-e2e-all provider-loop-live-e2e-all provider-consult-live-e2e-all \
-	             provider-network-live-e2e-all acp-e2e; do \
+	             provider-live-e2e-all provider-resume-live-e2e-all provider-loop-live-e2e-all provider-consult-live-e2e-all provider-delegate-live-e2e-all \
+	             provider-network-live-e2e-all provider-accounts-live-e2e-all acp-e2e; do \
 	  echo "== $$suite"; \
 	  COOP_LIVE_TARGETS=all $(MAKE) --no-print-directory $$suite < /dev/null > "$$logs/$$suite.log" 2>&1 || { tail -n 40 "$$logs/$$suite.log"; exit 1; }; \
 	done; \
@@ -238,3 +245,4 @@ help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
 .PHONY: build install test cover lint staticcheck-version govulncheck-version vuln shellcheck require-python3 snapshot doctor docs docs-check align casts casts-check tools-test rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all provider-qualify acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e clean help
+.PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all

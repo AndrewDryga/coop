@@ -33,6 +33,8 @@ const (
 	ResumeSummaryPrefix = "COOP_PROVIDER_RESUME_LIVE_SUMMARY "
 	// ConsultSummaryPrefix identifies the separate four-provider live consult result contract.
 	ConsultSummaryPrefix = "COOP_CONSULT_LIVE_SUMMARY "
+	// DelegateSummaryPrefix distinguishes the writable ring from read-only consultation.
+	DelegateSummaryPrefix = "COOP_DELEGATE_LIVE_SUMMARY "
 	// NetworkSummaryPrefix identifies the credentialed probe that runs through the restricted
 	// gateway: same providers, but every packet crosses the filtered boundary.
 	NetworkSummaryPrefix = "COOP_PROVIDER_NETWORK_LIVE_SUMMARY "
@@ -233,7 +235,7 @@ func validFailedResult(result ProviderResult) bool {
 	case ReasonPromptExit:
 		return result.Attempted && validPromptExitPhase(result.Phase) && !result.TimedOut
 	case ReasonPromptTimeout:
-		return result.Attempted && (result.Phase == "prompt" || result.Phase == "resume") && result.TimedOut && result.ErrorClass == "timeout"
+		return result.Attempted && (result.Phase == "prompt" || result.Phase == "resume" || result.Phase == "mcp") && result.TimedOut && result.ErrorClass == "timeout"
 	case ReasonMarkerMismatch:
 		return result.Attempted && (result.Phase == "prompt" || result.Phase == "resume") && !result.TimedOut
 	case ReasonRepositoryChanged, ReasonSourceChanged, ReasonCleanupFailed:
@@ -565,6 +567,8 @@ type ChildSpec struct {
 	// the gateway's broker is the only way Coop runs one. Credentials, repository and
 	// home stay isolated either way.
 	NetworkStateHome string
+	// NetworkMCPFile is the fixed controlled stdio fixture, outside all agent mounts.
+	NetworkMCPFile string
 }
 
 // ConsultChildSpec is the complete authority granted to the one clean four-provider live helper.
@@ -573,6 +577,7 @@ type ConsultChildSpec struct {
 	Targets                                                  []agents.Target
 	PreflightReasons                                         map[string]string
 	Strict                                                   bool
+	Delegate                                                 bool
 	ControlFD                                                int
 	RevokePath                                               string
 	Runtime                                                  RuntimeSettings
@@ -605,6 +610,14 @@ func ChildEnvironment(layout procharness.Layout, spec ChildSpec) ([]string, erro
 	}
 	if workflow != "prompt" && workflow != "loop" && workflow != "resume" && workflow != "network" {
 		return nil, errors.New("invalid live child workflow")
+	}
+	if workflow == "network" {
+		if spec.NetworkMCPFile != filepath.Join(layout.State, "provider-network-mcp.json") {
+			return nil, errors.New("the live network workflow requires its controlled MCP fixture")
+		}
+		values["COOP_MCP_FILE"] = spec.NetworkMCPFile
+	} else if spec.NetworkMCPFile != "" {
+		return nil, errors.New("live network MCP authority granted to another workflow")
 	}
 	if workflow == "resume" {
 		if (spec.Stage != "fresh" && spec.Stage != "resume") ||
@@ -671,6 +684,7 @@ func ConsultChildEnvironment(layout procharness.Layout, spec ConsultChildSpec) (
 	values["COOP_TEST_CONSULT_LIVE_SUPERVISOR"] = spec.Supervisor
 	values["COOP_TEST_CONSULT_LIVE_CID_DIR"] = spec.CIDDir
 	values["COOP_TEST_CONSULT_LIVE_STRICT"] = fmt.Sprintf("%t", spec.Strict)
+	values["COOP_TEST_CONSULT_LIVE_DELEGATE"] = fmt.Sprintf("%t", spec.Delegate)
 	targets := make([]string, 0, len(spec.Targets))
 	for _, target := range spec.Targets {
 		targets = append(targets, target.String())
@@ -1015,6 +1029,44 @@ func VerifyRepository(layout procharness.Layout, baseline RepositorySnapshot) (R
 	return snapshot, nil
 }
 
+// VerifyDelegateRepository permits exactly one expected untracked regular output. It checks the
+// remaining full tree (including Git administration and ignored files) before running Git, then
+// removes only that proven disposable output and requires the original repository again.
+func VerifyDelegateRepository(layout procharness.Layout, baseline RepositorySnapshot, name, content string) error {
+	if name == "" || strings.HasPrefix(name, ".") || filepath.Base(name) != name || baseline.Status != "" {
+		return errors.New("invalid delegate output contract")
+	}
+	path := filepath.Join(layout.Repo, name)
+	f, err := procharness.OpenRegularFile(layout.Root, path, os.O_RDONLY)
+	if err != nil {
+		return errors.New("delegate output is not a regular isolated file")
+	}
+	data, readErr := io.ReadAll(io.LimitReader(f, int64(len(content))+1))
+	closeErr := f.Close()
+	if readErr != nil || closeErr != nil || string(data) != content {
+		return errors.New("delegate output does not match the requested content")
+	}
+	tree, err := snapshotTreeWithout(layout.Repo, name)
+	if err != nil || tree != baseline.Tree {
+		return errors.New("delegate changed files outside its output")
+	}
+	var after RepositorySnapshot
+	if err := snapshotRepositoryGit(layout, &after); err != nil {
+		return err
+	}
+	if after.Head != baseline.Head || after.Refs != baseline.Refs || after.Reflog != baseline.Reflog || after.Status != "?? "+name+"\n" {
+		return errors.New("delegate staged changes or changed Git history")
+	}
+	if err := os.Remove(path); err != nil {
+		return errors.New("remove verified disposable delegate output")
+	}
+	restored, err := VerifyRepository(layout, baseline)
+	if err != nil || !restored.Equal(baseline) {
+		return errors.New("delegate repository did not return to its baseline")
+	}
+	return nil
+}
+
 func snapshotRepositoryGit(layout procharness.Layout, snapshot *RepositorySnapshot) error {
 	commands := []struct {
 		field *string
@@ -1053,6 +1105,10 @@ func runGit(layout procharness.Layout, args ...string) ([]byte, error) {
 }
 
 func snapshotTree(root string) ([32]byte, error) {
+	return snapshotTreeWithout(root, "")
+}
+
+func snapshotTreeWithout(root, output string) ([32]byte, error) {
 	h := sha256.New()
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
@@ -1062,7 +1118,7 @@ func snapshotTree(root string) ([32]byte, error) {
 		if err != nil {
 			return err
 		}
-		if relative == "." {
+		if relative == "." || relative == output {
 			return nil
 		}
 		info, err := entry.Info()

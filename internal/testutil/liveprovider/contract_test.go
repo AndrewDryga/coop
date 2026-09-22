@@ -301,6 +301,33 @@ func TestChildEnvironmentIsAllowlistOnly(t *testing.T) {
 	}
 }
 
+func TestChildEnvironmentNetworkMCPAuthority(t *testing.T) {
+	layout, err := procharness.NewLayout(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(layout.State, "provider-network-mcp.json")
+	spec := ChildSpec{Workflow: "network", NetworkStateHome: filepath.Join(t.TempDir(), "state"), NetworkMCPFile: path}
+	env, err := ChildEnvironment(layout, spec)
+	if err != nil || !slices.Contains(env, "COOP_MCP_FILE="+path) {
+		t.Fatalf("controlled MCP fixture not selected: %v", err)
+	}
+	for _, path := range []string{"", filepath.Join(layout.Repo, "mcp.json"), filepath.Join(layout.Config, "mcp.json"), "provider-network-mcp.json"} {
+		bad := spec
+		bad.NetworkMCPFile = path
+		if _, err := ChildEnvironment(layout, bad); err == nil {
+			t.Errorf("network MCP authority accepted %q", path)
+		}
+	}
+	for _, workflow := range []string{"prompt", "loop", "resume"} {
+		bad := spec
+		bad.Workflow = workflow
+		if _, err := ChildEnvironment(layout, bad); err == nil {
+			t.Errorf("network MCP authority escaped into %s", workflow)
+		}
+	}
+}
+
 // The consult ring runs behind this host's filtered gateway when any target in it brokers an API
 // key — the same grant the CLI children get, because the gateway's broker is the only way Coop ever
 // serves such a key. The refusals have to match too: a relative state home is not a state home, and
@@ -495,6 +522,9 @@ func TestHostNetworkStateTravelsWithFilteredIntoEveryProcessKind(t *testing.T) {
 		spec.Workflow, spec.NetworkStateHome = workflow, host
 		if workflow == "resume" {
 			spec.Stage, spec.SessionFile = "fresh", filepath.Join(layout.State, "provider-session-id")
+		}
+		if workflow == "network" {
+			spec.NetworkMCPFile = filepath.Join(layout.State, "provider-network-mcp.json")
 		}
 		env, err := ChildEnvironment(layout, spec)
 		if err != nil {

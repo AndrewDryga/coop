@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/liveprovider"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
@@ -36,13 +38,14 @@ const (
 	liveResumeFresh     = "fresh"
 	liveResumeContinue  = "resume"
 
-	liveChildDeadline   = 6 * time.Minute
-	livePromptDeadline  = 3 * time.Minute
-	liveLoopDeadline    = 8 * time.Minute
-	liveLoopChildWindow = 10 * time.Minute
-	liveVersionDeadline = 45 * time.Second
-	liveCleanupDeadline = 30 * time.Second
-	liveOutputLimit     = 1 << 20
+	liveChildDeadline      = 6 * time.Minute
+	livePromptDeadline     = 3 * time.Minute
+	liveLoopDeadline       = 8 * time.Minute
+	liveLoopChildWindow    = 10 * time.Minute
+	liveNetworkChildWindow = 3*livePromptDeadline + liveVersionDeadline + 2*time.Minute
+	liveVersionDeadline    = 45 * time.Second
+	liveCleanupDeadline    = 30 * time.Second
+	liveOutputLimit        = 1 << 20
 )
 
 func TestProviderLiveCompatibility(t *testing.T) {
@@ -256,6 +259,16 @@ func runProviderLiveCompatibility(
 	if workflow == liveWorkflowNetwork || brokered {
 		childSpec.NetworkStateHome = hostStateHome()
 	}
+	if workflow == liveWorkflowNetwork {
+		platform, _, err := rt.BuildPlatform()
+		if err != nil {
+			return fail(false, liveprovider.ReasonHarnessFailed, "mcp_fixture_platform")
+		}
+		childSpec.NetworkMCPFile, err = prepareProviderNetworkLiveMCP(layout, selection, runtimeSettings.HomeInBox, platform)
+		if err != nil {
+			return fail(false, liveprovider.ReasonHarnessFailed, "mcp_fixture_setup")
+		}
+	}
 	env, err := liveprovider.ChildEnvironment(layout, childSpec)
 	if err != nil {
 		return fail(false, liveprovider.ReasonHarnessFailed, "child_environment")
@@ -263,6 +276,8 @@ func runProviderLiveCompatibility(
 	childDeadline := liveChildDeadline
 	if workflow == liveWorkflowLoop {
 		childDeadline = liveLoopChildWindow
+	} else if workflow == liveWorkflowNetwork {
+		childDeadline = liveNetworkChildWindow
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), childDeadline)
 	processResult := procharness.Run(ctx, procharness.Command{
@@ -493,6 +508,8 @@ func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, 
 	var command []string
 	var taskTools box.TaskToolServer
 	var taskServer *providerLoopLiveTaskServer
+	var stream *loop.LiveStreamProbe
+	var output io.Writer = stdout
 	switch workflow {
 	case liveWorkflowLoop:
 		taskServer, err = newProviderLoopLiveTaskServer(cfg.RepoOverride, target.Provider)
@@ -505,6 +522,14 @@ func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, 
 		prompt = providerLoopLivePrompt(cfg.RepoOverride, target.Provider)
 		repoReadOnly = false
 		command = ag.Headless(cfg, prompt)
+		var streaming bool
+		command, streaming = loop.IterationCommand(target.Provider, command, nil)
+		if !streaming {
+			cancelPrompt()
+			return harnessFail(true, "native_stream_missing")
+		}
+		stream = loop.NewLiveStreamProbe(target.Provider)
+		output = io.MultiWriter(stdout, stream)
 	case liveWorkflowResume:
 		if stage == liveResumeContinue {
 			prompt = providerResumeRecallPrompt(target.Provider)
@@ -525,7 +550,7 @@ func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, 
 		Cmd:   command,
 		Agent: target.Provider, AgentCommand: true, Batch: true, RepoReadOnly: repoReadOnly, Quiet: true,
 		Homes: true, Network: false, Cache: false, SupervisorID: supervisor,
-		Stdout: stdout, Stderr: stderr, Ctx: promptCtx,
+		Stdout: output, Stderr: stderr, Ctx: promptCtx,
 		ExtraArgs: cidArgs("prompt"), CapturedEgress: capture,
 		TaskTools: taskTools,
 	})
@@ -552,6 +577,11 @@ func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, 
 	}
 	if workflow == liveWorkflowLoop && !taskServer.verified() {
 		return harnessFail(true, "task_channel")
+	}
+	if stream != nil && stream.Verify() != nil {
+		failed := fail(true, liveprovider.ReasonPromptExit, "prompt", code, false, false, "provider_stream")
+		failed.DetailCode = "tool_lifecycle"
+		return failed
 	}
 	if workflow == liveWorkflowResume {
 		resolvedID, reply, err := providerResumeLiveOutput(ag, sessionID, stdout.String())

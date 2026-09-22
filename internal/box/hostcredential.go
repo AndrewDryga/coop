@@ -148,9 +148,9 @@ func RemoveHostCredential(cfg *config.Config, ag agents.Agent, profile string) e
 // returns the file it wrote, for its owner to remove. An account whose key Coop does not hold (or
 // does not select) writes nothing.
 func ProjectHostCredential(from, to *config.Config, ag agents.Agent, profile string) (string, error) {
-	profileDir := from.AgentProfileDir(ag.Name(), profile)
-	if !hostCredentialSelected(ag, profileDir, profileMarkerPresent(ag, profileDir)) {
-		return "", nil
+	path, err := SelectedHostCredentialPath(from, ag, profile)
+	if err != nil || path == "" {
+		return "", err
 	}
 	_, value, found, err := LoadHostCredential(from, ag, profile)
 	if err != nil || !found {
@@ -161,6 +161,28 @@ func ProjectHostCredential(from, to *config.Config, ag agents.Agent, profile str
 		return "", err
 	}
 	return filepath.Join(dir, ag.HostCredential().File), SaveHostCredential(to, ag, profile, []byte(value))
+}
+
+// SelectedHostCredentialPath identifies the selected account's vault input without reading its
+// secret. The path may be absent: isolated callers must also detect a key appearing during a copy.
+// Unselected credential families return no path, even when a stale vault key remains on disk.
+func SelectedHostCredentialPath(cfg *config.Config, ag agents.Agent, profile string) (string, error) {
+	spec := ag.HostCredential()
+	if !spec.Declared() {
+		return "", nil
+	}
+	if err := validateHostCredentialSpec(ag, spec); err != nil {
+		return "", err
+	}
+	dir, err := hostCredentialDir(cfg, ag.Name(), profile)
+	if err != nil {
+		return "", err
+	}
+	profileDir := cfg.AgentProfileDir(ag.Name(), profile)
+	if !hostCredentialSelected(ag, profileDir, profileMarkerPresent(ag, profileDir)) {
+		return "", nil
+	}
+	return filepath.Join(dir, spec.File), nil
 }
 
 func hostCredentialMtime(cfg *config.Config, ag agents.Agent, profile string) (os.FileInfo, bool) {

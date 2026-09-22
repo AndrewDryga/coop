@@ -347,18 +347,6 @@ func QualifiedClients() []string {
 	return out
 }
 
-// Qualification records that the locked client set passed the provider conformance suites: the
-// set it qualified (QualifiedClientSet) and what each suite reported. `make provider-qualify` writes
-// it to locked-clients/qualification.json only when every suite passed for every provider.
-type Qualification struct {
-	Schema      int                          `json:"schema"`
-	QualifiedOn string                       `json:"qualified_on"`
-	Platform    string                       `json:"platform"` // the one the suites ran on
-	Lock        string                       `json:"lock_sha256"`
-	Clients     map[string][]string          `json:"clients"`
-	Suites      map[string]map[string]string `json:"suites"`
-}
-
 // QualifiedClientSet is what a qualification is keyed on: the lock's digest (so no dependency moves
 // unqualified) and, per platform, each client's provider, kind, package or native binary, version,
 // the versions of the executables it requires, and a native artifact's digest. Paths stay out —

@@ -1,9 +1,9 @@
 ---
 name: provider-client-qualification
-description: every box runs one locked client set; make provider-qualify records a strict live qualification (no record or gate yet — why) — the conformance rows, where each is proven, the gaps, the bump procedure
+description: locked clients, strict schema2 qualification requirements, conformance evidence and the operator-only paid run still owed
 subsystem: agent
-sources: [internal/agent/locked_clients.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go]
-updated: 2026-09-21
+sources: [internal/agent/locked_clients.go, internal/agent/qualification.go, internal/agent/qualification_gate_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go]
+updated: 2026-09-22
 ---
 
 **One manifest.** `locked-clients/package.json` + `package-lock.json` (embedded) and each adapter's
@@ -17,39 +17,30 @@ off in every image; the environment ones (Claude, Grok) also ride BoxEnv, and th
 cover Codex and Gemini in images Coop did not build. A project image built on
 `COOP_BASE_IMAGE` inherits all of it; one on another base brings its own, unqualified clients.
 
-**The record.** `make provider-qualify` (PAID) rebuilds this host's box and filtered setup from the
-working tree, runs every strict live suite (plus a model+effort run), and `tools/qualify` writes
-`locked-clients/qualification.json` only when each summary is strict, every provider passed once,
-and each reported `<provider>-cli <semver>` equals the pin. It is keyed by `QualifiedClientSet()`:
-the lock's SHA-256 plus, per platform, each client's provider, kind, package/binary, version,
-required executables' versions and native digest (paths stay out — moving a launcher is not a new
-client). **No record exists yet, so no gate enforces one:** on 2026-09-19 the strict suites could
-not pass on any host: Gemini's only portable account family is an API key, which needs filtered
-networking, while the open, consult and ACP suites run open (Gemini OAuth is host-bound). The
-broker now serves a key to a consult peer, an ACP session and a remote session on filtered
-networking, AND the CLI live suites and the singleton ACP suite now route a brokered-key target
-through the host's filtered gateway automatically: the harness asks
-`liveprovider.BrokersKey`/`AnyBrokersKey` per selection, and when the answer is yes it grants the
-child the host's network state and `COOP_EGRESS=filtered` (a signed-in account keeps the open path).
-The shared CLI child (`provider-live`, `-resume`, `-loop`), `startLiveACP` AND the consult ring are
-wired. The ring's earlier deferral blamed the broker's "run the agent itself" gate, and that was
-WRONG — worth knowing, because it parked mechanical work behind an imagined design problem. That gate
-(`internal/box/credential_broker.go`) refuses only when `!spec.AgentCommand && networkClient !=
-ClientACP`, and a consult run's spec sets `AgentCommand: agent != ""` while carrying its `ConsultLead`
-and `Peers`, so it never applied. What was actually missing was one field: `ChildSpec` has
-`NetworkStateHome`, which `grantHostNetworkState` turns into `XDG_STATE_HOME` + `COOP_EGRESS=filtered`,
-and `ConsultChildSpec` did not have it, so the ring could not be put behind the gateway at all. One
-brokered key anywhere in the ring now filters the whole launch, since the lead consults its peers from
-inside one box. Proven live 2026-09-20 on the reference host: Gemini's API key passes
-`provider-live-e2e` (prompt through the gateway) and the full `TestLiveProviderConformance/gemini` ACP
-run (initialize, session/new, prompt, model switch, SIGHUP replay, resumed prompt — all filtered).
-Two things the routing needed: a filtered launch now also admits `--label KEY=VALUE` in COOP_RUN_ARGS
-(the live supervisor's reaping key; [[restricted-networking]]), and an ACP supervisor with an isolated
-home links the host's `~/.docker/cli-plugins` so its self-run `coop net setup` finds Buildx. STILL
-OPEN before the record is written and the gate lands: a brokered Gemini's resume and loop live proofs,
-the consult-ring wiring + proof, the cross-provider-carry and preset-selector ACP tests with a
-brokered provider, and claude/grok need a fresh token before a full strict run — tracked by task
-(`2026-09-19-close-the-live-conformance-gaps-in-provider-qual`).
+**The record.** `make provider-qualify` is PAID and operator-only, last after other engineering.
+It rebuilds this host's images, runs offline probes first and every required live suite, then
+atomically writes `locked-clients/qualification.json`. `QualificationRequirements` is the single
+schema2 suite/provider/evidence map used by the recorder and `TestTheLockedClientsMatchTheirQualification`.
+Every CLI row must report the exact pinned version; test-only rows must pass their stated scope.
+Only second-account recovery permits `not_configured` (fewer than two configured accounts), never
+a pass implied by missing prerequisites. Unreadable account catalogs fail, and the recorder's
+success output names any providers whose account recovery remains unverified. Existing records
+must have complete exact scopes and match `QualifiedClientSet()` (lock SHA-256 and every platform's
+client/native artifact identity).
+Malformed, duplicate, non-strict, failed-footer or incomplete summaries cannot produce a record.
+No real record exists yet: the missing-file gate is deliberately dormant, not evidence of live
+compatibility. Engineering controls do not qualify providers. The final paid run and matching
+record remain owed by task `2026-09-19-close-the-live-conformance-gaps-in-provider-qual`.
+
+Live harnesses route brokered API keys through the host's filtered gateway automatically, using
+`BrokersKey`/`AnyBrokersKey` and `NetworkStateHome`; native sign-ins retain the open path except
+the explicitly filtered network suite. One brokered key filters the entire consult/delegate ring.
+Prepare projects selected host-vault keys outside mounted homes, honors default-env precedence,
+and fingerprints only selected authority. Gemini OAuth remains host-bound. Historical proof on
+2026-09-20 covered Gemini's basic prompt and singleton ACP conformance, not all suites or current
+credentials. The ring's old blocker was missing `NetworkStateHome`, not the broker's
+`AgentCommand` gate (the wrapper spec already sets it). Isolated ACP homes link Docker CLI plugins
+so their filtered setup can find Buildx; filtered launches admit the supervisor's `--label`.
 
 A filtered singleton's toolbar has NO Preset dropdown when the repo's only preset needs another
 provider: the supervisor freezes the scope to the one brokered provider (`LimitNetworkTargets`), so
@@ -59,13 +50,9 @@ session (an OPEN singleton still shows every repo preset, unfiltered by lead cap
 
 **Conformance rows** (D = deterministic in `make check`; R = the real pinned client, run OFFLINE in
 the locked image with `--network none` — free, but outside `make check` because it needs the image
-`coop net setup` builds. An R suite both GATES `provider-qualify` — it runs first, so a red aborts
-before a single paid prompt — and ENTERS `qualification.json`, through a per-suite `scope` in
-`tools/qualify`: a suite that cannot cover a client names the ones it does, and the record then
-states plainly what went unproven instead of implying every provider passed. Scope is for offline
-client suites only; a live suite leaves it empty, because every provider must answer a paid prompt or
-the run does not qualify; L = the paid run that calls a model; all four providers unless noted —
-mapped 2026-09-19 by reading the tests):
+`coop net setup` builds. An R suite both gates `provider-qualify` before paid prompts and enters
+the record with its explicit provider scope. L = a paid live assertion implemented in the harness,
+not a claim that it has run successfully; all four providers except unavailable second accounts):
 - start — D `TestProviderScriptedProcessSmoke`, `TestProviderScriptedDirectMatrix`, ACP switch matrix;
   L `provider-live-e2e-all`, `acp-e2e`.
 - resume — D `TestResume`, fork session process, ACP target replay, consult continuity;
@@ -96,13 +83,15 @@ mapped 2026-09-19 by reading the tests):
   shared MCP file reaches every client, read-only, at a path that client reads. Asserted on the
   SERVER NAMES the generated config carries, which the provider fixture captures at launch time —
   coop deletes those files when the run ends, so a test that looked afterwards would find nothing.
-  L `provider-loop-live-e2e-all` (Coop's task tools). R `mcp-e2e` proves the client then REACHES the
+  L `provider-loop-live-e2e-all` (Coop's task tools) and `provider-network-live-e2e-all` (mandatory
+  controlled shared stdio tool call, all providers). R `mcp-e2e` proves the client then REACHES the
   server, for codex, gemini and grok: a stdio server is a child process, not a network peer, so this
   runs offline. The witness is the server itself (`internal/box/testdata/mcpprobe` logs every
   JSON-RPC method it receives). What separates a real handshake from an announced one is ORDER, not
   presence: the probe sits on its initialize RESULT and logs `answered initialize` only after writing
-  it, so a client that sends `notifications/initialized` without reading the result lands before that
-  line and fails. Presence alone proves nothing — a client could write both back to back, which is
+  it; a concurrent reader timestamps receipt, so a pipelined `notifications/initialized` lands
+  before that line and fails. This proves response ordering, not the client's private read state.
+  Presence alone proves nothing — a client could write both back to back, which is
   what the codex driver here does deliberately. The configs come from Coop's own adapters
   (`agents.Agent.MCP`), not hand-written, and codex connects from NO `codex mcp` subcommand — `mcp
   list` prints config without launching anything; its app-server's `mcpServerStatus/list` launches
@@ -114,12 +103,16 @@ mapped 2026-09-19 by reading the tests):
   `--mcp-config` on the main invocation; `claude mcp list` rejects that flag outright, accepts and
   ignores it before the subcommand, and otherwise reads the `mcpServers` key of its own user config.
   Coop DOES write that file (onboarding, bypass and trust keys, under CLAUDE_CONFIG_DIR) but never
-  writes servers into it.** Its delivery stays pinned at process level.
+  writes servers into it.** Its actual shared-tool call is required by the live network suite.
+  That witness sits in the isolated provider profile and is cooperative compatibility evidence,
+  not model-resistant attestation. Missing, wrong-tool, duplicate and cross-process witnesses fail.
 - tool lifecycle — D `loop/streamjson_activity_test.go` per provider; watchdog process test now
   covers a silent start for claude, gemini and grok (`TestProviderScriptedLoopWatchdogProcess`,
   "no first output from <provider> rotates and completes") plus grok's foreground-tool and tool-cap
   cases — a start timeout is read from each client's OWN first-output shape, so one provider going
-  quiet proves nothing about another. **Still no live decoding.**
+  quiet proves nothing about another. L `provider-loop-live-e2e-all` now feeds native output
+  through production `IterationCommand` and the production lifecycle decoder, requiring paired
+  tool events and exactly one successful terminal event, independent of task-MCP completion.
 - quota classification — D pinned ACP signals per provider (claude `errorKind=rate_limit`, codex
   `usageLimitExceeded`, gemini `RESOURCE_EXHAUSTED`, grok `http_status=402`), ACP rate-limit recovery,
   AND `internal/ladder/limit_test.go` over REAL captured prose: claude's weekly subscription limit,
@@ -137,14 +130,18 @@ mapped 2026-09-19 by reading the tests):
   `<cwd>/.<agent>/agents` and claude, codex and gemini all fail, while grok passes because it
   discovers project scope as well; no PAID call — gemini's row does attempt one with
   a dummy key and reads the debug line printed before it fails); L `provider-consult-live-e2e-all`
-  (wrapper called directly). **No live delegate proof.**
+  (wrapper called directly), plus `provider-delegate-live-e2e-all`: the same four-edge ring in
+  delegate mode, exactly one requested file, no extra/ignored/staged/committed mutations.
 - account switching — D DirectMatrix account selection, ACP rotation, AND
   `TestProviderScriptedLoopRotatesAccountsBeforeProviders` (process level, every provider): a limit
   on one account rotates to the SAME provider's second account before any other provider, and each
   hop is recorded against the account that actually hit it. The order is the claim — reverse the
   ladder and it fails. Loop-path rotation was claude-only before, proven through its structured
-  credit-limit stream, which left the ORDER untested for the other three. **No live proof: it needs
-  a second signed-in account per provider on the qualifying host.**
+  credit-limit stream, which left the ORDER untested for the other three.
+  L `provider-accounts-live-e2e-all`: real controller, two distinct configured compatible accounts,
+  invalid synthetic first copy then unchanged second copy, at most two work launches. Strict
+  telemetry must show authentication then success on the expected accounts; one exact committed
+  task must finish. Fewer than two is `not_configured`; expired/unsafe/incompatible pairs fail.
 - clean completion — D loop lifecycle matrix; L `provider-loop-live-e2e-all`.
 
 **Bumping a client.** Edit `package.json` and regenerate the lock (`npm install
@@ -178,11 +175,15 @@ probes OAuth discovery paths and GETs the endpoint without the configured header
 Traps: the strict suites fail on any skip, so every provider needs a signed-in default account whose
 access token outlives the run (a Claude or Grok token hours old is skipped as refresh-required —
 one real prompt refreshes it); `provider-qualify`'s preflight refuses `COOP_IMAGE` (it would
-qualify a foreign image) and a provider with no default account; a changed client layer makes every
+qualify a foreign image) and a provider with no default credential, using the ordinary presence
+policy so an env-only account needs no directory; a changed client layer makes every
 host re-run filtered setup once — a filtered launch does it itself, an editor session refuses until
 `coop net setup`.
 
 ## Changelog
+- 2026-09-22 — closed harness gaps for host-vault keys, mandatory shared MCP, native lifecycle,
+  delegate and real-controller account recovery; schema2 recorder and gate share requirements.
+  Synthetic controls are not paid proof; record remains absent and operator qualification is last.
 - 2026-09-21 — the consult ring routes a brokered key through the gateway; its "run the agent
   itself" deferral was a misreading, and the real gap was a missing NetworkStateHome on
   ConsultChildSpec. Live proof still owed by the paid run.

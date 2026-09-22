@@ -2052,7 +2052,8 @@ install.sh            the curl one-liner: download the prebuilt binary onto PATH
 | Blocking | `make check` | formatting, vet, Staticcheck, ShellCheck, `go build ./...`, unit tests plain and under `-race`, deterministic provider process E2E, tagged process-control races, generated docs, casts, rules cards, maintenance tools, and comment alignment; no runtime or credentials |
 | Focused deterministic | `make provider-scripted-e2e` · `make acp-scripted-e2e` · `make live-process-control` | provider CLI/loop/fork policy, ACP switching/recovery, and live-harness ownership denials with fixtures |
 | Runtime boundary | `make doctor` · `make box-runtime-e2e` · `make review-writes-e2e` | real box isolation, process reaping/signal forwarding, and report-only review mounts; requires Docker (or Apple `container` for doctor) |
-| Upstream compatibility | `make provider-live-e2e[-all]` · `make provider-resume-live-e2e[-all]` · `make provider-loop-live-e2e[-all]` · `make provider-consult-live-e2e[-all]` · `make acp-e2e` | installed CLIs plus isolated credentials; opt-in and quota-consuming |
+| Upstream compatibility | provider live targets below · `make acp-e2e` | installed CLIs plus isolated credentials; opt-in and quota-consuming |
+| Full client qualification | `make provider-qualify` | operator-only image build, offline client probes and paid live suites; writes a version-pinned record only after all required checks pass |
 
 This table is the source-checkout reference: `make check` is the blocking no-credential gate, the
 focused deterministic targets are `make provider-scripted-e2e`, `make acp-scripted-e2e` and
@@ -2094,13 +2095,17 @@ make provider-loop-live-e2e COOP_LIVE_TARGETS='codex,gemini@work'
 make provider-loop-live-e2e-all
 make provider-consult-live-e2e COOP_LIVE_TARGETS='claude,codex,gemini,grok'
 make provider-consult-live-e2e-all
+make provider-delegate-live-e2e-all
+make provider-network-live-e2e-all
+make provider-accounts-live-e2e-all
 ```
 
 An explicit list uses Coop's normal target grammar. `all` is registry-generated strict mode: every
 provider must be attempted and pass, with no prerequisite skip. A complete registry-ordered explicit
 list may select non-default accounts. Once a provider request starts, auth errors, rate limits,
-timeouts, wrong output, repository/source changes, and incomplete cleanup are failures; there is one
-attempt and the suite never induces quota exhaustion.
+timeouts, wrong output, repository/source changes, and incomplete cleanup are failures. Most probes
+make one attempt; resume/network have fixed stages and account recovery permits exactly two work
+launches. No suite deliberately exhausts quota.
 
 | Live target | Model sessions / minimum calls | Stable evidence |
 |---|---:|---|
@@ -2108,13 +2113,37 @@ attempt and the suite never induces quota exhaustion.
 | `provider-resume-live-e2e` | 2 per admitted provider | `COOP_PROVIDER_RESUME_LIVE_SUMMARY` |
 | `provider-loop-live-e2e` | 1 writable task per admitted provider | `COOP_PROVIDER_LOOP_LIVE_SUMMARY` |
 | `provider-consult-live-e2e` | 4 peer sessions for a complete ring; no lead sessions; tool use may add upstream turns | `COOP_CONSULT_LIVE_SUMMARY` |
+| `provider-delegate-live-e2e-all` | 4 peer sessions; each must create exactly its requested file, without staging or committing | `COOP_DELEGATE_LIVE_SUMMARY` |
+| `provider-network-live-e2e-all` | 3 stages per provider: prompt, native resume and a controlled shared MCP tool call through filtered networking | `COOP_PROVIDER_NETWORK_LIVE_SUMMARY` |
+| `provider-accounts-live-e2e-all` | at most 2 work launches per configured compatible pair: rejected first account, successful second account | `COOP_PROVIDER_ACCOUNTS_LIVE_SUMMARY` |
 | `acp-e2e` | scenario-dependent; several adapter generations | none (strict test output) |
 
 Each run gets a disposable repository, HOME/XDG roots, access-only projected credentials, no
 inherited instructions/MCP/session history, a hard deadline, and bounded cleanup. Source credentials
-and complete repository/Git state are fingerprinted before and after. Raw provider output, paths,
+are fingerprinted before and after; repository checks match the journey (read-only preservation,
+exact delegate output, or task-bound committed work). Raw provider output, paths,
 accounts, tokens, and refresh authority are never retained. These targets stay outside `make check`
 because every admitted provider consumes real quota.
+
+Account recovery runs the real loop controller on one task, with preflight/review/peers disabled and
+a hard two-work-launch cap. It selects two distinct configured accounts of the same credential
+family, proves both copies are portable, then replaces only the first copy with invalid synthetic
+credentials. The source accounts are neither changed nor refreshed. Success requires recorded
+authentication failure on the first account, successful task completion on the second and one exact
+task-bound commit. Fewer than two configured accounts is reported as `not_configured`, not a pass;
+an unsafe, expired or incompatible configured pair fails. Selection is deterministic (account-name
+order), not an exhaustive account matrix. Provider tool use may require multiple upstream turns.
+
+Run `make provider-qualify` only as an operator, after the ordinary gate and other engineering
+work are finished. It rebuilds this host's box/filtered images and spends quota across every
+provider. It prints a directory containing full suite logs. All suites must pass before it writes
+`internal/agent/locked-clients/qualification.json`; no record is bundled until a real run succeeds.
+The schema-2 record names required suite/provider coverage, exact client pins and the tested
+platform. The final output names any providers with unverified account recovery. Only that row
+may say `not_configured`; an unreadable account directory fails. Offline MCP covers Codex, Gemini
+and Grok, while the live network suite requires a shared MCP tool call from every provider.
+`make check` rejects stale, malformed or incomplete existing records. An absent record leaves this
+gate dormant—it does not imply live qualification or parity between platforms/providers.
 
 `make acp-e2e` applies the same credential and runtime boundary to installed ACP adapters and fails
 on every skip; scenarios may start several generations and it intentionally has no stable summary
@@ -2126,7 +2155,8 @@ live quota.
 |---|---|
 | `missing_runtime`, `missing_image`, `missing_cli`, `missing_credential` | Install/build/sign in, then rerun. No paid request started. |
 | `credential_refresh_required` | Re-authenticate the selected account; its projected access token cannot outlive the deadline. |
-| `credential_not_portable` | Select a portable provider credential. For Gemini live probes, use an env-backed `GEMINI_API_KEY` account. Live suites automatically use filtered networking for supported API keys; `GOOGLE_API_KEY` is refused even with open networking. |
+| `credential_not_portable` | Select a portable provider credential. For Gemini live probes, use a Coop-stored or explicit env-backed `GEMINI_API_KEY` account. Live suites automatically use filtered networking for supported API keys; `GOOGLE_API_KEY` is refused even with open networking. |
+| `not_configured` | Account recovery only: fewer than two accounts are configured for that provider. No recovery claim is made. |
 | `ring_prerequisite` | Repair the named prerequisite. The consult ring admitted zero paid calls. |
 | `failed` with `attempted=true` | Treat as an upstream CLI/provider compatibility failure; reproduce syntax/policy with the deterministic fixture. |
 | `repository_changed`, `source_changed`, `cleanup_failed`, `harness_failed` | Treat as a local isolation/harness defect; these override provider success. |

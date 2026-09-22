@@ -1,7 +1,8 @@
 // Command qualify records a qualification of the locked client set. `make provider-qualify` runs
 // every strict live suite with verbose output into one directory, then this reads each suite's log
-// and writes internal/agent/locked-clients/qualification.json — only when every suite passed for
-// every registered provider and every CLI version a suite reported is the one the manifest pins.
+// and writes internal/agent/locked-clients/qualification.json — only when every suite satisfies its
+// required provider scope and every reported CLI version is the one the manifest pins. Account
+// recovery records not_configured, rather than passed, when a second account is unavailable.
 // A suite's evidence is its machine-readable summary (the CLI version each provider reported) or,
 // for a suite without one, its per-provider `--- PASS` lines. `-targets` prints the explicit
 // model+effort targets the second live run uses. stdlib + internal packages only.
@@ -13,6 +14,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -20,8 +22,8 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/liveprovider"
 )
@@ -29,30 +31,26 @@ import (
 // record is where the qualification is committed beside the lock it qualifies.
 const record = "internal/agent/locked-clients/qualification.json"
 
-// suites names each Makefile target provider-qualify runs and how its per-provider result is read:
-// a summary prefix, or the test whose one-subtest-per-provider results must all pass.
-//
-// scope is for the offline client suites, which prove a row directly against the pinned clients and
-// so can be honest about a client that cannot answer at all. A live suite must leave it empty: every
-// provider answers a paid prompt or the run does not qualify.
-var suites = []struct {
-	name, summary, test string
-	scope               []string
+// suites owns log parsing only. Required names, provider scopes and evidence kinds have one home
+// in agents.QualificationRequirements, shared with the committed-record gate.
+var suites = map[string]struct {
+	summary, test string
 }{
-	{name: "provider-live-e2e-all", summary: liveprovider.SummaryPrefix},
-	{name: "provider-live-e2e-effort", summary: liveprovider.SummaryPrefix}, // -targets: each example model at high effort
-	{name: "provider-resume-live-e2e-all", summary: liveprovider.ResumeSummaryPrefix},
-	{name: "provider-loop-live-e2e-all", summary: liveprovider.LoopSummaryPrefix},
-	{name: "provider-consult-live-e2e-all", summary: liveprovider.ConsultSummaryPrefix},
-	{name: "provider-network-live-e2e-all", summary: liveprovider.NetworkSummaryPrefix},
-	{name: "acp-e2e", test: "TestLiveProviderConformance"},
-	{name: "native-roles-e2e", test: "TestRuntimeNativeRolesAreDiscoveredByEveryPinnedClient"},
-	{name: "skills-e2e", test: "TestRuntimeSharedSkillsAreDiscoveredByEveryPinnedClient"},
+	"provider-live-e2e-all":          {summary: liveprovider.SummaryPrefix},
+	"provider-live-e2e-effort":       {summary: liveprovider.SummaryPrefix},
+	"provider-resume-live-e2e-all":   {summary: liveprovider.ResumeSummaryPrefix},
+	"provider-loop-live-e2e-all":     {summary: liveprovider.LoopSummaryPrefix},
+	"provider-consult-live-e2e-all":  {summary: liveprovider.ConsultSummaryPrefix},
+	"provider-delegate-live-e2e-all": {summary: liveprovider.DelegateSummaryPrefix},
+	"provider-network-live-e2e-all":  {summary: liveprovider.NetworkSummaryPrefix},
+	"provider-accounts-live-e2e-all": {summary: liveprovider.AccountsSummaryPrefix},
+	"acp-e2e":                        {test: "TestLiveProviderConformance"},
+	"native-roles-e2e":               {test: "TestRuntimeNativeRolesAreDiscoveredByEveryPinnedClient"},
+	"skills-e2e":                     {test: "TestRuntimeSharedSkillsAreDiscoveredByEveryPinnedClient"},
 	// Claude is out of scope here, and the omission is the record's: Coop hands claude its MCP
 	// servers with --mcp-config on the main invocation, which no offline command exercises, so its
 	// connection is not proven by this suite. See internal/box/mcp_runtime_e2e_test.go.
-	{name: "mcp-e2e", test: "TestRuntimeSharedMCPServersAreReachedByEveryProbeableClient",
-		scope: []string{"codex", "gemini", "grok"}},
+	"mcp-e2e": {test: "TestRuntimeSharedMCPServersAreReachedByEveryProbeableClient"},
 }
 
 // qualifyEffort is the level the model+effort run asks every provider for.
@@ -92,7 +90,7 @@ func run(logs string) error {
 	if err := preflightCheck(); err != nil {
 		return err
 	}
-	pinned, err := pinnedCLIVersions()
+	pinned, err := agents.PinnedCLIVersions()
 	if err != nil {
 		return err
 	}
@@ -112,50 +110,73 @@ func run(logs string) error {
 	if err != nil {
 		return err
 	}
-	q := agents.Qualification{Schema: 1, QualifiedOn: time.Now().UTC().Format(time.DateOnly), Platform: platform, Lock: lock,
+	q := agents.Qualification{Schema: agents.QualificationSchema, QualifiedOn: time.Now().UTC().Format(time.DateOnly), Platform: platform, Lock: lock,
 		Clients: clients, Suites: make(map[string]map[string]string)}
-	for _, suite := range suites {
-		lines, err := readLines(filepath.Join(logs, suite.name+".log"))
+	for _, required := range agents.QualificationRequirements() {
+		suite, ok := suites[required.Name]
+		if !ok {
+			return fmt.Errorf("missing log reader for %s", required.Name)
+		}
+		lines, err := readLines(filepath.Join(logs, required.Name+".log"))
 		if err != nil {
 			return err
 		}
 		var results map[string]string
-		if suite.summary != "" {
-			results, err = summaryResults(lines, suite.summary, pinned, suite.scope)
+		if required.Evidence == agents.QualificationAccounts {
+			results, err = accountResults(lines, pinned)
+		} else if suite.summary != "" {
+			results, err = summaryResults(lines, suite.summary, pinned, required.Providers)
 		} else {
-			results, err = testResults(lines, suite.test, suite.scope)
+			results, err = testResults(lines, suite.test, required.Providers)
 		}
 		if err != nil {
-			return fmt.Errorf("%s: %w", suite.name, err)
+			return fmt.Errorf("%s: %w", required.Name, err)
 		}
-		q.Suites[suite.name] = results
+		q.Suites[required.Name] = results
+	}
+	if err := agents.ValidateQualification(q, lock, clients); err != nil {
+		return err
 	}
 	data, err := json.MarshalIndent(q, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(record, append(data, '\n'), 0o644); err != nil {
+	if err := config.WriteFileAtomic(record, append(data, '\n')); err != nil {
 		return err
 	}
-	fmt.Printf("qualified the locked clients on every provider — wrote %s\n", record)
+	printQualification(os.Stdout, q)
 	return nil
 }
 
+func printQualification(w io.Writer, q agents.Qualification) {
+	fmt.Fprintf(w, "recorded locked-client qualification evidence for %s — wrote %s\n", q.Platform, record)
+	for _, provider := range agents.Names() {
+		if q.Suites["provider-accounts-live-e2e-all"][provider] == agents.QualificationNotConfigured {
+			fmt.Fprintf(w, "  %s: account recovery not verified — sign in a second compatible account and rerun qualification\n", provider)
+		}
+	}
+}
+
 // preflightCheck refuses what would otherwise fail only after paid suites ran: an image override (the
-// suites would qualify that image, not Coop's box) and a provider with no signed-in default account
-// (a strict suite fails on the skip). It checks that the account folder exists, never its contents.
+// suites would qualify that image, not Coop's box) and a provider with no configured default
+// credential. Use the normal presence policy, including env-only accounts; the live harness still
+// owns safe projection and portability checks before paid work.
 func preflightCheck() error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
+	return preflightConfig(cfg)
+}
+
+func preflightConfig(cfg *config.Config) error {
 	if cfg.ImageOverride != "" {
 		return errors.New("COOP_IMAGE is set (in the environment or coop.conf) — provider-qualify qualifies Coop's own box; unset it")
 	}
 	for _, name := range agents.Names() {
 		profile := cfg.DefaultProfileOf(name)
-		if info, err := os.Stat(cfg.AgentProfileDir(name, profile)); err != nil || !info.IsDir() {
-			return fmt.Errorf("%s has no signed-in default account (%s) — run `coop login %s` first", name, profile, name)
+		if !box.ProfileAuthed(cfg, name, profile) {
+			return fmt.Errorf("%s has no credential for its default account (%s) — run `coop login %s` or configure its API key first", name, profile, name)
 		}
 	}
 	return nil
@@ -176,48 +197,25 @@ func effortTargets() (string, error) {
 	return strings.Join(targets, ","), nil
 }
 
-// pinnedCLIVersions is each provider's CLI version as its summary reports it ("claude-cli 2.1.260").
-// Only the CLI is compared: an ACP adapter carries its own, different version.
-func pinnedCLIVersions() (map[string]string, error) {
-	closure, err := agents.LockedClientClosure(agents.ClientPlatform{OS: "linux", Architecture: "amd64", Libc: "glibc"})
+// summaryResults reads a suite's only summary line: strict, every provider passed once, each on
+// the pinned CLI version.
+func summaryResults(lines []string, prefix string, pinned map[string]string, scope []string) (map[string]string, error) {
+	raw, err := summaryJSON(lines, prefix)
 	if err != nil {
 		return nil, err
 	}
-	pinned := make(map[string]string)
-	for _, client := range closure.Clients {
-		if client.Client == egress.ClientCLI {
-			pinned[client.Provider] = client.Provider + "-cli " + client.Version
-		}
-	}
-	return pinned, nil
-}
-
-// summaryResults reads a suite's last summary line: strict, every provider passed once, each on
-// the pinned CLI version.
-func summaryResults(lines []string, prefix string, pinned map[string]string, scope []string) (map[string]string, error) {
-	var raw string
-	for _, line := range lines {
-		if _, after, ok := strings.Cut(line, prefix); ok {
-			raw = after
-		}
-	}
-	if raw == "" {
-		return nil, errors.New("no summary line — the suite did not finish")
-	}
-	var summary struct {
-		Strict  bool                          `json:"strict"`
-		Results []liveprovider.ProviderResult `json:"results"`
-	}
+	var summary liveprovider.Summary
 	var consult liveprovider.ConsultSummary
-	if prefix == liveprovider.ConsultSummaryPrefix {
-		if err := json.Unmarshal([]byte(raw), &consult); err != nil {
+	ring := prefix == liveprovider.ConsultSummaryPrefix || prefix == liveprovider.DelegateSummaryPrefix
+	if ring {
+		if err := decodeSummary(raw, &consult); err != nil {
 			return nil, err
 		}
-		summary.Strict = consult.Strict
+		summary.Schema, summary.Strict, summary.Totals = consult.Schema, consult.Strict, consult.Totals
 		for _, edge := range consult.Results {
 			summary.Results = append(summary.Results, edge.Peer)
 		}
-	} else if err := json.Unmarshal([]byte(raw), &summary); err != nil {
+	} else if err := decodeSummary(raw, &summary); err != nil {
 		return nil, err
 	}
 	if !summary.Strict {
@@ -236,7 +234,88 @@ func summaryResults(lines []string, prefix string, pinned map[string]string, sco
 		}
 		results[result.Provider] = result.CLIVersion
 	}
-	return results, everyProvider(results, scope)
+	if err := everyProvider(results, scope); err != nil {
+		return nil, err
+	}
+	targets, _, err := liveprovider.ParseTargets("all")
+	if err != nil {
+		return nil, err
+	}
+	validated, err := liveprovider.NewSummary(true, targets, summary.Results)
+	if err != nil || summary.Schema != validated.Schema || summary.Totals != validated.Totals {
+		return nil, errors.New("summary violates the live evidence contract")
+	}
+	if ring {
+		expected, err := liveprovider.NewConsultSummary(true, targets, summary.Results)
+		if err != nil || !slices.Equal(consult.Results, expected.Results) {
+			return nil, errors.New("summary does not prove the complete provider ring")
+		}
+	}
+	return results, nil
+}
+
+func accountResults(lines []string, pinned map[string]string) (map[string]string, error) {
+	raw, err := summaryJSON(lines, liveprovider.AccountsSummaryPrefix)
+	if err != nil {
+		return nil, err
+	}
+	var summary liveprovider.AccountsSummary
+	if err := decodeSummary(raw, &summary); err != nil {
+		return nil, err
+	}
+	validated, err := liveprovider.NewAccountsSummary(summary.Results)
+	if err != nil || summary.Schema != validated.Schema || !validated.Success() {
+		return nil, errors.New("account qualification is incomplete or failed")
+	}
+	results := map[string]string{}
+	for _, result := range validated.Results {
+		if result.Status == liveprovider.StatusNotConfigured {
+			results[result.Provider] = agents.QualificationNotConfigured
+			continue
+		}
+		if result.CLIVersion != pinned[result.Provider] {
+			return nil, fmt.Errorf("%s account run did not use the pinned CLI", result.Provider)
+		}
+		results[result.Provider] = result.CLIVersion
+	}
+	return results, nil
+}
+
+func summaryJSON(lines []string, prefix string) (string, error) {
+	var raw string
+	for _, line := range lines {
+		if failedTestLine(line) {
+			return "", errors.New("a test failed")
+		}
+		if _, after, ok := strings.Cut(line, prefix); ok {
+			if raw != "" {
+				return "", errors.New("duplicate summary lines")
+			}
+			raw = after
+		}
+	}
+	if raw == "" {
+		return "", errors.New("no summary line — the suite did not finish")
+	}
+	return raw, nil
+}
+
+func decodeSummary(raw string, result any) error {
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(result); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return errors.New("summary has trailing data")
+	}
+	return nil
+}
+
+func failedTestLine(line string) bool {
+	line = strings.TrimSpace(line)
+	return strings.HasPrefix(line, "--- FAIL:") || line == "FAIL" || strings.HasPrefix(line, "FAIL\t")
 }
 
 // testResults reads a suite without a summary: each provider's subtest passed, and nothing failed.
@@ -244,7 +323,7 @@ func testResults(lines []string, test string, scope []string) (map[string]string
 	results := make(map[string]string)
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "--- FAIL:") {
+		if failedTestLine(line) {
 			return nil, fmt.Errorf("a test failed: %s", line)
 		}
 		if name, ok := strings.CutPrefix(line, "--- PASS: "+test+"/"); ok {

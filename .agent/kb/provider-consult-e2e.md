@@ -3,7 +3,7 @@ name: provider-consult-e2e
 description: Verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring
 subsystem: testing
 sources: [Makefile, internal/box/image.go, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/consult_shell.go, internal/agent/role_health.go, internal/agent/testdata/login-failures/README.md, internal/preset/wrapper.go, internal/loop/telemetry.go, internal/loop/streamjson_providers.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go]
-updated: 2026-09-19
+updated: 2026-09-22
 ---
 
 `make provider-scripted-e2e` is the blocking consult contract. A strict external Coop binary mounts
@@ -88,6 +88,14 @@ tracked/untracked/ignored write attempts. Source credentials, complete repositor
 revocation, CIDs, labels, and per-edge process quiescence are verified. Evidence is one redacted
 `COOP_CONSULT_LIVE_SUMMARY` line.
 
+`make provider-delegate-live-e2e-all` reuses that isolated ring in delegate mode. Each wrapper
+must create its one exact nonce file, without staging or committing. The verifier checks the full
+tree (ignored files and Git metadata included) before semantic Git checks, then removes only the
+verified fixture output and proves the original repository is restored. Failures preserve the
+output for the enclosing disposable test's lifetime. `COOP_DELEGATE_LIVE_SUMMARY` is separate
+evidence; the recorder rejects a consult summary offered in its place. Both rings are required
+for full qualification, but deterministic controls alone are not live proof.
+
 Triage `skipped` as a prerequisite first: `credential_refresh_required` needs trusted-source
 renewal before an access-only projection, not necessarily re-login (see
 [[credentials-expired-is-a-false-alarm]]);
@@ -104,6 +112,8 @@ in final/state/log. Wrapper fixtures preserve a partial reply at exit0; they do 
 native lead carries its caveats through synthesis. No prose-to-verdict parser is involved.
 
 ## Changelog
+- 2026-09-22 — strict four-edge delegate mode and exact mutation/denial controls alongside consult;
+  schema2 qualification requires both independent summary prefixes
 - 2026-09-19 — both wrappers run their arms on `COOP_BOX_PATH` (recorded by coop-entry): a Codex
   lead's vendored `rg` on PATH made every Gemini consult fall back to GrepTool.
 - 2026-09-19 — `coop_login_rejected` rendered from AuthSignals over stderr + `<provider>_errors`; parity test

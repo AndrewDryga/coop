@@ -12,8 +12,12 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -26,14 +30,15 @@ import (
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/liveprovider"
+	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
 func TestProviderNetworkLiveCompatibility(t *testing.T) {
 	testProviderLiveCompatibility(t, liveWorkflowNetwork)
 }
 
-// executeProviderNetworkLiveChild runs one provider twice behind one frozen policy — a fresh
-// prompt and a native resume of that same conversation — then reads the sealed receipts back and
+// executeProviderNetworkLiveChild runs a fresh prompt, its native resume, and a controlled shared
+// MCP tool call behind one frozen policy, then reads the sealed receipts back and
 // requires every destination the boxes actually reached to be one this policy granted.
 //
 // A host that cannot be set up for filtered runs, has no runtime or no credential SKIPS: an
@@ -41,18 +46,15 @@ func TestProviderNetworkLiveCompatibility(t *testing.T) {
 func executeProviderNetworkLiveChild(target agents.Target, marker, attemptFile, preflightReason string) liveprovider.ProviderResult {
 	result := liveprovider.ProviderResult{Provider: target.Provider}
 	fail := func(reason, phase, class string, code int) liveprovider.ProviderResult {
-		result.Attempted, result.Passed = true, false
-		result.Status, result.ReasonCode = liveprovider.StatusFailed, reason
-		result.Phase, result.ExitCode, result.ErrorClass = phase, code, class
-		return result
+		return providerNetworkLiveFailure(result, reason, phase, class, code)
 	}
 	harnessFail := func(detail string) liveprovider.ProviderResult {
 		failed := fail(liveprovider.ReasonHarnessFailed, "harness", "harness", 0)
-		failed.Attempted, failed.DetailCode = false, detail
+		failed.DetailCode = detail
 		return failed
 	}
-	skip := func(reason, detail string) liveprovider.ProviderResult {
-		result.Status, result.ReasonCode, result.DetailCode = liveprovider.StatusSkipped, reason, detail
+	skip := func(reason string) liveprovider.ProviderResult {
+		result.Status, result.ReasonCode = liveprovider.StatusSkipped, reason
 		return result
 	}
 	cfg, err := config.Load()
@@ -72,12 +74,12 @@ func executeProviderNetworkLiveChild(target agents.Target, marker, attemptFile, 
 	}
 	rt, err := runtime.Detect(cfg.RuntimeName)
 	if err != nil {
-		return skip(liveprovider.ReasonMissingRuntime, "")
+		return skip(liveprovider.ReasonMissingRuntime)
 	}
 	if preflightReason != "" {
-		return skip(preflightReason, "")
+		return skip(preflightReason)
 	}
-	// One admission for both launches, exactly as a loop or an ACP session does: a policy that
+	// One admission for all launches, exactly as a loop or an ACP session does: a policy that
 	// changed between them would be a different experiment.
 	filtered := egress.Filtered
 	spec := box.RunSpec{
@@ -88,7 +90,7 @@ func executeProviderNetworkLiveChild(target agents.Target, marker, attemptFile, 
 		// A host that cannot be set up for filtered runs — admission tries that
 		// itself now — is a skip, not a compatibility failure.
 		if errors.Is(err, box.ErrNetworkSetupFailed) {
-			return skip(liveprovider.ReasonMissingImage, "network_setup")
+			return skip(liveprovider.ReasonMissingImage)
 		}
 		return harnessFail("network_admission")
 	}
@@ -103,10 +105,10 @@ func executeProviderNetworkLiveChild(target agents.Target, marker, attemptFile, 
 	if len(interactive) == 0 {
 		return harnessFail("version_probe")
 	}
-	version, code, err := runProviderNetworkLiveBox(cfg, rt, capture, target.Provider, []string{interactive[0], "--version"})
+	version, code, err := runProviderNetworkLiveBox(cfg, rt, capture, target.Provider, []string{interactive[0], "--version"}, liveVersionDeadline)
 	if err != nil || code != 0 {
 		if code == 127 {
-			return skip(liveprovider.ReasonMissingCLI, "")
+			return skip(liveprovider.ReasonMissingCLI)
 		}
 		return fail(liveprovider.ReasonVersionProbe, "version", "harness", code)
 	}
@@ -135,7 +137,7 @@ func executeProviderNetworkLiveChild(target agents.Target, marker, attemptFile, 
 	if !ok {
 		return harnessFail("session_lookup")
 	}
-	stdout, code, runErr := runProviderNetworkLiveBox(cfg, rt, capture, target.Provider, command)
+	stdout, code, runErr := runProviderNetworkLiveBox(cfg, rt, capture, target.Provider, command, livePromptDeadline)
 	if runErr != nil || code != 0 {
 		if errors.Is(runErr, context.DeadlineExceeded) {
 			return fail(liveprovider.ReasonPromptTimeout, "prompt", "timeout", code)
@@ -158,7 +160,7 @@ func executeProviderNetworkLiveChild(target agents.Target, marker, attemptFile, 
 	if !ok {
 		return harnessFail("session_lookup")
 	}
-	stdout, code, runErr = runProviderNetworkLiveBox(cfg, rt, capture, target.Provider, command)
+	stdout, code, runErr = runProviderNetworkLiveBox(cfg, rt, capture, target.Provider, command, livePromptDeadline)
 	if runErr != nil || code != 0 {
 		if errors.Is(runErr, context.DeadlineExceeded) {
 			return fail(liveprovider.ReasonPromptTimeout, "resume", "timeout", code)
@@ -168,21 +170,24 @@ func executeProviderNetworkLiveChild(target agents.Target, marker, attemptFile, 
 	if _, reply, err = providerResumeLiveOutput(ag, resolvedID, stdout); err != nil || reply != marker {
 		return fail(liveprovider.ReasonMarkerMismatch, "resume", "marker", code)
 	}
-	// Stage three, only when this host actually configures a shared MCP server over HTTP: those
-	// hosts are granted automatically by admission, so a tool call is the one way to prove the
-	// grant is reachable and not just present. A model that ignores an explicit instruction to
-	// call a named tool fails here, which is a finding worth a red run.
-	if hosts := providerNetworkLiveMCPHosts(cfg, spec); len(hosts) != 0 {
-		command = ag.Headless(cfg, "Call exactly one read-only tool from the MCP server you have, then respond with exactly "+
-			marker+" and no other text. Do not answer without calling the tool.")
-		if _, code, runErr = runProviderNetworkLiveBox(cfg, rt, capture, target.Provider, command); runErr != nil || code != 0 {
-			return fail(liveprovider.ReasonPromptExit, "mcp", "provider", code)
+	// Stage three is mandatory, independent of the operator's personal MCP configuration. Only
+	// this launch's witness counts; the earlier prompts may have connected without calling a tool.
+	witness := filepath.Join(cfg.AgentProfileDir(target.Provider, account), ".coop-network-mcp.log")
+	if err := os.Remove(witness); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return harnessFail("mcp_witness_reset")
+	}
+	command = ag.Headless(cfg, "Call exactly the coop_probe_tool MCP tool once; wait for its result, then respond with exactly "+
+		marker+" and no other text. Do not answer without calling the tool.")
+	if _, code, runErr = runProviderNetworkLiveBox(cfg, rt, capture, target.Provider, command, livePromptDeadline); runErr != nil || code != 0 {
+		if errors.Is(runErr, context.DeadlineExceeded) {
+			return fail(liveprovider.ReasonPromptTimeout, "mcp", "timeout", code)
 		}
-		if detail, err := verifyProviderNetworkLiveReached(capture, hosts); err != nil {
-			failed := fail(liveprovider.ReasonPromptExit, "mcp", "network", 0)
-			failed.DetailCode = detail
-			return failed
-		}
+		return fail(liveprovider.ReasonPromptExit, "mcp", "provider", code)
+	}
+	if err := verifyProviderNetworkLiveMCP(cfg.ConfigDir, witness); err != nil {
+		failed := fail(liveprovider.ReasonPromptExit, "mcp", "provider", 0)
+		failed.DetailCode = "mcp_tool_witness"
+		return failed
 	}
 	// The receipts are the evidence: what the boxes reached has to be what the policy granted.
 	if detail, err := verifyProviderNetworkLiveReceipts(capture, ag.CredentialBroker().Upstream); err != nil {
@@ -200,6 +205,16 @@ func executeProviderNetworkLiveChild(target agents.Target, marker, attemptFile, 
 		return failed
 	}
 	result.Passed, result.Status, result.ReasonCode = true, liveprovider.StatusPassed, ""
+	return result
+}
+
+// Keep attempt truth from the independently written marker boundary. A failed version probe is
+// not paid work; an MCP/setup error after a prompt must not erase the calls already made.
+func providerNetworkLiveFailure(result liveprovider.ProviderResult, reason, phase, class string, code int) liveprovider.ProviderResult {
+	result.Passed = false
+	result.Status, result.ReasonCode = liveprovider.StatusFailed, reason
+	result.Phase, result.ExitCode, result.ErrorClass = phase, code, class
+	result.TimedOut = reason == liveprovider.ReasonPromptTimeout
 	return result
 }
 
@@ -253,10 +268,10 @@ func verifyProviderNetworkLiveSilence(capture *box.CapturedEgress) (string, erro
 // filtered launch qualifies bind mounts and KEY=VALUE environment only, and a --cidfile there
 // would be refused by name (the gateway engine records the exact container id itself).
 func runProviderNetworkLiveBox(cfg *config.Config, rt runtime.Runtime, capture *box.CapturedEgress,
-	provider string, command []string) (string, int, error) {
+	provider string, command []string, deadline time.Duration) (string, int, error) {
 	stdout := liveprovider.NewBoundedBuffer(liveOutputLimit)
 	stderr := liveprovider.NewBoundedBuffer(liveOutputLimit)
-	ctx, cancel := context.WithTimeout(context.Background(), livePromptDeadline)
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
 	code, err := box.Run(cfg, rt, box.RunSpec{
 		Repo: cfg.RepoOverride, Cmd: command, Agent: provider, AgentCommand: true,
@@ -349,36 +364,70 @@ func providerNetworkLiveExecutions(evidence *networkstate.Evidence) ([]networkst
 	}
 }
 
-// verifyProviderNetworkLiveReached requires at least one of hosts to appear as an observed
-// destination of this capture's runs.
-func verifyProviderNetworkLiveReached(capture *box.CapturedEgress, hosts []string) (string, error) {
-	names, err := providerNetworkLiveDestinations(capture)
+func prepareProviderNetworkLiveMCP(layout procharness.Layout, selection liveprovider.Selection, home, platform string) (string, error) {
+	system, arch, ok := strings.Cut(platform, "/")
+	if !ok || system != "linux" || (arch != "amd64" && arch != "arm64") || !filepath.IsAbs(home) {
+		return "", errors.New("unsupported MCP fixture platform or home")
+	}
+	profile := filepath.Join(layout.Config, selection.Provider, "profiles", selection.Account)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	build := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", filepath.Join(profile, "mcpprobe"), "../box/testdata/mcpprobe")
+	build.Env = append(os.Environ(), "GOOS="+system, "GOARCH="+arch, "CGO_ENABLED=0")
+	if err := build.Run(); err != nil {
+		return "", errors.New("build controlled MCP fixture")
+	}
+	boxProfile := home + "/." + selection.Provider
+	body, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"coop-probe": map[string]any{
+		"type": "stdio", "command": boxProfile + "/mcpprobe", "args": []string{},
+		"env": map[string]string{"COOP_PROBE_LOG": boxProfile + "/.coop-network-mcp.log"},
+	}}})
 	if err != nil {
-		return "inspect", err
+		return "", err
 	}
-	for _, host := range hosts {
-		if slices.Contains(names, host) {
-			return "", nil
-		}
-	}
-	return "mcp_unreached", errors.New("no run reached a configured MCP host")
+	path := filepath.Join(layout.State, "provider-network-mcp.json")
+	return path, os.WriteFile(path, body, 0o600)
 }
 
-// providerNetworkLiveMCPHosts is the shared MCP configuration's HTTP hosts, which admission grants
-// automatically. Reaching one is the only MCP claim this probe can make: whether a model chooses to
-// call a tool is the model's business, not the boundary's.
-func providerNetworkLiveMCPHosts(cfg *config.Config, spec box.RunSpec) []string {
-	inputs, err := box.NetworkMCPDependencies(cfg, spec)
+// The profile witness proves cooperative native-client compatibility, not adversarial attestation:
+// the model can write its own profile. Source config stays outside every agent mount.
+func verifyProviderNetworkLiveMCP(root, path string) error {
+	f, err := procharness.OpenRegularFile(root, path, os.O_RDONLY)
 	if err != nil {
-		return nil
+		return errors.New("missing regular MCP witness")
 	}
-	var hosts []string
-	for _, input := range inputs {
-		for _, rule := range input.Rules {
-			if rule.To.Domain != "" && !slices.Contains(hosts, rule.To.Domain) {
-				hosts = append(hosts, rule.To.Domain)
-			}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, 65537))
+	if err != nil || len(data) > 65536 || !providerNetworkLiveMCPWitness(string(data)) {
+		return errors.New("missing ordered MCP handshake and tool-call witness")
+	}
+	return nil
+}
+
+func providerNetworkLiveMCPWitness(log string) bool {
+	steps := []string{"launched", "initialize", "answered initialize", "notifications/initialized", "tools/list", "tools/call coop_probe_tool", "answered tools/call coop_probe_tool"}
+	next, calls := 0, 0
+	for _, line := range strings.Split(strings.TrimSpace(log), "\n") {
+		if strings.HasPrefix(line, "tools/call ") {
+			calls++
 		}
+		if line == "launched" {
+			next = 0
+		}
+		index := slices.Index(steps, line)
+		if index < 0 {
+			if strings.HasPrefix(line, "tools/call") {
+				return false
+			}
+			continue
+		}
+		if index == 4 && next == 5 {
+			continue // clients may refresh the tool catalog before invoking it
+		}
+		if index != next {
+			return false
+		}
+		next++
 	}
-	return hosts
+	return next == len(steps) && calls == 1
 }

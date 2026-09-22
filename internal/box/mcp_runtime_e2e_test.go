@@ -25,8 +25,9 @@ import (
 // The server is the witness: `testdata/mcpprobe` logs every JSON-RPC method it receives, so the
 // assertion is made from the SERVER's side. What separates a real handshake from an announced one is
 // ORDER, not presence: the probe sits on its initialize RESULT for half a second and logs
-// `answered initialize` only after writing it, so a client that fires `notifications/initialized`
-// without reading the result lands before that line and fails here. Presence alone would pass for a
+// `answered initialize` only after writing it. A concurrent reader records pipelined notifications
+// before that line, so they fail here (response ordering, not proof of a client's private reads).
+// Presence alone would pass for a
 // client that talked past the server entirely — this test's own codex driver writes initialize and
 // initialized back to back, which is exactly the shape being ruled out.
 //
@@ -39,8 +40,8 @@ import (
 // before the subcommand is accepted and then ignored ("No MCP servers configured", probe never
 // launched). `claude mcp list` reads the `mcpServers` key of its own user config instead — and while
 // Coop does write that file (onboarding, bypass and trust keys, under CLAUDE_CONFIG_DIR), it
-// deliberately never writes servers there. So claude's connection stays a LIVE gap; its delivery is
-// pinned at process level.
+// deliberately never writes servers there. Claude's shared-tool call is instead required by the
+// paid provider-network-live suite; its delivery is also pinned at process level.
 //
 // Needs the locked client image, which `coop net setup` builds; run it with `make mcp-e2e`.
 func TestRuntimeSharedMCPServersAreReachedByEveryProbeableClient(t *testing.T) {
@@ -59,9 +60,11 @@ func TestRuntimeSharedMCPServersAreReachedByEveryProbeableClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := docker.Image(ctx, definition.Tag); err != nil {
+	imageID, _, err := docker.Image(ctx, definition.Tag)
+	if err != nil {
 		t.Fatalf("the locked client image %s is not on this daemon; run `coop net setup` first: %v", definition.Tag, err)
 	}
+	t.Logf("offline MCP clients: %s (%s), %s/%s", definition.Tag, imageID, binding.OS, binding.Architecture)
 	const (
 		boxHome   = "/tmp/h" // a throwaway HOME, so nothing of the operator's is in play
 		boxCwd    = "/tmp/w" // ...and a working directory outside it (see skills-e2e for why)

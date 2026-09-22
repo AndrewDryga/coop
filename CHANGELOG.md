@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Provider qualification now requires native loop tool lifecycles, a real shared MCP tool call,
+  write-capable delegate output and bounded two-account recovery where configured. Live tests
+  copy selected Coop-held API keys as well as native sign-ins; preflight also accepts env-only
+  accounts without requiring a profile directory. The recorder and pin gate share
+  strict coverage requirements and reject incomplete evidence; missing second accounts remain
+  explicitly unqualified. These are verification improvements, not a claim that a paid
+  qualification run has passed.
+
 - Evaluations are now discoverable from the main help, README and website guide, with a
   preview-first walkthrough and focused help for every eval command. `coop eval inspect`
   explains the latest run (or a chosen ID), including bounded recorded failure causes.

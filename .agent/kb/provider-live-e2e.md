@@ -2,8 +2,8 @@
 name: provider-live-e2e
 description: Probe installed upstream CLIs with isolated read-only, native-resume, and task-completion workflows
 subsystem: testing
-sources: [Makefile, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/run.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/runtime/process_group_live.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/acpctl/process_live.go, internal/cli/provider_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_loop_task_channel_live_test.go, internal/cli/provider_loop_task_observation_live_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go]
-updated: 2026-09-17
+sources: [Makefile, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/run.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/runtime/process_group_live.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/acpctl/process_live.go, internal/cli/provider_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/loop/live_stream_probe.go, internal/loop/provider_accounts_live_e2e_test.go, internal/loop/provider_accounts_live_credentials_test.go, internal/cli/provider_loop_task_channel_live_test.go, internal/cli/provider_loop_task_observation_live_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go]
+updated: 2026-09-22
 ---
 
 `make provider-live-e2e COOP_LIVE_TARGETS='...'` is the permissive prerequisite probe;
@@ -17,7 +17,7 @@ command starts is a failure, including quota/auth errors; there are no retries.
 `make provider-loop-live-e2e COOP_LIVE_TARGETS='...'` and its strict `-all` form reuse that same
 admission and evidence contract for one writable task-completion attempt. The deterministic suite
 already owns the real external loop controller, lease, reconciliation, and telemetry path. The
-live child therefore makes one direct adapter `Headless` call with the production loop work prompt
+live child therefore makes one direct adapter `Headless` call through `IterationCommand` with the production loop work prompt
 against one pre-claimed mechanical task, avoiding the controller's ordinary paid retries. Success
 requires the exact marker file and sole task-bound commit, unchanged task instructions apart from
 checking the required subtask, clean Git state, final state/log, no scratch, no extra ignored files,
@@ -51,6 +51,28 @@ A failed clean-tree commit can rewrite this scratch file without changing `HEAD`
 its reflog. The strict fixture still refuses that leftover text: accepting arbitrary
 scratch content would also allow hidden output in otherwise ignored Git metadata.
 
+Native output also passes through the production lifecycle decoder. `LiveStreamProbe` requires
+paired tools, no open tools at completion and exactly one successful terminal event; task MCP
+alone cannot satisfy it. All-provider native positive/denial controls run in `live-process-control`.
+
+`provider-network-live-e2e-all` requires prompt, native resume and one controlled shared stdio MCP
+tool call per provider. The Linux cross-built probe lives only in the isolated profile; the MCP
+config stays outside agent mounts. Received/answered initialization, tool discovery and the exact
+tool call must be ordered within one probe process. The concurrent probe reader detects pipelined
+notifications; missing, wrong or repeated calls fail. The profile witness is cooperative
+compatibility proof, not tamper-resistant grading. Each prompt has its own three-minute deadline;
+version probes remain 45 seconds, and the parent permits all three stages plus cleanup.
+
+`provider-accounts-live-e2e-all` is separate real-controller proof, in the loop package's tagged
+tests. It chooses the first two compatible configured accounts in name order, prepares both and
+checks portability before replacing only the first copy with closed invalid synthetic authority.
+An opaque witness verifies the second copy was untouched by fault injection. The private boxRun
+seam preserves admission/decoding/task MCP and rejects any third or unexpected work launch before
+calling box.Run. Parent deadline/revocation/cleanup remain independent. Host-owned telemetry must
+show authentication(first), success(second), one completed task and one exact task-bound commit.
+Fewer than two configured accounts is explicitly not_configured; bad configured pairs fail.
+This is not a claim of exhaustive account coverage or live success from deterministic tests.
+
 `make provider-resume-live-e2e COOP_LIVE_TARGETS='...'` spends two requests per admitted provider:
 one clean helper creates a marker-bearing native session, and a second provider request receives
 only its canonical ID and must return the prior assistant response without seeing the marker in its
@@ -70,7 +92,9 @@ access token; Codex retains exactly one API-key or ChatGPT access-token branch a
 required refresh field as an empty string. Grok retains an access key, expiry, and the current CLI's
 required auth-mode/OIDC/principal/user/team/create-time routing fields; it drops refresh authority
 and user-facing profile metadata. A key/expiry-only Grok record parses but is treated as logged out.
-Refresh authority never enters staging. Gemini's host-bound keychain is fingerprinted but not
+Refresh authority never enters staging. Selected Coop-owned host-vault keys are copied into the
+isolated host vault (never the mounted profile) and included in readiness and source fingerprints;
+an explicit default env key wins without reading an unused vault. Gemini's host-bound keychain is fingerprinted but not
 copied, and its settings projection contains only `security.auth.selectedType`. A Gemini API-key
 selection grants only `GEMINI_API_KEY`; Vertex express mode grants only `GOOGLE_API_KEY`. The helper
 rejects unsafe modes, symlinks, hardlinks, special/oversized/replaced files, bare env imports, and
@@ -85,7 +109,8 @@ forwarded. The narrow values reach the host runtime process, not the container a
 live suite copies the marked default for bare targets and every account explicitly named by a direct
 target or preset ladder.
 
-The provider command is the adapter's real `Headless` form inside `box.Run`: batch, open egress,
+The provider command is the adapter's real `Headless` form inside `box.Run`: batch, open egress
+for native sign-ins or filtered for brokered API keys,
 isolated homes, no ambient MCP/instructions/services/cache, and the generated repo mounted
 read-only except for the loop task fixture and its run-private task MCP channel. A
 version probe makes no model request. The marker prompt makes exactly one. The parent accepts one
@@ -140,7 +165,7 @@ carry no refresh authority. Before the prompt, the adapter must prove the projec
 outlives the run; otherwise standard mode reports `credential_refresh_required` with
 `attempted=false`, and strict mode fails. Gemini OAuth instead reports
 `credential_not_portable`; re-login cannot change its host-bound encryption, so live tests require
-the selected env-backed API-key mode. The no-quota version probe still runs for these preflight
+the selected host-vault or env-backed API-key mode. The no-quota version probe still runs for these preflight
 skips.
 
 Triage a `skipped` result as a prerequisite: `missing_runtime`, `missing_image`, `missing_cli`, or
@@ -152,6 +177,8 @@ isolation failures and take precedence over a provider result. Stable summaries 
 raw output; reproduce behavior in the deterministic fixture.
 
 ## Changelog
+- 2026-09-22 - selected host-vault isolation, mandatory shared MCP witness, production lifecycle
+  decoding and bounded real-controller account recovery; deterministic controls do not claim live proof
 - 2026-09-17 - Podman removed as a runtime; its connection capture is gone and a retired name yields no env
 - 2026-09-13 - separated native loop commit-message failure categories without changing
   acceptance; generated-hook commit/amend tests check scratch-message equality.

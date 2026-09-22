@@ -31,6 +31,14 @@ import (
 const consultLiveChildDeadline = 18 * time.Minute
 
 func TestProviderConsultLiveCompatibility(t *testing.T) {
+	testProviderPeerLiveCompatibility(t, false)
+}
+
+func TestProviderDelegateLiveCompatibility(t *testing.T) {
+	testProviderPeerLiveCompatibility(t, true)
+}
+
+func testProviderPeerLiveCompatibility(t *testing.T, delegate bool) {
 	if os.Getenv("COOP_TEST_CONSULT_LIVE_CHILD") == "1" {
 		t.Skip("parent orchestration is disabled in the clean consult child")
 	}
@@ -42,6 +50,9 @@ func TestProviderConsultLiveCompatibility(t *testing.T) {
 	if err := liveprovider.ValidateConsultTargets(targets); err != nil {
 		t.Fatal(err)
 	}
+	emit := func(results []liveprovider.ProviderResult) {
+		emitPeerLiveSummary(t, delegate, strict, targets, results)
+	}
 
 	realConfig, err := config.Load()
 	if err != nil {
@@ -49,16 +60,16 @@ func TestProviderConsultLiveCompatibility(t *testing.T) {
 	}
 	rt, err := runtime.Detect(realConfig.RuntimeName)
 	if err != nil {
-		emitConsultLiveSummary(t, strict, targets, skippedLiveResults(targets, liveprovider.ReasonMissingRuntime))
+		emit(skippedLiveResults(targets, liveprovider.ReasonMissingRuntime))
 		return
 	}
 	if err := rt.EnsureDaemon(); err != nil {
-		emitConsultLiveSummary(t, strict, targets, skippedLiveResults(targets, liveprovider.ReasonMissingRuntime))
+		emit(skippedLiveResults(targets, liveprovider.ReasonMissingRuntime))
 		return
 	}
 	connectionEnv, err := liveprovider.CaptureRuntimeConnectionEnv(rt.Name)
 	if err != nil {
-		emitConsultLiveSummary(t, strict, targets, failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "runtime_connection"))
+		emit(failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "runtime_connection"))
 		return
 	}
 	runtimeSettings := liveprovider.RuntimeSettings{
@@ -67,41 +78,41 @@ func TestProviderConsultLiveCompatibility(t *testing.T) {
 	}
 	image := box.ImageForRepo(t.TempDir(), realConfig.BaseImage, realConfig.ImageOverride)
 	if !box.ImageExists(rt, image) {
-		emitConsultLiveSummary(t, strict, targets, skippedLiveResults(targets, liveprovider.ReasonMissingImage))
+		emit(skippedLiveResults(targets, liveprovider.ReasonMissingImage))
 		return
 	}
 
 	layout, err := procharness.NewLayout(t.TempDir())
 	if err != nil {
-		emitConsultLiveSummary(t, strict, targets, failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "layout_setup"))
+		emit(failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "layout_setup"))
 		return
 	}
 	if err := liveprovider.InitRepository(layout); err != nil {
-		emitConsultLiveSummary(t, strict, targets, failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "repository_setup"))
+		emit(failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "repository_setup"))
 		return
 	}
 	before, err := liveprovider.SnapshotRepository(layout)
 	if err != nil {
-		emitConsultLiveSummary(t, strict, targets, failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "repository_snapshot"))
+		emit(failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "repository_snapshot"))
 		return
 	}
 	selections, err := liveprovider.SelectionsForTargets(realConfig, targets)
 	if err != nil {
-		emitConsultLiveSummary(t, strict, targets, failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "target_selection"))
+		emit(failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "target_selection"))
 		return
 	}
 	if err := os.Remove(layout.Config); err != nil {
-		emitConsultLiveSummary(t, strict, targets, failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "config_reset"))
+		emit(failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "config_reset"))
 		return
 	}
 	prepared, err := liveprovider.Prepare(realConfig.ConfigDir, layout.Config, selections)
 	if err != nil {
-		emitConsultLiveSummary(t, strict, targets, failedConsultLiveResults(targets, liveprovider.ReasonUnsafeCredential, liveprovider.CredentialDetailCode(err)))
+		emit(failedConsultLiveResults(targets, liveprovider.ReasonUnsafeCredential, liveprovider.CredentialDetailCode(err)))
 		return
 	}
 	defer func() { _ = prepared.Revoke() }()
 	if err := prepared.VerifySources(); err != nil {
-		emitConsultLiveSummary(t, strict, targets, finalizedConsultLiveResults(
+		emit(finalizedConsultLiveResults(
 			failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "source_preflight"),
 			liveprovider.VerificationFailures{SourceChanged: true}, nil,
 		))
@@ -111,7 +122,7 @@ func TestProviderConsultLiveCompatibility(t *testing.T) {
 	for _, target := range targets {
 		reason := prepared.PreflightReason(target.Provider, prepared.Account(target.Provider), time.Now().Add(consultLiveChildDeadline))
 		if reason == liveprovider.ReasonUnsafeCredential {
-			emitConsultLiveSummary(t, strict, targets, failedConsultLiveResults(targets, liveprovider.ReasonUnsafeCredential, "credential_portability"))
+			emit(failedConsultLiveResults(targets, liveprovider.ReasonUnsafeCredential, "credential_portability"))
 			return
 		}
 		preflight[target.Provider] = reason
@@ -119,12 +130,12 @@ func TestProviderConsultLiveCompatibility(t *testing.T) {
 
 	marker, err := liveIdentifier("CONSULT_LIVE_")
 	if err != nil {
-		emitConsultLiveSummary(t, strict, targets, failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "identifier_generation"))
+		emit(failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "identifier_generation"))
 		return
 	}
 	supervisor, err := liveIdentifier("consult-live-")
 	if err != nil {
-		emitConsultLiveSummary(t, strict, targets, failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "identifier_generation"))
+		emit(failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "identifier_generation"))
 		return
 	}
 	resultFile := filepath.Join(layout.State, "consult-result.json")
@@ -132,23 +143,23 @@ func TestProviderConsultLiveCompatibility(t *testing.T) {
 	cidDir := filepath.Join(layout.State, "consult-cids")
 	for _, dir := range []string{attemptDir, cidDir} {
 		if err := os.Mkdir(dir, 0o700); err != nil {
-			emitConsultLiveSummary(t, strict, targets, failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "control_directory"))
+			emit(failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "control_directory"))
 			return
 		}
 	}
 	control, _, err := liveprovider.NewProcessControl(layout, false)
 	if err != nil {
-		emitConsultLiveSummary(t, strict, targets, failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "process_control"))
+		emit(failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "process_control"))
 		return
 	}
 	defer control.Close()
 	revokePath, err := prepared.RevocationPath()
 	if err != nil {
-		emitConsultLiveSummary(t, strict, targets, failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "credential_revocation"))
+		emit(failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "credential_revocation"))
 		return
 	}
 	childSpec := liveprovider.ConsultChildSpec{
-		Path: os.Getenv("PATH"), Marker: marker, Targets: targets, Strict: strict,
+		Path: os.Getenv("PATH"), Marker: marker, Targets: targets, Strict: strict, Delegate: delegate,
 		ResultFile: resultFile, AttemptDir: attemptDir, Supervisor: supervisor, CIDDir: cidDir,
 		PreflightReasons: preflight, ControlFD: 3, RevokePath: revokePath, Runtime: runtimeSettings,
 	}
@@ -157,7 +168,7 @@ func TestProviderConsultLiveCompatibility(t *testing.T) {
 	// its peers from inside one launch. A ring of signed-in accounts keeps the open path.
 	brokered, err := liveprovider.AnyBrokersKey(realConfig, selections)
 	if err != nil {
-		emitConsultLiveSummary(t, strict, targets, failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "credential_kind"))
+		emit(failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "credential_kind"))
 		return
 	}
 	if brokered {
@@ -165,7 +176,7 @@ func TestProviderConsultLiveCompatibility(t *testing.T) {
 	}
 	env, err := liveprovider.ConsultChildEnvironment(layout, childSpec)
 	if err != nil {
-		emitConsultLiveSummary(t, strict, targets, failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "child_environment"))
+		emit(failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "child_environment"))
 		return
 	}
 
@@ -197,10 +208,10 @@ func TestProviderConsultLiveCompatibility(t *testing.T) {
 		SourceChanged:     sourceErr != nil,
 		RepositoryChanged: snapshotErr != nil || !before.Equal(after),
 	}, attempted)
-	emitConsultLiveSummary(t, strict, targets, results)
+	emit(results)
 }
 
-func emitConsultLiveSummary(t *testing.T, strict bool, targets []agents.Target, results []liveprovider.ProviderResult) {
+func emitPeerLiveSummary(t *testing.T, delegate, strict bool, targets []agents.Target, results []liveprovider.ProviderResult) {
 	t.Helper()
 	summary, err := liveprovider.NewConsultSummary(strict, targets, results)
 	if err != nil {
@@ -209,6 +220,9 @@ func emitConsultLiveSummary(t *testing.T, strict bool, targets []agents.Target, 
 	line, err := summary.Line()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if delegate {
+		line = liveprovider.DelegateSummaryPrefix + strings.TrimPrefix(line, liveprovider.ConsultSummaryPrefix)
 	}
 	fmt.Fprintln(os.Stdout, line)
 	if !summary.Success() {
@@ -357,6 +371,10 @@ func TestProviderConsultLiveChild(t *testing.T) {
 	if !ok {
 		t.Fatal("invalid consult live child strict mode")
 	}
+	delegate, ok := parseConsultLiveStrict(os.Getenv("COOP_TEST_CONSULT_LIVE_DELEGATE"))
+	if !ok {
+		t.Fatal("invalid peer live child delegation mode")
+	}
 	marker := os.Getenv("COOP_TEST_CONSULT_LIVE_MARKER")
 	resultFile := os.Getenv("COOP_TEST_CONSULT_LIVE_RESULT")
 	attemptDir := os.Getenv("COOP_TEST_CONSULT_LIVE_ATTEMPT_DIR")
@@ -369,7 +387,7 @@ func TestProviderConsultLiveChild(t *testing.T) {
 	for _, target := range targets {
 		preflight[target.Provider] = os.Getenv("COOP_TEST_CONSULT_LIVE_PREFLIGHT_" + strings.ToUpper(target.Provider))
 	}
-	results := executeProviderConsultLiveChild(targets, marker, attemptDir, supervisor, cidDir, preflight)
+	results := executeProviderConsultLiveChild(targets, marker, attemptDir, supervisor, cidDir, preflight, delegate)
 	summary, err := liveprovider.NewConsultSummary(strict, targets, results)
 	if err != nil {
 		t.Fatal("invalid consult live child result")
@@ -383,6 +401,7 @@ func executeProviderConsultLiveChild(
 	targets []agents.Target,
 	marker, attemptDir, supervisor, cidDir string,
 	preflight map[string]string,
+	delegate bool,
 ) []liveprovider.ProviderResult {
 	results := consultLiveResultSkeleton(targets)
 	cfg, err := config.Load()
@@ -428,6 +447,7 @@ func executeProviderConsultLiveChild(
 		results[i] = runConsultLiveEdge(
 			cfg, rt, image, targets, i, results[i], credentialSpecs[peer.Provider],
 			marker, attemptDir, supervisor, cidDir,
+			delegate,
 		)
 		if results[i].Status != liveprovider.StatusPassed {
 			return stopConsultLiveAdmission(results, i)
@@ -505,6 +525,7 @@ func runConsultLiveEdge(
 	result liveprovider.ProviderResult,
 	credentialSpec agents.LiveCredentialSpec,
 	marker, attemptDir, supervisor, cidDir string,
+	delegate bool,
 ) liveprovider.ProviderResult {
 	peer := targets[index]
 	lead := consultLiveLead(targets, index)
@@ -531,9 +552,16 @@ func runConsultLiveEdge(
 	peerScope := peer
 	peerScope.Accounts = nil
 	edgePreset := consultLiveRingPreset(lead.Provider, peerScope)
+	command := []string{consult.ConsultWrapperPath, "live-probe", "--fresh", prompt}
+	if delegate {
+		edgePreset.Roles[0].Mode = preset.ModeDelegate
+		prompt = "Create exactly one file named delegate-" + peer.Provider + ".txt containing exactly " + edgeMarker +
+			" followed by a newline. Do not modify any other file, stage changes, commit, or change Git metadata. Do not access anything outside this repository."
+		command = []string{preset.DelegateWrapperPath, "live-probe", prompt}
+	}
 	code, runErr := box.Run(cfg, rt, box.RunSpec{
 		Image: image, Repo: cfg.RepoOverride,
-		Cmd:   []string{consult.ConsultWrapperPath, "live-probe", "--fresh", prompt},
+		Cmd:   command,
 		Agent: lead.Provider, ConsultLead: lead.Provider, Preset: edgePreset,
 		Batch: true, Quiet: true, Homes: true, Network: false, Cache: false,
 		SupervisorID: supervisor, Stdout: stdout, Stderr: stderr, Ctx: ctx,
@@ -579,13 +607,18 @@ func runConsultLiveEdge(
 		result.ErrorClass = class
 		return result
 	}
-	if detail := consultLiveReplyDetail(stdout.String(), peer.Provider, edgeMarker); detail != "" {
+	if detail := consultLiveReplyDetail(stdout.String(), peer.Provider, edgeMarker); !delegate && detail != "" {
 		result.Status = liveprovider.StatusFailed
 		result.ReasonCode = liveprovider.ReasonMarkerMismatch
 		result.Phase = "prompt"
 		result.ErrorClass = "marker"
 		result.DetailCode = detail
 		return result
+	}
+	if delegate {
+		if err := liveprovider.VerifyDelegateRepository(repositoryLayout, before, "delegate-"+peer.Provider+".txt", edgeMarker+"\n"); err != nil {
+			return liveprovider.FinalizeResult(result, liveprovider.VerificationFailures{RepositoryChanged: true, AttemptedObserved: true})
+		}
 	}
 	after, snapshotErr := liveprovider.VerifyRepository(repositoryLayout, before)
 	if snapshotErr != nil || !before.Equal(after) {
