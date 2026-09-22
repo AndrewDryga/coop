@@ -2,8 +2,8 @@
 name: test-fixture-guards-vs-timing-bounds
 description: a test wait that guards a broken fixture is generous (testutil/wait, 60 s); a tight wall-clock bound is reserved for timing that IS the behavior under test, and then attributes its phases
 subsystem: testing
-sources: [internal/testutil/wait/wait.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/consult/instructions_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go]
-updated: 2026-09-13
+sources: [internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/consult/instructions_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go]
+updated: 2026-09-22
 ---
 
 Two kinds of waits look alike in a test and fail alike on a loaded host, but mean opposite things.
@@ -57,7 +57,14 @@ storage refusal. Ordinary workspace fixtures explicitly configure `Config.Storag
 and measurement intervals. The focused storage helper's nanosecond interval is not an ordinary
 fixture default. Production limits and dedicated reserve/adoption tests stay independent.
 
+**Two process listings are not one snapshot.** A fixture that starts a background sleep and then a
+foreground sleep may add the latter between listings, hiding an excluded leader in the row count.
+Publish one child's PID, keep the leader in builtin `wait`, and assert those known identities.
+Do not compare dynamic status/elapsed columns or loosen production cleanup assertions.
+
 ## Changelog
+- 2026-09-22 — reproduced the process-group exclusion fixture race in the canonical race gate
+  and focused repetitions; synchronized one child and asserted exact leader/child identities.
 - 2026-09-13 — reproduced an ordinary session fixture refusing allocation under the host's 24.7 GB
   production reserve. Added explicit test storage configuration and terminal-operation diagnostics;
   preserved production-default and reserve/refusal/recovery coverage instead of changing host policy

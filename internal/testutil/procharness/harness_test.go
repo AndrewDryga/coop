@@ -504,8 +504,10 @@ func TestRunDoesNotReportALeakWhenTheLeaderSimplyExits(t *testing.T) {
 // its own group is exactly what the old check mistook for a survivor. Proven on a real group leader
 // with a real child, so neither side of the comparison is hypothetical.
 func TestListGroupExcludesTheLeaderItself(t *testing.T) {
-	// A leader in its own process group, with one child, so the group has two members.
-	leader := exec.Command("/bin/sh", "-c", "sleep 30 & sleep 30")
+	// Publish the one child before listing. A second foreground sleep can start between
+	// the two snapshots and hide the removed leader in their row counts.
+	ready := filepath.Join(t.TempDir(), "child")
+	leader := exec.Command("/bin/sh", "-c", `sleep 300 & printf '%s\n' "$!" > "$1"; wait`, "sh", ready)
 	leader.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := leader.Start(); err != nil {
 		t.Fatal(err)
@@ -516,34 +518,38 @@ func TestListGroupExcludesTheLeaderItself(t *testing.T) {
 		_, _ = leader.Process.Wait()
 	}()
 
-	// Wait for the child to exist, so "excluding the leader" is a real subtraction rather than a
-	// comparison of two empty lists.
-	var withLeader, withoutLeader []string
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		var err error
-		if withLeader, err = listGroup(pid, true); err != nil {
-			t.Fatal(err)
-		}
-		if withoutLeader, err = listGroup(pid, false); err != nil {
-			t.Fatal(err)
-		}
-		if len(withLeader) >= 2 && len(withoutLeader) >= 1 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
+	child := strings.TrimSpace(awaitFileContent(t, ready))
+	if childPID, err := strconv.Atoi(child); err != nil || childPID <= 0 || childPID == pid {
+		t.Fatalf("invalid fixture child PID %q", child)
 	}
-	if len(withLeader) < 2 {
-		t.Fatalf("the group never had a leader and a child to tell apart: %v", withLeader)
+	withLeader, err := listGroup(pid, true)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(withoutLeader) != len(withLeader)-1 {
-		t.Errorf("excluding the leader removed %d rows, want exactly 1:\nwith:    %v\nwithout: %v",
-			len(withLeader)-len(withoutLeader), withLeader, withoutLeader)
+	withoutLeader, err := listGroup(pid, false)
+	if err != nil {
+		t.Fatal(err)
 	}
-	self := strconv.Itoa(pid)
-	for _, row := range withoutLeader {
-		if fields := strings.Fields(row); len(fields) > 0 && fields[0] == self {
-			t.Errorf("the leader is still counted as a survivor of its own group:\n%v", withoutLeader)
+	for _, tc := range []struct {
+		name string
+		rows []string
+		want []string
+	}{
+		{"with leader", withLeader, []string{strconv.Itoa(pid), child}},
+		{"without leader", withoutLeader, []string{child}},
+	} {
+		if len(tc.rows) != len(tc.want) {
+			t.Errorf("%s = %v, want exactly PIDs %v", tc.name, tc.rows, tc.want)
+		}
+		for _, want := range tc.want {
+			found := false
+			for _, row := range tc.rows {
+				fields := strings.Fields(row)
+				found = found || len(fields) > 0 && fields[0] == want
+			}
+			if !found {
+				t.Errorf("%s = %v, missing PID %s", tc.name, tc.rows, want)
+			}
 		}
 	}
 }
