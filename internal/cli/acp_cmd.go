@@ -858,7 +858,7 @@ func cleanACPChildEnv(env []string) []string {
 		switch key {
 		// The network capture is minted per child by this supervisor. An inherited
 		// one names a snapshot this session never admitted, so it never rides in.
-		case "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE", "COOP_ACP_ACTIVITY_ROLE", acpAccountBindingsEnv,
+		case "COOP_EGRESS", "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE", "COOP_ACP_ACTIVITY_ROLE", acpAccountBindingsEnv,
 			box.SessionNetworkCaptureEnv,
 			liveprocess.ControlFDEnv, liveprocess.ProcessDirEnv, liveprocess.CleanupIDEnv, liveprocess.RevokePathEnv:
 			continue
@@ -951,6 +951,11 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	}
 	env := append(cleanACPChildEnv(os.Environ()), "COOP_ACP_INNER=1", "COOP_ACP_SUPERVISOR="+superID,
 		"COOP_ACP_ACTIVITY_ROLE="+string(activityRole))
+	// Admission marks the mode explicit. Keep a standalone model probe's implicit default
+	// unset so its child can still apply project policy.
+	if a.cfg.Explicit("COOP_EGRESS") {
+		env = append(env, "COOP_EGRESS="+a.cfg.Egress)
+	}
 	capture, err := a.acpChildCapture(superID)
 	if err != nil {
 		inR.Close()

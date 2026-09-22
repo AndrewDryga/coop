@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Editor ACP children now keep the network mode admitted by their supervisor, including one-off
+  and remembered offline settings. Initial, replacement and warm children no longer fall back
+  to an absent or stale host environment setting. Filtered policy proofs are unchanged.
+
 - Restricted launches no longer automatically execute project Docker builds with unrestricted
   build networking. Review the Dockerfile and copied build files, then run
   `coop build --egress filtered` to prepare an image for filtered runs (plain `coop build` follows

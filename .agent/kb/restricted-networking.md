@@ -2,7 +2,7 @@
 name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
-sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, docs/networking.md, internal/sessionsvc/acp.go]
+sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go]
 updated: 2026-09-22
 ---
 
@@ -61,6 +61,14 @@ traffic is evidence, never a grant. Admission marks the resolved posture explici
 `cfg.SetEgress` (`box/network_admission.go:91`), so the project overlay cannot decide the mode a
 second time. A run that neither asks for filtered nor has a remembered posture writes NO host
 state — the preview creates no owner key (`networkstate/admission.go:45`).
+
+ACP supervision carries this explicit mode through `spawnBox` to initial, replacement and warm
+children, removing any conflicting ambient `COOP_EGRESS`. A standalone `coop models` catalog
+refresh is different: it is host-side provider metadata, not an admitted agent session (some
+providers deliberately use host CLIs). Its ACP-backed probes retain implicit project-overlay
+behavior; they must not export a default `open` that would suppress project tightening. This
+does not promise remembered agent-run policy for catalog refresh. Filtered child captures still
+require owner-store authentication; exporting a mode alone grants no filtered authority.
 
 A withdrawal marker (`networkstate/approval_withdrawal.go`, written before the grant is cleared)
 outranks the ladder below for an ordinary launch: with no approval it makes the project pending
@@ -243,6 +251,8 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-22 — ACP children carry their supervisor's explicit mode across re-exec; standalone
+  catalog refresh remains host-side metadata, with existing project-overlay behavior preserved.
 - 2026-09-22 — implemented the approved explicit restricted-project-build policy, preserving open
   automatic builds. Swept automatic callers, input/approval records, recovery and ACP warm identity.
 - 2026-09-22 — corrected the API-key and OAuth statements for direct readonly composition against

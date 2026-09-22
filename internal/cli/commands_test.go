@@ -1135,6 +1135,7 @@ func TestCmdACPRejectsExtraArgs(t *testing.T) {
 func TestCleanACPChildEnv(t *testing.T) {
 	got := cleanACPChildEnv([]string{
 		"PATH=/bin",
+		"COOP_EGRESS=open",
 		"COOP_ACP_TARGET=gemini",
 		"COOP_ACP_PRESET=frontier",
 		"COOP_ACP_INNER=1",
@@ -1155,7 +1156,7 @@ func TestCleanACPChildEnv(t *testing.T) {
 		}
 	}
 	for _, removed := range []string{
-		"COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR",
+		"COOP_EGRESS", "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR",
 		"COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE", liveprocess.ControlFDEnv, liveprocess.ProcessDirEnv,
 		liveprocess.CleanupIDEnv, liveprocess.RevokePathEnv,
 	} {

@@ -21,6 +21,10 @@ A switch takes the parked box only when it would start the same box cold:
   unknown image ("", e.g. Apple container) reuses nothing; a box on another account stays parked.
 Why these and not more: the workspace, network capture, MCP config and roles are the supervisor's
 own and the same for both spawns.
+`spawnBox` strips ambient `COOP_EGRESS` and exports the resolved explicit config value to every
+initial, replacement and warm child. Admission marks that value explicit; inner children skip
+admission and must not lose a one-off or remembered offline decision. Filtered mode still needs
+its independently authenticated capture and account bindings.
 Credentials are live profile mounts the client refreshes itself; in a filtered session a checkout first
 passes `acpFilteredLaunchProof` — the same re-proof (scope, admission, auth family, portability) a cold
 launch runs after its reset wait — so reuse passes the same credential gate as a cold start. Grok
@@ -58,6 +62,8 @@ deferred reap waits for that same teardown. Measured on a filtered project with 
 editor close → everything gone in ~1.4 s.
 
 ## Changelog
+- 2026-09-22 — recorded the shared child-mode handoff, verified by actual spawned-process
+  offline/open/conflicting-environment regressions, including standalone-probe controls.
 - 2026-09-22 — filtered warming checks the actual explicitly built image and its current approved
   inputs; removed the unrelated ordinary-image prerequisite.
 - 2026-09-20 — recorded the measured cost of filling on the editor handshake, with the
