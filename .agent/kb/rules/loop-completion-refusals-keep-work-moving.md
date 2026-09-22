@@ -4,7 +4,7 @@ description: ordinary completion mistakes get immediate feedback and bounded saf
 scope: loop
 sources: [internal/loop/loop.go, internal/loop/completion.go, internal/loop/prompts.go, internal/taskmcp/tools.go, internal/tasks/completion_recovery.go, internal/tasks/completion_checklist.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/pending_review.go, internal/tasks/pending_review_test.go, internal/cli/scripted_loop_completion_process_e2e_test.go]
 check: "go test ./internal/tasks -run 'TestUncommittedCompletionCanRetry|TestParkUncommittedCompletion|TestTrustedCompletionRequiresCurrentChecklist|TestIncompleteForkCompletionRefusesAcceptanceButCanResume|TestForkChecklistCheckedAgainAtPublicationAndLanding|TestPendingReviewRebindAllowsAuthorizedRewriteOfLaterCohortTask|TestPendingReviewRecoversAuthorizedRewriteOfLaterCohortTask'"
-updated: 2026-09-15
+updated: 2026-09-22
 ---
 
 # Recover ordinary completion mistakes without losing work or acceptance
@@ -21,8 +21,10 @@ not equivalent to passing it, including in proposed task acceptance. Checked box
 structural prerequisite, not independent evidence that verification ran.
 
 If a successful attempt ends after an ordinary no-commit completion refusal, allow one fresh
-repair only when HEAD is unchanged, the checkout/index/untracked set is clean, and raw history
-has no existing binding. Park a repeated clean refusal with an unanswered decision and continue
+repair only when HEAD and the checkout/index content fingerprint match the first leased attempt
+for this queue/task in the controller run, and raw history has no existing binding. Unchanged
+inherited work is allowed; automatic retries never refresh that baseline over their own edits.
+Park a repeated unchanged refusal with an unanswered decision and continue
 the remaining queue. A blocked task is unfinished, including in telemetry and the final verdict.
 
 Never advance the audit base over unbound code, hide dirty work from the next task, loosen task
@@ -56,6 +58,11 @@ code. The check above pins the conservative recovery boundary; the tagged script
 also runs in `make check` and proves continuation and both terminal modes.
 
 ## Changelog
+- 2026-09-22 — swept every no-change precheck/post-exit call and repair predicate. Automatic
+  retries formerly adopted earlier edits, including hidden-index changes after a successful MCP
+  call. Retained first-task evidence and one canonical content/history proof; unchanged inherited
+  work and ordinary implementation recovery remain supported. Controller and task-helper
+  regressions cover denial plus exact restoration and separate later-task baselines.
 - 2026-09-15 — replaced fake decision commits with explicit evidence-backed already-satisfied,
   could-not-reproduce and won't-fix completion outcomes. The host requires unchanged iteration
   history and checkout state; normal implementation still requires one task-bound commit.

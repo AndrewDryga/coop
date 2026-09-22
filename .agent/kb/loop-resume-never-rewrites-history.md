@@ -73,7 +73,7 @@ instructions, not a runtime guarantee that every generated shell command follows
 A task may already be satisfied, or an investigation may conclude `could_not_reproduce` or
 `wont_fix`. The assigned agent calls `tasks_complete` with that explicit outcome (`already_satisfied`
 for existing implementation), concrete `reason` and `evidence` after required verification. It
-does not fabricate an empty task commit. The host requires unchanged iteration history and
+does not fabricate an empty task commit. The host requires unchanged task-attempt history and
 checkout/index state, with no existing binding for this task. Unchanged pre-existing unrelated
 work is allowed — UNCHANGED IN CONTENT, which `git status` cannot establish. Its lines carry a path
 and a state, so an agent that inherits a dirty or staged file can rewrite those bytes, leave the line
@@ -86,18 +86,28 @@ drivers under a host inline-diff preference. Initialized children are fingerprin
 trusted Git view; empty uninitialized gitlinks are supported, but populated children without Git
 metadata fail closed. Ignored untracked output is excluded. A checked snapshot is not a filesystem
 transaction, so the post-exit comparison remains necessary even after a successful MCP call.
+The baseline belongs to the first leased attempt for that queue/task in this controller run.
+Automatic failure, limit, account, background and completion retries retain it: earlier attempts'
+edits are not inherited work. Each later task captures its own baseline; ordinary implementation
+audits still use their per-attempt commit ranges. An explicit operator restart establishes a new
+inspection boundary. Exact restoration to the original state can again qualify as no change.
 Human decisions remain blocked; no-change outcomes never substitute for
 unfinished work or a failed gate. Host-authorized audit rework retains its separate authority.
 
 Assigned `tasks_complete` validates the binding before moving the folder so the same agent can
 repair it. A successful exit after an ordinary no-commit refusal gets one fresh attempt only when
-HEAD did not move, the entire source checkout is clean, and raw history has no binding to recover.
-A second clean refusal is parked with its evidence and an unanswered decision; other tasks continue.
-Changed history or dirty source stops instead: resetting the iteration base there could omit the
+HEAD and the content fingerprint still match that task's original baseline, and raw history has
+no binding to recover. This uses the same no-change proof, including hidden-index edits and
+unchanged inherited work. A second unchanged refusal is parked with its evidence and an unanswered
+decision; other tasks continue. Changed history or source stops instead: resetting the base could omit the
 original diff from protected-gate review and signoff. The final report distinguishes blocked from
 completed work. See [[loop-completion-refusals-keep-work-moving]].
 
 ## Changelog
+- 2026-09-22 — retained first-task evidence across automatic retries and unified completion repair
+  with the content proof. Controller regressions deny prior-attempt source/commit changes and
+  post-MCP hidden edits; retain unchanged inheritance, exact restoration, normal implementation
+  recovery and each later task's own baseline.
 - 2026-09-22 — replaced the initial diff-based guard after regressions demonstrated hidden-index,
   whitespace-path and executable-mode bypasses plus submodule host execution. Rooted reads preserve
   unchanged dirty/deleted/link states; tests also deny edits after the successful completion call.

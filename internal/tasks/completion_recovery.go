@@ -10,29 +10,8 @@ import (
 // UncommittedCompletionCanRetry admits only a genuine no-change attempt. Advancing the base
 // after an unbound code commit would hide its diff from the next attempt's gate/signoff audit.
 // A raw walk also prevents a graft, shallow boundary, or replacement from hiding an old binding.
-func UncommittedCompletionCanRetry(repo, base, head, id string) bool {
-	if base == "" || base != head {
-		return false
-	}
-	status, err := gitOutErr(repo, "status", "--porcelain", "--untracked-files=all")
-	if err != nil || status != "" {
-		return false
-	}
-	commits, err := rawReachableAuditCommits(repo, head)
-	if err != nil {
-		return false
-	}
-	for _, commit := range commits {
-		if commit.taskBindingInvalid {
-			return false
-		}
-		for _, value := range commit.taskValues {
-			if value == id || strings.HasPrefix(value, id+" ") || strings.HasPrefix(value, id+"\t") {
-				return false
-			}
-		}
-	}
-	return true
+func UncommittedCompletionCanRetry(repo, base, head, id, baseline string) bool {
+	return NoChangeCompletionAllowed(repo, base, head, id, baseline) == nil
 }
 
 // NoChangeCompletionAllowed proves that a no-change conclusion did not smuggle code or history
@@ -69,7 +48,7 @@ func NoChangeCompletionAllowed(repo, base, head, id, baseline string) error {
 }
 
 // ParkUncommittedCompletion runs under the controller's existing task lease and ref window,
-// after a repeated clean no-change refusal. It never blesses the task's claimed completion.
+// after a repeated unchanged completion refusal. It never blesses the task's claimed completion.
 func ParkUncommittedCompletion(task QueuedTask) error {
 	id := task.Item.ID
 	if task.Item.State != StateInProgress {
@@ -104,7 +83,7 @@ func ParkUncommittedCompletion(task QueuedTask) error {
 	}); err != nil {
 		return rollback(err)
 	}
-	if err := AppendTaskLogStrict(dir, "host parked this task after two no-commit completion refusals; no completion was accepted and the clean checkout is safe for the next task"); err != nil {
+	if err := AppendTaskLogStrict(dir, "host parked this task after two no-commit completion refusals; no completion was accepted and the checkout is unchanged from this task's first attempt"); err != nil {
 		return rollback(err)
 	}
 	if err := NormalizeTaskState(id, dir, "blocked — completion needs clarification", "resolve decision.md, then explicitly unblock this task", "completion was refused twice without source or history changes", "this task is not complete; preserve its acceptance and required gates"); err != nil {

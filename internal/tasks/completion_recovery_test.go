@@ -12,7 +12,7 @@ import (
 func TestUncommittedCompletionCanRetry(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
-	for _, scenario := range []string{"clean", "untracked", "staged", "unstaged", "advanced", "bound", "malformed", "graft", "shallow", "unreadable"} {
+	for _, scenario := range []string{"clean", "inherited untracked", "inherited staged", "inherited unstaged", "inherited deleted", "untracked", "staged", "unstaged", "hidden edit", "missing baseline", "advanced", "bound", "malformed", "graft", "shallow", "unreadable"} {
 		t.Run(scenario, func(t *testing.T) {
 			repo, git := gitrepo.New(t)
 			writeTaskFile(t, filepath.Join(repo, "source"), "original\n")
@@ -29,6 +29,23 @@ func TestUncommittedCompletionCanRetry(t *testing.T) {
 			}
 			base := gitOut(repo, "rev-parse", "HEAD")
 			switch scenario {
+			case "inherited untracked", "inherited staged":
+				writeTaskFile(t, filepath.Join(repo, "unrelated"), "preserve me\n")
+				if scenario == "inherited staged" {
+					git("add", "unrelated")
+				}
+			case "inherited unstaged":
+				writeTaskFile(t, filepath.Join(repo, "source"), "inherited\n")
+			case "inherited deleted":
+				if err := os.Remove(filepath.Join(repo, "source")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			baseline, err := CheckoutFingerprint(repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch scenario {
 			case "untracked", "staged":
 				writeTaskFile(t, filepath.Join(repo, "unrelated"), "preserve me\n")
 				if scenario == "staged" {
@@ -36,6 +53,14 @@ func TestUncommittedCompletionCanRetry(t *testing.T) {
 				}
 			case "unstaged":
 				writeTaskFile(t, filepath.Join(repo, "source"), "modified\n")
+			case "hidden edit":
+				git("update-index", "--assume-unchanged", "source")
+				writeTaskFile(t, filepath.Join(repo, "source"), "hidden\n")
+				if status := gitOut(repo, "status", "--porcelain", "--untracked-files=all"); status != "" {
+					t.Fatalf("fixture edit must be hidden: %s", status)
+				}
+			case "missing baseline":
+				baseline = ""
 			case "advanced":
 				git("commit", "--allow-empty", "-m", "unbound work")
 			case "graft":
@@ -49,7 +74,8 @@ func TestUncommittedCompletionCanRetry(t *testing.T) {
 			if scenario == "unreadable" {
 				head = base
 			}
-			if got := UncommittedCompletionCanRetry(repo, base, head, "task"); got != (scenario == "clean") {
+			wantAllowed := scenario == "clean" || strings.HasPrefix(scenario, "inherited ")
+			if got := UncommittedCompletionCanRetry(repo, base, head, "task", baseline); got != wantAllowed {
 				t.Fatalf("can retry %s = %v", scenario, got)
 			}
 		})

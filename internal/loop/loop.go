@@ -611,6 +611,9 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	}
 	fails, waits, retries, handoffs, timeouts, stalls := 0, 0, 0, 0, 0, 0
 	completionRepairs := map[string]int{}
+	// Automatic retries must not reclassify an earlier attempt's edits as inherited work.
+	// Normal implementation audits still use each attempt's iterHead below.
+	noChangeBaselines := map[string]struct{ head, checkout string }{}
 	completedThisRun := map[string]bool{}
 	settledBaseline := c0.Done + c0.Blocked // "settled" = tasks out of the actionable set (done OR blocked)
 	// A commit between iterations is progress too (see below), and every completion is validated
@@ -773,12 +776,17 @@ reviewAgain:
 			// Coop-Recovery receipt); otherwise a landed Coop-Task commit (a crash after commit before
 			// the folder-move) gets the crash/reopen disambiguation line. Empty prefix → prompt unchanged.
 			iterHead := gitOut(repo, "rev-parse", "HEAD")
-			// A CONTENT fingerprint, not a status listing: a task may inherit dirty or staged work,
-			// and comparing labels alone would let a worker rewrite those bytes and still claim it
-			// changed nothing (tasks.CheckoutFingerprint).
-			iterStatus, statusErr := tasks.CheckoutFingerprint(repo)
-			if statusErr != nil {
-				return 1, errors.Join(fmt.Errorf("capture task %s checkout state: %w", assigned.Item.ID, statusErr), lease.Release())
+			// Keep the first leased attempt's CONTENT fingerprint through every automatic retry.
+			// An explicit controller restart is a new operator inspection boundary.
+			baselineKey := filepath.Join(assigned.Root, assigned.Item.ID)
+			noChangeBase, captured := noChangeBaselines[baselineKey]
+			if !captured {
+				checkout, captureErr := tasks.CheckoutFingerprint(repo)
+				if captureErr != nil {
+					return 1, errors.Join(fmt.Errorf("capture task %s checkout state: %w", assigned.Item.ID, captureErr), lease.Release())
+				}
+				noChangeBase.head, noChangeBase.checkout = iterHead, checkout
+				noChangeBaselines[baselineKey] = noChangeBase
 			}
 			if authorityErr := tasks.ValidateLeasedAuditReopen(repo, iterHead, assigned.Item.ID, lease.Reopen); authorityErr != nil {
 				baseline := lease.Reopen.BaselineHead
@@ -816,7 +824,7 @@ reviewAgain:
 						if lease.Reopen != nil {
 							return errors.New("audit rework already has a task binding; use normal verification-only completion")
 						}
-						if err := checkNoChangeCompletion(repo, iterHead, assigned.Item.ID, iterStatus); err != nil {
+						if err := checkNoChangeCompletion(repo, noChangeBase.head, assigned.Item.ID, noChangeBase.checkout); err != nil {
 							return err
 						}
 						copy := claim
@@ -1145,7 +1153,7 @@ reviewAgain:
 				if ok && current.State == tasks.StateInProgress {
 					checkErr := checkAssignedCompletion(repo, iterHead, assigned.Item.ID, nil, snapshot)
 					if claim := completionClaim.Load(); claim != nil && claim.NoChange() {
-						checkErr = checkNoChangeCompletion(repo, iterHead, assigned.Item.ID, iterStatus)
+						checkErr = checkNoChangeCompletion(repo, noChangeBase.head, assigned.Item.ID, noChangeBase.checkout)
 					}
 					if !errors.Is(checkErr, errCompletionBinding) {
 						// A repaired commit without a successful final tool call is not completion.
@@ -1175,7 +1183,7 @@ reviewAgain:
 			noChangeAccepted := false
 			if assignedCompletion != nil {
 				missing, tolerated = tasks.CompletionUnbindableTasks(repo, iterHead, headAfter, finished, lease.Reopen, touched)
-				if claim := completionClaim.Load(); claim != nil && claim.NoChange() && checkNoChangeCompletion(repo, iterHead, assigned.Item.ID, iterStatus) == nil {
+				if claim := completionClaim.Load(); claim != nil && claim.NoChange() && checkNoChangeCompletion(repo, noChangeBase.head, assigned.Item.ID, noChangeBase.checkout) == nil {
 					missing = slices.DeleteFunc(missing, func(id string) bool { return id == assigned.Item.ID })
 					noChangeAccepted = true
 				}
@@ -1191,7 +1199,7 @@ reviewAgain:
 			if len(missing) > 0 {
 				restoreErr = errors.Join(restoreErr, tasks.RestoreQueuedCompletion(*completionCandidate, lease.Reopen != nil))
 				canRepair := restoreErr == nil && len(unowned) == 0 && lease.Reopen == nil && classification.outcome == "success" && iterCtx.Err() == nil &&
-					tasks.UncommittedCompletionCanRetry(repo, iterHead, headAfter, assigned.Item.ID)
+					tasks.UncommittedCompletionCanRetry(repo, noChangeBase.head, headAfter, assigned.Item.ID, noChangeBase.checkout)
 				parked := canRepair && completionRepairs[assigned.Item.ID] > 0
 				if parked {
 					restoreErr = tasks.ParkUncommittedCompletion(assigned)
