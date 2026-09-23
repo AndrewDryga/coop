@@ -142,6 +142,13 @@ func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, fo
 
 	outWs := []io.Writer{termOut}
 	errWs := []io.Writer{termErr, tail, diagnostic}
+	if windowMode == completionWindowReview && streaming {
+		if ag, ok := agents.Get(agent); ok && ag.Stream().ReviewStdoutOnly {
+			// A native stderr footer can race the structured stdout verdict. Keep
+			// diagnostics visible, but accept receipts only from the JSON stream.
+			errWs = []io.Writer{termErr, diagnostic}
+		}
+	}
 	var identityCopies []io.Writer
 	if sink != nil { // fork loops also capture to ../<repo>-forks/.coop/<name>.log
 		outWs = append(outWs, sink)

@@ -61,6 +61,8 @@ type StreamSpec struct {
 	Flags         []string
 	TrailingArgs  int
 	ToolLifecycle StreamToolLifecycle
+	// ReviewStdoutOnly means stderr carries diagnostics, never review receipt text.
+	ReviewStdoutOnly bool
 }
 
 // TracksTools reports whether the watchdog may supervise this stream's foreground tools — suspend

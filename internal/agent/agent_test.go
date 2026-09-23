@@ -145,7 +145,7 @@ func TestStreamSpecs(t *testing.T) {
 		want StreamSpec
 	}{
 		{"claude", StreamSpec{Format: StreamClaudeJSON, Flags: []string{"--output-format", "stream-json", "--verbose"}, ToolLifecycle: ToolLifecycleIDs}},
-		{"codex", StreamSpec{Format: StreamCodexJSON, Flags: []string{"--json"}, TrailingArgs: 1, ToolLifecycle: ToolLifecycleIDs}},
+		{"codex", StreamSpec{Format: StreamCodexJSON, Flags: []string{"--json"}, TrailingArgs: 1, ToolLifecycle: ToolLifecycleIDs, ReviewStdoutOnly: true}},
 		{"gemini", StreamSpec{Format: StreamGeminiJSON, Flags: []string{"-o", "stream-json"}, TrailingArgs: 2, ToolLifecycle: ToolLifecycleIDs}},
 		// Grok's pinned 1.0.25 streaming-json opens and closes every tool under a toolCallId (the
 		// v0.2.101 CLI emitted only thought/text/end), so its tools suspend the idle deadline too.
@@ -156,7 +156,7 @@ func TestStreamSpecs(t *testing.T) {
 			a, _ := Get(c.name)
 			got := a.Stream()
 			if got.Format != c.want.Format || got.TrailingArgs != c.want.TrailingArgs || !slices.Equal(got.Flags, c.want.Flags) ||
-				got.ToolLifecycle != c.want.ToolLifecycle {
+				got.ToolLifecycle != c.want.ToolLifecycle || got.ReviewStdoutOnly != c.want.ReviewStdoutOnly {
 				t.Errorf("Stream() = %#v, want %#v", got, c.want)
 			}
 			if got, want := got.TracksTools(), c.want.ToolLifecycle == ToolLifecycleIDs; got != want {

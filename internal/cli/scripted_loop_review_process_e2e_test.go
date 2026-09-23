@@ -251,9 +251,10 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopReviewPTY(t, suite, work)
+		output := result.Stdout + result.Stderr
 		if result.Err != nil || result.ExitCode != 0 ||
-			!strings.Contains(result.Stdout+result.Stderr, "All tasks passed final review") ||
-			strings.Contains(result.Stderr, "structured verdict was malformed") {
+			!strings.Contains(output, "All tasks passed final review") ||
+			strings.Contains(output, "The review result could not be read") {
 			t.Fatalf("Codex split footer echo = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {

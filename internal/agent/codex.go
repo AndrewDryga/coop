@@ -66,7 +66,7 @@ func (a codexAgent) NetworkBundle(input NetworkBundleInput) (egress.Bundle, erro
 func (codexAgent) Stream() StreamSpec {
 	return StreamSpec{
 		Format: StreamCodexJSON, Flags: []string{"--json"}, TrailingArgs: 1,
-		ToolLifecycle: ToolLifecycleIDs,
+		ToolLifecycle: ToolLifecycleIDs, ReviewStdoutOnly: true,
 	}
 }
 
