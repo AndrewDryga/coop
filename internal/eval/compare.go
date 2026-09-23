@@ -1,7 +1,9 @@
 package eval
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"sort"
 )
 
@@ -104,6 +106,9 @@ type sealedRun struct {
 
 func loadSealed(root, id string) (sealedRun, error) {
 	run, err := LoadRun(root, id)
+	if errors.Is(err, os.ErrNotExist) {
+		return sealedRun{}, fmt.Errorf("eval run %q was not found — use 'coop eval runs' to find recorded runs", id)
+	}
 	if err != nil {
 		return sealedRun{}, fmt.Errorf("run %s: %w", id, err)
 	}

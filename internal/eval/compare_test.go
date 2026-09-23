@@ -1,6 +1,9 @@
 package eval
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -90,6 +93,39 @@ func TestCompareRefusesAnUnsealedRun(t *testing.T) {
 	seedRun(t, root, "done", "WL", []string{"codex"}, []TrialRecord{{Case: "a", Status: TrialPassed}})
 	if _, err := Compare(root, "partial", "done"); err == nil {
 		t.Error("comparing an unsealed run was allowed")
+	}
+}
+
+func TestCompareMissingRunNamesTheIDAndRecovery(t *testing.T) {
+	root := t.TempDir()
+	seedRun(t, root, "present", "WL", []string{"codex"}, []TrialRecord{{Case: "a", Status: TrialPassed}})
+	for _, tc := range []struct{ before, after, missing string }{
+		{"missing-before", "present", "missing-before"},
+		{"present", "missing-after", "missing-after"},
+	} {
+		_, err := Compare(root, tc.before, tc.after)
+		if err == nil || !strings.Contains(err.Error(), "eval run \""+tc.missing+"\" was not found") ||
+			!strings.Contains(err.Error(), "coop eval runs") || strings.Contains(err.Error(), root) {
+			t.Errorf("compare %q to %q = %v; want named run, list command, no internal path", tc.before, tc.after, err)
+		}
+	}
+}
+
+func TestCompareDoesNotCallDamagedExistingRunMissing(t *testing.T) {
+	root := t.TempDir()
+	seedRun(t, root, "present", "WL", []string{"codex"}, []TrialRecord{{Case: "a", Status: TrialPassed}})
+	seedRun(t, root, "broken", "WL", []string{"codex"}, []TrialRecord{{Case: "a", Status: TrialPassed}})
+	if err := os.WriteFile(filepath.Join(root, "broken", "run.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Compare(root, "broken", "present"); err == nil || strings.Contains(err.Error(), "was not found") {
+		t.Errorf("corrupt manifest was mislabeled as missing: %v", err)
+	}
+	if err := os.Rename(filepath.Join(root, "present", "trials"), filepath.Join(root, "present", "trials-moved")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Compare(root, "present", "broken"); err == nil || strings.Contains(err.Error(), "was not found") {
+		t.Errorf("missing trial directory was mislabeled as missing run: %v", err)
 	}
 }
 
