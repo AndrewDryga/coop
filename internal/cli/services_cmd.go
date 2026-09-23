@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
@@ -242,14 +243,24 @@ func askServiceSecrets(review *box.ServiceSecretReview, rel string, ask *bufio.S
 		return 0, nil
 	}
 	if err := review.Approve(); err != nil {
-		return 1, reported("Could not save secret-file approval",
-			sentence(osCause(err)+" while writing the host approval record"),
-			"Fix the permissions, then run coop up again.",
-			"Services were not started.")
+		return 1, reportServiceSecretApprovalFailure(err)
 	}
 	ui.OK("Secret-file access approved")
 	ui.Note("")
 	return 0, nil
+}
+
+func reportServiceSecretApprovalFailure(err error) error {
+	if errors.Is(err, syscall.EXDEV) {
+		return reported("Could not save secret-file approval",
+			"The project and Coop's host state are on different filesystems.",
+			"Move the project onto the filesystem containing ~/.local/state/coop, then run coop up again.",
+			"Services were not started.")
+	}
+	return reported("Could not save secret-file approval",
+		sentence(osCause(err)+" while writing the host approval record"),
+		"Fix the permissions, then run coop up again.",
+		"Services were not started.")
 }
 
 func noteServiceImagePins(images, refs, previous map[string]string) {

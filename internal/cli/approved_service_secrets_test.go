@@ -1,13 +1,44 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 )
+
+func TestServiceSecretApprovalFailureGuidance(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want []string
+		omit string
+	}{
+		{"cross-device", &os.LinkError{Op: "link", Old: "/project", New: "/state", Err: syscall.EXDEV}, []string{"different filesystems", "Move the project onto the filesystem containing ~/.local/state/coop, then run coop up again"}, "Fix the permissions"},
+		{"permission", &os.PathError{Op: "open", Path: "/state", Err: os.ErrPermission}, []string{"Fix the permissions, then run coop up again"}, "different filesystems"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := captureTerminal(t, func() {
+				if err := reportServiceSecretApprovalFailure(errors.Join(errors.New("save approval"), tc.err)); err == nil {
+					t.Fatal("approval failure was not reported")
+				}
+			})
+			for _, want := range tc.want {
+				if !strings.Contains(out, want) {
+					t.Fatalf("missing recovery advice %q: %s", want, out)
+				}
+			}
+			if strings.Contains(out, tc.omit) || !strings.Contains(out, "Services were not started") {
+				t.Fatalf("wrong recovery advice: %s", out)
+			}
+		})
+	}
+}
 
 // The approved `coop up` transcripts for the one question a start can ask: a service wants to read
 // a file that looks like a secret. Declining is not cancellation — the services start with empty
