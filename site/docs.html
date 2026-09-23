@@ -245,6 +245,11 @@
                         change — hand it to a fork instead and review the result
                         like a PR:
                     </p>
+                    <p>
+                        Before starting the fork, complete the generated
+                        <code>task.md</code> with the problem, completion criteria,
+                        approach, and checkable subtasks.
+                    </p>
                     <pre
                         class="code"
                     ><span class="k">coop</span> tasks add "wire up --json" <span class="t"># 1. queue the work as a task</span>
@@ -912,6 +917,8 @@ roles:
                         members under <code>subprojects:</code> in a committed
                         <code>.agent/project.yaml</code> and one loop drains
                         every component's queue — no configuration beyond that.
+                        Complete each generated <code>task.md</code> before
+                        starting, so the agent knows what done means.
                     </p>
                     <pre
                         class="code"
@@ -1232,7 +1239,7 @@ roles:
                         with nothing but a <code>.tool-versions</code> just
                         works. For a fully reproducible image,
                         <code>coop init --stack asdf</code> bakes the same
-                        versions into a <code>Dockerfile.agent</code> at build
+                        versions into a <code>.agent/Dockerfile</code> at build
                         time.
                     </p>
                     <p>

@@ -216,8 +216,9 @@
                             <p>
                                 Add tasks with <code>coop tasks add</code> (or
                                 just ask your agent to add them) — one folder per
-                                task under <code>.agent/tasks/</code> — and walk
-                                away. A fresh agent per iteration (no context rot)
+                                task under <code>.agent/tasks/</code>. Fill in
+                                each generated task file before you walk away.
+                                A fresh agent per iteration (no context rot)
                                 claims each one, commits behind your gate, and
                                 won't quit while work remains.
                             </p>
@@ -639,7 +640,7 @@ roles:
                             <h4>Or run it all night</h4>
                             <p>
                                 Scaffold a queue, add a task per folder,
-                                and let the loop drain it.
+                                complete its task file, then let the loop drain it.
                             </p>
                             <pre class="code"><span class="k">coop</span> init
 <span class="k">coop</span> tasks add <span class="s">"…"</span>

@@ -132,6 +132,9 @@ coop tasks add "Add a /health endpoint"
 coop tasks add "Backfill tests for the parser"
 coop tasks add "Document the config file"
 
+# Open each printed task.md and replace its placeholders with the problem,
+# completion criteria, approach, and checkable subtasks before starting the loop.
+
 coop loop claude           # 6. disposable agents work the queue until done, then sign off
 ```
 
@@ -1630,7 +1633,9 @@ Dockerfile and its copied build files. Plain `coop build` selects filtered autom
 is the project's effective network mode. It uses Coop's locked client base and a separate image
 tag. A filtered launch reuses the exact approved image; changed build-context inputs, an upgraded
 client base or a missing image require another explicit build. Open-network launches retain
-automatic builds; offline launches do not automatically execute project build instructions.
+automatic preparation for a missing editor image, but ordinary runs do not rebuild stale
+project images. After changing build inputs, run `coop build --egress open` yourself. Offline
+launches do not automatically execute project build instructions.
 Explicit project builds use ordinary networking, not the run's restrictions. See
 [restricted networking](docs/networking.md) for image proofs and the build boundary.
 

@@ -260,8 +260,10 @@ and files it copies before building. Coop stages a copy without shadowed secrets
 proves the resulting image, and saves approval for the exact staged inputs outside agent mounts.
 A failed approval write is a failed command, even if Docker finished building the image.
 
-Filtered launches never execute those build instructions themselves. Open-network launches retain
-automatic project builds; offline launches refuse them. Automatic preparation of Coop's own
+Filtered launches never execute those build instructions themselves. An open-network editor
+connection may build a missing project image, while ordinary runs warn about stale inputs and
+require an explicit `coop build --egress open` to rebuild. Offline launches refuse automatic
+project builds. Automatic preparation of Coop's own
 embedded base, gateway and client images remains separate: it executes no repository instructions.
 
 ## Refused, with the reason you will see

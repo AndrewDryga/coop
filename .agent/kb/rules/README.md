@@ -126,7 +126,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [scaffold-config-reads-well](scaffold-config-reads-well.md) — scaffolded config leads every field with its comment and works as-is
 
 **Security**
-- [restricted-project-builds-are-explicit](restricted-project-builds-are-explicit.md) — restricted launches require explicit host project builds while open launches retain automatic builds
+- [restricted-project-builds-are-explicit](restricted-project-builds-are-explicit.md) — restricted launches require explicit host project builds; open editor connects may prepare missing images, while stale inputs still need a build
 - [eval-oracles-outside-agent-authority](eval-oracles-outside-agent-authority.md) — hidden eval material stays outside mounts, Git history, images, caches and every candidate tool path
 - [project-edits-request-access](project-edits-request-access.md) — one host approval grants requested access; check before execution and enforce agent/service permissions without approving ordinary edits
 - [coopignore-read-only-in-boxes](coopignore-read-only-in-boxes.md) — keep .coopignore readable but read-only in every box, with ordinary host editing and no policy-approval workflow
@@ -152,6 +152,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [hermetic-git-tests](hermetic-git-tests.md) — a test that runs git pins `GIT_CONFIG_GLOBAL` *and* `GIT_CONFIG_SYSTEM`; identity envs alone still let the host's config in
 
 **Agent workflow** — how an agent works here, not what it ships
+- [full-product-audits-use-every-feature](full-product-audits-use-every-feature.md) — a full audit manually exercises each advertised supported feature on claimed platforms and labels unrun paths honestly
 - [audit-findings-need-practical-impact](audit-findings-need-practical-impact.md) — audit realistic agent access and practical impact; avoid speculative machinery and unproven product-defect claims
 - [batch-delegated-editorial-decisions](batch-delegated-editorial-decisions.md) — finish delegated editorial work in coherent batches; ask only about material choices
 - [batch-slow-gates-when-requested](batch-slow-gates-when-requested.md) — validation matches the changed surface; unrelated slow suites run only when the requested outcome needs them

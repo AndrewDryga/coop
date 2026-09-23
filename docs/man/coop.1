@@ -1715,7 +1715,9 @@ OPTIONS
 Defaults to this project's effective network mode. Filtered builds use
 Coop's locked client base and record the exact reviewed build inputs.
 Filtered launches reuse that image; changed inputs or a missing image
-require another explicit build. Open launches retain automatic builds.
+require another explicit build. An open editor connection may build a missing
+image automatically; ordinary runs only warn when project inputs change.
+Run coop build --egress open after editing the box Dockerfile or tool versions.
 Offline launches never automatically build project instructions.
 
 Project builds themselves use ordinary networking in every mode.
