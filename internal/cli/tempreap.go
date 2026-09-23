@@ -60,5 +60,12 @@ func startTempReap(cfg *config.Config) {
 		ctx, cancel := context.WithTimeout(context.Background(), tempReapTimeout)
 		defer cancel()
 		_, _ = box.ReapOrphanTempEntries(ctx, rt, os.TempDir(), time.Now())
+		// Ordinary run credentials and policy snapshots now live outside the shared system temp
+		// directory so a prior box with a broad /tmp bind cannot observe a later run. Sweep that
+		// stable private root too; locating it is intentionally read-only so housekeeping never
+		// creates run state.
+		if root, exists, rootErr := box.ExistingRunArtifactRoot(cfg); rootErr == nil && exists {
+			_, _ = box.ReapOrphanTempEntries(ctx, rt, root, time.Now())
+		}
 	}()
 }

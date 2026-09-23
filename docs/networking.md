@@ -373,9 +373,9 @@ of every `service:` it names. `coop approve` has no flags: to change access, edi
 review it again. The review is one diff against what is already approved, unchanged rows marked
 `already approved`, additions `new request`, removals `no longer requested`; a mode change is
 explained in plain words, and a request for `open` gets a red warning because nothing would be
-blocked. Confirm with `Approve these changes for new runs? [y/N]`. A file that is already exactly
+blocked. Confirm with `Approve this access for new runs? [y/N]`. A file that is already exactly
 what was approved prints `No approval needed — this project's requested access has not changed.`
-and writes nothing. Provider endpoints an agent brings with it are not part of this diff: coop
+and grants nothing new. Provider endpoints an agent brings with it are not part of this diff: coop
 grants those itself, and they are never shown as project access.
 
 While the file and the approval differ, the request is *pending*: `coop init` ends with
@@ -393,7 +393,26 @@ refused at review instead of being remembered and refused at every launch.
 
 An approval is bound to the project DIRECTORY, not to its path: moving the approved checkout aside
 and putting another there refuses the next launch until a human reviews it again. `coop net` reports
-that as blocked and names the command that fixes it.
+that as blocked and names the command that fixes it. The binding is a hidden `0600` marker hard-linked
+to owner-private Coop state, so the checkout and `$XDG_STATE_HOME` (or `~/.local/state`) must be on
+the same hardlink-capable filesystem. The marker contains identifiers, not credentials. A manual
+`git clean -x` removes ignored files including this marker; run `coop approve` again to review and
+restore access rather than copying marker bytes.
+
+Moving the checkout together with its intact marker is recoverable: `coop approve` verifies the
+old marker against Coop's private link, retires that pair, and asks you to approve the new canonical
+path. A copied marker is not a move and cannot retire or inherit the original checkout's access. If
+the marker itself is malformed, inspect it with `ls -l -- ./.coop-network-approval`; after verifying
+that it is stale, remove only that checkout-side name with `rm -- ./.coop-network-approval`, then run
+`coop approve` again. Coop prints these same guarded recovery commands with the refusal.
+
+Because the marker is visible to the box, final runtime arguments may mount the exact project, but
+not a path inside it that an existing agent could swap before Docker resolves the bind, or a
+writable ancestor that could replace the project. They may never expose Coop's private state,
+including prospective first-run network, fork, execution-record, or launch-lock paths, even
+read-only. Existing named volumes are inspected; `--volumes-from` and custom volume-driver options
+are refused while anchored authority is active. Put a cache outside the checkout and mount that
+explicit, inspectable path instead.
 
 `coop net forget` takes an approval back. It shows what the project remembered, asks on the terminal,
 and removes exactly that one record: run it in the project, or pass `--project <path>` for a checkout

@@ -71,10 +71,13 @@ func TestEvalResultsJourney(t *testing.T) {
 	}
 	for _, args := range [][]string{{"inspect"}, {"inspect", "20260921-errors"}} {
 		out := run(args...)
-		for _, want := range []string{"coop-core", "claude", "0/3 passed", "0/3 graded", "fix-the-cause", "sign-in required", "trial budget exhausted", "not a model", dir} {
+		for _, want := range []string{"coop-core", "claude", "0/3 passed", "0/3 graded", "no trial reached grading", "fix-the-cause", "sign-in required", "trial budget exhausted", "not a model", dir} {
 			if !strings.Contains(out, want) {
 				t.Errorf("inspection missing %q:\n%s", want, out)
 			}
+		}
+		if strings.Contains(out, "cloc unavailable") || strings.Contains(out, "verdict unaffected") {
+			t.Errorf("ungraded run blamed optional measurement tooling:\n%s", out)
 		}
 	}
 	comparison := run("compare", "20260921-errors", "20260921-errors")
@@ -125,5 +128,38 @@ func TestEvalInspectionEmptyMissingAndUnreadable(t *testing.T) {
 	}
 	if code, err := a.cmdEval([]string{"inspect", "broken"}); code != 1 || err == nil {
 		t.Errorf("unreadable = %d, %v", code, err)
+	}
+}
+
+func TestEvalMeasurementCoverageIsVisibleForPassingRuns(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	seedEvalResults(t, "measured", true,
+		eval.TrialRecord{Case: "fix-the-cause", Status: eval.TrialPassed, Size: &eval.TrialSize{CodeBefore: 10, CodeAfter: 14}},
+		eval.TrialRecord{Case: "keep-the-contract", Status: eval.TrialPassed},
+		eval.TrialRecord{Case: "no-collateral-damage", Status: eval.TrialPassed})
+	seedEvalResults(t, "unmeasured", true,
+		eval.TrialRecord{Case: "fix-the-cause", Status: eval.TrialPassed},
+		eval.TrialRecord{Case: "keep-the-contract", Status: eval.TrialPassed},
+		eval.TrialRecord{Case: "no-collateral-damage", Status: eval.TrialPassed})
+	a := &app{}
+	inspect := captureStdout(t, func() {
+		if code, err := a.cmdEval([]string{"inspect", "unmeasured"}); code != 0 || err != nil {
+			t.Fatalf("inspect = %d, %v", code, err)
+		}
+	})
+	for _, want := range []string{"Change size:", "not measured", "0/3 graded trials", "verdict unaffected"} {
+		if !strings.Contains(inspect, want) {
+			t.Errorf("unmeasured passing run hides %q:\n%s", want, inspect)
+		}
+	}
+	comparison := captureStdout(t, func() {
+		if code, err := a.cmdEval([]string{"compare", "measured", "unmeasured"}); code != 0 || err != nil {
+			t.Fatalf("compare = %d, %v", code, err)
+		}
+	})
+	for _, want := range []string{"measured 1/3 graded trials", "0/3 graded trials"} {
+		if !strings.Contains(comparison, want) {
+			t.Errorf("comparison hides measurement coverage %q:\n%s", want, comparison)
+		}
 	}
 }

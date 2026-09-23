@@ -980,6 +980,28 @@ func TestReadOnlyRemoteSessionPreparesOutputRootBeforeChild(t *testing.T) {
 	if info, err := os.Lstat(root); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		t.Fatalf("output root before child = %+v, %v; want real directory", info, err)
 	}
+	resolvedStateRoot, err := filepath.EvalSymlinks(fixture.runner.stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedHostRoot := filepath.Join(resolvedStateRoot, "output", fixture.session.ID)
+	if process.outputRoot != expectedHostRoot {
+		t.Fatalf("host output root = %q, want %q outside the workspace", process.outputRoot, expectedHostRoot)
+	}
+	if info, err := os.Lstat(expectedHostRoot); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("host output root before child = %+v, %v; want real directory", info, err)
+	}
+	if pathsOverlapForTest(fixture.session.Workspace, process.outputRoot) {
+		t.Fatalf("host output root %q overlaps workspace %q", process.outputRoot, fixture.session.Workspace)
+	}
+}
+
+func pathsOverlapForTest(left, right string) bool {
+	contains := func(root, path string) bool {
+		rel, err := filepath.Rel(root, path)
+		return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	}
+	return contains(left, right) || contains(right, left)
 }
 
 func projectSessionTestCredentials(t *testing.T, fixture *sessionACPFixture) *sessionACPProjection {

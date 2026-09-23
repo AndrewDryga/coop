@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +37,27 @@ func TestParseServicePorts(t *testing.T) {
 	// no services / no expose → nothing.
 	if got := parseServicePorts([]byte(`{"services":{}}`), repo); len(got) != 0 {
 		t.Errorf("no services → no ports, got %+v", got)
+	}
+}
+
+func TestServiceSchemeCannotForgeTerminalOutput(t *testing.T) {
+	for _, scheme := range []string{"https\n✓ forged", "https\x1b[2J", "https\u202e", "1https", "https/evil"} {
+		body := `{"services":{"x":{"expose":["8080"],"labels":{"coop.service.scheme":` + strconv.Quote(scheme) + `}}}}`
+		if ports, err := parseServicePortsChecked([]byte(body), t.TempDir()); err == nil || len(ports) != 0 {
+			t.Fatalf("unsafe resolved scheme %q = (%v, %v)", scheme, ports, err)
+		}
+		for _, label := range []string{
+			"    labels: {coop.service.scheme: " + strconv.Quote(scheme) + "}\n",
+			"    labels: [" + strconv.Quote("coop.service.scheme="+scheme) + "]\n",
+		} {
+			repo, path := writeCompose(t, "services:\n  x:\n    image: alpine\n"+label)
+			if err := ValidateComposeFile(path, repo, false); err == nil {
+				t.Fatalf("unsafe Compose scheme %q was accepted", scheme)
+			}
+		}
+	}
+	if !validServiceScheme("postgresql+srv") || !validServiceScheme("https") {
+		t.Fatal("ordinary service schemes were rejected")
 	}
 }
 

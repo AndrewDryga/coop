@@ -50,22 +50,19 @@ type TaskRef struct {
 	ID      string `json:"id"`
 }
 
-// TaskGeneration fences delete-and-recreate ABA at the filesystem boundary. The durable TaskID is
-// the logical identity; the inode proves that the folder currently answering its path is still the
-// exact instance an assignment captured. Device is recorded for diagnosis but is NOT identity: see
-// SameInstanceAs.
+// TaskGeneration is a filesystem replacement signal carried beside the authoritative random
+// QueueID and TaskID. Inodes can be reused after unlink, so callers never treat this tuple alone as
+// durable authority; operation-time locks and pinned directory handles close the live mutation
+// window. Device is recorded for diagnosis but is NOT identity: see SameInstanceAs.
 type TaskGeneration struct {
 	Device uint64 `json:"device"`
 	Inode  uint64 `json:"inode"`
 }
 
-// SameInstanceAs reports whether two generations name the same folder. It compares the inode and
-// deliberately not the device: a volume's device number is assigned when it is mounted — by macOS
-// for every APFS volume, and by Linux for dm/LVM, btrfs subvolumes, overlay and network mounts — so a
-// reboot changes it while the folder, its inode and its durable TaskID are all untouched, and a task
-// claimed before a reboot could then never be completed or released. The fence keeps its teeth
-// without it: a recreated folder carries a new random TaskID, and a file-level copy carries a new
-// inode. (A block-level clone keeps both, and is rightly the same task.)
+// SameInstanceAs compares the inode and deliberately not the device: a reboot may renumber a mount
+// while the folder and its durable TaskID remain untouched. This is always combined with TaskRef;
+// ordinary recreation mints a new random TaskID even on filesystems that immediately reuse the
+// inode. A live destructive operation additionally pins and rechecks the directory it mutates.
 func (g TaskGeneration) SameInstanceAs(other TaskGeneration) bool {
 	return g.Inode == other.Inode
 }

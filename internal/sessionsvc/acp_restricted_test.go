@@ -144,7 +144,7 @@ func TestABareSessionLaunchesTheAdapterWithoutAWorkspace(t *testing.T) {
 
 // A readonly session's child fronts its fork under --readonly: the fork is proven the session's
 // own exactly as before, the legacy writable output root is neither prepared nor announced, the
-// session/new keeps the fork's cwd and carries the adapter's extension-free meta with the tool
+// session/new keeps the fork's in-box cwd and carries the adapter's extension-free meta with the tool
 // set untouched, and no native session is bound.
 func TestAReadOnlySessionLaunchesItsForkWithoutAnOutputRoot(t *testing.T) {
 	fixture := newSessionACPFixtureUnder(t, "normal", "claude@work", agents.ModeReadOnly)
@@ -164,8 +164,12 @@ func TestAReadOnlySessionLaunchesItsForkWithoutAnOutputRoot(t *testing.T) {
 		t.Fatalf("readonly session prepared a writable output root: %v", err)
 	}
 	params := sessionNewParams(t, fixture.childLog)
-	if params["cwd"] != fixture.session.Workspace {
-		t.Fatalf("readonly session/new cwd = %v, want the fork %s", params["cwd"], fixture.session.Workspace)
+	wantCWD := fixture.session.Workspace
+	if strings.HasPrefix(wantCWD, "/tmp/") || strings.HasPrefix(wantCWD, "/home/node/") {
+		wantCWD = box.BareWorkdir
+	}
+	if params["cwd"] != wantCWD {
+		t.Fatalf("readonly session/new cwd = %v, want in-box path %s", params["cwd"], wantCWD)
 	}
 	options := claudeCodeOptions(t, params)
 	if _, ok := options["tools"]; ok || options["strictMcpConfig"] != true {

@@ -2,15 +2,208 @@ package box
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 )
+
+func TestFirstNetworkApprovalWaitsForExistingSandboxMountWindows(t *testing.T) {
+	cfg, repo, _ := postureFixture(t, requestFixtureYAML)
+	shared, err := forkspace.LockServiceLaunch(context.Background(), repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		review *ProjectNetworkApproval
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		review, err := ReviewProjectNetwork(cfg, repo)
+		done <- result{review, err}
+	}()
+	select {
+	case got := <-done:
+		shared()
+		if got.review != nil {
+			_ = got.review.Close()
+		}
+		t.Fatalf("first approval crossed a live sandbox mount window: %v", got.err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if _, err := os.Lstat(filepath.Join(repo, networkstate.ProjectApprovalMarker)); !os.IsNotExist(err) {
+		shared()
+		t.Fatalf("approval marker appeared before live sandboxes drained: %v", err)
+	}
+	updated := strings.Replace(requestFixtureYAML, "docs.example.com", "after-drain.example.com", 1)
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte(updated), 0o644); err != nil {
+		shared()
+		t.Fatal(err)
+	}
+	shared()
+	select {
+	case got := <-done:
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		defer got.review.Close()
+		if _, err := os.Lstat(filepath.Join(repo, networkstate.ProjectApprovalMarker)); err != nil {
+			t.Fatalf("first approval did not anchor the project: %v", err)
+		}
+		if got.review.After() == nil || len(got.review.After().Envelope) != 1 || got.review.After().Envelope[0].To.Domain != "after-drain.example.com" {
+			t.Fatalf("review used policy read before the transition lock: %+v", got.review.After())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("first approval did not resume after live sandboxes drained")
+	}
+}
+
+func TestFirstNetworkApprovalCanCancelWhileWaitingForSandboxMounts(t *testing.T) {
+	cfg, repo, _ := postureFixture(t, requestFixtureYAML)
+	shared, err := forkspace.LockServiceLaunch(context.Background(), repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer shared()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		review, err := ReviewProjectNetworkContext(ctx, cfg, repo)
+		if review != nil {
+			_ = review.Close()
+		}
+		done <- err
+	}()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled review = %v, want context cancellation", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelled approval stayed blocked behind a sandbox")
+	}
+	if _, err := os.Lstat(filepath.Join(repo, networkstate.ProjectApprovalMarker)); !os.IsNotExist(err) {
+		t.Fatalf("cancelled approval published a project marker: %v", err)
+	}
+}
+
+func TestNetworkApprovalMarkerDisappearanceTransitionsUnderLaunchLock(t *testing.T) {
+	cfg, repo, _ := postureFixture(t, requestFixtureYAML)
+	approveFixture(t, cfg, repo)
+	updated := strings.Replace(requestFixtureYAML, "docs.example.com", "changed.example.com", 1)
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte(updated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	shared, err := forkspace.LockServiceLaunch(context.Background(), repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hookRan := make(chan struct{})
+	previousHook := afterNetworkReviewInputsLoaded
+	afterNetworkReviewInputsLoaded = func() {
+		if err := os.Remove(filepath.Join(repo, networkstate.ProjectApprovalMarker)); err != nil {
+			t.Errorf("remove marker at scheduling point: %v", err)
+		}
+		close(hookRan)
+	}
+	t.Cleanup(func() { afterNetworkReviewInputsLoaded = previousHook })
+	type result struct {
+		review *ProjectNetworkApproval
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		review, err := ReviewProjectNetwork(cfg, repo)
+		done <- result{review, err}
+	}()
+	<-hookRan
+	select {
+	case got := <-done:
+		shared()
+		if got.review != nil {
+			_ = got.review.Close()
+		}
+		t.Fatalf("marker disappearance crossed a live sandbox mount window: %v", got.err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	shared()
+	select {
+	case got := <-done:
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		defer got.review.Close()
+		if got.review.After() == nil || len(got.review.After().Envelope) != 1 ||
+			got.review.After().Envelope[0].To.Domain != "changed.example.com" {
+			t.Fatalf("review after marker transition = %+v", got.review.After())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("marker transition did not resume after live sandboxes drained")
+	}
+}
+
+func TestMovedNetworkApprovalTransitionsUnderNewCheckoutLaunchLock(t *testing.T) {
+	cfg, repo, _ := postureFixture(t, requestFixtureYAML)
+	approveFixture(t, cfg, repo)
+	access, err := ProjectNetworkAccess(context.Background(), cfg, repo)
+	if err != nil || access.Approval == nil {
+		t.Fatalf("read original approval: %+v, %v", access, err)
+	}
+	originalProjectID := access.Approval.ProjectID
+	moved := repo + "-moved"
+	if err := os.Rename(repo, moved); err != nil {
+		t.Fatal(err)
+	}
+	shared, err := forkspace.LockServiceLaunch(context.Background(), moved, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hookRan := make(chan struct{})
+	previousHook := afterNetworkReviewInputsLoaded
+	afterNetworkReviewInputsLoaded = func() { close(hookRan) }
+	t.Cleanup(func() { afterNetworkReviewInputsLoaded = previousHook })
+	type result struct {
+		review *ProjectNetworkApproval
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		review, err := ReviewProjectNetwork(cfg, moved)
+		done <- result{review, err}
+	}()
+	<-hookRan
+	select {
+	case got := <-done:
+		shared()
+		if got.review != nil {
+			_ = got.review.Close()
+		}
+		t.Fatalf("moved checkout crossed its live sandbox mount window: %v", got.err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	shared()
+	select {
+	case got := <-done:
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		defer got.review.Close()
+		if got.review.After() == nil || got.review.After().ProjectID == originalProjectID {
+			t.Fatalf("moved checkout was not re-enrolled: before=%+v after=%+v", got.review.Before(), got.review.After())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("moved-checkout transition did not resume after live sandboxes drained")
+	}
+}
 
 // requestFixtureYAML is a project asking for one website: the smallest request
 // that is pending until a human approves it.
@@ -297,6 +490,48 @@ func TestReviewOfAnUnchangedRequestWritesNothing(t *testing.T) {
 		if before[i].Name() != after[i].Name() || !b.ModTime().Equal(a.ModTime()) {
 			t.Errorf("a no-op review touched %s", before[i].Name())
 		}
+	}
+}
+
+func TestReviewOfUnchangedApprovalConfirmsPriorPublication(t *testing.T) {
+	cfg, repo, _ := postureFixture(t, requestFixtureYAML)
+	approveFixture(t, cfg, repo)
+	previous := confirmNetworkStoreDurability
+	t.Cleanup(func() { confirmNetworkStoreDurability = previous })
+	failure := errors.New("synthetic approval directory sync failure")
+	confirmNetworkStoreDurability = func(*networkstate.Store) error { return failure }
+	if review, err := ReviewProjectNetwork(cfg, repo); !errors.Is(err, failure) {
+		if review != nil {
+			_ = review.Close()
+		}
+		t.Fatalf("unchanged review = %v, want durability failure", err)
+	}
+	confirmNetworkStoreDurability = previous
+	review, err := ReviewProjectNetwork(cfg, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer review.Close()
+	if !review.Unchanged() {
+		t.Fatal("durability retry no longer recognized the unchanged approval")
+	}
+}
+
+func TestApprovalRecoversAnEmptyRootLeftByFailedFirstCreation(t *testing.T) {
+	cfg, repo, root := postureFixture(t, requestFixtureYAML)
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	review, err := ReviewProjectNetwork(cfg, repo)
+	if err != nil {
+		t.Fatalf("review after interrupted authority-root creation: %v", err)
+	}
+	defer review.Close()
+	if review.Unchanged() || review.After() == nil {
+		t.Fatalf("interrupted empty root was mistaken for an existing approval: %+v", review)
+	}
+	if err := review.Commit(context.Background()); err != nil {
+		t.Fatalf("approve after interrupted authority-root creation: %v", err)
 	}
 }
 

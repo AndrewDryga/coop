@@ -323,6 +323,47 @@ func TestParseRuntimeScopesGeneratedConfigsToScenarioProviderHomes(t *testing.T)
 	}
 }
 
+func TestGeneratedFixtureArtifactNameAcceptsOwnedRunfilesOnly(t *testing.T) {
+	root := canonicalTemp(t)
+	runfiles := filepath.Join(root, "xdg", "config", "coop", "runfiles")
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{filepath.Join(runfiles, "coop-run-123", "coop-mcp-config"), "coop-mcp-config"},
+		{filepath.Join(runfiles, "coop-run-123", "coop-readonly-42", "tree"), "coop-readonly-42"},
+		{filepath.Join(root, "tmp", "coop-mcp-config"), "coop-mcp-config"},
+		{filepath.Join(runfiles, "other", "coop-mcp-config"), ""},
+		{filepath.Join(runfiles, "coop-run-123", "nested", "coop-mcp-config"), ""},
+		{filepath.Join(runfiles, "coop-run-123", "coop-readonly-42", "other"), ""},
+		{filepath.Join(root, "xdg", "config", "coop", "other", "coop-mcp-config"), ""},
+	} {
+		got, err := generatedFixtureArtifactName(root, tc.path)
+		if tc.want == "" {
+			if err == nil {
+				t.Errorf("accepted non-owned artifact %q", tc.path)
+			}
+		} else if err != nil || got != tc.want {
+			t.Errorf("artifact %q = %q, %v; want %q", tc.path, got, err, tc.want)
+		}
+	}
+}
+
+func TestParseRuntimeAcceptsOnlyFilteredVolumeInventory(t *testing.T) {
+	root := canonicalTemp(t)
+	if command, err := parseRuntime(root, "fixture-image", []string{"volume", "ls", "--quiet", "--filter", "name=coop-cache"}); err != nil || command.Kind != "volume-ls" {
+		t.Fatalf("filtered volume inventory = %#v, %v", command, err)
+	}
+	for _, args := range [][]string{
+		{"volume", "ls", "--quiet"},
+		{"volume", "ls", "--quiet", "--filter", "label=other"},
+	} {
+		if _, err := parseRuntime(root, "fixture-image", args); err == nil {
+			t.Errorf("accepted unfiltered volume inventory %q", args)
+		}
+	}
+}
+
 func TestParseRuntimeAcceptsOnlyCurrentGeneratedGitTargets(t *testing.T) {
 	root := canonicalTemp(t)
 	repo := filepath.Join(root, "repo")

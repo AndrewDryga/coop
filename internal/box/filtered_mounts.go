@@ -141,6 +141,10 @@ func bindMountShorthand(value string) (string, error) {
 // sole authority-tree exception is an exact, locally generated mount source
 // recorded by composition; the runfiles directory itself is never exposed.
 func (f *filteredExecution) validateMounts(options, files, directories []string) error {
+	return f.validateMountsContext(context.Background(), options, files, directories)
+}
+
+func (f *filteredExecution) validateMountsContext(ctx context.Context, options, files, directories []string) error {
 	root, err := f.store.RunFilesPath(f.record.ID)
 	if err != nil || root != f.runfiles {
 		return errors.New("network workload files changed during composition")
@@ -257,7 +261,10 @@ func (f *filteredExecution) validateMounts(options, files, directories []string)
 	if err := f.store.CheckExposure(directoryRoots); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, filteredControlTimeout)
 	defer cancel()
 	if err := f.checkNamedVolumeExposure(ctx, volumes); err != nil {
 		return err
@@ -268,6 +275,30 @@ func (f *filteredExecution) validateMounts(options, files, directories []string)
 				return err
 			}
 		}
+	}
+	authoritySpec := f.authoritySpec
+	if authoritySpec.Repo == "" {
+		authoritySpec.Repo, authoritySpec.PolicyRepo = f.record.Project, f.record.Project
+	}
+	allowedSources := make(map[string]bool, len(generated))
+	allowedEnvFiles := make(map[string]bool, len(generated))
+	for source, info := range generated {
+		allowedSources[source] = true
+		if info.Mode().IsRegular() {
+			allowedEnvFiles[source] = true
+		}
+	}
+	allowedVolumes := map[string]bool{}
+	if f.taskVolume != "" {
+		allowedVolumes[f.taskVolume] = true
+	}
+	allow, err := protectRunPrivateState(f.authorityConfig, authoritySpec,
+		authorityMountAllowlist{sources: allowedSources, envFiles: allowedEnvFiles, sourceTrees: directories, volumes: allowedVolumes, privateRoots: []string{f.runfiles}})
+	if err != nil {
+		return err
+	}
+	if err := validateAuthorityMounts(ctx, authoritySpec, options, f.store.Path(), f.docker.ExistingNamedVolumeExposure, allow); err != nil {
+		return err
 	}
 	f.bindSources = bindings
 	return f.checkBindings()

@@ -736,7 +736,8 @@ func readLeaseCompletionReceipt(authority *os.File, taskDir string) (leaseComple
 		return leaseCompletionReceipt{}, false
 	}
 	// The device is recorded but not compared: a reboot renumbers the volume (see
-	// TaskGeneration.SameInstanceAs), and the inode alone names the folder the host accepted.
+	// TaskGeneration.SameInstanceAs). This receipt is one signal inside the locked task transition,
+	// not standalone durable directory authority.
 	var got leaseCompletionReceipt
 	if json.Unmarshal(data, &got) != nil || got.Version != want.Version ||
 		got.Inode != want.Inode || got.Nonce == "" {

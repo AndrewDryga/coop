@@ -3,13 +3,13 @@ name: canonical-fork-task-authority
 description: the project owns one Markdown task; a fork owns only an exact-generation execution projection and reviewed candidate
 subsystem: tasks
 sources: [internal/tasks/identity.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/snapshot.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/land.go]
-updated: 2026-09-18
+updated: 2026-09-23
 ---
 
 The canonical queue is the task database. Fork work never creates a second authority: the host
-claims one exact `TaskInstance` (queue ID, task ID, folder inode — the device is recorded but not
-compared, since a reboot renumbers the volume) for one immutable
-`forkspace.Identity`, moves the canonical folder to in-progress, and materializes only that task
+claims one exact `TaskInstance` (random queue ID + task ID, with the folder inode as an additional
+replacement signal and the reboot-renumbered device diagnostic) for one immutable,
+hardlink-anchored `forkspace.Identity`, moves the canonical folder to in-progress, and materializes only that task
 under `.coop/task-executions/<generation>/<assignment>/tasks`. Existing loop prompts, receipts,
 between-review, and signoff run against this projection; the canonical queue is never mounted into
 the box.
@@ -35,6 +35,9 @@ Execution records normally live beside fork state and fall back to project-keyed
 when an ordinary repository's parent is read-only.
 
 ## Changelog
+- 2026-09-23 — corrected the allocator assumption: tasks remain authorized by random queue/task
+  identity plus locks, semantic records and live pins; durable fork generations now use a private
+  hardlink anchor. No task record migration was introduced.
 - 2026-09-18 — the fork workspace generation now binds the inode too, and the three places that
   compared whole task instances with `!=` (proposal.go, candidate.go, projection.go) go through
   `sameTaskInstance`. See [[identity-fences-compare-the-inode]].

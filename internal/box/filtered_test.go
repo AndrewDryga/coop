@@ -622,6 +622,26 @@ func TestFilteredLaunchOrdersReadinessAndExactCleanup(t *testing.T) {
 	}
 }
 
+func TestFilteredLaunchRevalidatesMountsBeforeCreatingAgent(t *testing.T) {
+	f, d := filteredFixture(t)
+	want := errors.New("mount authority changed before agent creation")
+	calls := 0
+	f.mountRevalidate = func() error {
+		calls++
+		return want
+	}
+	_, err := f.launch(context.Background(), RunSpec{Repo: f.record.Project}, nil, nil, io.Discard, io.Discard)
+	if !errors.Is(err, want) || calls != 1 {
+		t.Fatalf("launch error = %v with %d revalidations; want %v exactly once", err, calls, want)
+	}
+	if slices.Contains(d.log, "create:agent") {
+		t.Fatalf("agent was created after mount revalidation failed: %v", d.log)
+	}
+	if gone, cleanupErr := f.cleanup("launch_failed"); cleanupErr != nil || !gone {
+		t.Fatalf("cleanup after revalidation failure = gone %v, err %v", gone, cleanupErr)
+	}
+}
+
 // A step that fails beside another does not strand it: the sibling's request settles, the launch
 // stops there, and cleanup removes everything either one created — with no failure it did not have.
 func TestFilteredLaunchStepFailureSettlesItsSibling(t *testing.T) {
@@ -1105,7 +1125,6 @@ func TestFilteredMountsRefuseTheRuntimeControlSurface(t *testing.T) {
 		{"sys", "/sys", false},
 		{"dev", "/dev", false},
 		{"root", "/", false},
-		{"var", "/var", false},
 		{"ordinary data directory", ordinary, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -66,6 +67,9 @@ func newTrialRunner(t *testing.T, suite *eval.Suite, run boxRunner) *trialRunner
 		image:    "coop-box:test",
 		workRoot: t.TempDir(),
 		runBox:   run,
+		measureSize: func(context.Context, string, ...string) (eval.SizeMetrics, error) {
+			return eval.SizeMetrics{Languages: map[string]eval.LangCount{"Go": {Code: 1}}}, nil
+		},
 	}
 }
 
@@ -89,6 +93,32 @@ func TestTrialRunnerPassesAndReportsSizeBesideTheVerdict(t *testing.T) {
 	}
 	if !strings.Contains(res.Detail, "net code") {
 		t.Errorf("change size was not reported beside the verdict: %q", res.Detail)
+	}
+}
+
+func TestTrialRunnerPassesWhenOptionalClocIsUnavailable(t *testing.T) {
+	suite := trialSuite(t)
+	r := newTrialRunner(t, suite, func(spec box.RunSpec) (int, error) {
+		if spec.Agent != "" {
+			return 0, os.WriteFile(filepath.Join(spec.Repo, "answer.txt"), []byte("hello\n"), 0o644)
+		}
+		return 0, nil
+	})
+	r.measureSize = func(context.Context, string, ...string) (eval.SizeMetrics, error) {
+		return eval.SizeMetrics{}, exec.ErrNotFound
+	}
+
+	res := r.run(context.Background(), trialFor(suite))
+	if res.Status != eval.TrialPassed {
+		t.Fatalf("status = %q, detail %q", res.Status, res.Detail)
+	}
+	for _, want := range []string{"change size not measured", "optional cloc", "verdict unaffected"} {
+		if !strings.Contains(res.Detail, want) {
+			t.Errorf("detail %q does not explain %q", res.Detail, want)
+		}
+	}
+	if res.Size != nil {
+		t.Fatalf("missing measurement was recorded as %+v", res.Size)
 	}
 }
 
@@ -292,6 +322,7 @@ func TestTrialAttemptCannotRewriteTheNextTrialsInstructions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cfg.ExtraRunArgs = nil // a developer's own runtime binds are not part of this trial
 	cfg.Homes = true
 	recorder := filepath.Join(t.TempDir(), "argv.log")
 	r := &trialRunner{

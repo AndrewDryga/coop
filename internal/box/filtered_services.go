@@ -45,7 +45,13 @@ const (
 
 type preparedFilteredServices struct {
 	runtime   runtime.Runtime
-	args      []string
+	repo      string
+	file      string
+	data      []byte
+	owner     string
+	readOnly  bool
+	override  string
+	roots     []string
 	selected  []string
 	names     []string
 	sections  *launchSections
@@ -73,14 +79,38 @@ func (s *preparedFilteredServices) check(ctx context.Context, docker filteredDoc
 	return nil
 }
 
-func (s *preparedFilteredServices) start() error {
+func (s *preparedFilteredServices) start(ctx context.Context) error {
 	if s == nil {
 		return nil
 	}
+	if err := refuseRunningServiceWriters(ctx, s.runtime, s.repo); err != nil {
+		return err
+	}
+	// Preparation releases the repository launch lock while the gateway starts. Recheck bind
+	// paths and rebuild shadows under the final lock: a box may have changed a symlink or
+	// introduced a new secret beneath a directory bind in the meantime.
+	if err := validateComposeData(s.data, s.file, s.repo, s.readOnly); err != nil {
+		return fmt.Errorf("service bind sources changed before launch: %w", err)
+	}
+	args, cleanup, _, err := snapshotComposeArgsForStartData(s.repo, s.file, s.owner, s.data, false, s.roots...)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	if s.override != "" {
+		args = append(args, "-f", s.override)
+	}
 	var stderr bytes.Buffer
-	args := append(append([]string(nil), s.args...), "up", "-d", "--wait")
-	args = append(args, s.selected...)
-	if err := runCompose(s.runtime, io.Discard, &stderr, "up", args); err != nil {
+	// Prep and launch are separated by network setup. Replace the stopped candidates immediately
+	// before starting so no stale daemon mount survives from the earlier preparation phase.
+	create := append(append([]string(nil), args...), "up", "--no-start", "--force-recreate")
+	create = append(create, s.selected...)
+	if err := runCompose(s.runtime, io.Discard, &stderr, "up --no-start", create); err != nil {
+		return fmt.Errorf("prepare filtered services at launch: %w", err)
+	}
+	upArgs := append(append([]string(nil), args...), "up", "-d", "--wait")
+	upArgs = append(upArgs, s.selected...)
+	if err := runCompose(s.runtime, io.Discard, &stderr, "up", upArgs); err != nil {
 		return fmt.Errorf("a filtered box needs this project's approved sidecars running, and starting them failed: %w", err)
 	}
 	if s.sections != nil && s.sections.loop {
@@ -108,16 +138,6 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 		}
 		return "", nil, nil, nil, err
 	}
-	// The approval named a DEFINITION, not just a name: this is the file that is
-	// about to run, so it is the one the digest has to match. Check it before
-	// anything is started.
-	if err := checkApprovedServices(approval, composeFile, spec.Repo, spec.RepoReadOnly); err != nil {
-		if sections != nil && sections.loop {
-			sections.servicesRefused(err.Error())
-			return "", nil, nil, nil, ui.Reported(err)
-		}
-		return "", nil, nil, nil, err
-	}
 	projectRepo := spec.ActivityRepo
 	if projectRepo == "" {
 		projectRepo = spec.Repo
@@ -127,6 +147,20 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 		return "", nil, nil, nil, fmt.Errorf("wait for a safe service launch: %w", err)
 	}
 	defer unlockLaunch()
+	bound, err := rt.FreezeCompose(ctx)
+	if err != nil {
+		return "", nil, nil, nil, fmt.Errorf("bind filtered services to Docker daemon: %w", err)
+	}
+	if live, ok := docker.(interface {
+		Endpoint() string
+		Info() runtime.DockerInfo
+	}); ok {
+		endpoint, daemon := bound.ComposeBinding()
+		if endpoint != live.Endpoint() || daemon != live.Info().ID {
+			return "", nil, nil, nil, errors.New("filtered service Docker daemon differs from the gateway daemon")
+		}
+	}
+	rt = bound
 	selected := make([]string, 0, len(grants))
 	for _, grant := range grants {
 		if name := grant.Rule.To.Service; !slices.Contains(selected, name) {
@@ -136,6 +170,17 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 	slices.Sort(selected)
 	data, err := readValidatedCompose(composeFile, spec.Repo, spec.RepoReadOnly)
 	if err != nil {
+		return "", nil, nil, nil, err
+	}
+	if err := refuseRunningServiceWriters(ctx, rt, spec.Repo); err != nil {
+		return "", nil, nil, nil, err
+	}
+	// Review the exact validated bytes that every Compose invocation below uses.
+	if err := checkApprovedServicesData(approval, data); err != nil {
+		if sections != nil && sections.loop {
+			sections.servicesRefused(err.Error())
+			return "", nil, nil, nil, ui.Reported(err)
+		}
 		return "", nil, nil, nil, err
 	}
 	var doc composeDoc
@@ -148,7 +193,7 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 	}
 	noticeHidden := sections == nil || !sections.loop
 	owner := runServiceOwner(spec)
-	args, cleanupSnapshot, hidden, err := snapshotComposeArgsForStart(spec.Repo, composeFile, owner, spec.RepoReadOnly, true, exposedRoots...)
+	args, cleanupSnapshot, hidden, err := snapshotComposeArgsForStartData(spec.Repo, composeFile, owner, data, false, exposedRoots...)
 	if err != nil {
 		var refused *ComposeRefused
 		if sections != nil && sections.loop && errors.As(err, &refused) {
@@ -162,8 +207,8 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 	}
 	if len(hidden) > 0 && noticeHidden {
 		ui.Note("")
-		ui.Warn("services get an empty file in place of %s (looks like a secret) — to let them read the real file, run `coop up` in a terminal and approve %s; the approval lasts until that file changes",
-			strings.Join(hidden, ", "), filepath.Base(composeFile))
+		ui.Warn("services get an empty source in place of %s (looks like a secret) — run `coop up` in a terminal to review eligible read-only files; secret directories and writable binds remain hidden",
+			safeServicePaths(hidden))
 	}
 	keepSnapshot := false
 	defer func() {
@@ -233,7 +278,8 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 		clients = append(clients, networkgateway.ServiceProxyClient{Name: name, Address: addresses[name]})
 	}
 	keepSnapshot = true
-	prepared := &preparedFilteredServices{runtime: rt, args: finalArgs, selected: selected, names: selected, sections: sections, addresses: addresses,
+	prepared := &preparedFilteredServices{runtime: rt, repo: spec.Repo, file: composeFile, data: data, owner: owner,
+		readOnly: spec.RepoReadOnly, override: finalPath, roots: slices.Clone(exposedRoots), selected: selected, names: selected, sections: sections, addresses: addresses,
 		cleanup: func() { cleanupFinal(); cleanupSnapshot() }}
 	return network, bindings, clients, prepared, nil
 }

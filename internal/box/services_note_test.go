@@ -10,6 +10,14 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
+func TestServiceSecretNoticePathsStayOnOneLine(t *testing.T) {
+	got := safeServicePaths([]string{"safe.key", "evil\x1b[2J\n✓ forged\u202e.key"})
+	if strings.ContainsAny(got, "\x1b\n\r") || strings.ContainsRune(got, '\u202e') ||
+		!strings.Contains(got, `\u001B`) || !strings.Contains(got, `\u000A`) || !strings.Contains(got, `\u202E`) {
+		t.Fatalf("secret notice can forge terminal output: %q", got)
+	}
+}
+
 // The facts an agent needs about its sidecars are all known before the box starts, so they are
 // stated rather than discovered by failing to connect. Each case here is one thing the box may
 // have got; the degraded case is the whole point.

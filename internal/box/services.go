@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
@@ -56,7 +57,14 @@ func UpServices(rt runtime.Runtime, workspace, file string, stdout, stderr io.Wr
 // UpServicesForOwner starts the development stack when owner is empty or one logical run's
 // private stack otherwise.
 func UpServicesForOwner(rt runtime.Runtime, workspace, file, owner string, stdout, stderr io.Writer, exposedRoots ...string) (ServiceStart, error) {
-	started, err := startServicesFileContext(context.Background(), rt, workspace, file, owner, "", stdout, stderr, false, false, true, nil, exposedRoots...)
+	started, err := startServicesFileContext(context.Background(), rt, workspace, file, owner, "", stdout, stderr, false, false, nil, nil, exposedRoots...)
+	return ServiceStart{Names: started.names, Ports: started.ports}, err
+}
+
+// UpServicesReviewed is the terminal-only start path. Its review came from one validated file
+// snapshot under the exclusive service launch lock and is checked again before Compose runs.
+func UpServicesReviewed(rt runtime.Runtime, workspace, file string, review *ServiceStartReview, stdout, stderr io.Writer, exposedRoots ...string) (ServiceStart, error) {
+	started, err := startServicesFileContext(context.Background(), rt, workspace, file, "", "", stdout, stderr, false, false, review, nil, exposedRoots...)
 	return ServiceStart{Names: started.names, Ports: started.ports}, err
 }
 
@@ -66,19 +74,41 @@ type startedServices struct {
 	hidden []string
 }
 
-func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer, repoReadOnly, noticeHidden bool, exposedRoots ...string) (startedServices, error) {
-	return startServicesFileContext(context.Background(), rt, workspace, file, "", "", stdout, stderr, repoReadOnly, noticeHidden, false, nil, exposedRoots...)
+func safeServicePaths(paths []string) string {
+	safe := make([]string, len(paths))
+	for i, path := range paths {
+		safe[i] = ui.SafeInline(path)
+	}
+	return strings.Join(safe, ", ")
 }
 
-func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace, file, owner, network string, stdout, stderr io.Writer, repoReadOnly, noticeHidden, allowOutsideData bool, selected []string, exposedRoots ...string) (startedServices, error) {
+func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer, repoReadOnly, noticeHidden bool, exposedRoots ...string) (startedServices, error) {
+	return startServicesFileContext(context.Background(), rt, workspace, file, "", "", stdout, stderr, repoReadOnly, noticeHidden, nil, nil, exposedRoots...)
+}
+
+func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace, file, owner, network string, stdout, stderr io.Writer, repoReadOnly, noticeHidden bool, review *ServiceStartReview, selected []string, exposedRoots ...string) (startedServices, error) {
 	if file == "" {
 		return startedServices{}, nil
+	}
+	bound, err := rt.FreezeCompose(ctx)
+	if err != nil {
+		return startedServices{}, fmt.Errorf("bind service launch to Docker daemon: %w", err)
+	}
+	if review != nil && len(review.Volumes) > 0 {
+		endpoint, daemon := bound.ComposeBinding()
+		if endpoint != review.Endpoint() || daemon != review.DaemonID() {
+			return startedServices{}, errors.New("docker daemon changed after volume review — run 'coop up' again")
+		}
+	}
+	rt = bound
+	if err := refuseRunningServiceWriters(ctx, rt, workspace); err != nil {
+		return startedServices{}, &ComposeRefused{Verb: "run", File: filepath.Base(file), Err: err}
 	}
 	// coop runs this file on the HOST daemon, so validate it first: an in-box agent may author it
 	// (the compose path is no longer shadowed), but the host refuses anything that reaches outside a
 	// repo-scoped, loopback-only container. The specific violation rides out to `coop up` / the
 	// auto-up warning, so a refused file names exactly why.
-	args, cleanup, hidden, err := snapshotComposeArgsForStart(workspace, file, owner, repoReadOnly, allowOutsideData, exposedRoots...)
+	args, cleanup, hidden, err := snapshotComposeArgsForStart(ctx, rt, workspace, file, owner, repoReadOnly, review, exposedRoots...)
 	if err != nil {
 		return startedServices{}, &ComposeRefused{Verb: "run", File: filepath.Base(file), Err: err}
 	}
@@ -91,8 +121,8 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 		// fails in its own way ("missing BEGIN PRIVATE KEY"), and this is the only line that names the
 		// cause and the fix.
 		ui.Note("")
-		ui.Warn("services get an empty file in place of %s (looks like a secret) — to let them read the real file, run `coop up` in a terminal and approve %s; the approval lasts until that file changes",
-			strings.Join(hidden, ", "), filepath.Base(file))
+		ui.Warn("services get an empty source in place of %s (looks like a secret) — run `coop up` in a terminal to review eligible read-only files; secret directories and writable binds remain hidden",
+			safeServicePaths(hidden))
 	}
 	// Publish each `expose`d sidecar port to its stable per-workspace host port via a merged
 	// override (the base file's `expose` publishes nothing, so this adds the only host mapping).
@@ -127,19 +157,73 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 	return started, nil
 }
 
+// A running Compose sidecar with a writable bind can replace a source after Coop checked it.
+// The caller holds the exclusive launch lock; do not kill an existing service automatically.
+func refuseRunningServiceWriters(ctx context.Context, rt runtime.Runtime, workspace string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	repo, err := resolveExisting(workspace)
+	if err != nil {
+		return err
+	}
+	sources, err := rt.RunningWritableBindSourcesByLabels(ctx, map[string]string{composeProjectLabel: ""})
+	if err != nil {
+		return fmt.Errorf("inspect running service mounts: %w", err)
+	}
+	for _, source := range sources {
+		resolved, err := resolveExisting(source)
+		if err != nil {
+			return fmt.Errorf("inspect running service bind %q: %w", source, err)
+		}
+		inside, _, err := authorityContains(repo, resolved)
+		if err != nil {
+			return err
+		}
+		ancestor, _, err := authorityContains(resolved, repo)
+		if err != nil {
+			return err
+		}
+		if inside || ancestor {
+			return fmt.Errorf("a running Compose service can write this repository through %q — stop it with 'coop down' (or stop the container), then retry", source)
+		}
+	}
+	return nil
+}
+
 // Snapshot approved bytes outside the writable workspace. All commands in one operation use
 // this file; the explicit project directory preserves relative binds and ownership labels.
 // hidden names the repo-relative secret-looking bind sources the services get decoys for — empty
 // when there are none or when a human approved this exact file (ReviewServiceSecrets).
 func snapshotComposeArgs(workspace, file string, repoReadOnly bool, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
-	return snapshotComposeArgsForStart(workspace, file, "", repoReadOnly, true, exposedRoots...)
+	return snapshotComposeArgsForInspect(workspace, file, "", repoReadOnly, exposedRoots...)
 }
 
-func snapshotComposeArgsForStart(workspace, file, owner string, repoReadOnly, allowOutsideData bool, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
+// Inspection and teardown need the same Compose project definition, but never start containers.
+func snapshotComposeArgsForInspect(workspace, file, owner string, repoReadOnly bool, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
 	data, err := readValidatedCompose(file, workspace, repoReadOnly)
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	return snapshotComposeArgsForStartData(workspace, file, owner, data, true, exposedRoots...)
+}
+
+func snapshotComposeArgsForStart(ctx context.Context, rt runtime.Runtime, workspace, file, owner string, repoReadOnly bool, review *ServiceStartReview, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
+	data, err := readValidatedCompose(file, workspace, repoReadOnly)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if review != nil {
+		if err := review.verify(ctx, rt, workspace, file, data); err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	return snapshotComposeArgsForStartData(workspace, file, owner, data, review != nil, exposedRoots...)
+}
+
+func snapshotComposeArgsForStartData(workspace, file, owner string, data []byte, allowOutsideData bool, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
 	if !allowOutsideData {
 		volumes, err := outsideServiceVolumes(data)
 		if err != nil {
@@ -176,12 +260,12 @@ func snapshotComposeArgsForStart(workspace, file, owner string, repoReadOnly, al
 		return nil, nil, nil, fmt.Errorf("project secret shadowing into sibling services: %w", err)
 	}
 	if len(hidden) > 0 {
-		if approval, ok := ApprovedServiceSecrets(data); ok {
+		if approval, ok := ApprovedServiceSecrets(workspace, abs, data); ok {
 			// Only the files the human actually saw and approved come out from behind a decoy.
 			decoys, hidden = keepDecoysOutside(decoys, approval.Paths)
 		}
 	}
-	shadow, needed, err := writeServiceShadowOverride(decoys, dir)
+	shadow, needed, err := writeServiceShadowOverride(workspace, decoys, dir)
 	if err != nil {
 		cleanup()
 		return nil, nil, nil, fmt.Errorf("project secret shadowing into sibling services: %w", err)
@@ -478,7 +562,7 @@ func removeUnusedNetworks(ctx context.Context, rt runtime.Runtime, ids []string)
 }
 
 func runCompose(rt runtime.Runtime, stdout, stderr io.Writer, action string, args []string) error {
-	code, err := rt.Run(nil, stdout, stderr, args...)
+	code, err := rt.RunCompose(nil, stdout, stderr, args...)
 	if err != nil {
 		return err
 	}

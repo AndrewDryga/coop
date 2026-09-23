@@ -4,6 +4,35 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Compose sidecar approvals now bind external/custom volumes to the selected local Docker daemon
+  and inspected plain-local storage object. A missing custom volume is created only after terminal
+  approval; changed daemon, backing definition, or repository requires review again. Secret-file
+  approval reveals only individual read-only files, never writable binds or whole secret directories.
+  Filtered launches recheck binds and shadows at the final start, case-alias writable paths are
+  refused, and review prompts and hidden-secret notices escape control characters. Repository binds reject
+  host relabel/propagation options; read-only sessions refuse absent sources before Docker could
+  create them. Service URL schemes are validated. Compose uses a private proxy-free Docker client
+  config while retaining file, helper and environment-only registry authentication.
+
+- Fork generations and project network approvals no longer assume filesystem metadata is unique
+  forever. Each protected root now carries a two-link marker bound to owner-private state; copied or
+  replaced markers fail closed. Older network approvals require one fresh review, stopped legacy
+  fork records migrate only after semantic verification, and final runtime arguments cannot expose
+  current or prospective private anchors, execution locks, agent-controlled project descendants or
+  writable project parents. Moved checkouts can re-enroll only by proving their exact old hardlink;
+  copied markers cannot retire another project. The marker and state must share a hardlink-capable
+  filesystem; there is no timestamp fallback. Anchor, generation and remote-session cleanup ordering
+  now preserves an exact retry after post-rename sync failures or interrupted authority retirement.
+
+- The canonical gate and everyday behavior are portable across macOS and Linux: consult peers no
+  longer strand a flock through dash's hidden function-redirection descriptor after owner death;
+  readonly scratch conflicts use the actual in-box workdir; directory blocks are never mistaken for
+  shared hardlinks; tests no longer depend on inode allocation, host umask, Git's default branch or
+  optional `cloc`; and long ACP editor IDs fit their serialized record while oversized saves are
+  refused. Legacy read-only sessions keep generated output in session-owned scratch outside the
+  checkout while retaining the in-box `.coop-output` path. Eval grading remains available without
+  `cloc` and labels change size as unmeasured.
+
 - Provider qualification now requires native loop tool lifecycles, a real shared MCP tool call,
   write-capable delegate output and bounded two-account recovery where configured. Live tests
   copy selected Coop-held API keys as well as native sign-ins; preflight also accepts env-only
@@ -47,8 +76,9 @@
   snapshot, in a separate container with no model credentials and no network — so a verifier cannot
   be steered, and cannot spend your quota either. A verifier that crashes is reported as a grading
   error, never as a model failure, and a run always reports passes over the full requested matrix
-  with coverage shown separately, so an incomplete run can never read as a clean sweep. Change size
-  is measured with cloc and reported beside correctness, never folded into it.
+  with coverage shown separately, so an incomplete run can never read as a clean sweep. When the
+  optional `cloc` tool is available, change size is reported beside correctness and never folded
+  into it; without it, the verdict remains valid and the missing measurement is explicit.
 
   A suite runs one of two things per case. An `agent` case is a single headless attempt: one
   instruction, one workspace, one verdict. A `loop` case is a whole `coop loop` — a fixture

@@ -2,24 +2,27 @@
 name: repository-source-copies
 description: skills and fallback copies retain rooted content authority and validate links only after relocation; a lead's own agents are copied without following any link
 subsystem: box
-sources: [internal/box/sourcecopies.go, internal/box/run.go, internal/box/services.go]
-updated: 2026-09-19
+sources: [internal/box/sourcecopies.go, internal/box/run.go, internal/box/services.go, internal/shadowpath/shadowpath.go, internal/safefile/safefile.go]
+updated: 2026-09-23
 ---
 
 Skills and adapter fallback settings/hooks become writable provider-home copies. The source is
-not trusted host authority: `repositorySources` pins an `os.Root`, resolves metadata to support
-relative and absolute in-repository source links, then opens content only by root-relative name.
-Metadata traversal may inspect outside paths; it never grants an unrooted content read.
+not trusted host authority: `repositorySources` pins a raw repository directory handle and uses
+descriptor-relative no-follow opens for every copied byte. A fixed-source final symlink may point
+to another path inside the same pinned repository; outward links and symlinked intermediate
+components fail. Alias and target visibility policies are both applied before copying bytes.
 
-`sourceCopyFS` deliberately does not embed `Root.FS()`: its optimized filesystem methods would
-bypass nonblocking opens and let a regular-file-to-FIFO race hang `CopyFS`. Settings are regular,
-bounded to 1 MiB, and copied with mode 0600. Trees preserve executable permissions and internal symlinks;
-absolute internal links relocate to relative links. A completed private copy must resolve every
-link inside itself before exposure, so mutable source-link validation cannot bless different bytes.
+`safefile` uses raw nonblocking/no-follow opens rather than `Root.FS()`/`CopyFS`; those helpers can
+follow a swapped final link or hang on a FIFO. Settings are regular, bounded to 1 MiB, and copied
+with mode 0600. `shadowpath.Snapshot` captures the policy in each actual pinned directory as it
+walks, so swapping a child by pathname cannot pair one child's bytes with another's `.coopignore`.
+Trees preserve safe internal symlinks; absolute internal links relocate to relative links. Every
+link in the completed copy must still resolve inside it before exposure. The aggregate policy and
+copy budgets bound untrusted trees.
 
 Temporary copies use canonical paths outside the repository, credential configuration, exact ACP
 transcript roots and companion mounts. Where they are made depends on the run: an ordinary run uses
-a private system temp dir, and a filtered run uses its execution's artifact directory
+the stable protected BoxHome runfiles parent, and a filtered run uses its execution's artifact directory
 (`composedCopyDir` with `compositionArtifactOps.parent`), because a filtered launch accepts only
 mounts that are canonical descendants of that directory and exact-owned cleanup removes it. The
 exposed-roots check runs on both branches. Inode ancestry handles case aliases; exact transcript roots
@@ -49,6 +52,9 @@ independently, inactive providers do not read their fallbacks, and the legacy sh
 still requires a real directory rather than a symlink.
 
 ## Changelog
+- 2026-09-23 — re-verified the raw no-follow source read, alias/target visibility union,
+  descendant policy capture, bounded copy, and stable runfiles placement; corrected stale
+  root/temporary-directory claims after the filesystem authority repair.
 - 2026-09-19 — a lead's own agent definitions are copied into the preset box's generated agents
   directory by fd-relative, no-follow opens; recorded the two os.Root traps and the FIFO read that
   parks a launch when a box swaps one in.

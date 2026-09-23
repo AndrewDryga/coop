@@ -3,7 +3,8 @@ package box
 import (
 	"io/fs"
 	"path/filepath"
-	"strings"
+
+	"github.com/AndrewDryga/coop/internal/shadowpath"
 )
 
 // MountKind distinguishes the ways a path enters (or is blocked from) the box.
@@ -92,73 +93,7 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 // hiding a file from the box does not prevent committing it. A hidden directory
 // hides every descendant, including names an allow rule would otherwise rescue.
 func NewShadowDecider(repo string) func(relSlash string) bool {
-	cache := map[string]UserGlobs{} // dir (slash-rel, "" = root) → its .coopignore, loaded once
-	loadDir := func(dirRel string) UserGlobs {
-		if g, ok := cache[dirRel]; ok {
-			return g
-		}
-		g := LoadUserGlobs(filepath.Join(repo, filepath.FromSlash(dirRel)))
-		cache[dirRel] = g
-		return g
-	}
-	shadowedHere := func(relSlash string) bool {
-		name := relSlash
-		if i := strings.LastIndexByte(relSlash, '/'); i >= 0 {
-			name = relSlash[i+1:]
-		}
-		// A secret-named file stays visible only if an allow rule rescues it: an EXACT known-public
-		// name (a CA bundle, which overrides even *.pem), or a template/sample SUFFIX — but a
-		// suffix can never un-shadow a private-key pattern, so id_rsa.example stays shadowed. Allow
-		// rules override only built-in SecretGlobs false positives, never an explicit .coopignore
-		// (the user's authoritative hide rule).
-		// Match the built-in denylist case-insensitively so a case variant (.ENV, ID_RSA, *.PEM)
-		// can't slip past — important on a case-insensitive host FS (macOS/Windows). The user's
-		// .coopignore stays case-sensitive (their patterns, their casing).
-		lname := strings.ToLower(name)
-		allowed := matchesAny(lname, AllowGlobs) ||
-			(matchesAny(lname, allowTemplateGlobs) && !matchesAny(lname, hardSecretGlobs))
-		byDefault := matchesAny(lname, SecretGlobs) && !allowed
-		return byDefault || shadowedByCoopignore(relSlash, loadDir)
-	}
-	return func(relSlash string) bool {
-		// Direct file queries (scanner and service binds) must agree with a tree
-		// walk that prunes a hidden parent before ever visiting the child.
-		for i := 0; i < len(relSlash); i++ {
-			if relSlash[i] == '/' && shadowedHere(relSlash[:i]) {
-				return true
-			}
-		}
-		return shadowedHere(relSlash)
-	}
-}
-
-// shadowedByCoopignore reports whether the repo-relative slash path is shadowed by a
-// .coopignore in the root or any ancestor directory of the path: each directory's
-// basename patterns match anywhere in its subtree, and its path patterns are matched
-// against the path relative to that directory (so sub/.coopignore's "config/x" means
-// sub/config/x). loadDir caches the per-directory globs.
-func shadowedByCoopignore(relSlash string, loadDir func(string) UserGlobs) bool {
-	base := relSlash
-	if i := strings.LastIndexByte(relSlash, '/'); i >= 0 {
-		base = relSlash[i+1:]
-	}
-	dir, remaining := "", relSlash
-	for {
-		g := loadDir(dir)
-		if matchesAny(base, g.Base) || matchesPath(remaining, g.Path) {
-			return true
-		}
-		i := strings.IndexByte(remaining, '/')
-		if i < 0 {
-			return false
-		}
-		if dir == "" {
-			dir = remaining[:i]
-		} else {
-			dir += "/" + remaining[:i]
-		}
-		remaining = remaining[i+1:]
-	}
+	return shadowpath.NewDecider(repo)
 }
 
 // ShadowCount is the number of secret paths shadowed.
@@ -198,21 +133,5 @@ func RenderMounts(mounts []Mount, decoyFile, decoyDir string) []string {
 }
 
 func matchesAny(name string, globs []string) bool {
-	for _, g := range globs {
-		if ok, _ := filepath.Match(g, name); ok {
-			return true
-		}
-	}
-	return false
-}
-
-// matchesPath reports whether a repo-relative slash path matches any of the path
-// patterns (filepath.Match semantics: `*` does not cross `/`, no `**`).
-func matchesPath(relSlash string, globs []string) bool {
-	for _, g := range globs {
-		if ok, _ := filepath.Match(g, relSlash); ok {
-			return true
-		}
-	}
-	return false
+	return shadowpath.MatchesAny(name, globs)
 }

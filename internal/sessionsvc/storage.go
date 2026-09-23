@@ -782,8 +782,9 @@ func (s *Service) forkIsDirty(repo, name string) (bool, string) {
 }
 
 // measurePrivateState accounts the per-session stores that outlive a turn: the agent's private
-// state, companion checkouts, retained workspace checkpoints and review patches. They are counted
-// by Lstat only — nothing here opens a file, because this state is credential-bearing.
+// state, read-only-session output scratch, companion checkouts, retained workspace checkpoints and
+// review patches. They are counted by Lstat only — nothing here opens a file, because this state is
+// credential-bearing or agent-produced.
 func (s *Service) measurePrivateState(scan *forkspace.UsageScan, report *StorageReport) {
 	root := StorageRoot{Path: s.stateRoot}
 	if volume, err := forkspace.MeasureFilesystem(s.stateRoot); err == nil {
@@ -792,6 +793,7 @@ func (s *Service) measurePrivateState(scan *forkspace.UsageScan, report *Storage
 	}
 	for name, into := range map[string]*int64{
 		"acp":                   &report.Totals.PrivateStateBytes,
+		"output":                &report.Totals.PrivateStateBytes,
 		"repositories":          &report.Totals.CompanionBytes,
 		"workspace-checkpoints": &report.Totals.CheckpointBytes,
 		"review-artifacts":      &report.Totals.ReviewArtifactBytes,

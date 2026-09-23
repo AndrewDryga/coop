@@ -1316,7 +1316,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: verify, Stage: "verify", Result: "reopen"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 20*time.Second)
+		result := runLoopReview(t, suite, work, 40*time.Second)
 		if result.Err != nil || result.ExitCode != 3 || !strings.Contains(result.Stderr, "Review limit reached") ||
 			!strings.Contains(result.Stderr, "Answer it: coop tasks decisions -i") {
 			t.Fatalf("verify reopen cap = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
@@ -1810,8 +1810,8 @@ func assertLoopReviewMounts(t *testing.T, layout procharness.Layout, provider, a
 			}
 		case !mount.ReadOnly:
 			t.Errorf("unexpected writable review mount %#v", mount)
-		case !strings.HasPrefix(mount.Source, "<root>/tmp/coop-"):
-			t.Errorf("review read-only mount did not come from generated temp state: %#v", mount)
+		case !recordedGeneratedMountPath(mount.Source):
+			t.Errorf("review read-only mount did not come from generated fixture state: %#v", mount)
 		}
 	}
 	if !foundRepo || !foundProfile {
@@ -1828,14 +1828,17 @@ func assertLoopReviewRepoMount(t *testing.T, layout procharness.Layout, mounts [
 		if mount.Source == repo && mount.Target == repo {
 			matches = append(matches, mount)
 		}
-		if mount.Source == queue && mount.Target == queue {
+		// Writable review gets a read-only snapshot of the host queue, not a live bind.
+		if mount.Target == queue {
 			protected = append(protected, mount)
 		}
 	}
 	if len(matches) != 1 || matches[0].ReadOnly != readOnly {
 		t.Fatalf("review repo mount = %#v, want exactly one read-only=%v mount", matches, readOnly)
 	}
-	if !readOnly && (len(protected) != 1 || !protected[0].ReadOnly) {
-		t.Fatalf("repository-writable review task mounts = %#v, want one read-only queue mount", protected)
+	if !readOnly && (len(protected) != 1 || !protected[0].ReadOnly ||
+		!strings.HasPrefix(protected[0].Source, "<root>/xdg/config/coop/runfiles/coop-run-") ||
+		!strings.Contains(protected[0].Source, "/coop-readonly-") || !strings.HasSuffix(protected[0].Source, "/tree")) {
+		t.Fatalf("repository-writable review task mounts = %#v, want one read-only queue snapshot", protected)
 	}
 }

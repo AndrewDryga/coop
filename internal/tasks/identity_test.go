@@ -34,8 +34,8 @@ func TestTaskIdentitySurvivesLifecycleAndFencesReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if third.Ref.QueueID != first.Ref.QueueID || third.Ref.TaskID == first.Ref.TaskID || third.Generation == first.Generation {
-		t.Fatalf("replacement identity = %+v, want same queue but new task and inode from %+v", third, first)
+	if third.Ref.QueueID != first.Ref.QueueID || third.Ref.TaskID == first.Ref.TaskID {
+		t.Fatalf("replacement identity = %+v, want same queue but a new durable task ID from %+v", third, first)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -39,6 +40,35 @@ func TestForkStateRootAndFilesAreOwnerOnly(t *testing.T) {
 	assertForkStatePerm(t, StateDir(repo), 0o700)
 	assertForkStatePerm(t, LockPath(repo, "perf"), 0o600)
 	assertForkStatePerm(t, PidPath(repo, "perf"), 0o600)
+}
+
+func TestForkStateDirectoryCreationRetryRepeatsParentBarriers(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "project")
+	previous := syncForkDirectoryEntry
+	t.Cleanup(func() { syncForkDirectoryEntry = previous })
+	failure := errors.New("synthetic parent directory sync failure")
+	syncForkDirectoryEntry = func(*os.File) error { return failure }
+
+	if err := EnsureStateDir(repo); !errors.Is(err, failure) {
+		t.Fatalf("first state directory creation = %v, want %v", err, failure)
+	}
+	if _, err := os.Stat(Home(repo)); err != nil {
+		t.Fatalf("fork home was not visible after failed parent barrier: %v", err)
+	}
+
+	var synced []string
+	syncForkDirectoryEntry = func(dir *os.File) error {
+		synced = append(synced, filepath.Clean(dir.Name()))
+		return dir.Sync()
+	}
+	if err := EnsureStateDir(repo); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{filepath.Dir(Home(repo)), Home(repo)} {
+		if !slices.Contains(synced, filepath.Clean(want)) {
+			t.Errorf("retry did not confirm parent %q; synced %v", want, synced)
+		}
+	}
 }
 
 func TestForkStateRootRefusesUnsafeEntries(t *testing.T) {

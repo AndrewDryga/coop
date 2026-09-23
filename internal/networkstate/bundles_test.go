@@ -62,13 +62,12 @@ func TestHistoricalApprovalSurvivesSuffixChangesButNewAuthoringDoesNot(t *testin
 	}
 	// Seed a private historical record, as if the suffix catalog changed after
 	// approval. New approval below must still apply today's stricter catalog.
-	info, err := os.Stat(project)
+	anchor, err := s.ensureProjectAnchor(project, id, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	device, inode, _ := directoryIdentity(info)
-	data, err := json.Marshal(Approval{Version: 1, ProjectID: id, Posture: egress.Filtered,
-		Envelope: []egress.Rule{rule("*.github.io")}, Device: device, Inode: inode})
+	data, err := json.Marshal(Approval{Version: networkApprovalVersion, ProjectID: id, Posture: egress.Filtered,
+		Envelope: []egress.Rule{rule("*.github.io")}, ProjectAnchor: anchor})
 	if err != nil {
 		t.Fatal(err)
 	}

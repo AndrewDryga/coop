@@ -261,12 +261,15 @@ func (b *openBroker) labels(owner []string) []string {
 // and waits for it to report the address it listens on. It runs with an open stdin pipe, like the
 // task channel: EOF — this Coop exiting, however it ends — stops it, and `--rm` removes it. Once
 // start is called, the caller stops the helper on every path, whatever start returned.
-func (b *openBroker) start(ctx context.Context, rt runtime.Runtime, repo, network string, owner []string, building func(), exposed ...string) error {
+func (b *openBroker) start(ctx context.Context, rt runtime.Runtime, repo, artifactParent, network string, owner []string, building func(), exposed ...string) error {
 	image, err := ensureOpenBrokerImage(ctx, rt, building)
 	if err != nil {
 		return err
 	}
-	if b.dir, err = privateWorkspaceTempDir(repo, "coop-broker-", exposed...); err != nil {
+	if artifactParent == "" {
+		return errors.New("prepare the MCP credential broker: private run artifact directory is unavailable")
+	}
+	if b.dir, err = privateTempDirUnder(artifactParent, repo, "coop-broker-", exposed...); err != nil {
 		return fmt.Errorf("prepare the MCP credential broker: %w", err)
 	}
 	routes := b.plan.gatewayRoutes()

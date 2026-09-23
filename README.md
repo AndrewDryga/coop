@@ -279,7 +279,7 @@ edits your shell startup files; the source line is yours to add.
 
 ## The sandbox
 
-The repo is bind-mounted into the box at the same path it has on your machine, so
+In a normal run, the repo is bind-mounted into the box at the same path it has on your machine, so
 the agent edits real files and you see them live in your editor. Everything else —
 your home dir, SSH keys, the rest of the disk — simply isn't in the container.
 
@@ -340,7 +340,9 @@ copied into the tmpfs home before it starts.
 `--readonly` mounts the repository (git history included) and any approved companions read-only,
 so the agent can read, search and run experiments in scratch; `--bare` mounts no repository and
 adds the provider's own no-tools switch, so the model's request carries no tool — the conversation
-in, the answer out. Both refuse what they cannot enforce rather than launching on a promise: they
+in, the answer out. If the checkout's host path is under the box's `/tmp` or home scratch, a
+read-only run mounts it at `/workspace` inside the box instead; an explicit workdir inside that
+scratch is refused. Both refuse what they cannot enforce rather than launching on a promise: they
 run on Docker only, native restricted modes are offered only for `claude`, and `--peer`, presets
 and `COOP_IMAGE` are refused. A `COOP_RUN_ARGS` entry other than `-e KEY=VALUE` stops the launch
 by name. Direct `--readonly` runs support `--egress filtered`; `--bare` accepts only open or
@@ -1050,6 +1052,8 @@ the same before and after your change, then compare the recorded results.
    credential, runtime or image readiness. `--timeout` is a total time limit, not a money cap;
    each case also has its own timeout. `--repeat 3` runs each case three times, and `--jobs 2`
    allows two agent trials at once. More configurations or repeats mean more paid work.
+   `cloc` is optional: install it for change-size figures. Grading and verdicts still work
+   without it, and Coop labels the missing measurement instead of reporting a false zero.
 
 3. Change one thing, run the same suite again, and use `coop eval runs` to find the two IDs.
    Compare them with `coop eval compare <before-id> <after-id>`. Argument order determines
@@ -1285,7 +1289,7 @@ permission theater would only slow it down.
 Under the hood `coop acp [<target|preset>]` runs the selected provider's matching adapter
 (`@agentclientprotocol/claude-agent-acp`, `@agentclientprotocol/codex-acp`, `gemini --acp`,
 `grok agent stdio`)
-inside the box over stdio. The repo mounts at its real host path — the same path
+inside the box over stdio. In normal writable sessions, the repo mounts at its real host path — the same path
 `coop` and `coop loop` use — so Zed's absolute paths resolve *and* the session history
 lines up: a thread you started with `coop loop` is there to resume in Zed.
 
@@ -1740,6 +1744,14 @@ really published. If discovery fails, Coop does not start the project or claim a
 one with what it holds, and asks before removing any (default No; `-y/--yes` skips the question,
 and without a terminal it refuses rather than guessing). An `external: true` volume and a
 bind-mounted project file are never in scope.
+An `external: true` or custom-named volume may hold data from another project. `coop up` at a
+terminal shows its actual Docker name, read-only/read-write access, and service targets before
+asking for repository-scoped approval. It also shows the selected Docker daemon and an existing
+plain local volume's backing location; a missing custom-named volume is created as plain local
+storage only after Yes. A different daemon, replaced volume, or bind-backed/plugin volume cannot
+silently inherit the grant. No/EOF stops before Compose runs. Automatic box launches,
+filtered sidecars, and non-terminal `coop up` refuse these volumes even after a prior approval;
+ordinary project-scoped named volumes need no prompt.
 Changing the configured Compose file is reconciled on the next `coop up` or box launch: services
 removed from the file are stopped. `coop down` does the same. Every workspace uses its hashed
 Compose project name, so repositories with the same basename remain isolated.
@@ -1747,12 +1759,21 @@ Compose project name, so repositories with the same basename remain isolated.
 **Secret-looking files stay hidden from services too.** A bind of a `.env`, a `*.key`, or a
 `.coopignore`d path hands the service an empty decoy, exactly as the box sees it — otherwise an
 agent-written Compose file could ship your secrets to a container it controls. When a service
-legitimately needs such a file (a generated dev TLS key for Keycloak), run `coop up` in a terminal:
-it lists the files and asks once. The approval is tied to the Compose file's exact content and
+legitimately needs such a file (a generated dev TLS key for Keycloak), bind that individual file
+read-only (`:ro` or `read_only: true`) and run `coop up` in a terminal: it lists eligible files and
+asks once. Secret directories and files reachable through writable binds always keep their decoys;
+mount the individual needed files read-only, and use a named volume for mutable service data.
+The approval is tied to the Compose file's exact content and
 stored outside the repo, so an edit to the file (the one thing a box can do) resets it; until you
 approve again, box launches start the services with decoys and say which file is hidden and why.
+The approval is also tied to this checkout's private identity: copying the Compose file or its
+marker to a second checkout does not transfer it. The first `coop up` after upgrading older
+content-only approvals asks again.
 The approval covers the exact files you saw, so a secret that lands later under an approved
 directory bind stays hidden until you approve it too.
+Compose commands use a private Docker client config that retains registry authentication,
+including validated `DOCKER_AUTH_CONFIG`, without passing the host's configured proxy credentials
+into services.
 
 The repo can say which files its services genuinely need, so the ask is documented and travels to
 your teammates instead of arriving as a crash:
@@ -1805,15 +1826,20 @@ independent development stack. Only plain sibling-service directives pass: an `i
 volumes or repo-relative binds, `healthcheck`, `depends_on`, and loopback-only published
 ports. Anything that would reach past a repo-scoped container is refused with the exact reason —
 `privileged`, `cap_add`, a host bind like `/:/host` or `/var/run/docker.sock`, `network_mode:
-host`, `env_file`, `build`, a `0.0.0.0` port, an escaping symlink. A session whose repository is
+host`, `env_file`, `build`, a `0.0.0.0` port, an escaping symlink, or bind options that relabel host
+files or change mount propagation. A session whose repository is
 mounted read-only (an investigation, a review candidate) still gets its sidecars, but any bind of
 the repository into one must be read-only too (`:ro` or `read_only: true`) — a writable bind is
 refused for that session, since it would be a write path into a checkout the agent itself cannot
-write. A bind of the repo (or any directory in it) into a sidecar gets the box's own secret
+write. Its read-only bind source must already exist; Compose cannot create a host directory on
+its behalf. A bind of the repo (or any directory in it) into a sidecar gets the box's own secret
 shadowing: every `.env`, key, and `.coopignore`'d path under it is an empty decoy inside the
 sidecar too, and a bind whose source is itself a secret file is replaced by one. So the file is
 safe to auto-run no matter who wrote it: an agent can scaffold services for you, and a prompt-injected
-one still can't turn `.agent/compose.yml` into host root. (Need something outside that subset?
+one still can't turn `.agent/compose.yml` into host root. A running Compose service with a writable
+bind over the checkout must be stopped before Coop can safely launch another service stack; the
+error names the bind and suggests `coop down`. Nested bind sources under a writable service bind
+are refused, since a restart could reopen a path the service replaced. (Need something outside that subset?
 Run it yourself — coop only auto-runs the safe subset.)
 
 ### See the dev server in your browser

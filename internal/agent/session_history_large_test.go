@@ -201,7 +201,7 @@ func seedLargeSessionHistory(tb testing.TB, cfg *config.Config, provider, accoun
 		mustWriteSessionHistory(tb, filepath.Join(sessions, "rollout-exec.jsonl"), codexHistoryLine(largeHistoryMalformedID, ws, "session_meta", "exec"))
 	case "gemini":
 		for i := range entries {
-			bucketName := fmt.Sprintf("foreign-%04d", i/16)
+			bucketName := fmt.Sprintf("foreign-%04d", i)
 			cwd := "/work/" + bucketName
 			bucket := filepath.Join(root, "tmp", bucketName)
 			mustWriteSessionHistory(tb, filepath.Join(bucket, ".project_root"), cwd+"\n")

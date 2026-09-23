@@ -6,12 +6,41 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
+
+func serviceReviewRuntime(t *testing.T, recorder string) runtime.Runtime {
+	t.Helper()
+	t.Setenv("DOCKER_CONTEXT", "")
+	t.Setenv("DOCKER_HOST", "unix:///fixture.sock")
+	path := filepath.Join(t.TempDir(), "docker")
+	script := "#!/bin/sh\n"
+	if recorder != "" {
+		script += "echo \"$@\" >> " + strconv.Quote(recorder) + "\n"
+	}
+	script += `for last; do :; done
+case "$*" in
+  *"info --format"*) printf '{"ID":"%s","OSType":"linux","Architecture":"amd64","ServerVersion":"29.1","KernelVersion":"fixture","SecurityOptions":[]}\n' "${COOP_TEST_DAEMON:-fixture-daemon}" ;;
+  *"volume inspect"*)
+	if [ -n "$COOP_TEST_VOLUME_STATE" ] && [ ! -f "$COOP_TEST_VOLUME_STATE" ]; then exit 1; fi
+    options='{}'
+    if [ "$COOP_TEST_VOLUME_OPTS" = bind ]; then options='{"type":"none","o":"bind","device":"/"}'; fi
+    printf '{"Name":"%s","Driver":"local","Scope":"local","Mountpoint":"/var/lib/docker/volumes/%s/_data","CreatedAt":"%s","Options":%s}\n' "$last" "$last" "${COOP_TEST_VOLUME_CREATED:-2026-01-01T00:00:00Z}" "$options" ;;
+	*"volume ls"*) if [ -z "$COOP_TEST_VOLUME_STATE" ] || [ -f "$COOP_TEST_VOLUME_STATE" ]; then printf '"%s"\n' "$last"; fi ;;
+	*"volume create"*) if [ -n "$COOP_TEST_VOLUME_STATE" ]; then printf '%s\n' "$last" > "$COOP_TEST_VOLUME_STATE"; fi; echo "$last" ;;
+  *"config --services"*) echo db ;;
+esac
+`
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return runtime.Runtime{Name: path}
+}
 
 // A secret-looking bind stays a decoy until a human approves the compose file's exact content;
 // the approval is content-keyed, so editing the file hides the path again.
@@ -77,7 +106,7 @@ func TestServiceSecretApprovalIsBoundToTheComposeContent(t *testing.T) {
 	if len(hidden) != 0 || hasShadow(args) {
 		t.Fatalf("after approval: hidden=%v shadow=%v; want the service to read the real key", hidden, hasShadow(args))
 	}
-	approval, ok := ApprovedServiceSecrets([]byte(composeBody))
+	approval, ok := ApprovedServiceSecrets(repo, compose, []byte(composeBody))
 	if !ok || approval.File != ".agent/compose.yml" || strings.Join(approval.Paths, ",") != "certs/tls.key" || approval.ApprovedAt.IsZero() {
 		t.Fatalf("stored approval = %+v, ok=%v", approval, ok)
 	}
@@ -122,7 +151,7 @@ func TestServiceSecretApprovalIsBoundToTheComposeContent(t *testing.T) {
 	if err := later.Approve(); err != nil {
 		t.Fatal(err)
 	}
-	if approval, ok := ApprovedServiceSecrets([]byte(readFileString(t, compose))); !ok || strings.Join(approval.Paths, ",") != "certs/.env,certs/tls.key" {
+	if approval, ok := ApprovedServiceSecrets(repo, compose, []byte(readFileString(t, compose))); !ok || strings.Join(approval.Paths, ",") != "certs/.env,certs/tls.key" {
 		t.Fatalf("re-approval = %+v, ok=%v; want both files kept", approval, ok)
 	}
 	_, cleanup, hidden, err = snapshotComposeArgs(repo, compose, false)
@@ -139,8 +168,236 @@ func TestServiceSecretApprovalIsBoundToTheComposeContent(t *testing.T) {
 	if review, err := ReviewServiceSecrets(repo, compose); err != nil || review != nil {
 		t.Fatalf("plain compose review = %+v, err=%v; want nil", review, err)
 	}
-	if entries, _ := os.ReadDir(filepath.Join(os.Getenv(ServiceStateRootEnv), "service-approvals")); len(entries) != 2 {
-		t.Fatalf("approval store has %d entries, want one per approved compose content", len(entries))
+	entries, _ := os.ReadDir(filepath.Join(os.Getenv(ServiceStateRootEnv), "service-approvals"))
+	count := 0
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".json") {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("approval store has %d records, want one per approved compose content", count)
+	}
+}
+
+func TestServiceApprovalCannotCrossRepositoriesOrCopiedMarkers(t *testing.T) {
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	body := []byte("services:\n  web:\n    image: nginx:1\n    volumes: [\"./tls.key:/tls.key:ro\"]\n")
+	makeRepo := func() (string, string) {
+		t.Helper()
+		repo := t.TempDir()
+		compose := filepath.Join(repo, "compose.yml")
+		if err := os.WriteFile(compose, body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(repo, "tls.key"), []byte("-----BEGIN PRIVATE KEY-----\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return repo, compose
+	}
+	a, fileA := makeRepo()
+	b, fileB := makeRepo()
+	review, err := ReviewServiceSecrets(a, fileA)
+	if err != nil || review == nil {
+		t.Fatalf("repository A review = %v, %v", review, err)
+	}
+	if err := review.Approve(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ApprovedServiceSecrets(a, fileA, body); !ok {
+		t.Fatal("repository A lost its approval")
+	}
+	if _, ok := ApprovedServiceSecrets(b, fileB, body); ok {
+		t.Fatal("identical Compose content inherited another repository's approval")
+	}
+	marker, err := os.ReadFile(filepath.Join(a, serviceApprovalMarker))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(b, serviceApprovalMarker), marker, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ApprovedServiceSecrets(b, fileB, body); ok {
+		t.Fatal("copied service marker inherited another repository's approval")
+	}
+	if review, err := ReviewServiceSecrets(b, fileB); err != nil || review == nil {
+		t.Fatalf("copied marker should still need review: %v, %v", review, err)
+	} else if err := review.Approve(); err == nil {
+		t.Fatal("approval published against an unmatched copied marker")
+	}
+	// Replacing the public name cannot restore authority with its bytes.
+	if err := os.Remove(filepath.Join(a, serviceApprovalMarker)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(a, serviceApprovalMarker), marker, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ApprovedServiceSecrets(a, fileA, body); ok {
+		t.Fatal("replaced marker inherited the old approval")
+	}
+}
+
+func TestWritableSecretBindsAndSecretDirectoriesCannotBeApproved(t *testing.T) {
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	for _, tc := range []struct{ name, bind, blocked string }{
+		{"direct writable file", `./tls.key:/key`, "tls.key"},
+		{"writable parent", `./certs:/certs`, "certs/tls.key"},
+		{"secret directory", `./.ssh:/ssh:ro`, ".ssh"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			if err := os.Mkdir(filepath.Join(repo, "certs"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(repo, ".ssh"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for _, rel := range []string{"tls.key", "certs/tls.key", ".ssh/id_key"} {
+				if err := os.WriteFile(filepath.Join(repo, rel), []byte("-----BEGIN PRIVATE KEY-----\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			compose := filepath.Join(repo, "compose.yml")
+			body := "services:\n  app:\n    image: app:1\n    volumes: [\"" + tc.bind + "\"]\n"
+			if err := os.WriteFile(compose, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			review, err := ReviewServiceSecrets(repo, compose)
+			if err != nil || review == nil || len(review.Files) != 0 || len(review.Blocked) != 1 || review.Blocked[0].Path != tc.blocked {
+				t.Fatalf("unsafe secret review = %+v, %v", review, err)
+			}
+			if err := review.Approve(); err == nil {
+				t.Fatal("unsafe secret source was approved")
+			}
+			_, cleanup, hidden, err := snapshotComposeArgs(repo, compose, false)
+			if err != nil || !slices.Contains(hidden, tc.blocked) {
+				t.Fatalf("unsafe source lost its decoy: %v, %v", hidden, err)
+			}
+			cleanup()
+			if tc.name == "secret directory" {
+				if err := os.WriteFile(filepath.Join(repo, ".ssh", "later.key"), []byte("new key"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				_, cleanup, hidden, err = snapshotComposeArgs(repo, compose, false)
+				if err != nil || !slices.Contains(hidden, ".ssh") {
+					t.Fatalf("new child escaped hidden directory: %v, %v", hidden, err)
+				}
+				cleanup()
+			}
+		})
+	}
+}
+
+func TestExternalVolumeApprovalNamesActualAccessAndExpiresOnEdit(t *testing.T) {
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	rt := serviceReviewRuntime(t, "")
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	body := "services:\n  db:\n    image: postgres:18\n    volumes: [\"customer:/data:ro\"]\n  writer:\n    image: alpine\n    volumes:\n      - type: volume\n        source: customer\n        target: /backup\nvolumes:\n  customer:\n    name: actual-customer-data\n"
+	if err := os.WriteFile(compose, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	review, err := ReviewServiceStart(repo, compose, rt)
+	if err != nil || len(review.Volumes) != 1 || review.Volumes[0].Name != "actual-customer-data" ||
+		!review.Volumes[0].Writable || strings.Join(review.Volumes[0].Consumers, ",") != "db → /data,writer → /backup" {
+		t.Fatalf("volume review = %+v, %v", review, err)
+	}
+	if err := review.ApproveVolumes(); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := ReviewServiceStart(repo, compose, rt); err != nil || again.VolumeApprovalNeeded {
+		t.Fatalf("unchanged review = %+v, %v", again, err)
+	}
+	for _, changed := range []string{
+		strings.Replace(body, "actual-customer-data", "different-data", 1),
+		strings.Replace(body, "customer:/data:ro", "customer:/other:ro", 1),
+		strings.Replace(body, "customer:/data:ro", "customer:/data", 1),
+	} {
+		if err := os.WriteFile(compose, []byte(changed), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if again, err := ReviewServiceStart(repo, compose, rt); err != nil || !again.VolumeApprovalNeeded {
+			t.Fatalf("edited volume inherited approval: %+v, %v", again, err)
+		}
+	}
+}
+
+func TestVolumeApprovalRefusesChangedDaemonOrVolumeObject(t *testing.T) {
+	for _, change := range []string{"endpoint", "daemon", "created-at", "bind-backed"} {
+		t.Run(change, func(t *testing.T) {
+			t.Setenv(ServiceStateRootEnv, t.TempDir())
+			recorder := filepath.Join(t.TempDir(), "runtime.log")
+			rt := serviceReviewRuntime(t, recorder)
+			repo := t.TempDir()
+			compose := filepath.Join(repo, "compose.yml")
+			body := "services:\n  db:\n    image: postgres:18\n    volumes: [customer:/data:ro]\nvolumes:\n  customer:\n    external: true\n    name: customer-data\n"
+			if err := os.WriteFile(compose, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			review, err := ReviewServiceStart(repo, compose, rt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := review.ApproveVolumes(); err != nil {
+				t.Fatal(err)
+			}
+			switch change {
+			case "endpoint":
+				t.Setenv("DOCKER_HOST", "unix:///different.sock")
+			case "daemon":
+				t.Setenv("COOP_TEST_DAEMON", "different-daemon")
+			case "created-at":
+				t.Setenv("COOP_TEST_VOLUME_CREATED", "2026-02-02T00:00:00Z")
+			case "bind-backed":
+				t.Setenv("COOP_TEST_VOLUME_OPTS", "bind")
+			}
+			if _, err := UpServicesReviewed(rt, repo, compose, review, io.Discard, io.Discard); err == nil {
+				t.Fatal("changed Docker volume authority reached Compose")
+			}
+			if calls, err := os.ReadFile(recorder); err == nil && strings.Contains(string(calls), " up ") {
+				t.Fatalf("Compose ran after authority changed: %s", calls)
+			}
+			if next, err := ReviewServiceStart(repo, compose, rt); change == "bind-backed" {
+				if err == nil || next != nil {
+					t.Fatalf("bind-backed local volume became approvable: %+v, %v", next, err)
+				}
+			} else if err != nil || !next.VolumeApprovalNeeded {
+				t.Fatalf("changed Docker object reused saved grant: %+v, %v", next, err)
+			}
+		})
+	}
+}
+
+func TestApprovedCustomVolumeIsCreatedPlainAndBoundToItsObject(t *testing.T) {
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	state := filepath.Join(t.TempDir(), "created")
+	t.Setenv("COOP_TEST_VOLUME_STATE", state)
+	rt := serviceReviewRuntime(t, recorder)
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	body := "services:\n  db:\n    image: postgres:18\n    volumes: [customer:/data]\nvolumes:\n  customer:\n    name: customer-data\n"
+	if err := os.WriteFile(compose, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	review, err := ReviewServiceStart(repo, compose, rt)
+	if err != nil || !review.VolumeApprovalNeeded || !slices.Equal(review.NewVolumes, []string{"customer-data"}) {
+		t.Fatalf("absent custom volume review = %+v, %v", review, err)
+	}
+	if _, err := os.Stat(state); !os.IsNotExist(err) {
+		t.Fatalf("review created the volume before approval: %v", err)
+	}
+	if err := review.ApproveVolumes(); err != nil {
+		t.Fatal(err)
+	}
+	if identity, ok := review.VolumeIdentity("customer-data"); !ok || identity.CreatedAt == "" {
+		t.Fatalf("created volume identity = %+v, %t", identity, ok)
+	}
+	if next, err := ReviewServiceStart(repo, compose, rt); err != nil || next.VolumeApprovalNeeded {
+		t.Fatalf("created plain volume required repeat review: %+v, %v", next, err)
+	}
+	if calls, err := os.ReadFile(recorder); err != nil || !strings.Contains(string(calls), "volume create --driver local customer-data") {
+		t.Fatalf("approved volume was not created plain: %v\n%s", err, calls)
 	}
 }
 
@@ -253,14 +510,14 @@ func TestHiddenServiceFileNoticeGoesToTheUserNotTheComposeWriter(t *testing.T) {
 	if runErr != nil {
 		t.Fatalf("start = %v", runErr)
 	}
-	if !strings.Contains(seen.String(), "empty file in place of tls.key") {
+	if !strings.Contains(seen.String(), "empty source in place of tls.key") {
 		t.Fatalf("the notice never reached the user:\nstderr: %q\ncompose writer: %q", seen.String(), composeWriter.String())
 	}
-	if strings.Contains(composeWriter.String(), "empty file in place of") {
+	if strings.Contains(composeWriter.String(), "empty source in place of") {
 		t.Fatalf("the notice went to the compose writer, which a box start discards: %q", composeWriter.String())
 	}
 	want := "Configuring network access\n  ⚠ Unrestricted — nothing is blocked\n\n" +
-		"⚠ services get an empty file in place of tls.key (looks like a secret) — to let them read the real file, run `coop up` in a terminal and approve compose.yml; the approval lasts until that file changes\n\n" +
+		"⚠ services get an empty source in place of tls.key (looks like a secret) — run `coop up` in a terminal to review eligible read-only files; secret directories and writable binds remain hidden\n\n" +
 		"⚠ Project services could not start\n\n" +
 		"      Container project-db Running\n      Container project-keycloak Waiting\n\n  Run coop up to retry.\n"
 	if seen.String() != want {

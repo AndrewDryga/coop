@@ -1008,6 +1008,9 @@ BEFORE A REAL RUN
   in a directory without a project Dockerfile. Building may download dependencies.
   A dry run validates the plan, not credentials, runtime or image readiness.
 
+  cloc is optional. Install it for change-size figures; grading and verdicts still
+  work when it is unavailable, and the result labels the missing measurement.
+
   --timeout is required even for a preview. It is a time limit, not a money cap.
   More configurations or repetitions mean more paid work. Each case also has its
   own timeout in suite.yaml; raising the total budget does not raise that limit.
@@ -1337,10 +1340,22 @@ Agents reach each service by its Compose name. Starting again is safe.
 If an agent is changing this checkout, Coop waits for a safe launch window.
 Running development and loop stacks remain isolated after startup.
 Requires Docker with Compose support.
+Repository binds cannot relabel host files or change mount propagation.
+Read-only sessions require each bind source to exist before startup.
 
-If a service asks to read a secret file, Coop asks at a terminal before
-allowing it. Otherwise the service receives an empty file. Approval applies
-to the reviewed Compose file and must be repeated if that file changes.
+If a service asks to read a secret file through a read-only bind, Coop asks
+at a terminal before allowing it. Otherwise it receives an empty file.
+Secret directories and writable binds stay hidden. Approval applies to
+this repository's exact Compose file and must be repeated if it changes.
+
+External or custom-named Docker volumes can contain data outside this project.
+At a terminal, Coop names each actual volume, its read-only/read-write access,
+which service attaches it, and the selected Docker daemon before asking.
+Only plain local volumes are supported; a missing custom volume is created
+after approval. A daemon or volume replacement requires fresh review.
+Declining stops startup. Automatic, filtered, and non-terminal starts refuse
+these volumes even after approval.
+Previously saved service-file approvals need one fresh review after upgrading.
 
 Add services:  coop init --services
 Stop services: coop down

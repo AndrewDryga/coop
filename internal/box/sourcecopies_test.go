@@ -2,15 +2,16 @@ package box
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
 func TestRepositoryCopiesContainSources(t *testing.T) {
@@ -23,37 +24,45 @@ func TestRepositoryCopiesContainSources(t *testing.T) {
 		{"settings", ".agent/claude/settings.json", false},
 		{"hooks", ".agent/claude/hooks", true},
 	} {
-		for _, kind := range []string{"outside", "relative inside", "absolute inside"} {
+		for _, kind := range []string{"regular", "outside", "relative inside", "absolute inside"} {
 			t.Run(artifact.name+"/"+kind, func(t *testing.T) {
 				repo := t.TempDir()
-				target := filepath.Join(repo, "source")
-				if kind == "outside" {
-					target = filepath.Join(t.TempDir(), "source")
-				}
-				content := target
-				if artifact.dir {
-					content = filepath.Join(target, "SKILL.md")
-				}
-				if err := os.MkdirAll(filepath.Dir(content), 0o700); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(content, []byte("synthetic-source-canary"), 0o600); err != nil {
-					t.Fatal(err)
-				}
 				source := filepath.Join(repo, artifact.path)
-				if err := os.MkdirAll(filepath.Dir(source), 0o700); err != nil {
-					t.Fatal(err)
-				}
-				link := target
-				if kind == "relative inside" {
-					var err error
-					link, err = filepath.Rel(filepath.Dir(source), target)
-					if err != nil {
+				if kind == "regular" {
+					content := source
+					if artifact.dir {
+						content = filepath.Join(source, "SKILL.md")
+					}
+					writeCopyFixture(t, content, "synthetic-source-canary")
+				} else {
+					target := filepath.Join(repo, "source")
+					if kind == "outside" {
+						target = filepath.Join(t.TempDir(), "source")
+					}
+					content := target
+					if artifact.dir {
+						content = filepath.Join(target, "SKILL.md")
+					}
+					if err := os.MkdirAll(filepath.Dir(content), 0o700); err != nil {
 						t.Fatal(err)
 					}
-				}
-				if err := os.Symlink(link, source); err != nil {
-					t.Fatal(err)
+					if err := os.WriteFile(content, []byte("synthetic-source-canary"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.MkdirAll(filepath.Dir(source), 0o700); err != nil {
+						t.Fatal(err)
+					}
+					link := target
+					if kind == "relative inside" {
+						var err error
+						link, err = filepath.Rel(filepath.Dir(source), target)
+						if err != nil {
+							t.Fatal(err)
+						}
+					}
+					if err := os.Symlink(link, source); err != nil {
+						t.Fatal(err)
+					}
 				}
 				var mounts []extraMount
 				var dirs []string
@@ -166,6 +175,115 @@ func TestRepositoryCopiesValidateRelocatedLinks(t *testing.T) {
 	}
 }
 
+func TestRepositoryCopiesKeepProtectedDescendantsOutOfEverySyntheticHome(t *testing.T) {
+	repo := t.TempDir()
+	skills := filepath.Join(repo, ".agent", "skills")
+	writeCopyFixture(t, filepath.Join(skills, "SKILL.md"), "public skill")
+	writeCopyFixture(t, filepath.Join(skills, ".env"), "TOP_SECRET=1")
+	writeCopyFixture(t, filepath.Join(skills, "private", ".coopignore"), "token.txt\n")
+	writeCopyFixture(t, filepath.Join(skills, "private", "token.txt"), "private token")
+
+	mounts, dirs, err := synthSkillsMounts(repo, "/home/node", "", []string{"codex", "gemini"})
+	for _, dir := range dirs {
+		t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	}
+	if err != nil || len(mounts) != 2 {
+		t.Fatalf("synthetic skill mounts = %v, %v", mounts, err)
+	}
+	for _, mount := range mounts {
+		if data, err := os.ReadFile(filepath.Join(mount.host, "SKILL.md")); err != nil || string(data) != "public skill" {
+			t.Fatalf("public skill in %s = %q, %v", mount.host, data, err)
+		}
+		for _, hidden := range []string{".env", filepath.Join("private", "token.txt")} {
+			if _, err := os.Lstat(filepath.Join(mount.host, hidden)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("protected %s appeared in %s: %v", hidden, mount.host, err)
+			}
+		}
+	}
+}
+
+func TestRepositoryCopiesApplyAliasAndTargetSecretRules(t *testing.T) {
+	for _, policy := range []struct {
+		name, location, rule string
+	}{
+		{"alias rule", ".coopignore", ".agent/skills/private.txt\n"},
+		{"target rule", "source/.coopignore", "private.txt\n"},
+	} {
+		t.Run(policy.name, func(t *testing.T) {
+			repo := t.TempDir()
+			writeCopyFixture(t, filepath.Join(repo, policy.location), policy.rule)
+			writeCopyFixture(t, filepath.Join(repo, "source", "SKILL.md"), "public")
+			writeCopyFixture(t, filepath.Join(repo, "source", "private.txt"), "secret")
+			if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("../source", filepath.Join(repo, ".agent", "skills")); err != nil {
+				t.Fatal(err)
+			}
+			mounts, dirs, err := synthSkillsMounts(repo, "/home/node", "", []string{"codex"})
+			for _, dir := range dirs {
+				t.Cleanup(func() { _ = os.RemoveAll(dir) })
+			}
+			if err != nil || len(mounts) != 1 {
+				t.Fatalf("safe linked source = %v, %v", mounts, err)
+			}
+			if got, err := os.ReadFile(filepath.Join(mounts[0].host, "SKILL.md")); err != nil || string(got) != "public" {
+				t.Fatalf("public skill = %q, %v", got, err)
+			}
+			if _, err := os.Stat(filepath.Join(mounts[0].host, "private.txt")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("protected target re-exported: %v", err)
+			}
+		})
+	}
+}
+
+func TestRepositoryCopiesBoundAggregatePolicyInput(t *testing.T) {
+	repo := t.TempDir()
+	skills := filepath.Join(repo, ".agent", "skills")
+	writeCopyFixture(t, filepath.Join(skills, "SKILL.md"), "public")
+	for i := range 17 {
+		policy := filepath.Join(skills, fmt.Sprintf("dir-%02d", i), ".coopignore")
+		writeCopyFixture(t, policy, strings.Repeat("#", 1<<20-1))
+	}
+	if mounts, dirs, err := synthSkillsMounts(repo, "/home/node", "", []string{"codex"}); err == nil ||
+		!strings.Contains(err.Error(), "policy exceeds") || len(mounts) != 0 || len(dirs) != 0 {
+		t.Fatalf("oversized policy tree = %v, %v, %v", mounts, dirs, err)
+	}
+}
+
+func TestRepositoryCopiesKeepPinnedPolicyAuthorityAfterRepositoryReplacement(t *testing.T) {
+	parent := t.TempDir()
+	repo := filepath.Join(parent, "repo")
+	writeCopyFixture(t, filepath.Join(repo, ".coopignore"), "source/private.txt\n")
+	writeCopyFixture(t, filepath.Join(repo, "source", "public.txt"), "public")
+	writeCopyFixture(t, filepath.Join(repo, "source", "private.txt"), "old private")
+	sources, err := openRepositorySources(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sources.Close()
+	tree, policy, err := sources.openTree("source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tree.Close()
+
+	if err := os.Rename(repo, repo+"-held"); err != nil {
+		t.Fatal(err)
+	}
+	writeCopyFixture(t, filepath.Join(repo, "source", "private.txt"), "replacement private")
+	dst := filepath.Join(t.TempDir(), "copy")
+	if err := copySourceTree(dst, tree, policy); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(dst, "public.txt")); err != nil || string(data) != "public" {
+		t.Fatalf("pinned public file = %q, %v", data, err)
+	}
+	if _, err := os.Lstat(filepath.Join(dst, "private.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("old protected file escaped frozen policy: %v", err)
+	}
+}
+
 func TestRepositoryCopiesKeepPinnedSourceAuthority(t *testing.T) {
 	repo, outside := t.TempDir(), t.TempDir()
 	writeCopyFixture(t, filepath.Join(repo, "source", "SKILL.md"), "inside")
@@ -174,8 +292,8 @@ func TestRepositoryCopiesKeepPinnedSourceAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer sources.root.Close()
-	tree, err := sources.openTree("source")
+	defer sources.Close()
+	tree, policy, err := sources.openTree("source")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +305,7 @@ func TestRepositoryCopiesKeepPinnedSourceAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	dst := t.TempDir()
-	if err := copySourceTree(dst, tree); err != nil {
+	if err := copySourceTree(dst, tree, policy); err != nil {
 		t.Fatal(err)
 	}
 	if data, err := os.ReadFile(filepath.Join(dst, "SKILL.md")); err != nil || string(data) != "inside" {
@@ -205,7 +323,7 @@ func TestRepositoryCopiesRejectSpecialAndOversizedFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer sources.root.Close()
+	defer sources.Close()
 	if present, err := sources.exists("settings", false); err != nil || !present {
 		t.Fatalf("initial regular file = %v, %v", present, err)
 	}
@@ -218,8 +336,8 @@ func TestRepositoryCopiesRejectSpecialAndOversizedFiles(t *testing.T) {
 	if _, err := sources.readFile("settings"); err == nil {
 		t.Fatal("opened a replacement FIFO as settings")
 	}
-	if f, err := (sourceCopyFS{root: sources.root}).Open("settings"); err == nil {
-		f.Close()
+	if f, _, err := sources.openTree("settings"); err == nil {
+		_ = f.Close()
 		t.Fatal("opened a replacement FIFO as tree content")
 	}
 	writeCopyFixture(t, filepath.Join(repo, "large"), strings.Repeat("x", maxFallbackFileBytes+1))
@@ -232,7 +350,7 @@ func TestRepositoryCopiesRejectSpecialAndOversizedFiles(t *testing.T) {
 	if err := os.Symlink("missing", filepath.Join(repo, "dangling")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sources.exists("dangling", false); !errors.Is(err, os.ErrNotExist) {
+	if _, err := sources.exists("dangling", false); err == nil {
 		t.Fatalf("dangling artifact = %v", err)
 	}
 }
@@ -329,9 +447,10 @@ func TestPrivateCopiesAndComposeRejectExposedRoots(t *testing.T) {
 	assertDenied(err)
 	_, _, err = writeServiceOverride([]ServicePort{{Service: "db", ContainerPort: 5432, HostPort: 25432}}, repo, exposed)
 	assertDenied(err)
-	_, err = EnsureServicesFile(runtime.Runtime{}, repo, source, io.Discard, io.Discard, exposed)
+	rt := recorderRuntime(t, filepath.Join(t.TempDir(), "runtime.log"))
+	_, err = EnsureServicesFile(rt, repo, source, io.Discard, io.Discard, exposed)
 	assertDenied(err)
-	assertDenied(DownServicesFile(runtime.Runtime{}, repo, source, false, io.Discard, io.Discard, exposed))
+	assertDenied(DownServicesFile(rt, repo, source, false, io.Discard, io.Discard, exposed))
 	entries, err := os.ReadDir(exposed)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("private artifacts published before refusal: %v %v", entries, err)
@@ -349,6 +468,51 @@ func TestRepositorySourcesAcceptRelativeRepository(t *testing.T) {
 	}
 	if err != nil || len(mounts) != 1 {
 		t.Fatalf("relative repository = %v, %v", mounts, err)
+	}
+}
+
+func TestRepositoryPolicySnapshotRefusesSwappedLeafWithoutFollowingOrBlocking(t *testing.T) {
+	repo := t.TempDir()
+	policy := filepath.Join(repo, CoopIgnoreFile)
+	if err := os.WriteFile(policy, []byte("*.secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sources, err := openRepositorySources(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sources.Close()
+	outside := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(outside, []byte("HOST SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(policy); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, policy); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := sources.readRegularFileNoFollow(CoopIgnoreFile, coopIgnoreSnapshotLimit); err == nil || len(data) != 0 {
+		t.Fatalf("outward policy symlink = %q, %v; want refusal without content", data, err)
+	}
+	if err := os.Remove(policy); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(policy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := sources.readRegularFileNoFollow(CoopIgnoreFile, coopIgnoreSnapshotLimit)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("repository policy FIFO was accepted")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("repository policy snapshot blocked on a swapped FIFO")
 	}
 }
 

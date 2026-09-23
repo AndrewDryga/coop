@@ -24,6 +24,9 @@ const reapMinimumAge = time.Hour
 var tempPrefixes = []string{
 	"coop-mcp-", "coop-decoy-", "coop-decoy-dir-", "coop-githooks-",
 	"coop-audit-trees-", "coop-skills-", "coop-test-task-leases-",
+	// One directory now contains every generated artifact for an ordinary run. Keeping the parent
+	// together prevents same-UID boxes from enumerating one another's transient credentials.
+	"coop-run-",
 	// An open run's MCP credential broker keeps the run's real credentials here, so a killed
 	// coop must not leave them behind. The mount check below lists a BOX's mounts, and the
 	// helper is not a box — the hour of grace, and the container holding the bind-mounted file
@@ -69,7 +72,7 @@ func ReapOrphanTempEntries(
 			continue
 		}
 		path := filepath.Join(dir, entry.Name())
-		if mounted[path] {
+		if tempEntryMounted(path, mounted) {
 			continue
 		}
 		info, err := entry.Info()
@@ -83,6 +86,18 @@ func ReapOrphanTempEntries(
 		removed++
 	}
 	return removed, errors.Join(failures...)
+}
+
+func tempEntryMounted(path string, mounted map[string]bool) bool {
+	path = filepath.Clean(path)
+	for source := range mounted {
+		source = filepath.Clean(source)
+		rel, err := filepath.Rel(path, source)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasTempPrefix(name string) bool {

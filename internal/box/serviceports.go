@@ -137,6 +137,9 @@ func parseServicePortsChecked(configJSON []byte, workspacePath string) ([]Servic
 		if scheme == "" {
 			scheme = "http"
 		}
+		if !validServiceScheme(scheme) {
+			return nil, fmt.Errorf("service %q: coop.service.scheme must be a plain URI scheme", name)
+		}
 		for _, e := range svc.Expose {
 			port, err := strconv.Atoi(strings.TrimSpace(e))
 			if err != nil || port < 1 || port > 65535 {
@@ -153,6 +156,24 @@ func parseServicePortsChecked(configJSON []byte, workspacePath string) ([]Servic
 		}
 	}
 	return out, nil
+}
+
+func validServiceScheme(value string) bool {
+	if len(value) == 0 || len(value) > 64 {
+		return false
+	}
+	first := value[0]
+	if !(first >= 'A' && first <= 'Z' || first >= 'a' && first <= 'z') {
+		return false
+	}
+	for i := 1; i < len(value); i++ {
+		c := value[i]
+		if c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '+' || c == '-' || c == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // writeServiceOverride writes a temp compose override publishing each ServicePort to

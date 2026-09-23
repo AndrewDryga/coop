@@ -51,6 +51,52 @@ func TestServiceLaunchWaitsForSandboxMountWindow(t *testing.T) {
 	}
 }
 
+func TestServiceLaunchLockFollowsMovedRepositoryNotReplacement(t *testing.T) {
+	t.Setenv(TestExecutionRegistryRootEnv, t.TempDir())
+	parent := t.TempDir()
+	repo := filepath.Join(parent, "repo")
+	moved := filepath.Join(parent, "moved")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	before, err := ServiceLaunchLockPath(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared, err := LockServiceLaunch(context.Background(), repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer shared()
+	if err := os.Rename(repo, moved); err != nil {
+		t.Fatal(err)
+	}
+	after, err := ServiceLaunchLockPath(moved)
+	if err != nil || after != before {
+		t.Fatalf("moved repository lock = %q, %v; want %q", after, err, before)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+	defer cancel()
+	if unlock, err := LockServiceLaunch(ctx, moved, true); !errors.Is(err, context.DeadlineExceeded) {
+		if unlock != nil {
+			unlock()
+		}
+		t.Fatalf("moved checkout escaped its shared lock: %v", err)
+	}
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := ServiceLaunchLockPath(repo)
+	if err != nil || replacement == before {
+		t.Fatalf("replacement lock = %q, %v; want a distinct inode key", replacement, err)
+	}
+	separate, err := LockServiceLaunch(context.Background(), repo, true)
+	if err != nil {
+		t.Fatalf("replacement incorrectly waited for moved checkout: %v", err)
+	}
+	separate()
+}
+
 func TestExecutionRegistryTracksAllBoundIdentityAndExactCleanup(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "repo")
 	makeGenerationWorkspace(t, repo, "perf")

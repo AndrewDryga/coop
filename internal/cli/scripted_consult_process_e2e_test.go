@@ -1055,7 +1055,7 @@ func assertConsultRoleWiring(t *testing.T, run *processRun, lead string, first, 
 		if mount.Target == "<container>"+consult.ConsultWrapperPath && mount.ReadOnly {
 			wrapper++
 		}
-		if mount.Target == "<container>/home/node/.coop/consult/advisor.md" && mount.ReadOnly && strings.HasPrefix(mount.Source, "<root>/tmp/coop-mcp-") {
+		if mount.Target == "<container>/home/node/.coop/consult/advisor.md" && mount.ReadOnly && recordedGeneratedMountPath(mount.Source) && strings.HasPrefix(filepath.Base(mount.Source), "coop-mcp-") {
 			persona++
 		}
 	}
@@ -1089,7 +1089,7 @@ func assertConsultMounts(t *testing.T, suite *directProcessSuite, run *processTr
 		switch {
 		case m.Target == "<container>"+consult.ConsultWrapperPath:
 			wrapper++
-			if !m.ReadOnly || !strings.HasPrefix(m.Source, "<root>/tmp/coop-mcp-") {
+			if !m.ReadOnly || !recordedGeneratedMountPath(m.Source) || !strings.HasPrefix(filepath.Base(m.Source), "coop-mcp-") {
 				t.Errorf("unsafe consult wrapper mount: %#v", m)
 			}
 		case m.Source == processTracePath(suite.layout.Root, suite.layout.Repo) && m.Target == processTracePath(suite.layout.Root, suite.layout.Repo):

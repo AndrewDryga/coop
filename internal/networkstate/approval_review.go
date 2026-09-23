@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/egress"
 )
@@ -26,16 +25,28 @@ type ApprovalReview struct {
 	Digest string    `json:"digest"`
 }
 
-// ReviewApproval publishes nothing. Its arguments must be the same snapshot the
-// operator sees; never re-read repository YAML between review and Approve.
+// ReviewApproval grants nothing. It prepares a non-authoritative hardlink binding for the project;
+// its arguments must be the same snapshot the operator sees, and Approve later authenticates that
+// snapshot and binding by their digest. Never re-read repository YAML between review and Approve.
 // services carries each `service:` grant's reviewed Compose definition plus its
 // startup dependencies. Only the rules grant network access.
 func (s *Store) ReviewApproval(project string, mode egress.Mode, requests []egress.Rule, bundles []egress.Bundle, services map[string]string) (ApprovalReview, error) {
-	review, _, err := s.reviewApproval(project, mode, requests, bundles, services)
+	review, _, err := s.reviewApproval(project, mode, requests, bundles, services, true)
 	return review, err
 }
 
-func (s *Store) reviewApproval(project string, mode egress.Mode, requests []egress.Rule, bundles []egress.Bundle, services map[string]string) (ApprovalReview, []egress.Bundle, error) {
+// ReviewApprovalExisting prepares a review only when the project's current hardlink binding can
+// be reused byte-for-byte. transition is true when creating or re-enrolling the binding would be
+// required; the caller can then take its cross-box exclusive lock and retry ReviewApproval.
+func (s *Store) ReviewApprovalExisting(project string, mode egress.Mode, requests []egress.Rule, bundles []egress.Bundle, services map[string]string) (review ApprovalReview, transition bool, err error) {
+	review, _, err = s.reviewApproval(project, mode, requests, bundles, services, false)
+	if errors.Is(err, errProjectAnchorTransition) {
+		return ApprovalReview{}, true, nil
+	}
+	return review, false, err
+}
+
+func (s *Store) reviewApproval(project string, mode egress.Mode, requests []egress.Rule, bundles []egress.Bundle, services map[string]string, allowAnchorTransition bool) (ApprovalReview, []egress.Bundle, error) {
 	if err := s.intactAuthority(); err != nil {
 		return ApprovalReview{}, nil, err
 	}
@@ -69,22 +80,23 @@ func (s *Store) reviewApproval(project string, mode egress.Mode, requests []egre
 	if err != nil {
 		return ApprovalReview{}, nil, err
 	}
-	device, inode, ok := directoryIdentity(identity)
-	if !ok {
-		return ApprovalReview{}, nil, errors.New("this project directory could not be read")
+	before, err := s.approval(id)
+	if err != nil {
+		return ApprovalReview{}, nil, err
 	}
-	after := &Approval{Version: 1, ProjectID: id, Posture: mode, Envelope: rules, Device: device, Inode: inode, Features: features}
+	anchor, err := s.ensureProjectAnchor(resolved, id, allowAnchorTransition, before)
+	if err != nil {
+		return ApprovalReview{}, nil, err
+	}
+	after := &Approval{Version: networkApprovalVersion, ProjectID: id, Posture: mode, Envelope: rules,
+		ProjectAnchor: anchor, Features: features}
 	if after.Services, err = approvedServices(rules, services); err != nil {
 		return ApprovalReview{}, nil, err
 	}
 	if data, err := json.Marshal(after); err != nil || len(data) > maxPrivateRecordBytes {
 		return ApprovalReview{}, nil, errors.New("network approval exceeds byte limit")
 	}
-	before, err := s.approval(id)
-	if err != nil {
-		return ApprovalReview{}, nil, err
-	}
-	digest, err := s.approvalReviewDigest(resolved, identity, before, after)
+	digest, err := s.approvalReviewDigest(resolved, before, after)
 	if err != nil {
 		return ApprovalReview{}, nil, err
 	}
@@ -93,24 +105,18 @@ func (s *Store) reviewApproval(project string, mode egress.Mode, requests []egre
 
 // The digest is keyed: a public value cannot be replayed as owner consent, and
 // a project rebound to another directory produces a different view.
-func (s *Store) approvalReviewDigest(resolved string, identity os.FileInfo, before, after *Approval) (string, error) {
-	stat, ok := identity.Sys().(*syscall.Stat_t)
-	if !ok {
-		return "", errors.New("network approval project identity is unavailable")
-	}
+func (s *Store) approvalReviewDigest(resolved string, before, after *Approval) (string, error) {
 	view := struct {
-		Project       string    `json:"project"`
-		Device, Inode uint64    `json:"-"`
-		Before        *Approval `json:"before"`
-		After         *Approval `json:"after"`
-	}{Project: resolved, Device: uint64(stat.Dev), Inode: stat.Ino, Before: before, After: after}
+		Project string    `json:"project"`
+		Before  *Approval `json:"before"`
+		After   *Approval `json:"after"`
+	}{Project: resolved, Before: before, After: after}
 	data, err := json.Marshal(view)
 	if err != nil {
 		return "", err
 	}
 	mac := hmac.New(sha256.New, s.key)
-	_, _ = mac.Write([]byte("network-approval-review-v1\x00"))
-	_, _ = fmt.Fprintf(mac, "%d\x00%d\x00", view.Device, view.Inode)
+	_, _ = mac.Write([]byte("network-approval-review-v3\x00"))
 	_, _ = mac.Write(data)
 	return hex.EncodeToString(mac.Sum(nil)), nil
 }
@@ -132,7 +138,10 @@ func (s *Store) Approve(ctx context.Context, project string, mode egress.Mode, r
 	if !lowerHex(digest, 64) {
 		return errors.New("network approval requires the digest of a current review")
 	}
-	review, selected, err := s.reviewApproval(project, mode, requests, bundles, services)
+	review, selected, err := s.reviewApproval(project, mode, requests, bundles, services, false)
+	if errors.Is(err, errProjectAnchorTransition) {
+		return ErrApprovalChanged
+	}
 	if err != nil {
 		return err
 	}
@@ -140,7 +149,10 @@ func (s *Store) Approve(ctx context.Context, project string, mode egress.Mode, r
 		return ErrApprovalChanged
 	}
 	return s.lockRecord(ctx, "approval", review.After.ProjectID, func() error {
-		current, _, err := s.reviewApproval(project, mode, requests, bundles, services)
+		current, _, err := s.reviewApproval(project, mode, requests, bundles, services, false)
+		if errors.Is(err, errProjectAnchorTransition) {
+			return ErrApprovalChanged
+		}
 		if err != nil {
 			return err
 		}

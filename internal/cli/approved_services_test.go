@@ -32,11 +32,15 @@ type composeShim struct {
 
 func (s composeShim) build(t *testing.T) runtime.Runtime {
 	t.Helper()
+	t.Setenv("DOCKER_CONTEXT", "")
+	t.Setenv("DOCKER_HOST", "unix:///fixture.sock")
 	dir := t.TempDir()
 	path := filepath.Join(dir, "docker")
 	var script strings.Builder
 	script.WriteString("#!/bin/sh\ncase \"$*\" in\n")
 	script.WriteString("  info) exit 0 ;;\n")
+	script.WriteString("  *\"info --format\"*) echo '{\"ID\":\"fixture-daemon\",\"OSType\":\"linux\",\"Architecture\":\"amd64\",\"ServerVersion\":\"29.1\",\"KernelVersion\":\"fixture\",\"SecurityOptions\":[]}' ;;\n")
+	script.WriteString("  *\"volume inspect\"*) for last; do :; done; printf '{\"Name\":\"%s\",\"Driver\":\"local\",\"Scope\":\"local\",\"Mountpoint\":\"/var/lib/docker/volumes/%s/_data\",\"CreatedAt\":\"2026-01-01T00:00:00Z\",\"Options\":{}}\\n' \"$last\" \"$last\" ;;\n")
 	script.WriteString("  *\"config --services\"*)\n")
 	for _, name := range s.services {
 		script.WriteString("    printf '%s\\n' '" + name + "'\n")

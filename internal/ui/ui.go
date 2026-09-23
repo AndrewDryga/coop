@@ -9,7 +9,22 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"unicode"
 )
+
+// SafeInline keeps repository and daemon text from adding terminal commands,
+// new lines, or direction changes to a human approval prompt.
+func SafeInline(value string) string {
+	var out strings.Builder
+	for _, r := range value {
+		if unicode.IsControl(r) || r == 0x061c || r == 0x200e || r == 0x200f || r >= 0x202a && r <= 0x202e || r >= 0x2066 && r <= 0x2069 {
+			fmt.Fprintf(&out, "\\u%04X", r)
+		} else {
+			out.WriteRune(r)
+		}
+	}
+	return out.String()
+}
 
 // Raw SGR codes — always defined. Both the stderr-gated package vars below and the
 // stream-scoped Palette draw from these, so the escape sequences live in exactly one place.

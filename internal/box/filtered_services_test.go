@@ -248,7 +248,7 @@ func TestFilteredStartupScopesComposeToGrantedServices(t *testing.T) {
 			t.Fatalf("service proxy clients = %v, want named dependency closure", clients)
 		}
 	}
-	if err := prepared.start(); err != nil {
+	if err := prepared.start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(recorder)
@@ -270,6 +270,51 @@ func TestFilteredStartupScopesComposeToGrantedServices(t *testing.T) {
 	}
 	if err := checkApprovedServices(&networkstate.Approval{Services: digests}, compose, repo, false); err == nil || !strings.Contains(err.Error(), `service "cache" changed`) {
 		t.Fatalf("changed dependency kept the parent service approval: %v", err)
+	}
+}
+
+func TestFilteredFinalServiceStartRechecksBindsAndNewSecrets(t *testing.T) {
+	for _, changed := range []string{"escaped bind", "new secret"} {
+		t.Run(changed, func(t *testing.T) {
+			repo := t.TempDir()
+			shared := filepath.Join(repo, "shared")
+			if err := os.Mkdir(shared, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			compose := filepath.Join(repo, "compose.yml")
+			data := []byte("services:\n  db:\n    image: postgres:18\n    volumes: [\"./shared:/data:ro\"]\n")
+			if err := os.WriteFile(compose, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			recorder := filepath.Join(t.TempDir(), "runtime.log")
+			prepared := &preparedFilteredServices{runtime: recorderRuntime(t, recorder), repo: repo, file: compose, data: data,
+				selected: []string{"db"}}
+			if changed == "escaped bind" {
+				if err := os.Remove(shared); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink("/", shared); err != nil {
+					t.Fatal(err)
+				}
+				if err := prepared.start(t.Context()); err == nil || !strings.Contains(err.Error(), "outside the repo") {
+					t.Fatalf("escaped bind was launched: %v", err)
+				}
+				if calls, _ := os.ReadFile(recorder); strings.Contains(string(calls), " up ") {
+					t.Fatalf("Compose started after bind escaped: %s", calls)
+				}
+				return
+			}
+			if err := os.WriteFile(filepath.Join(shared, ".env"), []byte("TOKEN=private\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := prepared.start(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			calls, err := os.ReadFile(recorder)
+			if err != nil || !strings.Contains(string(calls), "coop-compose-override-shadow.yml") {
+				t.Fatalf("new secret was not shadowed at final launch: %v\n%s", err, calls)
+			}
+		})
 	}
 }
 
@@ -319,8 +364,13 @@ func TestFilteredLaunchStartsServicesAfterTheGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	address := netip.MustParseAddr("172.31.0.16")
+	compose := filepath.Join(f.record.Project, "compose.yml")
+	data := []byte("services:\n  db:\n    image: postgres:18\n")
+	if err := os.WriteFile(compose, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	f.servicesNet = ComposeProject(f.record.Project) + "_filtered"
-	f.preparedServices = &preparedFilteredServices{runtime: runtime.Runtime{Name: runtimePath}, args: []string{"compose"},
+	f.preparedServices = &preparedFilteredServices{runtime: runtime.Runtime{Name: runtimePath}, repo: f.record.Project, file: compose, data: data,
 		selected: []string{"db"}, addresses: map[string]netip.Addr{"db": address}, cleanup: func() {}}
 	docker.networkMembers = map[string]netip.Addr{strings.Repeat("a", 64): address}
 	docker.composeServices = map[string]string{"db": strings.Repeat("a", 64)}

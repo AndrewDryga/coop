@@ -1,6 +1,7 @@
 package forkspace
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,6 +44,35 @@ func TestStageWorkspaceDiscardMovesTheExactInodeOutOfTheForkRoot(t *testing.T) {
 	pending, err := StagedDiscards(repo, "session-1")
 	if err != nil || len(pending) != 1 || pending[0] != staged {
 		t.Fatalf("StagedDiscards = %v, %v, want [%s]", pending, err, staged)
+	}
+}
+
+func TestStageWorkspaceDiscardDoesNotConfirmAnUnsyncedRename(t *testing.T) {
+	repo, workspace := stagedFixture(t, "session-1")
+	handle, info, err := Pin(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	previous := syncStagedDiscardDirectory
+	t.Cleanup(func() { syncStagedDiscardDirectory = previous })
+	failure := errors.New("synthetic staged-rename directory sync failure")
+	syncStagedDiscardDirectory = func(*os.File) error { return failure }
+
+	staged, err := StageWorkspaceDiscardLocked(repo, "session-1", info)
+	if !errors.Is(err, failure) || staged == "" {
+		t.Fatalf("StageWorkspaceDiscardLocked = %q, %v; want visible but unconfirmed stage", staged, err)
+	}
+	if _, statErr := os.Lstat(workspace); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("visible rename did not occur: %v", statErr)
+	}
+	if _, statErr := os.Lstat(staged); statErr != nil {
+		t.Fatalf("staged tree was lost after sync failure: %v", statErr)
+	}
+
+	syncStagedDiscardDirectory = previous
+	if err := ConfirmWorkspaceDiscardState(repo); err != nil {
+		t.Fatalf("retry durability barrier: %v", err)
 	}
 }
 
@@ -116,6 +146,36 @@ func TestPurgeStagedDiscardsResumesAPartiallyRemovedTree(t *testing.T) {
 	}
 	if _, err := os.Lstat(staged); !os.IsNotExist(err) {
 		t.Fatalf("resumed purge left the tree behind: %v", err)
+	}
+}
+
+func TestPurgeStagedDiscardsDoesNotCountAnUnsyncedRemoval(t *testing.T) {
+	repo, workspace := stagedFixture(t, "session-1")
+	handle, info, err := Pin(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged, err := StageWorkspaceDiscardLocked(repo, "session-1", info)
+	_ = handle.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := syncStagedDiscardDirectory
+	t.Cleanup(func() { syncStagedDiscardDirectory = previous })
+	failure := errors.New("synthetic staged-removal directory sync failure")
+	syncStagedDiscardDirectory = func(*os.File) error { return failure }
+
+	removed, err := PurgeStagedDiscards(repo, "session-1")
+	if removed != 0 || !errors.Is(err, failure) {
+		t.Fatalf("unsynced purge = %d, %v; want 0 and sync failure", removed, err)
+	}
+	if _, statErr := os.Lstat(staged); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("purge did not reach its visible unlink: %v", statErr)
+	}
+
+	syncStagedDiscardDirectory = previous
+	if removed, err := PurgeStagedDiscards(repo, "session-1"); err != nil || removed != 0 {
+		t.Fatalf("purge durability retry = %d, %v; want 0, nil", removed, err)
 	}
 }
 

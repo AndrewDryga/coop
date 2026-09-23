@@ -342,11 +342,9 @@ func renderEvalComparison(c *eval.Comparison) {
 			eval.TrialPassed: o.Passed, eval.TrialFailed: o.Failed, eval.TrialError: o.Errored,
 			eval.TrialTimedOut: o.TimedOut, eval.TrialPending: o.Pending,
 		}}))
-		if o.Size.Measured > 0 {
-			// Beside the counts, never inside them: this is a review signal, not a score.
-			printEvalText("  ", fmt.Sprintf("Change size: net code %+d (%d→%d lines) over %d graded trial(s)",
-				o.Size.NetGrowth, o.Size.CodeBefore, o.Size.CodeAfter, o.Size.Measured))
-		}
+		// Beside the counts, never inside them: this is a review signal, not a score. Its explicit
+		// denominator keeps a missing optional cloc from reading like a zero-sized solution.
+		printEvalText("  Change size: ", evalChangeSizeLine(o.Size, o.Covered()))
 		fmt.Println()
 	}
 	fmt.Println()

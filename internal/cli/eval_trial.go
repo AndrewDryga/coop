@@ -42,6 +42,9 @@ type trialRunner struct {
 	// trial materializes the same bytes.
 	presets map[string]string
 	runBox  boxRunner
+	// measureSize is injected by tests so the trial contract does not depend on an optional host
+	// binary. Production uses eval.MeasureSize and still reports an honest measurement gap.
+	measureSize func(context.Context, string, ...string) (eval.SizeMetrics, error)
 }
 
 // run executes one trial and always returns a status — never an error — because a run records why a
@@ -79,7 +82,11 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 	// tell afterwards whether it did anything at all. Both ignore the harness's own bookkeeping:
 	// the queue's state moves and the loop's telemetry are not the candidate's code.
 	ignore := harnessPaths(r.suite.IsLoop())
-	before, beforeErr := eval.MeasureSize(ctx, workspace, ignore...)
+	measureSize := r.measureSize
+	if measureSize == nil {
+		measureSize = eval.MeasureSize
+	}
+	before, beforeErr := measureSize(ctx, workspace, ignore...)
 	beforeSig, _ := eval.TreeSignature(workspace, ignore...)
 
 	// 4. The attempt. This is the only paid step: one headless agent call, or — for a loop scenario
@@ -129,7 +136,7 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 
 	// 7. Size after, reported BESIDE the verdict. Size never changes a verdict: a smaller wrong
 	// answer is not better than a larger right one.
-	after, afterErr := eval.MeasureSize(ctx, snap.Dir, ignore...)
+	after, afterErr := measureSize(ctx, snap.Dir, ignore...)
 	if beforeErr == nil && afterErr == nil {
 		// Recorded structurally as well as in prose, so a comparison can add it up.
 		res.Size = &eval.TrialSize{CodeBefore: before.TotalCode(), CodeAfter: after.TotalCode()}
@@ -306,7 +313,7 @@ func (w *tailBuffer) String() string {
 func sizeNote(before eval.SizeMetrics, beforeErr error, after eval.SizeMetrics, afterErr error, skipped []string) string {
 	var parts []string
 	if beforeErr != nil || afterErr != nil {
-		parts = append(parts, "change size not measured (cloc unavailable or failed)")
+		parts = append(parts, "change size not measured (optional cloc unavailable or failed; verdict unaffected)")
 	} else {
 		parts = append(parts, fmt.Sprintf("net code %+d (%d→%d lines)", eval.NetCodeGrowth(before, after), before.TotalCode(), after.TotalCode()))
 	}

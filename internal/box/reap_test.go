@@ -73,6 +73,29 @@ func TestReapNeedsBothUnmountedAndOld(t *testing.T) {
 	}
 }
 
+func TestReapPreservesRunDirectoryWhileAChildArtifactIsMounted(t *testing.T) {
+	dir := t.TempDir()
+	run := filepath.Join(dir, "coop-run-live")
+	if err := os.Mkdir(run, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(run, "env")
+	if err := os.WriteFile(artifact, []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	when := time.Now().Add(-3 * time.Hour)
+	if err := os.Chtimes(run, when, when); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := ReapOrphanTempEntries(context.Background(), fakeMounts{sources: map[string]bool{artifact: true}}, dir, time.Now())
+	if err != nil || removed != 0 {
+		t.Fatalf("mounted run directory reap = %d, %v", removed, err)
+	}
+	if _, err := os.Stat(artifact); err != nil {
+		t.Fatalf("mounted artifact was reaped with its parent: %v", err)
+	}
+}
+
 // A runtime that cannot be asked what is mounted must stop the reaper, not
 // empty the directory.
 //

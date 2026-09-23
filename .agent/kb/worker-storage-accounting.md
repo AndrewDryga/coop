@@ -3,7 +3,7 @@ name: worker-storage-accounting
 description: the worker measures allocated blocks and charges a hardlinked baseline once, stages a discard by renaming before deleting, and closes allocation on used-byte watermarks with a free-byte reserve underneath
 subsystem: worker
 sources: [internal/forkspace/usage.go, internal/forkspace/discard_stage.go, internal/sessionsvc/storage.go, internal/sessionsvc/workspace.go, internal/workerproto/storage.go, internal/workerconnector/storage.go, docs/session-api.md]
-updated: 2026-09-11
+updated: 2026-09-23
 ---
 
 A worker accounts for its own disk so a control plane can bound workspace growth. Four things about
@@ -12,7 +12,7 @@ it are not obvious from the code.
 **Only exclusive bytes are reclaimable.** `git clone` of a local path hardlinks the parent's object
 files, so measuring each fork on its own charges the same baseline to every one of them and reports
 a fork root far larger than the volume holds. `forkspace.UsageScan` measures a whole root under one
-accounting: an inode with `Nlink > 1` is charged exactly once, to whichever tree reaches it first,
+accounting: a non-directory inode with `Nlink > 1` is charged exactly once, to whichever tree reaches it first,
 and lands in `SharedBytes`. `ExclusiveBytes()` — the single-link remainder — is what discarding
 actually returns, so it is the number every category total uses
 (`internal/sessionsvc/storage.go`, `StorageTotals`). The shared remainder is reported once as
@@ -48,6 +48,9 @@ only seconds old is treated as a create still in flight, because
 `ensureSessionWorkspaceContext` writes the workspace before the session row exists.
 
 ## Changelog
+- 2026-09-23 — corrected link-count accounting: directories commonly have `Nlink > 1` because of
+  child directories but are still exclusively reclaimable; only multiply-linked non-directories
+  enter the shared-inode set.
 - 2026-09-11 — `docs/worker.md` folded into `docs/session-api.md` with the `coop sessions connect`
   consolidation; the workspace-storage section lives there now.
 - 2026-09-11 — created with the worker-side byte accounting, pressure check and owned-orphan scan.

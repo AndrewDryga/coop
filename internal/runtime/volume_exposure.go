@@ -21,8 +21,8 @@ func (r Runtime) DefaultMountType() string {
 }
 
 type volumeDefinition struct {
-	Name, Driver, Scope, Mountpoint string
-	Options                         map[string]string
+	Name, Driver, Scope, Mountpoint, CreatedAt string
+	Options                                    map[string]string
 }
 
 // BindSources retain paths the existing driver definition will consume. Callers
@@ -228,7 +228,7 @@ func (r volumeReader) readVolumeDefinition(ctx context.Context, name string) (vo
 	}
 	args := []string{"volume", "inspect"}
 	if r.dialect != runtimeAppleContainer {
-		args = append(args, "--format", `{"Name":{{json .Name}},"Driver":{{json .Driver}},"Scope":{{json .Scope}},"Mountpoint":{{json .Mountpoint}},"Options":{{json .Options}}}`)
+		args = append(args, "--format", `{"Name":{{json .Name}},"Driver":{{json .Driver}},"Scope":{{json .Scope}},"Mountpoint":{{json .Mountpoint}},"CreatedAt":{{json .CreatedAt}},"Options":{{json .Options}}}`)
 	}
 	data, err := r.output(ctx, 64<<10, append(args, name)...)
 	if err != nil {

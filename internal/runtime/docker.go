@@ -148,6 +148,55 @@ func (d *Docker) Info() DockerInfo {
 	return value
 }
 
+// NamedVolumeIdentity is the inspected object behind an operator-approved volume name.
+// A replacement under the same name needs a fresh approval.
+type NamedVolumeIdentity struct {
+	Name, CreatedAt, Mountpoint string
+}
+
+// InspectNamedVolume accepts only ordinary local storage, never a plugin or a
+// bind-backed local-driver volume hidden behind a friendly name.
+func (d *Docker) InspectNamedVolume(ctx context.Context, name string) (NamedVolumeIdentity, bool, error) {
+	if !volumeName(name) {
+		return NamedVolumeIdentity{}, false, errors.New("invalid selected Docker volume name")
+	}
+	if err := d.Verify(ctx); err != nil {
+		return NamedVolumeIdentity{}, false, err
+	}
+	definition, err := (volumeReader{runtimeDocker, d.output}).readVolumeDefinition(ctx, name)
+	if err != nil {
+		absent, checkErr := d.volumeAbsent(ctx, name)
+		if checkErr == nil && absent {
+			return NamedVolumeIdentity{}, false, nil
+		}
+		return NamedVolumeIdentity{}, false, errors.Join(err, checkErr)
+	}
+	if definition.Driver != "local" || definition.Scope != "local" || len(definition.Options) != 0 ||
+		definition.CreatedAt == "" || !filepath.IsAbs(definition.Mountpoint) || filepath.Clean(definition.Mountpoint) != definition.Mountpoint {
+		return NamedVolumeIdentity{}, false, errors.New("Docker volume is not plain local storage; use a plain volume or an explicit repository bind")
+	}
+	if err := d.Verify(ctx); err != nil {
+		return NamedVolumeIdentity{}, false, err
+	}
+	return NamedVolumeIdentity{Name: name, CreatedAt: definition.CreatedAt, Mountpoint: definition.Mountpoint}, true, nil
+}
+
+// CreatePlainNamedVolume fills only a confirmed absence on the bound daemon;
+// an intervening conflicting creation fails during the mandatory reinspection.
+func (d *Docker) CreatePlainNamedVolume(ctx context.Context, name string) (NamedVolumeIdentity, error) {
+	if _, present, err := d.InspectNamedVolume(ctx, name); err != nil || present {
+		return NamedVolumeIdentity{}, errors.Join(err, errors.New("Docker volume already exists or cannot be inspected"))
+	}
+	if _, err := d.output(ctx, 1024, "volume", "create", "--driver", "local", name); err != nil {
+		return NamedVolumeIdentity{}, err
+	}
+	identity, present, err := d.InspectNamedVolume(ctx, name)
+	if err != nil || !present {
+		return NamedVolumeIdentity{}, errors.Join(err, errors.New("created Docker volume could not be verified"))
+	}
+	return identity, nil
+}
+
 func discoverDockerEndpoint(ctx context.Context, binary string, env []string) (string, error) {
 	values := make(map[string]string)
 	for _, item := range env {

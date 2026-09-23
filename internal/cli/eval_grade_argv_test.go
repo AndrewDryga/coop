@@ -49,17 +49,18 @@ func TestGradingArgvIgnoresAHostileProjectPolicyInTheSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cfg.ExtraRunArgs = nil // only the verifier and candidate policy belong in this fixture
 	a := &app{cfg: cfg, rt: recordingRuntime(t, recorder)}
 	verifier := verifierDir(t, "verify.sh", "exit 1\n", 0o644)
 
 	// run == nil: the real box.Run assembles and launches.
-	a.gradeSnapshot(context.Background(), gradeRequest{
+	result := a.gradeSnapshot(context.Background(), gradeRequest{
 		Image: "coop-box:trusted", Workspace: snapshot, Verifier: verifier, CaseID: "c",
 	}, nil)
 
 	data, rerr := os.ReadFile(recorder)
 	if rerr != nil {
-		t.Fatalf("the grading launch never reached the runtime: %v", rerr)
+		t.Fatalf("the grading launch never reached the runtime: %v; result: %+v", rerr, result)
 	}
 	var argv string
 	for _, line := range strings.Split(string(data), "\n") {
@@ -111,6 +112,7 @@ func TestGradingSeesFilesNamedLikeSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cfg.ExtraRunArgs = nil
 	a := &app{cfg: cfg, rt: recordingRuntime(t, recorder)}
 	verifier := verifierDir(t, "verify.sh", "exit 0\n", 0o644)
 	a.gradeSnapshot(context.Background(), gradeRequest{

@@ -942,10 +942,6 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		if repo, err = box.ResolveRepo(a.cfg.RepoOverride); err != nil {
 			return -1, err
 		}
-		var code int
-		if img, code, err = a.restrictedImage(); err != nil {
-			return code, err
-		}
 	} else if repo, img, err = a.resolveLaunchImage(true); err != nil {
 		return -1, err
 	}
@@ -953,9 +949,20 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s (open it first: coop fork %s)", name, name)
 	}
+	if a.mode == agents.ModeReadOnly && sessionsvc.RunIDFromEnv() == "" &&
+		box.ReadOnlyDefaultWorkdir(ws, a.cfg.HomeInBox) != ws {
+		return 2, errors.New("this fork is under container scratch; a direct ACP editor cannot use --readonly here because it sends the host cwd; use a checkout outside /tmp or start a remote session")
+	}
+	if a.mode.Restricted() {
+		var code int
+		if img, code, err = a.restrictedImage(); err != nil {
+			return code, err
+		}
+	}
 	var sessionOutputArgs []string
+	var sessionOutputRoot string
 	if repositoryReadOnly && !a.mode.Restricted() {
-		sessionOutputArgs, err = readOnlySessionOutputMountArgs(ws)
+		sessionOutputArgs, sessionOutputRoot, err = readOnlySessionOutputMountArgs(ws)
 		if err != nil {
 			return -1, err
 		}
@@ -1003,7 +1010,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 			return os.Getenv("COOP_ACP_SUPERVISOR")
 		}(),
 		RunID: sessionsvc.RunIDFromEnv(), CompanionRepositories: companionRepositories,
-		ExtraArgs: sessionOutputArgs,
+		ExtraArgs: sessionOutputArgs, SessionOutputRoot: sessionOutputRoot,
 	}
 	if a.mode.Restricted() {
 		// The restricted profile registers no activity record (it starts no service and joins no
@@ -1051,16 +1058,38 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	return a.runBox(spec)
 }
 
-func readOnlySessionOutputMountArgs(workspace string) ([]string, error) {
+func readOnlySessionOutputMountArgs(workspace string) ([]string, string, error) {
 	if !filepath.IsAbs(workspace) {
-		return nil, errors.New("read-only session output root is unsafe")
+		return nil, "", errors.New("read-only session output root is unsafe")
 	}
-	root := filepath.Join(workspace, ".coop-output")
-	info, err := os.Lstat(root)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return nil, errors.New("read-only session output root is unsafe")
+	workspaceRoot, err := filepath.EvalSymlinks(workspace)
+	if err != nil || !filepath.IsAbs(workspaceRoot) {
+		return nil, "", errors.New("read-only session output root is unsafe")
 	}
-	return []string{"-v", root + ":" + root + ":rw"}, nil
+	destination := filepath.Join(workspace, ".coop-output")
+	destinationInfo, err := os.Lstat(destination)
+	if err != nil || !destinationInfo.IsDir() || destinationInfo.Mode()&os.ModeSymlink != 0 {
+		return nil, "", errors.New("read-only session output root is unsafe")
+	}
+	source := os.Getenv(sessionsvc.SessionOutputRootEnv)
+	sourceRoot, err := filepath.EvalSymlinks(source)
+	if source == "" || err != nil || !filepath.IsAbs(sourceRoot) {
+		return nil, "", errors.New("read-only session output root is unsafe")
+	}
+	sourceInfo, err := os.Lstat(sourceRoot)
+	if err != nil || !sourceInfo.IsDir() || sourceInfo.Mode()&os.ModeSymlink != 0 ||
+		pathsOverlap(workspaceRoot, sourceRoot) {
+		return nil, "", errors.New("read-only session output root is unsafe")
+	}
+	return []string{"-v", sourceRoot + ":" + destination + ":rw"}, sourceRoot, nil
+}
+
+func pathsOverlap(left, right string) bool {
+	contains := func(root, path string) bool {
+		rel, err := filepath.Rel(root, path)
+		return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	}
+	return contains(left, right) || contains(right, left)
 }
 
 func forkLoopContinueCommand(name, presetName string, target agents.Target) string {

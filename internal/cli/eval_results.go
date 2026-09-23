@@ -71,6 +71,7 @@ func (a *app) evalInspect(args []string) (int, error) {
 	}
 	fmt.Printf("Started: %s\n", run.CreatedAt.Local().Format("2006-01-02 15:04 MST"))
 	printEvalText("Result: ", evalResultLine(*sum))
+	printEvalText("Change size: ", evalChangeSizeLine(evalSizeSummary(trials), sum.Counts[eval.TrialPassed]+sum.Counts[eval.TrialFailed]))
 	if !sealed {
 		fmt.Println("\n⚠ No final summary — running or interrupted; not comparable yet.")
 	}
@@ -121,6 +122,31 @@ func (a *app) evalInspect(args []string) (int, error) {
 	fmt.Printf("\nRecords: %s\n", evalDisplayText(filepath.Join(root, id)))
 	fmt.Println("  Trial diagnostics: trials/*.json; retained work, when available: work/")
 	return 0, nil
+}
+
+func evalSizeSummary(trials []eval.TrialRecord) eval.SizeSummary {
+	var size eval.SizeSummary
+	for _, trial := range trials {
+		if trial.Size == nil || trial.Status != eval.TrialPassed && trial.Status != eval.TrialFailed {
+			continue
+		}
+		size.Measured++
+		size.CodeBefore += trial.Size.CodeBefore
+		size.CodeAfter += trial.Size.CodeAfter
+		size.NetGrowth += trial.Size.NetGrowth()
+	}
+	return size
+}
+
+func evalChangeSizeLine(size eval.SizeSummary, graded int) string {
+	if size.Measured == 0 {
+		if graded == 0 {
+			return "not measured (0/0 graded trials; no trial reached grading)"
+		}
+		return fmt.Sprintf("not measured (0/%d graded trials; optional cloc unavailable or failed; verdict unaffected)", graded)
+	}
+	return fmt.Sprintf("net code %+d (%d→%d lines); measured %d/%d graded trials",
+		size.NetGrowth, size.CodeBefore, size.CodeAfter, size.Measured, graded)
 }
 
 func evalConfigLabels(run *eval.RunRecord) []string {

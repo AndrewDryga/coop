@@ -82,7 +82,7 @@ func (s *Store) clearWithdrawal(id string) error {
 // has been approved again has no barrier left. Everything else — including the
 // built-in open default that made the withdrawal necessary — waits for a human.
 func (a Admission) withdrawalBarrier(approval *Approval, withdrawn bool, mode egress.Mode) *PendingApproval {
-	if !withdrawn || approval != nil || a.PolicyMode != nil || mode == egress.None {
+	if !withdrawn || a.PolicyMode != nil || mode == egress.None {
 		return nil
 	}
 	return &PendingApproval{

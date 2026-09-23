@@ -24,10 +24,12 @@ const (
 // in a 4 KiB cluster all charge what the volume actually gave them, which is the only number that
 // changes when the tree is removed.
 //
-// SharedBytes is the part of AllocatedBytes sitting on inodes with more than one link — a fork's
-// git objects hardlinked from the parent checkout, most of the time. Removing the fork does not
-// return those bytes, so only ExclusiveBytes is reclaimable, and a caller that treats
-// AllocatedBytes as reclaimable would promise storage it cannot deliver.
+// SharedBytes is the part of AllocatedBytes sitting on non-directory inodes with more than one
+// link — a fork's git objects hardlinked from the parent checkout, most of the time. A directory's
+// link count names its child directories, not another tree holding its allocated blocks; those
+// blocks remain exclusive. Removing a shared file link does not return its bytes, so only
+// ExclusiveBytes is reclaimable, and a caller that treats AllocatedBytes as reclaimable would
+// promise storage it cannot deliver.
 //
 // Unknown marks a measurement that could not see everything: an unreadable directory, an inode
 // whose identity the kernel would not give up, a tree past the bounds above. The totals then read
@@ -116,7 +118,11 @@ func (s *UsageScan) Measure(path string) (Usage, error) {
 			usage.Unknown = true
 			return nil
 		}
-		if stat.Nlink <= 1 {
+		// A directory's st_nlink is 2 plus its immediate subdirectories on ordinary Unix
+		// filesystems. It is not a hardlink count for storage accounting: removing this tree does
+		// reclaim the directory blocks, even when another measured tree happens to reuse its inode
+		// number after deletion.
+		if entry.IsDir() || stat.Nlink <= 1 {
 			usage.AllocatedBytes += blocks
 			return nil
 		}

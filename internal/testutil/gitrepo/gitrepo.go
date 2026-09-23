@@ -30,6 +30,11 @@ func New(t *testing.T) (string, func(...string)) {
 		}
 	}
 	run("init", "-q")
+	// The test deliberately ignores the developer's global config, including init.defaultBranch.
+	// Pin HEAD explicitly so a distro whose compiled default is master creates the same fixture as
+	// a laptop configured for main. symbolic-ref works on older supported Git versions too; unlike
+	// `git init -b`, it does not raise the fixture's Git-version floor.
+	run("symbolic-ref", "HEAD", "refs/heads/main")
 	run("config", "user.email", "t@t")
 	run("config", "user.name", "T")
 	return repo, run

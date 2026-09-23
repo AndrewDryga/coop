@@ -1,4 +1,4 @@
-Review the requested project access changes.
+Review the requested project access.
 
 NETWORK ACCESS
   - Offline — internet access is blocked.
@@ -6,4 +6,3 @@ NETWORK ACCESS
 
 NETWORK RULES
   + docs.example.com:443 · TLS  new request
-

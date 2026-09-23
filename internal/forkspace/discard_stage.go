@@ -16,6 +16,9 @@ const stagedDiscardCount = 4096
 
 var stagedDiscardSuffix = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
+// Injectable only inside this package to qualify rename/unlink durability recovery.
+var syncStagedDiscardDirectory = func(dir *os.File) error { return dir.Sync() }
+
 // StagedDiscardDir is where a workspace waits between "proven removable" and "gone".
 //
 // Deleting a workspace in place is not resumable: a crash partway through leaves a directory that
@@ -31,7 +34,7 @@ var stagedDiscardSuffix = regexp.MustCompile(`^[0-9a-f]{16}$`)
 func StagedDiscardDir(repo string) string { return filepath.Join(Home(repo), ".discarding") }
 
 func ensureStagedDiscardDir(repo string) error {
-	if err := os.MkdirAll(Home(repo), 0o755); err != nil {
+	if err := ensureForkHome(repo); err != nil {
 		return err
 	}
 	return ensurePrivateStateDir(StagedDiscardDir(repo))
@@ -86,7 +89,39 @@ func StageWorkspaceDiscardLocked(repo, name string, pinned os.FileInfo) (string,
 	if err := renameNoReplace(workspace, target); err != nil {
 		return "", fmt.Errorf("stage fork workspace %q for discard: %w", workspace, err)
 	}
+	// The visible rename is not yet a durable ownership transition. Persist both rename parents
+	// (and the fork-home entry in its parent) before the caller retires generation authority; an
+	// error deliberately leaves the staged tree visible so the same barrier can be retried.
+	if err := ConfirmWorkspaceDiscardState(repo); err != nil {
+		return target, fmt.Errorf("confirm staged fork workspace %q: %w", workspace, err)
+	}
 	return target, nil
+}
+
+// ConfirmWorkspaceDiscardState repeats the directory barriers for a visible stage or purge. It is
+// safe when any layer is already absent: the next existing ancestor records that absence. Callers
+// use it before retiring authority for a workspace whose path disappeared on an earlier attempt.
+func ConfirmWorkspaceDiscardState(repo string) error {
+	return errors.Join(
+		syncExistingDiscardDirectory(StagedDiscardDir(repo)),
+		syncExistingDiscardDirectory(Home(repo)),
+		syncExistingDiscardDirectory(filepath.Dir(Home(repo))),
+	)
+}
+
+func syncExistingDiscardDirectory(path string) error {
+	dir, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	info, statErr := dir.Stat()
+	if statErr != nil || !info.IsDir() {
+		return errors.Join(statErr, dir.Close(), fmt.Errorf("discard durability path %q is not a directory", path))
+	}
+	return errors.Join(syncStagedDiscardDirectory(dir), dir.Close())
 }
 
 // StagedDiscards lists the staged trees still holding storage. name scopes the answer to one fork;
@@ -138,9 +173,19 @@ func PurgeStagedDiscards(repo, name string) (int, error) {
 	// something is mid-removal, and it would keep the fork root alive past the last fork it held.
 	if entries, err := os.ReadDir(StagedDiscardDir(repo)); err == nil && len(entries) == 0 &&
 		os.Remove(StagedDiscardDir(repo)) == nil {
-		if entries, err := os.ReadDir(Home(repo)); err == nil && len(entries) == 0 {
-			_ = os.Remove(Home(repo))
+		if err := syncExistingDiscardDirectory(Home(repo)); err != nil {
+			return removed, fmt.Errorf("confirm removal of empty staged discard directory: %w", err)
 		}
+		if entries, err := os.ReadDir(Home(repo)); err == nil && len(entries) == 0 {
+			if os.Remove(Home(repo)) == nil {
+				if err := syncExistingDiscardDirectory(filepath.Dir(Home(repo))); err != nil {
+					return removed, fmt.Errorf("confirm removal of empty fork home: %w", err)
+				}
+			}
+		}
+	}
+	if err := ConfirmWorkspaceDiscardState(repo); err != nil {
+		return removed, fmt.Errorf("confirm staged discard state: %w", err)
 	}
 	return removed, nil
 }
@@ -164,6 +209,9 @@ func removeStagedDiscard(path string) error {
 			return fmt.Errorf("staged discard %q remains after removal", path)
 		}
 		return fmt.Errorf("verify staged discard %q removal: %w", path, err)
+	}
+	if err := syncExistingDiscardDirectory(filepath.Dir(path)); err != nil {
+		return fmt.Errorf("confirm staged discard %q removal: %w", path, err)
 	}
 	return nil
 }

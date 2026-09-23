@@ -28,7 +28,8 @@ const leaderReapTimeout = time.Second
 
 // Runtime is a resolved container CLI (e.g. "docker").
 type Runtime struct {
-	Name string
+	Name                           string
+	composeEndpoint, composeDaemon string // frozen local Docker target for one service operation
 }
 
 type runtimeKind int

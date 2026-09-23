@@ -136,6 +136,7 @@ func TestCanaryNeverReachesTheCandidateContainer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cfg.ExtraRunArgs = nil // isolate the argv proof from this host's personal runtime mounts
 	cfg.Homes = true
 	recorder := filepath.Join(t.TempDir(), "argv.log")
 	r := &trialRunner{

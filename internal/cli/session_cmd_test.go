@@ -234,6 +234,9 @@ func TestSessionPoliciesPrintsDigestsFromTheTrustedPolicyFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(policyRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	policyPath := filepath.Join(policyRoot, "session-policies.yaml")
 	body := "version: 1\npolicies:\n" +
 		"  write:\n    repository: " + repo + "\n    target: codex@work\n" +
@@ -317,6 +320,9 @@ func TestSessionPolicyNetworkReportsWhatItCannotResolve(t *testing.T) {
 		"          protocol: tls\n          ports: [443]\n"
 	policyRoot, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(policyRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	policyPath := filepath.Join(policyRoot, "session-policies.yaml")

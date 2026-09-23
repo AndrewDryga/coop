@@ -2,6 +2,7 @@ package networkstate
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"os"
 	"path/filepath"
@@ -47,6 +48,7 @@ func TestForgetRemovesOneApprovalAndKeepsEveryOtherRecord(t *testing.T) {
 		t.Fatalf("the approval record %q was never on disk", approvalRecord(record.ID))
 	}
 	delete(want, approvalRecord(record.ID))
+	delete(want, projectAnchorName(record.ID, record.Approval.ProjectAnchor))
 	got := inventory(t, s)
 	// Removing the grant is only half of it: the withdrawal marker is what keeps
 	// a project whose YAML is gone from falling back to the open default.
@@ -105,6 +107,50 @@ func TestForgetLocatesAnApprovalWhoseDirectoryIsGone(t *testing.T) {
 	}
 	if again, err := s.ApprovalAt(project); err != nil || again.Approval != nil {
 		t.Fatalf("the record outlived its removal: %+v %v", again, err)
+	}
+}
+
+func TestForgetRetiresTheCurrentAnchorAfterConcurrentReapproval(t *testing.T) {
+	s := openStore(t)
+	project := filepath.Join(t.TempDir(), "checkout")
+	if err := os.Mkdir(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := approve(s, project, egress.Filtered, []egress.Rule{rule("old.example.com")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := s.ApprovalAt(project)
+	if err != nil || stale.Approval == nil {
+		t.Fatalf("read initial approval: %+v, %v", stale, err)
+	}
+
+	if err := os.RemoveAll(project); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := approve(s, project, egress.Filtered, []egress.Rule{rule("new.example.com")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	current, err := s.ApprovalAt(project)
+	if err != nil || current.Approval == nil || current.Approval.ProjectAnchor == stale.Approval.ProjectAnchor {
+		t.Fatalf("replacement approval = %+v, %v", current, err)
+	}
+	currentAnchor := projectAnchorName(current.ID, current.Approval.ProjectAnchor)
+	if _, err := s.root.Lstat(currentAnchor); err != nil {
+		t.Fatalf("replacement private anchor was not published: %v", err)
+	}
+
+	removed, err := s.Forget(context.Background(), stale)
+	if err != nil || !removed {
+		t.Fatalf("Forget(stale review) = (%v, %v)", removed, err)
+	}
+	if _, err := s.root.Lstat(currentAnchor); !os.IsNotExist(err) {
+		t.Fatalf("forget left the current private anchor: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(project, ProjectApprovalMarker)); !os.IsNotExist(err) {
+		t.Fatalf("forget left the current project marker: %v", err)
 	}
 }
 
@@ -167,5 +213,44 @@ func TestForgetNeedsTheRecordItWasReadFrom(t *testing.T) {
 	}
 	if _, err := s.ApprovalAt("relative/path"); err == nil {
 		t.Error("a relative project path was resolved to a record id")
+	}
+}
+
+func TestForgetRetryConfirmsAlreadyVisibleRemoval(t *testing.T) {
+	s := openStore(t)
+	project := t.TempDir()
+	if err := approve(s, project, egress.Filtered, []egress.Rule{rule("retry.example.com")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	record, err := s.ApprovalAt(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("synthetic approval unlink sync failure")
+	calls := 0
+	s.syncDir = func(dir *os.File) error {
+		calls++
+		if calls == 2 {
+			return failure
+		}
+		return dir.Sync()
+	}
+	if removed, err := s.Forget(context.Background(), record); !errors.Is(err, failure) || removed {
+		t.Fatalf("first Forget = (%v, %v), want visible removal plus sync failure", removed, err)
+	}
+	if _, err := s.root.Lstat(approvalRecord(record.ID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("approval was not visibly absent after failed unlink barrier: %v", err)
+	}
+
+	calls = 0
+	s.syncDir = func(dir *os.File) error {
+		calls++
+		return dir.Sync()
+	}
+	if removed, err := s.Forget(context.Background(), record); err != nil || removed {
+		t.Fatalf("Forget retry = (%v, %v), want confirmed no second removal", removed, err)
+	}
+	if calls < 2 {
+		t.Fatalf("Forget retry used %d directory barriers, want withdrawal plus absent-approval confirmation", calls)
 	}
 }

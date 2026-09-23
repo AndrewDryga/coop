@@ -95,6 +95,31 @@ func TestUsageScanChargesASharedInodeToOneTreeOnly(t *testing.T) {
 	}
 }
 
+func TestUsageScanNeverTreatsDirectoryLinkCountsAsShared(t *testing.T) {
+	root := t.TempDir()
+	first := filepath.Join(root, "tree-a")
+	second := filepath.Join(root, "tree-b")
+	for _, tree := range []string{first, second} {
+		if err := os.MkdirAll(filepath.Join(tree, "one", "two"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	scan := NewUsageScan()
+	for _, tree := range []string{first, second} {
+		usage, err := scan.Measure(tree)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if usage.SharedBytes != 0 {
+			t.Fatalf("directory-only tree %s reported %d shared bytes", filepath.Base(tree), usage.SharedBytes)
+		}
+		if usage.ExclusiveBytes() != usage.AllocatedBytes {
+			t.Fatalf("directory-only tree %s has non-exclusive allocation: %+v", filepath.Base(tree), usage)
+		}
+	}
+}
+
 // "Unknown is not zero." A subtree coop cannot read is storage that exists; reporting 0 for it
 // would tell the control plane the disk is emptier than it is.
 func TestMeasureUsageReportsUnknownForAnUnreadableSubtree(t *testing.T) {

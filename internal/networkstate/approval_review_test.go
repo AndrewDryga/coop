@@ -63,8 +63,13 @@ func TestApprovalReviewPublishesOnlyReviewedRules(t *testing.T) {
 	if err != nil || review.Before != nil || review.After == nil || !lowerHex(review.Digest, 64) {
 		t.Fatal(review, err)
 	}
-	if !reflect.DeepEqual(before, inventory(t, s)) {
-		t.Fatal("review published authority")
+	afterReview := inventory(t, s)
+	delete(afterReview, projectAnchorName(review.After.ProjectID, review.After.ProjectAnchor))
+	if !reflect.DeepEqual(before, afterReview) {
+		t.Fatal("review published network authority")
+	}
+	if _, err := os.Lstat(filepath.Join(project, ProjectApprovalMarker)); err != nil {
+		t.Fatal("review did not prepare its non-authoritative project binding", err)
 	}
 	// Neither the displayed copy nor the caller's slice is the stored decision.
 	review.After.Posture = egress.Open
@@ -92,6 +97,80 @@ func TestApprovalReviewPublishesOnlyReviewedRules(t *testing.T) {
 	retained, err := s.LoadSnapshot(project, captured.Fingerprint)
 	if err != nil || !retained.Domain("reviewed.example.com", 443).Allowed {
 		t.Fatal("new approval rewrote an existing run capture", err)
+	}
+}
+
+func TestApprovalReviewReenrollsAMovedProjectMarker(t *testing.T) {
+	s := openStore(t)
+	base := t.TempDir()
+	oldPath := filepath.Join(base, "old")
+	newPath := filepath.Join(base, "new")
+	if err := os.Mkdir(oldPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	requests := []egress.Rule{rule("docs.example.com")}
+	oldReview, err := s.ReviewApproval(oldPath, egress.Filtered, requests, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldAnchor := filepath.Join(s.Path(), projectAnchorName(oldReview.After.ProjectID, oldReview.After.ProjectAnchor))
+	if err := os.Rename(oldPath, newPath); err != nil {
+		t.Fatal(err)
+	}
+	newReview, err := s.ReviewApproval(newPath, egress.Filtered, requests, nil, nil)
+	if err != nil {
+		t.Fatalf("review moved project: %v", err)
+	}
+	if newReview.After.ProjectID == oldReview.After.ProjectID || newReview.After.ProjectAnchor == oldReview.After.ProjectAnchor {
+		t.Fatalf("moved project kept its old binding: old=%+v new=%+v", oldReview.After, newReview.After)
+	}
+	if _, err := os.Stat(oldAnchor); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("old private anchor survived re-enrollment: %v", err)
+	}
+	if err := s.Approve(context.Background(), newPath, egress.Filtered, requests, nil, nil, newReview.Digest); err != nil {
+		t.Fatalf("approve moved project: %v", err)
+	}
+}
+
+func TestApprovalReviewCopiedMarkerCannotRetireAnotherProjectsAnchor(t *testing.T) {
+	s := openStore(t)
+	projectA, projectB := t.TempDir(), t.TempDir()
+	requests := []egress.Rule{rule("docs.example.com")}
+	reviewA, err := s.ReviewApproval(projectA, egress.Filtered, requests, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker, err := os.ReadFile(filepath.Join(projectA, ProjectApprovalMarker))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectB, ProjectApprovalMarker), marker, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ReviewApproval(projectB, egress.Filtered, requests, nil, nil); err == nil {
+		t.Fatal("a copied marker was accepted as a moved checkout")
+	}
+	if err := s.validateProjectAnchor(projectA, reviewA.After); err != nil {
+		t.Fatalf("copied marker retired the original project's private anchor: %v", err)
+	}
+	if err := s.Approve(context.Background(), projectA, egress.Filtered, requests, nil, nil, reviewA.Digest); err != nil {
+		t.Fatalf("original review could not commit after copied-marker attempt: %v", err)
+	}
+}
+
+func TestApprovalReviewExplainsHowToRecoverAMalformedReservedMarker(t *testing.T) {
+	s, project := openStore(t), t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, ProjectApprovalMarker), []byte("not coop\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.ReviewApproval(project, egress.Filtered, []egress.Rule{rule("docs.example.com")}, nil, nil)
+	if err == nil {
+		t.Fatal("malformed reserved marker was accepted")
+	}
+	for _, want := range []string{"ls -l -- ./.coop-network-approval", "rm -- ./.coop-network-approval", "coop approve"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("recovery error lacks %q: %v", want, err)
+		}
 	}
 }
 
@@ -192,49 +271,51 @@ func TestApprovalRefusesLostIdentityAndCancellation(t *testing.T) {
 	}
 }
 
-// A reboot renumbers the volume a project lives on, so an approval recorded before it names another
-// device for the very same directory. That directory must still be admitted without a new review;
-// a replacement at the path is still refused (TestApprovalRefusesAReplacedProjectDirectory), and an
-// approval that never recorded the directory still has to be reviewed again.
-func TestApprovalSurvivesADeviceRenumber(t *testing.T) {
+func TestLegacyApprovalRequiresExplicitReapproval(t *testing.T) {
 	s := openStore(t)
 	project := filepath.Join(t.TempDir(), "repo")
 	if err := os.Mkdir(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	requests := []egress.Rule{rule("example.com")}
-	if err := approve(s, project, egress.Filtered, requests, nil); err != nil {
-		t.Fatal(err)
-	}
 	id, err := s.projectID(project)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rewrite := func(edit func(*Approval)) {
-		t.Helper()
-		approval, err := s.approval(id)
-		if err != nil || approval == nil {
-			t.Fatalf("approval = %v, %v", approval, err)
-		}
-		edit(approval)
-		data, err := json.Marshal(approval)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := s.publish(approvalRecord(id), data, true); err != nil {
-			t.Fatal(err)
-		}
+	info, err := os.Stat(project)
+	if err != nil {
+		t.Fatal(err)
 	}
-	rewrite(func(a *Approval) { a.Device++ })
-	if _, err := s.Admit(project, Admission{Requests: requests}); err != nil {
-		t.Fatalf("an approval recorded before a reboot was refused: %v", err)
+	device, inode, ok := directoryIdentity(info)
+	if !ok {
+		t.Fatal("project identity unavailable")
 	}
-	if preview, err := s.admissionPreview(project, Admission{Requests: requests}); err != nil || preview.Pending != nil {
-		t.Fatalf("coop net asked for a review after a reboot: %+v, %v", preview, err)
+	legacy := Approval{Version: networkApprovalLegacyVersion, ProjectID: id, Posture: egress.Filtered,
+		Envelope: requests, Device: device, Inode: inode}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
 	}
-	rewrite(func(a *Approval) { a.Inode = 0 })
+	if err := s.publish(approvalRecord(id), data, true); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.Admit(project, Admission{Requests: requests}); err == nil || !strings.Contains(err.Error(), "older coop") {
-		t.Fatalf("an approval without a recorded directory was trusted: %v", err)
+		t.Fatalf("legacy allocator identity authorized a launch: %v", err)
+	}
+	if preview, err := s.admissionPreview(project, Admission{Requests: requests}); err != nil ||
+		preview.Pending == nil || !strings.Contains(preview.Pending.Error(), "older coop") {
+		t.Fatalf("legacy approval preview = %+v, %v", preview, err)
+	}
+	if err := approve(s, project, egress.Filtered, requests, nil); err != nil {
+		t.Fatal(err)
+	}
+	current, err := s.Approval(project)
+	if err != nil || current.Version != networkApprovalVersion || current.ProjectAnchor == "" ||
+		current.Device != 0 || current.Inode != 0 {
+		t.Fatalf("reapproved authority = %+v, %v", current, err)
+	}
+	if _, err := s.Admit(project, Admission{Requests: requests}); err != nil {
+		t.Fatal("explicit reapproval did not authorize the anchored project", err)
 	}
 }
 

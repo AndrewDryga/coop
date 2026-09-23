@@ -211,6 +211,23 @@ func openSessionRoot(path string) (*os.Root, error) {
 	return root, nil
 }
 
+// scanSessionDir bounds directory-entry allocation while preserving an exhaustive provider
+// history scan. Provider state may be very large or adversarially populated by an earlier box;
+// callers still find entries beyond the first batch without loading the whole directory at once.
+func scanSessionDir(dir *os.File, visit func(os.DirEntry) bool) bool {
+	for {
+		entries, err := dir.ReadDir(128)
+		for _, entry := range entries {
+			if visit(entry) {
+				return true
+			}
+		}
+		if err != nil {
+			return false
+		}
+	}
+}
+
 func (s EffortSpec) Args(level string) []string {
 	if s.Flag == "" || level == "" {
 		return nil

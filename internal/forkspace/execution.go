@@ -145,6 +145,11 @@ func executionRegistryDirs(repo string) ([]string, error) {
 	return []string{executionDir(repo), fallback}, nil
 }
 
+// ExecutionRegistryDirs returns every host-private execution registry a project may use. Callers
+// that expose arbitrary host mounts must protect these paths prospectively: the service-launch
+// lock and fallback records remain authority even before their directories have been created.
+func ExecutionRegistryDirs(repo string) ([]string, error) { return executionRegistryDirs(repo) }
+
 func validExecutionKind(kind ExecutionKind) bool {
 	switch kind {
 	case ExecutionLocalLoop, ExecutionForkLoop, ExecutionInteractive, ExecutionACP, ExecutionForkInteractive,
@@ -260,14 +265,13 @@ func newExecutionID() (string, error) {
 // shared lock only while its agent process can replace those paths. This serializes the dangerous
 // instant, not the users or their independently owned service stacks.
 func LockServiceLaunch(ctx context.Context, repo string, exclusive bool) (func(), error) {
-	registry, err := fallbackExecutionDir(repo)
+	path, err := ServiceLaunchLockPath(repo)
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureFallbackExecutionDir(registry); err != nil {
+	if err := ensureFallbackExecutionDir(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
-	path := filepath.Join(registry, serviceLaunchLockName)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return nil, err
@@ -306,6 +310,29 @@ func LockServiceLaunch(ctx context.Context, repo string, exclusive bool) (func()
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		_ = f.Close()
 	}, nil
+}
+
+// ServiceLaunchLockPath follows the repository directory's current filesystem identity rather
+// than its pathname. A moved checkout keeps the same mount barrier; a replacement at its old
+// pathname cannot borrow that barrier or accidentally wait on its old executions.
+func ServiceLaunchLockPath(repo string) (string, error) {
+	registry, err := fallbackExecutionDir(repo)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(repo)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", errors.New("service launch repository is not a directory")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", errors.New("service launch repository has no filesystem identity")
+	}
+	key := fmt.Sprintf("%x-%x", uint64(stat.Dev), uint64(stat.Ino))
+	return filepath.Join(filepath.Dir(registry), "service-locks", key+serviceLaunchLockName), nil
 }
 
 // BeginExecution publishes one execution before its sandbox starts. The caller must EndExecution

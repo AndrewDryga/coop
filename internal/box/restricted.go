@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -97,14 +97,14 @@ func checkRestrictedSpec(cfg *config.Config, rt runtime.Runtime, spec RunSpec, m
 	if mode == agents.ModeBare && cfg.Egress == "filtered" {
 		return fmt.Errorf("a %s run has no project for a filtered policy to apply to — use --readonly, or drop --egress filtered", mode)
 	}
-	// The repository mounts at its own host path; the profile's scratch tmpfs are fixed paths.
-	// A repository that IS one of them (a run from /tmp outside any checkout) would ask the
-	// runtime for two mounts at one point, which it refuses after the box was already narrated.
+	// The repository's container destination defaults to its host path; an explicit workdir may
+	// move it elsewhere. Only that destination can collide with the profile's scratch tmpfs. The
+	// host source may safely live under /tmp when it mounts at (for example) /workspace — common
+	// for CI and disposable checkouts.
 	if mode == agents.ModeReadOnly {
-		for _, scratch := range []string{"/tmp", cfg.HomeInBox, BareWorkdir} {
-			if scratch != "" && (spec.Repo == scratch || strings.HasPrefix(spec.Repo, scratch+"/")) {
-				return fmt.Errorf("a %s run cannot mount %s as the repository — that path is the box's own scratch; run it from a checkout", mode, spec.Repo)
-			}
+		workdir := restrictedReadOnlyWorkdir(spec, cfg)
+		if restrictedScratchDestination(workdir, cfg.HomeInBox) {
+			return fmt.Errorf("a %s run cannot mount the repository at %s — that path is the box's own scratch; choose another workdir", mode, workdir)
 		}
 	}
 	if cfg.BaseImage == "" || spec.Image != cfg.BaseImage {
@@ -139,6 +139,41 @@ func checkRestrictedSpec(cfg *config.Config, rt runtime.Runtime, spec RunSpec, m
 		}
 	}
 	return nil
+}
+
+// The normal default mirrors the host checkout path for session continuity. A checkout under
+// /tmp or the box home cannot be mounted there in this profile because those are tmpfs scratch;
+// move only that implicit destination to /workspace. An explicit different destination keeps
+// its meaning and is still refused if it overlaps scratch.
+func restrictedReadOnlyWorkdir(spec RunSpec, cfg *config.Config) string {
+	workdir := resolveWorkdir(spec, cfg)
+	implicit := spec.Workdir == spec.Repo || (spec.Workdir == "" && cfg.Workdir == "")
+	if implicit && workdir == spec.Repo {
+		return ReadOnlyDefaultWorkdir(workdir, cfg.HomeInBox)
+	}
+	return workdir
+}
+
+// ReadOnlyDefaultWorkdir is also the cwd the remote ACP controller must announce to a provider:
+// the fork mounts at this path, not its host path, when that path collides with box scratch.
+func ReadOnlyDefaultWorkdir(repo, homeInBox string) string {
+	if restrictedScratchDestination(repo, homeInBox) {
+		return BareWorkdir
+	}
+	return repo
+}
+
+func restrictedScratchDestination(workdir, homeInBox string) bool {
+	if homeInBox == "" {
+		homeInBox = "/home/node" // config.Load's default; test controllers may hold a partial config.
+	}
+	workdir, homeInBox = path.Clean(workdir), path.Clean(homeInBox)
+	for _, scratch := range []string{"/tmp", homeInBox} {
+		if scratch != "" && (workdir == scratch || strings.HasPrefix(workdir, scratch+"/")) {
+			return true
+		}
+	}
+	return false
 }
 
 // restrictedRuntimeArgs admits only `-e KEY=VALUE` from runtime arguments. A bind mount would be
@@ -330,23 +365,7 @@ func projectRestrictedCredential(ag agents.Agent, source, target string) error {
 // readSeedArtifact reads one host credential file without following a link, bounded, or reports
 // it absent.
 func readSeedArtifact(path string) ([]byte, bool, error) {
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, err
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return nil, false, errors.New("not a regular file")
-	}
-	data, err := io.ReadAll(io.LimitReader(file, restrictedArtifactLimit+1))
-	if err != nil || len(data) > restrictedArtifactLimit {
-		return nil, false, errors.New("unreadable or too large")
-	}
-	return data, true, nil
+	return agents.ReadOptionalCredentialArtifact(path, restrictedArtifactLimit)
 }
 
 // restrictedPlan is what the assembled runtime options must be checked against before launch:
@@ -355,6 +374,7 @@ type restrictedPlan struct {
 	workdir string
 	tmpfs   map[string]bool
 	sources map[string]bool
+	envFile string
 	// brokerHost is the one --add-host this profile admits: the entry a read-only session's box
 	// finds its own MCP credential broker through. Empty for every other restricted run.
 	brokerHost string
@@ -364,7 +384,7 @@ type restrictedPlan struct {
 // purpose: an option this profile has not admitted refuses the launch by name, so a mount or flag
 // added to the shared assembly later cannot widen a restricted run without being admitted here.
 func validateRestrictedOptions(options []string, plan restrictedPlan) error {
-	readOnly, brokerHosts := 0, 0
+	readOnly, brokerHosts, envFiles := 0, 0, 0
 	tmpfs := map[string]bool{}
 	for i := 0; i < len(options); i++ {
 		opt := options[i]
@@ -385,7 +405,12 @@ func validateRestrictedOptions(options []string, plan restrictedPlan) error {
 		i++
 		value := options[i]
 		switch opt {
-		case "--label", "-e", "--env", "--env-file", "--cap-drop", "--pids-limit", "--memory", "--cpus":
+		case "--label", "-e", "--env", "--cap-drop", "--pids-limit", "--memory", "--cpus":
+		case "--env-file":
+			if value != plan.envFile {
+				return fmt.Errorf("restricted launch: environment file %q is not the planned scoped environment", value)
+			}
+			envFiles++
 		case "--security-opt":
 			if value != "no-new-privileges" {
 				return fmt.Errorf("restricted launch: security option %q is not part of the profile", value)
@@ -421,6 +446,13 @@ func validateRestrictedOptions(options []string, plan restrictedPlan) error {
 	}
 	if len(tmpfs) != len(plan.tmpfs) {
 		return errors.New("restricted launch: a planned scratch tmpfs is missing")
+	}
+	wantEnvFiles := 0
+	if plan.envFile != "" {
+		wantEnvFiles = 1
+	}
+	if envFiles != wantEnvFiles {
+		return fmt.Errorf("restricted launch: %d scoped environment files, want %d", envFiles, wantEnvFiles)
 	}
 	if plan.brokerHost != "" && brokerHosts != 1 {
 		return fmt.Errorf("restricted launch: %d hosts entries for the MCP credential broker, want 1", brokerHosts)
@@ -499,12 +531,20 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 			return -1, err
 		}
 	}
+	cleanupArtifacts, err := prepareCompositionArtifactParent(&artifacts, cfg, spec)
+	if err != nil {
+		return -1, err
+	}
+	defer cleanupArtifacts()
+	if err := preflightCompositionArtifactExposure(cfg, rt, spec, artifacts.parent); err != nil {
+		return -1, err
+	}
 	if _, err := selectCredentialPlan(cfg, spec); err != nil {
 		return -1, err
 	}
 	workdir := BareWorkdir
 	if mode == agents.ModeReadOnly {
-		workdir = resolveWorkdir(spec, cfg)
+		workdir = restrictedReadOnlyWorkdir(spec, cfg)
 	}
 	if spec.Homes {
 		if err := ensureAgentHomes(cfg, spec); err != nil {
@@ -537,6 +577,11 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 			return -1, err
 		}
 		mounts[0].RO = true // ComputeMounts guarantees the primary repo bind is first
+		policySnapshots, err := snapshotPolicyMounts(spec.Repo, mounts, artifacts)
+		if err != nil {
+			return -1, err
+		}
+		tmpFiles = append(tmpFiles, policySnapshots...)
 		companionMounts, companionEnvironment, err := companionRepositoryMounts(spec.CompanionRepositories)
 		if err != nil {
 			return -1, err
@@ -705,6 +750,7 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 		envFile = brokerEnv
 		tmpFiles = append(tmpFiles, brokerEnv)
 	}
+	plan.envFile = envFile
 	if err := rt.EnsureDaemon(); err != nil {
 		return -1, err
 	}
@@ -728,12 +774,9 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 		if brokerCtx == nil {
 			brokerCtx = context.Background()
 		}
-		privateRoots := append(ConfigExposureRoots(cfg), projectPolicyRepo(spec))
-		for _, companion := range spec.CompanionRepositories {
-			privateRoots = append(privateRoots, companion.HostPath)
-		}
+		privateRoots := compositionArtifactExposureRoots(cfg, spec)
 		network := openBrokerNetwork("", cfg.ExtraRunArgs, spec.ExtraArgs)
-		if err := open.start(brokerCtx, rt, spec.Repo, network, ownerLabels(spec), sections.brokerImage, privateRoots...); err != nil {
+		if err := open.start(brokerCtx, rt, spec.Repo, artifacts.parent, network, ownerLabels(spec), sections.brokerImage, privateRoots...); err != nil {
 			return -1, err
 		}
 		plan.brokerHost = open.hostArgs()[0]
@@ -764,7 +807,43 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	options := assembleOptions(cfg, rt.SupportsInit(), plain, mounts, decoy, decoyDir, workdir, tty, false,
 		nil, nil, nil, nil, nil, network, envFile, limits...)
 	options = append(options, extras...)
-	if err := validateRestrictedOptions(options, plan); err != nil {
+	networkState, err := NetworkStatePath()
+	if err != nil {
+		return -1, err
+	}
+	volumeReader := volumeExposureReader(rt.ExistingNamedVolumeExposure)
+	if filtered != nil {
+		networkState = filtered.store.Path()
+		volumeReader = filtered.docker.ExistingNamedVolumeExposure
+	}
+	allow := authorityMountAllowlist{
+		sources: map[string]bool{}, envFiles: map[string]bool{}, sourceTrees: tmpDirs,
+		privateRoots: []string{artifacts.parent},
+	}
+	if envFile != "" {
+		allow.envFiles[envFile] = true
+	}
+	for source := range plan.sources {
+		if pathContains(artifacts.parent, source) && source != artifacts.parent {
+			allow.sources[source] = true
+		}
+	}
+	if filtered != nil {
+		if filtered.taskVolume != "" {
+			allow.volumes = map[string]bool{filtered.taskVolume: true}
+		}
+	}
+	allow, err = protectRunPrivateState(cfg, spec, allow)
+	if err != nil {
+		return -1, err
+	}
+	revalidateMounts := func() error {
+		if err := validateAuthorityMounts(spec.Ctx, spec, options, networkState, volumeReader, allow); err != nil {
+			return err
+		}
+		return validateRestrictedOptions(options, plan)
+	}
+	if err := revalidateMounts(); err != nil {
 		return -1, err
 	}
 	var stdin io.Reader
@@ -782,11 +861,23 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 		return -1, err
 	}
 	if filtered != nil {
+		filtered.mountRevalidate = revalidateMounts
 		// The gateway was prepared before any artifact was generated (see above), so this is only
 		// the launch: the hook marks the launch boundary and the filtered launch fires it itself,
 		// after bring-up.
 		return launchRestrictedFiltered(filtered, spec, sections, options, cmd, stdin, stdout, stderr,
 			&started, restrictedInterrupt, &filteredStopped)
+	}
+	activityRepo := spec.ActivityRepo
+	if activityRepo == "" {
+		activityRepo = spec.Repo
+	}
+	if activityRepo != "" {
+		unlockMounts, err := enterAuthorityMountWindow(spec.Ctx, activityRepo, revalidateMounts)
+		if err != nil {
+			return -1, err
+		}
+		defer unlockMounts()
 	}
 	if spec.OnRuntimeLaunch != nil {
 		spec.OnRuntimeLaunch()

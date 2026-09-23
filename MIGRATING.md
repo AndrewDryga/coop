@@ -1,5 +1,66 @@
 # Migrating
 
+## Anchored fork and network identity
+
+Linux overlay filesystems can immediately reuse every observed piece of directory metadata after
+deletion, including inode and birth time. Coop therefore no longer treats allocator metadata as
+durable authority for the two roots that authorize future sandbox work: fork generations and
+project network approvals now use a two-link filesystem anchor.
+
+A fork carries `.coop-fork-generation`, linked to its generation-specific file under the adjacent
+owner-only fork state. A reviewed project carries `.coop-network-approval`, linked to a randomly
+named file under Coop's owner-only network state. The visible files contain identifiers, not
+credentials. Both names must still be the same owner-controlled `0600` inode with exactly two links
+whenever Coop uses the authority.
+
+The two names must be on one filesystem with hardlink support. Fork state is adjacent to its
+workspace, so this is normally automatic. For network approvals, keep the checkout and
+`$XDG_STATE_HOME` (or the default `~/.local/state`) on the same filesystem. Coop reports a clear
+error and does not fall back to timestamps when it cannot create the link.
+
+Stopped v1/v2 fork records migrate under the lifecycle lock only when their Git branch and
+absolute local origin still match and they have no execution or land intent. Ordinary forks must
+also have no reservation; remote sessions may retain only their exact same-generation, same-owner
+reservation. An active legacy fork must be stopped and retried. Older network approvals never grant under the new binary:
+run `coop approve` once to review and enroll the current project. Task records and remote-session
+discard plans did not change format; they continue to combine logical identity, semantic state,
+locks and live pinned handles rather than relying on another timestamp.
+
+The markers are excluded from ordinary Git status. A manual `git clean -x` can still remove them.
+For a project approval, inspect `ls -l -- ./.coop-network-approval`; after verifying a damaged name
+is stale, run `rm -- ./.coop-network-approval` and then `coop approve`. An intact checkout moved to
+a new path needs only `coop approve`: Coop proves and retires the old pair before enrolling the new
+path. Copying marker bytes never transfers access or retires the original project's anchor.
+
+For a damaged fork marker, first preserve any Git work, task notes, or other data you need. Do not
+remove only `.coop-fork-generation`: the generation record and private link must retire together.
+Use the normal, confirming `coop fork rm <name> --force` flow to remove that fork and its authority,
+then recreate it. This permanently deletes the fork's unmerged work and service volumes, so inspect
+the deletion preview before confirming. Coop's own checkpoint restore preserves an intact marker.
+Stopped v1/v2 fork generations migrate to hardlink anchors after branch/origin checks. Existing
+remote sessions keep only their exact same-generation, same-owner reservation during that migration;
+a missing or foreign reservation, or live execution, is never guessed into ownership.
+
+When an anchor exists, runtime arguments may mount the exact project, but not a path inside it that
+an existing agent could swap before the runtime resolves the bind, or a writable ancestor that
+could replace the project. No mount may expose Coop's private anchor, execution-record, or
+launch-lock state, including paths that the first approval or fork will create, even read-only.
+Opaque `--volumes-from` and custom volume drivers are refused; existing named volumes are inspected
+before launch. Put a cache outside the checkout and mount that explicit, inspectable path instead.
+
+Saved service-file approvals from earlier formats (including the first repository-scoped format)
+no longer grant access. Run `coop up` at a terminal to review eligible read-only secret files again;
+secret directories and writable binds cannot be approved. An external or custom-named Docker
+volume now also needs an explicit terminal review listing its actual name,
+read-only/read-write mode, and service targets; automatic, filtered, and non-terminal starts stay
+closed even after approval. The grant binds the selected Docker daemon and the inspected plain-local
+volume object; switching daemon or replacing a volume requires another review. Approval belongs to the repository's `.coop-service-approval` marker
+and a private hardlink in Coop state. Keep both on one filesystem. Copying the marker into another
+checkout does not copy its grant. Inspect a damaged marker before removing it and re-reviewing.
+Sidecar repository binds using SELinux relabel or propagation options now refuse; remove those
+options before retrying. A read-only session also requires its bind source to exist already,
+because Compose's short syntax would otherwise create a directory on the host.
+
 ## Canonical tasks across isolated forks
 
 Fork loops now schedule from the project's canonical task queue. They no longer copy a complete

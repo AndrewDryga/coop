@@ -213,9 +213,9 @@ func TestFreshApprovalClearsTheWithdrawalBarrier(t *testing.T) {
 	}
 }
 
-// The barrier is written BEFORE the grant is cleared, so the only state a crash
-// between the two can leave is the one that existed a moment earlier: the old
-// approval still in force. It never leaves the open default.
+// The barrier is written BEFORE the grant is cleared, so a crash between the two leaves a stale
+// grant behind a durable refusal. The user's withdrawal has taken effect even before cleanup
+// finishes; a visible old approval must not resurrect access.
 func TestWithdrawalIsPersistedBeforeTheGrantIsCleared(t *testing.T) {
 	s := openStore(t)
 	project := t.TempDir()
@@ -231,10 +231,14 @@ func TestWithdrawalIsPersistedBeforeTheGrantIsCleared(t *testing.T) {
 	if err := s.recordWithdrawal(id); err != nil {
 		t.Fatal(err)
 	}
-	if pending := pendingAfter(t, s, project, Admission{Requests: []egress.Rule{rule("c.example.com")}}); pending != nil {
-		t.Fatalf("an interrupted withdrawal refused a run its approval still covers: %s", pending.Reason)
+	request := Admission{Requests: []egress.Rule{rule("c.example.com")}}
+	if pending := pendingAfter(t, s, project, request); pending == nil || !strings.Contains(pending.Reason, "withdrawn") {
+		t.Fatalf("an interrupted withdrawal reused its stale approval: %v", pending)
 	}
-	// Finishing the removal is what turns it into a withdrawal.
+	if _, err := s.Admit(project, request); err == nil {
+		t.Fatal("Admit reused a stale approval after the withdrawal barrier was durable")
+	}
+	// A retry still finishes the retained anchor and approval cleanup.
 	record, err := s.ApprovalAt(project)
 	if err != nil {
 		t.Fatal(err)

@@ -3,6 +3,7 @@ package networkstate
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 )
 
@@ -65,6 +66,13 @@ func (s *Store) Forget(ctx context.Context, record ApprovalRecord) (bool, error)
 	}
 	removed := false
 	err := s.lockRecord(ctx, "approval", record.ID, func() error {
+		// ApprovalAt is a review snapshot, not the object to clean up after this lock is acquired.
+		// A concurrent reapproval can replace its anchor while the operator is confirming. Re-read
+		// under the record lock so deleting the current grant cannot orphan the current anchor.
+		current, err := s.approval(record.ID)
+		if err != nil {
+			return err
+		}
 		// The barrier goes down FIRST and durably. Removing the grant is what
 		// makes this project's mode fall back to coop's open default, so the
 		// order is the guarantee: after this line no ordinary launch of this
@@ -72,10 +80,18 @@ func (s *Store) Forget(ctx context.Context, record ApprovalRecord) (bool, error)
 		if err := s.recordWithdrawal(record.ID); err != nil {
 			return err
 		}
+		// Retire the anchor while its approval record still names it. If the process dies here,
+		// withdrawal keeps launches closed and the retained record lets the next retry finish
+		// cleanup. Removing the record first would turn this into an uncollectable private link.
+		if err := s.retireProjectAnchor(record.Path, current); err != nil {
+			return fmt.Errorf("retire project approval identity: %w", err)
+		}
 		name := approvalRecord(record.ID)
-		err := s.root.Remove(name)
+		err = s.root.Remove(name)
 		if errors.Is(err, os.ErrNotExist) {
-			return nil
+			// The missing name may be a prior unlink whose directory sync failed. Repeat the
+			// barrier before an idempotent retry reports that nothing remained to remove.
+			return s.confirmPublication()
 		}
 		if err != nil {
 			return err
@@ -83,10 +99,13 @@ func (s *Store) Forget(ctx context.Context, record ApprovalRecord) (bool, error)
 		if _, err := s.root.Lstat(name); !errors.Is(err, os.ErrNotExist) {
 			return errors.New("this approval could not be proven removed")
 		}
-		removed = true
 		// An unlink is durable only once its directory entry is — the same fsync
 		// a publication needs, for the same reason.
-		return s.confirmPublication()
+		if err := s.confirmPublication(); err != nil {
+			return err
+		}
+		removed = true
+		return nil
 	})
 	if err != nil {
 		return false, err

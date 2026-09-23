@@ -2,6 +2,8 @@ package box
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -31,7 +33,7 @@ func serviceShadowOverride(repo, composeFile string, data []byte, dir string) (s
 	if err != nil {
 		return "", false, err
 	}
-	return writeServiceShadowOverride(decoys, dir)
+	return writeServiceShadowOverride(repo, decoys, dir)
 }
 
 // serviceDecoy is one read-only override mount. Most entries are empty decoys; bindSource marks
@@ -41,6 +43,7 @@ type serviceDecoy struct {
 	dir        bool
 	source     string
 	bindSource string // non-empty for a readable, read-only policy bind
+	writable   bool   // the original bind or its ancestor lets the service modify this source
 }
 
 // serviceShadowPlan decides, per service, which bind targets get a decoy, and lists the
@@ -67,7 +70,7 @@ func serviceShadowPlan(repo, composeFile string, data []byte) (map[string][]serv
 	for _, name := range names {
 		for _, entry := range doc.Services[name].Volumes {
 			source, target := bindSourceTarget(entry)
-			if source == "" || target == "" || !looksLikePath(source) {
+			if target == "" || !serviceVolumeIsBind(entry, source) {
 				continue
 			}
 			abs := source
@@ -86,8 +89,9 @@ func serviceShadowPlan(repo, composeFile string, data []byte) (map[string][]serv
 			if err != nil {
 				continue // a source that does not exist yet has nothing to hide
 			}
+			_, writable := serviceVolumeTargetAccess(entry)
 			if rel != "." && shadowed(filepath.ToSlash(rel)) {
-				decoys[name] = append(decoys[name], serviceDecoy{target: target, dir: info.IsDir(), source: filepath.ToSlash(rel)})
+				decoys[name] = append(decoys[name], serviceDecoy{target: target, dir: info.IsDir(), source: filepath.ToSlash(rel), writable: writable})
 				hidden[filepath.ToSlash(rel)] = true
 				continue
 			}
@@ -122,7 +126,7 @@ func serviceShadowPlan(repo, composeFile string, data []byte) (map[string][]serv
 				if !shadowed(filepath.ToSlash(relRepo)) {
 					return nil
 				}
-				decoys[name] = append(decoys[name], serviceDecoy{target: target + "/" + filepath.ToSlash(under), dir: d.IsDir(), source: filepath.ToSlash(relRepo)})
+				decoys[name] = append(decoys[name], serviceDecoy{target: target + "/" + filepath.ToSlash(under), dir: d.IsDir(), source: filepath.ToSlash(relRepo), writable: writable})
 				hidden[filepath.ToSlash(relRepo)] = true
 				if d.IsDir() {
 					return fs.SkipDir
@@ -150,11 +154,19 @@ func keepDecoysOutside(decoys map[string][]serviceDecoy, approved []string) (map
 	for _, p := range approved {
 		allow[p] = true
 	}
+	unsafe := make(map[string]bool)
+	for _, list := range decoys {
+		for _, d := range list {
+			if d.dir || d.writable {
+				unsafe[d.source] = true
+			}
+		}
+	}
 	kept := map[string][]serviceDecoy{}
 	hidden := map[string]bool{}
 	for name, list := range decoys {
 		for _, d := range list {
-			if d.bindSource == "" && allow[d.source] {
+			if d.bindSource == "" && allow[d.source] && !unsafe[d.source] {
 				continue
 			}
 			kept[name] = append(kept[name], d)
@@ -215,7 +227,7 @@ func serviceDecoyPaths() (file, dir string, err error) {
 	return file, dir, nil
 }
 
-func writeServiceShadowOverride(decoys map[string][]serviceDecoy, dir string) (string, bool, error) {
+func writeServiceShadowOverride(repo string, decoys map[string][]serviceDecoy, dir string) (string, bool, error) {
 	if len(decoys) == 0 {
 		return "", false, nil
 	}
@@ -228,6 +240,12 @@ func writeServiceShadowOverride(decoys map[string][]serviceDecoy, dir string) (s
 	if err != nil {
 		return "", false, err
 	}
+	var sources *repositorySources
+	defer func() {
+		if sources != nil {
+			_ = sources.Close()
+		}
+	}()
 	var b strings.Builder
 	b.WriteString("services:\n")
 	for _, name := range names {
@@ -240,7 +258,20 @@ func writeServiceShadowOverride(decoys map[string][]serviceDecoy, dir string) (s
 		for _, d := range list {
 			source := decoyFile
 			if d.bindSource != "" {
-				source = d.bindSource
+				if sources == nil {
+					sources, err = openRepositorySources(repo)
+					if err != nil {
+						return "", false, err
+					}
+				}
+				policy, readErr := sources.readRegularFileNoFollow(filepath.FromSlash(d.source), coopIgnoreSnapshotLimit)
+				if readErr != nil {
+					return "", false, fmt.Errorf("snapshot service policy %s: %w", d.source, readErr)
+				}
+				source, err = durableServicePolicySnapshot(policy)
+				if err != nil {
+					return "", false, err
+				}
 			} else if d.dir {
 				source = decoyDir
 			}
@@ -252,6 +283,47 @@ func writeServiceShadowOverride(decoys map[string][]serviceDecoy, dir string) (s
 		return "", false, err
 	}
 	return path, true, nil
+}
+
+// A sidecar may restart long after the per-command Compose snapshot is removed. Its .coopignore
+// bind therefore needs an immutable, host-private source that survives the command lifetime.
+func durableServicePolicySnapshot(data []byte) (string, error) {
+	root, err := serviceStateRoot("policies")
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	path := filepath.Join(root, hex.EncodeToString(sum[:])+".coopignore")
+	if existing, err := os.ReadFile(path); err == nil {
+		if bytes.Equal(existing, data) {
+			return path, nil
+		}
+		return "", errors.New("stored service policy snapshot changed")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o400)
+	if errors.Is(err, os.ErrExist) {
+		return durableServicePolicySnapshot(data)
+	}
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return "", err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // bindSourceTarget reads a volume entry's host source and container target in both the short

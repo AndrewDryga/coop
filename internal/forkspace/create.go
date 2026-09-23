@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // Setup creates the clone and its branch (the git half of `coop fork <name>`, with no
@@ -30,7 +29,15 @@ func SetupPinnedContext(ctx context.Context, repo, name, commit string) (ws stri
 
 func setupContext(ctx context.Context, repo, name, commit string) (ws string, err error) {
 	ws = Workspace(repo, name)
-	if err := os.MkdirAll(Home(repo), 0o755); err != nil {
+	// Production callers hold the fork lifecycle lock. Refuse before cloning so an interrupted
+	// session discard cannot be hidden by a new, unanchored workspace at the same public name.
+	// EnsureGenerationLocked repeats the check at the authority-publication boundary.
+	if ValidExistingName(name) {
+		if err := RequireForkNameAvailable(repo, name); err != nil {
+			return ws, err
+		}
+	}
+	if err := ensureForkHome(repo); err != nil {
 		return ws, err
 	}
 	clone := GitCloneContext
@@ -49,8 +56,16 @@ func setupContext(ctx context.Context, repo, name, commit string) (ws string, er
 		}
 		if cleanupErr := os.RemoveAll(ws); cleanupErr != nil {
 			err = errors.Join(err, fmt.Errorf("remove incomplete fork workspace %s: %w", ws, cleanupErr))
+		} else if syncErr := confirmForkDirectoryEntry(ws); syncErr != nil {
+			err = errors.Join(err, fmt.Errorf("confirm removal of incomplete fork workspace %s: %w", ws, syncErr))
 		}
 	}()
+	// The clone's directory name is the workspace users and later generation authority rely on.
+	// Sync its parent before returning or publishing an identity; on failure the defer removes the
+	// volatile clone and confirms that absence so a retry starts from one unambiguous state.
+	if err := confirmForkDirectoryEntry(ws); err != nil {
+		return ws, fmt.Errorf("confirm fork workspace creation: %w", err)
+	}
 	var checkoutErr error
 	if commit == "" {
 		checkoutErr = gitCheckoutNewBranchContext(ctx, ws, name)
@@ -75,6 +90,9 @@ func setupContext(ctx context.Context, repo, name, commit string) (ws string, er
 	}
 	if err := Exclude(ws, ".coop/"); err != nil { // trusted setup only; never re-open agent-writable .git metadata later
 		return ws, fmt.Errorf("exclude fork bookkeeping: %w", err)
+	}
+	if err := Exclude(ws, "/"+GenerationMarkerName); err != nil {
+		return ws, fmt.Errorf("exclude fork identity marker: %w", err)
 	}
 	complete = true
 	return ws, nil
@@ -154,23 +172,6 @@ func PropagateGitIdentityContext(ctx context.Context, repo, ws string) error {
 	return nil
 }
 
-// Exclude appends a pattern to the fork's local .git/info/exclude (git's uncommitted
-// ignore file) if absent, so coop's per-fork bookkeeping never shows in a review diff or
-// lands on merge.
-func Exclude(ws, pattern string) error {
-	excl := filepath.Join(ws, ".git", "info", "exclude")
-	if data, err := os.ReadFile(excl); err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
-			if strings.TrimSpace(line) == pattern {
-				return nil
-			}
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return appendFile(excl, []byte("\n# coop: per-fork state, never committed\n"+pattern+"\n"))
-}
-
 func appendFile(path string, data []byte) error {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -191,8 +192,16 @@ func Destroy(repo, name string) error {
 	if err := os.RemoveAll(Workspace(repo, name)); err != nil {
 		return err
 	}
-	if entries, _ := os.ReadDir(Home(repo)); len(entries) == 0 {
-		_ = os.Remove(Home(repo))
+	if err := confirmForkDirectoryEntry(Workspace(repo, name)); err != nil {
+		return fmt.Errorf("confirm fork workspace removal: %w", err)
+	}
+	home := Home(repo)
+	if entries, _ := os.ReadDir(home); len(entries) == 0 {
+		if err := os.Remove(home); err == nil {
+			if err := confirmForkDirectoryEntry(home); err != nil {
+				return fmt.Errorf("confirm empty fork home removal: %w", err)
+			}
+		}
 	}
 	return nil
 }

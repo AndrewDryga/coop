@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/egress"
@@ -30,7 +32,9 @@ func (a *app) cmdApprove(args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	review, err := box.ReviewProjectNetwork(a.cfg, repo)
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	review, err := box.ReviewProjectNetworkContext(ctx, a.cfg, repo)
 	if err != nil {
 		return 1, err
 	}
@@ -40,8 +44,8 @@ func (a *app) cmdApprove(args []string) (int, error) {
 		ui.Note("%s", netApproveUnchanged)
 		return 0, nil
 	}
-	err = confirmNetApproval(context.Background(), review, os.Stderr, func() bool {
-		return ui.Confirm(netApprovePrompt, false)
+	err = confirmNetApproval(ctx, review, os.Stderr, func() bool {
+		return confirmNetApprovalPrompt(ctx)
 	})
 	if err = errors.Join(err, review.Close()); err != nil {
 		return 1, err
@@ -50,11 +54,25 @@ func (a *app) cmdApprove(args []string) (int, error) {
 	return 0, nil
 }
 
+func confirmNetApprovalPrompt(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	answered := make(chan bool, 1)
+	go func() { answered <- ui.Confirm(netApprovePrompt, false) }()
+	select {
+	case answer := <-answered:
+		return answer
+	case <-ctx.Done():
+		return false
+	}
+}
+
 // The question and the answer carry the one limit that matters — an approval
 // applies to NEW runs — so the review above them can be the change and nothing else.
 const (
-	netApproveIntro     = "Review the requested project access changes."
-	netApprovePrompt    = "Approve these changes for new runs?"
+	netApproveIntro     = "Review the requested project access."
+	netApprovePrompt    = "Approve this access for new runs?"
 	netApproveApproved  = "Approved for new runs"
 	netApproveUnchanged = "No approval needed — this project's requested access has not changed."
 )
@@ -78,6 +96,7 @@ type netApprovalReview interface {
 	Project() string
 	Before() *networkstate.Approval
 	After() *networkstate.Approval
+	Pending() *networkstate.PendingApproval
 	Commit(context.Context) error
 }
 
@@ -89,15 +108,21 @@ func confirmNetApproval(ctx context.Context, review netApprovalReview, out io.Wr
 	var b strings.Builder
 	p := ui.For(os.Stderr)
 	fmt.Fprintf(&b, "%s\n", netApproveIntro)
+	if pending := review.Pending(); pending != nil && pending.Sentence() != "" {
+		fmt.Fprintf(&b, "\nWhy approval is needed:\n  %s\n", pending.Sentence())
+	}
 	writeNetAccessChange(&b, p, review.Before(), after.Posture, after.Envelope)
-	b.WriteString("\n")
 	if _, err := io.WriteString(out, b.String()); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if !confirm() {
+	confirmed := confirm()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !confirmed {
 		return errors.New("cancelled — nothing was approved")
 	}
 	return review.Commit(ctx)

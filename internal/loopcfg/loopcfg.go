@@ -23,11 +23,14 @@ import (
 	"strings"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/safefile"
 	"gopkg.in/yaml.v3"
 )
 
 // File is the repo-relative path of the loop config.
 const File = ".agent/loop.yaml"
+
+const loopConfigFileLimit = 1 << 20
 
 // Config is a parsed .agent/loop.yaml. Every field is optional; a zero Config means "all
 // built-in defaults" (an absent file decodes to this).
@@ -118,10 +121,17 @@ func Load(repo string) (*Config, error) {
 // A loop run pins the pair for its lifetime: config and digest always agree because there is no
 // second read between parse and snapshot.
 func LoadSnapshot(repo string) (*Config, *Snapshot, error) {
-	path := filepath.Join(repo, filepath.FromSlash(File))
-	data, err := os.ReadFile(path)
+	abs, err := filepath.Abs(repo)
+	if err != nil {
+		return nil, nil, err
+	}
+	canonical, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return nil, nil, err
+	}
+	data, err := readLoopConfig(canonical)
 	if os.IsNotExist(err) {
-		return &Config{}, &Snapshot{path: path}, nil
+		return &Config{}, &Snapshot{repo: canonical}, nil
 	}
 	if err != nil {
 		return nil, nil, err
@@ -130,7 +140,19 @@ func LoadSnapshot(repo string) (*Config, *Snapshot, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return c, &Snapshot{path: path, digest: Digest(data)}, nil
+	return c, &Snapshot{repo: canonical, digest: Digest(data)}, nil
+}
+
+// readLoopConfig confines the repository-controlled path to the selected checkout and refuses
+// links, FIFOs and oversized files. A loop is unattended by design, so a malicious worktree must
+// not be able to block orchestration by replacing its config with a special file.
+func readLoopConfig(repo string) ([]byte, error) {
+	root, err := safefile.OpenRoot(repo)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return safefile.ReadRegular(root, filepath.FromSlash(File), loopConfigFileLimit)
 }
 
 func parse(data []byte) (*Config, error) {
@@ -183,7 +205,7 @@ func Digest(data []byte) string {
 // state once and, at each later box launch, warns once per new on-disk digest that a restart
 // is needed to apply the change.
 type Snapshot struct {
-	path   string              // the file this run read
+	repo   string              // checkout root containing the file this run read
 	digest string              // Digest of the startup bytes; "" when the file was absent
 	warned map[string]struct{} // drifted digests already reported during this run
 }
@@ -210,7 +232,7 @@ func (s *Snapshot) State() string {
 // subsequent launch while an edit-of-the-edit still does. A read error other than not-exist is
 // not drift: the check is best-effort and must never block or spam a launch.
 func (s *Snapshot) Drift() (string, bool) {
-	data, err := os.ReadFile(s.path)
+	data, err := readLoopConfig(s.repo)
 	current := ""
 	switch {
 	case err == nil:

@@ -132,47 +132,44 @@ func geminiHasSession(cfg *config.Config, ws, id string) bool {
 	if err != nil {
 		return false
 	}
-	buckets, _ := dir.ReadDir(-1)
-	_ = dir.Close()
-	for _, bucket := range buckets {
+	found := scanSessionDir(dir, func(bucket os.DirEntry) bool {
 		if !bucket.IsDir() || bucket.Type()&os.ModeSymlink != 0 {
-			continue
+			return false
 		}
 		if geminiBucketCWD(root, bucket.Name()) != ws {
-			continue
+			return false
 		}
 		chats := filepath.Join(bucket.Name(), "chats")
 		info, err := root.Lstat(chats)
 		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			continue
+			return false
 		}
 		chatDir, err := root.Open(chats)
 		if err != nil {
-			continue
+			return false
 		}
-		files, _ := chatDir.ReadDir(-1)
-		_ = chatDir.Close()
-		for _, entry := range files {
+		matched := scanSessionDir(chatDir, func(entry os.DirEntry) bool {
 			if !strings.HasSuffix(entry.Name(), ".jsonl") {
-				continue
+				return false
 			}
 			path := filepath.Join(chats, entry.Name())
 			info, err := root.Lstat(path)
 			if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-				continue
+				return false
 			}
 			f, err := root.Open(path)
 			if err != nil {
-				continue
+				return false
 			}
 			sessionID, projectHash := geminiSessionMetadata(io.LimitReader(f, geminiMetadataLimit))
 			_ = f.Close()
-			if sessionID == id && projectHash == wantProject {
-				return true
-			}
-		}
-	}
-	return false
+			return sessionID == id && projectHash == wantProject
+		})
+		_ = chatDir.Close()
+		return matched
+	})
+	_ = dir.Close()
+	return found
 }
 
 // geminiBucketCWD reads Gemini's bucket ownership marker. An absent or malformed marker is not

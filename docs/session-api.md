@@ -99,7 +99,8 @@ The parser rejects unknown fields and requires:
   schema-invalid structured result is regenerated from the admitted prompt, up to the same three
   attempts). A bare session takes no `source` and no `responder_binding`, at create or on a
   turn. A legacy `repository_read_only: true` policy is not a readonly policy: it keeps its normal
-  mode and its writable output root;
+  mode and a writable `.coop-output` path inside the box, backed by session-owned scratch outside
+  the read-only checkout;
 - `repository`: the absolute, canonical root of an existing Git worktree (omitted for `mode: bare`);
 - `remote` and `branch`: optional, paired fields that make Coop fetch and pin the exact current
   remote branch commit without switching, pulling, resetting, or otherwise changing the local
@@ -951,7 +952,10 @@ so their cumulative bytes do not terminate a legitimate long turn. Assistant tex
 the turn deadline, and durable output artifacts remain independently bounded.
 Only PNG, JPEG, WebP, and GIF are accepted. Coop rejects symlinks, special files, mismatched content,
 more than four files, a file over 8 MiB, or more than 8 MiB total. The scratch directory is removed
-before the turn completes, so generated charts do not appear as repository changes.
+before the turn completes, so generated charts do not appear as repository changes. For a legacy
+read-only repository session the path is still `.coop-output/...` in the box, but its host source
+lives in Coop's session state rather than beneath the checkout; the repository mount remains wholly
+read-only.
 
 Cancellation asks ACP to cancel, then stops and reaps the exact process group and run-labeled box.
 It does not claim that external side effects were reversed.
@@ -1257,8 +1261,10 @@ curl --unix-socket "$SOCKET" \
   http://localhost/v1/sessions/remote_.../discard-plan
 ```
 
-The plan captures exact session revision, workspace inode, branch, head, status digest, running
-state, dirty state, and unmerged state. By default dirty or unmerged work is refused. A caller that
+The plan captures the exact session revision, anchored fork generation and reservation, plus the
+workspace inode, branch, head, status digest, running state, dirty state, and unmerged state. The
+inode is one stale-plan signal, not authority by itself; apply pins the live directory and rechecks
+the complete snapshot before deletion. By default dirty or unmerged work is refused. A caller that
 has separate authority to destroy it must explicitly set `accept_dirty` and/or `accept_unmerged`
 when creating the plan.
 

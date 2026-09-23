@@ -318,12 +318,15 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 	if projectRepo == "" {
 		projectRepo = spec.Repo
 	}
+	if projectRepo == "" {
+		projectRepo = f.record.Project // trusted execution record; synthetic/recovery launches may omit RunSpec.Repo
+	}
 	if f.preparedServices != nil {
 		unlock, err := forkspace.LockServiceLaunch(ctx, projectRepo, true)
 		if err != nil {
 			return -1, fmt.Errorf("wait for a safe service launch: %w", err)
 		}
-		err = f.preparedServices.start()
+		err = f.preparedServices.start(ctx)
 		unlock()
 		if err != nil {
 			return -1, err
@@ -338,9 +341,13 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 	if err := f.checkBindings(); err != nil {
 		return -1, err
 	}
-	unlockMounts, err := forkspace.LockServiceLaunch(ctx, projectRepo, false)
+	revalidate := f.mountRevalidate
+	if revalidate == nil {
+		revalidate = func() error { return nil }
+	}
+	unlockMounts, err := enterAuthorityMountWindow(ctx, projectRepo, revalidate)
 	if err != nil {
-		return -1, fmt.Errorf("enter the sandbox mount window: %w", err)
+		return -1, err
 	}
 	defer unlockMounts()
 	options = append(slices.Clone(options), "--user", "1000:1000", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",

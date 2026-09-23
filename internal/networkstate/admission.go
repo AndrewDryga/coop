@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -152,6 +153,9 @@ func PreviewAdmission(path, project string, exposed []string, input Admission) (
 	}
 	store, err := openFiles(path, exposed, false)
 	if errors.Is(err, os.ErrNotExist) {
+		if err := refuseOrphanedProjectMarker(project); err != nil {
+			return AdmissionPreview{}, err
+		}
 		return input.preview(nil, false)
 	}
 	if err != nil {
@@ -162,9 +166,23 @@ func PreviewAdmission(path, project string, exposed []string, input Admission) (
 		return AdmissionPreview{}, err
 	}
 	if store.key == nil {
+		if err := refuseOrphanedProjectMarker(project); err != nil {
+			return AdmissionPreview{}, err
+		}
 		return input.preview(nil, false)
 	}
 	return store.admissionPreview(project, input)
+}
+
+func refuseOrphanedProjectMarker(project string) error {
+	_, err := os.Lstat(filepath.Join(project, ProjectApprovalMarker))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect project network approval marker: %w", err)
+	}
+	return errors.New("this project has a network approval marker but Coop's private authority store is missing — recover or reset the network approval before launching")
 }
 
 // PreviewAdmissionMode is the launch caller's form: a pending request is a
@@ -188,7 +206,7 @@ func (s *Store) admissionPreview(project string, input Admission) (AdmissionPrev
 	if err := s.authorityAvailable(); err != nil {
 		return AdmissionPreview{}, err
 	}
-	id, canonical, info, err := s.projectIdentity(project)
+	id, canonical, _, err := s.projectIdentity(project)
 	if err != nil {
 		return AdmissionPreview{}, err
 	}
@@ -206,7 +224,7 @@ func (s *Store) admissionPreview(project string, input Admission) (AdmissionPrev
 	}
 	// A replaced project directory is exactly the pending review this view
 	// exists to report: describing it beats failing the read nobody can act on.
-	if drift := approval.checkDirectory(canonical, info); drift != nil {
+	if drift := s.checkDirectory(approval, canonical); drift != nil {
 		preview.Pending = drift
 	}
 	return preview, nil
@@ -269,7 +287,7 @@ func (s *Store) authorized(project string, input Admission, pinBundles bool) (st
 	if err := s.authorityAvailable(); err != nil {
 		return "", "", nil, err
 	}
-	id, canonical, info, err := s.projectIdentity(project)
+	id, canonical, _, err := s.projectIdentity(project)
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -277,7 +295,7 @@ func (s *Store) authorized(project string, input Admission, pinBundles bool) (st
 	if err != nil {
 		return "", "", nil, err
 	}
-	if err := approval.checkDirectory(canonical, info); err != nil {
+	if err := s.checkDirectory(approval, canonical); err != nil {
 		return "", "", nil, err
 	}
 	mode, err := input.resolveMode(approval)

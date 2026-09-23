@@ -2045,7 +2045,7 @@ func loopServiceFingerprint(workspace, policyRepo string) string {
 		return ""
 	}
 	approved := byte(0)
-	if _, ok := box.ApprovedServiceSecrets(data); ok {
+	if _, ok := box.ApprovedServiceSecrets(workspace, file, data); ok {
 		approved = 1
 	}
 	sum := sha256.Sum256(append(data, approved))

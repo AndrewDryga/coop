@@ -2,8 +2,8 @@
 name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
-sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go]
-updated: 2026-09-22
+sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go]
+updated: 2026-09-23
 ---
 
 `coop <agent> --egress filtered` runs the box behind a per-run gateway. Five boring layers stand
@@ -44,9 +44,8 @@ same answer, so no two of them can disagree. Without an approval only a widening
 fresh `coop init` project (explicitly `filtered`) launches without a review. The file's mode counts
 only where it would decide anything: under `--egress`, `COOP_EGRESS` or a session policy the file's
 `open` is moot and is not pending. `approve` has no `--mode`: to change access you edit the file.
-An approval binds three things beyond the rules: the project directory's inode (a replacement
-at the same path is pending, `networkstate/authority.go`, `checkDirectory`; the device is recorded
-but not compared, since a reboot renumbers the volume), the reviewed Compose
+An approval binds three things beyond the rules: the project directory's private two-link anchor (a
+replacement or copied marker is pending; allocator metadata alone is never trusted), the reviewed Compose
 stanza of every `service:` grant as a digest recomputed at launch (`box/composecheck.go:415`,
 `box/network_approval.go`, `requestedServiceDigests`), and the same capability gate a launch applies
 — an unenforceable rule is refused at review, not remembered. `coop net forget` is the way back and the only caller of
@@ -61,6 +60,14 @@ traffic is evidence, never a grant. Admission marks the resolved posture explici
 `cfg.SetEgress` (`box/network_admission.go:91`), so the project overlay cannot decide the mode a
 second time. A run that neither asks for filtered nor has a remembered posture writes NO host
 state — the preview creates no owner key (`networkstate/admission.go:45`).
+
+Approval review has a two-phase concurrency rule. An exact existing marker/private-anchor pair may
+be reviewed read-only without pausing running boxes. Any missing, replaced, or moved binding is a
+transition: `ReviewProjectNetwork` takes the project's exclusive service-launch lock, re-reads the
+policy and pending state, then creates or re-enrolls the pair. `Store.Approve` never performs that
+transition later at the prompt boundary; it reuses the reviewed pair exactly or returns
+`ErrApprovalChanged`. This prevents marker deletion or checkout movement between an unlocked probe
+and enrollment from crossing an active sandbox mount window.
 
 ACP supervision carries this explicit mode through `spawnBox` to initial, replacement and warm
 children, removing any conflicting ambient `COOP_EGRESS`. A standalone `coop models` catalog
@@ -251,6 +258,9 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-23 — project identity moved from reusable inode metadata to a private hardlink anchor.
+  Older approvals require explicit review; final box arguments now refuse writable project-parent
+  mounts, every private-state exposure and opaque/custom volumes that could transplant the link.
 - 2026-09-22 — ACP children carry their supervisor's explicit mode across re-exec; standalone
   catalog refresh remains host-side metadata, with existing project-overlay behavior preserved.
 - 2026-09-22 — implemented the approved explicit restricted-project-build policy, preserving open

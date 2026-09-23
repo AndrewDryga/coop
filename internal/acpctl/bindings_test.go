@@ -88,6 +88,14 @@ func TestThreadBindingsRejectUnusableEntries(t *testing.T) {
 	if _, ok := s.Lookup("S1"); ok {
 		t.Fatal("Save persisted an unusable binding")
 	}
+
+	// Save must not create a record that Lookup is guaranteed to reject. The adapter owns this ID,
+	// so bound the serialized record rather than relying on a particular timestamp width.
+	tooLarge := strings.Repeat("x", maxThreadBindingBytes)
+	s.Save(tooLarge, acpproxy.SessionBinding{Provider: "claude", AdapterID: "N1"})
+	if _, err := os.Stat(s.path(tooLarge)); !os.IsNotExist(err) {
+		t.Fatalf("oversized Save left a binding file: %v", err)
+	}
 }
 
 func TestThreadBindingsPruneStaleEntries(t *testing.T) {

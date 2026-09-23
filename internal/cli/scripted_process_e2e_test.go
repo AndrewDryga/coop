@@ -387,8 +387,8 @@ func readProcessTrace(t *testing.T, path string) []*processTrace {
 // run contract, provider start and exit, and the runtime's exit. A command that reaps orphaned boxes
 // on its way in (loop, fork, build) adds exactly one runtime `ps` and one `network` listing. A loop
 // WORK box adds its task channel on top (box/taskchannel.go): the run-private volume is created,
-// coop's helper container is started on it, and the volume is removed after the box — three more
-// runtime invocations, and nothing else.
+// coop's helper container is started on it, the host checks the volume's backing exposure before
+// launch, and the volume is removed after the box — four more runtime invocations.
 type traceShape int
 
 const (
@@ -400,7 +400,7 @@ const (
 const (
 	directTraceEvents   = 7
 	sweptTraceEvents    = directTraceEvents + 2
-	loopWorkTraceEvents = sweptTraceEvents + 3
+	loopWorkTraceEvents = sweptTraceEvents + 4
 )
 
 func (s traceShape) events() int {
@@ -447,7 +447,7 @@ func assertDirectRuntimeInvocations(t *testing.T, trace []*processTrace, shape t
 	if shape == loopWorkBox {
 		// The task channel brackets the box: its volume and helper come up first (the box must
 		// find the socket listening), and the volume goes once the box is gone.
-		wantPrefix = append(wantPrefix, []string{"volume", "<validated>"}, []string{"run", "<task-channel>"})
+		wantPrefix = append(wantPrefix, []string{"volume", "<validated>"}, []string{"run", "<task-channel>"}, []string{"volume", "<validated>"})
 		wantSuffix = [][]string{{"volume", "<validated>"}}
 	}
 	run := len(wantPrefix)
@@ -549,8 +549,8 @@ func assertProcessMountsAtTarget(t *testing.T, layout procharness.Layout, repo, 
 		}
 		if !mount.ReadOnly {
 			t.Errorf("unexpected writable mount %#v", mount)
-		} else if !strings.HasPrefix(mount.Source, "<root>/tmp/coop-") {
-			t.Errorf("read-only mount did not come from generated temp state: %#v", mount)
+		} else if !recordedGeneratedMountPath(mount.Source) {
+			t.Errorf("read-only mount did not come from generated fixture state: %#v", mount)
 		}
 	}
 	if !foundRepo {
@@ -559,6 +559,18 @@ func assertProcessMountsAtTarget(t *testing.T, layout procharness.Layout, repo, 
 	if !foundProfile {
 		t.Fatalf("profile mount %s:%s missing from %#v", profileSource, profileTarget, mounts)
 	}
+}
+
+func recordedGeneratedMountPath(path string) bool {
+	if strings.HasPrefix(path, "<root>/tmp/coop-") {
+		return true
+	}
+	rel := strings.TrimPrefix(path, "<root>/xdg/config/coop/runfiles/")
+	if rel == path {
+		return false
+	}
+	parts := strings.Split(rel, "/")
+	return len(parts) == 2 && strings.HasPrefix(parts[0], "coop-run-") && strings.HasPrefix(parts[1], "coop-")
 }
 
 func recordedFixturePath(path string) bool {

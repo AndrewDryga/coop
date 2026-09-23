@@ -85,10 +85,13 @@ type filteredExecution struct {
 	taskVolume string
 	// builtTags are the per-definition tags of the images Coop built for this filtered host. The
 	// box runs them by ID, so these are the only names a later build can weigh (reclaim.go).
-	builtTags   []string
-	broker      *credentialBrokerRun
-	mcpScrub    []string        // the configured MCP file's token variables, kept out of the box env
-	authMarkers map[string]bool // frozen before admission; agent-writable profile state cannot widen env authority
+	builtTags       []string
+	broker          *credentialBrokerRun
+	mcpScrub        []string        // the configured MCP file's token variables, kept out of the box env
+	authMarkers     map[string]bool // frozen before admission; agent-writable profile state cannot widen env authority
+	authoritySpec   RunSpec         // final mount guard for project/fork hardlink anchors
+	authorityConfig *config.Config  // original host config; generated MCP snapshots never replace its privacy boundary
+	mountRevalidate func() error    // rerun under the shared launch window immediately before agent creation
 }
 
 func (f *filteredExecution) workloadOutcome(code int, err error, cancelled bool) string {
@@ -243,7 +246,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 			ui.Detail("waiting for Docker to start this box (%s so far)", elapsed.Round(time.Second))
 		}
 	}
-	f := &filteredExecution{store: capture.Store, docker: docker, policy: policy, attempted: map[string]bool{}, taskVolume: spec.taskVolume, authMarkers: authMarkers}
+	f := &filteredExecution{store: capture.Store, docker: docker, policy: policy, attempted: map[string]bool{}, taskVolume: spec.taskVolume, authMarkers: authMarkers, authoritySpec: spec, authorityConfig: cfg}
 	if brokerPlan != nil {
 		f.broker = &credentialBrokerRun{plan: brokerPlan}
 	}

@@ -1,7 +1,8 @@
 package sessionsvc
 
 import (
-	"encoding/json"
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,6 +75,198 @@ func TestSessionWorkspaceCreateCapturesExactParentHead(t *testing.T) {
 	}
 	if got := sessionWorkspaceGit(t, repo, "for-each-ref", "--format=%(refname)=%(objectname)"); got != parentRefsBefore {
 		t.Fatalf("parent refs changed during workspace creation:\nbefore %s\nafter %s", parentRefsBefore, got)
+	}
+}
+
+func TestSessionWorkspacePreservesPublishedGenerationAfterAmbiguousCreateError(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	failure := errors.New("synthetic post-publish sync failure")
+	previous := ensureSessionGenerationLocked
+	ensureSessionGenerationLocked = func(repo, name string) (forkspace.Identity, error) {
+		identity, err := previous(repo, name)
+		if err != nil {
+			return identity, err
+		}
+		return forkspace.Identity{}, failure
+	}
+	t.Cleanup(func() { ensureSessionGenerationLocked = previous })
+
+	_, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "ambiguous", base)
+	if !errors.Is(err, failure) {
+		t.Fatalf("create error = %v, want %v", err, failure)
+	}
+	workspace := forkspace.Workspace(repo, "ambiguous")
+	if info, err := os.Lstat(workspace); err != nil || !info.IsDir() {
+		t.Fatalf("ambiguous publication deleted its anchored workspace: %+v, %v", info, err)
+	}
+	published, present, err := forkspace.ReadGeneration(repo, "ambiguous")
+	if err != nil || !present {
+		t.Fatalf("published generation = %+v, present=%v, err=%v", published, present, err)
+	}
+	if err := forkspace.ValidateGenerationWorkspace(repo, published); err != nil {
+		t.Fatalf("published generation no longer validates: %v", err)
+	}
+
+	ensureSessionGenerationLocked = previous
+	recovered, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "ambiguous", base)
+	if err != nil || recovered.Fork != published {
+		t.Fatalf("retry = %+v, %v; want published generation %+v", recovered, err, published)
+	}
+}
+
+func TestSessionWorkspacePreservesGenerationWhenReservationPublicationFails(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	reserveFailure := errors.New("synthetic reservation failure")
+	retireCalled := false
+	previousReserve, previousRemove := reserveSessionWorkspaceLocked, removeSessionGenerationIfMatches
+	reserveSessionWorkspaceLocked = func(string, forkspace.WorkspaceReservation) error { return reserveFailure }
+	removeSessionGenerationIfMatches = func(string, forkspace.Identity) error {
+		retireCalled = true
+		return errors.New("generation retirement must not begin")
+	}
+	t.Cleanup(func() {
+		reserveSessionWorkspaceLocked = previousReserve
+		removeSessionGenerationIfMatches = previousRemove
+	})
+
+	_, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "reserve-rollback", base, "remote_owner")
+	if !errors.Is(err, reserveFailure) {
+		t.Fatalf("create error = %v, want reservation failure", err)
+	}
+	if retireCalled {
+		t.Fatal("reservation failure began generation retirement")
+	}
+	workspace := forkspace.Workspace(repo, "reserve-rollback")
+	if info, err := os.Lstat(workspace); err != nil || !info.IsDir() {
+		t.Fatalf("reservation failure deleted the workspace: %+v, %v", info, err)
+	}
+	published, present, err := forkspace.ReadGeneration(repo, "reserve-rollback")
+	if err != nil || !present {
+		t.Fatalf("preserved generation = %+v, present=%v, err=%v", published, present, err)
+	}
+	if err := forkspace.ValidateGenerationWorkspace(repo, published); err != nil {
+		t.Fatalf("preserved generation no longer validates: %v", err)
+	}
+
+	reserveSessionWorkspaceLocked, removeSessionGenerationIfMatches = previousReserve, previousRemove
+	recovered, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "reserve-rollback", base, "remote_owner")
+	if err != nil || recovered.Fork != published {
+		t.Fatalf("retry = %+v, %v; want preserved generation %+v", recovered, err, published)
+	}
+}
+
+func TestSessionWorkspacePreservesPublishedReservationAfterAmbiguousCreate(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	failure := errors.New("synthetic reservation publication ambiguity")
+	previous := reserveSessionWorkspaceLocked
+	reserveSessionWorkspaceLocked = func(repo string, reservation forkspace.WorkspaceReservation) error {
+		if err := previous(repo, reservation); err != nil {
+			return err
+		}
+		return failure
+	}
+	t.Cleanup(func() { reserveSessionWorkspaceLocked = previous })
+
+	_, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "reservation-ambiguous", base, "remote_owner")
+	if !errors.Is(err, failure) {
+		t.Fatalf("create error = %v, want %v", err, failure)
+	}
+	workspace := forkspace.Workspace(repo, "reservation-ambiguous")
+	if info, err := os.Lstat(workspace); err != nil || !info.IsDir() {
+		t.Fatalf("ambiguous reservation deleted its workspace: %+v, %v", info, err)
+	}
+	identity, present, err := forkspace.ReadGeneration(repo, "reservation-ambiguous")
+	if err != nil || !present {
+		t.Fatalf("generation after ambiguous reservation = %+v, present=%v err=%v", identity, present, err)
+	}
+	if reservation, reserved, err := forkspace.ReadWorkspaceReservation(repo, identity); err != nil || !reserved || reservation.OwnerID != "remote_owner" {
+		t.Fatalf("published reservation = %+v, reserved=%v err=%v", reservation, reserved, err)
+	}
+
+	reserveSessionWorkspaceLocked = previous
+	recovered, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "reservation-ambiguous", base, "remote_owner")
+	if err != nil || recovered.Fork != identity {
+		t.Fatalf("retry = %+v, %v; want reserved generation %+v", recovered, err, identity)
+	}
+}
+
+func TestSessionWorkspaceCreateRemovesItsOwnersStaleReservationAfterRollbackCrash(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	owner := "remote_55555555555555555555555555555555"
+	created, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "rollback-replay", base, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := created.Fork
+	// Crash prefix from rollback: the workspace is already gone and generation retirement is
+	// durable, but reservation retirement never ran.
+	if err := forkspace.Destroy(repo, created.Name); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(repo, created.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = forkspace.RemoveGenerationIfMatchesLocked(repo, old)
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, reserved, err := forkspace.ReadWorkspaceReservation(repo, old); err != nil || !reserved {
+		t.Fatalf("crash fixture reservation: reserved=%v err=%v", reserved, err)
+	}
+
+	recovered, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, created.Name, base, owner)
+	if err != nil {
+		t.Fatalf("create replay: %v", err)
+	}
+	if recovered.Fork == old {
+		t.Fatal("create replay reused the retired generation")
+	}
+	records, problems := forkspace.WorkspaceReservations(repo)
+	if len(problems) != 0 {
+		t.Fatal(errors.Join(problems...))
+	}
+	matching := 0
+	for _, record := range records {
+		if record.Fork.Name == created.Name && record.OwnerID == owner {
+			matching++
+			if record.Fork != recovered.Fork {
+				t.Fatalf("stale reservation survived replay: %+v", record)
+			}
+		}
+	}
+	if matching != 1 {
+		t.Fatalf("matching reservations = %d, want exactly the replacement", matching)
+	}
+}
+
+func TestSessionWorkspaceCreateConfirmsMissingReservationBeforeSetup(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	failure := errors.New("synthetic missing-reservation durability failure")
+	previous := confirmSessionReservationState
+	confirmSessionReservationState = func(string) error { return failure }
+	t.Cleanup(func() { confirmSessionReservationState = previous })
+
+	_, err := ensureSessionWorkspaceContext(
+		context.Background(), nil, repo, "reservation-sync", base,
+		"remote_66666666666666666666666666666666",
+	)
+	if !errors.Is(err, failure) {
+		t.Fatalf("create error = %v, want %v", err, failure)
+	}
+	if _, statErr := os.Lstat(forkspace.Workspace(repo, "reservation-sync")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("reservation durability failure still created a workspace: %v", statErr)
 	}
 }
 
@@ -241,6 +434,206 @@ func TestSessionWorkspaceDiscardClean(t *testing.T) {
 	}
 }
 
+func TestSessionWorkspaceDiscardKeepsAuthorityWhenStageDurabilityIsUncertain(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	created, err := ensureSessionWorkspaceContext(
+		context.Background(), nil, repo, "discard-stage-sync", base,
+		"remote_44444444444444444444444444444444",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := planSessionWorkspaceDiscard(repo, created.Path, false, false)
+	if err != nil || plan.Fork == nil || plan.Reservation == nil {
+		t.Fatalf("discard plan = %+v, %v; want exact generation and reservation", plan, err)
+	}
+
+	previous := stageSessionWorkspaceDiscard
+	t.Cleanup(func() { stageSessionWorkspaceDiscard = previous })
+	failure := errors.New("synthetic post-rename durability failure")
+	stageSessionWorkspaceDiscard = func(repo, name string, pinned os.FileInfo) (string, error) {
+		staged, err := previous(repo, name, pinned)
+		if err != nil {
+			return staged, err
+		}
+		return staged, failure
+	}
+
+	if err := discardSessionWorkspace(plan); !errors.Is(err, failure) {
+		t.Fatalf("first discard error = %v, want %v", err, failure)
+	}
+	if _, present, err := forkspace.ReadGeneration(repo, created.Name); err != nil || !present {
+		t.Fatalf("generation retired after uncertain stage: present=%v err=%v", present, err)
+	}
+	if _, reserved, err := forkspace.ReadWorkspaceReservation(repo, *plan.Fork); err != nil || !reserved {
+		t.Fatalf("reservation retired after uncertain stage: reserved=%v err=%v", reserved, err)
+	}
+
+	stageSessionWorkspaceDiscard = previous
+	if err := discardSessionWorkspace(plan); err != nil {
+		t.Fatalf("discard durability retry: %v", err)
+	}
+	if _, present, err := forkspace.ReadGeneration(repo, created.Name); err != nil || present {
+		t.Fatalf("generation after retry: present=%v err=%v", present, err)
+	}
+	if _, reserved, err := forkspace.ReadWorkspaceReservation(repo, *plan.Fork); err != nil || reserved {
+		t.Fatalf("reservation after retry: reserved=%v err=%v", reserved, err)
+	}
+}
+
+func TestSessionWorkspaceDiscardReplaysEachAuthorityCleanupPrefix(t *testing.T) {
+	for _, first := range []string{"reservation", "generation"} {
+		t.Run(first, func(t *testing.T) {
+			repo, git := gitrepo.New(t)
+			git("commit", "-q", "--allow-empty", "-m", "base")
+			base := gitOut(repo, "rev-parse", "HEAD")
+			created, err := ensureSessionWorkspaceContext(
+				context.Background(), nil, repo, "discard-prefix", base,
+				"remote_11111111111111111111111111111111",
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, err := planSessionWorkspaceDiscard(repo, created.Path, false, false)
+			if err != nil || plan.Fork == nil || plan.Reservation == nil {
+				t.Fatalf("discard plan = %+v, %v; want exact generation and reservation", plan, err)
+			}
+			// Both real cleanup orders reach this point only after the workspace was staged and
+			// destroyed. Simulate a crash after the first authority record is retired.
+			if err := forkspace.Destroy(repo, created.Name); err != nil {
+				t.Fatal(err)
+			}
+			unlock, err := forkspace.LockState(repo, created.Name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch first {
+			case "reservation":
+				err = forkspace.RemoveWorkspaceReservationIfMatchesLocked(repo, *plan.Reservation)
+			case "generation":
+				err = forkspace.RemoveGenerationIfMatchesLocked(repo, *plan.Fork)
+			}
+			unlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if err := discardSessionWorkspace(plan); err != nil {
+				t.Fatalf("replay after %s cleanup: %v", first, err)
+			}
+			if _, present, err := forkspace.ReadGeneration(repo, created.Name); err != nil || present {
+				t.Fatalf("generation after replay: present=%v err=%v", present, err)
+			}
+			if _, reserved, err := forkspace.ReadWorkspaceReservation(repo, *plan.Fork); err != nil || reserved {
+				t.Fatalf("reservation after replay: reserved=%v err=%v", reserved, err)
+			}
+		})
+	}
+}
+
+func TestSessionWorkspaceDiscardRetryRepeatsMissingGenerationDurabilityBeforeReservation(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	created, err := ensureSessionWorkspaceContext(
+		context.Background(), nil, repo, "discard-sync-retry", base,
+		"remote_22222222222222222222222222222222",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := planSessionWorkspaceDiscard(repo, created.Path, false, false)
+	if err != nil || plan.Fork == nil || plan.Reservation == nil {
+		t.Fatalf("discard plan = %+v, %v; want exact generation and reservation", plan, err)
+	}
+
+	previous := removeSessionGenerationIfMatches
+	t.Cleanup(func() { removeSessionGenerationIfMatches = previous })
+	failure := errors.New("synthetic post-unlink generation sync failure")
+	calls := 0
+	removeSessionGenerationIfMatches = func(repo string, identity forkspace.Identity) error {
+		calls++
+		if calls == 2 {
+			if _, reserved, err := forkspace.ReadWorkspaceReservation(repo, identity); err != nil || !reserved {
+				t.Fatalf("generation durability retry ran after reservation removal: reserved=%v err=%v", reserved, err)
+			}
+		}
+		if err := previous(repo, identity); err != nil {
+			return err
+		}
+		if calls == 1 {
+			return failure
+		}
+		return nil
+	}
+
+	if err := discardSessionWorkspace(plan); !errors.Is(err, failure) {
+		t.Fatalf("first discard error = %v, want %v", err, failure)
+	}
+	if _, present, err := forkspace.ReadGeneration(repo, created.Name); err != nil || present {
+		t.Fatalf("first discard generation: present=%v err=%v", present, err)
+	}
+	if _, reserved, err := forkspace.ReadWorkspaceReservation(repo, *plan.Fork); err != nil || !reserved {
+		t.Fatalf("first discard reservation: reserved=%v err=%v", reserved, err)
+	}
+	if err := discardSessionWorkspace(plan); err != nil {
+		t.Fatalf("discard retry: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("generation removal calls = %d, want retry of missing-record durability", calls)
+	}
+	if _, reserved, err := forkspace.ReadWorkspaceReservation(repo, *plan.Fork); err != nil || reserved {
+		t.Fatalf("reservation after retry: reserved=%v err=%v", reserved, err)
+	}
+}
+
+func TestSessionWorkspaceDiscardRetryRepeatsMissingReservationDurability(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	created, err := ensureSessionWorkspaceContext(
+		context.Background(), nil, repo, "discard-reservation-sync", base,
+		"remote_33333333333333333333333333333333",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := planSessionWorkspaceDiscard(repo, created.Path, false, false)
+	if err != nil || plan.Fork == nil || plan.Reservation == nil {
+		t.Fatalf("discard plan = %+v, %v; want exact generation and reservation", plan, err)
+	}
+
+	previous := removeSessionReservationIfMatches
+	t.Cleanup(func() { removeSessionReservationIfMatches = previous })
+	failure := errors.New("synthetic post-unlink reservation sync failure")
+	calls := 0
+	removeSessionReservationIfMatches = func(repo string, reservation forkspace.WorkspaceReservation) error {
+		calls++
+		if err := previous(repo, reservation); err != nil {
+			return err
+		}
+		if calls == 1 {
+			return failure
+		}
+		return nil
+	}
+
+	if err := discardSessionWorkspace(plan); !errors.Is(err, failure) {
+		t.Fatalf("first discard error = %v, want %v", err, failure)
+	}
+	if _, reserved, err := forkspace.ReadWorkspaceReservation(repo, *plan.Fork); err != nil || reserved {
+		t.Fatalf("first discard reservation: reserved=%v err=%v", reserved, err)
+	}
+	if err := discardSessionWorkspace(plan); err != nil {
+		t.Fatalf("discard retry: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("reservation removal calls = %d, want retry of missing-record durability", calls)
+	}
+}
+
 func TestSessionWorkspaceDiscardRefusesStaleHeadStatusReplacementAndRunning(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	sessionWorkspaceWrite(t, filepath.Join(repo, "file.txt"), "base\n")
@@ -317,9 +710,10 @@ func TestSessionWorkspaceDiscardRefusesStaleHeadStatusReplacementAndRunning(t *t
 	}
 }
 
-// A discard plan made before a reboot names the old device for the very same workspace — and so
-// does the fork generation it was created under. The discard must still go through; a workspace
-// recreated at the path is still refused (TestSessionWorkspaceDiscardRefusesStaleHeadStatusReplacementAndRunning).
+// A discard plan made before a reboot names the old device for the very same workspace. The
+// authoritative fork generation is now a hardlink identity and does not record the allocator's
+// device number. The discard must still go through; a workspace recreated at the path is still
+// refused (TestSessionWorkspaceDiscardRefusesStaleHeadStatusReplacementAndRunning).
 func TestSessionWorkspaceDiscardSurvivesADeviceRenumber(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
@@ -332,23 +726,6 @@ func TestSessionWorkspaceDiscardSurvivesADeviceRenumber(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan.WorkspaceIdentity.Device++
-	path := forkspace.GenerationPath(repo, created.Name)
-	body, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var record map[string]any
-	if err := json.Unmarshal(body, &record); err != nil {
-		t.Fatal(err)
-	}
-	record["workspace_device"] = record["workspace_device"].(float64) + 1
-	body, err = json.Marshal(record)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, append(body, '\n'), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	if err := discardSessionWorkspace(plan); err != nil {
 		t.Fatalf("a discard planned before a reboot was refused: %v", err)
 	}
@@ -470,5 +847,32 @@ func TestSessionWorkspaceDiscardPlansAMissingWorkspaceAsAbsent(t *testing.T) {
 	if _, err := planSessionWorkspaceDiscard(repo, broken, false, false); err == nil ||
 		!strings.Contains(err.Error(), "pin session workspace") {
 		t.Fatalf("uninspectable workspace plan = %v", err)
+	}
+}
+
+func TestCreatedSessionWorkspaceCleanupConfirmsRemovalDurability(t *testing.T) {
+	repo := t.TempDir()
+	path := forkspace.Workspace(repo, "partial")
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cause := errors.New("original create failure")
+	barrier := errors.New("parent directory sync failed")
+	previous := confirmSessionDiscardState
+	defer func() { confirmSessionDiscardState = previous }()
+	called := false
+	confirmSessionDiscardState = func(got string) error {
+		called = true
+		if got != repo {
+			t.Errorf("synced %q, want %q", got, repo)
+		}
+		return barrier
+	}
+	err := removeCreatedSessionWorkspace(repo, path, cause)
+	if !called || !errors.Is(err, cause) || !errors.Is(err, barrier) {
+		t.Fatalf("cleanup = %v; want original failure and sync failure", err)
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("workspace remains after cleanup: %v", err)
 	}
 }

@@ -14,6 +14,7 @@ import (
 
 type fakeApprovalReview struct {
 	before, after *networkstate.Approval
+	pending       *networkstate.PendingApproval
 	committed     int
 	commitErr     error
 }
@@ -21,7 +22,10 @@ type fakeApprovalReview struct {
 func (f *fakeApprovalReview) Project() string                { return "/private/tmp/project" }
 func (f *fakeApprovalReview) Before() *networkstate.Approval { return f.before }
 func (f *fakeApprovalReview) After() *networkstate.Approval  { return f.after }
-func (f *fakeApprovalReview) Commit(context.Context) error   { f.committed++; return f.commitErr }
+func (f *fakeApprovalReview) Pending() *networkstate.PendingApproval {
+	return f.pending
+}
+func (f *fakeApprovalReview) Commit(context.Context) error { f.committed++; return f.commitErr }
 
 func approvalRule(domain string) egress.Rule {
 	return egress.Rule{To: egress.Destination{Domain: domain}, Protocol: "tls", Ports: []int{443}}
@@ -63,6 +67,27 @@ func TestApprovalReviewShowsTheModeChange(t *testing.T) {
 		t.Fatalf("confirmNetApproval: %v", err)
 	}
 	assertApprovedOutput(t, "21n-net-approve-mode-change", out.String())
+}
+
+func TestApprovalReviewExplainsIdentityOnlyReapproval(t *testing.T) {
+	for name, cause := range map[string]string{
+		"older approval":  "This project's network access was approved by an older Coop.",
+		"replaced folder": "This project folder was replaced after its network access was approved.",
+	} {
+		t.Run(name, func(t *testing.T) {
+			approved := &networkstate.Approval{Posture: egress.Filtered, Envelope: []egress.Rule{approvalRule("docs.example.com")}}
+			review := &fakeApprovalReview{before: approved, after: approved, pending: &networkstate.PendingApproval{Cause: cause}}
+			var out bytes.Buffer
+			if err := confirmNetApproval(context.Background(), review, &out, func() bool { return true }); err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"Why approval is needed:", cause, "already approved"} {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("identity-only review lacks %q:\n%s", want, out.String())
+				}
+			}
+		})
+	}
 }
 
 // Additions expand access, so they are yellow; removals are dim; nothing new is
@@ -139,6 +164,21 @@ func TestApprovalCancelledLeavesNothingBehind(t *testing.T) {
 	}
 	if review.committed != 0 {
 		t.Error("a declined approval was committed")
+	}
+}
+
+func TestApprovalContextCancellationCannotCommitAnAnswer(t *testing.T) {
+	review := &fakeApprovalReview{after: &networkstate.Approval{Posture: egress.Filtered}}
+	ctx, cancel := context.WithCancel(context.Background())
+	err := confirmNetApproval(ctx, review, &bytes.Buffer{}, func() bool {
+		cancel()
+		return true
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled approval = %v, want context cancellation", err)
+	}
+	if review.committed != 0 {
+		t.Fatal("approval committed after its context was cancelled")
 	}
 }
 

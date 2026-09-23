@@ -64,9 +64,9 @@ func TestServiceShadowHiddenAncestors(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := []serviceDecoy{
-				{target: "/direct", source: tc.parent + "/notes.txt"},
-				{target: "/directory", source: tc.parent + "/sub", dir: true},
-				{target: "/alias", source: tc.parent + "/notes.txt"},
+				{target: "/direct", source: tc.parent + "/notes.txt", writable: true},
+				{target: "/directory", source: tc.parent + "/sub", dir: true, writable: true},
+				{target: "/alias", source: tc.parent + "/notes.txt", writable: true},
 			}
 			if !slices.Equal(decoys["probe"], want) || !slices.Equal(hidden, []string{tc.parent + "/notes.txt", tc.parent + "/sub"}) {
 				t.Fatalf("decoys=%+v hidden=%v, want direct/dir/alias protection only", decoys, hidden)

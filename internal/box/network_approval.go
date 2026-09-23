@@ -10,6 +10,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/project"
 )
@@ -108,8 +109,66 @@ type ProjectNetworkApproval struct {
 	requests  []egress.Rule
 	services  map[string]string
 	review    networkstate.ApprovalReview
+	pending   *networkstate.PendingApproval
 	unchanged bool
 	used      bool
+}
+
+type projectNetworkReviewInputs struct {
+	canonical string
+	project   *project.Project
+	root      string
+	exposed   []string
+	admission networkstate.Admission
+	pending   *networkstate.PendingApproval
+	needs     bool
+}
+
+// Test-only scheduling point for proving that marker transitions are decided under the
+// cross-box launch lock. Production leaves it nil.
+var afterNetworkReviewInputsLoaded func()
+
+// Test seam for visible-but-not-yet-durable rename/unlink recovery. Production always repeats the
+// store directory barrier before a read-only command reports settled state.
+var confirmNetworkStoreDurability = func(store *networkstate.Store) error { return store.ConfirmDurability() }
+
+func loadProjectNetworkReviewInputs(cfg *config.Config, repo string) (projectNetworkReviewInputs, error) {
+	canonical, p, root, exposed, input, err := networkProjectInputs(cfg, repo)
+	if err != nil {
+		return projectNetworkReviewInputs{}, err
+	}
+	for _, rule := range p.Box.EgressRules {
+		if rule.To.Provider != "" {
+			return projectNetworkReviewInputs{}, errors.New("this release has no optional provider features to approve — an agent's core endpoints are allowed automatically, so drop the provider rule")
+		}
+	}
+	if err := checkSupportedRequests(input); err != nil {
+		return projectNetworkReviewInputs{}, err
+	}
+	var before *networkstate.Approval
+	if existing, openErr := networkstate.OpenExisting(root, exposed); openErr == nil {
+		before, err = existing.Approval(canonical)
+		if err == nil {
+			err = confirmNetworkStoreDurability(existing)
+		}
+		err = errors.Join(err, existing.Close())
+		if err != nil {
+			return projectNetworkReviewInputs{}, err
+		}
+	} else if !errors.Is(openErr, fs.ErrNotExist) {
+		return projectNetworkReviewInputs{}, openErr
+	}
+	modeChanged := before != nil && approvalMode(input, before) != before.Posture
+	var pending *networkstate.PendingApproval
+	if !modeChanged {
+		preview, previewErr := networkstate.PreviewAdmission(root, canonical, exposed, input)
+		if previewErr != nil {
+			return projectNetworkReviewInputs{}, previewErr
+		}
+		pending = preview.Pending
+	}
+	return projectNetworkReviewInputs{canonical: canonical, project: p, root: root, exposed: exposed,
+		admission: input, pending: pending, needs: modeChanged || pending != nil}, nil
 }
 
 // ReviewProjectNetwork prepares the approval a human confirms. The mode and
@@ -122,51 +181,77 @@ type ProjectNetworkApproval struct {
 // launch makes — returns a review with nothing to decide, before any authority
 // state exists: a no-op must not create an owner key or refresh a record.
 func ReviewProjectNetwork(cfg *config.Config, repo string) (_ *ProjectNetworkApproval, err error) {
+	return ReviewProjectNetworkContext(context.Background(), cfg, repo)
+}
+
+// ReviewProjectNetworkContext is ReviewProjectNetwork with cancellation for the transition lock.
+// A first approval can legitimately wait for live sandbox mount windows; Ctrl-C must release that
+// wait without creating a project marker or owner decision.
+func ReviewProjectNetworkContext(ctx context.Context, cfg *config.Config, repo string) (_ *ProjectNetworkApproval, err error) {
+	if ctx == nil {
+		return nil, errors.New("network approval requires a cancelable context")
+	}
 	if cfg == nil {
 		return nil, errors.New("network approval requires host configuration")
 	}
-	canonical, p, root, exposed, input, err := networkProjectInputs(cfg, repo)
+	inputs, err := loadProjectNetworkReviewInputs(cfg, repo)
 	if err != nil {
 		return nil, err
 	}
-	for _, rule := range p.Box.EgressRules {
-		if rule.To.Provider != "" {
-			return nil, errors.New("this release has no optional provider features to approve — an agent's core endpoints are allowed automatically, so drop the provider rule")
+	if !inputs.needs {
+		return &ProjectNetworkApproval{project: inputs.canonical, unchanged: true}, nil
+	}
+	if afterNetworkReviewInputsLoaded != nil {
+		afterNetworkReviewInputsLoaded()
+	}
+
+	// Reusing an exact existing binding is read-only and does not need to interrupt running boxes.
+	// A missing, replaced, or moved marker is a transition: make that decision from the validator,
+	// not an unlocked path probe, then repeat the whole policy read under the exclusive launch lock.
+	if existing, openErr := networkstate.OpenExisting(inputs.root, inputs.exposed); openErr == nil {
+		before, reviewErr := existing.Approval(inputs.canonical)
+		if reviewErr == nil {
+			mode := approvalMode(inputs.admission, before)
+			var review networkstate.ApprovalReview
+			var transition bool
+			review, transition, reviewErr = existing.ReviewApprovalExisting(inputs.canonical, mode,
+				inputs.project.Box.EgressRules, nil, inputs.admission.Services)
+			if reviewErr == nil && !transition {
+				return &ProjectNetworkApproval{store: existing, project: inputs.canonical, mode: mode,
+					requests: inputs.project.Box.EgressRules, services: inputs.admission.Services,
+					review: review, pending: inputs.pending}, nil
+			}
 		}
-	}
-	// The same capability gate a launch applies, applied BEFORE the rule is
-	// remembered: an approval every launch would refuse by name is not a
-	// decision worth storing, and the operator finds out now instead of at the
-	// next unattended run.
-	if err := checkSupportedRequests(input); err != nil {
-		return nil, err
-	}
-	// Launch posture deliberately prefers a remembered restriction over a project edit. Approval
-	// review is the one place that must compare the replacement requested posture instead, or an
-	// offline approval can never be changed to filtered without first deleting it.
-	var before *networkstate.Approval
-	if existing, openErr := networkstate.OpenExisting(root, exposed); openErr == nil {
-		before, err = existing.Approval(canonical)
-		err = errors.Join(err, existing.Close())
-		if err != nil {
-			return nil, err
+		closeErr := existing.Close()
+		if reviewErr != nil || closeErr != nil {
+			return nil, errors.Join(reviewErr, closeErr)
 		}
 	} else if !errors.Is(openErr, fs.ErrNotExist) {
 		return nil, openErr
 	}
-	modeChanged := before != nil && approvalMode(input, before) != before.Posture
-	if !modeChanged {
-		preview, previewErr := networkstate.PreviewAdmission(root, canonical, exposed, input)
-		if previewErr != nil {
-			return nil, previewErr
-		}
-		if preview.Pending == nil {
-			return &ProjectNetworkApproval{project: canonical, unchanged: true}, nil
-		}
+
+	unlockTransition, err := forkspace.LockServiceLaunch(ctx, inputs.canonical, true)
+	if err != nil {
+		return nil, fmt.Errorf("wait for active boxes before anchoring network approval: %w", err)
+	}
+	defer unlockTransition()
+	refreshed, err := loadProjectNetworkReviewInputs(cfg, repo)
+	if err != nil {
+		return nil, err
+	}
+	if refreshed.canonical != inputs.canonical {
+		return nil, errors.New("project directory changed while active boxes were draining — run 'coop approve' again")
+	}
+	inputs = refreshed
+	if !inputs.needs {
+		return &ProjectNetworkApproval{project: inputs.canonical, unchanged: true}, nil
 	}
 	// Approve is the explicit host operation that may create the authority
 	// root: a launch never does, so this is where an owner key is born.
-	store, err := networkstate.Open(root, exposed)
+	if err := forkspace.ExcludeIfRepository(inputs.canonical, "/"+networkstate.ProjectApprovalMarker); err != nil {
+		return nil, fmt.Errorf("exclude project approval marker: %w", err)
+	}
+	store, err := networkstate.Open(inputs.root, inputs.exposed)
 	if err != nil {
 		return nil, err
 	}
@@ -175,22 +260,29 @@ func ReviewProjectNetwork(cfg *config.Config, repo string) (_ *ProjectNetworkApp
 			err = errors.Join(err, store.Close())
 		}
 	}()
-	before, err = store.Approval(canonical)
+	before, err := store.Approval(inputs.canonical)
 	if err != nil {
 		return nil, err
 	}
-	mode := approvalMode(input, before)
-	review, err := store.ReviewApproval(canonical, mode, p.Box.EgressRules, nil, input.Services)
+	mode := approvalMode(inputs.admission, before)
+	review, err := store.ReviewApproval(inputs.canonical, mode, inputs.project.Box.EgressRules, nil, inputs.admission.Services)
 	if err != nil {
 		return nil, err
 	}
-	return &ProjectNetworkApproval{store: store, project: canonical, mode: mode, requests: p.Box.EgressRules, services: input.Services, review: review}, nil
+	return &ProjectNetworkApproval{store: store, project: inputs.canonical, mode: mode, requests: inputs.project.Box.EgressRules,
+		services: inputs.admission.Services, review: review, pending: inputs.pending}, nil
 }
 
 func (a *ProjectNetworkApproval) Project() string                { return a.project }
 func (a *ProjectNetworkApproval) Mode() egress.Mode              { return a.mode }
 func (a *ProjectNetworkApproval) Before() *networkstate.Approval { return a.review.Before }
 func (a *ProjectNetworkApproval) After() *networkstate.Approval  { return a.review.After }
+func (a *ProjectNetworkApproval) Pending() *networkstate.PendingApproval {
+	if a == nil {
+		return nil
+	}
+	return a.pending
+}
 
 // Unchanged reports a request that is exactly what was approved already: there
 // is no security question to ask, and nothing was written to find that out.
@@ -290,12 +382,23 @@ func checkApprovedServices(approval *networkstate.Approval, composeFile, repoRoo
 	if approval == nil || len(approval.Services) == 0 {
 		return nil
 	}
+	data, err := readValidatedCompose(composeFile, repoRoot, repoReadOnly)
+	if err != nil {
+		return err
+	}
+	return checkApprovedServicesData(approval, data)
+}
+
+func checkApprovedServicesData(approval *networkstate.Approval, data []byte) error {
+	if approval == nil || len(approval.Services) == 0 {
+		return nil
+	}
 	names := make([]string, 0, len(approval.Services))
 	for name := range approval.Services {
 		names = append(names, name)
 	}
 	slices.Sort(names)
-	digests, err := composeServiceDigests(composeFile, repoRoot, repoReadOnly, names)
+	digests, err := composeServiceDigestsData(data, names)
 	if err != nil {
 		return err
 	}

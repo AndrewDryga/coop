@@ -257,7 +257,8 @@ func restoreWorkspaceCheckpointFiles(
 		"reset", "--hard", checkpoint.BaseRevision); err != nil {
 		return fmt.Errorf("reset replacement workspace: %w", err)
 	}
-	if _, _, err := runSessionWorkspaceGit(workspace, sessionWorkspaceGitOutputLimit, "clean", "-qfdx"); err != nil {
+	if _, _, err := runSessionWorkspaceGit(workspace, sessionWorkspaceGitOutputLimit,
+		"clean", "-qfdx", "-e", "/"+forkspace.GenerationMarkerName); err != nil {
 		return fmt.Errorf("clean replacement workspace: %w", err)
 	}
 	patch := members[manifest.TrackedPatch.Entry]

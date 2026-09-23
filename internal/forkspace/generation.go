@@ -2,6 +2,7 @@ package forkspace
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -15,15 +16,26 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/fsidentity"
 )
 
 const (
-	forkGenerationVersion = 1
-	forkGenerationLimit   = 4096
-	forkGenerationCount   = 4096
+	forkGenerationLegacyVersion = 1
+	forkGenerationBirthVersion  = 2
+	forkGenerationVersion       = 3
+	forkGenerationLimit         = 4096
+	forkGenerationCount         = 4096
+	// GenerationMarkerName is the ignored workspace-side half of a fork's private hardlink
+	// identity. Destructive workspace maintenance must preserve it; validation still requires
+	// the matching private anchor and generation record.
+	GenerationMarkerName = ".coop-fork-generation"
 )
 
 var forkGenerationRE = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+// Injectable only inside this package to qualify rename/unlink-before-directory-sync recovery.
+var syncGenerationDirectory = func(dir *os.File) error { return dir.Sync() }
 
 // Generation is an immutable incarnation of one named fork. A name can be reused after --fresh
 // or rm; a generation cannot, so stale workers, boxes, task assignments, and candidates cannot
@@ -35,17 +47,20 @@ type Identity struct {
 	Generation Generation `json:"generation"`
 }
 
-// generationRecord binds a fork's generation to its workspace directory. The inode is that binding:
-// a workspace recreated at the same path is a new inode. WorkspaceDevice is recorded for diagnosis
-// but never compared — a volume's device number is assigned when it is mounted, so a reboot changes
-// it while the workspace is untouched, and every fork would stop opening after one.
+// generationRecord binds a fork's logical generation to one physical workspace. Versions 1 and 2
+// are the historical inode and inode+birth-time formats; supported overlay filesystems can reuse
+// both. Version 3 names a private hardlink anchor whose live inode is compared with the marker in
+// the workspace on every authoritative open.
 type generationRecord struct {
-	Version         int        `json:"version"`
-	Name            string     `json:"name"`
-	Generation      Generation `json:"generation"`
-	WorkspaceDevice uint64     `json:"workspace_device"`
-	WorkspaceInode  uint64     `json:"workspace_inode"`
-	CreatedAt       time.Time  `json:"created_at"`
+	Version            int        `json:"version"`
+	Name               string     `json:"name"`
+	Generation         Generation `json:"generation"`
+	WorkspaceDevice    uint64     `json:"workspace_device,omitempty"`
+	WorkspaceInode     uint64     `json:"workspace_inode,omitempty"`
+	WorkspaceBirthSec  int64      `json:"workspace_birth_sec,omitempty"`
+	WorkspaceBirthNsec uint32     `json:"workspace_birth_nsec,omitempty"`
+	WorkspaceAnchor    string     `json:"workspace_anchor,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
 }
 
 func GenerationPath(repo, name string) string {
@@ -69,6 +84,25 @@ func NewGeneration() (Generation, error) {
 
 func ValidGeneration(g Generation) bool { return forkGenerationRE.MatchString(string(g)) }
 
+func forkGenerationAnchorName(_ string, generation Generation) string {
+	// The random generation is already unique within this repository. Keeping the human fork name
+	// out of the private filename preserves names that fit the historical .generation.json record
+	// at NAME_MAX; the authenticated marker body still binds both name and generation.
+	return "generation-" + string(generation) + ".anchor"
+}
+
+func forkGenerationAnchorBody(name string, generation Generation) []byte {
+	return []byte("coop-fork-generation-v3\n" + name + "\n" + string(generation) + "\n")
+}
+
+func forkGenerationBinding(repo string, record generationRecord, state *os.Root) fsidentity.Binding {
+	return fsidentity.Binding{
+		RootPath: Workspace(repo, record.Name), MarkerName: GenerationMarkerName,
+		AnchorRoot: state, AnchorName: forkGenerationAnchorName(record.Name, record.Generation),
+		Body: forkGenerationAnchorBody(record.Name, record.Generation),
+	}
+}
+
 func workspaceGeneration(repo, name string) (uint64, uint64, error) {
 	path := Workspace(repo, name)
 	info, err := os.Lstat(path)
@@ -83,10 +117,29 @@ func workspaceGeneration(repo, name string) (uint64, uint64, error) {
 }
 
 func validateGenerationRecord(record generationRecord, name string) error {
-	if record.Version != forkGenerationVersion || record.Name != name || !ValidExistingName(name) ||
-		!ValidGeneration(record.Generation) || record.WorkspaceDevice == 0 ||
-		record.WorkspaceInode == 0 || record.CreatedAt.IsZero() {
+	if record.Name != name || !ValidExistingName(name) || !ValidGeneration(record.Generation) ||
+		record.CreatedAt.IsZero() {
 		return errors.New("invalid fork generation record")
+	}
+	switch record.Version {
+	case forkGenerationLegacyVersion:
+		if record.WorkspaceDevice == 0 || record.WorkspaceInode == 0 || record.WorkspaceBirthSec != 0 ||
+			record.WorkspaceBirthNsec != 0 || record.WorkspaceAnchor != "" {
+			return errors.New("invalid legacy fork generation record")
+		}
+	case forkGenerationBirthVersion:
+		if record.WorkspaceDevice == 0 || record.WorkspaceInode == 0 || record.WorkspaceBirthSec == 0 ||
+			record.WorkspaceAnchor != "" {
+			return errors.New("invalid birth-time fork generation record")
+		}
+	case forkGenerationVersion:
+		if record.WorkspaceDevice != 0 || record.WorkspaceInode != 0 || record.WorkspaceBirthSec != 0 ||
+			record.WorkspaceBirthNsec != 0 ||
+			record.WorkspaceAnchor != forkGenerationAnchorName(name, record.Generation) {
+			return errors.New("invalid anchored fork generation record")
+		}
+	default:
+		return errors.New("unsupported fork generation record")
 	}
 	return nil
 }
@@ -231,17 +284,22 @@ func ValidateGenerationWorkspace(repo string, identity Identity) error {
 	if record.Generation != identity.Generation {
 		return errors.New("fork generation changed")
 	}
-	_, inode, err := workspaceGeneration(repo, identity.Name)
+	if record.Version != forkGenerationVersion {
+		return fmt.Errorf("fork %s uses an older workspace identity — stop it and retry so Coop can verify and anchor it", identity.Name)
+	}
+	state, err := os.OpenRoot(StateDir(repo))
 	if err != nil {
 		return err
 	}
-	if inode != record.WorkspaceInode {
-		return errors.New("fork workspace no longer matches its generation")
+	defer state.Close()
+	root, err := fsidentity.Open(forkGenerationBinding(repo, record, state))
+	if err != nil {
+		return fmt.Errorf("fork workspace no longer matches its generation: %w", err)
 	}
-	return nil
+	return root.Close()
 }
 
-// OpenGenerationWorkspaceRoot opens the exact workspace inode bound to identity. Callers that
+// OpenGenerationWorkspaceRoot opens the exact anchored workspace bound to identity. Callers that
 // cross a sandbox trust boundary must perform their relative filesystem operations through this
 // handle: validating a pathname and then reopening it by name would let an agent swap a parent
 // directory or symlink between those two steps.
@@ -253,34 +311,27 @@ func OpenGenerationWorkspaceRoot(repo string, identity Identity) (*os.Root, erro
 	if record.Generation != identity.Generation {
 		return nil, errors.New("fork generation changed")
 	}
-	path := Workspace(repo, identity.Name)
-	before, err := os.Lstat(path)
+	if record.Version != forkGenerationVersion {
+		return nil, fmt.Errorf("fork %s uses an older workspace identity — stop it and retry so Coop can verify and anchor it", identity.Name)
+	}
+	state, err := os.OpenRoot(StateDir(repo))
 	if err != nil {
 		return nil, err
 	}
-	stat, ok := before.Sys().(*syscall.Stat_t)
-	if !ok || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 ||
-		uint64(stat.Ino) != record.WorkspaceInode {
-		return nil, errors.New("fork workspace no longer matches its generation")
-	}
-	root, err := os.OpenRoot(path)
-	if err != nil {
-		return nil, err
-	}
-	after, err := root.Stat(".")
-	if err != nil || !os.SameFile(before, after) {
-		_ = root.Close()
-		if err != nil {
-			return nil, err
+	root, openErr := fsidentity.Open(forkGenerationBinding(repo, record, state))
+	closeErr := state.Close()
+	if openErr != nil || closeErr != nil {
+		if root != nil {
+			_ = root.Close()
 		}
-		return nil, errors.New("fork workspace changed while opening its generation root")
+		return nil, errors.Join(openErr, closeErr)
 	}
 	return root, nil
 }
 
 // ResolveProjectBinding maps a command launched directly from a fork checkout back to its
 // canonical project. The path convention alone is never authority: a matching host generation
-// record must validate the exact workspace inode before the binding is returned.
+// record must validate the exact anchored workspace before the binding is returned.
 func ResolveProjectBinding(repo string) (string, *Identity, error) {
 	repo = filepath.Clean(repo)
 	parent := filepath.Dir(repo)
@@ -308,52 +359,303 @@ func ResolveProjectBinding(repo string) (string, *Identity, error) {
 	return authorityRepo, &identity, nil
 }
 
-// EnsureGenerationLocked adopts a legacy, stopped workspace or returns the identity already bound
-// to it. The caller must hold LockState(repo,name); a pidfile without a generation is deliberately
-// not adopted because it may name a live/reserved old worker.
+// EnsureGenerationLocked anchors a new workspace, migrates a semantically verified stopped legacy
+// workspace, or returns the identity already bound to it. The caller holds LockState(repo,name).
+// A pidfile without a generation is deliberately not adopted because it may name a live old worker.
 func EnsureGenerationLocked(repo, name string) (Identity, error) {
-	if identity, ok, err := ReadGeneration(repo, name); err != nil {
-		return Identity{}, err
-	} else if ok {
-		if err := ValidateGenerationWorkspace(repo, identity); err != nil {
+	record, err := readGenerationRecord(repo, name)
+	if err == nil {
+		identity := Identity{Name: record.Name, Generation: record.Generation}
+		if record.Version == forkGenerationVersion {
+			if err := ValidateGenerationWorkspace(repo, identity); err != nil {
+				return Identity{}, err
+			}
+			// A prior publication may have renamed this complete record and then failed the
+			// state-directory sync. Repeat the barrier on every successful observation so a
+			// retry cannot report durable authority while that directory entry is still volatile.
+			if err := syncGenerationStateDir(repo); err != nil {
+				return Identity{}, err
+			}
+			return identity, nil
+		}
+		if err := migrateLegacyGenerationLocked(repo, record, ""); err != nil {
 			return Identity{}, err
 		}
 		return identity, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return Identity{}, err
 	}
 	if _, err := os.Lstat(PidPath(repo, name)); err == nil {
 		return Identity{}, fmt.Errorf("fork %s has legacy worker state without a generation — stop it, then retry", name)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Identity{}, err
 	}
-	device, inode, err := workspaceGeneration(repo, name)
+	// A missing generation record does not make the human name free. Session teardown can
+	// durably rename the old workspace first and retire its generation before retiring the
+	// reservation. Fence both that staged tree and every old-generation owner before recovering or
+	// minting authority for a replacement workspace.
+	if err := RequireForkNameAvailable(repo, name); err != nil {
+		return Identity{}, err
+	}
+	// Setup normally installs these before it returns, but an interrupted clone can be adopted by
+	// a persisted session-create retry before that final step. Normalize both exclusions before
+	// recovering or creating the marker, or Coop's own authority appears as user work and the model
+	// can delete or commit it.
+	for _, pattern := range []string{".coop/", "/" + GenerationMarkerName} {
+		if err := ExcludeIfRepository(Workspace(repo, name), pattern); err != nil {
+			return Identity{}, fmt.Errorf("exclude fork bookkeeping before binding generation: %w", err)
+		}
+	}
+	// Session-create recovery can adopt a clone that died before Setup returned. Establish the
+	// workspace name durably in its fork-home parent before publishing a marker, anchor or record.
+	if err := confirmForkDirectoryEntry(Workspace(repo, name)); err != nil {
+		return Identity{}, fmt.Errorf("confirm fork workspace before binding generation: %w", err)
+	}
+	if err := EnsureStateDir(repo); err != nil {
+		return Identity{}, err
+	}
+	state, err := os.OpenRoot(StateDir(repo))
 	if err != nil {
 		return Identity{}, err
+	}
+	defer state.Close()
+	if recovered, ok, err := recoverUnrecordedGeneration(repo, name, state); err != nil {
+		return Identity{}, err
+	} else if ok {
+		return recovered, nil
 	}
 	generation, err := NewGeneration()
 	if err != nil {
 		return Identity{}, err
 	}
-	record := generationRecord{
-		Version: forkGenerationVersion, Name: name, Generation: generation,
-		WorkspaceDevice: device, WorkspaceInode: inode, CreatedAt: time.Now().UTC(),
+	record = generationRecord{
+		Version: forkGenerationVersion, Name: name, Generation: generation, CreatedAt: time.Now().UTC(),
+		WorkspaceAnchor: forkGenerationAnchorName(name, generation),
+	}
+	root, err := fsidentity.Create(forkGenerationBinding(repo, record, state))
+	if err != nil {
+		return Identity{}, fmt.Errorf("anchor fork workspace generation: %w", err)
+	}
+	if err := root.Close(); err != nil {
+		_ = fsidentity.Retire(forkGenerationBinding(repo, record, state))
+		return Identity{}, err
 	}
 	data, err := json.Marshal(record)
 	if err != nil {
+		_ = fsidentity.Retire(forkGenerationBinding(repo, record, state))
 		return Identity{}, err
 	}
-	if err := writeGenerationAtomic(repo, name, append(data, '\n')); err != nil {
+	published, err := writeGenerationAtomicResult(repo, name, append(data, '\n'))
+	if err != nil {
+		// A rename followed by a failed directory sync is uncertain to this process but already
+		// visible to a retry. Keep the matching anchor so that published record remains recoverable.
+		if !published {
+			_ = fsidentity.Retire(forkGenerationBinding(repo, record, state))
+		}
 		return Identity{}, err
 	}
 	return Identity{Name: name, Generation: generation}, nil
 }
 
-func writeGenerationAtomic(repo, name string, data []byte) error {
+// EnsureReservedGenerationLocked upgrades an older generation for one exact remote-session
+// owner. The caller holds LockState. A v3 generation needs no migration and may still have its
+// reservation restored by its session; a legacy generation may migrate only with its existing
+// exact reservation, never by guessing from a matching path or session id alone.
+func EnsureReservedGenerationLocked(repo string, identity Identity, owner string) error {
+	if owner == "" || identity.Name == "" || !ValidGeneration(identity.Generation) {
+		return errors.New("invalid reserved generation migration")
+	}
+	record, err := readGenerationRecord(repo, identity.Name)
+	if err != nil {
+		return err
+	}
+	if record.Generation != identity.Generation {
+		return errors.New("reserved workspace generation changed")
+	}
+	if record.Version != forkGenerationVersion {
+		if err := migrateLegacyGenerationLocked(repo, record, owner); err != nil {
+			return err
+		}
+	}
+	if err := ValidateGenerationWorkspace(repo, identity); err != nil {
+		return err
+	}
+	return syncGenerationStateDir(repo)
+}
+
+func migrateLegacyGenerationLocked(repo string, record generationRecord, reservationOwner string) error {
+	identity := Identity{Name: record.Name, Generation: record.Generation}
+	if NeedsStop(repo, record.Name) {
+		return fmt.Errorf("fork %s uses an older workspace identity — stop it and retry so Coop can verify and anchor it", record.Name)
+	}
+	if err := RequireNoForkExecutionsLocked(repo, identity); err != nil {
+		return err
+	}
+	if reservationOwner == "" {
+		if err := RequireNoWorkspaceReservationLocked(repo, identity); err != nil {
+			return err
+		}
+	} else {
+		reservation, exists, err := ReadWorkspaceReservation(repo, identity)
+		if err != nil {
+			return err
+		}
+		if !exists || reservation.Kind != WorkspaceReservationRemoteSession || reservation.OwnerID != reservationOwner {
+			return errors.New("legacy workspace has no exact remote-session reservation")
+		}
+	}
+	if _, err := os.Lstat(LandIntentPath(repo, identity)); err == nil {
+		return fmt.Errorf("fork %s has an interrupted land journal — finish or recover the merge before anchoring it", record.Name)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	_, inode, err := workspaceGeneration(repo, record.Name)
+	if err != nil {
+		return err
+	}
+	if inode != record.WorkspaceInode {
+		return errors.New("fork workspace no longer matches its legacy generation")
+	}
+	if err := verifyForkRepository(repo, record.Name); err != nil {
+		return fmt.Errorf("fork %s uses an older workspace identity and could not be safely verified: %w", record.Name, err)
+	}
 	if err := EnsureStateDir(repo); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(StateDir(repo), "."+name+".generation-")
+	state, err := os.OpenRoot(StateDir(repo))
 	if err != nil {
 		return err
+	}
+	defer state.Close()
+	if err := Exclude(Workspace(repo, record.Name), "/"+GenerationMarkerName); err != nil {
+		return fmt.Errorf("exclude fork identity marker: %w", err)
+	}
+	anchored := record
+	anchored.Version = forkGenerationVersion
+	anchored.WorkspaceDevice, anchored.WorkspaceInode = 0, 0
+	anchored.WorkspaceBirthSec, anchored.WorkspaceBirthNsec = 0, 0
+	anchored.WorkspaceAnchor = forkGenerationAnchorName(record.Name, record.Generation)
+	binding := forkGenerationBinding(repo, anchored, state)
+	root, openErr := fsidentity.Open(binding)
+	if openErr != nil {
+		markerMissing := rootNameMissing(Workspace(repo, record.Name), GenerationMarkerName)
+		anchorMissing := rootNameMissing(StateDir(repo), anchored.WorkspaceAnchor)
+		if markerMissing && !anchorMissing {
+			// An interrupted Create can leave only its private recovery name after removing the
+			// public marker. Retire checks the exact body and durable public absence before a
+			// retry mints the same binding; a stray or changed private file remains a refusal.
+			if err := fsidentity.Retire(binding); err != nil {
+				return fmt.Errorf("retire interrupted legacy fork anchor: %w", err)
+			}
+			anchorMissing = true
+		}
+		if !markerMissing || !anchorMissing {
+			return fmt.Errorf("legacy fork identity has incomplete anchor state; remove neither file and retry recovery: %w", openErr)
+		}
+		root, err = fsidentity.Create(binding)
+		if err != nil {
+			return fmt.Errorf("anchor legacy fork workspace: %w", err)
+		}
+	}
+	if err := root.Close(); err != nil {
+		return err
+	}
+	data, err := json.Marshal(anchored)
+	if err != nil {
+		return err
+	}
+	if err := replaceGenerationAtomic(repo, record.Name, append(data, '\n')); err != nil {
+		return fmt.Errorf("publish anchored fork generation: %w", err)
+	}
+	return nil
+}
+
+func verifyForkRepository(repo, name string) error {
+	workspace := Workspace(repo, name)
+	branch, err := gitOutputContext(context.Background(), workspace, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if err != nil || branch != name {
+		return fmt.Errorf("workspace branch is %q, want %q", branch, name)
+	}
+	origin, ok, err := gitConfigContext(context.Background(), workspace, "remote.origin.url")
+	if err != nil || !ok || origin == "" {
+		return errors.Join(errors.New("workspace has no verifiable origin"), err)
+	}
+	if !filepath.IsAbs(origin) {
+		return errors.New("workspace origin is not an absolute local repository")
+	}
+	want, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		return err
+	}
+	got, err := filepath.EvalSymlinks(origin)
+	if err != nil || filepath.Clean(got) != filepath.Clean(want) {
+		return errors.Join(errors.New("workspace origin is not the canonical project"), err)
+	}
+	return nil
+}
+
+func recoverUnrecordedGeneration(repo, name string, state *os.Root) (Identity, bool, error) {
+	body, err := fsidentity.ReadMarker(Workspace(repo, name), GenerationMarkerName)
+	if errors.Is(err, os.ErrNotExist) {
+		return Identity{}, false, nil
+	}
+	if err != nil {
+		return Identity{}, false, fmt.Errorf("read interrupted fork identity marker: %w", err)
+	}
+	lines := strings.Split(string(body), "\n")
+	if len(lines) != 4 || lines[0] != "coop-fork-generation-v3" || lines[1] != name ||
+		lines[3] != "" || !ValidGeneration(Generation(lines[2])) {
+		return Identity{}, false, errors.New("reserved fork identity marker exists without a valid generation record")
+	}
+	generation := Generation(lines[2])
+	record := generationRecord{Version: forkGenerationVersion, Name: name, Generation: generation,
+		WorkspaceAnchor: forkGenerationAnchorName(name, generation), CreatedAt: time.Now().UTC()}
+	root, err := fsidentity.Open(forkGenerationBinding(repo, record, state))
+	if err != nil {
+		return Identity{}, false, fmt.Errorf("interrupted fork identity cannot be recovered: %w", err)
+	}
+	if err := root.Close(); err != nil {
+		return Identity{}, false, err
+	}
+	data, err := json.Marshal(record)
+	if err != nil {
+		return Identity{}, false, err
+	}
+	if err := writeGenerationAtomic(repo, name, append(data, '\n')); err != nil {
+		return Identity{}, false, err
+	}
+	return Identity{Name: name, Generation: generation}, true, nil
+}
+
+func rootNameMissing(root, name string) bool {
+	_, err := os.Lstat(filepath.Join(root, name))
+	return errors.Is(err, os.ErrNotExist)
+}
+
+func writeGenerationAtomic(repo, name string, data []byte) error {
+	_, err := publishGenerationAtomic(repo, name, data, false)
+	return err
+}
+
+func writeGenerationAtomicResult(repo, name string, data []byte) (bool, error) {
+	return publishGenerationAtomic(repo, name, data, false)
+}
+
+func replaceGenerationAtomic(repo, name string, data []byte) error {
+	_, err := publishGenerationAtomic(repo, name, data, true)
+	return err
+}
+
+// publishGenerationAtomic reports whether the final rename happened. An error after publication
+// must not make a caller retire authority that the visible record still references.
+func publishGenerationAtomic(repo, name string, data []byte, replace bool) (bool, error) {
+	if err := EnsureStateDir(repo); err != nil {
+		return false, err
+	}
+	f, err := os.CreateTemp(StateDir(repo), "."+name+".generation-")
+	if err != nil {
+		return false, err
 	}
 	tmp := f.Name()
 	defer func() {
@@ -363,49 +665,90 @@ func writeGenerationAtomic(repo, name string, data []byte) error {
 	}()
 	if err := f.Chmod(0o600); err != nil {
 		_ = f.Close()
-		return err
+		return false, err
 	}
 	if _, err := f.Write(data); err != nil {
 		_ = f.Close()
-		return err
+		return false, err
 	}
 	if err := f.Sync(); err != nil {
 		_ = f.Close()
-		return err
+		return false, err
 	}
 	if err := f.Close(); err != nil {
-		return err
+		return false, err
 	}
-	// Publish the fully-synced inode only when the authority path is still absent. The platform
-	// no-replace rename is a single-directory atomic operation and, unlike link+unlink, cannot leave
-	// the immutable authority record with two links after a crash.
-	if err := renameNoReplace(tmp, GenerationPath(repo, name)); err != nil {
-		return err
+	// Creation refuses an existing authority path; a locked legacy upgrade deliberately replaces
+	// its old record. Both publish one fully-synced inode with a single rename.
+	var publishErr error
+	if replace {
+		publishErr = os.Rename(tmp, GenerationPath(repo, name))
+	} else {
+		publishErr = renameNoReplace(tmp, GenerationPath(repo, name))
+	}
+	if publishErr != nil {
+		return false, publishErr
 	}
 	tmp = ""
 	dir, err := os.Open(StateDir(repo))
 	if err != nil {
-		return err
+		return true, err
 	}
-	syncErr := dir.Sync()
-	return errors.Join(syncErr, dir.Close())
+	return true, errors.Join(syncGenerationDirectory(dir), dir.Close())
 }
 
 // RemoveGenerationIfMatchesLocked fences fresh/rm cleanup. A stale command may never erase the
-// generation record of a replacement fork with the same human name.
+// generation record of a replacement fork with the same human name. The record stays until its
+// private anchor is retired: after a crash, it is the durable name a later retry needs to finish
+// that cleanup.
 func RemoveGenerationIfMatchesLocked(repo string, expected Identity) error {
-	current, ok, err := ReadGeneration(repo, expected.Name)
+	record, err := readGenerationRecord(repo, expected.Name)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := retireGenerationAnchor(repo, generationRecord{Version: forkGenerationVersion,
+			Name: expected.Name, Generation: expected.Generation,
+			WorkspaceAnchor: forkGenerationAnchorName(expected.Name, expected.Generation), CreatedAt: time.Unix(1, 0)}); err != nil {
+			return err
+		}
+		// A prior attempt may have unlinked the record and then failed its directory sync. Repeat
+		// that durability barrier before declaring cleanup complete.
+		return syncGenerationStateDir(repo)
+	}
 	if err != nil {
 		return err
 	}
-	if !ok {
-		return nil
-	}
-	if current != expected {
+	if record.Name != expected.Name || record.Generation != expected.Generation {
 		return errors.New("fork generation changed before removal")
+	}
+	if record.Version == forkGenerationVersion {
+		if err := retireGenerationAnchor(repo, record); err != nil {
+			return err
+		}
 	}
 	if err := os.Remove(GenerationPath(repo, expected.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return nil
+	return syncGenerationStateDir(repo)
+}
+
+func syncGenerationStateDir(repo string) error {
+	dir, err := os.Open(StateDir(repo))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return errors.Join(syncGenerationDirectory(dir), dir.Close())
+}
+
+func retireGenerationAnchor(repo string, record generationRecord) error {
+	state, err := os.OpenRoot(StateDir(repo))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer state.Close()
+	return fsidentity.Retire(forkGenerationBinding(repo, record, state))
 }

@@ -95,19 +95,29 @@ volumes:
 			t.Errorf("decoy at %s does not use %s:\n%s", want.target, want.source, override)
 		}
 	}
-	realRepo, err := filepath.EvalSymlinks(repo)
+	rootPolicy, err := durableServicePolicySnapshot([]byte("data/notes.txt\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	childPolicy, err := durableServicePolicySnapshot([]byte("local.txt\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []struct{ target, source string }{
-		{"/repo/.coopignore", filepath.Join(realRepo, ".coopignore")},
-		{"/repo/data/.coopignore", filepath.Join(realRepo, "data", ".coopignore")},
-		{"/data/.coopignore", filepath.Join(realRepo, "data", ".coopignore")},
+		{"/repo/.coopignore", rootPolicy},
+		{"/repo/data/.coopignore", childPolicy},
+		{"/data/.coopignore", childPolicy},
 	} {
 		block := "source: " + quoted(want.source) + "\n        target: " + quoted(want.target) + "\n        read_only: true"
 		if !strings.Contains(override, block) {
 			t.Errorf("no read-only policy mount at %s:\n%s", want.target, override)
 		}
+	}
+	if err := os.Remove(filepath.Join(repo, ".coopignore")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(rootPolicy); err != nil || string(got) != "data/notes.txt\n" {
+		t.Fatalf("durable policy disappeared with its repository source: %q, %v", got, err)
 	}
 	for _, public := range []string{"/repo/.ssh/id_ed25519", "/repo/data/public.csv", "/repo/public/readme.md", "/public", "pgdata", "clean:"} {
 		if strings.Contains(override, public) {
@@ -124,6 +134,21 @@ volumes:
 	data, _ = os.ReadFile(plain)
 	if path, needed, err := serviceShadowOverride(repo, plain, data, t.TempDir()); err != nil || needed || path != "" {
 		t.Fatalf("plain override = %q, needed=%v, err=%v; want none", path, needed, err)
+	}
+}
+
+func TestServiceShadowCoversExplicitBareBind(t *testing.T) {
+	repo, compose := writeCompose(t, "services:\n  probe:\n    image: alpine\n    volumes: [{type: bind, source: secret.key, target: /key, read_only: true}]\n")
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "secret.key"), []byte("fixture-only"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := readValidatedCompose(compose, repo, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoys, hidden, err := serviceShadowPlan(repo, compose, data)
+	if err != nil || len(hidden) != 1 || hidden[0] != ".agent/secret.key" || len(decoys["probe"]) != 1 || decoys["probe"][0].target != "/key" {
+		t.Fatalf("explicit bare secret bind was not shadowed: decoys=%v hidden=%v err=%v", decoys, hidden, err)
 	}
 }
 

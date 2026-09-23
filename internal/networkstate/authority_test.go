@@ -40,6 +40,62 @@ func TestExistingOwnerKeyStillRequiresDurablePublication(t *testing.T) {
 	}
 }
 
+func TestConfirmDurabilityRepeatsDirectoryBarrier(t *testing.T) {
+	s := openStore(t)
+	failure := errors.New("synthetic durability confirmation failure")
+	s.syncDir = func(*os.File) error { return failure }
+	if err := s.ConfirmDurability(); !errors.Is(err, failure) {
+		t.Fatalf("ConfirmDurability = %v, want %v", err, failure)
+	}
+	s.syncDir = nil
+	if err := s.ConfirmDurability(); err != nil {
+		t.Fatalf("ConfirmDurability retry: %v", err)
+	}
+}
+
+func TestAuthorityDirectoryCreationRetryRepeatsParentBarriers(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state", "coop", "network")
+	canonicalRoot, err := canonicalPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetParent := filepath.Dir(canonicalRoot)
+	previous := syncAuthorityDirectoryEntry
+	t.Cleanup(func() { syncAuthorityDirectoryEntry = previous })
+	failure := errors.New("synthetic authority parent sync failure")
+	syncAuthorityDirectoryEntry = func(dir *os.File) error {
+		if filepath.Clean(dir.Name()) == filepath.Clean(targetParent) {
+			return failure
+		}
+		return dir.Sync()
+	}
+	if store, err := Open(root, nil); !errors.Is(err, failure) {
+		if store != nil {
+			_ = store.Close()
+		}
+		t.Fatalf("first authority root creation = %v, want %v", err, failure)
+	}
+	if _, err := os.Stat(root); err != nil {
+		t.Fatalf("authority root was not visible after failed parent barrier: %v", err)
+	}
+
+	confirmed := false
+	syncAuthorityDirectoryEntry = func(dir *os.File) error {
+		if filepath.Clean(dir.Name()) == filepath.Clean(targetParent) {
+			confirmed = true
+		}
+		return dir.Sync()
+	}
+	store, err := Open(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+	if !confirmed {
+		t.Fatal("authority root creation retry did not repeat the parent barrier")
+	}
+}
+
 func TestApprovalRequestsNeverGrantAndPostureSurvivesRemoval(t *testing.T) {
 	s, project := openStore(t), t.TempDir()
 	requests := []egress.Rule{rule("a.example.com"), rule("b.example.com")}

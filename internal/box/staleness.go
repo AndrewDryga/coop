@@ -17,6 +17,8 @@ import (
 	"github.com/AndrewDryga/coop/internal/project"
 )
 
+const imageInputFileLimit = 4 << 20
+
 // A per-project image (built from a repo's .agent/Dockerfile) bakes that repo's toolchain
 // at build time, so it can drift from the files that define it. We record a hash of those
 // inputs when `coop build` builds the image, and compare on a later run to nudge a rebuild.
@@ -31,17 +33,16 @@ import (
 // repo has no box Dockerfile (it runs on the shared base, which has no per-repo inputs).
 func inputsHash(repo string) (hash string, ok bool) {
 	dfRel := project.DockerfilePath(repo)
-	if !fileExists(filepath.Join(repo, dfRel)) {
+	dockerfile, err := readRepositoryRegularFileNoFollow(repo, dfRel, imageInputFileLimit)
+	if err != nil {
 		return "", false
 	}
 	h := sha256.New()
-	for _, name := range []string{dfRel, ".tool-versions"} {
-		data, err := os.ReadFile(filepath.Join(repo, name))
-		if err != nil {
-			continue // a missing .tool-versions is fine; its absence is part of the hash via the name
-		}
-		h.Write([]byte(name + "\x00"))
-		h.Write(data)
+	h.Write([]byte(dfRel + "\x00"))
+	h.Write(dockerfile)
+	if toolVersions, err := readRepositoryRegularFileNoFollow(repo, ".tool-versions", imageInputFileLimit); err == nil {
+		h.Write([]byte(".tool-versions\x00"))
+		h.Write(toolVersions)
 	}
 	return hex.EncodeToString(h.Sum(nil)), true
 }

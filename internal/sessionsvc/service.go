@@ -1581,6 +1581,9 @@ func (s *Service) ensureSessionForkAuthority(ctx context.Context, bound session.
 		if !reserved || reservation.Kind != forkspace.WorkspaceReservationRemoteSession || reservation.OwnerID != bound.ID {
 			return session.Session{}, fmt.Errorf("%w: exact session reservation is absent", errLegacySessionForkUnproven)
 		}
+		if err := forkspace.EnsureReservedGenerationLocked(bound.Repository, identity, bound.ID); err != nil {
+			return session.Session{}, fmt.Errorf("%w: %v", errLegacySessionForkUnproven, err)
+		}
 		if err := forkspace.ValidateGenerationWorkspace(bound.Repository, identity); err != nil {
 			return session.Session{}, err
 		}
@@ -1599,7 +1602,7 @@ func (s *Service) ensureSessionForkAuthority(ctx context.Context, bound session.
 	if forkspace.Generation(bound.ForkGeneration) != identity.Generation {
 		return session.Session{}, fmt.Errorf("%w: workspace generation changed", errSessionForkUnproven)
 	}
-	if err := forkspace.ValidateGenerationWorkspace(bound.Repository, identity); err != nil {
+	if err := forkspace.EnsureReservedGenerationLocked(bound.Repository, identity, bound.ID); err != nil {
 		return session.Session{}, fmt.Errorf("%w: %v", errSessionForkUnproven, err)
 	}
 	reservation := forkspace.WorkspaceReservation{
@@ -1627,7 +1630,7 @@ func validSessionForkBinding(bound session.Session) bool {
 
 // validateSessionForkAuthority is the operation-time half of startup recovery. It never creates
 // or adopts authority: a caller about to read or mutate a workspace must prove that the DB binding,
-// host generation record, workspace inode, and durable remote-session reservation still agree.
+// host anchored generation record, workspace path, and durable remote-session reservation agree.
 func validateSessionForkAuthority(ctx context.Context, bound session.Session) error {
 	return validateSessionForkAuthorityState(ctx, bound, false)
 }
@@ -3757,7 +3760,13 @@ func removePrivateSessionState(stateRoot, sessionID string) error {
 	if stateRoot == "" || sessionID == "" || !validSessionPathComponent(sessionID) {
 		return &session.Error{Code: session.CodeInvalidRequest, Detail: "invalid private session state path"}
 	}
-	root := filepath.Join(stateRoot, "acp")
+	return errors.Join(
+		removePrivateSessionDir(filepath.Join(stateRoot, "acp"), sessionID),
+		removePrivateSessionDir(filepath.Join(stateRoot, "output"), sessionID),
+	)
+}
+
+func removePrivateSessionDir(root, sessionID string) error {
 	path := filepath.Join(root, sessionID)
 	rel, err := filepath.Rel(root, path)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -3768,19 +3777,19 @@ func removePrivateSessionState(stateRoot, sessionID string) error {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("inspect private session state: %w", err)
+		return fmt.Errorf("inspect private session directory: %w", err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return errors.New("private session state is ambiguous")
+		return errors.New("private session directory is ambiguous")
 	}
 	if err := os.RemoveAll(path); err != nil {
-		return fmt.Errorf("remove private session state: %w", err)
+		return fmt.Errorf("remove private session directory: %w", err)
 	}
 	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 		if err == nil {
-			return errors.New("private session state remains after removal")
+			return errors.New("private session directory remains after removal")
 		}
-		return fmt.Errorf("verify private session state removal: %w", err)
+		return fmt.Errorf("verify private session directory removal: %w", err)
 	}
 	return nil
 }

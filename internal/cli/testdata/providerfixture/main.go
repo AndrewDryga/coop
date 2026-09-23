@@ -243,7 +243,7 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 		// The daemon probe opens every box run, so it is the harness's handle on HOST-side box
 		// setup — the work a test holds to prove no provider clock is running during it.
 		return holdHostSetup(root, trace)
-	case "inspect", "network-ls", "volume":
+	case "inspect", "network-ls", "volume", "volume-ls":
 		return nil
 	case "task-channel":
 		return serveTaskChannelHelper()
@@ -370,6 +370,11 @@ func parseRuntimeForProvider(root, image string, args []string, provider string,
 	// container on a run-private volume (box/taskchannel.go). Both are coop's own resources, not
 	// the agent's, so the fixture models them exactly as far as the launch depends on them: the
 	// volume calls succeed, and the helper reports its socket ready and then waits.
+	if len(args) == 5 && args[0] == "volume" && args[1] == "ls" && args[2] == "--quiet" && args[3] == "--filter" && strings.HasPrefix(args[4], "name=") && len(args[4]) > len("name=") {
+		// This runtime fixture creates no persistent backing storage. Even its task-channel
+		// create call is a simulated socket handshake, so no volume is exposed on the host.
+		return runtimeCommand{Kind: "volume-ls"}, nil
+	}
 	if len(args) > 1 && args[0] == "volume" {
 		if (args[1] != "create" && args[1] != "rm") || len(args) < 3 {
 			return runtimeCommand{}, fmt.Errorf("unsupported volume command %q", strings.Join(args, " "))
@@ -688,16 +693,22 @@ func validateMountPolicy(root string, run runCommand, providerHomes []string) er
 }
 
 func validateGeneratedReadOnlyMount(root string, run runCommand, m mount, providerHomes []string) error {
-	rel, err := filepath.Rel(filepath.Join(root, "tmp"), m.Source)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("read-only mount source %q is not generated fixture temp state", m.Source)
+	name, err := generatedFixtureArtifactName(root, m.Source)
+	if err != nil {
+		return fmt.Errorf("read-only mount source %q is not generated fixture state", m.Source)
 	}
-	name := strings.Split(rel, string(filepath.Separator))[0]
 	providerHome := "/home/node/." + run.Provider
 	switch {
 	case strings.HasPrefix(name, "coop-decoy-"):
 		if !pathAtOrBelow(run.Workdir, m.Target) {
 			return fmt.Errorf("decoy mount target %q is outside the repo", m.Target)
+		}
+	case strings.HasPrefix(name, "coop-readonly-"):
+		if m.Target == run.Workdir || !pathAtOrBelow(run.Workdir, m.Target) {
+			return fmt.Errorf("read-only repository snapshot target %q is outside the repo", m.Target)
+		}
+		if info, err := os.Stat(m.Source); err != nil || !info.IsDir() {
+			return fmt.Errorf("read-only repository snapshot source %q is not a directory", m.Source)
 		}
 	case strings.HasPrefix(name, "coop-mcp-"):
 		// `/home/node/.mcp.json` is claude's shared-MCP mount. A loop WORK box always carries one
@@ -718,6 +729,25 @@ func validateGeneratedReadOnlyMount(root string, run runCommand, m mount, provid
 		return fmt.Errorf("read-only mount source %q is not an allowed generated fixture class", m.Source)
 	}
 	return nil
+}
+
+// Ordinary runs keep generated mounts in an owner-private runfiles directory; older fixture
+// paths under TMPDIR are still used by tests that exercise the parser directly.
+func generatedFixtureArtifactName(root, source string) (string, error) {
+	if rel, err := filepath.Rel(filepath.Join(root, "xdg", "config", "coop", "runfiles"), source); err == nil && filepath.IsLocal(rel) && rel != "." {
+		parts := strings.Split(rel, string(filepath.Separator))
+		if len(parts) == 2 && strings.HasPrefix(parts[0], "coop-run-") && parts[1] != "" {
+			return parts[1], nil
+		}
+		if len(parts) == 3 && strings.HasPrefix(parts[0], "coop-run-") && strings.HasPrefix(parts[1], "coop-readonly-") && parts[2] == "tree" {
+			return parts[1], nil
+		}
+		return "", errors.New("not an owned run artifact")
+	}
+	if rel, err := filepath.Rel(filepath.Join(root, "tmp"), source); err == nil && filepath.IsLocal(rel) && rel != "." {
+		return strings.Split(rel, string(filepath.Separator))[0], nil
+	}
+	return "", errors.New("outside generated fixture state")
 }
 
 // geminiThinkingTarget is where Coop mounts Gemini's per-effort thinking settings: one file per
@@ -1497,9 +1527,9 @@ func validateSkillsMount(root, provider string, m mount, providerHomes []string)
 	if m.ReadOnly {
 		return fmt.Errorf("skills mount %q:%q must be writable", m.Source, m.Target)
 	}
-	rel, err := filepath.Rel(filepath.Join(root, "tmp"), m.Source)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("skills mount source %q is not a synthesized copy in fixture temp state", m.Source)
+	name, err := generatedFixtureArtifactName(root, m.Source)
+	if err != nil || (!strings.HasPrefix(name, "coop-agents-") && !strings.HasPrefix(name, "coop-skills-")) {
+		return fmt.Errorf("skills mount source %q is not a synthesized fixture copy", m.Source)
 	}
 	return nil
 }

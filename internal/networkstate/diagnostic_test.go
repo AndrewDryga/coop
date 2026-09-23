@@ -45,7 +45,7 @@ func TestNetworkWhyUsesOnlyRetainedPolicyAfterKeyAndProjectLoss(t *testing.T) {
 	if err := os.Remove(filepath.Join(s.Path(), "owner.key")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(record.Project); err != nil {
+	if err := os.RemoveAll(record.Project); err != nil {
 		t.Fatal(err)
 	}
 	before := inventory(t, s)

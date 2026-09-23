@@ -2,6 +2,7 @@ package box
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/networkstate"
 )
 
 func approveFixture(t *testing.T, cfg *config.Config, repo string) {
@@ -135,5 +137,30 @@ func TestForgetOnAHostThatRememberedNothing(t *testing.T) {
 	}
 	if _, err := ReviewProjectNetworkForget("relative/path"); err == nil || !strings.Contains(err.Error(), "absolute") {
 		t.Errorf("a relative project path was accepted: %v", err)
+	}
+}
+
+func TestForgetNothingConfirmsPriorRemovalBeforeReportingIt(t *testing.T) {
+	cfg, repo, _ := postureFixture(t, requestFixtureYAML)
+	approveFixture(t, cfg, repo)
+	review, err := ReviewProjectNetworkForget(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := review.Commit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := review.Close(); err != nil {
+		t.Fatal(err)
+	}
+	previous := confirmNetworkStoreDurability
+	t.Cleanup(func() { confirmNetworkStoreDurability = previous })
+	failure := errors.New("synthetic removal directory sync failure")
+	confirmNetworkStoreDurability = func(*networkstate.Store) error { return failure }
+	if again, err := ReviewProjectNetworkForget(repo); !errors.Is(err, failure) {
+		if again != nil {
+			_ = again.Close()
+		}
+		t.Fatalf("read visibly absent approval = %v, want durability failure", err)
 	}
 }

@@ -93,7 +93,7 @@ func discoverObservedServicePorts(ctx context.Context, rt runtime.Runtime, works
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	args, cleanup, _, err := snapshotComposeArgsForStart(workspace, composeFile, owner, repoReadOnly, true, exposedRoots...)
+	args, cleanup, _, err := snapshotComposeArgsForInspect(workspace, composeFile, owner, repoReadOnly, exposedRoots...)
 	if err != nil {
 		return nil, err
 	}

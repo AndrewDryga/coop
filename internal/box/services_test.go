@@ -177,9 +177,10 @@ func TestEnsureServicesValidates(t *testing.T) {
 		if !strings.Contains(err.Error(), "refusing to run compose.yml") {
 			t.Errorf("error should name the refused file, got: %v", err)
 		}
-		if _, statErr := os.Stat(rec); statErr == nil {
-			out, _ := os.ReadFile(rec)
-			t.Errorf("compose must NOT run for a refused file, but recorder has: %q", out)
+		if out, readErr := os.ReadFile(rec); readErr == nil && strings.Contains(string(out), " up ") {
+			t.Errorf("compose must NOT start for a refused file, but recorder has: %q", out)
+		} else if readErr != nil && !os.IsNotExist(readErr) {
+			t.Fatal(readErr)
 		}
 	})
 
@@ -200,6 +201,7 @@ func TestEnsureServicesValidates(t *testing.T) {
 }
 
 func TestAutomaticServiceStartRefusesExternalVolumes(t *testing.T) {
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
 	repo := t.TempDir()
 	compose := filepath.Join(repo, "compose.yml")
 	body := "services:\n  db:\n    image: postgres:18\n    volumes: [customer:/data]\nvolumes:\n  customer:\n    external: true\n    name: customer-data\n"
@@ -211,13 +213,24 @@ func TestAutomaticServiceStartRefusesExternalVolumes(t *testing.T) {
 	if _, err := EnsureServicesFile(rt, repo, compose, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "coop up") {
 		t.Fatalf("automatic external-volume start = %v, want explicit host startup refusal", err)
 	}
-	if data, err := os.ReadFile(recorder); err == nil && len(data) > 0 {
-		t.Fatalf("runtime ran before external-volume refusal:\n%s", data)
+	if data, err := os.ReadFile(recorder); err == nil && strings.Contains(string(data), " up ") {
+		t.Fatalf("Compose ran before external-volume refusal:\n%s", data)
 	} else if err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
-	if _, err := UpServices(rt, repo, compose, io.Discard, io.Discard); err != nil {
-		t.Fatalf("explicit coop up path refused the external volume: %v", err)
+	if _, err := UpServices(rt, repo, compose, io.Discard, io.Discard); err == nil {
+		t.Fatal("an unreviewed direct start accepted an external volume")
+	}
+	reviewRT := serviceReviewRuntime(t, recorder)
+	review, err := ReviewServiceStart(repo, compose, reviewRT)
+	if err != nil || review == nil || !review.VolumeApprovalNeeded {
+		t.Fatalf("external volume review = %v, %v", review, err)
+	}
+	if err := review.ApproveVolumes(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpServicesReviewed(reviewRT, repo, compose, review, io.Discard, io.Discard); err != nil {
+		t.Fatalf("reviewed coop up path refused the external volume: %v", err)
 	}
 	local := "services:\n  db:\n    image: postgres:18\n    volumes: [customer:/data]\nvolumes:\n  customer: {}\n"
 	if err := os.WriteFile(compose, []byte(local), 0o644); err != nil {
@@ -254,7 +267,7 @@ func TestServiceLaunchRevalidatesBindAfterSandboxWindow(t *testing.T) {
 	go func() {
 		launch, err := forkspace.LockServiceLaunch(context.Background(), repo, true)
 		if err == nil {
-			_, err = startServicesFileContext(context.Background(), rt, repo, compose, "loop-one", "", io.Discard, io.Discard, false, false, false, nil)
+			_, err = startServicesFileContext(context.Background(), rt, repo, compose, "loop-one", "", io.Discard, io.Discard, false, false, nil, nil)
 			launch()
 		}
 		done <- err
@@ -273,10 +286,83 @@ func TestServiceLaunchRevalidatesBindAfterSandboxWindow(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "outside the repo") {
 		t.Fatalf("replaced bind source reached service launch: %v", err)
 	}
-	if data, readErr := os.ReadFile(recorder); readErr == nil && len(data) > 0 {
-		t.Fatalf("runtime ran after bind source escaped:\n%s", data)
+	if data, readErr := os.ReadFile(recorder); readErr == nil && strings.Contains(string(data), " up ") {
+		t.Fatalf("Compose ran after bind source escaped:\n%s", data)
 	} else if readErr != nil && !os.IsNotExist(readErr) {
 		t.Fatal(readErr)
+	}
+}
+
+func TestServiceLaunchRefusesRunningWritableComposeBind(t *testing.T) {
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	if err := os.WriteFile(compose, []byte("services:\n  db:\n    image: postgres:18\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	shim := filepath.Join(t.TempDir(), "runtime")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + strconv.Quote(recorder) + "\n" +
+		"case \"$1\" in ps) echo sidecar ;; inspect) echo '[{\"Type\":\"bind\",\"Source\":\"" + repo + "\",\"RW\":true}]' ;; esac\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := EnsureServicesFile(runtime.Runtime{Name: shim}, repo, compose, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "running Compose service") {
+		t.Fatalf("live writable sidecar = %v, want actionable refusal", err)
+	}
+	data, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), " up ") {
+		t.Fatalf("Compose started after live writable bind refusal:\n%s", data)
+	}
+}
+
+func TestServiceLaunchRefusesCaseAliasedRunningWritableBind(t *testing.T) {
+	repo := t.TempDir()
+	alias := filepath.Join(filepath.Dir(repo), strings.ToUpper(filepath.Base(repo)))
+	left, leftErr := os.Stat(repo)
+	right, rightErr := os.Stat(alias)
+	if leftErr != nil || rightErr != nil || !os.SameFile(left, right) || alias == repo {
+		t.Skip("host filesystem does not provide a case alias")
+	}
+	shim := filepath.Join(t.TempDir(), "docker")
+	script := "#!/bin/sh\ncase \"$1\" in ps) echo sidecar ;; inspect) echo '[{\"Type\":\"bind\",\"Source\":\"" + alias + "\",\"RW\":true}]' ;; esac\n"
+	if err := os.WriteFile(shim, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := refuseRunningServiceWriters(t.Context(), runtime.Runtime{Name: shim}, repo); err == nil || !strings.Contains(err.Error(), "running Compose service") {
+		t.Fatalf("case-aliased writable sidecar was missed: %v", err)
+	}
+}
+
+func TestReviewedServiceStartRefusesChangedComposeBeforeRuntime(t *testing.T) {
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	body := "services:\n  db:\n    image: postgres:18\n    volumes: [customer:/data]\nvolumes:\n  customer:\n    external: true\n    name: customer-data\n"
+	if err := os.WriteFile(compose, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	rt := serviceReviewRuntime(t, recorder)
+	review, err := ReviewServiceStart(repo, compose, rt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := review.ApproveVolumes(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(compose, []byte(strings.Replace(body, "customer-data", "other-data", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = UpServicesReviewed(rt, repo, compose, review, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "changed after review") {
+		t.Fatalf("swapped Compose review = %v, want refusal", err)
+	}
+	if data, readErr := os.ReadFile(recorder); readErr == nil && strings.Contains(string(data), " up ") {
+		t.Fatalf("Compose started after review swap:\n%s", data)
 	}
 }
 
@@ -397,7 +483,7 @@ func TestEnsureServicesReturnsResolvedServiceNames(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			calls := strings.Split(strings.TrimSpace(string(data)), "\n")
+			calls := slices.DeleteFunc(strings.Split(strings.TrimSpace(string(data)), "\n"), func(call string) bool { return strings.HasPrefix(call, "ps ") })
 			if len(calls) != 3 {
 				t.Fatalf("expected port discovery, service discovery and up: %s", data)
 			}

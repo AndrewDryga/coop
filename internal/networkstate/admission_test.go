@@ -83,6 +83,44 @@ func TestAdmissionPreviewDoesNotCreateOrRepairAuthority(t *testing.T) {
 	}
 }
 
+func TestMovedCheckoutWithEmptyPolicyKeepsNetworkReviewBarrier(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "network")
+	base := t.TempDir()
+	oldPath, newPath := filepath.Join(base, "old"), filepath.Join(base, "new")
+	if err := os.Mkdir(oldPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := approve(store, oldPath, egress.None, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(oldPath, newPath); err != nil {
+		t.Fatal(err)
+	}
+	var pending *PendingApproval
+	if _, err := PreviewAdmissionMode(root, newPath, nil, Admission{}); !errors.As(err, &pending) ||
+		!strings.Contains(pending.Reason, "moved") {
+		t.Fatalf("moved empty-policy preview = %v, want review barrier", err)
+	}
+	if _, err := store.Admit(newPath, Admission{}); !errors.As(err, &pending) {
+		t.Fatalf("moved empty-policy launch = %v, want denial", err)
+	}
+	review, err := store.ReviewApproval(newPath, egress.None, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Approve(t.Context(), newPath, egress.None, nil, nil, nil, review.Digest); err != nil {
+		t.Fatal(err)
+	}
+	if mode, err := PreviewAdmissionMode(root, newPath, nil, Admission{}); err != nil || mode != egress.None {
+		t.Fatalf("reviewed moved checkout = %s, %v", mode, err)
+	}
+}
+
 func TestAdmissionDirectPresenceMatrix(t *testing.T) {
 	choices := []*egress.Mode{nil, admissionMode(egress.Open), admissionMode(egress.Filtered), admissionMode(egress.None)}
 	for _, invocation := range choices {
@@ -278,6 +316,28 @@ func TestAdmitFailsClosedWithoutUsableAuthority(t *testing.T) {
 			got, err := s.Admit(project, input)
 			if err == nil || got.Fingerprint != "" || got.Mode != "" || len(got.Grants) != 0 {
 				t.Fatal("failure returned usable authority", got, err)
+			}
+		})
+	}
+}
+
+func TestPreviewFailsClosedWhenProjectMarkerOutlivesAuthorityStore(t *testing.T) {
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, ProjectApprovalMarker), []byte("orphaned\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, root := range map[string]string{
+		"missing store": filepath.Join(t.TempDir(), "network"),
+		"keyless store": filepath.Join(t.TempDir(), "network"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if name == "keyless store" {
+				if err := os.Mkdir(root, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := PreviewAdmission(root, project, nil, Admission{}); err == nil || !strings.Contains(err.Error(), "private authority store is missing") {
+				t.Fatalf("PreviewAdmission = %v, want orphaned-marker refusal", err)
 			}
 		})
 	}

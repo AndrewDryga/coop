@@ -1980,23 +1980,7 @@ func ensureNoSymlinkPath(path string) error {
 }
 
 func readCredentialArtifact(path string) ([]byte, bool, error) {
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, err
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return nil, false, errors.New("credential artifact is not regular")
-	}
-	data, err := io.ReadAll(io.LimitReader(file, sessionACPArtifactLimit+1))
-	if err != nil || len(data) > sessionACPArtifactLimit {
-		return nil, false, errors.New("credential artifact is too large")
-	}
-	return data, true, nil
+	return agents.ReadOptionalCredentialArtifact(path, sessionACPArtifactLimit)
 }
 
 func writeCredentialArtifact(path string, data []byte) error {
@@ -2095,10 +2079,18 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 	// The legacy read-only session mounts a writable output root beside its read-only fork; a
 	// restricted session mounts nothing writable at all, so it neither prepares nor announces one.
 	legacyReadOnly := bound.RepositoryReadOnly && !mode.Restricted()
+	outputRoot := ""
 	if legacyReadOnly {
 		if _, err := prepareSessionOutputRoot(bound.Workspace); err != nil {
 			return nil, errors.Join(
 				acpFailure(sessionACPProcessError, "read-only session output root is invalid"),
+				err,
+			)
+		}
+		outputRoot, err = preparePrivateSessionOutputRoot(r.stateRoot, bound.ID)
+		if err != nil {
+			return nil, errors.Join(
+				acpFailure(sessionACPProcessError, "read-only session output state is invalid"),
 				err,
 			)
 		}
@@ -2113,6 +2105,9 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		bound.Repository, bound.Companions, legacyReadOnly, privateRoot, runID,
 		r.sourceCfg, r.rt.Name,
 	), network...)
+	if outputRoot != "" {
+		env = append(env, SessionOutputRootEnv+"="+outputRoot)
+	}
 	activityRole := forkspace.ExecutionRoleActiveTurn
 	if runID == sessionWarmRunID(bound.ID) {
 		activityRole = forkspace.ExecutionRoleWarm
@@ -2189,8 +2184,16 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		process.mcpHandoff = mcpHandoff
 		process.sessionMeta = sessionMeta
 		process.cwd = bound.Workspace
+		if mode == agents.ModeReadOnly {
+			process.cwd = box.ReadOnlyDefaultWorkdir(bound.Workspace, r.sourceCfg.HomeInBox)
+		}
+		process.outputRoot = filepath.Join(bound.Workspace, sessionOutputRoot)
+		if outputRoot != "" {
+			process.outputRoot = outputRoot
+		}
 		if mode == agents.ModeBare {
 			process.cwd = box.BareWorkdir
+			process.outputRoot = ""
 		}
 		process.restricted = mode.Restricted()
 		if bound.NetworkMode == string(egress.Filtered) {
@@ -2384,12 +2387,14 @@ type sessionACPProcess struct {
 	stopOnce  sync.Once
 	stopErr   error
 	runID     string
-	// cwd is the session's working directory INSIDE the box: the fork's own host path, which
-	// mounts at the same place, or bare's scratch workdir. sessionMeta is the adapter's `_meta`
+	// cwd is the session's working directory INSIDE the box: normally the fork's host path,
+	// /workspace when readonly would collide with box scratch, or bare's scratch workdir.
+	// sessionMeta is the adapter's `_meta`
 	// for a restricted session (nil otherwise), and restricted says the box keeps no provider
 	// history and mounts no output root — so each turn is a fresh native session with no
 	// output directory announced.
 	cwd                    string
+	outputRoot             string
 	sessionMeta            map[string]any
 	restricted             bool
 	mcpServers             []map[string]any
@@ -2910,13 +2915,13 @@ func (r *sessionTurnRunner) runACP(
 	if err != nil {
 		return "", nil, session.Usage{}, err
 	}
-	outputDir := ""
+	var outputDir *sessionOutputDirectory
 	if !process.restricted {
 		// The output root is a writable bind beside the workspace, which a restricted box has
 		// none of: its only generated output is what rides the wire. The preamble that names the
 		// directory is omitted with it — a path nothing can write is a prompt for a tool call.
 		var outputRelative string
-		outputDir, outputRelative, err = prepareSessionOutputDir(bound.Workspace, leased.ID)
+		outputDir, outputRelative, err = prepareSessionOutputDirAtRoot(process.outputRoot, leased.ID)
 		if err != nil {
 			return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "turn output directory could not be prepared")
 		}
@@ -2982,7 +2987,7 @@ func (r *sessionTurnRunner) runACP(
 	if err != nil || len(payload) > session.MaxEventPayloadBytes {
 		return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "assistant message exceeded its durable event bound")
 	}
-	if outputDir != "" {
+	if outputDir != nil {
 		files, err := collectSessionOutputDir(outputDir)
 		if err != nil {
 			return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, err.Error())

@@ -25,7 +25,9 @@ type ThreadBindings struct{ dir string }
 // still load.
 const threadBindingMaxAge = 90 * 24 * time.Hour
 
-const maxThreadBindingBytes = 4096
+// Editor IDs are adapter-owned and can be several kilobytes. Keep the record bounded, but leave
+// room for JSON escaping and timestamp formatting around the largest ID we support in practice.
+const maxThreadBindingBytes = 8 << 10
 
 type threadBinding struct {
 	EditorID  string    `json:"editor_id"`
@@ -81,6 +83,10 @@ func (s *ThreadBindings) Save(editorID string, binding acpproxy.SessionBinding) 
 		return
 	}
 	data, err := json.Marshal(threadBinding{EditorID: editorID, Provider: binding.Provider, AdapterID: binding.AdapterID, Updated: time.Now().UTC()})
+	if err == nil && len(data) > maxThreadBindingBytes {
+		acpproxy.Trace("thread binding could not be saved: serialized record exceeds %d bytes", maxThreadBindingBytes)
+		return
+	}
 	if err == nil {
 		err = config.WriteFileAtomic(s.path(editorID), data)
 	}

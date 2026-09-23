@@ -495,16 +495,16 @@ run() {
 	# Unlimited (the default): exec the peer directly, with no timeout wrapper to cut it off.
 	if [ "$consult_timeout" -eq 0 ]; then
 		if command -v setsid >/dev/null 2>&1; then
-			setsid "$@" &
+			setsid "$@" 8>&- &
 			active_run_group=1
 		else
-			"$@" &
+			"$@" 8>&- &
 		fi
 	elif command -v setsid >/dev/null 2>&1; then
-		setsid timeout -k 30 "$consult_timeout" "$@" &
+		setsid timeout -k 30 "$consult_timeout" "$@" 8>&- &
 		active_run_group=1
 	else
-		timeout -k 30 "$consult_timeout" "$@" &
+		timeout -k 30 "$consult_timeout" "$@" 8>&- &
 	fi
 	active_run_pid=$!
 	run_pid=$active_run_pid
@@ -638,12 +638,13 @@ run_attempt() {
 	start_capture "$diagnostics" "$diagnostics_overflow" "$attempt_dir/diagnostics-chunk-$index" "$diagnostics_pipe" "$diagnostics_capture_status_file"
 	diagnostics_pid=$capture_pid
 	# Preserve the provider's real status outside its adapter subshell while both output streams
-	# are independently drained into bounded spools. FD 8 is the wrapper's flock and must not keep
-	# the lock alive in a provider child if the wrapper is killed.
+	# are independently drained into bounded spools. The provider launch in run() closes FD 8
+	# directly: closing it as a redirection on this shell function makes dash save the descriptor
+	# on a hidden restore FD that a capture child can inherit and keep locked after wrapper death.
 	if [ "$dispatch" = resume ]; then
-		dispatch_resume 8>&- >"$output_pipe" 2>"$diagnostics_pipe"
+		dispatch_resume >"$output_pipe" 2>"$diagnostics_pipe"
 	else
-		dispatch_fresh 8>&- >"$output_pipe" 2>"$diagnostics_pipe"
+		dispatch_fresh >"$output_pipe" 2>"$diagnostics_pipe"
 	fi
 	attempt_status=$?
 	await_capture "$output_pid" "$output_capture_status_file"

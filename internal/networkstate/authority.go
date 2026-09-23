@@ -21,9 +21,13 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/fsidentity"
 )
 
 const maxPrivateRecordBytes = 4 << 20
+
+// Injectable only inside this package to qualify first-create parent-directory barriers.
+var syncAuthorityDirectoryEntry = func(dir *os.File) error { return dir.Sync() }
 
 type Store struct {
 	root *os.Root
@@ -59,6 +63,14 @@ func OpenExisting(path string, exposed []string) (*Store, error) {
 		_ = s.Close()
 		return nil, err
 	}
+	// A first creating opener can leave the newly linked directory visible when its parent fsync
+	// fails, before any owner key exists. Semantically that empty/temp-only directory is still no
+	// authority store: read-only callers report absence, while the explicit approval path may retry
+	// Open and repeat the creation barriers. loadKey already rejects any real record without a key.
+	if s.key == nil {
+		_ = s.Close()
+		return nil, fmt.Errorf("network authority is not initialized: %w", os.ErrNotExist)
+	}
 	if err := s.intactAuthority(); err != nil {
 		_ = s.Close()
 		return nil, err
@@ -83,6 +95,13 @@ func openFiles(path string, exposed []string, create bool) (*Store, error) {
 		if err := os.MkdirAll(canonical, 0o700); err != nil {
 			return nil, err
 		}
+		// Mkdir visibility is not durable publication. Confirm every directory entry in the
+		// canonical path before a public project marker or private approval can depend on this
+		// store. Repeating the full chain also resolves a previous create whose parent fsync failed
+		// after the directory became visible.
+		if err := confirmAuthorityDirectoryEntries(canonical); err != nil {
+			return nil, err
+		}
 		// Prospective descendants have no inode. Once the root exists, repeat
 		// the identity check before publishing any key, including case or
 		// normalization aliases that lexical comparisons could not prove.
@@ -102,6 +121,30 @@ func openFiles(path string, exposed []string, create bool) (*Store, error) {
 		return nil, err
 	}
 	return &Store{root: root, path: canonical}, nil
+}
+
+func confirmAuthorityDirectoryEntries(path string) error {
+	var parents []string
+	for current := filepath.Clean(path); ; {
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		parents = append(parents, parent)
+		current = parent
+	}
+	slices.Reverse(parents)
+	for _, parent := range parents {
+		dir, err := os.Open(parent)
+		if err != nil {
+			return err
+		}
+		err = errors.Join(syncAuthorityDirectoryEntry(dir), dir.Close())
+		if err != nil {
+			return fmt.Errorf("confirm network authority directory %q: %w", parent, err)
+		}
+	}
+	return nil
 }
 
 // CheckPathExposure protects even a not-yet-created authority tree without
@@ -405,6 +448,16 @@ func (s *Store) confirmPublication() error {
 	return s.syncDirectory(dir)
 }
 
+// ConfirmDurability repeats the store directory barrier without publishing anything. Read-only
+// host commands use it before reporting an already-visible approval/removal as settled: that state
+// may be the result of a prior rename or unlink whose fsync failed after the change became visible.
+func (s *Store) ConfirmDurability() error {
+	if s == nil {
+		return errors.New("network authority store is not open")
+	}
+	return s.confirmPublication()
+}
+
 func (s *Store) syncDirectory(dir *os.File) error {
 	if s.syncDir != nil {
 		return s.syncDir(dir)
@@ -445,18 +498,27 @@ func (s *Store) projectKey(canonical string) string {
 
 func approvalRecord(id string) string { return "approval-" + id + ".json" }
 
+const (
+	networkApprovalLegacyVersion = 1
+	networkApprovalBirthVersion  = 2
+	networkApprovalVersion       = 3
+)
+
 type Approval struct {
 	Version   int           `json:"version"`
 	ProjectID string        `json:"project_id"`
 	Posture   egress.Mode   `json:"posture"`
 	Envelope  []egress.Rule `json:"envelope"`
-	// Inode is the approved directory's kernel identity, recorded so a
-	// replacement at the same path cannot inherit its grants. Device is recorded
-	// beside it for diagnosis but never compared: a volume's device number is
-	// assigned when it is mounted, so a reboot changes it while the directory and
-	// its inode are untouched (see checkDirectory).
-	Device uint64 `json:"device"`
-	Inode  uint64 `json:"inode"`
+	// Device, Inode and Birth* are retained only to parse approvals written by
+	// older Coop builds. They are allocator metadata, not current authority.
+	Device    uint64 `json:"device,omitempty"`
+	Inode     uint64 `json:"inode,omitempty"`
+	BirthSec  int64  `json:"birth_sec,omitempty"`
+	BirthNsec uint32 `json:"birth_nsec,omitempty"`
+	// ProjectAnchor names the host-private half of a two-link filesystem anchor.
+	// The repository marker must still be that exact inode for a launch to use
+	// this approval.
+	ProjectAnchor string `json:"project_anchor,omitempty"`
 	// Services is the digest of each approved `service:` grant's Compose
 	// definition, keyed by service name. A launch recomputes it from the file it
 	// is about to run and refuses a service that changed since it was reviewed.
@@ -469,23 +531,25 @@ type Approval struct {
 // one that was reviewed. An approval that never recorded that identity cannot
 // prove it either, so it is reviewed again rather than trusted. Both are
 // pending reviews, not corruption: the remedy is the same `coop approve`.
-func (a *Approval) checkDirectory(canonical string, info os.FileInfo) *PendingApproval {
+func (s *Store) checkDirectory(a *Approval, canonical string) *PendingApproval {
 	if a == nil {
+		// A moved checkout changes its path-keyed project id. Even an empty policy would otherwise
+		// resolve to the fresh default and silently forget the old sticky posture. A marker with no
+		// approval for this path is an explicit re-enrollment, not a first-use project.
+		if _, err := fsidentity.ReadMarker(canonical, ProjectApprovalMarker); err == nil {
+			return &PendingApproval{Reason: "this checkout moved or has a pending network identity — review it with 'coop approve'",
+				Cause: "This checkout has a network approval marker but no approval for its current location."}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return &PendingApproval{Reason: "this checkout's network identity cannot be verified — review it with 'coop approve'",
+				Cause: "Coop could not verify this checkout's network approval marker."}
+		}
 		return nil
 	}
-	_, inode, ok := directoryIdentity(info)
-	if !ok {
-		return &PendingApproval{Reason: "the project directory at " + canonical + " could not be read",
-			Cause: "This project folder could not be read, so its approval cannot be checked."}
-	}
-	if a.Inode == 0 {
+	if a.Version != networkApprovalVersion {
 		return &PendingApproval{Reason: "the network approval for " + canonical + " was made by an older coop",
 			Cause: "This project's network access was approved by an older Coop."}
 	}
-	// The inode alone: a directory recreated at the path is a new inode,
-	// while a reboot renumbers the volume's device and would otherwise send
-	// every approved project back for review.
-	if a.Inode != inode {
+	if err := s.validateProjectAnchor(canonical, a); err != nil {
 		return &PendingApproval{Reason: "the project directory at " + canonical + " was replaced since it was approved",
 			Cause: "This project folder was replaced after its network access was approved."}
 	}
@@ -522,8 +586,25 @@ func (s *Store) approval(id string) (*Approval, error) {
 	if err := strictJSON(data, &approval); err != nil {
 		return nil, err
 	}
-	if approval.Version != 1 || approval.ProjectID != id || len(approval.Features) > egress.MaxFeatureExpansions {
+	if approval.ProjectID != id || len(approval.Features) > egress.MaxFeatureExpansions {
 		return nil, errors.New("network approval identity mismatch")
+	}
+	switch approval.Version {
+	case networkApprovalLegacyVersion:
+		if approval.Inode == 0 || approval.BirthSec != 0 || approval.BirthNsec != 0 || approval.ProjectAnchor != "" {
+			return nil, errors.New("invalid legacy network approval identity")
+		}
+	case networkApprovalBirthVersion:
+		if approval.Inode == 0 || approval.BirthSec == 0 || approval.ProjectAnchor != "" {
+			return nil, errors.New("invalid birth-time network approval identity")
+		}
+	case networkApprovalVersion:
+		if approval.Device != 0 || approval.Inode != 0 || approval.BirthSec != 0 || approval.BirthNsec != 0 ||
+			!projectAnchorRE.MatchString(approval.ProjectAnchor) {
+			return nil, errors.New("invalid anchored network approval identity")
+		}
+	default:
+		return nil, errors.New("unsupported network approval version")
 	}
 	if _, err := egress.ParseMode(string(approval.Posture)); err != nil {
 		return nil, err
@@ -552,6 +633,13 @@ func (s *Store) CheckRequests(project string, requests []egress.Rule, bundles []
 	}
 	if err := s.checkBundles(bundles); err != nil {
 		return nil, err
+	}
+	_, canonical, _, err := s.projectIdentity(project)
+	if err != nil {
+		return nil, err
+	}
+	if pending := s.checkDirectory(approval, canonical); pending != nil {
+		return nil, pending
 	}
 	return s.checkRequests(approval, requests, bundles)
 }

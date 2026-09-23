@@ -455,11 +455,14 @@ func renderDelegateStep(root string, step delegateStep, delegate delegateScenari
 		}
 		wrapper := os.Getenv("COOP_PROVIDER_FIXTURE_CONSULT_WRAPPER")
 		cmd := exec.Command(wrapper, "advisor", "--fresh", "delegate nested question")
-		cmd.Stdout, cmd.Stderr, cmd.Env = os.Stdout, os.Stderr, os.Environ()
+		var answer strings.Builder
+		cmd.Stdout, cmd.Stderr, cmd.Env = &answer, os.Stderr, os.Environ()
 		if err := cmd.Run(); err != nil {
 			return commandExitCodeFixture(err), "", err
 		}
-		return 0, "", nil
+		// The delegate provider sees the tool reply, then emits its own structured result.
+		// Passing plain tool text through as Codex JSON made this fixture host-jq dependent.
+		return 0, "", renderDelegateSuccess(step.Provider, strings.TrimSpace(answer.String()))
 	case "wait":
 		if err := awaitDelegateFile(root, delegateReleaseFileName, 5*time.Second); err != nil {
 			return 1, "", err

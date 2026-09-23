@@ -18,11 +18,15 @@ import (
 	"strings"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/safefile"
+	"github.com/AndrewDryga/coop/internal/shadowpath"
 	"gopkg.in/yaml.v3"
 )
 
 // Dir is the repo-relative home of presets: .agent/presets/<name>/preset.yaml.
 const Dir = ".agent/presets"
+
+const presetFileLimit = 1 << 20
 
 // Role modes: how the lead reaches a role.
 const (
@@ -207,19 +211,26 @@ func List(repo, globalDir string) []string {
 	seen := map[string]bool{}
 	var names []string
 	for _, root := range roots(repo, globalDir) {
-		entries, err := os.ReadDir(root)
+		dir, err := os.Open(root)
 		if err != nil {
 			continue
 		}
-		for _, e := range entries {
-			if !e.IsDir() || seen[e.Name()] {
-				continue // repo iterated first, so a repo name shadows the global one
+		for {
+			entries, readErr := dir.ReadDir(128)
+			for _, e := range entries {
+				if !e.IsDir() || seen[e.Name()] {
+					continue // repo iterated first, so a repo name shadows the global one
+				}
+				if _, err := os.Stat(filepath.Join(root, e.Name(), "preset.yaml")); err == nil {
+					seen[e.Name()] = true
+					names = append(names, e.Name())
+				}
 			}
-			if _, err := os.Stat(filepath.Join(root, e.Name(), "preset.yaml")); err == nil {
-				seen[e.Name()] = true
-				names = append(names, e.Name())
+			if readErr != nil {
+				break
 			}
 		}
+		_ = dir.Close()
 	}
 	sort.Strings(names)
 	return names
@@ -268,18 +279,107 @@ func Load(repo, globalDir, name string) (*Preset, error) {
 			fmt.Sprintf("A preset is a folder name under %s/.", Dir),
 		}}
 	}
-	path := Path(repo, globalDir, name)
-	data, err := os.ReadFile(path)
+	source, err := openPresetSource(repo, globalDir, name)
 	if err != nil {
-		return nil, &LoadError{Name: name, Path: path, NotFound: true, Detail: []string{
-			fmt.Sprintf("No preset %q exists.", name),
-			fmt.Sprintf("Coop looked under %s.", strings.Join(roots(repo, globalDir), " and ")),
-		}}
+		return nil, err
 	}
-	dir := filepath.Dir(path)
-	return loadPreset(name, dir, data, func(rel string) ([]byte, error) {
-		return os.ReadFile(filepath.Join(dir, rel))
+	defer source.dir.Close()
+	return loadPreset(name, source.path, source.data, func(rel string) ([]byte, error) {
+		if source.policy != nil {
+			data, err := source.policy.ReadRegular(source.dir, source.repoRelative, filepath.FromSlash(rel), presetFileLimit)
+			if errors.Is(err, shadowpath.ErrProtected) {
+				return nil, fmt.Errorf("%w: %s", errProtectedPresetPath,
+					filepath.ToSlash(filepath.Join(source.repoRelative, filepath.FromSlash(rel))))
+			}
+			return data, err
+		}
+		return safefile.ReadRegular(source.dir, filepath.FromSlash(rel), presetFileLimit)
 	})
+}
+
+var errProtectedPresetPath = errors.New("preset path is protected by the repository secret policy")
+
+type presetSource struct {
+	dir          *os.File
+	path         string
+	data         []byte
+	repoRelative string
+	policy       *shadowpath.Snapshot
+}
+
+func openPresetSource(repo, globalDir, name string) (*presetSource, error) {
+	type candidate struct {
+		base, rel, path, repoRel string
+	}
+	candidates := []candidate{{
+		base: repo, rel: filepath.Join(filepath.FromSlash(Dir), name),
+		path:    filepath.Join(repo, filepath.FromSlash(Dir), name),
+		repoRel: filepath.ToSlash(filepath.Join(filepath.FromSlash(Dir), name)),
+	}}
+	if globalDir != "" {
+		candidates = append(candidates, candidate{base: globalDir, rel: name, path: filepath.Join(globalDir, name)})
+	}
+	for _, candidate := range candidates {
+		canonical, err := filepath.EvalSymlinks(candidate.base)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, brokenPresetError(name, filepath.Join(candidate.path, "preset.yaml"))
+		}
+		root, err := safefile.OpenRoot(canonical)
+		if err != nil {
+			return nil, brokenPresetError(name, filepath.Join(candidate.path, "preset.yaml"))
+		}
+		var dir *os.File
+		var policy *shadowpath.Snapshot
+		if candidate.repoRel != "" {
+			dir, policy, err = shadowpath.OpenTree(root, candidate.rel)
+		} else {
+			dir, err = safefile.OpenDir(root, candidate.rel)
+		}
+		_ = root.Close()
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, brokenPresetError(name, filepath.Join(candidate.path, "preset.yaml"))
+		}
+		if candidate.repoRel != "" {
+			if full := candidate.repoRel + "/preset.yaml"; policy.Shadowed(full) {
+				_ = dir.Close()
+				return nil, protectedPresetError(name, filepath.Join(candidate.path, "preset.yaml"), full)
+			}
+		}
+		data, err := safefile.ReadRegular(dir, "preset.yaml", presetFileLimit)
+		if err != nil {
+			_ = dir.Close()
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, brokenPresetError(name, filepath.Join(candidate.path, "preset.yaml"))
+		}
+		return &presetSource{dir: dir, path: candidate.path, data: data,
+			repoRelative: candidate.repoRel, policy: policy}, nil
+	}
+	return nil, &LoadError{Name: name, Path: filepath.Join(repo, filepath.FromSlash(Dir), name, "preset.yaml"), NotFound: true, Detail: []string{
+		fmt.Sprintf("No preset %q exists.", name),
+		fmt.Sprintf("Coop looked under %s.", strings.Join(roots(repo, globalDir), " and ")),
+	}}
+}
+
+func brokenPresetError(name, path string) error {
+	return &LoadError{Name: name, Path: path, Detail: []string{
+		"Coop could not safely read this preset.",
+		"Use regular files no larger than 1 MiB inside the preset folder.",
+	}}
+}
+
+func protectedPresetError(name, path, rel string) error {
+	return &LoadError{Name: name, Path: path, Detail: []string{
+		fmt.Sprintf("Repository path %q is hidden by Coop's secret policy and cannot be used as model prompt material.", rel),
+		"Move public prompt text to an ordinary Markdown file, or correct the matching .coopignore rule.",
+	}}
 }
 
 // Scaffold shares validation while reading from its pinned, unpublished bundle.
@@ -504,7 +604,19 @@ func promptText(rel string, readFile func(string) ([]byte, error)) (string, []st
 	}
 	data, err := readFile(filepath.FromSlash(rel))
 	if err != nil {
-		return "", []string{fmt.Sprintf("Prompt file %q was not found.", rel)}
+		if errors.Is(err, errProtectedPresetPath) {
+			return "", []string{
+				fmt.Sprintf("Prompt file %q is hidden by Coop's secret policy and cannot be sent to a model.", rel),
+				"Move public prompt text to an ordinary Markdown file, or correct the matching .coopignore rule.",
+			}
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			return "", []string{fmt.Sprintf("Prompt file %q was not found.", rel)}
+		}
+		return "", []string{
+			fmt.Sprintf("Prompt file %q could not be read safely.", rel),
+			"Use a regular file no larger than 1 MiB inside the preset folder.",
+		}
 	}
 	return strings.TrimSpace(string(data)), nil
 }

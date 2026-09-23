@@ -143,26 +143,23 @@ func grokHasSession(cfg *config.Config, ws, id string) bool {
 	if err != nil {
 		return false
 	}
-	entries, _ := dir.ReadDir(-1)
-	_ = dir.Close()
-	for _, entry := range entries {
+	found := scanSessionDir(dir, func(entry os.DirEntry) bool {
 		if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
-			continue
+			return false
 		}
 		if grokBucketCWD(root, entry.Name()) != ws {
-			continue
+			return false
 		}
 		session := filepath.Join(entry.Name(), id)
 		info, err := root.Lstat(session)
 		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			continue
+			return false
 		}
 		marker, err := root.Lstat(filepath.Join(session, "summary.json"))
-		if err == nil && marker.Mode().IsRegular() && marker.Mode()&os.ModeSymlink == 0 {
-			return true
-		}
-	}
-	return false
+		return err == nil && marker.Mode().IsRegular() && marker.Mode()&os.ModeSymlink == 0
+	})
+	_ = dir.Close()
+	return found
 }
 
 func grokBucketCWD(root *os.Root, bucket string) string {
@@ -392,7 +389,7 @@ func (a grokAgent) ActiveCredentialEnvKeys(_ string, markerPresent bool) []strin
 
 // readGrokCredentials decodes the profile's stored login; false means there is none usable.
 func readGrokCredentials(profileDir string) (map[string]grokSourceCredential, bool) {
-	data, err := os.ReadFile(filepath.Join(profileDir, "auth.json"))
+	data, err := ReadCredentialArtifact(filepath.Join(profileDir, "auth.json"), grokCredentialLimit)
 	if err != nil {
 		return nil, false
 	}
@@ -815,22 +812,7 @@ func requestGrokCredentialRefresh(credential grokSourceCredential, deadline time
 
 // readGrokCredentialFile reads the stored login without following a link, bounded.
 func readGrokCredentialFile(path string) ([]byte, error) {
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	if info, err := file.Stat(); err != nil || !info.Mode().IsRegular() {
-		return nil, errors.New("credential is not a regular file")
-	}
-	data, err := io.ReadAll(io.LimitReader(file, grokCredentialLimit+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > grokCredentialLimit {
-		return nil, errors.New("credential is too large")
-	}
-	return data, nil
+	return ReadCredentialArtifact(path, grokCredentialLimit)
 }
 
 // grokCanRefresh reports whether the stored login carries refresh authority — its presence, never

@@ -532,14 +532,17 @@ func PlanBuild(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool) 
 		return BuildPlan{}, err
 	}
 	dfRel := proj.DockerfileRel() // box.dockerfile, else .agent/Dockerfile
-	if !fileExists(filepath.Join(repo, dfRel)) {
+	content, readErr := readRepositoryRegularFileNoFollow(repo, dfRel, imageInputFileLimit)
+	if errors.Is(readErr, os.ErrNotExist) {
 		return BuildPlan{Image: cfg.BaseImage}, nil
+	}
+	if readErr != nil {
+		return BuildPlan{}, fmt.Errorf("read project Dockerfile %s: %w", dfRel, readErr)
 	}
 	// A project Dockerfile may inherit coop's trusted base (agent CLIs + ACP adapters, browser
 	// libraries, writable-home + security setup) with `ARG COOP_BASE_IMAGE` / `FROM ${COOP_BASE_IMAGE}`,
 	// adding only its own toolchain. When it does, the base has to be present (built if missing,
 	// rebuilt on --fresh) and passed in as a build-arg.
-	content, _ := os.ReadFile(filepath.Join(repo, dfRel))
 	usesBase := strings.Contains(string(content), "COOP_BASE_IMAGE")
 	return BuildPlan{
 		Project:    true,

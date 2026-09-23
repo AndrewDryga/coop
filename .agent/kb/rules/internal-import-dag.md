@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-09-15
+updated: 2026-09-23
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -46,6 +46,17 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-09-23 — added `box -> fsidentity`: service approvals now bind their public marker to
+  private host state, so a copied or replaced repository cannot inherit another checkout's
+  secret-file or external-volume grants. This is service authority, not fork lifecycle.
+- 2026-09-23 — added the low-level `safefile` and `shadowpath` leaves. `box`, `preset`, and
+  `loopcfg` share raw descriptor-relative no-symlink reads because `os.Root.OpenFile` resolves
+  links even with `O_NOFOLLOW`; `box` and `preset` share one deny policy for repository bytes
+  re-exported outside the shadowed checkout. New edges: `box -> safefile, shadowpath`,
+  `preset -> safefile, shadowpath`, `loopcfg -> safefile`, and `shadowpath -> safefile`.
+- 2026-09-23 — added the leaf `fsidentity` package plus deliberate `forkspace` and `networkstate`
+  edges for private hardlink anchors. Tasks and sessions keep their existing logical/semantic
+  authority and add no edge.
 - 2026-09-20 — **+1 package `eval` (a leaf, `nil`) and +1 edge: `cli` → `eval`.** Native evals v1:
   `internal/eval` loads/validates suite manifests, fingerprints inputs and plans a run — a pure data
   library that imports no internal package (the CLI resolves targets/presets and hands it strings),

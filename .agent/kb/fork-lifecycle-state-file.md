@@ -2,8 +2,8 @@
 name: fork-lifecycle-state-file
 description: one generation-bound owner-v2 file holds four fork lifecycle states; unsupported formats stay held and only pid+start-token — never file age — may decide a current owner is gone
 subsystem: fork
-sources: [internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/processidentity/identity.go]
-updated: 2026-09-18
+sources: [internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
+updated: 2026-09-23
 ---
 Every fork's whole process lifecycle lives in ONE small file, `<repo>-forks/.coop/<name>.pid`, read
 and written through `forkspace.WorkerState` (`internal/forkspace/state.go`) — never by hand. Four
@@ -18,8 +18,9 @@ current shapes. Every one has an `owner-v2` header followed by the immutable gen
 
 `owner-v1` remains parseable only for stop/migration compatibility. It has no generation, cannot
 start or claim current work beside a generation record, and must never be upgraded by editing its
-bytes. The host-owned `<name>.generation.json` binds name+generation to the workspace inode (the
-device is recorded, never compared — [[identity-fences-compare-the-inode]]);
+bytes. The host-owned `<name>.generation.json` binds name+generation to a private two-link anchor:
+`.coop-fork-generation` inside the workspace and a generation-specific file in the owner-only fork
+state directory ([[identity-fences-compare-the-inode]]);
 workers, runtime labels, executions, assignments, candidates, and cleanup all carry that exact
 identity, so `--fresh` cannot rebind a stale namesake.
 
@@ -34,10 +35,18 @@ log also tightens its mode. The private parent protects older leaf records until
 
 Creating the workspace is all-or-nothing before generation authority exists. `SetupContext` keeps
 the clone only after hardened checkout leaves `HEAD` on the exact requested branch, required Git
-identity/signing settings have propagated, and `.coop/` is excluded. A failed step removes that
+identity/signing settings have propagated, and `.coop/` plus the root identity marker are excluded.
+A failed step removes that
 incomplete clone. Fork discovery treats a missing workspace/state root as empty, but returns any
 other directory error to lifecycle callers; only prompt decoration and shell completion suppress
 that diagnostic deliberately.
+
+Generation publication is crash-replayable. The private hardlink name is durable before its public
+marker, and a record rename that becomes visible before directory sync reports failure keeps both
+anchor and workspace. A session create retry adopts that exact visible generation instead of
+deleting the directory it names. Reservation rollback retires the generation first and deletes the
+workspace only after retirement succeeds. Legacy migration uses the hardened Git-exclude target
+proof, so a checkout-controlled `commondir` cannot redirect the host append into a sibling clone.
 
 Fork log absence is an ordinary not-yet-produced state, not a read success with mysteriously blank
 output. A named read says that explicitly. Multi-fork reads preserve every readable stream and
@@ -120,6 +129,11 @@ A dead-WORKER state (not a reservation) is never auto-cleared: it may still own 
 only `coop fork stop` reaps that by owner label.
 
 ## Changelog
+- 2026-09-23 — generation v3 replaced allocator metadata with a private hardlink anchor. Stopped
+  v1/v2 records migrate only after branch/origin verification and absence of executions,
+  reservations and land intent; active or ambiguous state fails closed. Publication and session
+  rollback preserve an exact retry point across post-rename sync and cleanup interruptions, and
+  migration refuses redirected common Git metadata.
 - 2026-09-18 — the generation binds the workspace inode only (generation.go ValidateGenerationWorkspace,
   OpenGenerationWorkspaceRoot): comparing the device had stopped every fork from opening after a reboot.
 - 2026-09-05 — post-land deletion retains the successful land's open inode, generation and commit

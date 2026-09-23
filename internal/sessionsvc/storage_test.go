@@ -151,6 +151,20 @@ func storageTestLimits(t *testing.T) StorageLimits {
 	return limits
 }
 
+func TestStorageReportCountsExternalReadOnlySessionOutput(t *testing.T) {
+	repo := storageTestRepo(t)
+	service := storageTestService(t, repo)
+	writeStorageBytes(t, filepath.Join(service.stateRoot, "output", "remote_output", "interrupted.bin"), storageTestPayload)
+
+	report, err := service.StorageReport(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Totals.PrivateStateBytes < storageTestPayload {
+		t.Fatalf("private state bytes = %d, want external session output included", report.Totals.PrivateStateBytes)
+	}
+}
+
 // The whole point of the accounting: every retained byte has a reason, and the reason decides
 // whether the control plane may ask for it back.
 func TestStorageReportSeparatesActiveGraceDisposableAndUnattributedForks(t *testing.T) {
@@ -643,6 +657,9 @@ func TestLoadStorageLimitsReadsTheOperatorBlockAndRefusesAnIncoherentOne(t *test
 		// The loader refuses a path through a symlinked ancestor, and macOS temp roots are one.
 		root, err := filepath.EvalSymlinks(t.TempDir())
 		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(root, 0o700); err != nil {
 			t.Fatal(err)
 		}
 		path := filepath.Join(root, "session-policies.yaml")

@@ -111,11 +111,20 @@ func validateComposeData(data []byte, path, repoRoot string, repoReadOnly bool) 
 	if err != nil {
 		return err
 	}
+	type bind struct {
+		service  string
+		source   string
+		writable bool
+	}
+	var binds []bind
 	for name, svc := range doc.Services {
 		if strings.TrimSpace(svc.Image) == "" {
 			return fmt.Errorf("service %q: an image is required (build: is not allowed — publish a pre-built image)", name)
 		}
 		if err := checkComposeEnvironment(name, svc.Environment); err != nil {
+			return err
+		}
+		if err := checkComposeScheme(name, svc.Labels); err != nil {
 			return err
 		}
 		for _, p := range svc.Ports {
@@ -126,6 +135,34 @@ func validateComposeData(data []byte, path, repoRoot string, repoReadOnly bool) 
 		for _, v := range svc.Volumes {
 			if err := checkVolume(name, v, composeDir, realRepo, repoReadOnly); err != nil {
 				return err
+			}
+			if source, _ := bindSourceTarget(v); serviceVolumeIsBind(v, source) {
+				abs := source
+				if !filepath.IsAbs(abs) {
+					abs = filepath.Join(composeDir, source)
+				}
+				resolved, err := resolveExisting(abs)
+				if err != nil {
+					return err
+				}
+				_, writable := serviceVolumeTargetAccess(v)
+				binds = append(binds, bind{service: name, source: resolved, writable: writable})
+			}
+		}
+	}
+	// Docker reopens each bind independently on a restart. A writable ancestor sidecar could
+	// replace a nested source after validation, even when that nested bind itself is read-only.
+	for _, parent := range binds {
+		if !parent.writable {
+			continue
+		}
+		for _, child := range binds {
+			inside, exact, err := authorityContains(parent.source, child.source)
+			if err != nil {
+				return err
+			}
+			if inside && !exact {
+				return fmt.Errorf("service %q: bind source %q is nested under writable service %q bind %q — use non-overlapping sources or make the ancestor read-only", child.service, child.source, parent.service, parent.source)
 			}
 		}
 	}
@@ -196,6 +233,30 @@ func checkComposeEnvironment(service string, value any) error {
 	return nil
 }
 
+func checkComposeScheme(service string, labels any) error {
+	var scheme string
+	switch value := labels.(type) {
+	case map[string]any:
+		if raw, present := value["coop.service.scheme"]; present {
+			scheme, _ = raw.(string)
+			if scheme == "" {
+				return fmt.Errorf("service %q: coop.service.scheme needs a plain URI scheme", service)
+			}
+		}
+	case []any:
+		for _, raw := range value {
+			entry, _ := raw.(string)
+			if found, ok := strings.CutPrefix(entry, "coop.service.scheme="); ok {
+				scheme = found
+			}
+		}
+	}
+	if scheme != "" && !validServiceScheme(scheme) {
+		return fmt.Errorf("service %q: coop.service.scheme needs a plain URI scheme", service)
+	}
+	return nil
+}
+
 // composeDoc / serviceSpec / volumeDecl model the SAFE subset only. Fields we don't inspect are
 // `any` (shape-flexible, inert — no host reach), so a new inert compose feature just needs adding
 // here; a DANGEROUS one is rejected by KnownFields for not being present at all. Do not add a
@@ -260,7 +321,11 @@ func checkVolume(svc string, entry any, composeDir, realRepo string, repoReadOnl
 		}
 		source = parts[0]
 		if len(parts) == 3 {
-			writable = !slices.Contains(strings.Split(parts[2], ","), "ro")
+			var err error
+			writable, err = checkedVolumeModes(svc, source, parts[2], serviceVolumeIsBind(v, source))
+			if err != nil {
+				return err
+			}
 		}
 	case map[string]any:
 		if t, _ := v["type"].(string); t != "" && t != "bind" {
@@ -270,12 +335,17 @@ func checkVolume(svc string, entry any, composeDir, realRepo string, repoReadOnl
 		if source == "" {
 			return nil
 		}
+		if serviceVolumeIsBind(v, source) {
+			if err := checkLongBindOptions(svc, source, v); err != nil {
+				return err
+			}
+		}
 		readOnly, _ := v["read_only"].(bool)
 		writable = !readOnly
 	default:
 		return fmt.Errorf("service %q: unrecognized volume entry %v", svc, entry)
 	}
-	if !looksLikePath(source) {
+	if !serviceVolumeIsBind(entry, source) {
 		return nil // a named volume token (e.g. "pgdata"), not a host bind
 	}
 	if err := checkBindSource(svc, source, composeDir, realRepo); err != nil {
@@ -283,6 +353,71 @@ func checkVolume(svc string, entry any, composeDir, realRepo string, repoReadOnl
 	}
 	if repoReadOnly && writable {
 		return fmt.Errorf("service %q: bind mount %q is writable, but this session's repository is read-only — mount it :ro (or read_only: true)", svc, source)
+	}
+	if repoReadOnly {
+		abs := source
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(composeDir, source)
+		}
+		if _, err := os.Stat(abs); err != nil {
+			return fmt.Errorf("service %q: read-only bind source %q must already exist: %w", svc, source, err)
+		}
+	}
+	return nil
+}
+
+func checkedVolumeModes(svc, source, modes string, bind bool) (bool, error) {
+	writable, seenAccess := true, false
+	for _, mode := range strings.Split(modes, ",") {
+		switch mode {
+		case "ro", "rw":
+			if seenAccess {
+				return false, fmt.Errorf("service %q: volume %q has conflicting access modes", svc, source)
+			}
+			seenAccess = true
+			writable = mode == "rw"
+		case "consistent", "cached", "delegated":
+			// Client-side consistency hints do not add host write authority.
+		case "nocopy":
+			if bind {
+				return false, fmt.Errorf("service %q: bind mount %q cannot use nocopy", svc, source)
+			}
+		default:
+			return false, fmt.Errorf("service %q: volume %q has unsupported mode %q — use ro or rw without host-mutating options", svc, source, mode)
+		}
+	}
+	return writable, nil
+}
+
+func checkLongBindOptions(svc, source string, volume map[string]any) error {
+	for key := range volume {
+		switch key {
+		case "type", "source", "target", "read_only", "bind", "consistency":
+		default:
+			return fmt.Errorf("service %q: bind mount %q has unsupported option %q", svc, source, key)
+		}
+	}
+	if value, ok := volume["read_only"]; ok {
+		if _, ok := value.(bool); !ok {
+			return fmt.Errorf("service %q: bind mount %q needs a boolean read_only value", svc, source)
+		}
+	}
+	if value, ok := volume["consistency"]; ok {
+		mode, ok := value.(string)
+		if !ok || !slices.Contains([]string{"consistent", "cached", "delegated"}, mode) {
+			return fmt.Errorf("service %q: bind mount %q has unsupported consistency", svc, source)
+		}
+	}
+	if raw, ok := volume["bind"]; ok {
+		options, ok := raw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("service %q: bind mount %q has invalid bind options", svc, source)
+		}
+		for key, value := range options {
+			if key != "create_host_path" || value != false {
+				return fmt.Errorf("service %q: bind mount %q has host-mutating or unsupported bind option %q", svc, source, key)
+			}
+		}
 	}
 	return nil
 }
@@ -292,6 +427,20 @@ func checkVolume(svc string, entry any, composeDir, realRepo string, repoReadOnl
 // a bare token (`pgdata`) is a named volume.
 func looksLikePath(source string) bool {
 	return strings.ContainsAny(source, "/\\") || strings.HasPrefix(source, ".") || strings.HasPrefix(source, "~")
+}
+
+// An explicit long-form type: bind remains a host path even when its source is a bare token.
+// Short-form bare tokens are named volumes instead.
+func serviceVolumeIsBind(entry any, source string) bool {
+	if source == "" {
+		return false
+	}
+	if volume, ok := entry.(map[string]any); ok {
+		if kind, _ := volume["type"].(string); kind != "" {
+			return kind == "bind"
+		}
+	}
+	return looksLikePath(source)
 }
 
 // checkBindSource requires a bind source to resolve strictly within repoRoot. It rejects `$`
@@ -423,11 +572,19 @@ func composeServiceDigests(composeFile, repoRoot string, repoReadOnly bool, name
 	if err != nil {
 		return nil, err
 	}
+	return composeServiceDigestsData(data, names)
+}
+
+// composeServiceDigestsData checks the frozen bytes a service launch will actually hand Compose.
+func composeServiceDigestsData(data []byte, names []string) (map[string]string, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
 	var doc composeDoc
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, err
 	}
-	names, err = composeServiceClosure(doc.Services, names)
+	names, err := composeServiceClosure(doc.Services, names)
 	if err != nil {
 		return nil, err
 	}
@@ -484,31 +641,75 @@ func namedVolumeSource(entry any) string {
 }
 
 func outsideServiceVolumes(data []byte) ([]string, error) {
+	access, err := outsideServiceVolumeAccess(data)
+	if err != nil {
+		return nil, err
+	}
+	volumes := make([]string, 0, len(access))
+	for _, volume := range access {
+		volumes = append(volumes, volume.Name)
+	}
+	return volumes, nil
+}
+
+// ServiceVolumeAccess is the actual Docker volume a Compose service would attach, and whether
+// any consumer can write it. External and explicitly named volumes are outside this project.
+type ServiceVolumeAccess struct {
+	Name      string   `json:"name"`
+	Writable  bool     `json:"writable"`
+	Consumers []string `json:"consumers"`
+}
+
+func outsideServiceVolumeAccess(data []byte) ([]ServiceVolumeAccess, error) {
 	var doc composeDoc
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, err
 	}
-	seen := map[string]bool{}
-	for _, service := range doc.Services {
+	seen := map[string]*ServiceVolumeAccess{}
+	for name, service := range doc.Services {
 		for _, entry := range service.Volumes {
 			source := namedVolumeSource(entry)
 			declaration, ok := doc.Volumes[source]
 			if source == "" || !ok || !declaration.External && declaration.Name == "" {
 				continue
 			}
-			name := declaration.Name
-			if name == "" {
-				name = source
+			actual := declaration.Name
+			if actual == "" {
+				actual = source
 			}
-			seen[name] = true
+			volume := seen[actual]
+			if volume == nil {
+				volume = &ServiceVolumeAccess{Name: actual}
+				seen[actual] = volume
+			}
+			target, writable := serviceVolumeTargetAccess(entry)
+			volume.Writable = volume.Writable || writable
+			volume.Consumers = append(volume.Consumers, name+" → "+target)
 		}
 	}
-	volumes := make([]string, 0, len(seen))
-	for name := range seen {
-		volumes = append(volumes, name)
+	volumes := make([]ServiceVolumeAccess, 0, len(seen))
+	for _, volume := range seen {
+		slices.Sort(volume.Consumers)
+		volumes = append(volumes, *volume)
 	}
-	slices.Sort(volumes)
+	slices.SortFunc(volumes, func(a, b ServiceVolumeAccess) int { return strings.Compare(a.Name, b.Name) })
 	return volumes, nil
+}
+
+func serviceVolumeTargetAccess(entry any) (string, bool) {
+	switch v := entry.(type) {
+	case string:
+		parts := strings.SplitN(v, ":", 3)
+		if len(parts) < 2 {
+			return "", true
+		}
+		return parts[1], len(parts) < 3 || !slices.Contains(strings.Split(parts[2], ","), "ro")
+	case map[string]any:
+		target, _ := v["target"].(string)
+		readOnly, _ := v["read_only"].(bool)
+		return target, !readOnly
+	}
+	return "", true
 }
 
 func composeServiceClosure(services map[string]serviceSpec, names []string) ([]string, error) {

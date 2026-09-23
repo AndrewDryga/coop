@@ -19,13 +19,26 @@ import (
 	"github.com/AndrewDryga/coop/internal/session"
 )
 
-const sessionOutputRoot = ".coop-output"
+const (
+	sessionOutputRoot          = ".coop-output"
+	sessionOutputDirEntryLimit = 256
+	SessionOutputRootEnv       = "COOP_SESSION_OUTPUT_ROOT"
+)
+
+// Injectable only in tests that deterministically replace a validated leaf before open.
+var beforeSessionOutputArtifactOpen = func(*sessionOutputDirectory, string) {}
 
 func prepareSessionOutputRoot(workspace string) (string, error) {
 	if !filepath.IsAbs(workspace) {
 		return "", errors.New("invalid turn output workspace")
 	}
-	root := filepath.Join(workspace, sessionOutputRoot)
+	return prepareSessionOutputRootPath(filepath.Join(workspace, sessionOutputRoot))
+}
+
+func prepareSessionOutputRootPath(root string) (string, error) {
+	if !filepath.IsAbs(root) {
+		return "", errors.New("invalid turn output root")
+	}
 	if err := os.Mkdir(root, 0o750); err != nil && !errors.Is(err, os.ErrExist) {
 		return "", fmt.Errorf("create turn output root: %w", err)
 	}
@@ -35,39 +48,126 @@ func prepareSessionOutputRoot(workspace string) (string, error) {
 	return root, nil
 }
 
-func prepareSessionOutputDir(workspace, turnID string) (string, string, error) {
-	if !filepath.IsAbs(workspace) || !validSessionHTTPPathID(turnID) {
-		return "", "", errors.New("invalid turn output identity")
+func preparePrivateSessionOutputRoot(stateRoot, sessionID string) (string, error) {
+	if !filepath.IsAbs(stateRoot) || !validSessionPathComponent(sessionID) {
+		return "", errors.New("invalid private turn output identity")
 	}
-	root, err := prepareSessionOutputRoot(workspace)
-	if err != nil {
-		return "", "", err
+	resolved, err := filepath.EvalSymlinks(stateRoot)
+	if err != nil || !filepath.IsAbs(resolved) {
+		return "", errors.New("private turn output state is unsafe")
 	}
-	dir := filepath.Join(root, turnID)
-	if err := os.Mkdir(dir, 0o750); err != nil {
-		return "", "", fmt.Errorf("create turn output directory: %w", err)
+	base := filepath.Join(resolved, "output")
+	if err := os.Mkdir(base, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return "", fmt.Errorf("create private turn output state: %w", err)
 	}
-	return dir, filepath.ToSlash(filepath.Join(sessionOutputRoot, turnID)), nil
+	if info, err := os.Lstat(base); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.New("private turn output state is unsafe")
+	}
+	return prepareSessionOutputRootPath(filepath.Join(base, sessionID))
 }
 
-func removeSessionOutputDir(dir string) error {
-	if dir == "" {
+type sessionOutputDirectory struct {
+	parent *os.Root
+	root   *os.Root
+	path   string
+	name   string
+	info   os.FileInfo
+}
+
+func prepareSessionOutputDir(workspace, turnID string) (*sessionOutputDirectory, string, error) {
+	if !filepath.IsAbs(workspace) || !validSessionHTTPPathID(turnID) {
+		return nil, "", errors.New("invalid turn output identity")
+	}
+	return prepareSessionOutputDirAtRoot(filepath.Join(workspace, sessionOutputRoot), turnID)
+}
+
+func prepareSessionOutputDirAtRoot(root, turnID string) (*sessionOutputDirectory, string, error) {
+	if !filepath.IsAbs(root) || !validSessionHTTPPathID(turnID) {
+		return nil, "", errors.New("invalid turn output identity")
+	}
+	root, err := prepareSessionOutputRootPath(root)
+	if err != nil {
+		return nil, "", err
+	}
+	namedRoot, err := os.Lstat(root)
+	if err != nil || !namedRoot.IsDir() || namedRoot.Mode()&os.ModeSymlink != 0 {
+		return nil, "", errors.New("turn output root is unsafe")
+	}
+	parent, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, "", fmt.Errorf("open turn output root: %w", err)
+	}
+	fail := func(cause error) (*sessionOutputDirectory, string, error) {
+		return nil, "", errors.Join(cause, parent.Close())
+	}
+	openedRoot, statErr := parent.Stat(".")
+	currentRoot, pathErr := os.Lstat(root)
+	if statErr != nil || pathErr != nil || !currentRoot.IsDir() || currentRoot.Mode()&os.ModeSymlink != 0 ||
+		!os.SameFile(namedRoot, openedRoot) || !os.SameFile(openedRoot, currentRoot) {
+		return fail(errors.New("turn output root changed while opening"))
+	}
+	if err := parent.Mkdir(turnID, 0o750); err != nil {
+		return fail(fmt.Errorf("create turn output directory: %w", err))
+	}
+	turn, err := parent.OpenRoot(turnID)
+	if err != nil {
+		_ = parent.RemoveAll(turnID)
+		return fail(fmt.Errorf("open turn output directory: %w", err))
+	}
+	entryInfo, entryErr := parent.Lstat(turnID)
+	openedInfo, openedErr := turn.Stat(".")
+	if entryErr != nil || openedErr != nil || !entryInfo.IsDir() || entryInfo.Mode()&os.ModeSymlink != 0 ||
+		!os.SameFile(entryInfo, openedInfo) {
+		_ = turn.Close()
+		_ = parent.RemoveAll(turnID)
+		return fail(errors.New("turn output directory changed while opening"))
+	}
+	return &sessionOutputDirectory{
+		parent: parent, root: turn, path: filepath.Join(root, turnID), name: turnID, info: openedInfo,
+	}, filepath.ToSlash(filepath.Join(sessionOutputRoot, turnID)), nil
+}
+
+func removeSessionOutputDir(dir *sessionOutputDirectory) error {
+	if dir == nil {
 		return nil
 	}
-	if err := os.RemoveAll(dir); err != nil {
-		return err
+	var closeTurn error
+	if dir.root != nil {
+		closeTurn = dir.root.Close()
+		dir.root = nil
 	}
-	root := filepath.Dir(dir)
-	if entries, err := os.ReadDir(root); err == nil && len(entries) == 0 {
-		_ = os.Remove(root)
-	}
-	return nil
+	removeErr := dir.parent.RemoveAll(dir.name)
+	closeParent := dir.parent.Close()
+	dir.parent = nil
+	return errors.Join(closeTurn, removeErr, closeParent)
 }
 
-func collectSessionOutputDir(dir string) ([]session.OutputArtifact, error) {
-	entries, err := os.ReadDir(dir)
+func (dir *sessionOutputDirectory) bindingIntact() bool {
+	if dir == nil || dir.parent == nil || dir.root == nil {
+		return false
+	}
+	current, err := dir.parent.Lstat(dir.name)
+	return err == nil && current.IsDir() && current.Mode()&os.ModeSymlink == 0 && os.SameFile(dir.info, current)
+}
+
+func collectSessionOutputDir(dir *sessionOutputDirectory) ([]session.OutputArtifact, error) {
+	if !dir.bindingIntact() {
+		return nil, errors.New("turn output directory was replaced")
+	}
+	handle, err := dir.root.Open(".")
 	if err != nil {
-		return nil, fmt.Errorf("read turn output directory: %w", err)
+		return nil, fmt.Errorf("open turn output directory: %w", err)
+	}
+	entries, readDirErr := handle.ReadDir(sessionOutputDirEntryLimit + 1)
+	closeDirErr := handle.Close()
+	if readDirErr != nil && !errors.Is(readDirErr, io.EOF) {
+		return nil, fmt.Errorf("read turn output directory: %w", errors.Join(readDirErr, closeDirErr))
+	}
+	if closeDirErr != nil {
+		return nil, fmt.Errorf("read turn output directory: %w", closeDirErr)
+	}
+	if len(entries) > sessionOutputDirEntryLimit {
+		return nil, errors.New("turn output directory contains too many entries")
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	artifacts := make([]session.OutputArtifact, 0, len(entries))
@@ -77,19 +177,20 @@ func collectSessionOutputDir(dir string) ([]session.OutputArtifact, error) {
 		if !supportedOutputExtension(name) {
 			continue
 		}
-		if !validOutputName(name) || entry.Type()&os.ModeSymlink != 0 || !entry.Type().IsRegular() {
+		entryInfo, err := dir.root.Lstat(name)
+		if err != nil || !validOutputName(name) || entryInfo.Mode()&os.ModeSymlink != 0 || !entryInfo.Mode().IsRegular() {
 			return nil, errors.New("turn produced an unsafe output artifact")
 		}
 		if len(artifacts) >= session.MaxTurnArtifacts {
 			return nil, errors.New("turn produced too many output artifacts")
 		}
-		path := filepath.Join(dir, name)
-		file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+		beforeSessionOutputArtifactOpen(dir, name)
+		file, err := dir.root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 		if err != nil {
 			return nil, fmt.Errorf("open turn output artifact: %w", err)
 		}
 		info, statErr := file.Stat()
-		if statErr != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o022 != 0 {
+		if statErr != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o022 != 0 || !os.SameFile(entryInfo, info) {
 			file.Close()
 			return nil, errors.New("turn output artifact is unsafe")
 		}
@@ -97,6 +198,10 @@ func collectSessionOutputDir(dir string) ([]session.OutputArtifact, error) {
 		closeErr := file.Close()
 		if readErr != nil || closeErr != nil || len(data) == 0 || len(data) > session.MaxArtifactBytes {
 			return nil, errors.New("turn output artifact exceeds its bound")
+		}
+		current, currentErr := dir.root.Lstat(name)
+		if currentErr != nil || !os.SameFile(info, current) {
+			return nil, errors.New("turn output artifact changed while collecting")
 		}
 		if total > session.MaxTurnArtifactBytes-len(data) {
 			return nil, errors.New("turn output artifacts exceed their total bound")
@@ -107,6 +212,9 @@ func collectSessionOutputDir(dir string) ([]session.OutputArtifact, error) {
 			return nil, errors.New("turn output artifact is not a supported image")
 		}
 		artifacts = appendOutputArtifact(artifacts, name, mediaType, data)
+	}
+	if !dir.bindingIntact() {
+		return nil, errors.New("turn output directory was replaced")
 	}
 	return artifacts, nil
 }

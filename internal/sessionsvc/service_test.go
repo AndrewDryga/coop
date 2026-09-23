@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -341,6 +342,11 @@ func TestLoadSessionPoliciesRejectsUnsafeFileAndAncestry(t *testing.T) {
 	body := "version: 1\npolicies:\n  responder:\n    repository: " + repo + "\n    target: codex@work\n    max_turns: 1\n    max_queued_turns: 1\n    max_queued_bytes: 1\n    max_patch_bytes: 1\n    turn_timeout: 1s\n"
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
+		t.Fatal(err)
+	}
+	// Go's numbered TempDir children honor the host umask and may be 0775. This fixture is
+	// deliberately the trusted positive control; unsafe ancestry is staged explicitly below.
+	if err := os.Chmod(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "session-policies.yaml")
@@ -848,6 +854,11 @@ func TestReplacementWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(
 		restored.BaseCommit != captured.Checkpoint.BaseRevision {
 		t.Fatalf("restored session = %+v, source task = %+v", restored, source.WorkspaceTask)
 	}
+	if err := forkspace.ValidateGenerationWorkspace(restored.Repository, forkspace.Identity{
+		Name: restored.ForkName, Generation: forkspace.Generation(restored.ForkGeneration),
+	}); err != nil {
+		t.Fatalf("checkpoint restore destroyed the fork authority marker: %v", err)
+	}
 	wantPatch, _, err := runSessionWorkspaceGit(source.Workspace, workerproto.MaxWorkspaceCheckpointBundleBytes+1,
 		"diff", "--no-ext-diff", "--no-textconv", "--binary", captured.Checkpoint.BaseRevision, "--")
 	if err != nil {
@@ -1092,6 +1103,120 @@ func TestLegacySessionForkAuthorityAdoptsExactReservation(t *testing.T) {
 	}
 	if err := validateSessionForkAuthority(context.Background(), persisted); err != nil {
 		t.Fatalf("adopted authority does not validate: %v", err)
+	}
+}
+
+func TestStartupMigratesExactlyReservedLegacySessionGenerations(t *testing.T) {
+	for _, version := range []int{1, 2} {
+		for _, boundGeneration := range []bool{false, true} {
+			t.Run(fmt.Sprintf("v%d-bound-%t", version, boundGeneration), func(t *testing.T) {
+				repo, git := gitrepo.New(t)
+				git("commit", "-q", "--allow-empty", "-m", "base")
+				service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
+				defer service.Stop()
+				sess, identity := createLegacyBoundSession(t, service, repo, "legacy-upgrade", "legacy-session", "legacy-session")
+				if boundGeneration {
+					var err error
+					sess, err = service.Store().AdoptSessionForkGeneration(t.Context(), sess.ID, string(identity.Generation))
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				downgradeSessionGeneration(t, repo, identity, version)
+				if err := service.Start(t.Context()); err != nil {
+					t.Fatalf("start with exact legacy reservation: %v", err)
+				}
+				if service.sessionQuarantined(sess.ID) {
+					t.Fatal("exactly reserved legacy session was quarantined")
+				}
+				persisted := mustSession(t, service, sess.ID)
+				if persisted.ForkGeneration != string(identity.Generation) {
+					t.Fatalf("generation after migration = %q", persisted.ForkGeneration)
+				}
+				if err := validateSessionForkAuthority(t.Context(), persisted); err != nil {
+					t.Fatalf("migrated session authority: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func downgradeSessionGeneration(t *testing.T, repo string, identity forkspace.Identity, version int) []byte {
+	t.Helper()
+	workspace := forkspace.Workspace(repo, identity.Name)
+	info, err := os.Stat(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat := info.Sys().(*syscall.Stat_t)
+	path := forkspace.GenerationPath(repo, identity.Name)
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]json.RawMessage
+	if err := json.Unmarshal(body, &record); err != nil {
+		t.Fatal(err)
+	}
+	set := func(key string, value any) {
+		t.Helper()
+		record[key], err = json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	set("version", version)
+	set("workspace_device", uint64(stat.Dev))
+	set("workspace_inode", uint64(stat.Ino))
+	if version == 2 {
+		set("workspace_birth_sec", int64(1))
+	}
+	delete(record, "workspace_anchor")
+	body, err = json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(workspace, forkspace.GenerationMarkerName)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(forkspace.StateDir(repo), "generation-"+string(identity.Generation)+".anchor")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func TestStartupRejectsUnreservedOrForeignLegacySessionGeneration(t *testing.T) {
+	for _, version := range []int{1, 2} {
+		for _, owner := range []string{"", "foreign-session"} {
+			t.Run(fmt.Sprintf("v%d-owner-%q", version, owner), func(t *testing.T) {
+				repo, git := gitrepo.New(t)
+				git("commit", "-q", "--allow-empty", "-m", "base")
+				service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
+				defer service.Stop()
+				sess, identity := createLegacyBoundSession(t, service, repo, "legacy-denied", "legacy-session", owner)
+				before := downgradeSessionGeneration(t, repo, identity, version)
+				if err := service.Start(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				if !service.sessionQuarantined(sess.ID) {
+					t.Fatal("unproven legacy generation was adopted")
+				}
+				after, err := os.ReadFile(forkspace.GenerationPath(repo, identity.Name))
+				if err != nil || !bytes.Equal(before, after) {
+					t.Fatalf("legacy generation changed: %v", err)
+				}
+				reservation, present, err := forkspace.ReadWorkspaceReservation(repo, identity)
+				if err != nil || present != (owner != "") || present && reservation.OwnerID != owner {
+					t.Fatalf("reservation changed: %+v, %t, %v", reservation, present, err)
+				}
+				if got := mustSession(t, service, sess.ID); got.ForkGeneration != "" {
+					t.Fatalf("unproven generation bound into session: %q", got.ForkGeneration)
+				}
+			})
+		}
 	}
 }
 

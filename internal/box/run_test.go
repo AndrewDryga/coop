@@ -115,9 +115,10 @@ func TestLoopRefusesUnsafeComposeBeforeAgentLaunch(t *testing.T) {
 		strings.Contains(output, "Starting claude") {
 		t.Fatalf("refused service launch narration = %q", output)
 	}
-	if _, err := os.Stat(recorder); !errors.Is(err, os.ErrNotExist) {
-		data, _ := os.ReadFile(recorder)
-		t.Fatalf("runtime was invoked after a fatal Compose refusal: %q", data)
+	if data, err := os.ReadFile(recorder); err == nil && strings.Contains(string(data), " up ") {
+		t.Fatalf("Compose started after a fatal refusal: %q", data)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
 	}
 }
 
@@ -142,6 +143,145 @@ func TestRunRepoWritable(t *testing.T) {
 	}
 	if slices.Contains(fields, repo+":/workspace:ro") {
 		t.Fatalf("full-write repo mount must not be read-only:\n%s", args)
+	}
+}
+
+func TestRunSnapshotsCoopIgnorePoliciesForAnchoredProject(t *testing.T) {
+	spec, _ := anchoredProjectFixture(t)
+	nested := filepath.Join(spec.Repo, "nested")
+	if err := os.Mkdir(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(spec.Repo, CoopIgnoreFile), filepath.Join(nested, CoopIgnoreFile)} {
+		if err := os.WriteFile(path, []byte("*.secret\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
+	spec.Image, spec.Workdir, spec.Cmd, spec.Batch, spec.Quiet = "i", "/workspace", []string{"true"}, true, true
+	if code, err := Run(cfg, recorderRuntime(t, recorder), spec); code != 0 || err != nil {
+		t.Fatalf("anchored run with %s = (%d, %v), want success", CoopIgnoreFile, code, err)
+	}
+	data, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Fields(string(data))
+	for _, target := range []string{"/workspace/" + CoopIgnoreFile, "/workspace/nested/" + CoopIgnoreFile} {
+		source := ""
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] == "-v" && strings.HasSuffix(args[i+1], ":"+target+":ro") {
+				source = strings.TrimSuffix(args[i+1], ":"+target+":ro")
+			}
+		}
+		if source == "" || source == filepath.Join(spec.Repo, strings.TrimPrefix(target, "/workspace/")) ||
+			pathContains(spec.Repo, source) {
+			t.Fatalf("policy target %s was not mounted from a private snapshot: %q\n%s", target, source, data)
+		}
+	}
+}
+
+func TestRunArtifactsStayOutOfSystemTempAcrossRuns(t *testing.T) {
+	sharedTemp := t.TempDir()
+	t.Setenv("TMPDIR", sharedTemp)
+	// Test binaries ordinarily put service authority below TMPDIR. Keep that unrelated host state
+	// outside the broad bind so this fixture isolates the run-artifact confidentiality boundary.
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, CoopIgnoreFile), []byte("*.secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	boxHome := t.TempDir()
+	cfg := &config.Config{
+		BoxHome: boxHome, ConfigDir: filepath.Join(boxHome, "agents"), HomeInBox: "/home/node", Egress: "none",
+		ExtraRunArgs: []string{"-v", sharedTemp + ":/host-tmp"},
+	}
+	firstRecorder := filepath.Join(t.TempDir(), "runtime-args")
+	if code, err := Run(cfg, recorderRuntime(t, firstRecorder), RunSpec{
+		Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"}, Batch: true, Quiet: true,
+	}); code != 0 || err != nil {
+		t.Fatalf("first run with broad system-temp bind = (%d, %v)", code, err)
+	}
+	// A later run has no broad bind, but its secrets must still land under the same protected Coop
+	// root rather than somewhere the first, potentially long-lived box can watch.
+	cfg.ExtraRunArgs = nil
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	artifacts := defaultCompositionArtifactOps()
+	var writtenParents []string
+	originalWrite := artifacts.writeFile
+	artifacts.writeFile = func(parent, content string) (string, error) {
+		writtenParents = append(writtenParents, parent)
+		return originalWrite(parent, content)
+	}
+	code, err := runWithCompositionArtifacts(cfg, recorderRuntime(t, recorder), RunSpec{
+		Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"}, Batch: true, Quiet: true,
+	}, artifacts)
+	if code != 0 || err != nil {
+		t.Fatalf("later run = (%d, %v)", code, err)
+	}
+	if len(writtenParents) == 0 {
+		t.Fatal("fixture produced no private artifact")
+	}
+	expectedRoot, err := filepath.EvalSymlinks(filepath.Join(boxHome, "runfiles"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, parent := range writtenParents {
+		if pathContains(sharedTemp, parent) || !pathContains(expectedRoot, parent) {
+			t.Fatalf("private artifact parent %q is visible through the prior temp bind", parent)
+		}
+	}
+}
+
+func TestExistingRunArtifactRootIsReadOnlyAndFindsCreatedRoot(t *testing.T) {
+	cfg := &config.Config{BoxHome: filepath.Join(t.TempDir(), "box-home")}
+	root := filepath.Join(cfg.BoxHome, "runfiles")
+
+	if got, exists, err := ExistingRunArtifactRoot(cfg); err != nil || exists || got != "" {
+		t.Fatalf("locate absent runfiles = (%q, %v, %v), want absent", got, exists, err)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("read-only lookup created runfiles root: %v", err)
+	}
+	created, err := privateRunArtifactRoot(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, exists, err := ExistingRunArtifactRoot(cfg)
+	if err != nil || !exists || got != created {
+		t.Fatalf("locate created runfiles = (%q, %v, %v), want (%q, true, nil)", got, exists, err, created)
+	}
+}
+
+func TestRunRejectsBroadRunfilesBindBeforeWritingPrivateArtifacts(t *testing.T) {
+	boxHome := t.TempDir()
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, CoopIgnoreFile), []byte("*.secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	cfg := &config.Config{
+		BoxHome: boxHome, ConfigDir: filepath.Join(boxHome, "agents"), HomeInBox: "/home/node", Egress: "none",
+		ExtraRunArgs: []string{"-v", boxHome + ":/host-coop"},
+	}
+	artifacts := defaultCompositionArtifactOps()
+	writes := 0
+	artifacts.writeFile = func(string, string) (string, error) {
+		writes++
+		return "", errors.New("artifact writer must not run")
+	}
+	code, err := runWithCompositionArtifacts(cfg, recorderRuntime(t, recorder), RunSpec{
+		Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"}, Batch: true, Quiet: true,
+	}, artifacts)
+	if code != -1 || err == nil || !strings.Contains(err.Error(), "private run artifacts") {
+		t.Fatalf("broad runfiles bind launch = (%d, %v), want pre-generation refusal", code, err)
+	}
+	if writes != 0 {
+		t.Fatalf("private artifact writes before broad runfiles refusal = %d, want 0", writes)
+	}
+	if _, statErr := os.Lstat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("runtime launched after broad runfiles bind refusal: %v", statErr)
 	}
 }
 
@@ -219,13 +359,17 @@ func TestRunRepoWritableWithReadOnlyDescendant(t *testing.T) {
 		t.Fatal(err)
 	}
 	fields := strings.Fields(string(args))
-	for _, want := range []string{
-		repo + ":/workspace",
-		queue + ":/workspace/.agent/tasks:ro",
-	} {
-		if !slices.Contains(fields, want) {
-			t.Fatalf("mount %q missing from:\n%s", want, args)
+	if want := repo + ":/workspace"; !slices.Contains(fields, want) {
+		t.Fatalf("mount %q missing from:\n%s", want, args)
+	}
+	readonlySource := ""
+	for _, field := range fields {
+		if source, ok := strings.CutSuffix(field, ":/workspace/.agent/tasks:ro"); ok {
+			readonlySource = source
 		}
+	}
+	if readonlySource == "" || readonlySource == queue || strings.HasPrefix(readonlySource, repo+string(filepath.Separator)) {
+		t.Fatalf("read-only descendant was not mounted from a private snapshot: %q\n%s", readonlySource, args)
 	}
 }
 
@@ -239,8 +383,9 @@ func TestRepoReadOnlyPathMountsRejectEscapeAndSymlink(t *testing.T) {
 	if err := os.Symlink(outside, queue); err != nil {
 		t.Fatal(err)
 	}
+	artifacts := t.TempDir()
 	for _, path := range []string{outside, queue, repo} {
-		if mounts, err := repoReadOnlyPathMounts(repo, "/workspace", []string{path}); err == nil || len(mounts) != 0 {
+		if mounts, _, err := repoReadOnlyPathMounts(repo, "/workspace", []string{path}, artifacts); err == nil || len(mounts) != 0 {
 			t.Errorf("repoReadOnlyPathMounts(%q) = %#v, %v; want rejection", path, mounts, err)
 		}
 	}
@@ -252,7 +397,7 @@ func TestRepoReadOnlyPathMountsRejectAbsentDescendantWithoutCreatingIt(t *testin
 		t.Fatal(err)
 	}
 	queue := filepath.Join(repo, ".agent", "tasks")
-	mounts, err := repoReadOnlyPathMounts(repo, "/workspace", []string{queue})
+	mounts, _, err := repoReadOnlyPathMounts(repo, "/workspace", []string{queue}, t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "create the configured task queue") {
 		t.Fatalf("absent queue mounts = %#v, %v; want actionable rejection", mounts, err)
 	}
@@ -314,6 +459,30 @@ done
 	}
 	if string(env) != "PGHOST=db\nPGPORT=5432\n" {
 		t.Errorf("project env = %q", env)
+	}
+}
+
+func TestRunRejectsExtraEnvironmentFileThatRestoresOutOfScopeCredentials(t *testing.T) {
+	configDir := t.TempDir()
+	sharedEnv := filepath.Join(configDir, "env")
+	if err := os.WriteFile(sharedEnv, []byte("ANTHROPIC_API_KEY=must-not-reenter\nNORMAL=value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	cfg := &config.Config{
+		ConfigDir: configDir, HomeInBox: "/home/node", Egress: "none",
+		ExtraRunArgs: []string{"--env-file", sharedEnv},
+	}
+	spec := RunSpec{
+		Image: "i", Repo: t.TempDir(), Cmd: []string{"codex"}, Agent: "codex",
+		AgentCommand: true, Homes: true, Batch: true, Quiet: true,
+	}
+	code, err := Run(cfg, recorderRuntime(t, recorder), spec)
+	if code != -1 || err == nil || !strings.Contains(err.Error(), "not the scoped environment Coop prepared") {
+		t.Fatalf("Run = (%d, %v), want the extra environment file refused", code, err)
+	}
+	if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatal("unscoped environment reached the runtime")
 	}
 }
 
@@ -2005,6 +2174,67 @@ func TestInstructionOverrideUsed(t *testing.T) {
 	}
 }
 
+func TestInstructionOverrideIsBoundedNonblockingAndRootConfined(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: dir}
+	profile := cfg.AgentDir("claude")
+	if err := os.MkdirAll(profile, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	override := filepath.Join(profile, "CLAUDE.md")
+
+	if err := os.WriteFile(override, make([]byte, maxInstructionFileBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentBaseInstructions(cfg, "claude", "CLAUDE.md", ""); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized instruction error = %v", err)
+	}
+	if err := os.Remove(override); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(override, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := agentBaseInstructions(cfg, "claude", "CLAUDE.md", "")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("FIFO instruction error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("instruction reader blocked on a provider-profile FIFO")
+	}
+	if err := os.Remove(override); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(outside, []byte("HOST SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, override); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentBaseInstructions(cfg, "claude", "CLAUDE.md", ""); err == nil {
+		t.Fatal("out-of-profile instruction symlink was read")
+	}
+	if err := os.Remove(override); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(profile, "rules.md"), []byte("INTERNAL RULE"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("rules.md", override); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := agentBaseInstructions(cfg, "claude", "CLAUDE.md", ""); err != nil || !strings.Contains(got, "INTERNAL RULE") {
+		t.Fatalf("internal instruction symlink = %q, %v", got, err)
+	}
+}
+
 // TestAssembleArgsMountsInstructions: assembleArgs read-only-mounts the per-agent instruction
 // mounts and the consult/preset augmented mount it is given. The selection (which agents, lead
 // excluded) and the content live in instructionPlan/agentBaseInstructions, tested below.
@@ -2434,18 +2664,45 @@ func TestRunRequiredBoxArtifactFailuresStopBeforeRuntime(t *testing.T) {
 			t.Fatalf("container runtime was touched despite required artifact failure; recorder error = %v", statErr)
 		}
 	}
+	assertTempIgnored := func(t *testing.T, cfg *config.Config, spec RunSpec, artifacts compositionArtifactOps, recorder string, rt runtime.Runtime) {
+		t.Helper()
+		var parents []string
+		write := artifacts.writeFile
+		artifacts.writeFile = func(parent, content string) (string, error) {
+			parents = append(parents, parent)
+			return write(parent, content)
+		}
+		if code, err := runWithCompositionArtifacts(cfg, rt, spec, artifacts); code != 0 || err != nil {
+			t.Fatalf("Run with exposed TMPDIR = (%d, %v), want safe private runfiles", code, err)
+		}
+		if _, err := os.Stat(recorder); err != nil {
+			t.Fatalf("runtime was not reached: %v", err)
+		}
+		root, err := filepath.EvalSymlinks(filepath.Join(cfg.ConfigDir, "runfiles"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(parents) == 0 {
+			t.Fatal("fixture produced no private artifact")
+		}
+		for _, parent := range parents {
+			if !pathContains(root, parent) {
+				t.Fatalf("artifact parent %q is outside private runfiles %q", parent, root)
+			}
+		}
+	}
 
-	t.Run("private copies cannot live in a credential home", func(t *testing.T) {
+	t.Run("credential-home TMPDIR does not redirect private copies", func(t *testing.T) {
 		cfg, spec, artifacts, recorder, rt := newFixture(t, "codex")
 		writeCopyFixture(t, filepath.Join(spec.Repo, ".agent", "skills", "SKILL.md"), "inside")
 		if err := os.MkdirAll(cfg.AgentDir("codex"), 0o700); err != nil {
 			t.Fatal(err)
 		}
 		t.Setenv("TMPDIR", cfg.AgentDir("codex"))
-		assertStopped(t, cfg, spec, artifacts, recorder, rt, "outside agent-exposed", false)
+		assertTempIgnored(t, cfg, spec, artifacts, recorder, rt)
 	})
 
-	t.Run("private copies cannot live in another provider ACP alias", func(t *testing.T) {
+	t.Run("ACP-alias TMPDIR does not redirect private copies", func(t *testing.T) {
 		cfg, spec, artifacts, recorder, rt := newFixture(t, "codex")
 		writeCopyFixture(t, filepath.Join(spec.Repo, ".agent", "skills", "SKILL.md"), "inside")
 		outside := t.TempDir()
@@ -2458,7 +2715,7 @@ func TestRunRequiredBoxArtifactFailuresStopBeforeRuntime(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Setenv("TMPDIR", outside)
-		assertStopped(t, cfg, spec, artifacts, recorder, rt, "outside agent-exposed", false)
+		assertTempIgnored(t, cfg, spec, artifacts, recorder, rt)
 	})
 
 	t.Run("selected provider instruction read", func(t *testing.T) {
@@ -3363,6 +3620,20 @@ func TestOwnAgentFilesTakeOnlyARealAgentsDirectory(t *testing.T) {
 				t.Fatalf("the launch blocked on %s", test.name)
 			}
 		})
+	}
+}
+
+func TestOwnAgentFilesRefuseAnOversizedDirectoryListing(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, "agents")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i <= maxOwnAgentFiles; i++ {
+		writeCopyFixture(t, filepath.Join(dir, fmt.Sprintf("helper-%03d.md", i)), "helper")
+	}
+	if got := ownAgentFiles(home, "claude", ".claude/agents"); len(got) != 0 {
+		t.Fatalf("oversized agent directory returned %d definitions, want a bounded refusal", len(got))
 	}
 }
 

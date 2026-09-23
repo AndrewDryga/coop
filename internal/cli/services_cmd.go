@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
@@ -53,17 +54,6 @@ func (a *app) cmdUp(args []string) (int, error) {
 		ui.Note("Waiting for a safe service-launch window (%s).", box.DescribeLiveBoxes(live))
 	}
 	rel, _ := filepath.Rel(repo, file)
-	// A service that legitimately needs a secret-looking file (a generated dev TLS key) gets it
-	// only after a human at a terminal approves this exact compose content; a script or an agent
-	// cannot answer for them, and the auto-start on box launch never asks — it warns and uses
-	// decoys until someone runs this command and says yes.
-	review, err := box.ReviewServiceSecrets(repo, file)
-	if err != nil {
-		return 1, composeRefusal("Could not start services from "+rel, rel, err, "coop up")
-	}
-	if code, err := askServiceSecrets(review, rel); err != nil {
-		return code, err
-	}
 	// Resolve the private snapshot area before saying a start is under way: a TMPDIR an agent can
 	// see is a refusal, and a refusal printed under "Starting services…" claims work that never began.
 	if err := box.CheckServiceTempDir(repo, box.ConfigExposureRoots(a.cfg)...); err != nil {
@@ -74,11 +64,23 @@ func (a *app) cmdUp(args []string) (int, error) {
 		return 1, reported("Could not start services", sentence(firstLine(err)), "Run coop up again.")
 	}
 	defer unlockLaunch()
+	// Keep the review, saved decisions, and start under one mount-launch barrier. A writable box
+	// cannot replace the Compose or bind sources while the host waits for an answer.
+	review, err := box.ReviewServiceStart(repo, file, a.rt)
+	if err != nil {
+		return 1, composeRefusal("Could not start services from "+rel, rel, err, "coop up")
+	}
+	if code, err := askServiceVolumes(review, rel); err != nil {
+		return code, err
+	}
+	if code, err := askServiceSecrets(review.Secrets, rel); err != nil {
+		return code, err
+	}
 	ui.Note("Starting services from %s", rel)
 	ui.Note("  Waiting for services to be ready.")
 	ui.Note("")
 	out, errOut := &seenWriter{w: os.Stdout}, &seenWriter{w: os.Stderr}
-	started, err := box.UpServices(a.rt, repo, file, out, errOut, box.ConfigExposureRoots(a.cfg)...)
+	started, err := box.UpServicesReviewed(a.rt, repo, file, review, out, errOut, box.ConfigExposureRoots(a.cfg)...)
 	if out.seen || errOut.seen {
 		ui.Note("")
 	}
@@ -105,6 +107,51 @@ func (a *app) cmdUp(args []string) (int, error) {
 	return 0, nil
 }
 
+func askServiceVolumes(review *box.ServiceStartReview, rel string) (int, error) {
+	if review == nil || len(review.Volumes) == 0 {
+		return 0, nil
+	}
+	ask, atTerminal := askTerminal()
+	if !atTerminal {
+		return 1, reported("Services were not started",
+			"External or custom Docker volumes require approval in a terminal, even if previously approved.",
+			"Run coop up at a terminal to review the volumes.")
+	}
+	if !review.VolumeApprovalNeeded {
+		return 0, nil
+	}
+	ui.Note("Services in %s ask to attach Docker volumes outside this project's storage:", ui.SafeInline(rel))
+	ui.Note("  Docker daemon: %s (%s)", ui.SafeInline(review.DaemonID()), ui.SafeInline(review.Endpoint()))
+	for _, volume := range review.Volumes {
+		access := "read-only"
+		if volume.Writable {
+			access = "read/write"
+		}
+		ui.Note("  %s — %s (%s)", ui.SafeInline(volume.Name), access, ui.SafeInline(strings.Join(volume.Consumers, ", ")))
+		if slices.Contains(review.NewVolumes, volume.Name) {
+			ui.Note("    A new plain local volume will be created after approval.")
+		} else if identity, ok := review.VolumeIdentity(volume.Name); ok {
+			ui.Note("    Existing volume: %s", ui.SafeInline(identity.Mountpoint))
+		}
+	}
+	ui.Note("")
+	ui.Warn("These services can read or change data outside this project; read/write access can delete it.")
+	ui.Note("Approval is for this repository and exact Compose file; edits require another review.")
+	ui.Note("")
+	answer, _ := askOneOK(ask, "Allow these Docker volumes? [y/N]: ")
+	ui.Note("")
+	if !ui.ConfirmationResponse(answer, false) {
+		return 1, reported("Services were not started", "External Docker volume access was not approved.")
+	}
+	if err := review.ApproveVolumes(); err != nil {
+		return 1, reported("Could not save Docker-volume approval", sentence(osCause(err)),
+			"Fix the cause, then run coop up again.", "Services were not started.")
+	}
+	ui.OK("Docker-volume access approved")
+	ui.Note("")
+	return 0, nil
+}
+
 // composeRefusal renders the refusals that happen before anything runs: coop will not run this
 // Compose file (the violation names itself), or TMPDIR resolves somewhere an agent can see. Both
 // name the file that did not run and the command to repeat once it is fixed.
@@ -126,15 +173,21 @@ func askServiceSecrets(review *box.ServiceSecretReview, rel string) (int, error)
 	if review == nil {
 		return 0, nil
 	}
+	for _, file := range review.Blocked {
+		ui.Warn("%s stays hidden: %s.", ui.SafeInline(file.Path), file.BlockReason)
+	}
+	if len(review.Files) == 0 {
+		return 0, nil
+	}
 	ask, atTerminal := askTerminal()
 	if !atTerminal {
 		emptyFilesNotice(review.Paths(), "  To approve access, run coop up at a terminal.")
 		return 0, nil
 	}
-	ui.Note("Services in %s ask to read %s.", rel, ui.Count(len(review.Files), "secret file"))
+	ui.Note("Services in %s ask to read %s.", ui.SafeInline(rel), ui.Count(len(review.Files), "secret file"))
 	for _, f := range review.Files {
 		ui.Note("")
-		ui.Note("  %s", f.Path)
+		ui.Note("  %s", ui.SafeInline(f.Path))
 		if f.Requested {
 			ui.Note("    Requested in %s.", project.File)
 		} else {
@@ -172,7 +225,7 @@ func askServiceSecrets(review *box.ServiceSecretReview, rel string) (int, error)
 func emptyFilesNotice(paths []string, action string) {
 	ui.Warn("Services will receive empty files")
 	for _, p := range paths {
-		ui.Note("  %s", p)
+		ui.Note("  %s", ui.SafeInline(p))
 	}
 	if action != "" {
 		ui.Note("")

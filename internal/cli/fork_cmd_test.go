@@ -26,6 +26,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/sessionsvc"
 )
 
 // A mistyped fork subcommand must be a usage error with a suggestion — never silently turned into
@@ -721,6 +722,9 @@ func TestForkACPTreatsAKeyAsTheAgentsOwnClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := filepath.Join(root, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(forkspace.Workspace(repo, "keyed"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -755,6 +759,9 @@ func TestForkACPPhysicallyMountsAReadOnlySessionRepositoryReadOnly(t *testing.T)
 		t.Fatal(err)
 	}
 	repo := filepath.Join(root, "repo")
+	if err := os.Mkdir(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	workspace := forkspace.Workspace(repo, "readonly")
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatal(err)
@@ -763,11 +770,34 @@ func TestForkACPPhysicallyMountsAReadOnlySessionRepositoryReadOnly(t *testing.T)
 	if err := os.Mkdir(outputRoot, 0o750); err != nil {
 		t.Fatal(err)
 	}
+	runID := "session-" + strings.Repeat("ab", 12)
+	stateRoot := filepath.Join(root, "session-state")
+	hostOutputRoot := filepath.Join(stateRoot, "output", "remote_1")
+	if err := os.MkdirAll(hostOutputRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("COOP_SESSION_REPOSITORY_READ_ONLY", "1")
+	t.Setenv("COOP_SESSION_RUN_ID", runID)
+	t.Setenv(sessionsvc.SessionOutputRootEnv, hostOutputRoot)
+	unlock, err := forkspace.LockState(repo, "readonly")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := forkspace.EnsureGenerationLocked(repo, "readonly")
+	if err == nil {
+		err = forkspace.ReserveWorkspaceLocked(repo, forkspace.WorkspaceReservation{
+			Version: forkspace.WorkspaceReservationVersion, Fork: identity,
+			Kind: forkspace.WorkspaceReservationRemoteSession, OwnerID: "remote_1", CreatedAt: time.Now().UTC(),
+		})
+	}
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
 	recorder := filepath.Join(root, "runtime-args")
 	a := &app{
 		cfg: &config.Config{
-			RepoOverride: repo, ConfigDir: filepath.Join(root, "config"),
+			RepoOverride: repo, ConfigDir: filepath.Join(stateRoot, "acp", "remote_1"),
 			BoxHome: filepath.Join(root, "box"), HomeInBox: "/home/node",
 			ImageOverride: "test-image", Egress: "none",
 		},
@@ -783,7 +813,7 @@ func TestForkACPPhysicallyMountsAReadOnlySessionRepositoryReadOnly(t *testing.T)
 	if !strings.Contains(string(args), workspace+":"+workspace+":ro") {
 		t.Fatalf("read-only session repository was writable:\n%s", args)
 	}
-	if !strings.Contains(string(args), outputRoot+":"+outputRoot+":rw") {
+	if !strings.Contains(string(args), hostOutputRoot+":"+outputRoot+":rw") {
 		t.Fatalf("read-only session output root was not writable:\n%s", args)
 	}
 }
@@ -840,9 +870,10 @@ func TestForkACPReadOnlyFrontsTheForkUnderTheRestrictedProfile(t *testing.T) {
 			line = candidate
 		}
 	}
+	workdir := expectedReadOnlyWorkdir(workspace, a.cfg.HomeInBox)
 	for _, want := range []string{
 		"--label coop.run=" + runID, "--label coop.fork=readonly", "--read-only", "--network none",
-		"-v " + workspace + ":" + workspace + ":ro", "-w " + workspace, ":/coop/seed:ro",
+		"-v " + workspace + ":" + workdir + ":ro", "-w " + workdir, ":/coop/seed:ro",
 	} {
 		if !strings.Contains(line, want) {
 			t.Errorf("readonly fork ACP run missing %q:\n%s", want, line)
@@ -864,6 +895,27 @@ func TestForkACPReadOnlyFrontsTheForkUnderTheRestrictedProfile(t *testing.T) {
 	}
 }
 
+func TestLocalForkACPReadOnlyRefusesScratchWorkspaceBeforeRuntime(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	if err := os.MkdirAll(forkspace.Workspace(repo, "readonly"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_SESSION_RUN_ID", "")
+	recorder := filepath.Join(root, "runtime-args")
+	a := restrictedApp(t, recorder)
+	a.cfg.RepoOverride, a.cfg.Egress = repo, "none"
+	// The configurable box home models any scratch destination; /tmp is the default collision.
+	a.cfg.HomeInBox = root
+	code, err := a.forkACP("readonly", []string{"claude", "--readonly"})
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "direct ACP editor cannot use --readonly") {
+		t.Fatalf("local scratch fork ACP = (%d, %v), want actionable refusal", code, err)
+	}
+	if _, err := os.Stat(recorder); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("local scratch fork ACP reached runtime: %v", err)
+	}
+}
+
 func TestForkACPRejectsUnsafeReadOnlySessionOutputRootBeforeBoxLaunch(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -878,6 +930,7 @@ func TestForkACPRejectsUnsafeReadOnlySessionOutputRootBeforeBoxLaunch(t *testing
 		t.Fatal(err)
 	}
 	t.Setenv("COOP_SESSION_REPOSITORY_READ_ONLY", "1")
+	t.Setenv(sessionsvc.SessionOutputRootEnv, t.TempDir())
 	recorder := filepath.Join(root, "runtime-args")
 	a := &app{
 		cfg: &config.Config{
@@ -893,6 +946,37 @@ func TestForkACPRejectsUnsafeReadOnlySessionOutputRootBeforeBoxLaunch(t *testing
 	}
 	if _, err := os.Stat(recorder); !os.IsNotExist(err) {
 		t.Fatalf("unsafe output root reached runtime inspection or launch: %v", err)
+	}
+}
+
+func TestForkACPRejectsReadOnlySessionOutputSourceInsideWorkspace(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(root, "repo")
+	workspace := forkspace.Workspace(repo, "readonly")
+	outputRoot := filepath.Join(workspace, ".coop-output")
+	if err := os.MkdirAll(outputRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_SESSION_REPOSITORY_READ_ONLY", "1")
+	t.Setenv(sessionsvc.SessionOutputRootEnv, outputRoot)
+	recorder := filepath.Join(root, "runtime-args")
+	a := &app{
+		cfg: &config.Config{
+			RepoOverride: repo, ConfigDir: filepath.Join(root, "config"),
+			BoxHome: filepath.Join(root, "box"), HomeInBox: "/home/node",
+			ImageOverride: "test-image", Egress: "none",
+		},
+		rt: recordingRuntime(t, recorder), rtSet: true,
+	}
+	code, runErr := a.forkACP("readonly", []string{"codex"})
+	if code != -1 || runErr == nil || !strings.Contains(runErr.Error(), "output root is unsafe") {
+		t.Fatalf("forkACP = (%d, %v), want overlapping output-root refusal", code, runErr)
+	}
+	if _, err := os.Stat(recorder); !os.IsNotExist(err) {
+		t.Fatalf("overlapping output root reached runtime inspection or launch: %v", err)
 	}
 }
 

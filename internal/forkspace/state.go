@@ -34,6 +34,8 @@ var (
 	// ErrDetachedStartSuperseded means stop or another lifecycle owner changed the exact launch
 	// reservation before its re-exec child could publish itself. The child must exit without work.
 	ErrDetachedStartSuperseded = errors.New("detached fork start was superseded")
+	// Injectable only inside this package to qualify first-create parent-directory barriers.
+	syncForkDirectoryEntry = func(dir *os.File) error { return dir.Sync() }
 )
 
 // SignalPID is the kill(2) the lifecycle probes and the supervisor share, as one seam so a test can
@@ -50,10 +52,27 @@ func LockPath(repo, name string) string { return filepath.Join(StateDir(repo), n
 // ordinary project directories; only the host-owned .coop authority and its descendants are
 // owner-private.
 func EnsureStateDir(repo string) error {
-	if err := os.MkdirAll(Home(repo), 0o755); err != nil {
+	if err := ensureForkHome(repo); err != nil {
 		return err
 	}
 	return ensurePrivateStateDir(StateDir(repo))
+}
+
+func ensureForkHome(repo string) error {
+	home := Home(repo)
+	// A fork home is a direct sibling of an existing project, so its parent already exists. Avoid
+	// MkdirAll here: every directory Coop creates must have a specific parent durability barrier.
+	if err := os.Mkdir(home, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	info, err := os.Lstat(home)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("fork home path %q is not a real directory", home)
+	}
+	return confirmForkDirectoryEntry(home)
 }
 
 func ensurePrivateStateDir(path string) error {
@@ -70,7 +89,17 @@ func ensurePrivateStateDir(path string) error {
 	if err := os.Chmod(path, 0o700); err != nil {
 		return fmt.Errorf("make fork state path %q owner-only: %w", path, err)
 	}
-	return nil
+	// Repeat this barrier even when the directory was already visible. A previous creation may
+	// have returned an fsync error after mkdir; the idempotent retry is what confirms publication.
+	return confirmForkDirectoryEntry(path)
+}
+
+func confirmForkDirectoryEntry(path string) error {
+	parent, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	return errors.Join(syncForkDirectoryEntry(parent), parent.Close())
 }
 
 // LockState serializes start, worker cleanup, and stop for one fork. The lock file persists,

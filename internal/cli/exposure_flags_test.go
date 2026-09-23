@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
@@ -115,7 +116,8 @@ func TestLaunchAgentReadOnlyMountsRepoReadOnly(t *testing.T) {
 		t.Fatalf("launchAgent = (%d, %v), want (0, nil)", code, err)
 	}
 	line := recordedRunLine(t, recorder)
-	for _, want := range []string{"--read-only", "-v " + repo + ":" + repo + ":ro", "-w " + repo, ":/coop/seed:ro", "--strict-mcp-config --setting-sources user"} {
+	workdir := expectedReadOnlyWorkdir(repo, a.cfg.HomeInBox)
+	for _, want := range []string{"--read-only", "-v " + repo + ":" + workdir + ":ro", "-w " + workdir, ":/coop/seed:ro", "--strict-mcp-config --setting-sources user"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("readonly run missing %q:\n%s", want, line)
 		}
@@ -123,6 +125,15 @@ func TestLaunchAgentReadOnlyMountsRepoReadOnly(t *testing.T) {
 	if strings.Contains(line, "--tools") || strings.Contains(line, "coop-cache:") || strings.Contains(line, "coop-asdf:") {
 		t.Errorf("readonly run keeps its tools and mounts no volume:\n%s", line)
 	}
+}
+
+func expectedReadOnlyWorkdir(repo, boxHome string) string {
+	for _, scratch := range []string{"/tmp", boxHome} {
+		if scratch != "" && (repo == scratch || strings.HasPrefix(repo, scratch+"/")) {
+			return box.BareWorkdir
+		}
+	}
+	return repo
 }
 
 // Every contradiction is a usage error reported before any runtime work.

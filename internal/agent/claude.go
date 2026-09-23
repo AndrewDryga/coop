@@ -420,7 +420,7 @@ func (a claudeAgent) ActiveCredentialEnvKeys(_ string, markerPresent bool) []str
 }
 
 func (claudeAgent) StoredCredentialStatus(profileDir string, now time.Time) StoredCredentialStatus {
-	data, err := os.ReadFile(filepath.Join(profileDir, ".credentials.json"))
+	data, err := ReadCredentialArtifact(filepath.Join(profileDir, ".credentials.json"), claudeCredentialLimit)
 	if err != nil {
 		return StoredCredentialReauthRequired
 	}
@@ -436,7 +436,7 @@ func (claudeAgent) StoredCredentialStatus(profileDir string, now time.Time) Stor
 }
 
 func claudeCredentialPortability(profileDir string, deadline time.Time) CredentialPortability {
-	data, err := os.ReadFile(filepath.Join(profileDir, ".credentials.json"))
+	data, err := ReadCredentialArtifact(filepath.Join(profileDir, ".credentials.json"), claudeCredentialLimit)
 	if err != nil {
 		return CredentialRefreshRequired
 	}
@@ -629,23 +629,7 @@ func mergeClaudeCredentialRefresh(
 }
 
 func readClaudeCredential(path string) ([]byte, error) {
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("credential is not a regular file")
-	}
-	data, err := io.ReadAll(io.LimitReader(file, claudeCredentialLimit+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > claudeCredentialLimit {
-		return nil, fmt.Errorf("credential is too large")
-	}
-	return data, nil
+	return ReadCredentialArtifact(path, claudeCredentialLimit)
 }
 
 func requestClaudeCredentialRefresh(

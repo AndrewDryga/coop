@@ -152,18 +152,70 @@ func TestValidateComposeMalformed(t *testing.T) {
 	}
 }
 
+func TestValidateComposeRejectsNestedSourceUnderWritableBind(t *testing.T) {
+	body := "services:\n  writer:\n    image: alpine\n    volumes: [\"../data:/data\"]\n  reader:\n    image: alpine\n    volumes: [\"../data/.coopignore:/policy:ro\"]\n"
+	repo, path := writeCompose(t, body)
+	if err := ValidateComposeFile(path, repo, false); err == nil || !strings.Contains(err.Error(), "nested under writable") {
+		t.Fatalf("writable ancestor with read-only nested source = %v, want refusal", err)
+	}
+	body = strings.Replace(body, "../data:/data", "../data:/data:ro", 1)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateComposeFile(path, repo, false); err != nil {
+		t.Fatalf("read-only ancestor should be allowed: %v", err)
+	}
+}
+
+func TestValidateComposeRejectsCaseAliasedNestedWritableBind(t *testing.T) {
+	repo := t.TempDir()
+	data := filepath.Join(repo, "data")
+	if err := os.Mkdir(data, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(data, "child"), []byte("private"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	alias, err := os.Stat(filepath.Join(repo, "DATA"))
+	if os.IsNotExist(err) {
+		t.Skip("host filesystem is case-sensitive")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := os.Stat(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(parent, alias) {
+		t.Skip("host filesystem does not alias case")
+	}
+	compose := filepath.Join(repo, "compose.yml")
+	body := "services:\n  writer:\n    image: alpine\n    volumes: [\"./data:/data\"]\n  reader:\n    image: alpine\n    volumes: [\"./DATA/child:/child:ro\"]\n"
+	if err := os.WriteFile(compose, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateComposeFile(compose, repo, false); err == nil || !strings.Contains(err.Error(), "nested under writable") {
+		t.Fatalf("case-aliased nested bind was accepted: %v", err)
+	}
+}
+
 // A read-only session keeps its sidecars, but a bind of the repository into one must be
 // read-only too; otherwise the sidecar is a write path into a checkout the agent cannot write.
 func TestValidateComposeReadOnlyRepo(t *testing.T) {
 	accepted := map[string]string{
-		"short-form :ro":          "services:\n  x:\n    image: a\n    volumes: [\"./initdb:/docker-entrypoint-initdb.d:ro\"]\n",
-		"short-form :ro with z":   "services:\n  x:\n    image: a\n    volumes: [\"./initdb:/docker-entrypoint-initdb.d:ro,z\"]\n",
-		"long-form read_only":     "services:\n  x:\n    image: a\n    volumes:\n      - type: bind\n        source: ./initdb\n        target: /initdb\n        read_only: true\n",
-		"named volume stays free": "services:\n  x:\n    image: a\n    volumes: [\"pgdata:/var/lib/postgresql\"]\nvolumes:\n  pgdata:\n",
+		"short-form :ro":           "services:\n  x:\n    image: a\n    volumes: [\"./initdb:/docker-entrypoint-initdb.d:ro\"]\n",
+		"short-form :ro cached":    "services:\n  x:\n    image: a\n    volumes: [\"./initdb:/docker-entrypoint-initdb.d:ro,cached\"]\n",
+		"long-form read_only":      "services:\n  x:\n    image: a\n    volumes:\n      - type: bind\n        source: ./initdb\n        target: /initdb\n        read_only: true\n",
+		"long-form no host create": "services:\n  x:\n    image: a\n    volumes:\n      - type: bind\n        source: ./initdb\n        target: /initdb\n        read_only: true\n        bind: {create_host_path: false}\n",
+		"named volume stays free":  "services:\n  x:\n    image: a\n    volumes: [\"pgdata:/var/lib/postgresql\"]\nvolumes:\n  pgdata:\n",
 	}
 	for name, body := range accepted {
 		t.Run(name, func(t *testing.T) {
 			repo, path := writeCompose(t, body)
+			if err := os.Mkdir(filepath.Join(repo, ".agent", "initdb"), 0o700); err != nil {
+				t.Fatal(err)
+			}
 			if err := ValidateComposeFile(path, repo, true); err != nil {
 				t.Errorf("read-only repo rejected a read-only bind: %v\n%s", err, body)
 			}
@@ -188,4 +240,85 @@ func TestValidateComposeReadOnlyRepo(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateComposeRejectsHostMutatingBindOptions(t *testing.T) {
+	cases := map[string]string{
+		"short shared relabel":  "volumes: [\"./initdb:/initdb:ro,z\"]",
+		"short private relabel": "volumes: [\"./initdb:/initdb:ro,Z\"]",
+		"short propagation":     "volumes: [\"./initdb:/initdb:ro,rshared\"]",
+		"long relabel":          "volumes: [{type: bind, source: ./initdb, target: /initdb, read_only: true, bind: {selinux: Z}}]",
+		"long propagation":      "volumes: [{type: bind, source: ./initdb, target: /initdb, read_only: true, bind: {propagation: rshared}}]",
+		"long host create":      "volumes: [{type: bind, source: ./initdb, target: /initdb, read_only: true, bind: {create_host_path: true}}]",
+		"ambiguous access":      "volumes: [\"./initdb:/initdb:ro,rw\"]",
+	}
+	for name, volume := range cases {
+		t.Run(name, func(t *testing.T) {
+			repo, path := writeCompose(t, "services:\n  x:\n    image: alpine\n    "+volume+"\n")
+			if err := os.Mkdir(filepath.Join(repo, ".agent", "initdb"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := ValidateComposeFile(path, repo, true); err == nil {
+				t.Fatal("host-mutating bind option was accepted in a read-only session")
+			}
+			if err := ValidateComposeFile(path, repo, false); err == nil {
+				t.Fatal("host-mutating bind option was accepted in a writable session")
+			}
+		})
+	}
+}
+
+func TestValidateComposeReadOnlyBindNeedsExistingSource(t *testing.T) {
+	for _, volume := range []string{
+		"\"./missing:/data:ro\"",
+		"{type: bind, source: ./missing, target: /data, read_only: true}",
+	} {
+		repo, path := writeCompose(t, "services:\n  x:\n    image: alpine\n    volumes: ["+volume+"]\n")
+		if err := ValidateComposeFile(path, repo, true); err == nil || !strings.Contains(err.Error(), "must already exist") {
+			t.Fatalf("read-only missing bind %s = %v, want pre-launch refusal", volume, err)
+		}
+		if err := ValidateComposeFile(path, repo, false); err != nil {
+			t.Fatalf("writable session should preserve Compose's source creation: %v", err)
+		}
+	}
+}
+
+func TestValidateComposeExplicitBareBindIsHostPath(t *testing.T) {
+	write := func(t *testing.T, volume string) (string, string) {
+		t.Helper()
+		return writeCompose(t, "services:\n  x:\n    image: alpine\n    volumes:\n      - type: bind\n        source: bare\n        target: /data\n"+volume)
+	}
+	t.Run("writable read-only denial", func(t *testing.T) {
+		repo, path := write(t, "")
+		if err := os.Mkdir(filepath.Join(repo, ".agent", "bare"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := ValidateComposeFile(path, repo, true); err == nil || !strings.Contains(err.Error(), "repository is read-only") {
+			t.Fatalf("bare explicit bind bypassed read-only policy: %v", err)
+		}
+		if err := ValidateComposeFile(path, repo, false); err != nil {
+			t.Fatalf("ordinary writable bind was refused: %v", err)
+		}
+	})
+	t.Run("missing read-only source", func(t *testing.T) {
+		repo, path := write(t, "        read_only: true\n")
+		if err := ValidateComposeFile(path, repo, true); err == nil || !strings.Contains(err.Error(), "must already exist") {
+			t.Fatalf("missing bare bind would let Compose create host path: %v", err)
+		}
+	})
+	t.Run("host-mutating option", func(t *testing.T) {
+		repo, path := write(t, "        read_only: true\n        bind: {selinux: Z}\n")
+		if err := ValidateComposeFile(path, repo, false); err == nil || !strings.Contains(err.Error(), "host-mutating") {
+			t.Fatalf("bare bind escaped option review: %v", err)
+		}
+	})
+	t.Run("nested writable ancestor", func(t *testing.T) {
+		repo, path := writeCompose(t, "services:\n  writer:\n    image: alpine\n    volumes: [{type: bind, source: data, target: /data}]\n  reader:\n    image: alpine\n    volumes: [{type: bind, source: data/child, target: /child, read_only: true}]\n")
+		if err := os.MkdirAll(filepath.Join(repo, ".agent", "data", "child"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := ValidateComposeFile(path, repo, false); err == nil || !strings.Contains(err.Error(), "nested under writable") {
+			t.Fatalf("bare ancestor escaped restart protection: %v", err)
+		}
+	})
 }

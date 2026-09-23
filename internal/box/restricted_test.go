@@ -1,16 +1,19 @@
 package box
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/gatewayimage"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -204,6 +207,66 @@ func TestRunReadOnlyMountsRepoReadOnlyAndNothingWritable(t *testing.T) {
 		if slices.ContainsFunc(got, func(arg string) bool { return strings.HasPrefix(arg, forbidden) }) {
 			t.Errorf("readonly run mounts %s", forbidden)
 		}
+	}
+}
+
+func TestRunReadOnlySnapshotsCoopIgnoreForAnchoredProject(t *testing.T) {
+	spec, _ := anchoredProjectFixture(t)
+	if err := os.WriteFile(filepath.Join(spec.Repo, CoopIgnoreFile), []byte("*.secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := restrictedConfig(t)
+	cfg.Egress = "none"
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	spec.Image, spec.Workdir, spec.Cmd = cfg.BaseImage, "/workspace", []string{"true"}
+	spec.Mode, spec.Batch, spec.Quiet = agents.ModeReadOnly, true, true
+	if code, err := Run(cfg, dockerRecorder(t, recorder), spec); code != 0 || err != nil {
+		t.Fatalf("anchored readonly run with %s = (%d, %v), want success", CoopIgnoreFile, code, err)
+	}
+	args := recordedRun(t, recorder)
+	source := ""
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-v" && strings.HasSuffix(args[i+1], ":/workspace/"+CoopIgnoreFile+":ro") {
+			source = strings.TrimSuffix(args[i+1], ":/workspace/"+CoopIgnoreFile+":ro")
+		}
+	}
+	if source == "" || source == filepath.Join(spec.Repo, CoopIgnoreFile) || pathContains(spec.Repo, source) {
+		t.Fatalf("readonly policy was not mounted from a private snapshot: %q\n%q", source, args)
+	}
+}
+
+func TestRunReadOnlyHoldsAuthorityMountWindowThroughRuntime(t *testing.T) {
+	cfg := restrictedConfig(t)
+	cfg.Egress = "none"
+	repo := t.TempDir()
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	acquired := make(chan func(), 1)
+	spec := RunSpec{
+		Image: cfg.BaseImage, Repo: repo, Workdir: "/workspace", Cmd: []string{"true"},
+		Mode: agents.ModeReadOnly, Batch: true, Quiet: true,
+		OnRuntimeLaunch: func() {
+			go func() {
+				unlock, err := forkspace.LockServiceLaunch(context.Background(), repo, true)
+				if err == nil {
+					acquired <- unlock
+				}
+			}()
+			select {
+			case unlock := <-acquired:
+				unlock()
+				t.Error("exclusive authority transition entered while readonly runtime was launching")
+			case <-time.After(100 * time.Millisecond):
+			}
+		},
+	}
+	if code, err := Run(cfg, dockerRecorder(t, recorder), spec); code != 0 || err != nil {
+		t.Fatalf("readonly run = (%d, %v)", code, err)
+	}
+	select {
+	case unlock := <-acquired:
+		unlock()
+	case <-time.After(5 * time.Second):
+		t.Fatal("exclusive authority transition did not resume after readonly runtime exited")
 	}
 }
 
@@ -425,6 +488,10 @@ func TestRunRestrictedRefusesWhatItDoesNotEnforce(t *testing.T) {
 			cfg.ExtraRunArgs = []string{"-v", "/host:/box"}
 			return runtime.Runtime{}
 		}, "only -e KEY=VALUE"},
+		{"env file in COOP_RUN_ARGS", func(cfg *config.Config, spec *RunSpec) runtime.Runtime {
+			cfg.ExtraRunArgs = []string{"--env-file", cfg.EnvFile()}
+			return runtime.Runtime{}
+		}, "only -e KEY=VALUE"},
 		{"privilege in ExtraArgs", func(cfg *config.Config, spec *RunSpec) runtime.Runtime {
 			spec.ExtraArgs = []string{"--privileged"}
 			return runtime.Runtime{}
@@ -464,7 +531,7 @@ func TestRunRestrictedRefusesWhatItDoesNotEnforce(t *testing.T) {
 // The final options are proven against the plan, so a mount or flag added to the shared assembly
 // later cannot widen a restricted run without being admitted here.
 func TestValidateRestrictedOptions(t *testing.T) {
-	plan := restrictedPlan{workdir: "/w", tmpfs: map[string]bool{"/home/node:x": true}, sources: map[string]bool{"/repo": true, "/seed": true}}
+	plan := restrictedPlan{workdir: "/w", tmpfs: map[string]bool{"/home/node:x": true}, sources: map[string]bool{"/repo": true, "/seed": true}, envFile: "/f"}
 	good := []string{"--init", "--label", "coop=box", "-e", "TZ=UTC", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
 		"--read-only", "--tmpfs", "/home/node:x", "-v", "/repo:/w:ro", "-v", "/seed:/coop/seed:ro", "--env-file", "/f", "--network", "none", "-w", "/w"}
 	if err := validateRestrictedOptions(good, plan); err != nil {
@@ -472,7 +539,7 @@ func TestValidateRestrictedOptions(t *testing.T) {
 	}
 	// The one hosts entry this profile admits, and only when the launch planned one: the box's own
 	// MCP credential broker. A second entry — or any entry nobody planned — refuses the launch.
-	brokered := restrictedPlan{workdir: plan.workdir, tmpfs: plan.tmpfs, sources: plan.sources,
+	brokered := restrictedPlan{workdir: plan.workdir, tmpfs: plan.tmpfs, sources: plan.sources, envFile: plan.envFile,
 		brokerHost: "--add-host=coop-broker:172.18.0.5"}
 	if err := validateRestrictedOptions(append(slices.Clone(good), brokered.brokerHost), brokered); err != nil {
 		t.Fatalf("the planned broker entry was refused: %v", err)
@@ -489,6 +556,14 @@ func TestValidateRestrictedOptions(t *testing.T) {
 			against = plan
 		}
 		if err := validateRestrictedOptions(options, against); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	for name, options := range map[string][]string{
+		"unplanned environment": append(slices.Clone(good), "--env-file", "/config/env"),
+		"duplicate environment": append(slices.Clone(good), "--env-file", "/f"),
+	} {
+		if err := validateRestrictedOptions(options, plan); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
@@ -649,17 +724,56 @@ func TestRunRestrictedNarratesLikeAnInteractiveLaunch(t *testing.T) {
 	}
 }
 
-// A repository that sits on one of the profile's scratch paths — a run from /tmp outside any
-// checkout — is refused by name before anything is narrated, instead of the runtime refusing two
-// mounts at one point after the launch already said what it was doing.
-func TestRunReadOnlyRefusesAScratchPathRepository(t *testing.T) {
+func TestRunReadOnlyMovesImplicitTmpCheckoutToWorkspace(t *testing.T) {
 	cfg := restrictedConfig(t)
-	for _, repo := range []string{"/tmp", "/tmp/project", "/home/node/x", "/workspace"} {
-		spec := RunSpec{Image: "coop-box", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"}, Mode: agents.ModeReadOnly, Batch: true, Quiet: true}
+	repo, err := os.MkdirTemp("/tmp", "coop-readonly-workdir-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repo) })
+	spec := RunSpec{Image: cfg.BaseImage, Repo: repo, Cmd: []string{"true"}, Mode: agents.ModeReadOnly, Batch: true, Quiet: true}
+	if got := restrictedReadOnlyWorkdir(spec, cfg); got != BareWorkdir {
+		t.Fatalf("implicit workdir = %q, want %q", got, BareWorkdir)
+	}
+	if got := ReadOnlyDefaultWorkdir("/home/node/project", ""); got != BareWorkdir {
+		t.Fatalf("default-home checkout workdir = %q, want %q", got, BareWorkdir)
+	}
+	spec.Workdir = repo // fork ACP currently supplies the ordinary default explicitly.
+	if got := restrictedReadOnlyWorkdir(spec, cfg); got != BareWorkdir {
+		t.Fatalf("fork default workdir = %q, want %q", got, BareWorkdir)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	if code, err := Run(cfg, dockerRecorder(t, recorder), spec); err != nil || code != 0 {
+		t.Fatalf("readonly /tmp checkout = %d, %v; want 0, nil", code, err)
+	}
+	args := recordedRun(t, recorder)
+	workdirArg := slices.Index(args, "-w")
+	if !slices.Contains(args, repo+":"+BareWorkdir+":ro") || workdirArg < 0 || workdirArg+1 >= len(args) || args[workdirArg+1] != BareWorkdir {
+		t.Fatalf("readonly /tmp checkout did not mount at %s: %q", BareWorkdir, args)
+	}
+	cfg.Workdir = repo
+	spec.Workdir = ""
+	if got := restrictedReadOnlyWorkdir(spec, cfg); got != repo {
+		t.Fatalf("explicit COOP_WORKDIR = %q, want %q", got, repo)
+	}
+}
+
+// A repository destination inside one of the profile's scratch tmpfs mounts is refused before
+// anything is narrated. The host source is independent: a disposable checkout under /tmp is safe
+// when an explicit workdir mounts it somewhere else in the box.
+func TestRunReadOnlyRefusesAScratchPathDestination(t *testing.T) {
+	cfg := restrictedConfig(t)
+	repo := t.TempDir()
+	for _, workdir := range []string{"/tmp", "/tmp/project", "/workspace/../tmp/project", cfg.HomeInBox, filepath.Join(cfg.HomeInBox, "project"), "/home/node/../node/project"} {
+		spec := RunSpec{Image: "coop-box", Repo: repo, Workdir: workdir, Cmd: []string{"true"}, Mode: agents.ModeReadOnly, Batch: true, Quiet: true}
 		_, err := Run(cfg, dockerRecorder(t, filepath.Join(t.TempDir(), "runtime-args")), spec)
 		if err == nil || !strings.Contains(err.Error(), "box's own scratch") {
-			t.Fatalf("repo %s: err = %v, want the scratch-path refusal", repo, err)
+			t.Fatalf("workdir %s: err = %v, want the scratch-path refusal", workdir, err)
 		}
+	}
+	spec := RunSpec{Image: "coop-box", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"}, Mode: agents.ModeReadOnly, Batch: true, Quiet: true}
+	if code, err := Run(cfg, dockerRecorder(t, filepath.Join(t.TempDir(), "runtime-args")), spec); err != nil || code != 0 {
+		t.Fatalf("host /tmp source at /workspace = %d, %v; want 0, nil", code, err)
 	}
 }
 
@@ -848,10 +962,10 @@ func TestAReadOnlySessionWithoutMCPHandsOverAnEmptyList(t *testing.T) {
 	}
 }
 
-// The helper's private directory holds every brokered secret in cleartext, so it may never be
-// allocated inside anything this box can see — the repository OR a companion the read-only run
-// mounts beside it. TMPDIR is the operator's, so this is a real configuration, not a contrivance.
+// The helper's private directory holds every brokered secret in cleartext. Stable runfiles must
+// keep it outside every mounted repository even when the operator's TMPDIR is inside a companion.
 func TestAReadOnlySessionKeepsItsHelperOutOfEveryMountedRepository(t *testing.T) {
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
 	for name, inside := range map[string]bool{"a companion it mounts": true, "a directory it does not": false} {
 		cfg, spec := readOnlySessionFixture(t)
 		companion, err := filepath.EvalSymlinks(t.TempDir())
@@ -876,12 +990,6 @@ func TestAReadOnlySessionKeepsItsHelperOutOfEveryMountedRepository(t *testing.T)
 		code, err := Run(cfg, readOnlySessionShim(t, calls, filepath.Join(dir, "box-env")), spec)
 		recorded, _ := os.ReadFile(calls)
 		started := strings.Contains(string(recorded), "--name coop-broker-")
-		if inside {
-			if err == nil || started {
-				t.Errorf("%s: the helper's secrets were allowed inside it (code %d, err %v)", name, code, err)
-			}
-			continue
-		}
 		if err != nil || code != 0 || !started {
 			t.Errorf("%s: the helper did not run (code %d, err %v)", name, code, err)
 		}

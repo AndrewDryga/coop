@@ -152,6 +152,10 @@ type RunSpec struct {
 	Stdout               io.Writer // capture output (doctor); nil means inherit os.Stdout
 	Stderr               io.Writer // capture/discard the container's stderr; nil means inherit os.Stderr
 	ExtraArgs            []string  // extra runtime args for this run (e.g. doctor's probe mount)
+	// SessionOutputRoot is the one host-owned writable subtree a legacy read-only remote session
+	// mounts beside its checkout. It is never request data; mount validation exact-allows this
+	// source while protecting the rest of the session daemon's state.
+	SessionOutputRoot string `json:"-"`
 
 	// CapturedEgress is host-owned frozen network authority, produced by
 	// AdmitNetwork before launch. It is never populated from a request or a
@@ -284,14 +288,58 @@ func instructionFile(name string) string {
 }
 
 type compositionArtifactOps struct {
-	// parent is the directory generated artifacts are created in. Empty uses
-	// the system temp dir; a filtered run points it at the execution's private
-	// artifact directory so exact-owned cleanup covers everything it mounts.
+	// parent is the directory generated artifacts are created in. A filtered run points it at the
+	// execution's private artifact directory. An ordinary run replaces empty with one owner-private
+	// per-run directory before producing anything a box could use.
 	parent            string
 	writeFile         func(parent, content string) (string, error)
 	chmod             func(string, os.FileMode) error
 	assembleAgentsDir func(parent string, files []genFile) (string, error)
 	gitHookDir        func(parent string) (string, error)
+}
+
+const coopIgnoreSnapshotLimit = 1 << 20
+
+// snapshotPolicyMounts freezes every repository .coopignore overlay into the run-private artifact
+// directory. Mounting the live descendant directly both races repository mutation and violates an
+// anchored project's rule that no independently mounted descendant may reach the box.
+func snapshotPolicyMounts(repo string, mounts []Mount, artifacts compositionArtifactOps) ([]string, error) {
+	hasPolicy := false
+	for _, mount := range mounts {
+		if mount.Kind == Policy {
+			hasPolicy = true
+			break
+		}
+	}
+	if !hasPolicy {
+		return nil, nil
+	}
+	sources, err := openRepositorySources(repo)
+	if err != nil {
+		return nil, fmt.Errorf("open repository policy sources: %w", err)
+	}
+	defer sources.Close()
+	var snapshots []string
+	for i := range mounts {
+		if mounts[i].Kind != Policy {
+			continue
+		}
+		rel, err := filepath.Rel(filepath.Clean(repo), filepath.Clean(mounts[i].Source))
+		if err != nil || !filepath.IsLocal(rel) {
+			return snapshots, fmt.Errorf("snapshot %s: policy source is outside the repository", CoopIgnoreFile)
+		}
+		data, err := sources.readRegularFileNoFollow(rel, coopIgnoreSnapshotLimit)
+		if err != nil {
+			return snapshots, fmt.Errorf("snapshot %s: %w", CoopIgnoreFile, err)
+		}
+		path, err := artifacts.writeFile(artifacts.parent, string(data))
+		if err != nil {
+			return snapshots, fmt.Errorf("snapshot %s: %w", CoopIgnoreFile, err)
+		}
+		mounts[i].Source = path
+		snapshots = append(snapshots, path)
+	}
+	return snapshots, nil
 }
 
 // composedCopyDir allocates a writable copy directory the box will mount. Every other generated mount
@@ -314,6 +362,124 @@ func defaultCompositionArtifactOps() compositionArtifactOps {
 		writeFile: writeTempFile, chmod: os.Chmod, assembleAgentsDir: assembleAgentsDir,
 		gitHookDir: gitHookDir,
 	}
+}
+
+func prepareCompositionArtifactParent(artifacts *compositionArtifactOps, cfg *config.Config, spec RunSpec) (func(), error) {
+	if artifacts.parent != "" {
+		return func() {}, nil
+	}
+	base, err := privateRunArtifactRoot(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("prepare private run artifact root: %w", err)
+	}
+	exposed := compositionArtifactExposureRoots(cfg, spec)
+	dir, err := privateTempDirUnder(base, spec.Repo, "coop-run-", exposed...)
+	if err != nil {
+		return nil, fmt.Errorf("create private run artifact directory: %w", err)
+	}
+	artifacts.parent = dir
+	return func() { _ = os.RemoveAll(dir) }, nil
+}
+
+// compositionArtifactExposureRoots is what a box can actually reach through ordinary generated
+// mounts. The stable runfiles parent deliberately lives below BoxHome; ConfigDir and BoxHome are
+// protected control-plane ancestors, not broad mounts, so treating them as exposed would reject
+// every private artifact. Exact credential homes and external ACP aliases remain exposure roots.
+func compositionArtifactExposureRoots(cfg *config.Config, spec RunSpec) []string {
+	roots := []string{projectPolicyRepo(spec)}
+	for _, companion := range spec.CompanionRepositories {
+		roots = append(roots, companion.HostPath)
+	}
+	if cfg == nil || cfg.ConfigDir == "" {
+		return roots
+	}
+	for _, root := range ConfigExposureRoots(cfg) {
+		if root != cfg.ConfigDir && root != cfg.BoxHome {
+			roots = append(roots, root)
+		}
+	}
+	for _, agent := range credentialScope(cfg, spec) {
+		roots = append(roots, cfg.AgentDir(agent))
+	}
+	return roots
+}
+
+// privateRunArtifactRoot is a stable Coop-owned parent that every launch protects. System TMPDIR
+// cannot provide cross-run confidentiality: one long-lived box with a broad /tmp bind can watch a
+// later run even when that later run has no such argument. Keeping all ordinary runfiles under the
+// already-protected Coop control home makes that earlier launch fail its own authority validation.
+func privateRunArtifactRoot(cfg *config.Config) (string, error) {
+	root, err := runArtifactRootPath(cfg)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return "", err
+	}
+	return validatePrivateRunArtifactRoot(root)
+}
+
+func runArtifactRootPath(cfg *config.Config) (string, error) {
+	base := ""
+	if cfg != nil {
+		base = cfg.BoxHome
+		if base == "" {
+			base = cfg.ConfigDir
+		}
+	}
+	if base == "" {
+		cache, err := os.UserCacheDir()
+		if err != nil {
+			return "", err
+		}
+		base = filepath.Join(cache, "coop")
+	}
+	return filepath.Join(base, "runfiles"), nil
+}
+
+func validatePrivateRunArtifactRoot(root string) (string, error) {
+	info, err := os.Lstat(root)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.Join(err, errors.New("private run artifact root is not a real directory"))
+	}
+	if stat, ok := info.Sys().(*syscall.Stat_t); !ok || stat.Uid != uint32(os.Geteuid()) {
+		return "", errors.New("private run artifact root is not owned by the current user")
+	}
+	if err := os.Chmod(root, 0o700); err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(root)
+}
+
+// ExistingRunArtifactRoot locates the stable private runfiles directory for housekeeping without
+// creating it. A command that has never staged a run must not acquire filesystem state merely
+// because the daily orphan reaper was due.
+func ExistingRunArtifactRoot(cfg *config.Config) (string, bool, error) {
+	root, err := runArtifactRootPath(cfg)
+	if err != nil {
+		return "", false, err
+	}
+	if _, err := os.Lstat(root); errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	} else if err != nil {
+		return "", false, err
+	}
+	root, err = validatePrivateRunArtifactRoot(root)
+	return root, err == nil, err
+}
+
+// preflightCompositionArtifactExposure runs before any generated env, MCP, instruction, broker or
+// policy file is written. A prior long-lived box may still see a broad operator bind (for example
+// TMPDIR itself); final launch validation would reject that bind, but doing so after secrets were
+// staged lets the older box read them in the meantime.
+func preflightCompositionArtifactExposure(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifactParent string) error {
+	options := append([]string(nil), cfg.ExtraRunArgs...)
+	options = append(options, spec.ExtraArgs...)
+	if err := validateAuthorityMounts(spec.Ctx, spec, options, "", rt.ExistingNamedVolumeExposure,
+		authorityMountAllowlist{privateRoots: []string{artifactParent}}); err != nil {
+		return fmt.Errorf("protect private run artifacts before generating credentials: %w", err)
+	}
+	return nil
 }
 
 // ctxStep is the step-boundary Ctx check threaded between runWithCompositionArtifacts' discrete
@@ -413,6 +579,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		return -1, err
 	}
 	cfg = applyProjectPolicy(cfg, p, &spec)
+	// MCP assembly may replace cfg with a generated snapshot later. Mount authority still protects
+	// the operator's original config and MCP source, not merely that disposable copy.
+	authorityConfig := cfg
 	projectEnv := p.Box.Env
 	spec.projectEnv = projectEnv
 	composeFile := ComposeFileAt(spec.Repo, p.ComposeRel())
@@ -523,13 +692,6 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		mounts = []Mount{{Kind: DirDecoy, Target: workdir, RO: true}}
 	} else if spec.RepoReadOnly && len(mounts) > 0 {
 		mounts[0].RO = true // ComputeMounts guarantees the primary repo bind is first
-	}
-	if !spec.Login && !spec.RepoReadOnly && len(spec.RepoReadOnlyPaths) > 0 {
-		protected, err := repoReadOnlyPathMounts(spec.Repo, workdir, spec.RepoReadOnlyPaths)
-		if err != nil {
-			return -1, err
-		}
-		mounts = append(mounts, protected...)
 	}
 	companionMounts, companionEnvironment, err := companionRepositoryMounts(
 		spec.CompanionRepositories,
@@ -642,6 +804,37 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			return -1, err
 		}
 	}
+	cleanupArtifacts, err := prepareCompositionArtifactParent(&artifacts, cfg, spec)
+	if err != nil {
+		return -1, err
+	}
+	defer cleanupArtifacts()
+	if err := preflightCompositionArtifactExposure(cfg, rt, spec, artifacts.parent); err != nil {
+		return -1, err
+	}
+	var tmpFiles []string
+	var tmpDirs []string
+	defer func() {
+		for _, f := range tmpFiles {
+			_ = os.Remove(f)
+		}
+		for _, d := range tmpDirs {
+			_ = os.RemoveAll(d)
+		}
+	}()
+	policySnapshots, err := snapshotPolicyMounts(spec.Repo, mounts, artifacts)
+	if err != nil {
+		return -1, err
+	}
+	tmpFiles = append(tmpFiles, policySnapshots...)
+	if !spec.Login && !spec.RepoReadOnly && len(spec.RepoReadOnlyPaths) > 0 {
+		protected, snapshots, err := repoReadOnlyPathMounts(spec.Repo, workdir, spec.RepoReadOnlyPaths, artifacts.parent)
+		if err != nil {
+			return -1, err
+		}
+		mounts = append(mounts, protected...)
+		tmpDirs = append(tmpDirs, snapshots...)
+	}
 	var policy *egress.Snapshot
 	if filtered != nil {
 		policy = &filtered.policy
@@ -732,33 +925,6 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 
 	// Generate agent configs into temp files that live for the container's run.
-	var tmpFiles []string
-	var tmpDirs []string
-	defer func() {
-		for _, f := range tmpFiles {
-			os.Remove(f)
-		}
-		for _, d := range tmpDirs {
-			os.RemoveAll(d)
-		}
-	}()
-	if filtered != nil {
-		for i := range mounts {
-			if mounts[i].Kind != Policy {
-				continue
-			}
-			data, err := os.ReadFile(mounts[i].Source)
-			if err != nil {
-				return -1, fmt.Errorf("snapshot %s: %w", CoopIgnoreFile, err)
-			}
-			path, err := artifacts.writeFile(artifacts.parent, string(data))
-			if err != nil {
-				return -1, fmt.Errorf("snapshot %s: %w", CoopIgnoreFile, err)
-			}
-			mounts[i].Source = path
-			tmpFiles = append(tmpFiles, path)
-		}
-	}
 	var mcpMounts []extraMount
 	if filtered != nil {
 		mounts, paths, err := filtered.credentialBrokerMounts(artifacts, cfg.HomeInBox)
@@ -939,10 +1105,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// so a repo can omit committed adapter directories and still give each agent its skills, mounted
 	// USER-level at ~/.<agent>/skills (writable copy, dies with the box). A project skills dir wins,
 	// like the subagents mount.
-	privateRoots := append(ConfigExposureRoots(cfg), projectPolicyRepo(spec))
-	for _, companion := range spec.CompanionRepositories {
-		privateRoots = append(privateRoots, companion.HostPath)
-	}
+	privateRoots := compositionArtifactExposureRoots(cfg, spec)
 	workflowAgents := configAgents
 	if spec.Login || spec.FormatCorrection {
 		workflowAgents = nil
@@ -1129,9 +1292,14 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		for _, mount := range synthMounts {
 			generated = append(generated, mount.host) // includes exact fallback-file leaves
 		}
-		if err := filtered.validateMounts(options, generated, append([]string{decoyDir}, tmpDirs...)); err != nil {
+		generatedDirs := append([]string{decoyDir}, tmpDirs...)
+		revalidateMounts := func() error {
+			return filtered.validateMountsContext(spec.Ctx, options, generated, generatedDirs)
+		}
+		if err := revalidateMounts(); err != nil {
 			return finish(-1, err)
 		}
+		filtered.mountRevalidate = revalidateMounts
 		sections.starting()
 		code, launchErr := filtered.launch(spec.Ctx, spec, options, stdin, stdout, stderr)
 		if started = filtered.started(); started {
@@ -1182,7 +1350,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			if lockErr != nil {
 				return finish(-1, fmt.Errorf("wait for a safe service launch: %w", lockErr))
 			}
-			started, err := startServicesFileContext(serviceCtx, rt, spec.Repo, cf, serviceOwner, serviceNetwork, io.Discard, &composeStderr, spec.RepoReadOnly, !sections.loop, false, nil, privateRoots...)
+			started, err := startServicesFileContext(serviceCtx, rt, spec.Repo, cf, serviceOwner, serviceNetwork, io.Discard, &composeStderr, spec.RepoReadOnly, !sections.loop, nil, nil, privateRoots...)
 			unlock()
 			sections.serviceSecrets(started.hidden, cf)
 			servicePorts = started.ports
@@ -1236,7 +1404,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			brokerCtx = context.Background()
 		}
 		network := openBrokerNetwork(networkName, cfg.ExtraRunArgs, spec.ExtraArgs)
-		if err := open.start(brokerCtx, rt, spec.Repo, network, ownerLabels(spec), sections.brokerImage, privateRoots...); err != nil {
+		if err := open.start(brokerCtx, rt, spec.Repo, artifacts.parent, network, ownerLabels(spec), sections.brokerImage, privateRoots...); err != nil {
 			return finish(-1, err)
 		}
 		spec.ExtraArgs = append(spec.ExtraArgs, open.hostArgs()...)
@@ -1297,13 +1465,38 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		tmpFiles = append(tmpFiles, capturedEnv)
 	}
 	args = append(options, args[optionEnd:]...)
+	networkState, err := NetworkStatePath()
+	if err != nil {
+		return finish(-1, err)
+	}
+	finalOptions := args[2 : len(args)-len(spec.Cmd)-1]
+	allowedSources := make(map[string]bool, 2+len(tmpFiles)+len(tmpDirs))
+	for _, source := range append(append([]string{decoy.Name(), decoyDir}, tmpFiles...), tmpDirs...) {
+		allowedSources[source] = true
+	}
+	allowedEnvFiles := map[string]bool{}
+	for _, source := range []string{envFile, capturedEnv} {
+		if source != "" {
+			allowedEnvFiles[source] = true
+		}
+	}
+	authorityAllow := authorityMountAllowlist{
+		sources: allowedSources, envFiles: allowedEnvFiles, sourceTrees: tmpDirs,
+		privateRoots: []string{artifacts.parent},
+	}
+	authorityAllow, err = protectRunPrivateState(authorityConfig, spec, authorityAllow)
+	if err != nil {
+		return finish(-1, err)
+	}
 	activityRepo := spec.ActivityRepo
 	if activityRepo == "" {
 		activityRepo = spec.Repo
 	}
-	unlockMounts, err := forkspace.LockServiceLaunch(spec.Ctx, activityRepo, false)
+	unlockMounts, err := enterAuthorityMountWindow(spec.Ctx, activityRepo, func() error {
+		return validateAuthorityMounts(spec.Ctx, spec, finalOptions, networkState, rt.ExistingNamedVolumeExposure, authorityAllow)
+	})
 	if err != nil {
-		return finish(-1, fmt.Errorf("enter the sandbox mount window: %w", err))
+		return finish(-1, err)
 	}
 	defer unlockMounts()
 	// The launch boundary: everything above is host work, everything below is the provider's.
@@ -1671,25 +1864,40 @@ func validCommitIdentity(commit string) bool {
 	return true
 }
 
-func repoReadOnlyPathMounts(repo, workdir string, paths []string) ([]Mount, error) {
+func repoReadOnlyPathMounts(repo, workdir string, paths []string, artifactParent string) ([]Mount, []string, error) {
+	if artifactParent == "" {
+		return nil, nil, errors.New("read-only repository paths require a private artifact directory")
+	}
 	repoAbs, err := filepath.Abs(repo)
 	if err != nil {
-		return nil, fmt.Errorf("resolve repository for read-only paths: %w", err)
+		return nil, nil, fmt.Errorf("resolve repository for read-only paths: %w", err)
 	}
 	repoResolved, err := filepath.EvalSymlinks(repoAbs)
 	if err != nil {
-		return nil, fmt.Errorf("resolve repository for read-only paths: %w", err)
+		return nil, nil, fmt.Errorf("resolve repository for read-only paths: %w", err)
 	}
+	sources, err := openRepositorySources(repoResolved)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open repository for read-only paths: %w", err)
+	}
+	defer sources.Close()
 	seen := map[string]bool{}
 	var mounts []Mount
+	var snapshots []string
+	fail := func(err error) ([]Mount, []string, error) {
+		for _, dir := range snapshots {
+			_ = os.RemoveAll(dir)
+		}
+		return nil, nil, err
+	}
 	for _, path := range paths {
 		pathAbs, err := filepath.Abs(path)
 		if err != nil {
-			return nil, fmt.Errorf("resolve read-only repository path %q: %w", path, err)
+			return fail(fmt.Errorf("resolve read-only repository path %q: %w", path, err))
 		}
 		rel, err := filepath.Rel(repoAbs, pathAbs)
 		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return nil, fmt.Errorf("read-only repository path %q is not a real descendant of %q", path, repo)
+			return fail(fmt.Errorf("read-only repository path %q is not a real descendant of %q", path, repo))
 		}
 		if seen[rel] {
 			continue
@@ -1700,33 +1908,49 @@ func repoReadOnlyPathMounts(repo, workdir string, paths []string) ([]Mount, erro
 			current = filepath.Join(current, component)
 			info, err := os.Lstat(current)
 			if errors.Is(err, os.ErrNotExist) {
-				return nil, fmt.Errorf(
+				return fail(fmt.Errorf(
 					"read-only repository path %q does not exist; create the configured task queue before a repository-writable review",
 					path,
-				)
+				))
 			}
 			if err != nil {
-				return nil, fmt.Errorf("inspect read-only repository path %q: %w", path, err)
+				return fail(fmt.Errorf("inspect read-only repository path %q: %w", path, err))
 			}
 			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-				return nil, fmt.Errorf("read-only repository path %q crosses a non-directory or symlink", path)
+				return fail(fmt.Errorf("read-only repository path %q crosses a non-directory or symlink", path))
 			}
 		}
 		target := filepath.Join(workdir, rel)
 		resolved, err := filepath.EvalSymlinks(pathAbs)
 		if err != nil {
-			return nil, fmt.Errorf("resolve read-only repository path %q: %w", path, err)
+			return fail(fmt.Errorf("resolve read-only repository path %q: %w", path, err))
 		}
 		resolvedRel, err := filepath.Rel(repoResolved, resolved)
 		if err != nil || resolvedRel == ".." || strings.HasPrefix(resolvedRel, ".."+string(filepath.Separator)) ||
 			filepath.Clean(filepath.Join(repoResolved, rel)) != resolved {
-			return nil, fmt.Errorf("read-only repository path %q escapes through a symlink", path)
+			return fail(fmt.Errorf("read-only repository path %q escapes through a symlink", path))
+		}
+		source, policy, err := sources.openTree(rel)
+		if err != nil {
+			return fail(fmt.Errorf("open read-only repository path %q: %w", path, err))
+		}
+		snapshotParent, err := os.MkdirTemp(artifactParent, "coop-readonly-")
+		if err != nil {
+			_ = source.Close()
+			return fail(fmt.Errorf("prepare read-only repository snapshot: %w", err))
+		}
+		snapshots = append(snapshots, snapshotParent)
+		snapshot := filepath.Join(snapshotParent, "tree")
+		copyErr := copySourceTree(snapshot, source, policy)
+		copyErr = errors.Join(copyErr, source.Close())
+		if copyErr != nil {
+			return fail(fmt.Errorf("snapshot read-only repository path %q: %w", path, copyErr))
 		}
 		mounts = append(mounts, Mount{
-			Kind: Bind, Source: pathAbs, Target: target, RO: true,
+			Kind: Bind, Source: snapshot, Target: target, RO: true,
 		})
 	}
-	return mounts, nil
+	return mounts, snapshots, nil
 }
 
 func projectPolicyRepo(spec RunSpec) string {
@@ -1967,14 +2191,14 @@ You run inside a coop container: a Debian box that IS your sandbox and security 
 // else the shared INSTRUCTIONS.md. Consult and preset routing augment this; they do not replace it.
 func agentBaseInstructions(cfg *config.Config, agent, file, network string) (string, error) {
 	user := ""
-	data, present, err := readOptionalRegularFile(filepath.Join(cfg.AgentDir(agent), file))
+	data, present, err := readOptionalRegularFile(cfg.AgentDir(agent), file)
 	if err != nil {
 		return "", fmt.Errorf("read %s instructions: %w", agent, err)
 	}
 	if present {
 		user = string(data)
 	} else {
-		data, present, err = readOptionalRegularFile(cfg.Instructions())
+		data, present, err = readOptionalRegularFile(cfg.ConfigDir, filepath.Base(cfg.Instructions()))
 		if err != nil {
 			return "", fmt.Errorf("read shared instructions: %w", err)
 		}
@@ -1988,27 +2212,52 @@ func agentBaseInstructions(cfg *config.Config, agent, file, network string) (str
 	return boxEnvNote + network + "\n" + user, nil
 }
 
-// readOptionalRegularFile distinguishes a missing override from a present file Coop could not
-// read. Symlinks to regular files retain their existing behavior; dangling links and special files
-// are errors rather than silently erasing selected-provider instructions.
-func readOptionalRegularFile(path string) ([]byte, bool, error) {
-	info, err := os.Stat(path)
+const maxInstructionFileBytes = 1 << 20
+
+// readOptionalRegularFile distinguishes a missing instruction from one that cannot be safely
+// read. The descriptor-rooted lookup preserves links within the configured instruction directory
+// while refusing links that escape it; O_NONBLOCK and a byte limit prevent a writable provider
+// profile from turning the next host launch into a FIFO hang or unbounded allocation.
+func readOptionalRegularFile(rootPath, name string) ([]byte, bool, error) {
+	if !filepath.IsLocal(name) {
+		return nil, false, errors.New("instruction filename is not local")
+	}
+	root, err := os.OpenRoot(rootPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			if _, linkErr := os.Lstat(path); errors.Is(linkErr, os.ErrNotExist) {
-				return nil, false, nil
-			} else if linkErr != nil {
-				return nil, false, linkErr
-			}
+		return nil, false, err
+	}
+	defer root.Close()
+	file, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		if _, linkErr := root.Lstat(name); errors.Is(linkErr, os.ErrNotExist) {
+			return nil, false, nil
+		} else if linkErr != nil {
+			return nil, false, linkErr
 		}
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
 		return nil, false, err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, false, fmt.Errorf("%s is not a regular file", path)
+		return nil, false, fmt.Errorf("%s is not a regular file", filepath.Join(rootPath, name))
 	}
-	data, err := os.ReadFile(path)
+	if info.Size() < 0 || info.Size() > maxInstructionFileBytes {
+		return nil, false, fmt.Errorf("%s exceeds %d bytes", filepath.Join(rootPath, name), maxInstructionFileBytes)
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxInstructionFileBytes+1))
 	if err != nil {
 		return nil, false, err
+	}
+	if len(data) > maxInstructionFileBytes {
+		return nil, false, fmt.Errorf("%s exceeds %d bytes", filepath.Join(rootPath, name), maxInstructionFileBytes)
 	}
 	return data, true, nil
 }
@@ -2027,7 +2276,7 @@ func synthSkillsMounts(repo, homeInBox, artifactParent string, agentNames []stri
 	if err != nil {
 		return nil, nil, err
 	}
-	defer sources.root.Close()
+	defer sources.Close()
 	seen := map[string]bool{}
 	var selected []string
 	for _, ag := range agentNames {
@@ -2058,7 +2307,18 @@ func synthSkillsMounts(repo, homeInBox, artifactParent string, agentNames []stri
 		// The old .claude source is only a compatibility fallback. Invalid links and other
 		// unusable legacy shapes remain equivalent to absence.
 		for _, candidate := range agents.EstablishedSkillsSources() {
-			if info, legacyErr := sources.root.Lstat(candidate); legacyErr == nil && info.IsDir() {
+			info, lstatErr := os.Lstat(filepath.Join(sources.path, candidate))
+			if lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
+				continue
+			}
+			if lstatErr != nil && !errors.Is(lstatErr, os.ErrNotExist) {
+				return nil, nil, fmt.Errorf("inspect legacy skills source %s: %w", candidate, lstatErr)
+			}
+			candidatePresent, legacyErr := sources.exists(candidate, true)
+			if legacyErr != nil {
+				return nil, nil, fmt.Errorf("inspect legacy skills source %s: %w", candidate, legacyErr)
+			}
+			if candidatePresent {
 				src, present = candidate, true
 				break
 			}
@@ -2067,7 +2327,7 @@ func synthSkillsMounts(repo, homeInBox, artifactParent string, agentNames []stri
 			return nil, nil, nil
 		}
 	}
-	source, err := sources.openTree(src)
+	source, policy, err := sources.openTree(src)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open shared skills source: %w", err)
 	}
@@ -2086,7 +2346,7 @@ func synthSkillsMounts(repo, homeInBox, artifactParent string, agentNames []stri
 		if err != nil {
 			return nil, nil, fmt.Errorf("prepare skills for %s: %w", ag, err)
 		}
-		if err := copySourceTree(dst, source); err != nil {
+		if err := copySourceTree(dst, source, policy); err != nil {
 			_ = os.RemoveAll(dst)
 			return nil, nil, fmt.Errorf("copy skills for %s from %s: %w", ag, src, err)
 		}
@@ -2104,7 +2364,7 @@ func synthHomeFallbackMounts(repo, homeInBox, artifactParent string, agentNames 
 	if err != nil {
 		return nil, nil, err
 	}
-	defer sources.root.Close()
+	defer sources.Close()
 	var preparedDirs []string
 	defer func() {
 		if retErr != nil {
@@ -2145,10 +2405,11 @@ func synthHomeFallbackMounts(repo, homeInBox, artifactParent string, agentNames 
 			}
 			host := dst
 			if artifact.Dir {
-				var tree *os.Root
-				tree, err = sources.openTree(source)
+				var tree *os.File
+				var policy *sourceVisibility
+				tree, policy, err = sources.openTree(source)
 				if err == nil {
-					err = copySourceTree(dst, tree)
+					err = copySourceTree(dst, tree, policy)
 					_ = tree.Close()
 				}
 			} else {
@@ -2248,16 +2509,13 @@ func ownAgentFiles(home, lead, homeDir string) []genFile {
 		dir = os.NewFile(uintptr(fd), filepath.Join(dir.Name(), name))
 	}
 	defer dir.Close()
-	entries, err := dir.ReadDir(-1)
-	if err != nil {
+	entries, err := dir.ReadDir(maxOwnAgentFiles + 1)
+	if err != nil || len(entries) > maxOwnAgentFiles {
 		return nil
 	}
 	slices.SortFunc(entries, func(a, b os.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
 	var own []genFile
 	for _, entry := range entries {
-		if len(own) == maxOwnAgentFiles {
-			break
-		}
 		if !entry.Type().IsRegular() {
 			continue
 		}
