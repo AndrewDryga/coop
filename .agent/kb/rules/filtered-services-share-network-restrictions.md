@@ -1,10 +1,10 @@
 ---
 name: filtered-services-share-network-restrictions
-description: agent-controlled services must obey approved network restrictions without freezing live code or approving every image update
+description: agent-controlled services obey network restrictions while ordinary code and image updates remain live
 scope: security
-sources: [internal/box/filtered.go, internal/box/filtered_services.go, internal/box/filtered_launch.go, internal/box/repo.go, internal/networkgateway/controller.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go]
+sources: [internal/box/filtered.go, internal/box/filtered_services.go, internal/box/filtered_launch.go, internal/box/repo.go, internal/box/serviceapproval.go, internal/box/serviceimages.go, internal/networkgateway/controller.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go]
 check: none
-updated: 2026-09-14
+updated: 2026-09-23
 ---
 
 # Enforce network restrictions for agent-controlled services too
@@ -12,7 +12,9 @@ updated: 2026-09-14
 Service-executed agent code must not provide an unrestricted network path around a filtered run.
 Enforce approved access at runtime before service startup and across restarts/failures. Preserve
 required service connections, live source/script mounts and normal image updates. Do not replace
-network isolation with approval of every edited script or immutable image identity.
+network isolation with approval of every edited script or every image update. The narrow exception
+is a service receiving human-approved secret files or outside Docker volumes: its host-data grant
+must bind the exact local image ID, while services without that grant retain normal tag behavior.
 
 **Why:** the user explicitly approved "Apply the network restrictions to agent-controlled services
 too" after withdrawing the audit's content-freezing prescription.
@@ -31,6 +33,10 @@ Use the separately approved unified permission flow in [[project-edits-request-a
 not expose new credentials or grant extra direct agent-to-service connections.
 
 ## Changelog
+
+- 2026-09-23 — the human chose image pinning for elevated host-data grants. Swept Compose start,
+  filtered preparation/final start, saved secret/volume approval and ordinary service behavior;
+  only approved consumers get an immutable image override. Normal unprivileged image updates remain.
 
 - 2026-09-15 — filtered services now use the owning run's private Compose project and network;
   the same run identity continues to attribute their external traffic.

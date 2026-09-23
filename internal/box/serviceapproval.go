@@ -42,6 +42,7 @@ type ServiceApproval struct {
 	Paths         []string              `json:"paths"`             // the secret-looking bind sources the approver saw
 	Volumes       []ServiceVolumeAccess `json:"volumes,omitempty"` // actual external/custom volume capabilities
 	VolumeBinding ServiceVolumeBinding  `json:"volume_binding,omitempty"`
+	Images        map[string]string     `json:"images"` // local immutable image IDs for elevated consumers
 	ApprovedAt    time.Time             `json:"approved_at"`
 	ApprovedBy    string                `json:"approved_by"`
 }
@@ -92,8 +93,11 @@ func ApprovedServiceSecrets(workspace, file string, data []byte) (ServiceApprova
 		return ServiceApproval{}, false
 	}
 	var approval ServiceApproval
-	if err := json.Unmarshal(raw, &approval); err != nil || approval.Version != 4 || approval.Anchor != anchor ||
+	if err := json.Unmarshal(raw, &approval); err != nil || approval.Version != 5 || approval.Anchor != anchor ||
 		approval.File != rel || approval.Digest != composeDigest(data) {
+		return ServiceApproval{}, false
+	}
+	if len(approval.Images) == 0 || !validServiceImagePins(approval.Images) {
 		return ServiceApproval{}, false
 	}
 	return approval, true
@@ -129,7 +133,7 @@ func serviceApprovalScope(workspace, file string, data []byte, create bool) (can
 	if err != nil {
 		return "", "", "", "", err
 	}
-	sum := sha256.Sum256([]byte("v4\x00" + anchor + "\x00" + rel + "\x00" + composeDigest(data)))
+	sum := sha256.Sum256([]byte("v5\x00" + anchor + "\x00" + rel + "\x00" + composeDigest(data)))
 	return canonical, rel, anchor, hex.EncodeToString(sum[:]), nil
 }
 
@@ -142,6 +146,10 @@ type ServiceSecretReview struct {
 
 	workspace string
 	data      []byte
+	images    map[string]string
+	imageRefs map[string]string
+	previous  map[string]string
+	renewal   bool
 }
 
 // ReviewFile is one hidden file, with the two things that tell a human whether to expect it: does
@@ -186,10 +194,10 @@ func ReviewServiceSecrets(workspace, file string) (*ServiceSecretReview, error) 
 	if err != nil {
 		return nil, err
 	}
-	return reviewServiceSecretsData(workspace, file, data)
+	return reviewServiceSecretsData(workspace, file, data, false)
 }
 
-func reviewServiceSecretsData(workspace, file string, data []byte) (*ServiceSecretReview, error) {
+func reviewServiceSecretsData(workspace, file string, data []byte, force bool) (*ServiceSecretReview, error) {
 	abs, err := filepath.Abs(file)
 	if err != nil {
 		return nil, err
@@ -215,7 +223,7 @@ func reviewServiceSecretsData(workspace, file string, data []byte) (*ServiceSecr
 	if err != nil {
 		return nil, err
 	}
-	if approval, ok := ApprovedServiceSecrets(canonical, file, data); ok {
+	if approval, ok := ApprovedServiceSecrets(canonical, file, data); ok && !force {
 		remaining := make([]string, 0, len(hidden))
 		approved := make(map[string]bool, len(approval.Paths))
 		for _, p := range approval.Paths {
@@ -292,7 +300,7 @@ func lastApprovalFor(workspace, file string) ([]string, bool) {
 			continue
 		}
 		var approval ServiceApproval
-		if json.Unmarshal(raw, &approval) != nil || approval.Version != 4 || approval.Anchor != anchor || approval.File != file {
+		if json.Unmarshal(raw, &approval) != nil || (approval.Version != 4 && approval.Version != 5) || approval.Anchor != anchor || approval.File != file {
 			continue
 		}
 		if !found || approval.ApprovedAt.After(newest.ApprovedAt) {
@@ -308,6 +316,9 @@ func (r *ServiceSecretReview) Approve() error {
 	if r == nil || len(r.Files) == 0 {
 		return errors.New("no read-only secret files to approve")
 	}
+	if !validServiceImagePins(r.images) {
+		return errors.New("service images must be reviewed on Docker before approval — run 'coop up'")
+	}
 	root, err := serviceApprovalRoot()
 	if err != nil {
 		return err
@@ -319,7 +330,7 @@ func (r *ServiceSecretReview) Approve() error {
 	// earlier approval of the same content covered, so re-approving adds the new files to it.
 	paths := r.Paths()
 	file := filepath.Join(r.workspace, filepath.FromSlash(r.File))
-	if prior, ok := ApprovedServiceSecrets(r.workspace, file, r.data); ok {
+	if prior, ok := ApprovedServiceSecrets(r.workspace, file, r.data); ok && approvedServiceImagesMatch(prior.Images, r.images) {
 		paths = append(append([]string(nil), prior.Paths...), paths...)
 		sort.Strings(paths)
 	}
@@ -327,10 +338,14 @@ func (r *ServiceSecretReview) Approve() error {
 	if err != nil {
 		return err
 	}
-	approval := ServiceApproval{Version: 4, Anchor: anchor, Digest: composeDigest(r.data), File: r.File, Workspace: r.workspace, Paths: paths, ApprovedAt: time.Now().UTC(), ApprovedBy: approverName()}
-	if prior, ok := ApprovedServiceSecrets(r.workspace, file, r.data); ok {
+	approval := ServiceApproval{Version: 5, Anchor: anchor, Digest: composeDigest(r.data), File: r.File, Workspace: r.workspace, Paths: paths, ApprovedAt: time.Now().UTC(), ApprovedBy: approverName()}
+	if prior, ok := ApprovedServiceSecrets(r.workspace, file, r.data); ok && approvedServiceImagesMatch(prior.Images, r.images) {
 		approval.Volumes = prior.Volumes
 		approval.VolumeBinding = prior.VolumeBinding
+	}
+	approval.Images, err = pinsForServiceGrant(r.workspace, file, r.data, approval, r.images)
+	if err != nil {
+		return err
 	}
 	return writeServiceApproval(root, key, approval)
 }
@@ -370,7 +385,19 @@ type ServiceStartReview struct {
 	data      []byte
 	runtime   runtime.Runtime
 	binding   ServiceVolumeBinding
+	images    map[string]string
+	imageRefs map[string]string
+	previous  map[string]string
 }
+
+func (r *ServiceSecretReview) Renewal() bool                     { return r != nil && r.renewal }
+func (r *ServiceSecretReview) Images() map[string]string         { return r.images }
+func (r *ServiceSecretReview) ImageRefs() map[string]string      { return r.imageRefs }
+func (r *ServiceSecretReview) PreviousImages() map[string]string { return r.previous }
+func (r *ServiceStartReview) Images() map[string]string          { return r.images }
+func (r *ServiceStartReview) ImageRefs() map[string]string       { return r.imageRefs }
+func (r *ServiceStartReview) PreviousImages() map[string]string  { return r.previous }
+func (r *ServiceStartReview) Renewal() bool                      { return r != nil && r.Secrets.Renewal() }
 
 func (r *ServiceStartReview) Endpoint() string { return r.binding.Endpoint }
 func (r *ServiceStartReview) DaemonID() string { return r.binding.DaemonID }
@@ -383,27 +410,54 @@ func (r *ServiceStartReview) VolumeIdentity(name string) (runtime.NamedVolumeIde
 	return runtime.NamedVolumeIdentity{}, false
 }
 
-func ReviewServiceStart(workspace, file string, rt runtime.Runtime) (*ServiceStartReview, error) {
+func ReviewServiceStart(workspace, file string, rt runtime.Runtime, terminal bool) (*ServiceStartReview, error) {
 	data, err := readValidatedCompose(file, workspace, false)
 	if err != nil {
 		return nil, err
 	}
-	secrets, err := reviewServiceSecretsData(workspace, file, data)
+	bound, err := rt.FreezeCompose(context.Background())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("inspect Docker before service review: %w", err)
 	}
 	volumes, err := outsideServiceVolumeAccess(data)
 	if err != nil {
 		return nil, err
 	}
-	binding, missing, err := inspectServiceVolumeBinding(context.Background(), rt, data, volumes)
+	binding, missing, err := inspectServiceVolumeBinding(context.Background(), bound, data, volumes)
 	if err != nil {
 		return nil, err
 	}
 	current, ok := ApprovedServiceSecrets(workspace, file, data)
-	needed := len(volumes) > 0 && (!ok || !sameServiceVolumes(current.Volumes, volumes) || !sameServiceVolumeBinding(current.VolumeBinding, binding))
+	var images map[string]string
+	if terminal {
+		images, err = reviewServiceImages(context.Background(), bound, workspace, file, data, volumes)
+		if err != nil {
+			return nil, err
+		}
+	}
+	imageRefs := map[string]string{}
+	if len(images) > 0 {
+		var doc composeDoc
+		if err := yaml.Unmarshal(data, &doc); err != nil {
+			return nil, err
+		}
+		for name := range images {
+			imageRefs[name] = doc.Services[name].Image
+		}
+	}
+	changed := terminal && ok && !approvedServiceImagesMatch(current.Images, images)
+	secrets, err := reviewServiceSecretsData(workspace, file, data, changed)
+	if err != nil {
+		return nil, err
+	}
+	if secrets != nil {
+		secrets.images, secrets.renewal = images, changed
+		secrets.imageRefs, secrets.previous = imageRefs, current.Images
+	}
+	needed := len(volumes) > 0 && (!ok || changed || !sameServiceVolumes(current.Volumes, volumes) || !sameServiceVolumeBinding(current.VolumeBinding, binding))
 	return &ServiceStartReview{Secrets: secrets, Volumes: volumes, VolumeApprovalNeeded: needed,
-		NewVolumes: missing, workspace: workspace, file: file, data: data, runtime: rt, binding: binding}, nil
+		NewVolumes: missing, workspace: workspace, file: file, data: data, runtime: bound, binding: binding,
+		images: images, imageRefs: imageRefs, previous: current.Images}, nil
 }
 
 func sameServiceVolumeBinding(a, b ServiceVolumeBinding) bool {
@@ -465,6 +519,67 @@ func (r *ServiceStartReview) ApproveVolumes() error {
 	if r == nil || len(r.Volumes) == 0 {
 		return errors.New("no external volumes to approve")
 	}
+	if err := r.prepareVolumes(); err != nil {
+		return err
+	}
+	canonical, rel, anchor, key, err := serviceApprovalScope(r.workspace, r.file, r.data, true)
+	if err != nil {
+		return err
+	}
+	approval := ServiceApproval{Version: 5, Anchor: anchor, Digest: composeDigest(r.data), File: rel,
+		Workspace: canonical, Volumes: r.Volumes, VolumeBinding: r.binding, ApprovedAt: time.Now().UTC(), ApprovedBy: approverName()}
+	if prior, ok := ApprovedServiceSecrets(r.workspace, r.file, r.data); ok && approvedServiceImagesMatch(prior.Images, r.images) {
+		approval.Paths = prior.Paths
+	}
+	approval.Images, err = pinsForServiceGrant(r.workspace, r.file, r.data, approval, r.images)
+	if err != nil {
+		return err
+	}
+	root, err := serviceApprovalRoot()
+	if err != nil {
+		return err
+	}
+	if err := writeServiceApproval(root, key, approval); err != nil {
+		return err
+	}
+	r.VolumeApprovalNeeded = false
+	return nil
+}
+
+// ApproveRenewal publishes both answers in one record after the terminal has
+// collected them. A declined second prompt therefore cannot replace the old grant.
+func (r *ServiceStartReview) ApproveRenewal() error {
+	if !r.Renewal() || !validServiceImagePins(r.images) {
+		return errors.New("no changed service image to approve")
+	}
+	if len(r.Volumes) > 0 {
+		if err := r.prepareVolumes(); err != nil {
+			return err
+		}
+	}
+	canonical, rel, anchor, key, err := serviceApprovalScope(r.workspace, r.file, r.data, true)
+	if err != nil {
+		return err
+	}
+	approval := ServiceApproval{Version: 5, Anchor: anchor, Digest: composeDigest(r.data), File: rel,
+		Workspace: canonical, Paths: r.Secrets.Paths(), Volumes: r.Volumes, VolumeBinding: r.binding,
+		ApprovedAt: time.Now().UTC(), ApprovedBy: approverName()}
+	approval.Images, err = pinsForServiceGrant(r.workspace, r.file, r.data, approval, r.images)
+	if err != nil {
+		return err
+	}
+	root, err := serviceApprovalRoot()
+	if err != nil {
+		return err
+	}
+	if err := writeServiceApproval(root, key, approval); err != nil {
+		return err
+	}
+	r.VolumeApprovalNeeded = false
+	return nil
+}
+
+func (r *ServiceStartReview) prepareVolumes() error {
 	current, missing, err := inspectServiceVolumeBinding(context.Background(), r.runtime, r.data, r.Volumes)
 	if err != nil || !sameServiceVolumeBinding(current, r.binding) || !slices.Equal(missing, r.NewVolumes) {
 		return errors.Join(err, errors.New("docker daemon or volume changed after review — run 'coop up' again"))
@@ -489,23 +604,6 @@ func (r *ServiceStartReview) ApproveVolumes() error {
 			return errors.Join(err, errors.New("approved Docker volumes could not be verified"))
 		}
 	}
-	canonical, rel, anchor, key, err := serviceApprovalScope(r.workspace, r.file, r.data, true)
-	if err != nil {
-		return err
-	}
-	approval := ServiceApproval{Version: 4, Anchor: anchor, Digest: composeDigest(r.data), File: rel,
-		Workspace: canonical, Volumes: r.Volumes, VolumeBinding: r.binding, ApprovedAt: time.Now().UTC(), ApprovedBy: approverName()}
-	if prior, ok := ApprovedServiceSecrets(r.workspace, r.file, r.data); ok {
-		approval.Paths = prior.Paths
-	}
-	root, err := serviceApprovalRoot()
-	if err != nil {
-		return err
-	}
-	if err := writeServiceApproval(root, key, approval); err != nil {
-		return err
-	}
-	r.VolumeApprovalNeeded = false
 	return nil
 }
 
@@ -528,11 +626,14 @@ func (r *ServiceStartReview) verify(ctx context.Context, rt runtime.Runtime, wor
 	if !sameServiceVolumes(volumes, r.Volumes) {
 		return errors.New("compose volumes changed after review")
 	}
+	approval, ok := ApprovedServiceSecrets(workspace, file, data)
+	if ok && r.images != nil && !approvedServiceImagesMatch(approval.Images, r.images) {
+		return errors.New("service image approval changed after review — run 'coop up' again")
+	}
 	if len(volumes) > 0 {
 		if r.VolumeApprovalNeeded {
 			return errors.New("external Docker volumes require approval in a terminal")
 		}
-		approval, ok := ApprovedServiceSecrets(workspace, file, data)
 		binding, missing, err := inspectServiceVolumeBinding(ctx, rt, data, volumes)
 		if err != nil || len(missing) != 0 || !sameServiceVolumeBinding(binding, r.binding) {
 			return errors.Join(err, errors.New("docker daemon or volume changed after review — run 'coop up' again"))

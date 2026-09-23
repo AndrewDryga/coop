@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -64,17 +65,34 @@ func (a *app) cmdUp(args []string) (int, error) {
 		return 1, reported("Could not start services", sentence(firstLine(err)), "Run coop up again.")
 	}
 	defer unlockLaunch()
+	ask, atTerminal := askTerminal()
 	// Keep the review, saved decisions, and start under one mount-launch barrier. A writable box
 	// cannot replace the Compose or bind sources while the host waits for an answer.
-	review, err := box.ReviewServiceStart(repo, file, a.rt)
+	review, err := box.ReviewServiceStart(repo, file, a.rt, atTerminal)
 	if err != nil {
 		return 1, composeRefusal("Could not start services from "+rel, rel, err, "coop up")
 	}
-	if code, err := askServiceVolumes(review, rel); err != nil {
+	renewal := review.Renewal()
+	volumePending := review.VolumeApprovalNeeded
+	secretPending := review.Secrets != nil && len(review.Secrets.Files) > 0
+	if code, err := askServiceVolumes(review, rel, ask, atTerminal, !renewal); err != nil {
 		return code, err
 	}
-	if code, err := askServiceSecrets(review.Secrets, rel); err != nil {
+	if code, err := askServiceSecrets(review.Secrets, rel, ask, atTerminal, !renewal); err != nil {
 		return code, err
+	}
+	if renewal {
+		if err := review.ApproveRenewal(); err != nil {
+			return 1, reported("Could not save service-image approval", sentence(osCause(err)),
+				"Fix the cause, then run coop up again.", "Services were not started.")
+		}
+		if volumePending {
+			ui.OK("Docker-volume access approved")
+		}
+		if secretPending {
+			ui.OK("Secret-file access approved")
+		}
+		ui.Note("")
 	}
 	ui.Note("Starting services from %s", rel)
 	ui.Note("  Waiting for services to be ready.")
@@ -107,11 +125,10 @@ func (a *app) cmdUp(args []string) (int, error) {
 	return 0, nil
 }
 
-func askServiceVolumes(review *box.ServiceStartReview, rel string) (int, error) {
+func askServiceVolumes(review *box.ServiceStartReview, rel string, ask *bufio.Scanner, atTerminal, save bool) (int, error) {
 	if review == nil || len(review.Volumes) == 0 {
 		return 0, nil
 	}
-	ask, atTerminal := askTerminal()
 	if !atTerminal {
 		return 1, reported("Services were not started",
 			"External or custom Docker volumes require approval in a terminal, even if previously approved.",
@@ -134,14 +151,18 @@ func askServiceVolumes(review *box.ServiceStartReview, rel string) (int, error) 
 			ui.Note("    Existing volume: %s", ui.SafeInline(identity.Mountpoint))
 		}
 	}
+	noteServiceImagePins(review.Images(), review.ImageRefs(), review.PreviousImages())
 	ui.Note("")
 	ui.Warn("These services can read or change data outside this project; read/write access can delete it.")
-	ui.Note("Approval is for this repository and exact Compose file; edits require another review.")
+	ui.Note("Approval is for this repository, exact Compose file, and image IDs above; changes require another review.")
 	ui.Note("")
 	answer, _ := askOneOK(ask, "Allow these Docker volumes? [y/N]: ")
 	ui.Note("")
 	if !ui.ConfirmationResponse(answer, false) {
 		return 1, reported("Services were not started", "External Docker volume access was not approved.")
+	}
+	if !save {
+		return 0, nil
 	}
 	if err := review.ApproveVolumes(); err != nil {
 		return 1, reported("Could not save Docker-volume approval", sentence(osCause(err)),
@@ -169,7 +190,7 @@ func composeRefusal(headline, rel string, err error, retry string) error {
 // is what they would have got had nobody asked. Without a terminal nobody can answer, so it says
 // which files stay empty and how to approve them, then starts anyway — the same decision the box
 // auto-start makes. A non-nil error means the caller must stop.
-func askServiceSecrets(review *box.ServiceSecretReview, rel string) (int, error) {
+func askServiceSecrets(review *box.ServiceSecretReview, rel string, ask *bufio.Scanner, atTerminal, save bool) (int, error) {
 	if review == nil {
 		return 0, nil
 	}
@@ -179,8 +200,11 @@ func askServiceSecrets(review *box.ServiceSecretReview, rel string) (int, error)
 	if len(review.Files) == 0 {
 		return 0, nil
 	}
-	ask, atTerminal := askTerminal()
 	if !atTerminal {
+		if review.Renewal() {
+			return 1, reported("Services were not started", "A service image changed since its secret-file approval.",
+				"Run coop up at a terminal to review the new image; the previous approval is unchanged.")
+		}
 		emptyFilesNotice(review.Paths(), "  To approve access, run coop up at a terminal.")
 		return 0, nil
 	}
@@ -199,14 +223,22 @@ func askServiceSecrets(review *box.ServiceSecretReview, rel string) (int, error)
 			ui.Note("    Added since your last approval.")
 		}
 	}
+	noteServiceImagePins(review.Images(), review.ImageRefs(), review.PreviousImages())
 	ui.Note("")
 	ui.Note("The services receive empty files unless you approve access.")
-	ui.Note("Approval applies to this Compose file and expires when its contents change.")
+	ui.Note("Approval applies to this Compose file and the image IDs above; changing either requires review.")
 	ui.Note("")
 	answer, _ := askOneOK(ask, "Allow services to read these files? [y/N]: ")
 	ui.Note("")
 	if !ui.ConfirmationResponse(answer, false) {
+		if review.Renewal() {
+			return 1, reported("Services were not started", "The new service image was not approved for secret-file access.",
+				"The previous approval is unchanged; run coop up to review the new image.")
+		}
 		emptyFilesNotice(review.Paths(), "")
+		return 0, nil
+	}
+	if !save {
 		return 0, nil
 	}
 	if err := review.Approve(); err != nil {
@@ -218,6 +250,26 @@ func askServiceSecrets(review *box.ServiceSecretReview, rel string) (int, error)
 	ui.OK("Secret-file access approved")
 	ui.Note("")
 	return 0, nil
+}
+
+func noteServiceImagePins(images, refs, previous map[string]string) {
+	if len(images) == 0 {
+		return
+	}
+	names := make([]string, 0, len(images))
+	for name := range images {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	ui.Note("")
+	ui.Note("  Exact local service images:")
+	for _, name := range names {
+		if old := previous[name]; old != "" && old != images[name] {
+			ui.Note("    %s (%s): %s → %s", ui.SafeInline(name), ui.SafeInline(refs[name]), ui.SafeInline(old), ui.SafeInline(images[name]))
+		} else {
+			ui.Note("    %s (%s): %s", ui.SafeInline(name), ui.SafeInline(refs[name]), ui.SafeInline(images[name]))
+		}
+	}
 }
 
 // emptyFilesNotice names the files the services will not be able to read, and — when nobody could

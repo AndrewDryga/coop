@@ -2,9 +2,9 @@
 name: filtered-service-startup-is-approved
 description: filtered auto-start runs only reviewed services and dependencies, without widening network grants or touching unrelated services
 scope: security
-sources: [internal/box/filtered_services.go, internal/box/filtered.go, internal/box/services.go, internal/box/composecheck.go, internal/box/serviceports.go, internal/networkstate/approval_review.go]
+sources: [internal/box/filtered_services.go, internal/box/filtered.go, internal/box/services.go, internal/box/serviceapproval.go, internal/box/serviceimages.go, internal/box/composecheck.go, internal/box/serviceports.go, internal/networkstate/approval_review.go]
 check: none
-updated: 2026-09-12
+updated: 2026-09-23
 ---
 
 # Start only reviewed services and dependencies in filtered runs
@@ -18,7 +18,9 @@ bound to the run's captured approval. Preserve dependency ordering and health/co
 An empty approved set starts nothing. Scope generated overrides to that set. Do not remove
 unrelated containers, start unrelated additions, or demand renewed approval just because an
 unrelated service was added. Added startup dependencies or network/data permissions need review,
-never unattended approval. Ordinary code/script/image changes within existing permissions do not.
+never unattended approval. Ordinary code/script/image changes within existing permissions do not,
+except image-ID changes for services with approved secret-file or outside-volume grants; see
+[[filtered-services-share-network-restrictions]].
 
 **Why:** the user approved a fix where `api` and its reviewed database start, but a later-added
 `background-uploader` does not. Normal dependencies must still work, without separate service
@@ -32,6 +34,10 @@ Test extra services, dependency changes, source swaps, empty approval, and unaff
 startup. Configuration snapshots do not freeze bind-mounted contents; keep that distinction.
 
 ## Changelog
+
+- 2026-09-23 — reconciled ordinary image updates with the human's exact-image decision for
+  elevated Compose host-data grants; checked filtered preparation and final start use the same
+  pinning path while unprivileged service images retain normal tag behavior.
 
 - 2026-09-12 — user approved replacing net approve with unified coop approve and permission-based
   review instead of approval for ordinary contents. Updated the rule and sibling authority guidance;

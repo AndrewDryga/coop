@@ -132,7 +132,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [coopignore-read-only-in-boxes](coopignore-read-only-in-boxes.md) — keep .coopignore readable but read-only in every box, with ordinary host editing and no policy-approval workflow
 - [hidden-files-are-not-scanner-exceptions](hidden-files-are-not-scanner-exceptions.md) — .coopignore hides files from agents; only exact reviewed .coopsecretsignore findings dismiss scanner warnings
 - [filtered-service-startup-is-approved](filtered-service-startup-is-approved.md) — filtered auto-start runs only reviewed services and dependencies, without widening network grants or touching unrelated services
-- [filtered-services-share-network-restrictions](filtered-services-share-network-restrictions.md) — agent-controlled services obey approved network restrictions while live code and normal image updates stay usable
+- [filtered-services-share-network-restrictions](filtered-services-share-network-restrictions.md) — agent-controlled services obey network restrictions while ordinary code and image updates stay live; elevated host-data grants pin the image
 - [destructive-confirm-gate](destructive-confirm-gate.md) — every unrecoverable delete routes through the one shared `ui.DestroyGate`
 - [renew-before-access-only-projection](renew-before-access-only-projection.md) — refreshable credentials renew in trusted host storage before an access-only box projection
 - [network-authority-is-proven-not-passed](network-authority-is-proven-not-passed.md) — a filtered launch proves its network authority against the owner-private store; a boundary crossing carries a name, never a grant

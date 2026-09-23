@@ -3,12 +3,59 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 )
+
+func TestDecliningSecondImageRenewalKeepsPreviousApproval(t *testing.T) {
+	t.Setenv(box.ServiceStateRootEnv, t.TempDir())
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "tls.key"), []byte("-----BEGIN PRIVATE KEY-----\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	compose := filepath.Join(repo, ".agent", "compose.yml")
+	body := []byte("services:\n  web:\n    image: nginx:1\n    volumes: [customer:/data, \"../tls.key:/key:ro\"]\nvolumes:\n  customer:\n    external: true\n    name: customer-data\n")
+	if err := os.WriteFile(compose, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}, rt: composeShim{services: []string{"web"}}.build(t), rtSet: true}
+	typedAnswers(t, "y", "y")
+	if out := captureTerminal(t, func() {
+		code, _ := a.cmdUp(nil)
+		if code != 0 {
+			t.Errorf("first approval exited %d", code)
+		}
+	}); !strings.Contains(out, "Services ready") {
+		t.Fatalf("first approval did not start: %s", out)
+	}
+	before, ok := box.ApprovedServiceSecrets(repo, compose, body)
+	if !ok || len(before.Paths) != 1 || len(before.Volumes) != 1 {
+		t.Fatalf("combined initial approval = %+v, %v", before, ok)
+	}
+	t.Setenv("COOP_TEST_IMAGE_ID", "sha256:"+strings.Repeat("b", 64))
+	typedAnswers(t, "y", "n")
+	var code int
+	out := captureTerminal(t, func() { code, _ = a.cmdUp(nil) })
+	if code != 1 || strings.Contains(out, "[Compose output]") || !strings.Contains(out, "previous approval is unchanged") {
+		t.Fatalf("denied renewal = %d:\n%s", code, out)
+	}
+	after, ok := box.ApprovedServiceSecrets(repo, compose, body)
+	if !ok || !reflect.DeepEqual(before, after) {
+		t.Fatalf("denied second prompt changed the saved grant:\nbefore=%+v\nafter=%+v", before, after)
+	}
+	typedAnswers(t, "y", "y")
+	out = captureTerminal(t, func() { code, _ = a.cmdUp(nil) })
+	if code != 0 || !strings.Contains(out, "Services ready") || !strings.Contains(out, "nginx:1") || !strings.Contains(out, "→ sha256:"+strings.Repeat("b", 64)) {
+		t.Fatalf("approved image renewal = %d:\n%s", code, out)
+	}
+}
 
 func TestExternalServiceVolumeNeedsTerminalReview(t *testing.T) {
 	t.Setenv(box.ServiceStateRootEnv, t.TempDir())

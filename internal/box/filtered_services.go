@@ -92,7 +92,7 @@ func (s *preparedFilteredServices) start(ctx context.Context) error {
 	if err := validateComposeData(s.data, s.file, s.repo, s.readOnly); err != nil {
 		return fmt.Errorf("service bind sources changed before launch: %w", err)
 	}
-	args, cleanup, _, err := snapshotComposeArgsForStartData(s.repo, s.file, s.owner, s.data, false, s.roots...)
+	args, cleanup, _, err := snapshotComposeArgsForStartPinned(ctx, s.runtime, s.repo, s.file, s.owner, s.data, false, s.roots...)
 	if err != nil {
 		return err
 	}
@@ -193,7 +193,7 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 	}
 	noticeHidden := sections == nil || !sections.loop
 	owner := runServiceOwner(spec)
-	args, cleanupSnapshot, hidden, err := snapshotComposeArgsForStartData(spec.Repo, composeFile, owner, data, false, exposedRoots...)
+	args, cleanupSnapshot, hidden, err := snapshotComposeArgsForStartPinned(ctx, rt, spec.Repo, composeFile, owner, data, false, exposedRoots...)
 	if err != nil {
 		var refused *ComposeRefused
 		if sections != nil && sections.loop && errors.As(err, &refused) {

@@ -1766,9 +1766,16 @@ mount the individual needed files read-only, and use a named volume for mutable 
 The approval is tied to the Compose file's exact content and
 stored outside the repo, so an edit to the file (the one thing a box can do) resets it; until you
 approve again, box launches start the services with decoys and say which file is hidden and why.
+For services receiving approved secret files or outside volumes, Coop also records the exact local
+Docker image ID shown at review and starts that ID with pulling disabled. An unchanged approval
+cannot silently follow a moved image tag. `coop up` at a terminal can review a locally updated tag;
+declining that renewal leaves the previous approval in place and stops this start. If the pinned
+image was removed, startup stops before creating a container; pull the tag and run `coop up` to
+review it again. A first approval may pull an uncached image through Docker's existing registry
+authentication. Services without these elevated grants keep normal image updates.
 The approval is also tied to this checkout's private identity: copying the Compose file or its
 marker to a second checkout does not transfer it. The first `coop up` after upgrading older
-content-only approvals asks again.
+content-only approvals asks again; automatic starts use decoys until then.
 The approval covers the exact files you saw, so a secret that lands later under an approved
 directory bind stays hidden until you approve it too.
 Compose commands use a private Docker client config that retains registry authentication,

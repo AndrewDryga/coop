@@ -2,7 +2,7 @@
 name: compose-host-authority
 description: sibling Compose execution uses a validated private snapshot and explicit values rather than ambient host imports
 subsystem: box/services
-sources: [internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/runtime/mounts.go, internal/runtime/compose.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/serviceapproval.go, internal/box/serviceanchor.go, internal/box/sweep.go, internal/forkspace/execution.go]
+sources: [internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/runtime/mounts.go, internal/runtime/compose.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/serviceapproval.go, internal/box/serviceimages.go, internal/box/serviceanchor.go, internal/box/sweep.go, internal/forkspace/execution.go]
 updated: 2026-09-23
 ---
 
@@ -99,6 +99,15 @@ used by automatic, filtered, or nonterminal starts. Ordinary project-prefixed na
 no grant. `ReviewServiceStart` and `UpServicesReviewed` keep review and launch on the same bytes;
 filtered service digests are checked against their frozen launch snapshot too.
 
+An approved host-data consumer also runs by its local Docker `sha256:` image ID, not the mutable
+tag in Compose. The v5 host approval stores pins only for services actually receiving real secret
+files or outside volumes. Terminal review inspects the selected frozen daemon and may pull an
+uncached image through the private registry-auth client; unattended starts never pull. A private
+`image`/`pull_policy: never` override is applied at ordinary and both filtered start stages, after
+checking the ID still exists on that daemon. Missing IDs refuse before container creation. A moved
+local tag asks for fresh consent; renewing one capability cannot carry the other to new code.
+Older unpinned approvals fail closed, while ordinary services keep the Compose tag's normal updates.
+
 Networks: the development Compose project keeps its canonical-workspace identity. A logical loop
 adds a hashed run owner to its project and port scope, so its network, volumes, and loopback ports
 are private but stable across that run's iterations. `StopSessionServices` removes containers by
@@ -108,6 +117,8 @@ like coop's (`^coop-…-<8hex>$`) — never a human's compose project. "Unused" 
 containers as users (`ps -a --filter network=`), because they reconnect on the next start.
 
 ## Changelog
+- 2026-09-23: verified exact-image approval and private start override against service review,
+  automatic and filtered start paths; only elevated consumers are pinned, and v4 grants fail closed.
 - 2026-09-23: repository-anchored secret and external-volume approvals, terminal-only volume
   authority, immutable review/start bytes, live writable-sidecar quiescence, nested bind denial,
   durable policy sources, and inode-keyed service launch locks. Swept the service start paths and

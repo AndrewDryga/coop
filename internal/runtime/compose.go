@@ -33,6 +33,37 @@ func (r Runtime) ComposeBinding() (endpoint, daemonID string) {
 	return r.composeEndpoint, r.composeDaemon
 }
 
+// ComposeImageID inspects an image on the daemon frozen for this service operation.
+// It never pulls; callers decide explicitly whether a terminal review may do so.
+func (r Runtime) ComposeImageID(ctx context.Context, image string) (string, error) {
+	if r.composeEndpoint == "" || r.composeDaemon == "" {
+		return "", errors.New("Docker daemon must be frozen before inspecting a service image")
+	}
+	docker, err := bindDocker(ctx, r, r.composeEndpoint, r.composeDaemon, false)
+	if err != nil {
+		return "", err
+	}
+	defer docker.Close()
+	id, _, err := docker.Image(ctx, image)
+	return id, err
+}
+
+// PullComposeImage is used only before a new terminal service approval. The
+// reference is an argument, never a Docker option or shell fragment.
+func (r Runtime) PullComposeImage(image string) error {
+	if r.composeEndpoint == "" || r.composeDaemon == "" || !dockerToken(image, 512) || strings.HasPrefix(image, "-") {
+		return errors.New("invalid service image reference or unfrozen Docker daemon")
+	}
+	code, err := r.RunCompose(nil, io.Discard, io.Discard, "pull", image)
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return errors.New("Docker image pull failed")
+	}
+	return nil
+}
+
 // RunCompose uses a private Docker config containing registry authentication
 // but never the host's proxy injection rules. It pins a frozen operation to its
 // inspected local daemon. Other runtime dialects retain their existing runner.

@@ -40,6 +40,7 @@ func (s composeShim) build(t *testing.T) runtime.Runtime {
 	script.WriteString("#!/bin/sh\ncase \"$*\" in\n")
 	script.WriteString("  info) exit 0 ;;\n")
 	script.WriteString("  *\"info --format\"*) echo '{\"ID\":\"fixture-daemon\",\"OSType\":\"linux\",\"Architecture\":\"amd64\",\"ServerVersion\":\"29.1\",\"KernelVersion\":\"fixture\",\"SecurityOptions\":[]}' ;;\n")
+	script.WriteString("  *\"image inspect --format\"*) for last; do :; done; case \"$last\" in sha256:*) id=\"$last\" ;; *) id=\"${COOP_TEST_IMAGE_ID:-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}\" ;; esac; printf '{\"ID\":\"%s\",\"Labels\":{}}\\n' \"$id\" ;;\n")
 	script.WriteString("  *\"volume inspect\"*) for last; do :; done; printf '{\"Name\":\"%s\",\"Driver\":\"local\",\"Scope\":\"local\",\"Mountpoint\":\"/var/lib/docker/volumes/%s/_data\",\"CreatedAt\":\"2026-01-01T00:00:00Z\",\"Options\":{}}\\n' \"$last\" \"$last\" ;;\n")
 	script.WriteString("  *\"config --services\"*)\n")
 	for _, name := range s.services {

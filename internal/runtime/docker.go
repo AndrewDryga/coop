@@ -52,7 +52,7 @@ func BindDocker(ctx context.Context, rt Runtime, endpoint, expectedID string) (*
 // whether a launch needs gateway qualification. It grants no create/start
 // authority, including on ordinary rootless or otherwise unqualified engines.
 func InspectDocker(ctx context.Context, rt Runtime) (*Docker, error) {
-	return bindDocker(ctx, rt, "", "", false)
+	return bindDocker(ctx, rt, rt.composeEndpoint, rt.composeDaemon, false)
 }
 
 func bindDocker(ctx context.Context, rt Runtime, endpoint, expectedID string, launchAllowed bool) (*Docker, error) {

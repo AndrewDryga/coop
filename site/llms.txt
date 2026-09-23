@@ -1341,13 +1341,15 @@ Read-only sessions require each bind source to exist before startup.
 If a service asks to read a secret file through a read-only bind, Coop asks
 at a terminal before allowing it. Otherwise it receives an empty file.
 Secret directories and writable binds stay hidden. Approval applies to
-this repository's exact Compose file and must be repeated if it changes.
+this repository's exact Compose file and the service's local Docker image ID.
+If either changes, run coop up at a terminal to review it again; an unchanged
+approval never follows a moved image tag. A missing approved image stops startup.
 
 External or custom-named Docker volumes can contain data outside this project.
 At a terminal, Coop names each actual volume, its read-only/read-write access,
 which service attaches it, and the selected Docker daemon before asking.
 Only plain local volumes are supported; a missing custom volume is created
-after approval. A daemon or volume replacement requires fresh review.
+after approval. A daemon, volume, or image replacement requires fresh review.
 Declining stops startup. Automatic, filtered, and non-terminal starts refuse
 these volumes even after approval.
 Previously saved service-file approvals need one fresh review after upgrading.

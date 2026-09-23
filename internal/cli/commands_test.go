@@ -1692,7 +1692,7 @@ func TestCmdUpWarnsAboutHiddenServiceSecretsWithoutATerminal(t *testing.T) {
 	}
 	write("certs/tls.key", "-----BEGIN PRIVATE KEY-----\n")
 	write(".agent/compose.yml", "services:\n  keycloak:\n    image: example/keycloak\n    volumes:\n      - \"../certs/tls.key:/certs/tls.key:ro\"\n")
-	a := &app{cfg: &config.Config{RepoOverride: repo}, rt: composeUpRuntime(t, []string{"keycloak"}, 0), rtSet: true}
+	a := &app{cfg: &config.Config{RepoOverride: repo}, rt: composeShim{services: []string{"keycloak"}}.build(t), rtSet: true}
 	var code int
 	var runErr error
 	out := captureStderr(t, func() { code, runErr = a.cmdUp(nil) })
@@ -1704,11 +1704,11 @@ func TestCmdUpWarnsAboutHiddenServiceSecretsWithoutATerminal(t *testing.T) {
 			t.Errorf("cmdUp did not explain the hidden file (%q):\n%s", want, out)
 		}
 	}
-	review, err := box.ReviewServiceSecrets(repo, filepath.Join(repo, ".agent", "compose.yml"))
-	if err != nil || review == nil {
-		t.Fatalf("review = %+v, err=%v", review, err)
+	startReview, err := box.ReviewServiceStart(repo, filepath.Join(repo, ".agent", "compose.yml"), a.rt, true)
+	if err != nil || startReview.Secrets == nil {
+		t.Fatalf("review = %+v, err=%v", startReview, err)
 	}
-	if err := review.Approve(); err != nil {
+	if err := startReview.Secrets.Approve(); err != nil {
 		t.Fatal(err)
 	}
 	out = captureStderr(t, func() { code, runErr = a.cmdUp(nil) })

@@ -220,7 +220,21 @@ func snapshotComposeArgsForStart(ctx context.Context, rt runtime.Runtime, worksp
 			return nil, nil, nil, err
 		}
 	}
-	return snapshotComposeArgsForStartData(workspace, file, owner, data, review != nil, exposedRoots...)
+	return snapshotComposeArgsForStartPinned(ctx, rt, workspace, file, owner, data, review != nil, exposedRoots...)
+}
+
+func snapshotComposeArgsForStartPinned(ctx context.Context, rt runtime.Runtime, workspace, file, owner string, data []byte, allowOutsideData bool, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
+	args, cleanup, hidden, err = snapshotComposeArgsForStartData(workspace, file, owner, data, allowOutsideData, exposedRoots...)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	args, cleanupPins, err := pinServiceStart(ctx, rt, workspace, file, data, args, exposedRoots...)
+	if err != nil {
+		cleanup()
+		return nil, nil, nil, err
+	}
+	baseCleanup := cleanup
+	return args, func() { cleanupPins(); baseCleanup() }, hidden, nil
 }
 
 func snapshotComposeArgsForStartData(workspace, file, owner string, data []byte, allowOutsideData bool, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {

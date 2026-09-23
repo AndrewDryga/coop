@@ -222,7 +222,7 @@ func TestAutomaticServiceStartRefusesExternalVolumes(t *testing.T) {
 		t.Fatal("an unreviewed direct start accepted an external volume")
 	}
 	reviewRT := serviceReviewRuntime(t, recorder)
-	review, err := ReviewServiceStart(repo, compose, reviewRT)
+	review, err := ReviewServiceStart(repo, compose, reviewRT, true)
 	if err != nil || review == nil || !review.VolumeApprovalNeeded {
 		t.Fatalf("external volume review = %v, %v", review, err)
 	}
@@ -347,7 +347,7 @@ func TestReviewedServiceStartRefusesChangedComposeBeforeRuntime(t *testing.T) {
 	}
 	recorder := filepath.Join(t.TempDir(), "runtime.log")
 	rt := serviceReviewRuntime(t, recorder)
-	review, err := ReviewServiceStart(repo, compose, rt)
+	review, err := ReviewServiceStart(repo, compose, rt, true)
 	if err != nil {
 		t.Fatal(err)
 	}

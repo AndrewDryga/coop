@@ -2,9 +2,9 @@
 name: project-edits-request-access
 description: project configuration requests access; one host approval grants it, checked before execution and enforced throughout agent and service runs
 scope: security
-sources: [internal/cli/net_approve.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/box/run.go, internal/box/network_approval.go, internal/networkstate/approval_review.go, internal/networkstate/admission.go, internal/box/filtered_services.go, internal/box/composecheck.go]
+sources: [internal/cli/net_approve.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/box/run.go, internal/box/network_approval.go, internal/networkstate/approval_review.go, internal/networkstate/admission.go, internal/box/filtered_services.go, internal/box/serviceapproval.go, internal/box/serviceimages.go, internal/box/composecheck.go]
 check: none
-updated: 2026-09-22
+updated: 2026-09-23
 ---
 
 # Approve added access, not ordinary development
@@ -25,7 +25,9 @@ high-level command and this enforcement boundary. This is not a mandate to appro
 
 **How to apply:** review actual startup dependencies, volume identity and read/write access, not
 just editable labels. Keep ordinary source/script/image changes, approved writes and project-owned
-storage automatic. Unused services stay stopped without triggering approval. Preserve the
+storage automatic, except that a service receiving approved secret files or outside volumes
+keeps the exact reviewed image ID; see [[filtered-services-share-network-restrictions]]. Unused
+services stay stopped without triggering approval. Preserve the
 explicit restricted project-build boundary in [[restricted-project-builds-are-explicit]]:
 runtime source edits remain live, but a filtered/offline launch cannot execute a new Docker build.
 Preserve prohibitions and destructive-command confirmations; do not convert them to reusable
@@ -34,6 +36,9 @@ Tests must prove refusal before execution/mounts, same-snapshot publication/star
 denial from agent-controlled services. A command rename or UI warning is not enforcement.
 
 ## Changelog
+
+- 2026-09-23 — added the narrow human-approved image-ID exception for services granted
+  protected host data; swept the startup/approval paths and kept ordinary updates automatic.
 
 - 2026-09-22 — recorded the human-approved restricted project-build exception; ordinary runtime
   edits and service enforcement retain their existing permission contract. Swept automatic build

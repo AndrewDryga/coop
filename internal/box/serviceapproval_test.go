@@ -26,6 +26,12 @@ func serviceReviewRuntime(t *testing.T, recorder string) runtime.Runtime {
 	script += `for last; do :; done
 case "$*" in
   *"info --format"*) printf '{"ID":"%s","OSType":"linux","Architecture":"amd64","ServerVersion":"29.1","KernelVersion":"fixture","SecurityOptions":[]}\n' "${COOP_TEST_DAEMON:-fixture-daemon}" ;;
+  *"image inspect --format"*)
+    if [ "$last" = "$COOP_TEST_MISSING_IMAGE" ] || { [ "$COOP_TEST_MISSING_TAG" = 1 ] && [ "${last#sha256:}" = "$last" ]; } || { [ -n "$COOP_TEST_IMAGE_STATE" ] && [ ! -f "$COOP_TEST_IMAGE_STATE" ] && [ "${last#sha256:}" = "$last" ]; }; then exit 1; fi
+    id="${COOP_TEST_IMAGE_ID:-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+    case "$last" in sha256:*) id="$last" ;; esac
+    printf '{"ID":"%s","Labels":{}}\n' "$id" ;;
+  *" pull "*) if [ -n "$COOP_TEST_IMAGE_STATE" ]; then touch "$COOP_TEST_IMAGE_STATE"; fi ;;
   *"volume inspect"*)
 	if [ -n "$COOP_TEST_VOLUME_STATE" ] && [ ! -f "$COOP_TEST_VOLUME_STATE" ]; then exit 1; fi
     options='{}'
@@ -40,6 +46,230 @@ esac
 		t.Fatal(err)
 	}
 	return runtime.Runtime{Name: path}
+}
+
+func serviceSecretReviewForApproval(t *testing.T, repo, compose string) *ServiceSecretReview {
+	t.Helper()
+	review, err := ReviewServiceStart(repo, compose, serviceReviewRuntime(t, ""), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return review.Secrets
+}
+
+func TestApprovedServiceImageStaysPinnedWhenTagMoves(t *testing.T) {
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	recorder := filepath.Join(t.TempDir(), "docker.log")
+	rt := serviceReviewRuntime(t, recorder)
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	if err := os.WriteFile(filepath.Join(repo, "tls.key"), []byte("-----BEGIN PRIVATE KEY-----\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	body := "services:\n  elevated:\n    image: example/app:latest\n    volumes: [\"./tls.key:/key:ro\"]\n  ordinary:\n    image: example/ordinary:latest\n"
+	if err := os.WriteFile(compose, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	first, err := ReviewServiceStart(repo, compose, rt, true)
+	if err != nil || first.Secrets == nil {
+		t.Fatalf("initial review = %+v, %v", first, err)
+	}
+	if err := first.Secrets.Approve(); err != nil {
+		t.Fatal(err)
+	}
+	old := "sha256:" + strings.Repeat("a", 64)
+	newID := "sha256:" + strings.Repeat("b", 64)
+	bound, err := rt.FreezeCompose(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkOverride := func(want string) {
+		t.Helper()
+		args, cleanup, _, err := snapshotComposeArgsForStartPinned(t.Context(), bound, repo, compose, "", []byte(body), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer cleanup()
+		path := args[len(args)-1]
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), "image: "+want) || !strings.Contains(string(data), "pull_policy: never") || strings.Contains(string(data), "ordinary:") {
+			t.Fatalf("image override = %s; want only elevated pinned to %s", data, want)
+		}
+	}
+	checkOverride(old)
+	t.Setenv("COOP_TEST_MISSING_TAG", "1")
+	offline, err := ReviewServiceStart(repo, compose, rt, true)
+	if err != nil || offline.Secrets != nil {
+		t.Fatalf("uncached tag lost usable saved image: %+v, %v", offline, err)
+	}
+	t.Setenv("COOP_TEST_MISSING_TAG", "")
+	t.Setenv("COOP_TEST_IMAGE_ID", newID)
+	checkOverride(old) // automatic startup ignores the changed tag
+	renewal, err := ReviewServiceStart(repo, compose, rt, true)
+	if err != nil || renewal.Secrets == nil || !renewal.Secrets.Renewal() || renewal.Images()["elevated"] != newID {
+		t.Fatalf("moved tag review = %+v, %v", renewal, err)
+	}
+	checkOverride(old) // declining the renewal leaves the saved grant unchanged
+	if err := renewal.Secrets.Approve(); err != nil {
+		t.Fatal(err)
+	}
+	checkOverride(newID)
+	if calls, err := os.ReadFile(recorder); err != nil || strings.Contains(string(calls), " pull ") {
+		t.Fatalf("locally available images should not be pulled: %v\n%s", err, calls)
+	}
+}
+
+func TestMissingApprovedServiceImageRefusesBeforeCompose(t *testing.T) {
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	recorder := filepath.Join(t.TempDir(), "docker.log")
+	rt := serviceReviewRuntime(t, recorder)
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	if err := os.WriteFile(filepath.Join(repo, "tls.key"), []byte("-----BEGIN PRIVATE KEY-----\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(compose, []byte("services:\n  app:\n    image: example/app:latest\n    volumes: [\"./tls.key:/key:ro\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	review, err := ReviewServiceStart(repo, compose, rt, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := review.Secrets.Approve(); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_MISSING_IMAGE", "sha256:"+strings.Repeat("a", 64))
+	if _, err := EnsureServicesFile(rt, repo, compose, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "approved image") {
+		t.Fatalf("missing image start = %v; want refusal before Compose", err)
+	}
+	if calls, err := os.ReadFile(recorder); err != nil || strings.Contains(string(calls), " up ") || strings.Contains(string(calls), " pull ") {
+		t.Fatalf("missing pinned image reached Compose or network: %v\n%s", err, calls)
+	}
+}
+
+func TestUnattendedSecretReviewDoesNotPullAnUnapprovedImage(t *testing.T) {
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	t.Setenv("COOP_TEST_MISSING_TAG", "1")
+	recorder := filepath.Join(t.TempDir(), "docker.log")
+	rt := serviceReviewRuntime(t, recorder)
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	if err := os.WriteFile(filepath.Join(repo, "tls.key"), []byte("-----BEGIN PRIVATE KEY-----\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(compose, []byte("services:\n  app:\n    image: example/uncached:1\n    volumes: [\"./tls.key:/key:ro\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	review, err := ReviewServiceStart(repo, compose, rt, false)
+	if err != nil || review.Secrets == nil || len(review.Secrets.Paths()) != 1 {
+		t.Fatalf("unattended review = %+v, %v; want decoy without a pull", review, err)
+	}
+	if calls, err := os.ReadFile(recorder); err != nil || strings.Contains(string(calls), " pull ") || strings.Contains(string(calls), "image inspect") {
+		t.Fatalf("unattended review touched an unapproved image: %v\n%s", err, calls)
+	}
+}
+
+func TestTerminalServiceReviewPullsAnUncachedImageThroughFrozenClient(t *testing.T) {
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	state := filepath.Join(t.TempDir(), "image-cached")
+	t.Setenv("COOP_TEST_IMAGE_STATE", state)
+	recorder := filepath.Join(t.TempDir(), "docker.log")
+	rt := serviceReviewRuntime(t, recorder)
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	if err := os.WriteFile(filepath.Join(repo, "tls.key"), []byte("-----BEGIN PRIVATE KEY-----\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(compose, []byte("services:\n  app:\n    image: example/uncached:1\n    volumes: [\"./tls.key:/key:ro\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	review, err := ReviewServiceStart(repo, compose, rt, true)
+	if err != nil || review.Secrets == nil || review.Images()["app"] == "" {
+		t.Fatalf("terminal review did not resolve uncached image: %+v, %v", review, err)
+	}
+	if _, err := os.Stat(state); err != nil {
+		t.Fatalf("pull did not cache the image: %v", err)
+	}
+	if calls, err := os.ReadFile(recorder); err != nil || !strings.Contains(string(calls), " pull example/uncached:1") || strings.Contains(string(calls), " compose pull ") {
+		t.Fatalf("wrong Docker pull command: %v\n%s", err, calls)
+	}
+}
+
+func TestUnpinnedLegacyServiceApprovalDoesNotRevealSecret(t *testing.T) {
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	if err := os.WriteFile(filepath.Join(repo, "tls.key"), []byte("-----BEGIN PRIVATE KEY-----\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("services:\n  app:\n    image: example/app:1\n    volumes: [\"./tls.key:/key:ro\"]\n")
+	if err := os.WriteFile(compose, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	canonical, rel, anchor, key, err := serviceApprovalScope(repo, compose, body, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := serviceApprovalRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeServiceApproval(root, key, ServiceApproval{Version: 4, Anchor: anchor, Digest: composeDigest(body), File: rel, Workspace: canonical, Paths: []string{"tls.key"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ApprovedServiceSecrets(repo, compose, body); ok {
+		t.Fatal("legacy approval retained secret authority without an image ID")
+	}
+	_, cleanup, hidden, err := snapshotComposeArgs(repo, compose, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup()
+	if !slices.Equal(hidden, []string{"tls.key"}) {
+		t.Fatalf("legacy approval revealed secret: hidden=%v", hidden)
+	}
+}
+
+func TestNewImageVolumeApprovalDoesNotInheritSecretAccess(t *testing.T) {
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	rt := serviceReviewRuntime(t, "")
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	if err := os.WriteFile(filepath.Join(repo, "tls.key"), []byte("-----BEGIN PRIVATE KEY-----\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	body := "services:\n  app:\n    image: example/app:latest\n    volumes: [customer:/data, \"./tls.key:/key:ro\"]\nvolumes:\n  customer:\n    external: true\n    name: customer-data\n"
+	if err := os.WriteFile(compose, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	first, err := ReviewServiceStart(repo, compose, rt, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.ApproveVolumes(); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Secrets.Approve(); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_IMAGE_ID", "sha256:"+strings.Repeat("b", 64))
+	next, err := ReviewServiceStart(repo, compose, rt, true)
+	if err != nil || !next.VolumeApprovalNeeded || next.Secrets == nil || !next.Secrets.Renewal() {
+		t.Fatalf("new image review = %+v, %v", next, err)
+	}
+	if err := next.ApproveVolumes(); err != nil {
+		t.Fatal(err)
+	}
+	approval, ok := ApprovedServiceSecrets(repo, compose, []byte(body))
+	if !ok || len(approval.Paths) != 0 || len(approval.Volumes) != 1 {
+		t.Fatalf("volume-only renewal inherited secret privilege: %+v, %v", approval, ok)
+	}
 }
 
 // A secret-looking bind stays a decoy until a human approves the compose file's exact content;
@@ -92,6 +322,7 @@ func TestServiceSecretApprovalIsBoundToTheComposeContent(t *testing.T) {
 	if err != nil || review == nil || review.File != ".agent/compose.yml" || strings.Join(review.Paths(), ",") != "certs/tls.key" {
 		t.Fatalf("review = %+v, err=%v; want the key listed for the human", review, err)
 	}
+	review = serviceSecretReviewForApproval(t, repo, compose)
 	if err := review.Approve(); err != nil {
 		t.Fatal(err)
 	}
@@ -132,6 +363,7 @@ func TestServiceSecretApprovalIsBoundToTheComposeContent(t *testing.T) {
 	if err != nil || review == nil || strings.Join(review.Paths(), ",") != "certs/tls.key" {
 		t.Fatalf("directory bind review = %+v, err=%v", review, err)
 	}
+	review = serviceSecretReviewForApproval(t, repo, compose)
 	if err := review.Approve(); err != nil {
 		t.Fatal(err)
 	}
@@ -148,6 +380,7 @@ func TestServiceSecretApprovalIsBoundToTheComposeContent(t *testing.T) {
 	if err != nil || later == nil || strings.Join(later.Paths(), ",") != "certs/.env" {
 		t.Fatalf("follow-up review = %+v, err=%v; want only the new file to approve", later, err)
 	}
+	later = serviceSecretReviewForApproval(t, repo, compose)
 	if err := later.Approve(); err != nil {
 		t.Fatal(err)
 	}
@@ -201,6 +434,7 @@ func TestServiceApprovalCannotCrossRepositoriesOrCopiedMarkers(t *testing.T) {
 	if err != nil || review == nil {
 		t.Fatalf("repository A review = %v, %v", review, err)
 	}
+	review = serviceSecretReviewForApproval(t, a, fileA)
 	if err := review.Approve(); err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +531,7 @@ func TestExternalVolumeApprovalNamesActualAccessAndExpiresOnEdit(t *testing.T) {
 	if err := os.WriteFile(compose, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	review, err := ReviewServiceStart(repo, compose, rt)
+	review, err := ReviewServiceStart(repo, compose, rt, true)
 	if err != nil || len(review.Volumes) != 1 || review.Volumes[0].Name != "actual-customer-data" ||
 		!review.Volumes[0].Writable || strings.Join(review.Volumes[0].Consumers, ",") != "db → /data,writer → /backup" {
 		t.Fatalf("volume review = %+v, %v", review, err)
@@ -305,7 +539,7 @@ func TestExternalVolumeApprovalNamesActualAccessAndExpiresOnEdit(t *testing.T) {
 	if err := review.ApproveVolumes(); err != nil {
 		t.Fatal(err)
 	}
-	if again, err := ReviewServiceStart(repo, compose, rt); err != nil || again.VolumeApprovalNeeded {
+	if again, err := ReviewServiceStart(repo, compose, rt, true); err != nil || again.VolumeApprovalNeeded {
 		t.Fatalf("unchanged review = %+v, %v", again, err)
 	}
 	for _, changed := range []string{
@@ -316,7 +550,7 @@ func TestExternalVolumeApprovalNamesActualAccessAndExpiresOnEdit(t *testing.T) {
 		if err := os.WriteFile(compose, []byte(changed), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if again, err := ReviewServiceStart(repo, compose, rt); err != nil || !again.VolumeApprovalNeeded {
+		if again, err := ReviewServiceStart(repo, compose, rt, true); err != nil || !again.VolumeApprovalNeeded {
 			t.Fatalf("edited volume inherited approval: %+v, %v", again, err)
 		}
 	}
@@ -334,7 +568,7 @@ func TestVolumeApprovalRefusesChangedDaemonOrVolumeObject(t *testing.T) {
 			if err := os.WriteFile(compose, []byte(body), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			review, err := ReviewServiceStart(repo, compose, rt)
+			review, err := ReviewServiceStart(repo, compose, rt, true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -357,7 +591,7 @@ func TestVolumeApprovalRefusesChangedDaemonOrVolumeObject(t *testing.T) {
 			if calls, err := os.ReadFile(recorder); err == nil && strings.Contains(string(calls), " up ") {
 				t.Fatalf("Compose ran after authority changed: %s", calls)
 			}
-			if next, err := ReviewServiceStart(repo, compose, rt); change == "bind-backed" {
+			if next, err := ReviewServiceStart(repo, compose, rt, true); change == "bind-backed" {
 				if err == nil || next != nil {
 					t.Fatalf("bind-backed local volume became approvable: %+v, %v", next, err)
 				}
@@ -380,7 +614,7 @@ func TestApprovedCustomVolumeIsCreatedPlainAndBoundToItsObject(t *testing.T) {
 	if err := os.WriteFile(compose, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	review, err := ReviewServiceStart(repo, compose, rt)
+	review, err := ReviewServiceStart(repo, compose, rt, true)
 	if err != nil || !review.VolumeApprovalNeeded || !slices.Equal(review.NewVolumes, []string{"customer-data"}) {
 		t.Fatalf("absent custom volume review = %+v, %v", review, err)
 	}
@@ -393,7 +627,7 @@ func TestApprovedCustomVolumeIsCreatedPlainAndBoundToItsObject(t *testing.T) {
 	if identity, ok := review.VolumeIdentity("customer-data"); !ok || identity.CreatedAt == "" {
 		t.Fatalf("created volume identity = %+v, %t", identity, ok)
 	}
-	if next, err := ReviewServiceStart(repo, compose, rt); err != nil || next.VolumeApprovalNeeded {
+	if next, err := ReviewServiceStart(repo, compose, rt, true); err != nil || next.VolumeApprovalNeeded {
 		t.Fatalf("created plain volume required repeat review: %+v, %v", next, err)
 	}
 	if calls, err := os.ReadFile(recorder); err != nil || !strings.Contains(string(calls), "volume create --driver local customer-data") {
@@ -567,6 +801,7 @@ func TestReviewLabelsWhatTheRepoAsksForAndWhatIsNew(t *testing.T) {
 	if got, want := review.Paths(), []string{"certs/.env", "certs/tls.key"}; !slices.Equal(got, want) {
 		t.Fatalf("review order = %v, want the files' own order %v", got, want)
 	}
+	review = serviceSecretReviewForApproval(t, repo, compose)
 	if err := review.Approve(); err != nil {
 		t.Fatal(err)
 	}
