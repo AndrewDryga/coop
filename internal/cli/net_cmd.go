@@ -269,7 +269,10 @@ func (a *app) cmdNetSetup() (int, error) {
 	if err := a.rt.EnsureDaemon(); err != nil {
 		return -1, err
 	}
-	_, err := box.SetupNetwork(context.Background(), a.cfg, a.rt, os.Stderr, os.Stderr)
+	err := withNetSetupSignals(func(ctx context.Context) error {
+		_, err := box.SetupNetwork(ctx, a.cfg, a.rt, os.Stderr, os.Stderr)
+		return err
+	})
 	if errors.Is(err, box.ErrNetworkSetupFailed) {
 		return 1, nil // the transcript already named the failed check and the verdict
 	}
@@ -277,6 +280,12 @@ func (a *app) cmdNetSetup() (int, error) {
 		return 1, err
 	}
 	return 0, nil
+}
+
+func withNetSetupSignals(setup func(context.Context) error) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return setup(ctx)
 }
 
 // ---------------------------------------------------------------- access ----
