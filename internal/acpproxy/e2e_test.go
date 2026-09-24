@@ -27,6 +27,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -77,6 +78,7 @@ func runLiveACPTests(m *testing.M) int {
 		fmt.Fprintln(os.Stderr, "ACP E2E setup failed: phase=config error_class=prerequisite")
 		return 1
 	}
+	box.ResolveBaseImage(coopE2ERealConfig)
 	coopE2ERuntime, err = runtime.Detect(coopE2ERealConfig.RuntimeName)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "ACP E2E setup failed: phase=runtime error_class=prerequisite")

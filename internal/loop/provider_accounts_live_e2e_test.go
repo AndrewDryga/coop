@@ -43,6 +43,7 @@ func TestProviderAccountsLiveCompatibility(t *testing.T) {
 	if err != nil {
 		t.Fatal("load live configuration")
 	}
+	box.ResolveBaseImage(cfg)
 	results := make([]liveprovider.ProviderResult, 0, len(agents.Names()))
 	for _, provider := range agents.Names() {
 		pair, brokered, err := accountLivePair(cfg, provider)

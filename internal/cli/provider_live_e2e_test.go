@@ -72,6 +72,7 @@ func testProviderLiveCompatibility(t *testing.T, workflow string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	box.ResolveBaseImage(realConfig)
 	rt, err := runtime.Detect(realConfig.RuntimeName)
 	if err != nil {
 		emitLiveSummary(t, workflow, strict, targets, skippedLiveResults(targets, liveprovider.ReasonMissingRuntime))

@@ -58,6 +58,7 @@ func testProviderPeerLiveCompatibility(t *testing.T, delegate bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	box.ResolveBaseImage(realConfig)
 	rt, err := runtime.Detect(realConfig.RuntimeName)
 	if err != nil {
 		emit(skippedLiveResults(targets, liveprovider.ReasonMissingRuntime))

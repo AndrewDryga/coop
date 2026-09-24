@@ -2,8 +2,8 @@
 name: provider-live-e2e
 description: Probe installed upstream CLIs with isolated read-only, native-resume, and task-completion workflows
 subsystem: testing
-sources: [Makefile, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/run.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/runtime/process_group_live.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/acpctl/process_live.go, internal/cli/provider_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/loop/live_stream_probe.go, internal/loop/provider_accounts_live_e2e_test.go, internal/loop/provider_accounts_live_credentials_test.go, internal/cli/provider_loop_task_channel_live_test.go, internal/cli/provider_loop_task_observation_live_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go]
-updated: 2026-09-22
+sources: [Makefile, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/image.go, internal/box/run.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/runtime/process_group_live.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/acpctl/process_live.go, internal/cli/provider_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/loop/live_stream_probe.go, internal/loop/provider_accounts_live_e2e_test.go, internal/loop/provider_accounts_live_credentials_test.go, internal/cli/provider_loop_task_channel_live_test.go, internal/cli/provider_loop_task_observation_live_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go]
+updated: 2026-09-24
 ---
 
 `make provider-live-e2e COOP_LIVE_TARGETS='...'` is the permissive prerequisite probe;
@@ -13,6 +13,11 @@ token that cannot outlive the run. The latter expands `all` from `agents.Names()
 also accepts a complete registry-ordered explicit target list for account selection, and succeeds
 only when every registered provider was attempted once and passed. Anything after the marker
 command starts is a failure, including quota/auth errors; there are no retries.
+Each live parent resolves the default managed base image after `config.Load()`, as production
+`cli.Main` does, before looking for the image or handing runtime settings to its clean child.
+The bare `coop-box` name is only the config default, not the built `coop-box:<definition>` tag;
+forgetting that resolution skips all providers as `missing_image` after a successful build.
+Explicit operator base/image overrides remain unchanged.
 
 `make provider-loop-live-e2e COOP_LIVE_TARGETS='...'` and its strict `-all` form reuse that same
 admission and evidence contract for one writable task-completion attempt. The deterministic suite
@@ -177,6 +182,9 @@ isolation failures and take precedence over a provider result. Stable summaries 
 raw output; reproduce behavior in the deterministic fixture.
 
 ## Changelog
+- 2026-09-24 — reverified four live parent entrypoints and their clean-child runtime settings.
+  A real VM qualification built a managed base but skipped every provider as `missing_image`
+  before any paid call; parents now resolve the definition tag before admission.
 - 2026-09-22 - selected host-vault isolation, mandatory shared MCP witness, production lifecycle
   decoding and bounded real-controller account recovery; deterministic controls do not claim live proof
 - 2026-09-17 - Podman removed as a runtime; its connection capture is gone and a retired name yields no env
