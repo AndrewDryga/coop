@@ -194,15 +194,15 @@ provider-delegate-live-e2e-all: ## Strict write-capable coop-delegate probe for 
 # LockedClients): it rebuilds this host's box and filtered setup from the working tree, runs every
 # strict live suite against them, and records the result. PAID — every provider answers real
 # prompts. Full logs stay in the printed directory; a failure shows its tail.
+# The three offline suites run FIRST: they need only the image the setup step just built and call no
+# model, so a red there costs nothing — behind the paid suites, the same red would arrive after every
+# provider had already answered real prompts.
 provider-qualify: ## PAID: qualify the locked clients on every provider and record it (qualification.json)
 	@go run ./tools/qualify -preflight
 	@logs="$$(mktemp -d)"; echo "logs: $$logs"; \
 	go build -o "$$logs/coop" . && mkdir "$$logs/repo" \
 	  && (cd "$$logs/repo" && git init -q && "$$logs/coop" build && "$$logs/coop" net setup) < /dev/null > "$$logs/setup.log" 2>&1 \
 	  || { tail -n 40 "$$logs/setup.log"; exit 1; }; \
-# The three offline suites run FIRST: they need only the image the setup step just built and call no
-# model, so a red there costs nothing — behind the paid suites, the same red would arrive after every
-# provider had already answered real prompts.
 	for suite in native-roles-e2e skills-e2e mcp-e2e \
 	             provider-live-e2e-all provider-resume-live-e2e-all provider-loop-live-e2e-all provider-consult-live-e2e-all provider-delegate-live-e2e-all \
 	             provider-network-live-e2e-all provider-accounts-live-e2e-all acp-e2e; do \

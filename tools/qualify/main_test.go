@@ -75,6 +75,32 @@ func TestQualificationPreflightAcceptsEnvOnlyDefaults(t *testing.T) {
 	}
 }
 
+func TestProviderQualifyKeepsLogsInOneRecipeShell(t *testing.T) {
+	data, err := os.ReadFile("../../Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(data), "\n")
+	start, end := -1, -1
+	for i, line := range lines {
+		if strings.Contains(line, `@logs="$$(mktemp -d)"`) {
+			start = i
+		}
+		if strings.Contains(line, `go run ./tools/qualify -logs "$$logs"`) {
+			end = i
+		}
+	}
+	if start < 0 || end <= start {
+		t.Fatal("provider-qualify log directory and recorder recipe not found")
+	}
+	// Make starts a new shell at every recipe boundary, discarding the logs variable.
+	for i := start; i <= end; i++ {
+		if !strings.HasPrefix(lines[i], "\t") || (i < end && !strings.HasSuffix(strings.TrimSpace(lines[i]), `\`)) {
+			t.Fatalf("provider-qualify recipe splits before the recorder at Makefile:%d", i+1)
+		}
+	}
+}
+
 func summaryLine(t *testing.T, strict bool, results []liveprovider.ProviderResult) string {
 	t.Helper()
 	summary := liveprovider.Summary{Schema: 1, Strict: strict, Results: results}
