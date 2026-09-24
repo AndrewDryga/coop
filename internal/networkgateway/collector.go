@@ -818,7 +818,7 @@ func (c *Collector) publish(kernel KernelSample, kernelErr error, rows []SocketR
 		c.inventoryAt = &s.AsOf
 		current := make(map[socketAttemptKey]struct{})
 		rows = slices.DeleteFunc(slices.Clone(rows), func(row SocketRow) bool {
-			if row.UID != 1000 || row.State != "connecting" || c.boundary.captured(row.UID, row.Tuple.Local, row.Tuple.Peer) {
+			if row.UID != c.boundary.agentUID || row.State != "connecting" || c.boundary.captured(row.UID, row.Tuple.Local, row.Tuple.Peer) {
 				return false
 			}
 			key := socketAttemptKey{Tuple: row.Tuple, UID: row.UID, Inode: row.Inode}
@@ -1011,10 +1011,10 @@ func (c *Collector) publish(kernel KernelSample, kernelErr error, rows []SocketR
 		if row.UID != 65532 || row.Inode == 0 {
 			c.markBoundaryGap("unattributed_socket")
 			switch {
-			case row.UID == 1000 && row.State == "connecting":
+			case row.UID == c.boundary.agentUID && row.State == "connecting":
 				c.unverifiedAttempt = true
 				reason = "agent_attempt_unverified"
-			case row.UID == 1000:
+			case row.UID == c.boundary.agentUID:
 				c.unexpectedAgent = true
 				reason = "unexpected_agent_connection"
 				s.Health.Enforcer = networkview.Health{Status: "unknown", Reason: reason}

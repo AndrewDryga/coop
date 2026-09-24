@@ -104,6 +104,7 @@ type LaunchConfig struct {
 	Version   int             `json:"version"`
 	RunID     string          `json:"run_id"`
 	Epoch     string          `json:"gateway_epoch"`
+	AgentUID  uint32          `json:"agent_uid"`
 	Policy    egress.Snapshot `json:"policy"`
 	Protected []netip.Prefix  `json:"protected"`
 	// Services binds each approved `service:` grant to the ONE container
@@ -302,7 +303,7 @@ func ReadLaunchConfig(reader io.Reader) (LaunchConfig, error) {
 }
 
 func (c LaunchConfig) Validate() error {
-	if c.Version != 1 || !lowerHex(c.RunID, 32) || !lowerHex(c.Epoch, 32) || !lowerHex(c.Policy.Fingerprint, 64) || c.Policy.Version != egress.Version ||
+	if c.Version != 1 || !validAgentUID(c.AgentUID) || !lowerHex(c.RunID, 32) || !lowerHex(c.Epoch, 32) || !lowerHex(c.Policy.Fingerprint, 64) || c.Policy.Version != egress.Version ||
 		len(c.Policy.Grants) > egress.MaxGrants || len(c.Protected) > MaxProtectedRanges || c.Policy.RequireSupported() != nil {
 		return Failure("gateway_configuration_invalid")
 	}
@@ -369,7 +370,7 @@ func RunController(ctx context.Context, config LaunchConfig) error {
 	if err := os.Mkdir("/ipc/controller", 0710); err != nil {
 		return Failure("controller_socket_unavailable")
 	}
-	c, err := NewController(config.identity(clock), config.Policy, config.Protected, config.Services, config.ServiceProxyClients,
+	c, err := NewController(config.identity(clock), config.AgentUID, config.Policy, config.Protected, config.Services, config.ServiceProxyClients,
 		config.Serve, config.Ingress, config.Brokers, clock, applyKernelRules)
 	if err != nil {
 		return err
@@ -443,7 +444,7 @@ func NewGuardRuntime(config LaunchConfig) (*GuardRuntime, error) {
 	events := NewGuardEvents(clock)
 	identity := config.identity(clock)
 	controller := ControllerClient{Path: ControllerSocket, Identity: identity, Clock: clock}
-	guard, err := NewGuard(config.Policy, clock, r, controller, events)
+	guard, err := NewGuard(config.AgentUID, config.Policy, clock, r, controller, events)
 	if err != nil {
 		doh.Close()
 		return nil, err

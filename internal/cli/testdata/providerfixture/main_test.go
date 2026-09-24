@@ -17,6 +17,22 @@ import (
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
+func TestCacheVolumeNamesMatchNativeLinuxIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		linux    bool
+		uid, gid int
+		want     string
+	}{
+		{false, 501, 20, "coop-cache"},
+		{true, 1000, 1000, "coop-cache"},
+		{true, 1001, 1002, "coop-cache-1001-1002"},
+	} {
+		if got := cacheVolumeForIdentity("coop-cache", tc.linux, tc.uid, tc.gid); got != tc.want {
+			t.Errorf("identity %t %d:%d: got %q, want %q", tc.linux, tc.uid, tc.gid, got, tc.want)
+		}
+	}
+}
+
 func TestParseRuntimeAcceptsTheNarrowRunDialect(t *testing.T) {
 	root := canonicalTemp(t)
 	repo := filepath.Join(root, "repo")
@@ -279,7 +295,7 @@ func TestParseRuntimeRejectsWorkdirTraversalAndUnsafeMountPolicy(t *testing.T) {
 		{"run", "-v", repo + ":/workspace", "-v", state + ":/etc/fixture", "-w", "/workspace", "fixture-image", "future-provider"},
 		{"run", "-v", repo + ":/workspace", "-v", state + ":/home/node/.future-provider/config", "-w", "/workspace", "fixture-image", "future-provider"},
 		{"run", "-v", repo + ":/workspace", "-v", state + ":/home/node/.future-provider/config:ro", "-w", "/workspace", "fixture-image", "future-provider"},
-		{"run", "-v", repo + ":/workspace", "-v", "coop-cache:/home/node/.cache:ro", "-w", "/workspace", "fixture-image", "future-provider"},
+		{"run", "-v", repo + ":/workspace", "-v", cacheVolume("coop-cache") + ":/home/node/.cache:ro", "-w", "/workspace", "fixture-image", "future-provider"},
 	}
 	for _, args := range cases {
 		if _, err := parseRuntime(root, "fixture-image", args); err == nil {

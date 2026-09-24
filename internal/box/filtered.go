@@ -56,6 +56,7 @@ func capturedSessionWorkspace(capture *CapturedEgress, spec RunSpec, runRepo str
 }
 
 type filteredExecution struct {
+	agentIdentity       agentIdentity
 	store               *networkstate.Store
 	docker              filteredDocker
 	policy              egress.Snapshot
@@ -246,7 +247,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 			ui.Detail("waiting for Docker to start this box (%s so far)", elapsed.Round(time.Second))
 		}
 	}
-	f := &filteredExecution{store: capture.Store, docker: docker, policy: policy, attempted: map[string]bool{}, taskVolume: spec.taskVolume, authMarkers: authMarkers, authoritySpec: spec, authorityConfig: cfg}
+	f := &filteredExecution{store: capture.Store, docker: docker, policy: policy, agentIdentity: boxAgentIdentity(), attempted: map[string]bool{}, taskVolume: spec.taskVolume, authMarkers: authMarkers, authoritySpec: spec, authorityConfig: cfg}
 	if brokerPlan != nil {
 		f.broker = &credentialBrokerRun{plan: brokerPlan}
 	}
@@ -343,7 +344,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	if smoke != nil && smoke.registered != nil {
 		smoke.registered(f.record)
 	}
-	launch := networkgateway.LaunchConfig{Version: 1, RunID: f.record.ID, Epoch: f.record.Epoch, Policy: policy, Protected: protected,
+	launch := networkgateway.LaunchConfig{Version: 1, RunID: f.record.ID, Epoch: f.record.Epoch, AgentUID: uint32(f.agentIdentity.uid), Policy: policy, Protected: protected,
 		Services: f.services, ServiceProxyClients: f.serviceProxyClients, Serve: servePorts, Ingress: ingress, Brokers: f.broker.gatewayRoutes()}
 	if err := launch.Validate(); err != nil {
 		return f, err

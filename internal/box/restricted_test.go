@@ -2,6 +2,7 @@ package box
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -85,10 +86,9 @@ func seedFrom(t *testing.T, args []string) string {
 	return ""
 }
 
-const (
-	ownedScratch = "rw,exec,nosuid,nodev,uid=1000,gid=1000,size=1g"
-	seedScript   = `cp -R /coop/seed/. "$1"/ && shift && exec "$@"`
-)
+var ownedScratch = fmt.Sprintf("rw,exec,nosuid,nodev,uid=%d,gid=%d,size=1g", boxAgentIdentity().uid, boxAgentIdentity().gid)
+
+const seedScript = `cp -R /coop/seed/. "$1"/ && shift && exec "$@"`
 
 // The bare golden: no repository, no home, no cache, no asdf, no instruction/git/MCP mount — the
 // read-only root, three owned tmpfs, one read-only seed bind, and the provider's own no-tools
@@ -203,7 +203,7 @@ func TestRunReadOnlyMountsRepoReadOnlyAndNothingWritable(t *testing.T) {
 			t.Errorf("writable bind %q in a readonly run", got[i+1])
 		}
 	}
-	for _, forbidden := range []string{"coop-cache:", "coop-asdf:", cfg.AgentDir("claude") + ":"} {
+	for _, forbidden := range []string{"coop-cache", "coop-asdf", cfg.AgentDir("claude") + ":"} {
 		if slices.ContainsFunc(got, func(arg string) bool { return strings.HasPrefix(arg, forbidden) }) {
 			t.Errorf("readonly run mounts %s", forbidden)
 		}
@@ -601,8 +601,8 @@ func TestValidateRestrictedOptions(t *testing.T) {
 	}
 }
 
-// Normal mode is untouched: a full-featured spec assembles to exactly the bytes it did before the
-// modes existed, and spelling the mode out changes nothing.
+// Normal mode keeps its ordinary launch profile; cache volumes are named for the native host
+// identity, and spelling the mode out changes nothing.
 func TestAssembleArgsNormalModeGolden(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: dir, BaseImage: "coop-box", MCPFile: filepath.Join(dir, "mcp.json"), MCPInBox: "/home/node/.mcp.json", Egress: "open", ConsultTimeout: "30"}
@@ -646,8 +646,8 @@ func TestAssembleArgsNormalModeGolden(t *testing.T) {
 		"-e", "COOP_BOX=1",
 		"-e", "COOP_SUPERVISE_DESCENDANTS=1",
 		"--network", "coop-repo_default",
-		"-v", "coop-cache:/home/node/.cache",
-		"-v", "coop-asdf:/home/node/.asdf",
+		"-v", boxAgentIdentity().volume("coop-cache") + ":/home/node/.cache",
+		"-v", boxAgentIdentity().volume("coop-asdf") + ":/home/node/.asdf",
 		"-w", "/workspace", "coop-box", "claude",
 	}
 	if got := assemble(spec); !slices.Equal(got, want) {

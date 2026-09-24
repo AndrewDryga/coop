@@ -98,6 +98,7 @@ const ImageAgeNudge = 30 * 24 * time.Hour
 // or reports a skew on a guess.
 var baseDefHash = sync.OnceValue(func() string {
 	sum := sha256.New()
+	fmt.Fprintf(sum, "agent=%s\x00", boxAgentIdentity().user())
 	for _, arch := range []string{"amd64", "arm64"} {
 		files, err := baseImageDefinition(agents.ClientPlatform{OS: "linux", Architecture: arch, Libc: "glibc"})
 		if err != nil {

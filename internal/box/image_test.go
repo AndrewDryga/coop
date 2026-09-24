@@ -1,6 +1,7 @@
 package box
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -320,7 +321,7 @@ func TestBoxDockerfileUntracked(t *testing.T) {
 }
 
 // projectBuildArgs: a base-inheriting Dockerfile gets the COOP_BASE_IMAGE build-arg and, on --fresh,
-// --no-cache WITHOUT --pull (the base is a local tag); a standalone one gets --pull on fresh and no arg.
+// --no-cache WITHOUT --pull (the base is a local tag); a standalone one gets --pull on fresh.
 func TestProjectBuildArgs(t *testing.T) {
 	// Inherits the base: build-arg present, no --pull even on fresh.
 	got := projectBuildArgs("/ctx", ".agent/Dockerfile", "coop-app", "coop-box", true, true)
@@ -328,17 +329,28 @@ func TestProjectBuildArgs(t *testing.T) {
 	if !strings.Contains(joined, "--build-arg COOP_BASE_IMAGE=coop-box") {
 		t.Errorf("inheriting build must pass the base build-arg: %v", got)
 	}
+	id := boxAgentIdentity()
+	for _, want := range []string{"--build-arg COOP_BOX_UID=" + fmt.Sprint(id.uid), "--build-arg COOP_BOX_GID=" + fmt.Sprint(id.gid)} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("inheriting build missing %s: %v", want, got)
+		}
+	}
 	if strings.Contains(joined, "--pull") {
 		t.Errorf("a local base can't be pulled — no --pull on an inheriting build: %v", got)
 	}
 	if !strings.Contains(joined, "--no-cache") {
 		t.Errorf("--fresh must still add --no-cache: %v", got)
 	}
-	// Standalone (external FROM): no build-arg, --pull on fresh.
+	// Standalone (external FROM): no base-image arg, but still gets the host identity.
 	got = projectBuildArgs("/ctx", ".agent/Dockerfile", "coop-app", "coop-box", false, true)
 	joined = strings.Join(got, " ")
 	if strings.Contains(joined, "COOP_BASE_IMAGE") {
 		t.Errorf("a standalone build must not pass the base arg: %v", got)
+	}
+	for _, want := range []string{"--build-arg COOP_BOX_UID=" + fmt.Sprint(id.uid), "--build-arg COOP_BOX_GID=" + fmt.Sprint(id.gid)} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("standalone build missing %s: %v", want, got)
+		}
 	}
 	if !strings.Contains(joined, "--pull") || !strings.Contains(joined, "--no-cache") {
 		t.Errorf("a standalone --fresh build should --pull --no-cache: %v", got)

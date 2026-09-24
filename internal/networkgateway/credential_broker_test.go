@@ -612,7 +612,7 @@ func TestCredentialBrokerWaitsOutAConcurrentLeaseUpdate(t *testing.T) {
 	var holding atomic.Bool
 	applying, release := make(chan struct{}), make(chan struct{})
 	c, err := NewController(Identity{Clock: clock.Domain(), RunID: config.RunID, Epoch: config.Epoch, PolicyFingerprint: config.Policy.Fingerprint},
-		config.Policy, nil, nil, nil, nil, netip.Addr{}, config.Brokers, clock, func(_ context.Context, rules string) error {
+		1000, config.Policy, nil, nil, nil, nil, netip.Addr{}, config.Brokers, clock, func(_ context.Context, rules string) error {
 			if strings.HasPrefix(rules, "flush set") && holding.CompareAndSwap(false, true) {
 				close(applying)
 				<-release
@@ -686,7 +686,7 @@ func TestControllerKeepsBrokerLeaseOutOfAgentPolicy(t *testing.T) {
 	route := CredentialBrokerRoute{Name: "claude", Kind: CredentialBrokerProvider, Upstream: "api.anthropic.com", Header: "x-api-key", Methods: []string{"POST"}, Path: "/v1/messages", Port: 443}
 	codex := CredentialBrokerRoute{Name: "codex", Kind: CredentialBrokerProvider, Upstream: "api.openai.com", Header: "authorization", HeaderPrefix: "Bearer ", Methods: []string{"POST"}, Path: "/v1/responses", Port: 443}
 	c, err := NewController(Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32), PolicyFingerprint: policy.Fingerprint},
-		policy, nil, nil, nil, nil, netip.Addr{}, []CredentialBrokerRoute{route, codex}, clock, func(context.Context, string) error { return nil })
+		1000, policy, nil, nil, nil, nil, netip.Addr{}, []CredentialBrokerRoute{route, codex}, clock, func(context.Context, string) error { return nil })
 	if err != nil || c.Initialize(context.Background(), netip.MustParseAddr("1.1.1.1")) != nil {
 		t.Fatal("controller setup", err)
 	}

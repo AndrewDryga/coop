@@ -168,6 +168,7 @@ func parseSocketTable(table socketTable, b boundary, retained [3][]SocketRow) ([
 // gateway EXPECTS: the permanent denials, plus the frozen policy that says
 // which raw destinations this run may dial without passing through the guard.
 type boundary struct {
+	agentUID            uint32
 	protected           []netip.Prefix
 	policy              egress.Snapshot
 	serviceProxyClients []ServiceProxyClient
@@ -182,7 +183,7 @@ type boundary struct {
 // correlate, so treating it as an unattributed flow would report an allowed
 // connection as an evidence gap and, mid-handshake, as a denial that never happened.
 func (b boundary) captured(uid uint32, local, peer netip.AddrPort) bool {
-	if uid == 1000 && peer.Addr().Is4() {
+	if uid == b.agentUID && peer.Addr().Is4() {
 		// The run's own namespace loopback is permitted, not a protected host
 		// surface: an agent's `npm test` server is its own business, and
 		// reporting it as an attempt on a protected destination would be a false

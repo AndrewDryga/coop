@@ -45,6 +45,7 @@ func (l Lease) destination() netip.AddrPort {
 
 type Controller struct {
 	identity            Identity
+	agentUID            uint32
 	policy              egress.Snapshot
 	brokers             []CredentialBrokerRoute
 	protected           []netip.Prefix
@@ -64,8 +65,11 @@ type Controller struct {
 	kernel              kernelEvents
 }
 
-func NewController(identity Identity, policy egress.Snapshot, protected []netip.Prefix, services []ServiceBinding, serviceProxyClients []ServiceProxyClient,
+func NewController(identity Identity, agentUID uint32, policy egress.Snapshot, protected []netip.Prefix, services []ServiceBinding, serviceProxyClients []ServiceProxyClient,
 	serve []int, ingress netip.Addr, brokers []CredentialBrokerRoute, clock *BootClock, apply ApplyRules) (*Controller, error) {
+	if !validAgentUID(agentUID) {
+		return nil, errors.New("invalid gateway agent UID")
+	}
 	if err := policy.RequireSupported(); err != nil {
 		return nil, err
 	}
@@ -93,7 +97,7 @@ func NewController(identity Identity, policy egress.Snapshot, protected []netip.
 			return nil, errors.New("invalid protected namespace prefix")
 		}
 	}
-	return &Controller{identity: identity, policy: policy.Clone(), brokers: slices.Clone(brokers), protected: slices.Clone(protected), grants: grants,
+	return &Controller{identity: identity, agentUID: agentUID, policy: policy.Clone(), brokers: slices.Clone(brokers), protected: slices.Clone(protected), grants: grants,
 		serviceProxyClients: slices.Clone(serviceProxyClients), serve: slices.Clone(serve),
 		ingress: ingress, apply: apply, now: clock.instant, clock: clock, leases: map[string]Lease{}}, nil
 }
@@ -370,7 +374,7 @@ func (c *Controller) initialRules(maintenance netip.Addr) string {
 	// own pinned DoH resolver.
 	captured, capture := c.policy.TLSPorts(), ""
 	if len(captured) != 0 {
-		capture = fmt.Sprintf("  meta nfproto ipv4 meta skuid 1000 tcp dport %s ip daddr != @protected4 redirect to :15443\n", portSet(captured))
+		capture = fmt.Sprintf("  meta nfproto ipv4 meta skuid %d tcp dport %s ip daddr != @protected4 redirect to :15443\n", c.agentUID, portSet(captured))
 	}
 	replies := append(slices.Clone(captured), 443)
 	slices.Sort(replies)
@@ -390,10 +394,10 @@ func (c *Controller) initialRules(maintenance netip.Addr) string {
 		}
 		switch grant.protocol {
 		case "tcp", "udp":
-			fmt.Fprintf(out, "  meta skuid 1000 ip daddr %s %s dport %s counter name %s accept\n", grant.target, grant.protocol, portSet(grant.ports), grant.counter)
+			fmt.Fprintf(out, "  meta skuid %d ip daddr %s %s dport %s counter name %s accept\n", c.agentUID, grant.target, grant.protocol, portSet(grant.ports), grant.counter)
 			fmt.Fprintf(back, "  ip saddr %s %s sport %s ct state established accept\n", grant.target, grant.protocol, portSet(grant.ports))
 		case "icmp":
-			fmt.Fprintf(out, "  meta skuid 1000 ip daddr %s icmp type echo-request counter name %s accept\n", grant.target, grant.counter)
+			fmt.Fprintf(out, "  meta skuid %d ip daddr %s icmp type echo-request counter name %s accept\n", c.agentUID, grant.target, grant.counter)
 			fmt.Fprintf(back, "  ip saddr %s icmp type echo-reply ct state established,related accept\n", grant.target)
 		}
 	}
@@ -414,7 +418,7 @@ func (c *Controller) initialRules(maintenance netip.Addr) string {
 		fmt.Fprintf(&serviceIngress, "  ip saddr %s tcp dport %d ct state new,established accept\n", client.Address, ServiceProxyPort)
 		fmt.Fprintf(&serviceEgress, "  ip daddr %s tcp sport %d ct state established accept\n", client.Address, ServiceProxyPort)
 	}
-	return fmt.Sprintf(`table inet coop_net {
+	rules := fmt.Sprintf(`table inet coop_net {
  counter denied_agent { }
  counter protected_agent { }
  counter denied_ingress { }
@@ -429,18 +433,18 @@ func (c *Controller) initialRules(maintenance netip.Addr) string {
  }
  chain capture {
   type nat hook output priority -110; policy accept;
-%s  meta nfproto ipv4 meta skuid 1000 udp dport 53 redirect to :15353
-  meta nfproto ipv4 meta skuid 1000 tcp dport 53 redirect to :15353
+%s  meta nfproto ipv4 meta skuid AGENT_UID udp dport 53 redirect to :15353
+  meta nfproto ipv4 meta skuid AGENT_UID tcp dport 53 redirect to :15353
  }
  chain output {
   type filter hook output priority 0; policy drop;
-  meta skuid 1000 meta nfproto ipv6 counter name denied_agent reject with icmpx type admin-prohibited
-  meta skuid 1000 ct state invalid counter name denied_agent drop
-  meta skuid 1000 oifname "lo" accept
-  meta skuid 1000 ip daddr 127.0.0.0/8 accept
+  meta skuid AGENT_UID meta nfproto ipv6 counter name denied_agent reject with icmpx type admin-prohibited
+  meta skuid AGENT_UID ct state invalid counter name denied_agent drop
+  meta skuid AGENT_UID oifname "lo" accept
+  meta skuid AGENT_UID ip daddr 127.0.0.0/8 accept
   meta skuid 65532 oifname "lo" ct state established accept
-%s  meta skuid 1000 ip daddr @protected4 counter name protected_agent reject with icmpx type admin-prohibited
-%s  meta skuid 1000 counter name denied_agent reject with icmpx type admin-prohibited
+%s  meta skuid AGENT_UID ip daddr @protected4 counter name protected_agent reject with icmpx type admin-prohibited
+%s  meta skuid AGENT_UID counter name denied_agent reject with icmpx type admin-prohibited
   meta nfproto ipv6 counter name denied_service drop
   ct state invalid counter name denied_service drop
   ip daddr @protected4 counter name denied_service drop
@@ -466,4 +470,5 @@ func (c *Controller) initialRules(maintenance netip.Addr) string {
 }
 `, counters.String(), strings.Join(protected, ", "), capture, serviceEgress.String(), egressRules.String(), maintenance,
 		serviceIngress.String(), portSet(replies), ingressRules.String())
+	return strings.ReplaceAll(rules, "AGENT_UID", fmt.Sprint(c.agentUID))
 }

@@ -3,12 +3,17 @@ name: box-base-image-tags
 description: Coop's shared base is tagged by its box definition so two Coop versions on one host keep their own; why there is no :latest alias, how an upgrade is repaired, and what stays shared
 subsystem: box
 sources: [internal/box/reclaim.go, internal/box/derived_image.go, internal/box/filtered.go, internal/box/image.go, internal/box/staleness.go, internal/box/locked_image.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/cli/cli.go, internal/cli/build_cmd.go, internal/cli/session_cmd.go, internal/forkctl/host.go, internal/forkctl/merge.go]
-updated: 2026-09-22
+updated: 2026-09-25
 ---
 
 `COOP_BASE_IMAGE` defaults to the bare repository `coop-box`, which `box.ResolveBaseImage` (run
 right after `config.Load` in `cli.Main` and the session service) turns into
 `coop-box:<first 32 hex of baseDefHash>`: the hash of the base definition this binary would build.
+On native Linux, the host user's UID/GID are part of that definition and the locked-client image's
+build arguments, so two users of one Docker daemon do not reuse images with mismatched `/home/node`
+ownership. macOS Docker Desktop retains UID/GID 1000. Native Linux cache/asdf volume names also
+include non-default UID/GID; the default names stay unchanged. An ordinary project's built image
+gets the same per-user separation, while filtered project tags already hash the locked client image.
 The filtered client image was already tagged that way (`coop-clients:<definition>`,
 `locked_image.go`). Any other value — `coop-box:latest`, a registry image — is the operator's and
 stands as written; `IsManagedBase` tells the two apart.
@@ -40,7 +45,8 @@ Filtered gates defer to their captured image instead. `coop build --egress open`
 print `Image: coop-box:<definition>` when preparing the shared image. Until the next launch,
 `coop update --check` and `coop doctor` still report the new tag as not built.
 
-Still shared: a project image (`coop-<repo>`, from `.agent/Dockerfile`) keeps one name, so two
+Still shared across Coop versions for one user: a project image (`coop-<repo>`, from `.agent/Dockerfile`;
+on native Linux with a non-default UID/GID it has a user suffix) keeps one name per user, so two
 versions still take turns on it, and a project box built on an older base keeps those clients until
 `coop build` — `checkCoopBox` never replaces a project's image. A superseded base IS reclaimed now
 (`reclaim.go`), but only after 14 days with no recorded use and no container referencing it. A
@@ -63,6 +69,8 @@ record, so the 14 days start then), and an image any container still references 
 stopped, whoever owns it — is kept.
 
 ## Changelog
+- 2026-09-25 — rechecked image tagging against UID-aware base and locked-image builds and
+  per-identity cache volumes for native Linux users.
 - 2026-09-22 — filtered launches no longer require the unused ordinary project tag; only an
   explicit host build constructs the filtered project image.
 - 2026-09-20 — a project's own derived images join the reclaim, recognized by the `coop.derived`

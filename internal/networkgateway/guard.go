@@ -41,6 +41,7 @@ type destinationReader func(net.Conn) (netip.AddrPort, error)
 // construction. Envoy process supervision and host resource ownership are above
 // this server; no agent-facing handler can create privileges or change routing.
 type Guard struct {
+	agentUID            uint32
 	policy              egress.Snapshot
 	clock               *BootClock
 	resolver            *Resolver
@@ -53,7 +54,10 @@ type Guard struct {
 
 func (g *Guard) setDestinationReader(read destinationReader) { g.original.Store(&read) }
 
-func NewGuard(policy egress.Snapshot, clock *BootClock, resolver *Resolver, controller ControllerClient, events *GuardEvents) (*Guard, error) {
+func NewGuard(agentUID uint32, policy egress.Snapshot, clock *BootClock, resolver *Resolver, controller ControllerClient, events *GuardEvents) (*Guard, error) {
+	if !validAgentUID(agentUID) {
+		return nil, Failure("gateway_configuration_invalid")
+	}
 	if err := policy.RequireSupported(); err != nil {
 		return nil, err
 	}
@@ -61,7 +65,7 @@ func NewGuard(policy egress.Snapshot, clock *BootClock, resolver *Resolver, cont
 		controller.Clock.Domain() != clock.Domain() || resolver.domain != clock.Domain() || controller.Identity.PolicyFingerprint != policy.Fingerprint || resolver.policy.Fingerprint != policy.Fingerprint {
 		return nil, Failure("gateway_configuration_invalid")
 	}
-	g := &Guard{policy: policy.Clone(), clock: clock, resolver: resolver, controller: controller, events: events}
+	g := &Guard{agentUID: agentUID, policy: policy.Clone(), clock: clock, resolver: resolver, controller: controller, events: events}
 	g.setDestinationReader(readOriginalDestination)
 	return g, nil
 }
@@ -70,7 +74,7 @@ func NewGuard(policy egress.Snapshot, clock *BootClock, resolver *Resolver, cont
 // which addresses are permanently denied, and which raw destinations a grant
 // lets the agent dial without a proxied leg to correlate.
 func (g *Guard) boundary() boundary {
-	return boundary{protected: g.resolver.protected, policy: g.policy, tlsPorts: g.policy.TLSPorts(), serviceProxyClients: g.serviceProxyClients}
+	return boundary{agentUID: g.agentUID, protected: g.resolver.protected, policy: g.policy, tlsPorts: g.policy.TLSPorts(), serviceProxyClients: g.serviceProxyClients}
 }
 
 func (g *Guard) Serve(ctx context.Context, ready func()) error {

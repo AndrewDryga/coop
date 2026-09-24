@@ -25,9 +25,8 @@ func ResolveRepo(override string) (string, error) {
 	return os.Getwd()
 }
 
-// ServicesProject is the deterministic per-REPO name: a lowercased, sanitized basename. It is the
-// per-project IMAGE tag — legitimately shared across clones of the same repo (same Dockerfile →
-// same image), so it stays basename-only.
+// ServicesProject is the deterministic per-REPO base name: a lowercased, sanitized basename.
+// ImageForRepo adds a native Linux user suffix for project images; Compose names stay repo-based.
 func ServicesProject(repo string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(filepath.Base(repo)) {
@@ -43,7 +42,7 @@ func ServicesProject(repo string) string {
 // parent — or two clones — never share one compose project (and its volumes). The path is
 // canonicalized (symlinks resolved, e.g. macOS /var→/private/var) so the SAME physical workspace
 // always yields the SAME name: its sidecar volumes persist across every run. Distinct from the
-// image tag (ServicesProject), which stays repo-based.
+// image base name (ServicesProject); ImageForRepo adds a user suffix on native Linux.
 func ComposeProject(workspacePath string) string {
 	canon := canonicalWorkspace(workspacePath)
 	sum := sha256.Sum256([]byte(canon))

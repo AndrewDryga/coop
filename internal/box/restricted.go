@@ -47,10 +47,6 @@ const (
 	// repository. Exported because an ACP client outside the box (the session daemon) names the
 	// session's cwd in session/new, and for a bare session this is the only directory there is.
 	BareWorkdir = "/workspace"
-	// restrictedBoxUID is the shared base image's `node` user. A tmpfs is root-owned unless told
-	// otherwise, so every scratch mount names the user that must write it. Restricted modes run
-	// the base image only, which is what makes this a constant rather than an inspection.
-	restrictedBoxUID = 1000
 	// restrictedScratchSize caps each scratch tmpfs. A cap, not an allocation: pages are charged
 	// only as they are written, and a runaway fills this rather than the runtime host's memory.
 	restrictedScratchSize = "1g"
@@ -212,7 +208,8 @@ func restrictedFilesystemArgs(cfg *config.Config, mode agents.ExecutionMode) []s
 	// exec is spelled out: Docker mounts a --tmpfs noexec unless told otherwise, and scratch is
 	// where an experiment's script, a built test binary or an npm bin has to run from. nosuid
 	// and nodev stay; under --cap-drop ALL and no-new-privileges they cost nothing to keep.
-	owned := fmt.Sprintf("rw,exec,nosuid,nodev,uid=%d,gid=%d,size=%s", restrictedBoxUID, restrictedBoxUID, restrictedScratchSize)
+	id := boxAgentIdentity()
+	owned := fmt.Sprintf("rw,exec,nosuid,nodev,uid=%d,gid=%d,size=%s", id.uid, id.gid, restrictedScratchSize)
 	args := []string{"--read-only",
 		"--tmpfs", cfg.HomeInBox + ":" + owned + ",mode=0700",
 		"--tmpfs", "/tmp:" + owned + ",mode=1777"}

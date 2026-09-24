@@ -32,6 +32,9 @@ const lockedClientRepository = "coop-clients"
 // It deliberately accepts no Config, repository path, fresh/floating flag,
 // package override or custom Dockerfile: the inputs are embedded.
 func BuildNetworkCandidate(ctx context.Context, docker *runtime.Docker, stdout, stderr *os.File) (networkstate.CandidateSpec, error) {
+	if !boxAgentIdentity().valid() {
+		return networkstate.CandidateSpec{}, errors.New("this Linux user ID cannot build Coop boxes: the box user must be non-root and distinct from the gateway user 65532")
+	}
 	if ctx == nil || docker == nil {
 		return networkstate.CandidateSpec{}, errors.New("network construction requires a bound Docker runtime")
 	}
@@ -73,6 +76,9 @@ func networkRuntimeBinding(info runtime.DockerInfo, endpoint string) networkstat
 const lockedPath = agents.LauncherDir + ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 func lockedImageDefinition(platform agents.ClientPlatform) (runtime.DockerBuild, []byte, agents.ClientClosure, error) {
+	if !boxAgentIdentity().valid() {
+		return runtime.DockerBuild{}, nil, agents.ClientClosure{}, errors.New("unsupported box user ID")
+	}
 	closure, err := agents.LockedClientClosure(platform)
 	if err != nil {
 		return runtime.DockerBuild{}, nil, agents.ClientClosure{}, err
@@ -95,7 +101,11 @@ func lockedImageDefinition(platform agents.ClientPlatform) (runtime.DockerBuild,
 	if err := w.Close(); err != nil {
 		return runtime.DockerBuild{}, nil, agents.ClientClosure{}, err
 	}
-	spec := runtime.DockerBuild{Platform: platform.OS + "/" + platform.Architecture, Args: map[string]string{"NODE_IMAGE": pinnedNodeImage, "GO_IMAGE": pinnedGoImage}}
+	id := boxAgentIdentity()
+	spec := runtime.DockerBuild{Platform: platform.OS + "/" + platform.Architecture, Args: map[string]string{
+		"NODE_IMAGE": pinnedNodeImage, "GO_IMAGE": pinnedGoImage,
+		"COOP_BOX_UID": fmt.Sprint(id.uid), "COOP_BOX_GID": fmt.Sprint(id.gid),
+	}}
 	identity, err := json.Marshal(struct {
 		Platform string
 		Args     map[string]string

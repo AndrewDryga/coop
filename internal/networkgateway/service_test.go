@@ -22,7 +22,7 @@ import (
 
 func testLaunch(t *testing.T) LaunchConfig {
 	t.Helper()
-	return LaunchConfig{Version: 1, RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32), Policy: testPolicy(t)}
+	return LaunchConfig{Version: 1, RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32), AgentUID: 1000, Policy: testPolicy(t)}
 }
 
 func TestGuardReadinessCannotReopenDuringShutdown(t *testing.T) {
@@ -92,6 +92,25 @@ func TestGatewayLaunchConfigurationIsBoundedAndConcrete(t *testing.T) {
 	config.Policy.Grants[0].Rule.To.Domain = "API.EXAMPLE.COM"
 	if config.Validate() == nil {
 		t.Fatal("noncanonical launch grant accepted")
+	}
+}
+
+func TestGatewayLaunchRequiresDistinctAgentUID(t *testing.T) {
+	for _, uid := range []uint32{0, 65532, 1 << 31} {
+		config := testLaunch(t)
+		config.AgentUID = uid
+		if err := config.Validate(); err == nil {
+			t.Errorf("accepted agent UID %d", uid)
+		}
+		data, _ := json.Marshal(config)
+		if _, err := ReadLaunchConfig(bytes.NewReader(data)); err == nil {
+			t.Errorf("read invalid agent UID %d", uid)
+		}
+	}
+	config := testLaunch(t)
+	config.AgentUID = 1001
+	if err := config.Validate(); err != nil {
+		t.Fatal("ordinary Linux UID refused", err)
 	}
 }
 

@@ -882,7 +882,7 @@ func TestForkACPReadOnlyFrontsTheForkUnderTheRestrictedProfile(t *testing.T) {
 	if !strings.HasSuffix(line, " claude-agent-acp") {
 		t.Errorf("readonly fork ACP run must end in the plain adapter command:\n%s", line)
 	}
-	for _, forbidden := range []string{":rw ", ".coop-output", "coop.execution=", "coop-cache:", "--tools"} {
+	for _, forbidden := range []string{":rw ", ".coop-output", "coop.execution=", "-v coop-cache", "--tools"} {
 		if strings.Contains(line, forbidden) {
 			t.Errorf("readonly fork ACP run carries %q:\n%s", forbidden, line)
 		}

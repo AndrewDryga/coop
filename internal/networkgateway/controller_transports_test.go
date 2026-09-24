@@ -47,11 +47,34 @@ func transportController(t *testing.T, policy egress.Snapshot, services []Servic
 		ingress = serveIngress
 	}
 	c, err := NewController(Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32),
-		PolicyFingerprint: policy.Fingerprint}, policy, nil, services, nil, serve, ingress, nil, clock, func(context.Context, string) error { return nil })
+		PolicyFingerprint: policy.Fingerprint}, 1000, policy, nil, services, nil, serve, ingress, nil, clock, func(context.Context, string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
 	return c
+}
+
+func TestNativeLinuxAgentUIDOwnsEveryNetworkRule(t *testing.T) {
+	policy := transportPolicy(t, egress.Rule{To: egress.Destination{Domain: "api.example.com"}, Protocol: "tls", Ports: []int{443}})
+	clock := testBootClock()
+	c, err := NewController(Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32), PolicyFingerprint: policy.Fingerprint},
+		1001, policy, nil, nil, nil, nil, netip.Addr{}, nil, clock, func(context.Context, string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := c.initialRules(netip.MustParseAddr("1.1.1.1"))
+	for _, expected := range []string{
+		"meta nfproto ipv4 meta skuid 1001 tcp dport { 443 }", "meta skuid 1001 udp dport 53", "meta skuid 1001 tcp dport 53",
+		"meta skuid 1001 ip daddr @protected4", "meta skuid 1001 counter name denied_agent",
+		"meta skuid 65532 ip daddr . tcp dport @leases4 accept",
+	} {
+		if !strings.Contains(rules, expected) {
+			t.Errorf("missing %q in rules:\n%s", expected, rules)
+		}
+	}
+	if strings.Contains(rules, "skuid 1000") || strings.Contains(rules, "AGENT_UID") {
+		t.Fatal("old or unrendered agent UID in rules")
+	}
 }
 
 func TestServiceProxyIngressIsLimitedToPreparedServiceAddresses(t *testing.T) {
@@ -59,7 +82,7 @@ func TestServiceProxyIngressIsLimitedToPreparedServiceAddresses(t *testing.T) {
 	client := netip.MustParseAddr("172.31.4.8")
 	clock := testBootClock()
 	c, err := NewController(Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32),
-		PolicyFingerprint: policy.Fingerprint}, policy, []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, nil,
+		PolicyFingerprint: policy.Fingerprint}, 1000, policy, []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, nil,
 		[]ServiceProxyClient{{Name: "web", Address: client}}, nil, netip.Addr{}, nil, clock, func(context.Context, string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
@@ -242,11 +265,11 @@ func TestServePortsCannotCollideWithACapturedTLSPort(t *testing.T) {
 	clock := testBootClock()
 	identity := Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32), PolicyFingerprint: policy.Fingerprint}
 	for _, port := range []int{443, 53, 8443} {
-		if _, err := NewController(identity, policy, nil, nil, nil, []int{port}, serveIngress, nil, clock, func(context.Context, string) error { return nil }); err == nil {
+		if _, err := NewController(identity, 1000, policy, nil, nil, nil, []int{port}, serveIngress, nil, clock, func(context.Context, string) error { return nil }); err == nil {
 			t.Errorf("serve port %d was accepted alongside the capture", port)
 		}
 	}
-	if _, err := NewController(identity, policy, nil, nil, nil, []int{8000}, serveIngress, nil, clock, func(context.Context, string) error { return nil }); err != nil {
+	if _, err := NewController(identity, 1000, policy, nil, nil, nil, []int{8000}, serveIngress, nil, clock, func(context.Context, string) error { return nil }); err != nil {
 		t.Fatal("an uncaptured serve port was refused", err)
 	}
 }
@@ -258,7 +281,7 @@ func TestGrantedCIDRCannotBeatAProtectedAddress(t *testing.T) {
 	host := netip.MustParsePrefix("10.7.7.7/32")
 	clock := testBootClock()
 	c, err := NewController(Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32),
-		PolicyFingerprint: policy.Fingerprint}, policy, []netip.Prefix{host}, nil, nil, nil, netip.Addr{}, nil, clock, func(context.Context, string) error { return nil })
+		PolicyFingerprint: policy.Fingerprint}, 1000, policy, []netip.Prefix{host}, nil, nil, nil, netip.Addr{}, nil, clock, func(context.Context, string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}

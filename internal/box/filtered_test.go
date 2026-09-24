@@ -144,12 +144,12 @@ func filteredFixture(t *testing.T) (*filteredExecution, *filteredDaemonFixture) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, _ := json.Marshal(networkgateway.LaunchConfig{Version: 1, RunID: record.ID, Epoch: record.Epoch, Policy: policy})
+	data, _ := json.Marshal(networkgateway.LaunchConfig{Version: 1, RunID: record.ID, Epoch: record.Epoch, AgentUID: uint32(boxAgentIdentity().uid), Policy: policy})
 	record, err = store.PrepareArtifacts(ctx, record.ID, record.Revision, data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &filteredExecution{store: store, record: record, policy: policy, image: "sha256:" + strings.Repeat("b", 64), attempted: map[string]bool{}}
+	f := &filteredExecution{store: store, record: record, policy: policy, image: "sha256:" + strings.Repeat("b", 64), agentIdentity: boxAgentIdentity(), attempted: map[string]bool{}}
 	f.config, err = store.LaunchConfigPath(record.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -341,6 +341,9 @@ func (d *filteredDaemonFixture) CreateContainer(_ context.Context, spec runtime.
 	}
 	if faultSelects(d.corruptRole, role) {
 		v.User = "0"
+	}
+	if d.corruptRole == "agent-legacy-user" && role == "agent" {
+		v.User = "1000:1000"
 	}
 	plan, err := networkMountPlan(spec.Options)
 	if err != nil {
@@ -835,6 +838,19 @@ func TestFilteredCreatedSecurityMismatchNeverStartsAgent(t *testing.T) {
 	_, err := f.launch(context.Background(), RunSpec{}, nil, nil, io.Discard, io.Discard)
 	if err == nil || slices.Contains(d.log, "start:agent") {
 		t.Fatal("security mismatch started workload")
+	}
+	if gone, err := f.cleanup("launch_failed"); err != nil || !gone {
+		t.Fatal("mismatch cleanup", gone, err)
+	}
+}
+
+func TestFilteredNativeLinuxUserRejectsLegacyContainerIdentity(t *testing.T) {
+	f, d := filteredFixture(t)
+	f.agentIdentity = agentIdentity{1001, 1002}
+	d.corruptRole = "agent-legacy-user"
+	_, err := f.launch(context.Background(), RunSpec{}, nil, nil, io.Discard, io.Discard)
+	if err == nil || slices.Contains(d.log, "start:agent") {
+		t.Fatal("UID-1000 container started for UID-1001 host user", err)
 	}
 	if gone, err := f.cleanup("launch_failed"); err != nil || !gone {
 		t.Fatal("mismatch cleanup", gone, err)

@@ -145,7 +145,7 @@ func startGuardPolicyFixture(t *testing.T, policy egress.Snapshot, clock *BootCl
 	if err != nil {
 		t.Fatal(err)
 	}
-	g, err := NewGuard(c.policy, c.clock, r, control, NewGuardEvents(c.clock))
+	g, err := NewGuard(c.agentUID, c.policy, c.clock, r, control, NewGuardEvents(c.clock))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -617,7 +617,7 @@ func TestGuardRefusesResolverFromDifferentClockDomain(t *testing.T) {
 	r := newTestResolver(t, func(context.Context, []byte) ([]byte, error) { return nil, io.EOF })
 	r.domain.TimeNamespace = "67890"
 	g := fixture.guard
-	if _, err := NewGuard(g.policy, g.clock, r, g.controller, NewGuardEvents(g.clock)); err == nil {
+	if _, err := NewGuard(g.agentUID, g.policy, g.clock, r, g.controller, NewGuardEvents(g.clock)); err == nil {
 		t.Fatal("guard accepted resolver TTLs from another time namespace")
 	}
 }

@@ -503,6 +503,9 @@ func ctxStep(ctx context.Context, step string) error {
 // agent homes + MCP. It returns the container's exit code (with a nil error when
 // the container merely exited non-zero); a non-nil error means it never started.
 func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
+	if !boxAgentIdentity().valid() {
+		return -1, fmt.Errorf("this Linux user ID cannot run Coop boxes: the box user must be non-root and distinct from the gateway user 65532")
+	}
 	// The one rail on GradeSnapshot: it disables secret shadowing, so it must never be combined with
 	// a box that carries model credentials. Enforced here, at the single public entry point, rather
 	// than trusted to every caller.
@@ -3026,7 +3029,7 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 		args = append(args, "--network", networkName)
 	}
 	if spec.Cache {
-		args = append(args, "-v", "coop-cache:"+cfg.HomeInBox+"/.cache")
+		args = append(args, "-v", boxAgentIdentity().volume("coop-cache")+":"+cfg.HomeInBox+"/.cache")
 	}
 	// The task channel's socket, read-only: the box connects to it and can neither replace nor
 	// unlink it (connect needs write permission on the socket inode, which the helper set, not
@@ -3038,7 +3041,7 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 	// time; persist ~/.asdf in a volume so installs survive the disposable box and
 	// are reused across repos. Only the base image carries the asdf entrypoint.
 	if spec.Homes && spec.Image == cfg.BaseImage {
-		args = append(args, "-v", "coop-asdf:"+cfg.HomeInBox+"/.asdf")
+		args = append(args, "-v", boxAgentIdentity().volume("coop-asdf")+":"+cfg.HomeInBox+"/.asdf")
 	}
 	return append(args, "-w", workdir)
 }

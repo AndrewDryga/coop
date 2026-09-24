@@ -3,7 +3,7 @@ name: restricted-execution-modes
 description: readonly and bare share one tmpfs-only filesystem profile; the provider is seeded through a read-only bind OUTSIDE the tmpfs home, because a bind under it would be root-owned; over ACP the provider's switches ride session/new, not the adapter's argv
 subsystem: box
 sources: [internal/box/restricted.go, internal/box/restricted_filtered_composition_test.go, internal/box/filtered.go, internal/box/filtered_cleanup.go, internal/box/run.go, internal/agent/agent.go, internal/agent/claude.go, internal/cli/help.go, internal/cli/commands.go, internal/cli/exposure_flags.go, internal/cli/acp_cmd.go, internal/cli/fork_cmd.go, internal/runtime/runtime.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/network.go, internal/session/records.go]
-updated: 2026-09-23
+updated: 2026-09-25
 ---
 
 `RunSpec.Mode` (`agents.ExecutionMode`: normal, readonly, bare; empty is normal) is fixed at
@@ -13,7 +13,7 @@ and instruction mounts — so the restricted profile is what that file builds, n
 path leaves out. Normal launches are byte-identical to before (`TestAssembleArgsNormalModeGolden`).
 
 The profile: `--read-only` root; owned tmpfs at the box home and `/tmp` (bare adds `/workspace`
-as its cwd), each `rw,exec,nosuid,nodev,uid=1000,gid=1000,size=1g` (`exec` spelled out: Docker's tmpfs default is noexec, which broke `./script` and built test binaries in the live probe) — 1000 is the base image's `node`, which is why
+as its cwd), each `rw,exec,nosuid,nodev,uid=<host-uid>,gid=<host-gid>,size=1g` (`exec` spelled out: Docker's tmpfs default is noexec, which broke `./script` and built test binaries in the live probe) — the owner is the managed image's `node` identity (native Linux host UID/GID; 1000/1000 on macOS), which is why
 restricted runs accept `cfg.BaseImage` at entry and never a project/custom image (filtered launch
 substitutes its managed client image); readonly's repo and companions `:ro`; one read-only seed
 bind at `/coop/seed`, plus run-owned read-only broker configuration when needed. `validateRestrictedOptions` proves the
@@ -131,6 +131,7 @@ a tool call. What the API half still does not do: register activity for a restri
 gemini or grok — each refuses by name until a live run proves its adapter's switch.
 
 ## Changelog
+- 2026-09-25 — rechecked restricted tmpfs ownership against the host-selected managed image user.
 - 2026-09-23 — mapped implicit readonly checkouts under Linux `/tmp` to `/workspace` and kept
   the ACP `session/new` cwd aligned with the actual mount; explicit scratch destinations still refuse.
 - 2026-09-23 — moved the legacy read-only session's writable output source out of the anchored

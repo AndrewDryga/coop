@@ -49,22 +49,16 @@ func TestRestrictedFilesystemProfileIsAdmissibleOnTheFilteredCreatePath(t *testi
 	}
 }
 
-// The second precondition, and the one that would fail silently. The filtered launch hardcodes the
-// agent box's user (`--user 1000:1000`, filtered_launch.go), while the restricted profile hardcodes
-// the OWNER of every scratch tmpfs (`uid=restrictedBoxUID`). Those two numbers are written in
-// different files for different reasons and neither mentions the other.
+// The second precondition, and the one that would fail silently: the filtered launch's agent
+// user and restricted scratch ownership must come from the same host identity.
 //
 // If they ever diverge, a composed read-only/bare + filtered run still starts — and then the agent
 // cannot write its own home or /tmp, which reads as a broken client rather than a mismatched
 // sandbox. Cheaper to pin the equality than to debug it once.
 func TestRestrictedScratchIsOwnedByTheFilteredAgentUser(t *testing.T) {
-	const filteredAgentUID = 1000 // filtered_launch.go: options = append(..., "--user", "1000:1000", ...)
-	if restrictedBoxUID != filteredAgentUID {
-		t.Fatalf("the restricted scratch is owned by uid %d but a filtered agent box runs as uid %d; "+
-			"a composed run would have unwritable scratch", restrictedBoxUID, filteredAgentUID)
-	}
+	id := boxAgentIdentity()
 	profile := restrictedFilesystemArgs(&config.Config{HomeInBox: "/home/node"}, agents.ModeReadOnly)
-	want := fmt.Sprintf("uid=%d,gid=%d", filteredAgentUID, filteredAgentUID)
+	want := fmt.Sprintf("uid=%d,gid=%d", id.uid, id.gid)
 	for i, arg := range profile {
 		if arg == "--tmpfs" && i+1 < len(profile) && !strings.Contains(profile[i+1], want) {
 			t.Errorf("scratch %q is not owned by the agent user (%s)", profile[i+1], want)

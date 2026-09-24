@@ -320,12 +320,12 @@ func TestFilteredNamedVolumesAreAdmittedOnlyAfterExposureInspection(t *testing.T
 	spec := RunSpec{Image: "base", Repo: t.TempDir(), Homes: true, Cache: true}
 	options := assembleOptions(cfg, false, spec, nil, "", "", spec.Repo, ttyNone, false, nil, nil, nil, nil, nil, "", "")
 	joined := strings.Join(options, " ")
-	if !strings.Contains(joined, "coop-cache:") || !strings.Contains(joined, "coop-asdf:") {
+	if !strings.Contains(joined, boxAgentIdentity().volume("coop-cache")+":") || !strings.Contains(joined, boxAgentIdentity().volume("coop-asdf")+":") {
 		t.Fatal("ordinary named volumes disappeared from the workload plan", joined)
 	}
 	// A daemon-managed volume has no host path to expose, so it is admitted.
 	f, d := filteredFixture(t)
-	plan := []string{"-v", "coop-cache:/home/node/.cache", "-v", "coop-asdf:/home/node/.asdf"}
+	plan := []string{"-v", boxAgentIdentity().volume("coop-cache") + ":/home/node/.cache", "-v", boxAgentIdentity().volume("coop-asdf") + ":/home/node/.asdf"}
 	if err := f.validateMounts(plan, nil, nil); err != nil {
 		t.Fatal("managed named volume refused", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os/exec"
 	"reflect"
@@ -60,7 +61,10 @@ func TestLockedImageBuildContextIsPinnedDeterministicAndEmbeddedOnly(t *testing.
 	if err != nil || !reflect.DeepEqual(spec, again) || !bytes.Equal(data, againData) {
 		t.Fatal("nondeterministic definition", err)
 	}
-	if spec.Args["NODE_IMAGE"] != pinnedNodeImage || spec.Args["GO_IMAGE"] != pinnedGoImage || len(spec.Args) != 2 || spec.Labels["coop.clients.closure"] != closure.Digest {
+	id := boxAgentIdentity()
+	if spec.Args["NODE_IMAGE"] != pinnedNodeImage || spec.Args["GO_IMAGE"] != pinnedGoImage ||
+		spec.Args["COOP_BOX_UID"] != fmt.Sprint(id.uid) || spec.Args["COOP_BOX_GID"] != fmt.Sprint(id.gid) ||
+		len(spec.Args) != 4 || spec.Labels["coop.clients.closure"] != closure.Digest {
 		t.Fatal("mutable base or lost identity", spec)
 	}
 	files := make(map[string][]byte)

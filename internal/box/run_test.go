@@ -1061,7 +1061,7 @@ func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {
 	mustContain("-v", "/tmp/g:/home/node/.gemini/settings.json:ro")
 	mustContain("-v", "/tmp/gc:/home/node/.gitconfig:ro")
 	mustContain("--network", "coop-r_default")
-	mustContain("-v", "coop-cache:/home/node/.cache")
+	mustContain("-v", boxAgentIdentity().volume("coop-cache")+":/home/node/.cache")
 }
 
 func TestRunProjectsSharedMCPForNestedClaudeCommandsOnly(t *testing.T) {
@@ -3123,6 +3123,7 @@ func TestBoxLimits(t *testing.T) {
 
 func TestBuildArgs(t *testing.T) {
 	cfg := &config.Config{BaseImage: "coop-box"}
+	id := boxAgentIdentity()
 
 	// Stable build pins the FROM image; fresh (coop update) floats it and adds --pull --no-cache.
 	// Either way the runtime's platform flags hold the build to the platform its clients were
@@ -3132,6 +3133,8 @@ func TestBuildArgs(t *testing.T) {
 		"build", "--platform", "linux/arm64",
 		"--build-arg", "NODE_IMAGE=" + pinnedNodeImage,
 		"--build-arg", "GO_IMAGE=" + pinnedGoImage,
+		"--build-arg", "COOP_BOX_UID=" + fmt.Sprint(id.uid),
+		"--build-arg", "COOP_BOX_GID=" + fmt.Sprint(id.gid),
 		"-t", "coop-box", "-f", filepath.Join("/ctx", "Dockerfile"), "/ctx",
 	}) {
 		t.Errorf("base cached: args=%v", a)
@@ -3140,6 +3143,8 @@ func TestBuildArgs(t *testing.T) {
 		"build", "--pull", "--no-cache",
 		"--build-arg", "NODE_IMAGE=" + floatingNodeImage,
 		"--build-arg", "GO_IMAGE=" + floatingGoImage,
+		"--build-arg", "COOP_BOX_UID=" + fmt.Sprint(id.uid),
+		"--build-arg", "COOP_BOX_GID=" + fmt.Sprint(id.gid),
 		"-t", "coop-box", "-f", filepath.Join("/ctx", "Dockerfile"), "/ctx",
 	}) {
 		t.Errorf("base fresh: args=%v", a)
@@ -3172,7 +3177,7 @@ func TestAssembleArgsForkLabel(t *testing.T) {
 func TestAssembleArgsAsdfVolume(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", BaseImage: "coop-box", ConfigDir: t.TempDir()}
 	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
-	asdf := []string{"-v", "coop-asdf:/home/node/.asdf"}
+	asdf := []string{"-v", boxAgentIdentity().volume("coop-asdf") + ":/home/node/.asdf"}
 
 	base := assembleArgs(cfg, true, RunSpec{Image: "coop-box", Repo: "/r", Homes: true}, mounts,
 		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")

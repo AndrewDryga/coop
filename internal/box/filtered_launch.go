@@ -144,7 +144,7 @@ func (f *filteredExecution) verifyContainer(ctx context.Context, role, image str
 	if err != nil || !present {
 		return errors.Join(errors.New("restricted workload security state unavailable"), err)
 	}
-	user, network := "1000:1000", "container:"+f.ref("controller").ID
+	user, network := f.agentIdentity.user(), "container:"+f.ref("controller").ID
 	if role == "guard" {
 		user = "65532:65532"
 	} else if role == "controller" {
@@ -350,7 +350,7 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 		return -1, err
 	}
 	defer unlockMounts()
-	options = append(slices.Clone(options), "--user", "1000:1000", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+	options = append(slices.Clone(options), "--user", f.agentIdentity.user(), "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
 		"--network", "container:"+f.ref("controller").ID)
 	options = append(options, f.serveEnv...)
 	if err := f.createContainer(ctx, "agent", f.image, options, spec.Cmd); err != nil {

@@ -122,7 +122,7 @@ func TestLaunchAgentReadOnlyMountsRepoReadOnly(t *testing.T) {
 			t.Errorf("readonly run missing %q:\n%s", want, line)
 		}
 	}
-	if strings.Contains(line, "--tools") || strings.Contains(line, "coop-cache:") || strings.Contains(line, "coop-asdf:") {
+	if strings.Contains(line, "--tools") || strings.Contains(line, "-v coop-cache") || strings.Contains(line, "-v coop-asdf") {
 		t.Errorf("readonly run keeps its tools and mounts no volume:\n%s", line)
 	}
 }

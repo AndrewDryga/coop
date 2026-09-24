@@ -346,6 +346,13 @@ ENV ASDF_DATA_DIR=/home/node/.asdf \
 # The clients' launchers, the checks that each runs what the lock installed, and every client's
 # update controls — as root, before the image drops to node.
 %s
+ARG COOP_BOX_UID=1000
+ARG COOP_BOX_GID=1000
+RUN if [ "$COOP_BOX_UID:$COOP_BOX_GID" != "1000:1000" ]; then \
+      if ! getent group "$COOP_BOX_GID" >/dev/null; then groupmod -g "$COOP_BOX_GID" node; fi \
+   && usermod -u "$COOP_BOX_UID" -g "$COOP_BOX_GID" node \
+   && chown -R "$COOP_BOX_UID:$COOP_BOX_GID" /home/node; \
+    fi
 USER node
 ENTRYPOINT ["/usr/local/bin/coop-entry"]
 WORKDIR /workspace
@@ -405,7 +412,7 @@ func ImageForRepo(repo, baseImage, override string) string {
 		return override
 	}
 	if fileExists(filepath.Join(repo, project.DockerfilePath(repo))) {
-		return ServicesProject(repo)
+		return boxAgentIdentity().projectImage(ServicesProject(repo))
 	}
 	return baseImage
 }
@@ -636,7 +643,8 @@ func buildProjectOnBase(ctx context.Context, rt runtime.Runtime, repo string, en
 // projectBuildArgs assembles the `<runtime> build` args for a project Dockerfile at dfRel inside the
 // staged ctx, tagged img. When the Dockerfile inherits coop's base (usesBase), it passes the base as
 // a build-arg and, on --fresh, uses --no-cache WITHOUT --pull — the base is a local image tag, not a
-// registry ref, so --pull would fail trying to fetch it. An external FROM still gets --pull on fresh.
+// registry ref, so --pull would fail trying to fetch it. The user identity args let standalone
+// Dockerfiles create a matching non-root account. An external FROM still gets --pull on fresh.
 func projectBuildArgs(ctx, dfRel, img, baseImage string, usesBase, fresh bool, labels ...string) []string {
 	args := []string{"build"}
 	if fresh {
@@ -648,6 +656,8 @@ func projectBuildArgs(ctx, dfRel, img, baseImage string, usesBase, fresh bool, l
 	if usesBase {
 		args = append(args, "--build-arg", "COOP_BASE_IMAGE="+baseImage)
 	}
+	id := boxAgentIdentity()
+	args = append(args, "--build-arg", "COOP_BOX_UID="+fmt.Sprint(id.uid), "--build-arg", "COOP_BOX_GID="+fmt.Sprint(id.gid))
 	for _, label := range labels {
 		args = append(args, "--label", label)
 	}
@@ -657,6 +667,9 @@ func projectBuildArgs(ctx, dfRel, img, baseImage string, usesBase, fresh bool, l
 // buildBaseImage builds the shared base for the platform the runtime builds for, from a staged
 // context holding only the embedded definition, then stamps it for the staleness checks.
 func buildBaseImage(rt runtime.Runtime, cfg *config.Config, fresh bool, version string, stdout io.Writer) error {
+	if !boxAgentIdentity().valid() {
+		return errors.New("this Linux user ID cannot build Coop boxes: the box user must be non-root and distinct from the gateway user 65532")
+	}
 	platform, flags, err := rt.BuildPlatform()
 	if err != nil {
 		return err
@@ -712,6 +725,8 @@ func baseBuildArgs(cfg *config.Config, fresh bool, platformFlags []string, dir s
 	args = append(args,
 		"--build-arg", "NODE_IMAGE="+node,
 		"--build-arg", "GO_IMAGE="+goImage,
+		"--build-arg", "COOP_BOX_UID="+fmt.Sprint(boxAgentIdentity().uid),
+		"--build-arg", "COOP_BOX_GID="+fmt.Sprint(boxAgentIdentity().gid),
 	)
 	return append(args, "-t", cfg.BaseImage, "-f", filepath.Join(dir, "Dockerfile"), dir)
 }

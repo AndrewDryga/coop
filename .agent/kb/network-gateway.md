@@ -3,7 +3,7 @@ name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
 sources: [internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/gatewayimage/image.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/forkctl/host.go]
-updated: 2026-09-20
+updated: 2026-09-25
 ---
 
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
@@ -12,7 +12,8 @@ A filtered run adds two helper containers from one pinned image, both running `c
 **Controller** — UID `0:65532`, `CAP_ADD NET_ADMIN` and nothing else, on the bridge
 (`box/filtered_launch.go:151`, `:194`). It owns nftables table `coop_net`
 (`networkgateway/controller.go:316`): a nat/output `capture` chain redirects the agent's
-(skuid 1000) TCP on every port the policy grants TLS on — `tcp dport { 443, 853, … }` — to the
+(the host-selected non-root `skuid`: native Linux user UID, or 1000 on Docker Desktop) TCP on every
+port the policy grants TLS on — `tcp dport { 443, 853, … }` — to the
 guard's `:15443`, and 53 tcp+udp to its `:15353`; a filter/output chain drops by default. A policy
 with no `tls` grant renders NO redirect rule at all (an empty nft set is a syntax error, and a
 default one would be an invention). Its order is the contract (`controller.go:368`): the agent's OWN loopback is
@@ -217,6 +218,9 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-09-25 — rechecked the owner-private launch configuration, nft rules and socket collector:
+  the host now supplies the agent UID explicitly; zero and gateway UID 65532 are refused. Regenerated
+  the embedded helper source after the source change (an unregenerated live smoke failed closed).
 - 2026-09-20 — those two refusals now carry the client's loopback source port, through the
   collector and the projection, rendered as a source rather than a destination.
 - 2026-09-20 — recorded what `tls_direct_dial_refused`/`dns_query_invalid` actually mean (a client

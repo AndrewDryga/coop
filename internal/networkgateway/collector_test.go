@@ -23,7 +23,7 @@ func collectorFixture(t *testing.T) (*Collector, *BootInstant) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g, err := NewGuard(controller.policy, controller.clock, r, ControllerClient{Identity: controller.identity, Clock: controller.clock}, NewGuardEvents(controller.clock))
+	g, err := NewGuard(controller.agentUID, controller.policy, controller.clock, r, ControllerClient{Identity: controller.identity, Clock: controller.clock}, NewGuardEvents(controller.clock))
 	if err != nil {
 		t.Fatal(err)
 	}

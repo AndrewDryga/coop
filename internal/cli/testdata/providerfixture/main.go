@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	hostruntime "runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -554,6 +555,19 @@ func parseRun(root, image string, args []string, provider string, providerHomes 
 	return run, nil
 }
 
+// Match the host-owned volume names exactly; a prefix alone would let a scripted
+// run hide an unintended named volume from the exposure checks.
+func cacheVolume(name string) string {
+	return cacheVolumeForIdentity(name, hostruntime.GOOS == "linux" && os.Getuid() != 0, os.Getuid(), os.Getgid())
+}
+
+func cacheVolumeForIdentity(name string, nativeLinux bool, uid, gid int) string {
+	if !nativeLinux || (uid == 1000 && gid == 1000) {
+		return name
+	}
+	return fmt.Sprintf("%s-%d-%d", name, uid, gid)
+}
+
 func parseMount(root, value string) (mount, error) {
 	parts := strings.Split(value, ":")
 	if len(parts) < 2 || len(parts) > 3 || parts[0] == "" || parts[1] == "" {
@@ -571,7 +585,7 @@ func parseMount(root, value string) (mount, error) {
 		// launch (box/taskchannel.go) — whose name carries a fresh nonce, so it is recognized by
 		// its prefix and the mountpoint it is bound at, read-only.
 		channel := strings.HasPrefix(m.Source, "coop-tasks-") && m.Target == taskchannel.BoxSocketDir && m.ReadOnly
-		if m.Source != "coop-cache" && m.Source != "coop-asdf" && !channel {
+		if m.Source != cacheVolume("coop-cache") && m.Source != cacheVolume("coop-asdf") && !channel {
 			return mount{}, fmt.Errorf("unknown named volume %q", m.Source)
 		}
 		m.Named = true
@@ -620,8 +634,8 @@ func validateMountPolicy(root string, run runCommand, providerHomes []string) er
 				}
 				continue
 			}
-			if (m.Source != "coop-cache" || m.Target != "/home/node/.cache") &&
-				(m.Source != "coop-asdf" || m.Target != "/home/node/.asdf") {
+			if (m.Source != cacheVolume("coop-cache") || m.Target != "/home/node/.cache") &&
+				(m.Source != cacheVolume("coop-asdf") || m.Target != "/home/node/.asdf") {
 				return fmt.Errorf("named volume %q has unexpected target %q", m.Source, m.Target)
 			}
 			if m.ReadOnly {
@@ -1388,7 +1402,7 @@ func traceMountArg(root, value string) string {
 	}
 	if filepath.IsAbs(parts[0]) {
 		parts[0] = traceRootPath(root, parts[0])
-	} else if parts[0] != "coop-cache" && parts[0] != "coop-asdf" {
+	} else if parts[0] != cacheVolume("coop-cache") && parts[0] != cacheVolume("coop-asdf") {
 		parts[0] = "<redacted-volume>"
 	}
 	parts[1] = traceContainerPath(root, parts[1])

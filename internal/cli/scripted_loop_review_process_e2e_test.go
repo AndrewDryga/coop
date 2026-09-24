@@ -1806,7 +1806,7 @@ func assertLoopReviewMounts(t *testing.T, layout procharness.Layout, provider, a
 		case mount.Source == profile && mount.Target == profileTarget && !mount.ReadOnly:
 			foundProfile = true
 		case mount.Named:
-			if mount.ReadOnly || (mount.Source != "coop-cache" && mount.Source != "coop-asdf") {
+			if mount.ReadOnly || (mount.Source != processCacheVolume("coop-cache") && mount.Source != processCacheVolume("coop-asdf")) {
 				t.Errorf("invalid review named mount %#v", mount)
 			}
 		case !mount.ReadOnly:

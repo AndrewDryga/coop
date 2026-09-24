@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	hostruntime "runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -524,7 +525,7 @@ func assertProcessMountsAtTarget(t *testing.T, layout procharness.Layout, repo, 
 				}
 				continue
 			}
-			if mount.Source != "coop-cache" && mount.Source != "coop-asdf" {
+			if mount.Source != processCacheVolume("coop-cache") && mount.Source != processCacheVolume("coop-asdf") {
 				t.Errorf("unknown named mount %#v", mount)
 			}
 			if mount.ReadOnly {
@@ -559,6 +560,13 @@ func assertProcessMountsAtTarget(t *testing.T, layout procharness.Layout, repo, 
 	if !foundProfile {
 		t.Fatalf("profile mount %s:%s missing from %#v", profileSource, profileTarget, mounts)
 	}
+}
+
+func processCacheVolume(name string) string {
+	if hostruntime.GOOS != "linux" || os.Getuid() == 0 || (os.Getuid() == 1000 && os.Getgid() == 1000) {
+		return name
+	}
+	return fmt.Sprintf("%s-%d-%d", name, os.Getuid(), os.Getgid())
 }
 
 func recordedGeneratedMountPath(path string) bool {

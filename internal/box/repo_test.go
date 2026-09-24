@@ -70,8 +70,8 @@ func TestImageForRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	os.WriteFile(filepath.Join(dir, ".agent", "Dockerfile"), []byte("FROM scratch"), 0o644)
-	if got := ImageForRepo(dir, "coop-box", ""); got != ServicesProject(dir) {
-		t.Errorf(".agent/Dockerfile -> %q, want %q", got, ServicesProject(dir))
+	if want, got := boxAgentIdentity().projectImage(ServicesProject(dir)), ImageForRepo(dir, "coop-box", ""); got != want {
+		t.Errorf(".agent/Dockerfile -> %q, want %q", got, want)
 	}
 }
 

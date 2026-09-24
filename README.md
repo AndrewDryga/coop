@@ -1659,6 +1659,11 @@ An image is a valid agent box when:
 3. `claude`, `codex`, `gemini` are on `PATH` (so it needs Node) — plus the ACP adapters if you want `coop acp`.
 4. **`git config --system --add safe.directory '*'`** — git works on the host-owned bind mount (which lives at the repo's real path, not a fixed `/workspace`).
 
+On native Linux, the image's non-root user must also have the host user's UID/GID to read a
+private checkout and selected credential's files. Coop builds its managed images for that user
+automatically; if you supply `COOP_BASE_IMAGE` or another custom image, set its user accordingly.
+Docker Desktop on macOS keeps the managed image's UID/GID 1000.
+
 coop sets the working directory itself, so no `WORKDIR` is required. A skeleton:
 
 ```dockerfile
@@ -1666,12 +1671,24 @@ FROM <your-language-base>
 RUN <install your toolchain> \
  && npm install -g @anthropic-ai/claude-code@2.1.260 @openai/codex@0.153.4 @google/gemini-cli@0.59.0 \
       @agentclientprotocol/claude-agent-acp@0.75.1 @agentclientprotocol/codex-acp@1.10.0 \
- && git config --system --add safe.directory '*' \
- && id -u node >/dev/null 2>&1 || useradd -m -u 1000 -s /bin/bash node
+ && git config --system --add safe.directory '*'
+ARG COOP_BOX_UID=1000
+ARG COOP_BOX_GID=1000
+RUN if id -u node >/dev/null 2>&1; then \
+      if ! getent group "$COOP_BOX_GID" >/dev/null; then groupmod -g "$COOP_BOX_GID" "$(id -gn node)"; fi \
+   && usermod -u "$COOP_BOX_UID" -g "$COOP_BOX_GID" node \
+   && chown -R "$COOP_BOX_UID:$COOP_BOX_GID" /home/node; \
+    else \
+      if ! getent group "$COOP_BOX_GID" >/dev/null; then groupadd -g "$COOP_BOX_GID" node; fi \
+   && useradd -m -u "$COOP_BOX_UID" -g "$COOP_BOX_GID" -s /bin/bash node; \
+    fi
 USER node
 ```
 
-(If the base lacks Node, install it first — NodeSource works.) Those are the versions this Coop
+(If the base lacks Node, install it first — NodeSource works. The skeleton assumes the base has
+standard `useradd`/`usermod`/`groupmod` tools. `coop build` supplies the host UID/GID build args
+for project Dockerfiles; a separately built `COOP_BASE_IMAGE` needs those args supplied by its
+builder.) Those are the versions this Coop
 release qualifies; an image on another base runs whatever it installs, so move them when you
 update Coop — or inherit coop's base and never think about it:
 
@@ -2052,7 +2069,7 @@ when a tool needs current joined state.
 | **Login hangs or "usage limit reached"** | `coop login <agent>` re-runs the sign-in (paste-code, no browser). Hit a subscription limit? It resets on a schedule — wait, or `coop login` into another account. The unattended loop waits out the reset on its own; a [Zed session](#drive-it-from-zed-acp) rotates to your next signed-in account and re-sends by itself. |
 | **Gemini says its Google sign-in client is no longer supported** | Google retired Gemini CLI access for individual Google accounts. Run `coop login gemini[@<name>]` and paste a Gemini API key from the displayed AI Studio link; Coop does not launch that retired Google flow. Enterprise Gemini CLI and Vertex credentials remain separate provider-supported options and are not supported with `--egress filtered`. Coop refuses Vertex `GOOGLE_API_KEY` in every network mode. |
 | **Agent seems stuck / a detached loop won't quit** | `coop fork logs <name> -f` to watch it; `coop fork stop <name>` to stop a detached loop. A foreground run is just Ctrl-C. |
-| **"permission denied" writing `~/.cache` / build or test caches** | The shared cache volume initialized root-owned. Recreate it: `docker volume rm coop-cache` (or your runtime's equivalent), then `coop build`. |
+| **"permission denied" writing `~/.cache` / build or test caches** | Inspect the cache volume's ownership. Its name is `coop-cache` for the default image user, or `coop-cache-<uid>-<gid>` on native Linux (see `id -u` and `id -g`). If it was initialized with the wrong owner, preserve anything useful, remove only that idle cache volume, then run `coop build`. Never loosen your credential directory's permissions. |
 | **`go`/`gofmt`: "No version is set for command go"** | The box provisions toolchains from `.tool-versions` via asdf — add the required `golang` version there so it's installed and shimmed. Set `COOP_NO_ASDF=1` to skip provisioning. |
 | **A pinned `.tool-versions` tool (`go`, `ruby`, …) is installed yet "not found" in a *login* shell** | asdf's shims sit on PATH via the image's `ENV`, which only reaches the agent process and non-login shells. A login shell (`sh -lc`, `bash -l`) sources `/etc/profile`, which resets PATH and drops the shims. The base box adds an `/etc/profile.d` drop-in to re-add them; rebuild an older box with `coop build` to pick it up. |
 | **Zed (ACP) can't find the agent** | Zed must launch `coop` from a shell where it's on `PATH` (the installer puts it in `~/.local/bin`). Point Zed's ACP command at the absolute path if needed, and confirm `coop acp` (optionally with a target or preset) runs in a terminal first. |
