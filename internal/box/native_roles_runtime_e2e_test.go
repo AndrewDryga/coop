@@ -96,6 +96,7 @@ func TestRuntimeNativeRolesAreDiscoveredByEveryPinnedClient(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			readableLockedClientFixture(t, source)
 			// The probe runs from a directory that is NOT the home: these clients also discover
 			// <cwd>/.<agent>/agents as project-scope roles, so a run from $HOME would keep passing for
 			// a client that had dropped the user-level root entirely — the regression this catches.

@@ -1,9 +1,9 @@
 ---
 name: provider-client-qualification
-description: locked clients, strict schema2 qualification requirements, conformance evidence and the operator-only paid run still owed
+description: locked clients, strict schema2 qualification requirements, conformance evidence and the approved paid run still owed
 subsystem: agent
-sources: [internal/agent/locked_clients.go, internal/agent/qualification.go, internal/agent/qualification_gate_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go]
-updated: 2026-09-22
+sources: [internal/agent/locked_clients.go, internal/agent/qualification.go, internal/agent/qualification_gate_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go]
+updated: 2026-09-24
 ---
 
 **One manifest.** `locked-clients/package.json` + `package-lock.json` (embedded) and each adapter's
@@ -17,7 +17,7 @@ off in every image; the environment ones (Claude, Grok) also ride BoxEnv, and th
 cover Codex and Gemini in images Coop did not build. A project image built on
 `COOP_BASE_IMAGE` inherits all of it; one on another base brings its own, unqualified clients.
 
-**The record.** `make provider-qualify` is PAID and operator-only, last after other engineering.
+**The record.** `make provider-qualify` is PAID and needs explicit spending authorization, last after other engineering.
 It rebuilds this host's images, runs offline probes first and every required live suite, then
 atomically writes `locked-clients/qualification.json`. `QualificationRequirements` is the single
 schema2 suite/provider/evidence map used by the recorder and `TestTheLockedClientsMatchTheirQualification`.
@@ -53,6 +53,14 @@ the locked image with `--network none` — free, but outside `make check` becaus
 `coop net setup` builds. An R suite both gates `provider-qualify` before paid prompts and enters
 the record with its explicit provider scope. L = a paid live assertion implemented in the harness,
 not a claim that it has run successfully; all four providers except unavailable second accounts):
+
+The three R probes bind-mount synthetic files from `t.TempDir()` into the locked client image,
+which runs as `node`. Go keeps the enclosing test directory private; under host umask 077, the
+returned bind-source leaf and nested fixture paths also become unreadable to `node` on direct
+Linux Docker. Make the entire synthetic source tree traversable/readable only after writing it
+(`readableLockedClientFixture`), while keeping the enclosing test directory private, the bind
+read-only and the client unprivileged. A Mac pass at umask 022 does not prove Linux/umask 077.
+
 - start — D `TestProviderScriptedProcessSmoke`, `TestProviderScriptedDirectMatrix`, ACP switch matrix;
   L `provider-live-e2e-all`, `acp-e2e`.
 - resume — D `TestResume`, fork session process, ACP target replay, consult continuity;
@@ -181,6 +189,11 @@ host re-run filtered setup once — a filtered launch does it itself, an editor 
 `coop net setup`.
 
 ## Changelog
+- 2026-09-24 — direct Ubuntu qualification under umask 077 exposed a private `t.TempDir` bind
+  source unreadable by the locked image's `node` user; nested synthetic content stayed private too.
+  the same VM source passed at umask 022. Made each generated fixture tree readable after writing,
+  kept the enclosing test directory private and mounts read-only. Explicit campaign spending
+  authorization superseded the earlier operator-only wording, not a general unattended paid policy.
 - 2026-09-22 — closed harness gaps for host-vault keys, mandatory shared MCP, native lifecycle,
   delegate and real-controller account recovery; schema2 recorder and gate share requirements.
   Synthetic controls are not paid proof; record remains absent and operator qualification is last.

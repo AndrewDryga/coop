@@ -108,6 +108,7 @@ func TestRuntimeSharedSkillsAreDiscoveredByEveryPinnedClient(t *testing.T) {
 				skill(mounted, "coop-canary", flawed)
 			}
 			skill(filepath.Join("."+test.provider, "notskills"), decoyed, decoy)
+			readableLockedClientFixture(t, source)
 
 			script := `mkdir -p ` + boxHome + ` ` + boxCwd + ` && cp -R /src/. ` + boxHome + `/ && cd ` + boxCwd + ` && ` + test.check + ` 2>&1`
 			out, _ := exec.CommandContext(ctx, rt.Name, "run", "--rm", "--network", "none", "-e", "HOME="+boxHome,
