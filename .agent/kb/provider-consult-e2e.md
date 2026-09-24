@@ -3,7 +3,7 @@ name: provider-consult-e2e
 description: Verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring
 subsystem: testing
 sources: [Makefile, internal/box/image.go, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/consult_shell.go, internal/agent/role_health.go, internal/agent/testdata/login-failures/README.md, internal/preset/wrapper.go, internal/loop/telemetry.go, internal/loop/streamjson_providers.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go]
-updated: 2026-09-22
+updated: 2026-09-24
 ---
 
 `make provider-scripted-e2e` is the blocking consult contract. A strict external Coop binary mounts
@@ -31,6 +31,11 @@ never invalidates an otherwise usable reply. Delegate diff-report output is unch
 delegate calls use the same adapter-owned parser to append one usage row after a successful
 attempt. Failed or malformed attempts keep usage unknown, and a nested consult retains its own
 separate row rather than being folded into the delegate total.
+Unlike consult, delegate decodes while capturing through a live `tee` pipeline. A native parser
+that exits on malformed output must leave a reader draining to EOF; otherwise `tee` can lose
+later provider bytes before the bounded raw fallback has them. The delegate wrapper drains after
+decode failure and then shows the complete raw capture, including when decoding emitted a partial
+reply. Valid native JSON still streams decoded text normally.
 All-provider parser and generated-wrapper unit tests cover the added usage/cost paths;
 the scripted process suite's explicit telemetry scenario currently covers Codex only.
 
@@ -112,6 +117,9 @@ in final/state/log. Wrapper fixtures preserve a partial reply at exit0; they do 
 native lead carries its caveats through synthesis. No prose-to-verdict parser is involved.
 
 ## Changelog
+- 2026-09-24 — reverified the shared delegate pipeline against `internal/preset/wrapper.go` and
+  all four adapter decoders. A malformed Gemini stream with a later tail reproduced raw reply
+  loss; the wrapper now drains after parse failure and uses the full bounded raw fallback.
 - 2026-09-22 — strict four-edge delegate mode and exact mutation/denial controls alongside consult;
   schema2 qualification requires both independent summary prefixes
 - 2026-09-19 — both wrappers run their arms on `COOP_BOX_PATH` (recorded by coop-entry): a Codex

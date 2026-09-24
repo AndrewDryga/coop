@@ -347,7 +347,11 @@ run_delegate_with_usage() {
 	} 2>"$diagnostics_pipe" | tee "$raw_pipe" | {
 		if command -v "${provider}_delegate_text" >/dev/null 2>&1; then
 			"${provider}_delegate_text" 2>/dev/null
-			printf '%s\n' "$?" >"$decode_status"
+			decode_result=$?
+			# Keep tee's reader open when a malformed stream makes the decoder quit early.
+			# Otherwise later provider output can be lost from the raw fallback too.
+			if [ "$decode_result" -ne 0 ]; then cat >/dev/null; fi
+			printf '%s\n' "$decode_result" >"$decode_status"
 		else
 			cat
 			printf '%s\n' "$?" >"$decode_status"
@@ -377,8 +381,8 @@ run_delegate_with_usage() {
 	fi
 	if [ "$decoded_ok" -ne 0 ] || [ ! -s "$decoded" ]; then
 		# Unknown adapters still emit ordinary text. A malformed native stream remains visible
-		# for diagnosis; neither case gets guessed usage.
-		[ -s "$decoded" ] || cat "$raw"
+		# for diagnosis, even if the decoder printed only part of it; neither gets guessed usage.
+		cat "$raw"
 		return 0
 	fi
 	if command -v "${provider}_text" >/dev/null 2>&1 && "${provider}_text" <"$raw" >/dev/null 2>&1 &&

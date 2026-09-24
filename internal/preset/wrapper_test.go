@@ -915,6 +915,18 @@ func TestDelegateWrapperRunsRole(t *testing.T) {
 	}
 }
 
+func TestDelegateWrapperKeepsRawTailAfterDecodeError(t *testing.T) {
+	h := newDelegateHarness(t)
+	// The first line makes the native JSON decoder exit. Enough later output fills a pipe
+	// even when the writer and decoder run at different speeds.
+	h.stub("gemini", "printf 'not-json\\n'; dd if=/dev/zero bs=1024 count=128 2>/dev/null | tr '\\000' x; printf '\\ndid-the-work\\n'")
+	out, code := h.run("fast", "Implement the thing")
+	if code != 0 || !strings.Contains(out, "did-the-work") || !strings.Contains(out, "[coop-delegate fast: finished on gemini:gemini-3.5-flash]") {
+		t.Fatalf("malformed native stream must preserve the provider's later raw reply and exit status (exit %d, tail=%t, size=%d)",
+			code, strings.Contains(out, "did-the-work"), len(out))
+	}
+}
+
 func TestDelegateWrapperRecordsProviderUsageOnce(t *testing.T) {
 	h := newDelegateHarness(t)
 	for index, entry := range h.env {
