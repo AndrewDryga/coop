@@ -251,13 +251,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 		f.broker = &credentialBrokerRun{plan: brokerPlan}
 	}
 	f.mcpScrub = scrub
-	f.unsafeRoots = []string{spec.Repo, project}
-	if roots := ConfigExposureRoots(cfg); len(roots) > 1 {
-		f.unsafeRoots = append(f.unsafeRoots, roots[1:]...)
-	}
-	for _, name := range credentialScope(cfg, spec) {
-		f.unsafeRoots = append(f.unsafeRoots, cfg.AgentDir(name))
-	}
+	f.unsafeRoots = filteredWritableRoots(cfg, spec)
 	if err := verifyNetworkCandidate(candidate, networkRuntimeBinding(docker.Info(), docker.Endpoint()), cfg.ImageOverride); err != nil {
 		return f, err
 	}
@@ -367,6 +361,23 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	}
 	f.runfiles, err = f.store.RunFilesPath(f.record.ID)
 	return f, err
+}
+
+func filteredWritableRoots(cfg *config.Config, spec RunSpec) []string {
+	roots := []string{spec.Repo, projectPolicyRepo(spec)}
+	if configRoots := ConfigExposureRoots(cfg); len(configRoots) > 1 {
+		for _, root := range configRoots[1:] {
+			// BoxHome is protected host authority, not a directory mounted into the box.
+			// Treating it as writable rejects the selected profile beneath the default agents/ tree.
+			if root != cfg.BoxHome {
+				roots = append(roots, root)
+			}
+		}
+	}
+	for _, name := range credentialScope(cfg, spec) {
+		roots = append(roots, cfg.AgentDir(name))
+	}
+	return roots
 }
 
 // filteredProtectedAddresses is the envelope this run's kernel refuses before

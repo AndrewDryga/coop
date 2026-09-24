@@ -1030,6 +1030,31 @@ func TestFilteredNestedMutableBindSourcesAreRefused(t *testing.T) {
 	}
 }
 
+func TestFilteredDefaultCredentialHomeIsNotMistakenForWritableParent(t *testing.T) {
+	f, _ := filteredFixture(t)
+	boxHome, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{BoxHome: boxHome, ConfigDir: filepath.Join(boxHome, "agents")}
+	spec := RunSpec{Repo: f.record.Project, Agent: "gemini", Homes: true}
+	profile := cfg.AgentDir("gemini")
+	child := filepath.Join(profile, "agent-owned")
+	if err := os.MkdirAll(child, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f.unsafeRoots = filteredWritableRoots(cfg, spec)
+	f.authorityConfig, f.authoritySpec = cfg, spec
+	primary := []string{"-v", f.record.Project + ":/workspace", "-v", profile + ":/home/node/.gemini"}
+	if err := f.validateMounts(primary, nil, nil); err != nil {
+		t.Fatal("selected credential home refused:", err)
+	}
+	nested := append(append([]string{}, primary...), "-v", child+":/agent-owned:ro")
+	if err := f.validateMounts(nested, nil, nil); err == nil {
+		t.Fatal("bind beneath agent-writable credential home accepted")
+	}
+}
+
 func TestFilteredBindIdentityCannotBeRedefinedByReplacement(t *testing.T) {
 	f, _ := filteredFixture(t)
 	source, err := filepath.EvalSymlinks(t.TempDir())

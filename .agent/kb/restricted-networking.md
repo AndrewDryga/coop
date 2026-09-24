@@ -180,6 +180,11 @@ Traps:
   the environment, is the boundary — and a bind that IS or CONTAINS the runtime's control surface
   (`/var/run`, `/run`, `/proc`, `/sys`, `/dev`, `/`, the bound endpoint's socket) is refused too
   (`box/filtered_mounts.go:429`): one curl over a daemon socket starts a container no gateway sees.
+- Mount validation distinguishes host authority from agent-writable roots. `BoxHome` is
+  protected against exposure but is not mounted wholesale, so a normal selected profile
+  beneath its default `agents/` tree is an independent bind. The selected profile itself
+  is writable by the agent; a second bind beneath it is refused (`box/filtered.go`,
+  `box/filtered_mounts.go`).
 - The gateway captures every TLS port the policy grants (`Snapshot.TLSPorts`, `egress/snapshot.go:292`)
   plus DNS on 53; the upstream port comes from the kernel's redirect record (SO_ORIGINAL_DST),
   never from the client, and a dial straight at the guard listener is refused. A raw `tcp` grant
@@ -263,6 +268,9 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-24 — proved a real filtered Gemini API-key launch was refused because the
+  host-only `BoxHome` was treated as writable; recorded the corrected mount distinction
+  and the focused acceptance/denial regression.
 - 2026-09-24 — Cloud Shell interruption exposed a missing SIGINT/SIGTERM context in `coop net setup`:
   Buildx continued after the command exited and consumed disk. Added the CLI cancellation boundary
   and process regression; swept sibling filtered-build and runtime cancellation paths, which already
