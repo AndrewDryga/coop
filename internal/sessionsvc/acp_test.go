@@ -395,7 +395,7 @@ func TestSemanticRepairCarriesAValidGeneratedArtifactAcrossTheSameTurn(t *testin
 	// accept without regenerating the image.
 	fixture := newSessionACPFixture(t, "semantic-tool-image-output")
 	leased := fixture.submitSemanticContract(t, "return the result with its generated image")
-	first, err := fixture.runner.Run(contextWithTurnTimeout(t, 15*time.Second), fixture.session, leased)
+	first, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leased)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,7 +418,7 @@ func TestSemanticRepairCarriesAValidGeneratedArtifactAcrossTheSameTurn(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := fixture.runner.Run(contextWithTurnTimeout(t, 15*time.Second), fixture.session, leasedAgain)
+	second, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leasedAgain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -434,7 +434,7 @@ func TestSchemaRepairCarriesAValidGeneratedArtifactAcrossTheSameTurn(t *testing.
 	// file when the replacement response contains no new image frame.
 	fixture := newSessionACPFixture(t, "schema-repair-tool-image-output")
 	leased := fixture.submitSemanticContract(t, "return the result with its generated image")
-	candidate, err := fixture.runner.Run(contextWithTurnTimeout(t, 15*time.Second), fixture.session, leased)
+	candidate, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leased)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1870,10 +1870,10 @@ func TestSessionTurnRunnerSendsDurableImageArtifact(t *testing.T) {
 func TestSessionTurnRunnerCapturesGeneratedImageOutsideTranscript(t *testing.T) {
 	fixture := newSessionACPFixture(t, "image-output")
 	turn := fixture.submit(t, "generate a chart")
-	// This fixture moves more than 4 MiB through base64 JSON and SQLite. Keep it
-	// bounded, but do not make package-parallel race-detector load a correctness
-	// failure: the ordinary 5-second fixture deadline is for small ACP frames.
-	completed, err := fixture.runner.Run(contextWithTurnTimeout(t, 15*time.Second), fixture.session, turn)
+	// This fixture moves more than 4 MiB through base64 JSON and SQLite. The
+	// shared fixture guard still bounds hangs without treating package-parallel
+	// race-detector load as a correctness failure.
+	completed, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1893,7 +1893,7 @@ func TestSessionTurnRunnerCapturesGeneratedImageOutsideTranscript(t *testing.T) 
 func TestSessionTurnRunnerCapturesGeneratedImageFromToolUpdate(t *testing.T) {
 	fixture := newSessionACPFixture(t, "tool-image-output")
 	turn := fixture.submit(t, "generate a chart with an image tool")
-	completed, err := fixture.runner.Run(contextWithTurnTimeout(t, 15*time.Second), fixture.session, turn)
+	completed, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
 	if err != nil {
 		t.Fatal(err)
 	}
