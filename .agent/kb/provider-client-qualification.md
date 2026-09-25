@@ -2,7 +2,7 @@
 name: provider-client-qualification
 description: locked clients, strict schema2 qualification requirements, conformance evidence and the approved paid run still owed
 subsystem: agent
-sources: [internal/agent/locked_clients.go, internal/agent/qualification.go, internal/agent/qualification_gate_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go]
+sources: [internal/agent/locked_clients.go, internal/agent/qualification.go, internal/agent/qualification_gate_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go]
 updated: 2026-09-25
 ---
 
@@ -24,6 +24,12 @@ imports source directory and file modes, so the entries *inside* that root must 
 filtered client image uses a separate tar context whose file modes are explicit. The
 staging regression runs under a private umask. A rebuilt Ubuntu image confirmed
 `/etc` is 0755 and Codex, Claude and Grok launch as a non-root user.
+
+A live qualification child running a brokered API key must receive the host's
+`NetworkStateHome`, so `ChildEnvironment` selects the filtered credential gateway.
+This applies to both native-resume stages, not only the ordinary prompt suite;
+signed-in accounts keep their open path. The selected credential kind is determined
+from the real host config before the isolated child starts.
 
 **The record.** `make provider-qualify` is PAID and needs explicit spending authorization, last after other engineering.
 It rebuilds this host's images, runs offline probes first and every required live suite, then
@@ -197,6 +203,11 @@ host re-run filtered setup once — a filtered launch does it itself, an editor 
 `coop net setup`.
 
 ## Changelog
+- 2026-09-25 — real Ubuntu qualification passed four direct prompts but Gemini
+  API-key native resume failed before grading because both resume children omitted
+  the filtered host-state grant. Routed the selected brokered key through that
+  gateway in fresh and continued stages; the pinned Gemini 0.59.0 live resume
+  probe attempted and passed. Full multi-suite record remains pending.
 - 2026-09-25 — strict VM qualification exposed a real root-only `/etc` in a base image built
   under umask 077: Codex's Node could not read OpenSSL config (exit 13), while Claude/Grok
   prompts exited. Traced `COPY system/ /` to the base embedded context's inherited modes;

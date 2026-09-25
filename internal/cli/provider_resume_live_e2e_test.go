@@ -59,6 +59,10 @@ func runProviderResumeLiveCompatibility(
 	if err != nil {
 		return fail(false, "target_selection")
 	}
+	networkStateHome, err := providerResumeNetworkStateHome(realConfig, selection)
+	if err != nil {
+		return fail(false, "credential_kind")
+	}
 	if err := os.Remove(layout.Config); err != nil {
 		return fail(false, "config_reset")
 	}
@@ -107,7 +111,7 @@ func runProviderResumeLiveCompatibility(
 
 	fresh, freshFailures := runProviderResumeLiveStage(
 		layout, rt, runtimeSettings, prepared, control, revokePath, target,
-		liveResumeFresh, sessionID, sessionFile, marker, preflightReason,
+		networkStateHome, liveResumeFresh, sessionID, sessionFile, marker, preflightReason,
 	)
 	freshFailures = verifyProviderResumeLiveStage(layout, before, prepared, freshFailures)
 	if !fresh.Passed || freshFailures.CleanupFailed || freshFailures.SourceChanged || freshFailures.RepositoryChanged {
@@ -122,11 +126,23 @@ func runProviderResumeLiveCompatibility(
 
 	continued, continuedFailures := runProviderResumeLiveStage(
 		layout, rt, runtimeSettings, prepared, control, revokePath, target,
-		liveResumeContinue, resolvedID, sessionFile, marker, "",
+		networkStateHome, liveResumeContinue, resolvedID, sessionFile, marker, "",
 	)
 	continued, continuedFailures = carryProviderResumeStage(fresh, freshFailures, continued, continuedFailures)
 	continuedFailures = verifyProviderResumeLiveStage(layout, before, prepared, continuedFailures)
 	return finishProviderResumeLive(layout, before, prepared, continued, continuedFailures)
+}
+
+func providerResumeNetworkStateHome(cfg *config.Config, selection liveprovider.Selection) (string, error) {
+	brokered, err := liveprovider.BrokersKey(cfg, selection)
+	if err != nil || !brokered {
+		return "", err
+	}
+	home := hostStateHome()
+	if home == "" {
+		return "", errors.New("cannot locate host network state for a brokered API key")
+	}
+	return home, nil
 }
 
 func carryProviderResumeStage(
@@ -159,7 +175,7 @@ func runProviderResumeLiveStage(
 	control *os.File,
 	revokePath string,
 	target agents.Target,
-	stage, sessionID, sessionFile, marker, preflightReason string,
+	networkStateHome, stage, sessionID, sessionFile, marker, preflightReason string,
 ) (liveprovider.ProviderResult, liveprovider.VerificationFailures) {
 	supervisor, err := liveIdentifier("provider-resume-" + stage + "-")
 	if err != nil {
@@ -171,7 +187,7 @@ func runProviderResumeLiveStage(
 	if err := os.Mkdir(cidDir, 0o700); err != nil {
 		return providerResumeHarnessFailure(target.Provider, false, "control_directory"), liveprovider.VerificationFailures{}
 	}
-	env, err := liveprovider.ChildEnvironment(layout, liveprovider.ChildSpec{
+	env, err := providerResumeChildEnvironment(layout, networkStateHome, liveprovider.ChildSpec{
 		Path: os.Getenv("PATH"), Target: target.String(), Workflow: liveWorkflowResume,
 		Stage: stage, SessionID: sessionID, SessionFile: sessionFile, Marker: marker,
 		ResultFile: resultFile, AttemptFile: attemptFile, Supervisor: supervisor,
@@ -205,6 +221,11 @@ func runProviderResumeLiveStage(
 	return result, liveprovider.VerificationFailures{
 		CleanupFailed: cleanupErr != nil, AttemptedObserved: attempted,
 	}
+}
+
+func providerResumeChildEnvironment(layout procharness.Layout, networkStateHome string, spec liveprovider.ChildSpec) ([]string, error) {
+	spec.NetworkStateHome = networkStateHome
+	return liveprovider.ChildEnvironment(layout, spec)
 }
 
 func verifyProviderResumeLiveStage(
@@ -375,6 +396,44 @@ func TestProviderResumeLiveContract(t *testing.T) {
 		id     = "018f6352-6281-7ae1-a1d5-07c3399de43d"
 		marker = "COOP_LIVE_RESUME_0123456789abcdef0123456789abcdef"
 	)
+	t.Run("brokered key uses filtered networking in both stages", func(t *testing.T) {
+		host := filepath.Join(t.TempDir(), "host-state")
+		t.Setenv("XDG_STATE_HOME", host)
+		cfg := &config.Config{ConfigDir: t.TempDir()}
+		if err := os.WriteFile(cfg.EnvFile(), []byte("GEMINI_API_KEY=test-key\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		selection := liveprovider.Selection{Provider: "gemini", Account: "default"}
+		networkHome, err := providerResumeNetworkStateHome(cfg, selection)
+		if err != nil || networkHome != host {
+			t.Fatalf("brokered key network home = %q, %v; want %q", networkHome, err, host)
+		}
+		layout, err := procharness.NewLayout(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, stage := range []string{liveResumeFresh, liveResumeContinue} {
+			spec := liveprovider.ChildSpec{
+				Target: "gemini", Workflow: liveWorkflowResume, Stage: stage,
+				SessionID: id, SessionFile: filepath.Join(layout.State, "provider-session-id"),
+			}
+			env, err := providerResumeChildEnvironment(layout, networkHome, spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			joined := strings.Join(env, "\n")
+			if !strings.Contains(joined, "COOP_EGRESS=filtered") ||
+				!strings.Contains(joined, "XDG_STATE_HOME="+host) {
+				t.Errorf("%s stage did not receive the host filtered gateway", stage)
+			}
+		}
+		if err := os.WriteFile(cfg.EnvFile(), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if networkHome, err := providerResumeNetworkStateHome(cfg, selection); err != nil || networkHome != "" {
+			t.Fatalf("no-key account network home = %q, %v; want open", networkHome, err)
+		}
+	})
 	grokRecall := providerResumeRecallPrompt("grok")
 	if strings.Contains(grokRecall, "assistant response") || !strings.Contains(grokRecall, "previous user request") {
 		t.Fatalf("Grok resume probe can trigger its data-leakage check: %q", grokRecall)
