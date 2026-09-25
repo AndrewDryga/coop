@@ -1342,8 +1342,13 @@ coop's proxy sits between the editor and the box and owns the session:
   [Troubleshooting](#troubleshooting).
 
 To steer a [**fork**](#forks-hand-off-work-like-a-pr) from Zed instead of your working tree,
-point the adapter at it: `coop fork <name> acp <target>` — same ACP, but the agent works the
+point the adapter at it: `coop fork <name> acp <target>` — the ACP editor flow, but the agent works the
 throwaway clone (nothing to push, secrets never came along), and you still review and land it.
+For a writable local session, configure that command while the parent project is open in Zed.
+Coop maps the editor's project directory to the fork inside the box. The fork, provider and account
+stay fixed, without the plain ACP provider/preset toolbar; any model and effort choices offered
+by the adapter remain available. An editor opened on an unrelated directory is refused rather than
+quietly sending its session to the fork. With `--readonly`, open the fork itself in the editor.
 
 > **Services** work too — if the repo has a `.agent/compose.yml`, run `coop up` first and
 > the ACP box joins the same network.

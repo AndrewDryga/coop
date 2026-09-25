@@ -932,6 +932,14 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if err := foldTarget(t, "coop fork "+name+" acp", &model, &profile); err != nil {
 		return 2, err
 	}
+	innerProcess := os.Getenv("COOP_ACP_INNER") != ""
+	if innerProcess && os.Getenv(box.SessionNetworkCaptureEnv) != "" {
+		bindings, err := applyACPAccountBindings(a.cfg, os.Getenv(acpAccountBindingsEnv))
+		if err != nil {
+			return 1, err
+		}
+		a.acpAccountBindings = bindings
+	}
 	if err := a.applyOneOff(agent, model, profile, effort); err != nil {
 		return 2, err
 	}
@@ -997,6 +1005,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	spec := box.RunSpec{
 		Image: img, Repo: ws, Workdir: ws, RepoReadOnly: repositoryReadOnly,
 		Cmd: cmd, ForceNoTTY: true, Agent: agent, ConsultLead: lead, Peers: peers, NetworkClient: egress.ClientACP,
+		SupervisorID: os.Getenv("COOP_ACP_SUPERVISOR"), Quiet: innerProcess,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 		ForkName: name, ForkOwner: forkctl.ForkContainerOwner(repo, name, identity.Generation),
 		ForkGeneration: string(identity.Generation),
@@ -1033,7 +1042,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	}
 	// A local fork ACP launch admits here. A remote session already froze its
 	// policy in the daemon, including open/offline runs that carry no capture.
-	if capture == nil && sessionsvc.RunIDFromEnv() == "" {
+	if capture == nil && !innerProcess && sessionsvc.RunIDFromEnv() == "" {
 		capture, err = box.AdmitNetwork(a.cfg, a.rt, spec, a.network.admission())
 		if err != nil {
 			return 1, err
@@ -1054,6 +1063,14 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 		defer stop()
 		spec.Ctx = ctx
+	}
+	if innerProcess && capture != nil {
+		if err := validateACPAccountBindings(a.cfg, spec, a.acpAccountBindings); err != nil {
+			return 1, err
+		}
+	}
+	if !innerProcess && sessionsvc.RunIDFromEnv() == "" && !a.mode.Restricted() && !repositoryReadOnly {
+		return a.superviseForkACP(repo, ws, name, t, peers, capture)
 	}
 	return a.runBox(spec)
 }

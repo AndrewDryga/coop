@@ -10,7 +10,9 @@ OPTIONS
   --egress-rules <file>  add this file's network rules for the session
 
   Read-only mode has no peer agents, project hooks or MCP servers.
-  The editor controls whether to start or resume a conversation.
+  For a writable local session, open the parent project in your editor; Coop maps
+  its working directory to the fork. The fork, provider and account stay fixed;
+  any native model and effort choices remain available. With --readonly, open the fork.
 
 EXAMPLE
   coop fork login acp claude:opus

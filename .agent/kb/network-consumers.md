@@ -2,16 +2,19 @@
 name: network-consumers
 description: how the loop, direct/ACP runs and remote sessions consume one frozen network capture, and which surface reads which evidence
 subsystem: networking
-sources: [internal/networkreport/report.go, internal/box/run.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/acpctl/warm.go, internal/cli/fork_cmd.go, internal/cli/boxsweep.go, internal/forkctl/merge.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/cli/session_policies_view.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/session/schema.go, internal/workerproto/protocol.go]
-updated: 2026-09-19
+sources: [internal/networkreport/report.go, internal/box/run.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/acpctl/warm.go, internal/cli/fork_cmd.go, internal/cli/fork_acp.go, internal/cli/boxsweep.go, internal/forkctl/merge.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/cli/session_policies_view.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/session/schema.go, internal/workerproto/protocol.go]
+updated: 2026-09-25
 ---
 
 Admission happens ONCE per unit of work and the resulting `*box.CapturedEgress` is passed down; no
 consumer admits twice. See [[restricted-networking]] for what admission decides.
 
 **Direct runs** admit in the CLI and hand the capture to `box.Run` on the same host process
-(`cli/commands.go`). Interactive forks and local fork ACP sessions do the same in `cli/fork_cmd.go`;
-fork review/merge gates use the trusted parent policy in `forkctl/merge.go`. A fork loop re-renders
+(`cli/commands.go`). Interactive forks and remote/restricted fork ACP children do the same in
+`cli/fork_cmd.go`. A direct local fork ACP editor admits once in its outer process; its pinned
+child re-proves the capture reference and exact credential bindings without re-admitting
+(`cli/fork_acp.go`, `cli/fork_cmd.go`). Open/offline children inherit the resolved posture.
+Fork review/merge gates use the trusted parent policy in `forkctl/merge.go`. A fork loop re-renders
 the operator's flags in their exact spelling so the detached worker admits what its foreground twin
 would have (`cli/network_flags.go`). `box.Run` reloads project policy before its final capture check,
 so a future caller that misses admission fails before mounts or runtime execution.
@@ -150,6 +153,9 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-09-25 — reverified local fork ACP after the live editor test: its new fixed-target supervisor
+  admits once, hands each child a proved capture reference plus account bindings, and leaves the
+  remote/restricted direct adapter path unchanged.
 - 2026-09-19 — added the `Connecting account(s)` section; the network section lost its broker row.
   Restricted modes narrate the sections too (the old shadow-line claim was stale).
 - 2026-09-19 — the ACP supervisor's child stop is graceful for filtered children (was SIGKILL, which

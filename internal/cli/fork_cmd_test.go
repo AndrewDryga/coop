@@ -659,6 +659,8 @@ func TestForkACPValidatesTargetArgumentsBeforeRun(t *testing.T) {
 }
 
 func TestForkACPMountsSessionCompanionsReadOnly(t *testing.T) {
+	// Inspect the inner box contract; the local editor supervisor is exercised separately.
+	t.Setenv("COOP_ACP_INNER", "1")
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -717,6 +719,7 @@ func TestForkACPMountsSessionCompanionsReadOnly(t *testing.T) {
 // key meets the broker's rules, not the refusal for commands that are not the agent. Offline, that
 // rule is the refusal to put the key in a box the filtered gateway does not guard.
 func TestForkACPTreatsAKeyAsTheAgentsOwnClient(t *testing.T) {
+	t.Setenv("COOP_ACP_INNER", "1")
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
