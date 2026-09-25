@@ -809,6 +809,10 @@ func TestValidateConsultWrapperMountRequiresExactPrivateGeneratedFile(t *testing
 	if err := os.WriteFile(path, []byte(consult.ConsultWrapper()), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// WriteFile applies umask; establish the generated wrapper mode this validator checks.
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	m := mount{Source: path, Target: consult.ConsultWrapperPath, ReadOnly: true}
 	if err := validateConsultWrapperMount(root, m); err != nil {
 		t.Fatalf("exact consult wrapper rejected: %v", err)
@@ -911,6 +915,9 @@ func TestValidateDelegateWrapperMountRequiresExactPrivateGeneratedFile(t *testin
 	}
 	path := filepath.Join(tmp, "coop-delegate-wrapper")
 	if err := os.WriteFile(path, []byte(preset.DelegateWrapper()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	m := mount{Source: path, Target: preset.DelegateWrapperPath, ReadOnly: true}
