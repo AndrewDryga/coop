@@ -2368,6 +2368,9 @@ func TestEnsureAgentHomesRefusesProfilePathEscape(t *testing.T) {
 	if err := os.Mkdir(outside, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	cfg.SetActiveProfile("codex", "../../../outside")
 
 	if err := ensureAgentHomes(cfg, RunSpec{Homes: true, Agent: "codex"}); err == nil {

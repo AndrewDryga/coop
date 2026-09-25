@@ -831,6 +831,10 @@ func TestInitGitHooks(t *testing.T) {
 	if err := os.WriteFile(sharedHook, []byte(sharedHookBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// WriteFile applies the process umask; establish the mode Init must preserve.
+	if err := os.Chmod(sharedHook, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Symlink(sharedHook, symlinkPrepare); err != nil {
 		t.Fatal(err)
 	}

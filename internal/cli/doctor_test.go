@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -103,6 +104,8 @@ func TestBuildFixtureWorldReadable(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
+	previous := syscall.Umask(0o077)
+	defer syscall.Umask(previous)
 	dir, err := buildFixture()
 	if err != nil {
 		t.Fatal(err)
@@ -113,6 +116,13 @@ func TestBuildFixtureWorldReadable(t *testing.T) {
 		t.Fatal(err)
 	} else if fi.Mode().Perm()&0o005 != 0o005 {
 		t.Errorf("fixture root mode = %o, want world rx so a non-owner box can enter it", fi.Mode().Perm())
+	}
+	for _, rel := range []string{"src", "deploy", "config", "secrets"} {
+		if fi, err := os.Stat(filepath.Join(dir, rel)); err != nil {
+			t.Errorf("fixture directory %s: %v", rel, err)
+		} else if fi.Mode().Perm()&0o005 != 0o005 {
+			t.Errorf("fixture directory %s mode = %o, want world rx", rel, fi.Mode().Perm())
+		}
 	}
 	// A seeded source file must be world-readable (the probe reads it as that same non-owner uid).
 	if fi, err := os.Stat(filepath.Join(dir, "src", "app.js")); err != nil {

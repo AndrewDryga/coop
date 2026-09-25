@@ -684,7 +684,7 @@ func buildFixture() (string, error) {
 	}
 	// MkdirTemp makes the root 0700; the box mounts it at /workspace and the probe must cd into and
 	// stat it as a uid that may not own it (and, under --cap-drop ALL, can't bypass the check). Make
-	// the root world-traversable — the seeded files are already 0644 / subdirs 0755.
+	// the root world-traversable; seed permissions explicitly below because umask may be private.
 	if err := os.Chmod(dir, 0o755); err != nil {
 		return "", fmt.Errorf("could not create a temporary project: %s", osCause(err))
 	}
@@ -706,10 +706,17 @@ func buildFixture() (string, error) {
 	}
 	for rel, body := range files {
 		p := filepath.Join(dir, rel)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		parent := filepath.Dir(p)
+		if err := os.MkdirAll(parent, 0o755); err != nil {
+			return "", fmt.Errorf("could not create a temporary project: %s", osCause(err))
+		}
+		if err := os.Chmod(parent, 0o755); err != nil {
 			return "", fmt.Errorf("could not create a temporary project: %s", osCause(err))
 		}
 		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			return "", fmt.Errorf("could not create a temporary project: %s", osCause(err))
+		}
+		if err := os.Chmod(p, 0o644); err != nil {
 			return "", fmt.Errorf("could not create a temporary project: %s", osCause(err))
 		}
 	}

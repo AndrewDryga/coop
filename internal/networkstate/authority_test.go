@@ -307,6 +307,9 @@ func TestPrivateStoreDeniesMountOverlapAndSpecialFiles(t *testing.T) {
 	if err := os.Mkdir(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if s, err := Open(root, nil); err == nil {
 		_ = s.Close()
 		t.Fatal("nonprivate state accepted")

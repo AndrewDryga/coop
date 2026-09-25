@@ -432,6 +432,9 @@ func TestConsultWrapperRejectsHardlinkedContinuationLockBeforeDispatch(t *testin
 	if err := os.WriteFile(outside, []byte("do not touch"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(outside, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Link(outside, filepath.Join(stateDir, key+".lock")); err != nil {
 		t.Fatal(err)
 	}
@@ -1331,6 +1334,9 @@ func TestConsultWrapperRejectsUnsafeContinuationRecordBeforeDispatch(t *testing.
 			make: func(t *testing.T, statefile string) {
 				t.Helper()
 				if err := os.WriteFile(statefile, []byte("session"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(statefile, 0o644); err != nil {
 					t.Fatal(err)
 				}
 			},

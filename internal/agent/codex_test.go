@@ -87,6 +87,9 @@ func TestCodexPeerRowShell(t *testing.T) {
 			if err := os.WriteFile(path, nil, 0o644); err != nil {
 				t.Fatal(err)
 			}
+			if err := os.Chmod(path, 0o644); err != nil {
+				t.Fatal(err)
+			}
 		},
 		"hardlink": func(_, path string) {
 			if err := os.WriteFile(path, nil, 0o600); err != nil {

@@ -3,7 +3,7 @@ name: doctor-report-accounting
 description: how `coop doctor` counts — the 35 checks, the outcomes a row can have, and why a failed probe adds one failure plus the checks it was carrying
 subsystem: doctor
 sources: [internal/cli/doctor.go, internal/cli/doctor_report.go, internal/cli/doctor_checks.go]
-updated: 2026-09-17
+updated: 2026-09-25
 ---
 
 `coop doctor` is the one command whose point IS the ledger: the person asked coop to perform
@@ -34,7 +34,15 @@ why `internal/cli/testdata/approved/18*.txt` pins every report without a contain
 
 A fallback run that performed what it could still exits 0; it just never claims full isolation.
 
+The synthetic project in `buildFixture` is mounted for a probe that may run as a different UID.
+It explicitly sets root/subdirectory traversal and seeded-file read modes after creation;
+`MkdirAll` and `WriteFile` alone inherit the caller's umask and can leave a private-umask
+fixture unreadable inside the box.
+
 ## Changelog
+- 2026-09-25 — a private-umask Ubuntu gate exposed doctor fixture files/subdirectories masked
+  to owner-only despite a world-traversable root. Explicit fixture modes and nested-directory
+  regression restore a readable non-owner probe without changing report semantics.
 - 2026-09-17 — Podman removed as a runtime; the hardened-runtime count is Docker's.
 - 2026-09-11: created with the check tables, the row outcomes and the counting rule. Verified
   against doctor.go, doctor_report.go and the approved 18a–18k fixtures.

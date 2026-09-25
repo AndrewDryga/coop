@@ -635,6 +635,9 @@ func TestWriteFileAtomicModePreservesExistingModeAndRejectsLinks(t *testing.T) {
 	if err := os.WriteFile(path, []byte("before\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatal(err)
+	}
 	if err := WriteFileAtomicMode(path, []byte("after\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
