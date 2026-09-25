@@ -113,6 +113,7 @@ func (r *trialRunner) runLoopTrial(ctx context.Context, t eval.Trial, workspace 
 		"COOP_IMAGE="+r.image,  // the same image the grader uses, never one built from the fixture
 		"COOP_CACHE=0",         // no shared cache volume between trials
 		"COOP_MCP_FILE=",       // no operator MCP servers inside a trial
+		"COOP_RUN_ARGS=",       // no ambient host mounts or unrecorded runtime flags
 		"COOP_NO_UPDATE_CHECK=1",
 	)
 

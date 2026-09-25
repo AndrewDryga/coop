@@ -1019,7 +1019,13 @@ EXAMPLES
 
 Each trial gets a private workspace with no source history. The hidden verifier
 is never mounted for the model. Grading runs afterwards in a separate container
-without credentials or network. Operator MCP servers are not exposed to trials.
+without credentials or network. Operator MCP servers and COOP_RUN_ARGS are
+omitted from trials; use Coop-managed logins rather than runtime args for credentials.
+
+After a real run is sealed, exit 0 means every trial received a graded pass/fail
+verdict, even if some failed. Incomplete coverage exits 1; the run record and
+diagnostics remain available through coop eval inspect. A dry run exits 0 after
+previewing the plan without running trials.
 
 Read the result: coop eval inspect
 

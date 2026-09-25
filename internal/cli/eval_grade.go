@@ -90,7 +90,7 @@ func (a *app) gradeSnapshot(ctx context.Context, req gradeRequest, run boxRunner
 		// A CLONE of the config with egress cut. SetEgress (not a bare field write) also marks the
 		// mode explicit, which is what stops a project policy from deciding it a second time; and a
 		// clone, not `*a.cfg`, because Config's per-run maps are shared by a shallow copy.
-		offline := a.cfg.Clone()
+		offline := evalTrialConfig(a.cfg) // no operator MCP or ambient runtime mounts in grading
 		offline.SetEgress("none")
 		run = func(spec box.RunSpec) (int, error) { return box.Run(offline, a.rt, spec) }
 	}
@@ -105,6 +105,7 @@ func (a *app) gradeSnapshot(ctx context.Context, req gradeRequest, run boxRunner
 		// asked to produce — a .env, a key, a certificate — with an empty decoy, and the case would
 		// fail for a reason that has nothing to do with the model.
 		GradeSnapshot: true,
+		EvalVerifier:  req.Verifier,
 		Workdir:       gradeWorkspaceDir,
 		Cmd:           command,
 		// Batch: no tty and no stdin — a verifier that waits for input times out rather than hangs

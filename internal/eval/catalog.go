@@ -51,6 +51,9 @@ func StarterPath(id, root string) (string, bool, error) {
 		if s.ID != id {
 			continue
 		}
+		if err := ensurePrivateRoot(root); err != nil {
+			return "", true, err
+		}
 		dest := filepath.Join(root, "starters", id)
 		if err := os.RemoveAll(dest); err != nil {
 			return "", true, err

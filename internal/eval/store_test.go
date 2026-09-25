@@ -27,6 +27,20 @@ func TestListRunsExcludesCachesButRetainsUnreadableRecords(t *testing.T) {
 	}
 }
 
+func TestCreateRunProtectsExistingEvalRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "eval")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateRun(root, RunRecord{ID: "run-1", Suite: "core"}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(root)
+	if err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("eval root mode: %v, %v; want 0700", info, err)
+	}
+}
+
 func TestStoreRecordsARunItsTrialsAndSeals(t *testing.T) {
 	root := t.TempDir()
 	id := NewRunID(time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC), "abcdef1234567890")

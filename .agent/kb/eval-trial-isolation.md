@@ -2,8 +2,8 @@
 name: eval-trial-isolation
 description: What isolates one coop eval trial from the next and from the grader — and why the obvious credential fix would break authentication
 subsystem: eval
-sources: [internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_loop.go, internal/cli/eval_results.go, internal/loop/loop.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/eval/store.go, internal/box/run.go, internal/box/mounts.go, internal/agent/codex.go]
-updated: 2026-09-22
+sources: [internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_loop.go, internal/cli/eval_results.go, internal/loop/loop.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/eval/store.go, internal/eval/catalog.go, internal/eval/private_root.go, internal/box/run.go, internal/box/mounts.go, internal/box/authority_mounts.go, internal/agent/codex.go]
+updated: 2026-09-25
 ---
 
 `coop eval` measures configurations against each other, so its whole value rests on two trials
@@ -15,6 +15,11 @@ the map, and the reasoning behind the one place the obvious fix is wrong.
 - **Workspace** — `eval.PrepareWorkspace` copies the suite's fixture into a private tree with a
   synthetic initial commit and no `.git` from the source, so no author history travels
   (`internal/eval/workspace.go`).
+- **Host mount boundary** — those generated workspaces live under Coop's private state. Box admits
+  only the exact owner-private trial workspace for a candidate, and only its snapshot and selected
+  read-only starter verifier for a credential-free grader. Sibling records, other trials and
+  credentials remain fenced (`internal/box/authority_mounts.go`). Starter extraction and run
+  creation both tighten the eval root to 0700; older roots created as 0755 are migrated before use.
 - **Hidden material** — the verifier never appears in any candidate mount. The suite loader refuses a
   manifest whose verifier overlaps `files`/`fixture`/`tasks` (`internal/eval/suite.go`), and grading
   mounts it at `/coop-verifier`, outside the workspace (`internal/cli/eval_grade.go`).
@@ -31,6 +36,9 @@ the map, and the reasoning behind the one place the obvious fix is wrong.
   selection would leak into the next and concurrent workers would race.
 - **MCP** — a trial runs with `MCPFile` cleared. Operator MCP servers are a route out of the trial and
   differ per machine, so a run using them would not be reproducible.
+- **Ambient runtime args** — candidate and grader config clones clear `ExtraRunArgs`, and loop
+  children pin `COOP_RUN_ARGS=`. Operator binds can expose host data or hidden verifiers to a
+  candidate; even harmless flags would alter a trial without appearing in its fingerprint.
 - **Loop trials** — a subprocess with a PINNED environment, not an inherited one. `coop loop` resolves
   its repository from configuration rather than its working directory, so an inherited `COOP_REPO`
   would run the loop against the operator's own checkout, with their credentials, making real commits
@@ -103,6 +111,12 @@ already fully correct. The shipped verifier runs each subcommand on inputs no ta
 also why it cannot be satisfied by a loop that moves folders without finishing anything.
 
 ## Changelog
+- 2026-09-25 — a real starter run reached Box but inherited the operator's private MCP bind from
+  `COOP_RUN_ARGS` and returned three prelaunch errors. Traced candidate, grader and loop inheritance;
+  Eval now omits ambient runtime args on all three paths while ordinary Coop runs retain them.
+- 2026-09-25 — documented the exact generated-state mount admission after real `core` runs
+  failed before provider launch; the grader and candidate grants stay separate. Starter extraction
+  had created 0755 roots, so creation now tightens both new and existing roots before use.
 - 2026-09-22 — documented manifest-backed discovery, unsealed-state ambiguity and explicit local
   diagnostic inspection after a cache appeared as a run and provider quota refusals were opaque.
 - 2026-09-22 — separated terminal worker failure status from loop status, retaining raw attempt

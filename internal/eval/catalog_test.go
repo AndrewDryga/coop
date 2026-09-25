@@ -50,6 +50,34 @@ func TestEveryShippedStarterLoads(t *testing.T) {
 	}
 }
 
+func TestStarterProtectsNewAndExistingEvalRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "eval")
+	for _, existing := range []bool{false, true} {
+		if existing {
+			if err := os.Chmod(root, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, ok, err := StarterPath("core", root); err != nil || !ok {
+			t.Fatalf("StarterPath(existing=%v): ok=%v err=%v", existing, ok, err)
+		}
+		info, err := os.Stat(root)
+		if err != nil || info.Mode().Perm() != 0o700 {
+			t.Fatalf("eval root mode after existing=%v: %v, %v; want 0700", existing, info, err)
+		}
+	}
+}
+
+func TestStarterRefusesLinkedEvalRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "eval")
+	if err := os.Symlink(t.TempDir(), root); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := StarterPath("core", root); err == nil {
+		t.Fatal("starter extracted through a linked eval state root")
+	}
+}
+
 // The unpacked copy belongs to the binary: a stale one from an older version would silently change
 // what a comparison measures.
 func TestStarterIsRewrittenNotReused(t *testing.T) {

@@ -361,6 +361,118 @@ func TestAuthorityMountGuardProtectsHostConfigAndStateSiblings(t *testing.T) {
 	}
 }
 
+func TestEvalMountAllowsOnlyItsGeneratedWorkspace(t *testing.T) {
+	stateHome := filepath.Join(t.TempDir(), "state")
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	t.Setenv(ServiceStateRootEnv, filepath.Join(t.TempDir(), "service-state"))
+	evalRoot := filepath.Join(stateHome, "coop", "eval")
+	trial := filepath.Join(evalRoot, "run-1", "work", "case-c0-r0")
+	workspace := filepath.Join(trial, "workspace")
+	snapshot := filepath.Join(trial, "snapshot")
+	verifier := filepath.Join(evalRoot, "starters", "core", "verifiers", "fix-the-cause")
+	sibling := filepath.Join(evalRoot, "run-1", "work", "case-c0-r1", "workspace")
+	credential := filepath.Join(stateHome, "coop", "credentials")
+	for _, path := range []string{workspace, snapshot, verifier, sibling, credential} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	candidate := RunSpec{Repo: workspace}
+	grader := RunSpec{Repo: snapshot, GradeSnapshot: true, EvalVerifier: verifier}
+	for _, tc := range []struct {
+		name    string
+		spec    RunSpec
+		options []string
+		allowed bool
+	}{
+		{"candidate workspace", candidate, []string{"-v", workspace + ":/workspace"}, true},
+		{"candidate cannot mount verifier", candidate, []string{"-v", workspace + ":/workspace", "-v", verifier + ":/verifier:ro"}, false},
+		{"candidate cannot claim grader verifier", RunSpec{Repo: workspace, EvalVerifier: verifier}, []string{"-v", verifier + ":/verifier:ro"}, false},
+		{"candidate cannot mount another trial", candidate, []string{"-v", sibling + ":/other"}, false},
+		{"candidate cannot mount run record", candidate, []string{"-v", filepath.Join(evalRoot, "run-1") + ":/run:ro"}, false},
+		{"candidate cannot mount eval root", candidate, []string{"-v", evalRoot + ":/eval:ro"}, false},
+		{"candidate cannot mount credential sibling", candidate, []string{"-v", credential + ":/credentials:ro"}, false},
+		{"grader snapshot and read-only verifier", grader, []string{"-v", snapshot + ":/workspace", "-v", verifier + ":/verifier:ro"}, true},
+		{"grader cannot write verifier", grader, []string{"-v", verifier + ":/verifier"}, false},
+		{"grader cannot mount candidate workspace", grader, []string{"-v", workspace + ":/other"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateAuthorityMounts(context.Background(), tc.spec, tc.options,
+				filepath.Join(stateHome, "coop", "network"), nil, authorityMountAllowlist{})
+			if (err == nil) != tc.allowed {
+				t.Fatalf("mount decision = %v, want allowed=%v", err, tc.allowed)
+			}
+		})
+	}
+	alias := filepath.Join(evalRoot, "run-1", "work", "alias-c0-r0", "workspace")
+	if err := os.MkdirAll(filepath.Dir(alias), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(credential, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateAuthorityMounts(context.Background(), RunSpec{Repo: alias},
+		[]string{"-v", alias + ":/workspace"}, "", nil, authorityMountAllowlist{}); err == nil {
+		t.Fatal("symlinked eval workspace reached the runtime")
+	}
+	if err := os.Chmod(filepath.Join(evalRoot, "run-1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateAuthorityMounts(context.Background(), candidate,
+		[]string{"-v", workspace + ":/workspace"}, "", nil, authorityMountAllowlist{}); err == nil {
+		t.Fatal("nonprivate eval run ancestor reached the runtime")
+	}
+}
+
+func TestEvalMountDecisionReachesRunAssembly(t *testing.T) {
+	stateHome := filepath.Join(t.TempDir(), "state")
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	t.Setenv(ServiceStateRootEnv, filepath.Join(t.TempDir(), "service-state"))
+	evalRoot := filepath.Join(stateHome, "coop", "eval")
+	trial := filepath.Join(evalRoot, "run-1", "work", "case-c0-r0")
+	workspace := filepath.Join(trial, "workspace")
+	snapshot := filepath.Join(trial, "snapshot")
+	verifier := filepath.Join(evalRoot, "starters", "core", "verifiers", "fix-the-cause")
+	for _, path := range []string{workspace, snapshot, verifier} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	rt := recorderRuntime(t, recorder)
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
+	for _, spec := range []RunSpec{
+		{Image: "i", Repo: workspace, Workdir: "/workspace", Cmd: []string{"true"}, Batch: true, Quiet: true},
+		{Image: "i", Repo: snapshot, Workdir: "/workspace", Cmd: []string{"true"}, Batch: true, Quiet: true,
+			GradeSnapshot: true, EvalVerifier: verifier, ExtraArgs: []string{"-v", verifier + ":/verifier:ro"}},
+	} {
+		if code, err := Run(cfg, rt, spec); err != nil || code != 0 {
+			t.Fatalf("eval Run(%q) = %d, %v; want 0, nil", spec.Repo, code, err)
+		}
+	}
+	before, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mount := range []string{workspace + ":/workspace", snapshot + ":/workspace", verifier + ":/verifier:ro"} {
+		if !strings.Contains(string(before), mount) {
+			t.Fatalf("eval mount %q missing from runtime invocation: %q", mount, before)
+		}
+	}
+	candidate := RunSpec{Image: "i", Repo: workspace, Workdir: "/workspace", Cmd: []string{"true"}, Batch: true, Quiet: true,
+		ExtraArgs: []string{"-v", verifier + ":/verifier:ro"}}
+	if code, err := Run(cfg, rt, candidate); err == nil || code != -1 {
+		t.Fatalf("candidate verifier mount = %d, %v; want refusal before runtime", code, err)
+	}
+	after, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("runtime invoked for denied verifier mount: before %q, after %q", before, after)
+	}
+}
+
 func TestAuthorityMountGuardAllowsOnlyOneRemoteSessionOutputSubtree(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv(ServiceStateRootEnv, filepath.Join(root, "service-state"))

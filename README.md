@@ -1084,7 +1084,9 @@ causes for non-passing trials and the directory containing the JSON records and 
 An `error` means execution or grading did not produce a verdict—not that the model failed the
 task. `failed` means the independent verifier actually rejected the work. Timeouts and trials
 that never started also leave grading incomplete; an incomplete comparison has no definitive
-winner. Code-size changes are a review signal, not a quality score.
+winner. A sealed run with complete grading exits 0 even with graded failures; incomplete grading
+exits 1 and keeps the run record for inspection. A dry run exits 0 after previewing without trials.
+Code-size changes are a review signal, not a quality score.
 
 For a provider sign-in or quota refusal, check `coop credentials <agent>` before another paid
 run. For timeouts, check both the case timeout in `suite.yaml` and the run's `--timeout`.
@@ -1094,8 +1096,10 @@ Recorded diagnostics can contain private provider output: review them before sha
 
 Trials use private workspaces with no source Git history. Hidden verifiers stay outside model
 mounts and run afterwards in a separate, credential-free, network-free container. Operator MCP
-servers are not exposed to trials. These checks are evidence about the tested workload, not a
-promise of general provider parity or a public benchmark ranking.
+servers and `COOP_RUN_ARGS` are omitted from trials: ambient runtime mounts or flags would
+change the workload without appearing in its fingerprint. Use Coop-managed logins for provider
+credentials. These checks are evidence about the tested workload, not a promise of general
+provider parity or a public benchmark ranking.
 
 For all options: `coop help eval run`. For result meanings: `coop help eval inspect`.
 

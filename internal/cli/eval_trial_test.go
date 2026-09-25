@@ -247,20 +247,27 @@ func TestTrialRunnerRefusesAPresetOnAnAgentSuite(t *testing.T) {
 	}
 }
 
-// A candidate runs with no MCP servers and on its own copy of the config: MCP is a route out of the
-// trial and differs per machine, and a shared config would leak one trial's selection into the next.
+// A candidate runs without operator MCP servers or ambient runtime mounts, and on its own copy of
+// the config: those are routes out of the trial, while shared selections leak between trials.
 func TestEvalTrialConfigDropsMCPAndDoesNotTouchTheCallers(t *testing.T) {
 	base, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
 	base.MCPFile = filepath.Join(t.TempDir(), "mcp.json")
+	base.ExtraRunArgs = []string{"-v", filepath.Join(t.TempDir(), "host") + ":/leak"}
 	cfg := evalTrialConfig(base)
 	if cfg.MCPFile != "" {
 		t.Errorf("a candidate was given MCP servers: %q", cfg.MCPFile)
 	}
 	if base.MCPFile == "" {
 		t.Error("the trial cleared the caller's MCP configuration instead of its own copy")
+	}
+	if len(cfg.ExtraRunArgs) != 0 {
+		t.Errorf("a candidate inherited operator runtime args: %q", cfg.ExtraRunArgs)
+	}
+	if len(base.ExtraRunArgs) == 0 {
+		t.Error("the trial cleared the caller's runtime args instead of its own copy")
 	}
 	// And the per-run selections are independent, not shared through the clone.
 	if _, err := applyEvalConfiguration(cfg, eval.FrozenConfig{Kind: eval.ConfigTarget, Label: "codex@work"}); err != nil {

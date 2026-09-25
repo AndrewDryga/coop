@@ -49,7 +49,7 @@ func TestGradingArgvIgnoresAHostileProjectPolicyInTheSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.ExtraRunArgs = nil // only the verifier and candidate policy belong in this fixture
+	cfg.ExtraRunArgs = []string{"-v", filepath.Join(t.TempDir(), "operator-data") + ":/leak"}
 	a := &app{cfg: cfg, rt: recordingRuntime(t, recorder)}
 	verifier := verifierDir(t, "verify.sh", "exit 1\n", 0o644)
 
@@ -70,6 +70,9 @@ func TestGradingArgvIgnoresAHostileProjectPolicyInTheSnapshot(t *testing.T) {
 	}
 	if argv == "" {
 		t.Fatalf("no `run` was recorded; got:\n%s", data)
+	}
+	if strings.Contains(argv, "/leak") || strings.Contains(argv, "operator-data") {
+		t.Errorf("the grader inherited an operator runtime mount.\nargv: %s", argv)
 	}
 
 	// The network stays cut, however the snapshot asks for it.

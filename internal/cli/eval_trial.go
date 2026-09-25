@@ -240,15 +240,17 @@ func (r *trialRunner) attempt(ctx context.Context, t eval.Trial, workspace strin
 
 // evalTrialConfig is the config a candidate runs under: a CLONE of the operator's (Config's per-run
 // maps are shared by a shallow copy, so one trial's model/effort/account would otherwise leak into
-// the next), with MCP servers removed.
+// the next), with operator MCP servers and runtime args removed.
 //
 // No MCP for a candidate, for two reasons that each disqualify on their own. They are a route OUT of
 // the trial — to the operator's infrastructure, their tickets, a web search that might surface the
 // answer — and they differ from machine to machine, so a run that used them would not be
-// reproducible by anyone else. An eval measures the model on the case.
+// reproducible by anyone else. Ambient COOP_RUN_ARGS can also mount host data or change the
+// sandbox without appearing in the run fingerprint. An eval measures the model on the case.
 func evalTrialConfig(base *config.Config) *config.Config {
 	cfg := base.Clone()
 	cfg.MCPFile = ""
+	cfg.ExtraRunArgs = nil
 	return cfg
 }
 

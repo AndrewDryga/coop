@@ -154,7 +154,7 @@ func TestLoopTrialPinsTheChildToTheTrial(t *testing.T) {
 	shim := filepath.Join(t.TempDir(), "coop-shim")
 	script := "#!/bin/sh\n{ echo \"ARGS=$*\"; echo \"PWD=$PWD\"; " +
 		"echo \"COOP_REPO=$COOP_REPO\"; echo \"COOP_TASKS=[$COOP_TASKS]\"; echo \"COOP_IMAGE=$COOP_IMAGE\"; " +
-		"echo \"COOP_MCP_FILE=[$COOP_MCP_FILE]\"; echo \"COOP_CACHE=$COOP_CACHE\"; } > " + dump + "\nexit 0\n"
+		"echo \"COOP_MCP_FILE=[$COOP_MCP_FILE]\"; echo \"COOP_RUN_ARGS=[$COOP_RUN_ARGS]\"; echo \"COOP_CACHE=$COOP_CACHE\"; } > " + dump + "\nexit 0\n"
 	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -165,6 +165,7 @@ func TestLoopTrialPinsTheChildToTheTrial(t *testing.T) {
 	// An operator whose environment points at their own repository and queue.
 	t.Setenv("COOP_REPO", "/the/operators/real/checkout")
 	t.Setenv("COOP_TASKS", "/the/operators/real/queue")
+	t.Setenv("COOP_RUN_ARGS", "-v /the/operators/real/checkout:/leak")
 
 	out, err := r.runLoopTrial(context.Background(), eval.Trial{
 		Case: suite.Cases[0], Config: eval.FrozenConfig{Kind: eval.ConfigTarget, Label: "codex"},
@@ -182,6 +183,7 @@ func TestLoopTrialPinsTheChildToTheTrial(t *testing.T) {
 		"COOP_TASKS=[]",   // the queue we materialized, not a configured one
 		"COOP_IMAGE=coop-box:test",
 		"COOP_MCP_FILE=[]", // no operator MCP servers inside a trial
+		"COOP_RUN_ARGS=[]", // no ambient runtime binds inside a trial
 		"COOP_CACHE=0",
 	} {
 		if !strings.Contains(got, want) {

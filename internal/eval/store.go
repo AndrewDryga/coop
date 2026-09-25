@@ -123,7 +123,7 @@ func CreateRun(root string, rec RunRecord) (*Store, error) {
 	if filepath.Base(rec.ID) != rec.ID {
 		return nil, fmt.Errorf("invalid run id %q", rec.ID)
 	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
+	if err := ensurePrivateRoot(root); err != nil {
 		return nil, err
 	}
 	dir := filepath.Join(root, rec.ID)

@@ -80,6 +80,9 @@ type RunSpec struct {
 	// wrote, including a file named like a secret. It is refused together with Homes, so it can never
 	// be the reason an unshadowed tree is mounted beside model credentials.
 	GradeSnapshot bool
+	// EvalVerifier names the one hidden shipped verifier selected by the host grader.
+	// It is never candidate authority; the mount guard admits it only read-only.
+	EvalVerifier string `json:"-"`
 	// RepoReadOnly mounts Repo read-only. Maintenance checks can inspect an isolated candidate
 	// without letting the command alter even that disposable tree.
 	RepoReadOnly bool

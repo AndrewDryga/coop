@@ -242,7 +242,15 @@ func (a *app) executeEvalRun(plan *eval.Plan, frozen []eval.FrozenConfig) (int, 
 		return 1, err
 	}
 	renderEvalSummary(store.ID(), summary)
-	return 0, nil
+	return evalRunExitCode(summary), nil
+}
+
+// A graded failure is a valid evaluation result; an execution or grading gap is not.
+func evalRunExitCode(s eval.RunSummary) int {
+	if s.Counts[eval.TrialPassed]+s.Counts[eval.TrialFailed] < s.Requested {
+		return 1
+	}
+	return 0
 }
 
 // renderEvalSummary prints a finished run the same honest way a comparison does: passes over the
@@ -504,6 +512,7 @@ func renderEvalPlan(p *eval.Plan, frozen []eval.FrozenConfig) {
 		len(p.Suite.Cases), len(p.Configs), p.Repeat, p.Trials())
 	fmt.Printf("Workers: %d\n", p.Jobs)
 	fmt.Printf("Deadline: %s (covers preparation, work, grading and cleanup)\n", p.Timeout)
+	fmt.Println("Isolation: operator MCP servers and COOP_RUN_ARGS are omitted from trials")
 	fmt.Println("Cases:")
 	for _, c := range p.Suite.Cases {
 		fmt.Printf("  - %-24s budget %s\n", c.ID, c.Timeout)

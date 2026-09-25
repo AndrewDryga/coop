@@ -55,6 +55,27 @@ func TestParseEvalRunArgs(t *testing.T) {
 	}
 }
 
+func TestEvalRunExitCodeRequiresGradingCoverage(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		counts map[eval.TrialStatus]int
+		want   int
+	}{
+		{"all passed", map[eval.TrialStatus]int{eval.TrialPassed: 3}, 0},
+		{"graded failure", map[eval.TrialStatus]int{eval.TrialPassed: 2, eval.TrialFailed: 1}, 0},
+		{"all execution errors", map[eval.TrialStatus]int{eval.TrialError: 3}, 1},
+		{"execution error", map[eval.TrialStatus]int{eval.TrialPassed: 2, eval.TrialError: 1}, 1},
+		{"timeout", map[eval.TrialStatus]int{eval.TrialPassed: 2, eval.TrialTimedOut: 1}, 1},
+		{"pending", map[eval.TrialStatus]int{eval.TrialPassed: 2, eval.TrialPending: 1}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := evalRunExitCode(eval.RunSummary{Requested: 3, Counts: tc.counts}); got != tc.want {
+				t.Fatalf("exit code = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestEvalHelpRunExamplesParse(t *testing.T) {
 	examples, dryRuns := 0, 0
 	for _, line := range strings.Split(commandHelp["eval"]+commandHelp["eval run"]+commandHelp["eval init"], "\n") {
