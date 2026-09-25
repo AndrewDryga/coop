@@ -1226,6 +1226,8 @@ OPTIONS
   --gate  test the fork after rebasing a temporary copy onto your current branch
 
   Shows commits, the agent's task notes and changes that need your attention.
+  Counts and diffs include committed changes only. Uncommitted fork work gets
+  a warning; open the fork, commit intended files, then review again.
   --gate leaves the fork and your working tree unchanged. It cannot be used
   with --open.
 

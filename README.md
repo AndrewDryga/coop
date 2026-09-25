@@ -453,8 +453,13 @@ the commits; the agent's claim (the latest task `log.md`, labeled — it's the f
 voice); policy findings from the same scan `coop fork merge` enforces, so nothing first
 surfaces as a failed merge; the changed files risk-ordered (config & instructions, then
 code by churn, then tests, then docs, each with `+N -N`); and whether a merge gate is
-configured. Then the diff shows in your pager. No setup needed. To review in an IDE
-instead:
+configured. Then the diff shows in your pager. No setup needed.
+
+The counts and diff include committed fork changes only. If the fork has uncommitted or
+untracked edits, Coop warns you; open the fork, commit the intended work, then review again.
+Uncommitted files are not merged.
+
+To review in an IDE instead:
 
 | | |
 |---|---|

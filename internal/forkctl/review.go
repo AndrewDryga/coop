@@ -205,8 +205,17 @@ func (c *Control) ForkReview(args []string) (int, error) {
 	} else if err := gitFetchInto(repo, ws, name); err != nil {
 		return -1, fmt.Errorf("%s: git fetch: %w", name, err)
 	}
+	uncommitted, err := gitOutErr(ws, "status", "--porcelain", "--untracked-files=all")
+	if err != nil {
+		return -1, fmt.Errorf("inspect fork worktree: %w", err)
+	}
 	if err := c.forkBrief(reviewRepo, ws, name, ref, outcome, gateConfigured); err != nil {
 		return -1, err
+	}
+	if uncommitted != "" {
+		fmt.Println(ui.AlertBlock(ui.For(os.Stdout), "Uncommitted fork changes",
+			"Uncommitted changes are omitted from this review's counts and committed diff. Open the fork, commit intended work, then review again.",
+			[2]string{"Open fork:", "coop fork open " + name}))
 	}
 	if _, s := c.host.forkCost(ws); s != "" {
 		ui.Note("  Reported cost: %s", s)

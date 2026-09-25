@@ -334,6 +334,50 @@ func TestForkReviewWithoutGateKeepsExistingPath(t *testing.T) {
 	}
 }
 
+func TestForkReviewWarnsWhenUncommittedWorkIsOmitted(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	t.Run("untracked work with no commits", func(t *testing.T) {
+		repo := initRepo(t)
+		ws, err := forkspace.Setup(repo, "perf")
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := &Control{cfg: &config.Config{RepoOverride: repo}}
+		clean, code, err := reviewCommandOutput(t, c, "perf", "--stat")
+		if err != nil || code != 0 || strings.Contains(clean, "Uncommitted fork changes") {
+			t.Fatalf("clean review = (%d, %v):\n%s", code, err, clean)
+		}
+		path := filepath.Join(ws, "new.txt")
+		if err := os.WriteFile(path, []byte("kept\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, code, err := reviewCommandOutput(t, c, "perf", "--stat")
+		if err != nil || code != 0 || !strings.Contains(out, "0 commits · 0 files") ||
+			!strings.Contains(out, "Uncommitted fork changes") ||
+			!strings.Contains(out, "omitted from this review's counts and committed diff") ||
+			!strings.Contains(out, "coop fork open perf") {
+			t.Fatalf("untracked review = (%d, %v):\n%s", code, err, out)
+		}
+		if got, err := os.ReadFile(path); err != nil || string(got) != "kept\n" {
+			t.Fatalf("review changed untracked work: %q, %v", got, err)
+		}
+	})
+	t.Run("modified tracked work", func(t *testing.T) {
+		repo, ws := setupReviewGateFork(t, false)
+		c := &Control{cfg: &config.Config{RepoOverride: repo}}
+		if err := os.WriteFile(filepath.Join(ws, "fork.txt"), []byte("revised\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, code, err := reviewCommandOutput(t, c, "perf", "--stat")
+		if err != nil || code != 0 || !strings.Contains(out, "Uncommitted fork changes") ||
+			!strings.Contains(out, "omitted from this review's counts and committed diff") {
+			t.Fatalf("modified review = (%d, %v):\n%s", code, err, out)
+		}
+	})
+}
+
 func TestForkReviewGateRejectsOpen(t *testing.T) {
 	c := &Control{cfg: &config.Config{}}
 	if code, err := c.ForkReview([]string{"perf", "--gate", "--open"}); code != 2 || err == nil || !strings.Contains(err.Error(), "cannot be combined") {
