@@ -37,7 +37,7 @@ if [ -n "$trailer" ]; then
 	# idempotent) — keyed off the vendor name or noreply domain on the Co-authored-by line; a human
 	# co-author matches none of these and survives.
 	tmp="$f.coop.$$"
-	grep -viE '^Co-authored-by:.*(claude|chatgpt|codex|gemini|grok|coop|noreply@(anthropic|openai|google|x\.ai|coop))' "$f" > "$tmp" && mv "$tmp" "$f"
+	cp -p "$f" "$tmp" && grep -viE '^Co-authored-by:.*(claude|chatgpt|codex|gemini|grok|coop|noreply@(anthropic|openai|google|x\.ai|coop))' "$f" > "$tmp" && mv "$tmp" "$f"
 	git interpret-trailers --if-exists addIfDifferent --trailer "Co-authored-by: $trailer" --in-place "$f"
 fi
 task=$(git config coop.task 2>/dev/null || true)

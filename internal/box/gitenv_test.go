@@ -97,6 +97,24 @@ func TestPrepareCommitMsgHook(t *testing.T) {
 	if n := strings.Count(string(out), "coop (codex:"); n != 1 {
 		t.Errorf("amend should stay idempotent (one coop trailer), got %d:\n%s", n, out)
 	}
+	// The host-created message can be private while the box uses a different umask.
+	// The hook must not replace it with a more broadly readable temporary file.
+	messagePath := filepath.Join(repo, ".git", "COMMIT_EDITMSG")
+	if err := os.Chmod(messagePath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	boxCommit := exec.Command("sh", "-c", "umask 022; exec git commit -q --allow-empty -m 'private message'")
+	boxCommit.Dir, boxCommit.Env = repo, env
+	if out, err := boxCommit.CombinedOutput(); err != nil {
+		t.Fatalf("box commit: %v\n%s", err, out)
+	}
+	messageInfo, err := os.Stat(messagePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := messageInfo.Mode().Perm(); got != 0o600 {
+		t.Errorf("box commit changed private COMMIT_EDITMSG mode from 0600 to %04o", got)
+	}
 	// (4) A merge/squash message source is left untouched.
 	mf := filepath.Join(t.TempDir(), "MERGE_MSG")
 	if err := os.WriteFile(mf, []byte("Merge branch 'x'\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n"), 0o644); err != nil {

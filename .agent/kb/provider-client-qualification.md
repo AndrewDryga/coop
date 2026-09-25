@@ -2,7 +2,7 @@
 name: provider-client-qualification
 description: locked clients, strict schema2 qualification requirements, conformance evidence and the approved paid run still owed
 subsystem: agent
-sources: [internal/agent/locked_clients.go, internal/agent/qualification.go, internal/agent/qualification_gate_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go]
+sources: [internal/agent/locked_clients.go, internal/agent/qualification.go, internal/agent/qualification_gate_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go]
 updated: 2026-09-25
 ---
 
@@ -202,7 +202,21 @@ policy so an env-only account needs no directory; a changed client layer makes e
 host re-run filtered setup once — a filtered launch does it itself, an editor session refuses until
 `coop net setup`.
 
+The live loop verifier snapshots Git administrative state before the box commits. A different
+box umask can change permissions on Git's rewritten ref and index files; Coop's
+`prepare-commit-msg` hook must preserve `COMMIT_EDITMSG`'s original private mode too. The
+verifier tolerates safe permission-bit drift on allowlisted mutable Git files but rejects
+executable or world-writable modes, retaining their paths/types and exact semantic commit,
+reflog and index checks.
+
 ## Changelog
+- 2026-09-25 — strict Ubuntu loop qualification exposed a shared Git-admin mismatch after all
+  four providers completed their tasks. The real hook reproduced a `COMMIT_EDITMSG` mode change
+  from 0600 to 0644 under differing umasks; preserve the mode in its temporary replacement.
+  Plain Git changed a ref and index from 0600 to 0644 under the same umask transition on Mac,
+  and the ref on Ubuntu; normalize safe mutable-file permission drift in the verifier. Review
+  caught world-writable/executable permissions that the first normalization would accept;
+  focused denials now reject both. Live loop replay and qualification remain pending.
 - 2026-09-25 — real Ubuntu qualification passed four direct prompts but Gemini
   API-key native resume failed before grading because both resume children omitted
   the filtered host-state grant. Routed the selected brokered key through that

@@ -377,11 +377,20 @@ func providerLoopLiveAdminDigest(layout procharness.Layout) ([32]byte, error) {
 		if err != nil {
 			return err
 		}
-		// Names and modes still bind refs, logs, and the index into the digest. Only their
-		// contents may change during the one expected commit. Loose object names are derived
-		// from content, so fsck and the exact history checks validate them after this no-follow pass.
+		// Git rewrites mutable files via lock-and-rename: their permissions follow the box
+		// umask, which can differ from the host fixture's. Keep their names and non-permission
+		// mode bits bound, and reject executable or world-writable admin files; exact history,
+		// reflog, and index checks bind their content.
+		// Loose object names are derived from content, so fsck validates them separately.
 		if !strings.HasPrefix(rel, "objects/") || !mutableContent {
-			fmt.Fprintf(hash, "%s\x00%d\x00", rel, info.Mode())
+			mode := info.Mode()
+			if mutableContent && !entry.IsDir() {
+				if mode.Perm()&0o111 != 0 || mode.Perm()&0o002 != 0 {
+					return fmt.Errorf("unsafe live loop Git administrative file permissions")
+				}
+				mode &^= os.ModePerm
+			}
+			fmt.Fprintf(hash, "%s\x00%d\x00", rel, mode)
 		}
 		if entry.IsDir() || mutableContent {
 			return nil
@@ -690,6 +699,69 @@ func TestProviderLoopLiveContract(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+	t.Run("accepts Git mutable file permissions changed by box umask", func(t *testing.T) {
+		layout, before, target, marker := newCompleted(t)
+		ref, err := runProviderLoopLiveGit(layout, "symbolic-ref", "HEAD")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, rel := range []string{"COMMIT_EDITMSG", "index", strings.TrimSpace(string(ref))} {
+			path := filepath.Join(layout.Repo, ".git", rel)
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mode := os.FileMode(0o600)
+			if info.Mode().Perm() == mode {
+				mode = 0o644
+			}
+			if err := os.Chmod(path, mode); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := verifyProviderLoopLiveRepository(layout, before, target, marker); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("rejects immutable Git admin permission change", func(t *testing.T) {
+		layout, before, target, marker := newCompleted(t)
+		path := filepath.Join(layout.Repo, ".git", "config")
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mode := os.FileMode(0o600)
+		if info.Mode().Perm() == mode {
+			mode = 0o644
+		}
+		if err := os.Chmod(path, mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := verifyProviderLoopLiveRepository(layout, before, target, marker); err == nil || err.Error() != "live loop changed Git administrative state" {
+			t.Fatalf("immutable Git config permission change = %v", err)
+		}
+	})
+	for _, test := range []struct {
+		name string
+		mode os.FileMode
+	}{
+		{"world-writable", 0o666},
+		{"executable", 0o700},
+	} {
+		t.Run("rejects "+test.name+" Git ref", func(t *testing.T) {
+			layout, before, target, marker := newCompleted(t)
+			ref, err := runProviderLoopLiveGit(layout, "symbolic-ref", "HEAD")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(filepath.Join(layout.Repo, ".git", strings.TrimSpace(string(ref))), test.mode); err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyProviderLoopLiveRepository(layout, before, target, marker); err == nil || err.Error() != "live loop changed Git administrative state" {
+				t.Fatalf("unsafe Git ref permissions = %v", err)
+			}
+		})
+	}
 	t.Run("commit message diagnostics", func(t *testing.T) {
 		for _, test := range []struct{ name, want string }{
 			{"missing", "live loop Git commit message file is missing"},
