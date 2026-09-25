@@ -56,6 +56,13 @@ credentials. The ring's old blocker was missing `NetworkStateHome`, not the brok
 `AgentCommand` gate (the wrapper spec already sets it). Isolated ACP homes link Docker CLI plugins
 so their filtered setup can find Buildx; filtered launches admit the supervisor's `--label`.
 
+The filtered Grok live suite must renew a selected, renewable trusted source login *before*
+the harness fingerprints and projects it. Its child receives only an access token, so Grok's
+one-hour restricted admission needs that copy to remain valid through the bounded child run.
+The network suite checks the admission horizon plus its child window; a login without refresh
+authority retains a `credential_refresh_required` prerequisite skip. This is harness setup,
+not a relaxation of the product's admission horizon or permission to copy refresh tokens.
+
 A filtered singleton's toolbar has NO Preset dropdown when the repo's only preset needs another
 provider: the supervisor freezes the scope to the one brokered provider (`LimitNetworkTargets`), so
 `networkPresetAllowed` filters a codex-led preset out, its selector collapses to sole-"none", and
@@ -210,6 +217,11 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-09-25 — a real Grok filtered-network qualifier failed before launch with a
+  31-minute projected token: the harness preflight checked 30 minutes, but the
+  child required one hour. Renewing the trusted source before the access-only
+  snapshot and aligning the horizon passed a bounded Grok 1.0.25 live replay;
+  no-refresh and renewal-denial controls protect the existing boundaries.
 - 2026-09-25 — strict Ubuntu loop qualification exposed a shared Git-admin mismatch after all
   four providers completed their tasks. The real hook reproduced a `COMMIT_EDITMSG` mode change
   from 0600 to 0644 under differing umasks; preserve the mode in its temporary replacement.

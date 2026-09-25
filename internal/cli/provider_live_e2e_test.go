@@ -203,6 +203,21 @@ func runProviderLiveCompatibility(
 	if err != nil {
 		return fail(false, liveprovider.ReasonHarnessFailed, "target_selection")
 	}
+	brokered, err := liveprovider.BrokersKey(realConfig, selection)
+	if err != nil {
+		return fail(false, liveprovider.ReasonHarnessFailed, "credential_kind")
+	}
+	preflightDeadline := time.Now().Add(30 * time.Minute)
+	if workflow == liveWorkflowNetwork && target.Provider == "grok" {
+		// Admission needs a portable token for an hour after it starts. Renew the trusted
+		// source before Prepare snapshots and projects it, never the access-only copy.
+		preflightDeadline = time.Now().Add(box.RestrictedCredentialHorizon + liveNetworkChildWindow + 2*time.Minute)
+		if !brokered {
+			if err := prepareProviderNetworkLiveCredential(realConfig, selection, preflightDeadline); err != nil {
+				return fail(false, liveprovider.ReasonUnsafeCredential, "credential_preparation")
+			}
+		}
+	}
 	// NewLayout secures this path for us; Prepare publishes the complete vault by atomic rename.
 	if err := os.Remove(layout.Config); err != nil {
 		return fail(false, liveprovider.ReasonHarnessFailed, "config_reset")
@@ -212,9 +227,7 @@ func runProviderLiveCompatibility(
 		return fail(false, liveprovider.ReasonUnsafeCredential, liveprovider.CredentialDetailCode(err))
 	}
 	defer func() { _ = prepared.Revoke() }()
-	preflightReason := prepared.PreflightReason(
-		target.Provider, selection.Account, time.Now().Add(30*time.Minute),
-	)
+	preflightReason := prepared.PreflightReason(target.Provider, selection.Account, preflightDeadline)
 	if preflightReason == liveprovider.ReasonUnsafeCredential {
 		return fail(false, liveprovider.ReasonUnsafeCredential, "credential_portability")
 	}
@@ -253,10 +266,6 @@ func runProviderLiveCompatibility(
 	// The network workflow is filtered by definition. Any other workflow is filtered for a
 	// target whose credential is a brokered API key — the gateway's broker is the only way
 	// Coop runs one — and stays on the open path it was written for otherwise.
-	brokered, err := liveprovider.BrokersKey(realConfig, selection)
-	if err != nil {
-		return fail(false, liveprovider.ReasonHarnessFailed, "credential_kind")
-	}
 	if workflow == liveWorkflowNetwork || brokered {
 		childSpec.NetworkStateHome = hostStateHome()
 	}
@@ -323,6 +332,31 @@ func runProviderLiveCompatibility(
 		CleanupFailed: cleanupErr != nil || revokeErr != nil, SourceChanged: sourceErr != nil,
 		RepositoryChanged: repositoryErr != nil, AttemptedObserved: attempted,
 	})
+}
+
+func prepareProviderNetworkLiveCredential(cfg *config.Config, selection liveprovider.Selection, deadline time.Time) error {
+	if !box.ProfileMarkerPresent(cfg, selection.Provider, selection.Account) {
+		return nil // An env-only account has no stored login to renew.
+	}
+	ag, ok := agents.Get(selection.Provider)
+	if !ok {
+		return fmt.Errorf("unknown live provider %q", selection.Provider)
+	}
+	selector, ok := ag.(agents.NetworkAuthSelector)
+	if !ok {
+		return fmt.Errorf("%s has no network authentication selector", selection.Provider)
+	}
+	networkAuth, err := selector.NetworkAuthSelection(cfg.AgentProfileDir(selection.Provider, selection.Account), true)
+	if err != nil {
+		return err
+	}
+	if networkAuth.RequirePortable {
+		return nil // No refresh authority: preserve the projected credential's prerequisite skip.
+	}
+	if prepare := ag.LiveCredentials().Prepare; prepare != nil {
+		return prepare(cfg.AgentProfileDir(selection.Provider, selection.Account), deadline)
+	}
+	return nil
 }
 
 func verifyProviderLiveRepository(
