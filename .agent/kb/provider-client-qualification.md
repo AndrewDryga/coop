@@ -3,7 +3,7 @@ name: provider-client-qualification
 description: locked clients, strict schema2 qualification requirements, conformance evidence and the approved paid run still owed
 subsystem: agent
 sources: [internal/agent/locked_clients.go, internal/agent/qualification.go, internal/agent/qualification_gate_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go]
-updated: 2026-09-24
+updated: 2026-09-25
 ---
 
 **One manifest.** `locked-clients/package.json` + `package-lock.json` (embedded) and each adapter's
@@ -16,6 +16,14 @@ exec absolute paths on the image's own Node. Each adapter's `UpdateControls` swi
 off in every image; the environment ones (Claude, Grok) also ride BoxEnv, and the home overlays
 cover Codex and Gemini in images Coop did not build. A project image built on
 `COOP_BASE_IMAGE` inherits all of it; one on another base brings its own, unqualified clients.
+
+The base image stages its embedded files under a private temporary root. `COPY system/ /`
+imports source directory and file modes, so the entries *inside* that root must be reset to
+0755 directories and 0644 files after staging: under `umask 077`, inheriting 0700 for
+`system/etc` makes `/etc` root-only in a non-root box. Keep the outer root 0700. The
+filtered client image uses a separate tar context whose file modes are explicit. The
+staging regression runs under a private umask. A rebuilt Ubuntu image confirmed
+`/etc` is 0755 and Codex, Claude and Grok launch as a non-root user.
 
 **The record.** `make provider-qualify` is PAID and needs explicit spending authorization, last after other engineering.
 It rebuilds this host's images, runs offline probes first and every required live suite, then
@@ -189,6 +197,12 @@ host re-run filtered setup once — a filtered launch does it itself, an editor 
 `coop net setup`.
 
 ## Changelog
+- 2026-09-25 — strict VM qualification exposed a real root-only `/etc` in a base image built
+  under umask 077: Codex's Node could not read OpenSSL config (exit 13), while Claude/Grok
+  prompts exited. Traced `COPY system/ /` to the base embedded context's inherited modes;
+  added explicit staged modes and a private-umask regression. Distinct from the earlier
+  locked-client fixture bind-source issue below. The rebuilt non-root image and strict
+  four-provider prompt suite passed; the full qualification record remains pending.
 - 2026-09-24 — direct Ubuntu qualification under umask 077 exposed a private `t.TempDir` bind
   source unreadable by the locked image's `node` user; nested synthetic content stayed private too.
   the same VM source passed at umask 022. Made each generated fixture tree readable after writing,

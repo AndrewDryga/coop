@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -14,6 +15,40 @@ import (
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
+
+func TestStageBaseImageFilesKeepsSystemPathsReadableUnderPrivateUmask(t *testing.T) {
+	// The build runs from an operator's shell; unlike project staging, embedded-file staging
+	// used to inherit umask 077 and make COPY system/ / replace /etc with mode 0700.
+	previous := syscall.Umask(0o077)
+	defer syscall.Umask(previous)
+	dir := t.TempDir()
+	files := map[string][]byte{
+		"Dockerfile":                  []byte("FROM scratch\n"),
+		"launchers/codex":             []byte("#!/bin/sh\n"),
+		"system/etc/coop/client.conf": []byte("test\n"),
+	}
+	if err := stageBaseImageFiles(dir, files); err != nil {
+		t.Fatal(err)
+	}
+	for rel, want := range map[string]os.FileMode{
+		".":                           0o700,
+		"Dockerfile":                  0o644,
+		"launchers":                   0o755,
+		"launchers/codex":             0o644,
+		"system":                      0o755,
+		"system/etc":                  0o755,
+		"system/etc/coop":             0o755,
+		"system/etc/coop/client.conf": 0o644,
+	} {
+		info, err := os.Stat(filepath.Join(dir, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Errorf("%s mode = %04o, want %04o", rel, got, want)
+		}
+	}
+}
 
 // stageBuildContext must OMIT shadowed secrets (and .git) from the Docker build context — so a
 // .agent/Dockerfile COPY can't bake them into an image layer — while keeping every non-secret file.

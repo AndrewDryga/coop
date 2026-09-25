@@ -687,14 +687,8 @@ func buildBaseImage(rt runtime.Runtime, cfg *config.Config, fresh bool, version 
 		return err
 	}
 	defer os.RemoveAll(dir)
-	for name, data := range files {
-		file := filepath.Join(dir, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(file, data, 0o644); err != nil {
-			return err
-		}
+	if err := stageBaseImageFiles(dir, files); err != nil {
+		return err
 	}
 	if err := runBuild(rt, nil, stdout, baseBuildArgs(cfg, fresh, flags, dir)...); err != nil {
 		return err
@@ -704,6 +698,29 @@ func buildBaseImage(rt runtime.Runtime, cfg *config.Config, fresh bool, version 
 	// remove it. Another Coop still using one keeps it, because its launches record that use.
 	reclaimAfterBuild(context.Background(), rt, cfg, cfg.BaseImage, stdout, nil)
 	return nil
+}
+
+func stageBaseImageFiles(dir string, files map[string][]byte) error {
+	for name, data := range files {
+		file := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(file, data, 0o644); err != nil {
+			return err
+		}
+	}
+	// Docker COPY preserves the source's directory modes. Keep the temporary context root
+	// private, but never let the caller's umask turn system/etc into a root-only /etc.
+	return filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || path == dir {
+			return err
+		}
+		if entry.IsDir() {
+			return os.Chmod(path, 0o755)
+		}
+		return os.Chmod(path, 0o644)
+	})
 }
 
 // baseBuildArgs assembles the runtime args for building the shared base image from its staged
