@@ -677,17 +677,18 @@ cooling. There is no persistent pool to configure: the rotation *is* the model-f
 account; a bare model in a ladder does the same, while a pinned `model@account` runs just
 one. Limits are tracked per (model, account), so `claude-opus-4-8@personal` stays usable
 while `claude-opus-4-8@work` cools down. A ladder gives you fallbacks in the order you
-write them — step to a cheaper model, another account, or both:
+write them — step to a cheaper model, another account, or both. For example,
+after `coop presets init my-ladder`, edit that preset's lead:
 
 ```yaml
-# .agent/presets/frontier/preset.yaml — coop presets init scaffolds this
+# .agent/presets/my-ladder/preset.yaml (lead excerpt)
 lead:
-  # agent: is a target, or a fallback LADDER — opus on all accounts, then fable on work
+  # Opus on all accounts, then Fable on work.
   agent: [claude:claude-opus-4-8, claude:claude-fable-5@work]
 ```
 
 ```bash
-coop loop frontier             # rotates that ladder; coop presets shows every recipe
+coop loop my-ladder            # rotates that ladder; coop presets shows every recipe
 coop loop claude:opus@work     # or a one-off single target, no preset
 ```
 
@@ -800,7 +801,7 @@ there. A preset declares the whole arrangement once, as a runtime recipe under
 `.agent/presets/<name>/`: who leads, and which roles it routes work to. Three role
 modes cover the spectrum: `native` (a subagent inside the lead's own session),
 `consult` (a read-only peer via `coop-consult`), and `delegate` (a write-capable
-delegate via `coop-delegate`). `.agent/presets/frontier/preset.yaml`:
+delegate via `coop-delegate`). An example recipe:
 
 ```yaml
 lead:
