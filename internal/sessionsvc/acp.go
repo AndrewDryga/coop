@@ -2381,6 +2381,7 @@ type sessionACPProcess struct {
 	stdin     io.WriteCloser
 	stdout    io.ReadCloser
 	wait      chan error
+	waitDone  chan struct{}
 	readStop  chan struct{}
 	frames    chan sessionACPFrame
 	closeOnce sync.Once
@@ -2504,6 +2505,14 @@ func safeSessionACPExitDetail(stderr string) string {
 func sessionACPChildClosedFailure(process *sessionACPProcess) error {
 	detail := "ACP child closed before its response"
 	if process != nil {
+		// Stdout EOF can precede cmd.Wait's stderr copy. Give an exiting child a
+		// bounded chance to finish so its safe launch diagnostic is not lost.
+		if process.waitDone != nil {
+			select {
+			case <-process.waitDone:
+			case <-time.After(sessionACPTermGrace):
+			}
+		}
 		if diagnostic := safeSessionACPExitDetail(process.stderr.String()); diagnostic != "" {
 			detail += ": " + diagnostic
 		}
@@ -2523,7 +2532,7 @@ func startSessionACPProcess(cmd *exec.Cmd) (*sessionACPProcess, error) {
 	}
 	process := &sessionACPProcess{
 		cmd: cmd, stdin: stdin, stdout: stdout,
-		wait: make(chan error, 1), readStop: make(chan struct{}),
+		wait: make(chan error, 1), waitDone: make(chan struct{}), readStop: make(chan struct{}),
 		frames: make(chan sessionACPFrame, 1), stderr: &sessionACPStderr{},
 	}
 	cmd.Stderr = process.stderr
@@ -2535,6 +2544,7 @@ func startSessionACPProcess(cmd *exec.Cmd) (*sessionACPProcess, error) {
 		err := cmd.Wait()
 		process.exited.Store(true)
 		process.wait <- err
+		close(process.waitDone)
 	}()
 	go readSessionACPFrames(process.stdout, process.readStop, process.frames)
 	return process, nil

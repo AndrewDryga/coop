@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1960,19 +1961,37 @@ func TestSessionTurnRunnerPreservesInitializeFailure(t *testing.T) {
 }
 
 func TestSessionTurnRunnerReportsSafeChildLaunchDiagnostic(t *testing.T) {
-	fixture := newSessionACPFixture(t, "missing-image")
-	turn := fixture.submit(t, "launch failure")
-	_, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
-	if err == nil || !strings.Contains(err.Error(), "Coop box image is not built; run 'coop build'") {
-		t.Fatalf("missing image failure = %v", err)
+	for _, scenario := range []string{"missing-image", "missing-image-stdout-first"} {
+		t.Run(scenario, func(t *testing.T) {
+			fixture := newSessionACPFixture(t, scenario)
+			turn := fixture.submit(t, "launch failure")
+			_, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
+			if err == nil || !strings.Contains(err.Error(), "Coop box image is not built; run 'coop build'") {
+				t.Fatalf("missing image failure = %v", err)
+			}
+			got, getErr := fixture.store.GetTurn(context.Background(), fixture.session.ID, turn.ID)
+			if getErr != nil {
+				t.Fatal(getErr)
+			}
+			if got.State != session.TurnFailed || got.ErrorCode != sessionACPProcessError ||
+				!strings.Contains(got.ErrorDetail, "Coop box image is not built") {
+				t.Fatalf("missing image turn = %+v", got)
+			}
+		})
 	}
-	got, getErr := fixture.store.GetTurn(context.Background(), fixture.session.ID, turn.ID)
-	if getErr != nil {
-		t.Fatal(getErr)
-	}
-	if got.State != session.TurnFailed || got.ErrorCode != sessionACPProcessError ||
-		!strings.Contains(got.ErrorDetail, "Coop box image is not built") {
-		t.Fatalf("missing image turn = %+v", got)
+}
+
+func TestSessionACPChildClosedFailureWaitsForExitStderr(t *testing.T) {
+	// On one P the writer runs only after the caller blocks on waitDone.
+	previous := goruntime.GOMAXPROCS(1)
+	defer goruntime.GOMAXPROCS(previous)
+	process := &sessionACPProcess{stderr: &sessionACPStderr{}, waitDone: make(chan struct{})}
+	go func() {
+		_, _ = process.stderr.Write([]byte("image \"coop-box\" not built - run 'coop build'\n"))
+		close(process.waitDone)
+	}()
+	if err := sessionACPChildClosedFailure(process); !strings.Contains(err.Error(), "Coop box image is not built; run 'coop build'") {
+		t.Fatalf("exit diagnostic was lost before stderr collection: %v", err)
 	}
 }
 
@@ -3086,7 +3105,12 @@ func TestSessionACPChildHelper(t *testing.T) {
 			os.Exit(2)
 		}
 	}
-	if scenario == "missing-image" {
+	if scenario == "missing-image" || scenario == "missing-image-stdout-first" {
+		if scenario == "missing-image-stdout-first" {
+			_ = os.Stdout.Close()
+			// The reader must observe EOF before cmd.Wait finishes copying stderr.
+			time.Sleep(25 * time.Millisecond)
+		}
 		_, _ = os.Stderr.WriteString("image \"coop-box\" not built - run 'coop build'\n")
 		os.Exit(7)
 	}
