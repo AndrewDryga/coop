@@ -641,7 +641,7 @@ func TestFrontierStoredTargetTruth(t *testing.T) {
 			live.fail(t, "provider_target", nil)
 		}
 	case "codex":
-		if model != "gpt-5.6-sol" || effort != "xhigh" {
+		if model != "gpt-6-astra" || effort != "xhigh" {
 			live.fail(t, "provider_target", nil)
 		}
 	default:
