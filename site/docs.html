@@ -62,7 +62,7 @@
         />
 
         <link rel="stylesheet" href="assets/vendor/asciinema-player.css" />
-        <link rel="stylesheet" href="assets/css/site.css" />
+        <link rel="stylesheet" href="assets/css/site.css?v=20260926" />
     </head>
     <body>
         <header class="nav">
@@ -93,7 +93,8 @@
         </header>
 
         <div class="container docs">
-            <aside class="docs-side">
+            <details class="docs-side" open>
+                <summary>On this page</summary>
                 <h5>Start here</h5>
                 <a href="#idea">The idea</a>
                 <a href="#install">Install</a>
@@ -116,10 +117,11 @@
                 <h5>Integrate</h5>
                 <a href="#editors">Editors</a>
                 <a href="#toolchain">Toolchain &amp; services</a>
+                <a href="#mcp-remote">MCP &amp; remote sessions</a>
                 <h5>Reference</h5>
                 <a href="#config">Configuration</a>
                 <a href="#troubleshooting">Troubleshooting</a>
-            </aside>
+            </details>
 
             <main class="docs-main">
                 <h1>Documentation</h1>
@@ -138,10 +140,10 @@
                         one running loose on your laptop.
                     </p>
                     <p>
-                        Coop's answer is simple: run the agent inside a
+                        In a terminal or loop run, Coop runs the agent inside a
                         disposable container that can only see the one repo
                         you're working on. Your home directory, SSH keys, cloud
-                        credentials, and every other project simply aren't in
+                        credentials, and every other project aren't mounted
                         there. The repo's own secrets — <code>.env</code> files,
                         private keys, a <code>secrets/</code> folder — are
                         blanked out before the agent ever starts.
@@ -149,20 +151,18 @@
                     <div class="why">
                         <span class="why-label">Why it's built this way</span>
                         <p>
-                            The container <em>is</em> the boundary — not a list
-                            of permissions you have to get exactly right. You
-                            don't audit what the agent is allowed to do; you put
-                            it somewhere it can't do harm. The worst an
-                            off-the-rails agent can manage is a mess in one repo
-                            you can restore from git.
+                            For terminal and loop runs, the container limits
+                            the agent's direct filesystem access to its mounted
+                            repo. An ACP editor session also forwards requests
+                            for host-side file and terminal operations; read the
+                            <a href="#editors">editor security caveat</a> before
+                            using that integration.
                         </p>
                     </div>
                     <p>
-                        Everything else is built on that one box. Run an agent
-                        interactively, hand work off like a pull request, run
-                        parallel forks against a backlog overnight, or compose
-                        specialist roles on a hard problem — it's the same cage
-                        every time.
+                        That box powers interactive runs, forks, unattended
+                        loops, and specialist roles. Editor-host permissions are
+                        a separate boundary when you use ACP.
                     </p>
                 </section>
 
@@ -188,16 +188,17 @@
                         class="code"
                     ><span class="k">coop</span> build <span class="t">&amp;&amp;</span> <span class="k">coop</span> doctor</pre>
                     <p>
-                        For the runtime, take your pick: Docker or Apple
+                        Docker is the fully qualified default runtime. Apple
                         <a
                             href="https://github.com/apple/container"
                             target="_blank"
                             rel="noopener"
                             >container</a
                         >
-                        (macOS 26+) — coop auto-detects, preferring Docker. The
-                        <code>coop</code> binary itself is fully static with no
-                        other dependencies.
+                        (macOS 26+) can be selected, but its full Coop feature
+                        set is not yet qualified. Coop auto-detects both and
+                        prefers Docker. The <code>coop</code> binary itself is
+                        fully static with no other dependencies.
                     </p>
                     <div class="note">
                         The one-line command trusts GitHub and the repository's
@@ -1145,8 +1146,9 @@ roles:
                     <p class="section-lead">
                         Prefer your editor to a terminal? coop serves the
                         sandboxed agent over ACP, so any editor that speaks the
-                        protocol drives it while it runs in the box — your editor
-                        is the cockpit, the box stays the cage.
+                        protocol can drive it. The agent runs in the box;
+                        editor-side file and terminal requests use the editor's
+                        own permissions.
                     </p>
                     <p>
                         <a
@@ -1197,8 +1199,9 @@ roles:
                         selector. Account and same-provider switches preserve the conversation;
                         a provider switch re-creates the session and carries message text plus
                         one-line tool narration approximately and best-effort, without tool payloads.
-                        Every session runs yolo (the box is the
-                        boundary, so there are no permission prompts to click).
+                        Agent-side permission prompts are disabled; editor-side
+                        file and terminal requests still follow the editor's
+                        permissions (see below).
                         A rate limit is handled for you: coop rotates to your
                         next signed-in account and re-sends your prompt — or,
                         with every account cooling, waits out the nearest reset
@@ -1207,6 +1210,19 @@ roles:
                         OOM) replays the handshake, so your editor never
                         disconnects.
                     </p>
+                    <div class="note">
+                        ACP can ask the editor to read or write host files and
+                        run host terminal commands. Coop forwards those
+                        requests; the editor's own permissions, not the box,
+                        limit them. For a box-only boundary, use a terminal or
+                        loop run. See the
+                        <a
+                            href="https://github.com/AndrewDryga/coop/blob/main/README.md#drive-it-from-zed-acp"
+                            target="_blank"
+                            rel="noopener"
+                            >ACP security caveat</a
+                        >.
+                    </div>
                     <p>
                         Building a website? List the dev server's port under
                         <code>serve:</code> in a committed
@@ -1271,6 +1287,41 @@ roles:
                         <code>coop update</code> rebuilds the box fresh;
                         <code>coop build</code> is the stable, pinned rebuild.
                         Both use the agent-client versions pinned by your Coop release.
+                    </p>
+                </section>
+
+                <section class="doc-section" id="mcp-remote">
+                    <h2>MCP &amp; remote sessions</h2>
+                    <p class="section-lead">
+                        Share tool servers across agents, or connect a machine
+                        to a separate session controller.
+                    </p>
+                    <p>
+                        Define MCP servers once outside your repository. Coop
+                        makes the configured servers available to supported
+                        agent runs, subject to network mode, and brokers eligible
+                        HTTP tokens outside the box. The
+                        <a
+                            href="https://github.com/AndrewDryga/coop/blob/main/README.md#mcp-servers-defined-once"
+                            target="_blank"
+                            rel="noopener"
+                            >MCP guide</a
+                        >
+                        covers local commands, remote HTTP servers, tokens,
+                        and network modes.
+                    </p>
+                    <p>
+                        A remote worker makes outbound mTLS connections to a
+                        compatible controller. The worker still needs its own
+                        repository, account, and session policy configured
+                        locally; the controller does not provision those over
+                        the connection today. See the
+                        <a
+                            href="https://github.com/AndrewDryga/coop/blob/main/docs/session-api.md#connect-this-machine-to-a-remote-controller"
+                            target="_blank"
+                            rel="noopener"
+                            >worker connector guide</a
+                        >.
                     </p>
                 </section>
 
@@ -1509,6 +1560,6 @@ roles:
 
         <script src="assets/js/analytics.js"></script>
         <script src="assets/vendor/asciinema-player.min.js"></script>
-        <script src="assets/js/site.js"></script>
+        <script src="assets/js/site.js?v=20260926"></script>
     </body>
 </html>

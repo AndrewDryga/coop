@@ -203,8 +203,7 @@
                         <p>
                             Point it at any git repo and go. The same box drives
                             parallel fork loops, a PR-style handoff, or a set of
-                            specialist roles — all behind the same container
-                            boundary.
+                            specialist roles — each agent runs in a container.
                         </p>
                     </div>
 
@@ -598,9 +597,10 @@ roles:
                         <span class="kicker">Install</span>
                         <h2>From nothing to a sandboxed agent</h2>
                         <p>
-                            One binary, no Go, no clone. A container runtime —
-                            Docker or Apple <code>container</code> — is
-                            the only requirement.
+                            One binary, no Go, no clone. The installer needs
+                            curl, tar, and a SHA-256 tool. Docker is the
+                            fully qualified runtime; Apple
+                            <code>container</code> is not yet fully qualified.
                         </p>
                     </div>
                     <div class="steps">

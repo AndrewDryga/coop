@@ -65,8 +65,17 @@
 
   // --- docs sidebar: highlight the section in view -------------------------
   function wireDocsNav() {
+    var side = document.querySelector(".docs-side");
+    if (!side) return;
+    var mobile = window.matchMedia("(max-width: 920px)");
+    function syncOpen() { side.open = !mobile.matches; }
+    syncOpen();
+    mobile.addEventListener("change", syncOpen);
     var links = document.querySelectorAll('.docs-side a[href^="#"]');
     if (!links.length) return;
+    links.forEach(function (a) {
+      a.addEventListener("click", function () { if (mobile.matches) side.open = false; });
+    });
     var map = {};
     links.forEach(function (a) { map[a.getAttribute("href").slice(1)] = a; });
     var obs = new IntersectionObserver(function (entries) {
