@@ -21,6 +21,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/consult"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/liveprocess"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -481,14 +482,25 @@ func probeConsultLiveVersion(
 	stdout := liveprovider.NewBoundedBuffer(64 << 10)
 	stderr := liveprovider.NewBoundedBuffer(64 << 10)
 	ctx, cancel := context.WithTimeout(context.Background(), liveVersionDeadline)
-	code, runErr := box.Run(cfg, rt, box.RunSpec{
+	defer cancel()
+	spec := box.RunSpec{
 		Image: image, Repo: cfg.RepoOverride, Cmd: []string{interactive[0], "--version"},
 		Agent: peer.Provider, Batch: true, RepoReadOnly: true, Quiet: true,
 		SupervisorID: supervisor, Stdout: stdout, Stderr: stderr, Ctx: ctx,
-		ExtraArgs: liveCIDArgs(rt, cidDir, "version-"+peer.Provider),
-	})
+	}
+	capture, err := admitConsultLiveBox(cfg, rt, spec)
+	if err != nil {
+		if errors.Is(err, box.ErrNetworkSetupFailed) {
+			result.Status, result.ReasonCode = liveprovider.StatusSkipped, liveprovider.ReasonMissingImage
+			return result, live
+		}
+		return consultHarnessFailure(peer.Provider, false, "network_admission"), live
+	}
+	defer capture.Close()
+	spec.CapturedEgress = capture
+	spec.ExtraArgs = consultLiveCIDArgs(rt, cidDir, "version-"+peer.Provider, capture)
+	code, runErr := box.Run(cfg, rt, spec)
 	timedOut := errors.Is(runErr, context.DeadlineExceeded)
-	cancel()
 	if code == 127 {
 		result.Status = liveprovider.StatusSkipped
 		result.ReasonCode = liveprovider.ReasonMissingCLI
@@ -541,15 +553,12 @@ func runConsultLiveEdge(
 		return consultHarnessFailure(peer.Provider, false, "repository_snapshot")
 	}
 	phase := consultLiveEdgePhase(targets, index)
-	if err := writeConsultAttempt(filepath.Join(attemptDir, phase)); err != nil {
-		return consultHarnessFailure(peer.Provider, false, "attempt_marker")
-	}
-	result.Attempted = true
 	edgeMarker := marker + "_" + strings.ToUpper(peer.Provider)
 	prompt := consultLivePrompt(peer.Provider, edgeMarker)
 	stdout := liveprovider.NewBoundedBuffer(liveOutputLimit)
 	stderr := liveprovider.NewBoundedBuffer(liveOutputLimit)
 	ctx, cancel := context.WithTimeout(context.Background(), livePromptDeadline)
+	defer cancel()
 	peerScope := peer
 	peerScope.Accounts = nil
 	edgePreset := consultLiveRingPreset(lead.Provider, peerScope)
@@ -560,16 +569,32 @@ func runConsultLiveEdge(
 			" followed by a newline. Do not modify any other file, stage changes, commit, or change Git metadata. Do not access anything outside this repository."
 		command = []string{preset.DelegateWrapperPath, "live-probe", prompt}
 	}
-	code, runErr := box.Run(cfg, rt, box.RunSpec{
+	spec := box.RunSpec{
 		Image: image, Repo: cfg.RepoOverride,
 		Cmd:   command,
 		Agent: lead.Provider, ConsultLead: lead.Provider, Preset: edgePreset,
-		Batch: true, Quiet: true, Homes: true, Network: false, Cache: false,
+		AgentCommand: true, Batch: true, Quiet: true, Homes: true, Network: false, Cache: false,
 		SupervisorID: supervisor, Stdout: stdout, Stderr: stderr, Ctx: ctx,
-		ExtraArgs: liveCIDArgs(rt, cidDir, phase),
-	})
+	}
+	capture, err := admitConsultLiveBox(cfg, rt, spec)
+	if err != nil {
+		if errors.Is(err, box.ErrNetworkSetupFailed) {
+			result.Status, result.ReasonCode = liveprovider.StatusSkipped, liveprovider.ReasonMissingImage
+			return result
+		}
+		failed := consultHarnessFailure(peer.Provider, false, "network_admission")
+		failed.CLIVersion = result.CLIVersion
+		return failed
+	}
+	defer capture.Close()
+	spec.CapturedEgress = capture
+	spec.ExtraArgs = consultLiveCIDArgs(rt, cidDir, phase, capture)
+	if err := writeConsultAttempt(filepath.Join(attemptDir, phase)); err != nil {
+		return consultHarnessFailure(peer.Provider, false, "attempt_marker")
+	}
+	result.Attempted = true
+	code, runErr := box.Run(cfg, rt, spec)
 	timedOut := errors.Is(runErr, context.DeadlineExceeded)
-	cancel()
 	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), liveCleanupDeadline)
 	edgeCleanupErr := liveprovider.CleanupSupervisor(cleanupCtx, liveprovider.SupervisorCleanupSpec{
 		Root: filepath.Dir(cfg.RepoOverride), CIDDir: cidDir, Supervisor: supervisor, LabelKey: box.LabelSupervisor,
@@ -645,6 +670,23 @@ func failedConsultVersion(provider string, code int, timedOut, truncated bool, c
 		ReasonCode: liveprovider.ReasonVersionProbe, Phase: "version", ExitCode: code,
 		TimedOut: timedOut, Truncated: truncated, ErrorClass: class,
 	}
+}
+
+// A brokered peer puts the ring behind the filtered gateway. Capture each actual launch's
+// authority separately so a peer edge receives only its lead and named peer, not the whole ring.
+func admitConsultLiveBox(cfg *config.Config, rt runtime.Runtime, spec box.RunSpec) (*box.CapturedEgress, error) {
+	if cfg.Egress != "filtered" {
+		return nil, nil
+	}
+	filtered := egress.Filtered
+	return box.AdmitNetwork(cfg, rt, spec, box.NetworkAdmission{InvocationMode: &filtered})
+}
+
+func consultLiveCIDArgs(rt runtime.Runtime, cidDir, phase string, capture *box.CapturedEgress) []string {
+	if capture != nil {
+		return nil // the filtered gateway admits no --cidfile; supervisor-label cleanup still owns it
+	}
+	return liveCIDArgs(rt, cidDir, phase)
 }
 
 func stopConsultLiveAdmission(results []liveprovider.ProviderResult, failed int) []liveprovider.ProviderResult {
@@ -830,6 +872,16 @@ func TestProviderConsultLiveContract(t *testing.T) {
 		if err := os.Mkdir(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
+	}
+	docker := runtime.Runtime{Name: "docker"}
+	if args := consultLiveCIDArgs(docker, cidDir, "version-claude", &box.CapturedEgress{}); len(args) != 0 {
+		t.Fatalf("filtered version launch carried unsupported runtime arguments: %v", args)
+	}
+	if args := consultLiveCIDArgs(docker, cidDir, "edge-grok-claude", &box.CapturedEgress{}); len(args) != 0 {
+		t.Fatalf("filtered peer launch carried unsupported runtime arguments: %v", args)
+	}
+	if args := consultLiveCIDArgs(docker, cidDir, "edge-grok-claude", nil); len(args) != 2 || args[0] != "--cidfile" {
+		t.Fatalf("open peer launch lost its owned cidfile: %v", args)
 	}
 	t.Setenv("COOP_REPO", layout.Repo)
 	if err := validateConsultLiveChildControls(marker, filepath.Join(layout.State, "consult-result.json"), attemptDir, "consult-live-1", cidDir); err != nil {

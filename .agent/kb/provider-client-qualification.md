@@ -3,7 +3,7 @@ name: provider-client-qualification
 description: locked clients, strict schema2 qualification requirements, conformance evidence and the approved paid run still owed
 subsystem: agent
 sources: [internal/agent/locked_clients.go, internal/agent/qualification.go, internal/agent/qualification_gate_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go]
-updated: 2026-09-25
+updated: 2026-09-26
 ---
 
 **One manifest.** `locked-clients/package.json` + `package-lock.json` (embedded) and each adapter's
@@ -52,9 +52,13 @@ the explicitly filtered network suite. One brokered key filters the entire consu
 Prepare projects selected host-vault keys outside mounted homes, honors default-env precedence,
 and fingerprints only selected authority. Gemini OAuth remains host-bound. Historical proof on
 2026-09-20 covered Gemini's basic prompt and singleton ACP conformance, not all suites or current
-credentials. The ring's old blocker was missing `NetworkStateHome`, not the broker's
-`AgentCommand` gate (the wrapper spec already sets it). Isolated ACP homes link Docker CLI plugins
-so their filtered setup can find Buildx; filtered launches admit the supervisor's `--label`.
+credentials. `NetworkStateHome` lets the child select filtered mode, but each direct consult/delegate
+`box.Run` (version probe and peer edge) must separately admit the actual launch with
+`box.AdmitNetwork` and pass its `CapturedEgress`. The edge wrapper is an agent command for the
+broker's credential boundary. Filtered launches cannot use `--cidfile`; supervisor-label cleanup
+still owns them. Mark an attempt only after admission, so an admission failure is not reported as
+a model run. Isolated ACP homes link Docker CLI plugins so their filtered setup can find Buildx;
+filtered launches admit the supervisor's `--label`.
 
 The filtered Grok live suite must renew a selected, renewable trusted source login *before*
 the harness fingerprints and projects it. Its child receives only an access token, so Grok's
@@ -217,6 +221,10 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-09-26 — corrected the consult/delegate filtered-launch boundary after the clean Ubuntu
+  qualifier passed direct, resume and loop suites but all four consult version boxes refused
+  missing host-policy capture before model launch. Verified the per-launch repair with strict
+  consult and delegate 4/4 replays on the same pinned clients; no record claimed yet.
 - 2026-09-25 — a real Grok filtered-network qualifier failed before launch with a
   31-minute projected token: the harness preflight checked 30 minutes, but the
   child required one hour. Renewing the trusted source before the access-only
