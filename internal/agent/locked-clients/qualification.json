@@ -1,0 +1,101 @@
+{
+  "schema": 2,
+  "qualified_on": "2026-09-26",
+  "platform": "linux/amd64",
+  "lock_sha256": "91c88846fb4c24d4d2cf0c1acfaa23fb2ada4fb9feab313cbfecb03ac4b63aa1",
+  "clients": {
+    "linux/amd64": [
+      "claude cli @anthropic-ai/claude-code 2.1.260 requires @anthropic-ai/claude-code-linux-x64 2.1.260",
+      "claude acp @agentclientprotocol/claude-agent-acp 0.75.1 requires @anthropic-ai/claude-agent-sdk-linux-x64 0.3.257",
+      "codex cli @openai/codex 0.153.4 requires @openai/codex-linux-x64 0.153.4-linux-x64",
+      "codex acp @agentclientprotocol/codex-acp 1.10.0 requires @openai/codex-linux-x64 0.153.4-linux-x64",
+      "gemini cli @google/gemini-cli 0.59.0 requires @google/gemini-cli 0.59.0",
+      "gemini acp @google/gemini-cli 0.59.0 requires @google/gemini-cli 0.59.0",
+      "grok cli grok 1.0.25 requires grok 1.0.25 sha256 54bfe73e542b2207a21a5888f58ceb2e4fb22bccc66d53d19b54bc8289cc2476",
+      "grok acp grok 1.0.25 requires grok 1.0.25 sha256 54bfe73e542b2207a21a5888f58ceb2e4fb22bccc66d53d19b54bc8289cc2476"
+    ],
+    "linux/arm64": [
+      "claude cli @anthropic-ai/claude-code 2.1.260 requires @anthropic-ai/claude-code-linux-arm64 2.1.260",
+      "claude acp @agentclientprotocol/claude-agent-acp 0.75.1 requires @anthropic-ai/claude-agent-sdk-linux-arm64 0.3.257",
+      "codex cli @openai/codex 0.153.4 requires @openai/codex-linux-arm64 0.153.4-linux-arm64",
+      "codex acp @agentclientprotocol/codex-acp 1.10.0 requires @openai/codex-linux-arm64 0.153.4-linux-arm64",
+      "gemini cli @google/gemini-cli 0.59.0 requires @google/gemini-cli 0.59.0",
+      "gemini acp @google/gemini-cli 0.59.0 requires @google/gemini-cli 0.59.0",
+      "grok cli grok 1.0.25 requires grok 1.0.25 sha256 c401805423a934de6ae1544da5ab210ad406fd446328e6b06557f1a3a003721c",
+      "grok acp grok 1.0.25 requires grok 1.0.25 sha256 c401805423a934de6ae1544da5ab210ad406fd446328e6b06557f1a3a003721c"
+    ]
+  },
+  "suites": {
+    "acp-e2e": {
+      "claude": "passed",
+      "codex": "passed",
+      "gemini": "passed",
+      "grok": "passed"
+    },
+    "mcp-e2e": {
+      "codex": "passed",
+      "gemini": "passed",
+      "grok": "passed"
+    },
+    "native-roles-e2e": {
+      "claude": "passed",
+      "codex": "passed",
+      "gemini": "passed",
+      "grok": "passed"
+    },
+    "provider-accounts-live-e2e-all": {
+      "claude": "not_configured",
+      "codex": "not_configured",
+      "gemini": "not_configured",
+      "grok": "not_configured"
+    },
+    "provider-consult-live-e2e-all": {
+      "claude": "claude-cli 2.1.260",
+      "codex": "codex-cli 0.153.4",
+      "gemini": "gemini-cli 0.59.0",
+      "grok": "grok-cli 1.0.25"
+    },
+    "provider-delegate-live-e2e-all": {
+      "claude": "claude-cli 2.1.260",
+      "codex": "codex-cli 0.153.4",
+      "gemini": "gemini-cli 0.59.0",
+      "grok": "grok-cli 1.0.25"
+    },
+    "provider-live-e2e-all": {
+      "claude": "claude-cli 2.1.260",
+      "codex": "codex-cli 0.153.4",
+      "gemini": "gemini-cli 0.59.0",
+      "grok": "grok-cli 1.0.25"
+    },
+    "provider-live-e2e-effort": {
+      "claude": "claude-cli 2.1.260",
+      "codex": "codex-cli 0.153.4",
+      "gemini": "gemini-cli 0.59.0",
+      "grok": "grok-cli 1.0.25"
+    },
+    "provider-loop-live-e2e-all": {
+      "claude": "claude-cli 2.1.260",
+      "codex": "codex-cli 0.153.4",
+      "gemini": "gemini-cli 0.59.0",
+      "grok": "grok-cli 1.0.25"
+    },
+    "provider-network-live-e2e-all": {
+      "claude": "claude-cli 2.1.260",
+      "codex": "codex-cli 0.153.4",
+      "gemini": "gemini-cli 0.59.0",
+      "grok": "grok-cli 1.0.25"
+    },
+    "provider-resume-live-e2e-all": {
+      "claude": "claude-cli 2.1.260",
+      "codex": "codex-cli 0.153.4",
+      "gemini": "gemini-cli 0.59.0",
+      "grok": "grok-cli 1.0.25"
+    },
+    "skills-e2e": {
+      "claude": "passed",
+      "codex": "passed",
+      "gemini": "passed",
+      "grok": "passed"
+    }
+  }
+}

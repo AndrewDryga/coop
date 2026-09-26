@@ -2207,10 +2207,14 @@ order), not an exhaustive account matrix. Provider tool use may require multiple
 Run `make provider-qualify` only as an operator, after the ordinary gate and other engineering
 work are finished. It rebuilds this host's box/filtered images and spends quota across every
 provider. It prints a directory containing full suite logs. All suites must pass before it writes
-`internal/agent/locked-clients/qualification.json`; no record is bundled until a real run succeeds.
+`internal/agent/locked-clients/qualification.json`. The bundled Linux/amd64 record was assembled
+from complete green suite logs after a stale ACP test interrupted the combined invocation; it
+does not claim one uninterrupted `make provider-qualify` pass. Its four second-account recovery
+results are `not_configured`, not passes.
 The schema-2 record names required suite/provider coverage, exact client pins and the tested
-platform. The final output names any providers with unverified account recovery. Only that row
-may say `not_configured`; an unreadable account directory fails. Offline MCP covers Codex, Gemini
+platform; it does not establish live macOS or Linux/arm64 parity. The final output names any
+providers with unverified account recovery. Only that row may say `not_configured`; an unreadable
+account directory fails. Offline MCP covers Codex, Gemini
 and Grok, while the live network suite requires a shared MCP tool call from every provider.
 `make check` rejects stale, malformed or incomplete existing records. An absent record leaves this
 gate dormant—it does not imply live qualification or parity between platforms/providers.

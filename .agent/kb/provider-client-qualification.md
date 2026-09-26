@@ -1,6 +1,6 @@
 ---
 name: provider-client-qualification
-description: locked clients, strict schema2 qualification requirements, conformance evidence and the approved paid run still owed
+description: locked clients, strict schema2 qualification requirements and Linux/amd64 live evidence
 subsystem: agent
 sources: [internal/agent/locked_clients.go, internal/agent/qualification.go, internal/agent/qualification_gate_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go]
 updated: 2026-09-26
@@ -42,9 +42,16 @@ success output names any providers whose account recovery remains unverified. Ex
 must have complete exact scopes and match `QualifiedClientSet()` (lock SHA-256 and every platform's
 client/native artifact identity).
 Malformed, duplicate, non-strict, failed-footer or incomplete summaries cannot produce a record.
-No real record exists yet: the missing-file gate is deliberately dormant, not evidence of live
-compatibility. Engineering controls do not qualify providers. The final paid run and matching
-record remain owed by task `2026-09-19-close-the-live-conformance-gaps-in-provider-qual`.
+The 2026-09-26 Linux/amd64 record was produced from strict pinned-client suite logs: offline
+roles/skills/MCP, direct prompt, native resume/loop/consult/delegate, filtered networking,
+ACP adapters and the model+effort probe. `make provider-qualify` reached ACP but stopped on a
+stale Frontier test expectation after its preset lead changed; a one-line test repair and a
+complete green ACP rerun supplied that row. The production source was unchanged between the
+earlier green suites and that replay. The recorder validated all required logs and pins before
+writing the record. This is not a claim that one uninterrupted `make provider-qualify`
+invocation passed, or that macOS/Linux-arm64 live provider parity was exercised. Only one
+account was configured per provider, so all four second-account recovery entries remain
+`not_configured`, not proved. A missing-file gate is dormant, not proof of compatibility.
 
 Live harnesses route brokered API keys through the host's filtered gateway automatically, using
 `BrokersKey`/`AnyBrokersKey` and `NetworkStateHome`; native sign-ins retain the open path except
@@ -221,6 +228,8 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-09-26 — recorded strict Linux/amd64 qualification from complete green suite logs;
+  documented the ACP test-only replay and unverified second-account recovery
 - 2026-09-26 — corrected the consult/delegate filtered-launch boundary after the clean Ubuntu
   qualifier passed direct, resume and loop suites but all four consult version boxes refused
   missing host-policy capture before model launch. Verified the per-launch repair with strict
