@@ -957,6 +957,15 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s (open it first: coop fork %s)", name, name)
 	}
+	workdir := ws
+	if sessionsvc.RunIDFromEnv() != "" {
+		// Old native histories remain keyed by their host cwd; new sessions share only
+		// an in-box name, never a fork or container namespace.
+		workdir, err = sessionsvc.SessionWorkdir(a.cfg.ConfigDir, ws)
+		if err != nil {
+			return 1, err
+		}
+	}
 	if a.mode == agents.ModeReadOnly && sessionsvc.RunIDFromEnv() == "" &&
 		box.ReadOnlyDefaultWorkdir(ws, a.cfg.HomeInBox) != ws {
 		return 2, errors.New("this fork is under container scratch; a direct ACP editor cannot use --readonly here because it sends the host cwd; use a checkout outside /tmp or start a remote session")
@@ -970,7 +979,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	var sessionOutputArgs []string
 	var sessionOutputRoot string
 	if repositoryReadOnly && !a.mode.Restricted() {
-		sessionOutputArgs, sessionOutputRoot, err = readOnlySessionOutputMountArgs(ws)
+		sessionOutputArgs, sessionOutputRoot, err = readOnlySessionOutputMountArgs(ws, workdir)
 		if err != nil {
 			return -1, err
 		}
@@ -1003,7 +1012,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		reservationOwner = reservation.OwnerID
 	}
 	spec := box.RunSpec{
-		Image: img, Repo: ws, Workdir: ws, RepoReadOnly: repositoryReadOnly,
+		Image: img, Repo: ws, Workdir: workdir, RepoReadOnly: repositoryReadOnly,
 		Cmd: cmd, ForceNoTTY: true, Agent: agent, ConsultLead: lead, Peers: peers, NetworkClient: egress.ClientACP,
 		SupervisorID: os.Getenv("COOP_ACP_SUPERVISOR"), Quiet: innerProcess,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
@@ -1075,7 +1084,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	return a.runBox(spec)
 }
 
-func readOnlySessionOutputMountArgs(workspace string) ([]string, string, error) {
+func readOnlySessionOutputMountArgs(workspace, workdir string) ([]string, string, error) {
 	if !filepath.IsAbs(workspace) {
 		return nil, "", errors.New("read-only session output root is unsafe")
 	}
@@ -1098,7 +1107,7 @@ func readOnlySessionOutputMountArgs(workspace string) ([]string, string, error) 
 		pathsOverlap(workspaceRoot, sourceRoot) {
 		return nil, "", errors.New("read-only session output root is unsafe")
 	}
-	return []string{"-v", sourceRoot + ":" + destination + ":rw"}, sourceRoot, nil
+	return []string{"-v", sourceRoot + ":" + filepath.Join(workdir, ".coop-output") + ":rw"}, sourceRoot, nil
 }
 
 func pathsOverlap(left, right string) bool {

@@ -779,6 +779,13 @@ func TestForkACPPhysicallyMountsAReadOnlySessionRepositoryReadOnly(t *testing.T)
 	if err := os.MkdirAll(hostOutputRoot, 0o750); err != nil {
 		t.Fatal(err)
 	}
+	privateRoot := filepath.Join(stateRoot, "acp", "remote_1")
+	if err := os.MkdirAll(privateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(privateRoot, ".stable-workdir"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("COOP_SESSION_REPOSITORY_READ_ONLY", "1")
 	t.Setenv("COOP_SESSION_RUN_ID", runID)
 	t.Setenv(sessionsvc.SessionOutputRootEnv, hostOutputRoot)
@@ -813,11 +820,108 @@ func TestForkACPPhysicallyMountsAReadOnlySessionRepositoryReadOnly(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(args), workspace+":"+workspace+":ro") {
+	if !strings.Contains(string(args), workspace+":"+box.BareWorkdir+":ro") ||
+		!strings.Contains(string(args), "-w "+box.BareWorkdir) {
 		t.Fatalf("read-only session repository was writable:\n%s", args)
 	}
-	if !strings.Contains(string(args), hostOutputRoot+":"+outputRoot+":rw") {
+	if !strings.Contains(string(args), hostOutputRoot+":"+filepath.Join(box.BareWorkdir, ".coop-output")+":rw") {
 		t.Fatalf("read-only session output root was not writable:\n%s", args)
+	}
+}
+
+func TestRemoteForksKeepPrivateHostSourcesWithOneBoxWorkdir(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(root, "repo")
+	if err := os.Mkdir(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i, name := range []string{"first", "second", "legacy"} {
+		workspace := forkspace.Workspace(repo, name)
+		if err := os.MkdirAll(workspace, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		unlock, err := forkspace.LockState(repo, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		identity, err := forkspace.EnsureGenerationLocked(repo, name)
+		if err == nil {
+			err = forkspace.ReserveWorkspaceLocked(repo, forkspace.WorkspaceReservation{
+				Version: forkspace.WorkspaceReservationVersion, Fork: identity,
+				Kind: forkspace.WorkspaceReservationRemoteSession, OwnerID: name, CreatedAt: time.Now().UTC(),
+			})
+		}
+		unlock()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("COOP_SESSION_RUN_ID", "session-"+strings.Repeat(string(rune('a'+i)), 24))
+		recorder := filepath.Join(root, name+"-runtime-args")
+		configDir := filepath.Join(root, name+"-config")
+		if err := os.MkdirAll(configDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if name != "legacy" {
+			if err := os.WriteFile(filepath.Join(configDir, ".stable-workdir"), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		a := &app{
+			cfg: &config.Config{
+				RepoOverride: repo, ConfigDir: configDir,
+				BoxHome: filepath.Join(root, "box"), HomeInBox: "/home/node",
+				ImageOverride: "test-image", Egress: "none",
+			},
+			rt: recordingRuntime(t, recorder), rtSet: true,
+		}
+		if code, runErr := a.forkACP(name, []string{"codex"}); runErr != nil || code != 0 {
+			t.Fatalf("remote fork %s = (%d, %v)", name, code, runErr)
+		}
+		args, err := os.ReadFile(recorder)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantWorkdir := box.BareWorkdir
+		if name == "legacy" {
+			wantWorkdir = workspace
+		}
+		for _, want := range []string{workspace + ":" + wantWorkdir, "-w " + wantWorkdir} {
+			if !strings.Contains(string(args), want) {
+				t.Errorf("remote fork %s lacks %q:\n%s", name, want, args)
+			}
+		}
+		if name != "legacy" && strings.Contains(string(args), "-w "+workspace) {
+			t.Errorf("remote fork %s exposed unique host cwd:\n%s", name, args)
+		}
+	}
+	// A local editor session keeps the host path, and therefore its existing session history.
+	t.Setenv("COOP_SESSION_RUN_ID", "")
+	t.Setenv("COOP_ACP_INNER", "1")
+	local := forkspace.Workspace(repo, "local")
+	if err := os.MkdirAll(local, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(root, "local-runtime-args")
+	a := &app{
+		cfg: &config.Config{
+			RepoOverride: repo, ConfigDir: filepath.Join(root, "local-config"),
+			BoxHome: filepath.Join(root, "box"), HomeInBox: "/home/node",
+			ImageOverride: "test-image", Egress: "none",
+		},
+		rt: recordingRuntime(t, recorder), rtSet: true,
+	}
+	if code, runErr := a.forkACP("local", []string{"codex"}); runErr != nil || code != 0 {
+		t.Fatalf("local fork = (%d, %v)", code, runErr)
+	}
+	args, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), local+":"+local) || !strings.Contains(string(args), "-w "+local) {
+		t.Fatalf("local fork lost host cwd:\n%s", args)
 	}
 }
 
@@ -837,9 +941,16 @@ func TestForkACPReadOnlyFrontsTheForkUnderTheRestrictedProfile(t *testing.T) {
 	}
 	runID := "session-" + strings.Repeat("cd", 12)
 	t.Setenv("COOP_SESSION_RUN_ID", runID)
+	privateRoot := filepath.Join(root, "config")
+	if err := os.MkdirAll(privateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(privateRoot, ".stable-workdir"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	recorder := filepath.Join(root, "runtime-args")
 	a := restrictedApp(t, recorder)
-	a.cfg.RepoOverride, a.cfg.Egress = repo, "none"
+	a.cfg.RepoOverride, a.cfg.Egress, a.cfg.ConfigDir = repo, "none", privateRoot
 	// No reservation yet: the daemon's own proof of ownership is required before any launch.
 	if code, runErr := a.forkACP("readonly", []string{"claude", "--readonly"}); code != 1 || runErr == nil ||
 		!strings.Contains(runErr.Error(), "reservation is absent") {
@@ -873,7 +984,7 @@ func TestForkACPReadOnlyFrontsTheForkUnderTheRestrictedProfile(t *testing.T) {
 			line = candidate
 		}
 	}
-	workdir := expectedReadOnlyWorkdir(workspace, a.cfg.HomeInBox)
+	workdir := box.BareWorkdir
 	for _, want := range []string{
 		"--label coop.run=" + runID, "--label coop.fork=readonly", "--read-only", "--network none",
 		"-v " + workspace + ":" + workdir + ":ro", "-w " + workdir, ":/coop/seed:ro",

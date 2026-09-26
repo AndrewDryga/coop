@@ -2076,6 +2076,16 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 	if !validSessionRunID(runID) {
 		return nil, acpFailure(sessionACPProcessError, "session run identity is invalid")
 	}
+	workdir := box.BareWorkdir
+	if mode != agents.ModeBare {
+		workdir, err = prepareSessionWorkdir(privateRoot, bound.Workspace, bound.NativeSessionID)
+		if err != nil {
+			return nil, errors.Join(acpFailure(sessionACPProcessError, "session workdir state is unsafe"), err)
+		}
+		if mode == agents.ModeReadOnly && workdir == bound.Workspace {
+			workdir = box.ReadOnlyDefaultWorkdir(bound.Workspace, r.sourceCfg.HomeInBox)
+		}
+	}
 	// The legacy read-only session mounts a writable output root beside its read-only fork; a
 	// restricted session mounts nothing writable at all, so it neither prepares nor announces one.
 	legacyReadOnly := bound.RepositoryReadOnly && !mode.Restricted()
@@ -2183,16 +2193,12 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		process.mcpServers = mcpServers
 		process.mcpHandoff = mcpHandoff
 		process.sessionMeta = sessionMeta
-		process.cwd = bound.Workspace
-		if mode == agents.ModeReadOnly {
-			process.cwd = box.ReadOnlyDefaultWorkdir(bound.Workspace, r.sourceCfg.HomeInBox)
-		}
+		process.cwd = workdir
 		process.outputRoot = filepath.Join(bound.Workspace, sessionOutputRoot)
 		if outputRoot != "" {
 			process.outputRoot = outputRoot
 		}
 		if mode == agents.ModeBare {
-			process.cwd = box.BareWorkdir
 			process.outputRoot = ""
 		}
 		process.restricted = mode.Restricted()
@@ -2388,8 +2394,8 @@ type sessionACPProcess struct {
 	stopOnce  sync.Once
 	stopErr   error
 	runID     string
-	// cwd is the session's working directory INSIDE the box: normally the fork's host path,
-	// /workspace when readonly would collide with box scratch, or bare's scratch workdir.
+	// cwd is the working directory INSIDE the box: stable for new sessions, but the
+	// original host path for older native histories that must still load by cwd.
 	// sessionMeta is the adapter's `_meta`
 	// for a restricted session (nil otherwise), and restricted says the box keeps no provider
 	// history and mounts no output root — so each turn is a fresh native session with no

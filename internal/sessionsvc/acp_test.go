@@ -88,14 +88,34 @@ func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
 		strings.Contains(got, "secret") || !strings.Contains(got, "mcp= openai=") {
 		t.Fatalf("child environment was not private: %q", got)
 	}
-	if got := readFile(t, fixture.childLog); !strings.Contains(got, `"cwd":"`+fixture.session.Workspace+`"`) {
-		t.Fatalf("ACP cwd was not the immutable fork workspace: %q", got)
+	if got := readFile(t, fixture.childLog); !strings.Contains(got, `"cwd":"`+box.BareWorkdir+`"`) {
+		t.Fatalf("ACP cwd was not the stable in-box workspace: %q", got)
 	}
 	if got := readFile(t, fixture.runtimeLog); !strings.Contains(got, "coop.run") ||
 		!strings.Contains(got, "session-") ||
 		!strings.Contains(got, "com.docker.compose.project=") ||
 		!strings.Contains(got, "com.docker.compose.project.working_dir=") {
 		t.Fatalf("runtime cleanup label was not recorded: %q", got)
+	}
+}
+
+func TestLegacyBoundSessionLoadsAtItsOriginalHostCWD(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	bound, err := fixture.store.BindNativeSession(context.Background(), fixture.session.ID, "native-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.session = bound
+	turn := fixture.submit(t, "continue this conversation")
+	result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
+	if err != nil || result.State != session.TurnCompleted {
+		t.Fatalf("legacy load = %+v, %v", result, err)
+	}
+	if got := sessionNewParamsForMethod(t, fixture.childLog, "session/load")["cwd"]; got != fixture.session.Workspace {
+		t.Fatalf("legacy session/load cwd = %v, want %s", got, fixture.session.Workspace)
+	}
+	if _, err := os.Lstat(filepath.Join(fixture.private, stableWorkdirMarker)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy session gained a stable-workdir marker: %v", err)
 	}
 }
 

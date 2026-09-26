@@ -1672,7 +1672,7 @@ An image is a valid agent box when:
 1. It runs as a non-root user — Claude Code refuses `--dangerously-skip-permissions` as root.
 2. That user's home is `/home/node` — the `agents/` auth mounts land at `$HOME/.claude`, `$HOME/.codex`, `$HOME/.gemini`. (Different base? Set `COOP_HOME_IN_BOX=/home/<user>`.)
 3. `claude`, `codex`, `gemini` are on `PATH` (so it needs Node) — plus the ACP adapters if you want `coop acp`.
-4. **`git config --system --add safe.directory '*'`** — git works on the host-owned bind mount (which lives at the repo's real path, not a fixed `/workspace`).
+4. **`git config --system --add safe.directory '*'`** — git works on the host-owned bind mount (normally at the repo's real path; new remote sessions use `/workspace` inside their private boxes).
 
 On native Linux, the image's non-root user must also have the host user's UID/GID to read a
 private checkout and selected credential's files. Coop builds its managed images for that user

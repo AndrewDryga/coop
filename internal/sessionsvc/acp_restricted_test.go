@@ -35,17 +35,21 @@ func recordChildArgv(fixture *sessionACPFixture) *[]string {
 
 // sessionNewParams returns the params of the one session/new request the child logged.
 func sessionNewParams(t *testing.T, childLog string) map[string]any {
+	return sessionNewParamsForMethod(t, childLog, "session/new")
+}
+
+func sessionNewParamsForMethod(t *testing.T, childLog, method string) map[string]any {
 	t.Helper()
 	for _, line := range strings.Split(strings.TrimSpace(readFile(t, childLog)), "\n") {
 		var frame struct {
 			Method string         `json:"method"`
 			Params map[string]any `json:"params"`
 		}
-		if json.Unmarshal([]byte(line), &frame) == nil && frame.Method == "session/new" {
+		if json.Unmarshal([]byte(line), &frame) == nil && frame.Method == method {
 			return frame.Params
 		}
 	}
-	t.Fatal("no session/new request was sent")
+	t.Fatalf("no %s request was sent", method)
 	return nil
 }
 
@@ -164,10 +168,7 @@ func TestAReadOnlySessionLaunchesItsForkWithoutAnOutputRoot(t *testing.T) {
 		t.Fatalf("readonly session prepared a writable output root: %v", err)
 	}
 	params := sessionNewParams(t, fixture.childLog)
-	wantCWD := fixture.session.Workspace
-	if strings.HasPrefix(wantCWD, "/tmp/") || strings.HasPrefix(wantCWD, "/home/node/") {
-		wantCWD = box.BareWorkdir
-	}
+	wantCWD := box.BareWorkdir
 	if params["cwd"] != wantCWD {
 		t.Fatalf("readonly session/new cwd = %v, want in-box path %s", params["cwd"], wantCWD)
 	}
@@ -184,6 +185,25 @@ func TestAReadOnlySessionLaunchesItsForkWithoutAnOutputRoot(t *testing.T) {
 	stored, err := fixture.store.GetSession(context.Background(), fixture.session.ID)
 	if err != nil || stored.NativeSessionID != "" {
 		t.Fatalf("readonly session bound a native session nothing can load: %+v, %v", stored, err)
+	}
+}
+
+func TestNormalRemoteSessionsAnnounceOneBoxCWDForPrivateForks(t *testing.T) {
+	var workspaces []string
+	for range 2 {
+		fixture := newSessionACPFixture(t, "normal")
+		workspaces = append(workspaces, fixture.session.Workspace)
+		turn := fixture.submit(t, "inspect this")
+		result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
+		if err != nil || result.State != session.TurnCompleted {
+			t.Fatalf("normal turn = %+v, %v", result, err)
+		}
+		if got := sessionNewParams(t, fixture.childLog)["cwd"]; got != box.BareWorkdir {
+			t.Fatalf("normal session/new cwd = %v, want %s", got, box.BareWorkdir)
+		}
+	}
+	if workspaces[0] == workspaces[1] {
+		t.Fatalf("remote sessions shared a host fork: %q", workspaces[0])
 	}
 }
 

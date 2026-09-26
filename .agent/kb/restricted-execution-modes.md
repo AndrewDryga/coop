@@ -3,7 +3,7 @@ name: restricted-execution-modes
 description: readonly and bare share one tmpfs-only filesystem profile; the provider is seeded through a read-only bind OUTSIDE the tmpfs home, because a bind under it would be root-owned; over ACP the provider's switches ride session/new, not the adapter's argv
 subsystem: box
 sources: [internal/box/restricted.go, internal/box/restricted_filtered_composition_test.go, internal/box/filtered.go, internal/box/filtered_cleanup.go, internal/box/run.go, internal/agent/agent.go, internal/agent/claude.go, internal/cli/help.go, internal/cli/commands.go, internal/cli/exposure_flags.go, internal/cli/acp_cmd.go, internal/cli/fork_cmd.go, internal/runtime/runtime.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/network.go, internal/session/records.go]
-updated: 2026-09-25
+updated: 2026-09-26
 ---
 
 `RunSpec.Mode` (`agents.ExecutionMode`: normal, readonly, bare; empty is normal) is fixed at
@@ -51,10 +51,13 @@ transcripts, an editor supervisor, maintenance commands under an agent scope, re
 one-run escape, an empty `COOP_RUN_ARGS=` in front of the command.
 Direct readonly runs compose with filtered networking; bare has no project to admit a policy for
 and still refuses it. Restricted remote-session policies also refuse filtered networking.
-Readonly moves an implicit host-path workdir under `/tmp` or the tmpfs home to `/workspace` inside
-the box; otherwise a disposable Linux checkout would collide with scratch and refuse an ordinary
-run. An explicit different destination in those scratch trees still refuses. The host source may
-remain under `/tmp`; `/workspace` is a tmpfs only in bare mode.
+Direct readonly moves an implicit host-path workdir under `/tmp` or the tmpfs home to `/workspace`
+inside the box; otherwise a disposable Linux checkout would collide with scratch and refuse an
+ordinary run. An explicit different destination in those scratch trees still refuses. New remote
+sessions mount their distinct host fork at `/workspace` and announce that same ACP cwd; sessions
+bound before the change retain their original host-path cwd to load native history. Local editor
+forks also keep the host-path cwd. The host source may remain
+under `/tmp`; `/workspace` is a tmpfs only in bare mode.
 
 Historical live qualification (2026-09-10) on this host's Docker 29.4 with claude 2.1.267
 (task artifacts `exposure-*.log`; not a claim about the current locked clients or filtered composition):
@@ -93,9 +96,9 @@ supervisor, no project — the dispatch guard skips `loadProject` for a bare lau
 `coop fork <name> acp <target> --readonly` (`forkACP` under the profile: the daemon's reservation
 is still required, the legacy writable `.coop-output` bind is never made, and no activity record
 is registered — the daemon's run label is the whole receipt). `startChildWithRunID` sends the
-adapter's `ACPRestrictedSessionMeta(mode)` as `_meta` on `session/new` with `cwd` = the fork's
-in-box path (the host path normally, `/workspace` on a readonly scratch collision), or
-`box.BareWorkdir` for bare; claude-agent-acp spreads `_meta.claudeCode.options` into the SDK
+adapter's `ACPRestrictedSessionMeta(mode)` as `_meta` on `session/new` with `cwd` = the session's
+in-box mount (`/workspace` for new sessions, the old host path for legacy bound sessions);
+claude-agent-acp spreads `_meta.claudeCode.options` into the SDK
 options and the SDK renders `settingSources: ["user"]`, `strictMcpConfig: true` and an empty
 `tools` array onto the claude argv as `--setting-sources=user --strict-mcp-config --tools ""`,
 and `_meta.systemPrompt.append` as `appendSystemPrompt` on the CLI's stream-json initialize
@@ -131,6 +134,7 @@ a tool call. What the API half still does not do: register activity for a restri
 gemini or grok — each refuses by name until a live run proves its adapter's switch.
 
 ## Changelog
+- 2026-09-26 — reverified remote fork mounts and ACP cwd after stable per-box `/workspace` mapping; old native histories and local editor history remain host-path keyed.
 - 2026-09-25 — rechecked restricted tmpfs ownership against the host-selected managed image user.
 - 2026-09-23 — mapped implicit readonly checkouts under Linux `/tmp` to `/workspace` and kept
   the ACP `session/new` cwd aligned with the actual mount; explicit scratch destinations still refuse.

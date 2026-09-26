@@ -150,8 +150,8 @@ func restrictedReadOnlyWorkdir(spec RunSpec, cfg *config.Config) string {
 	return workdir
 }
 
-// ReadOnlyDefaultWorkdir is also the cwd the remote ACP controller must announce to a provider:
-// the fork mounts at this path, not its host path, when that path collides with box scratch.
+// ReadOnlyDefaultWorkdir is also the cwd the remote ACP controller must announce for a legacy
+// read-only native session: its fork may have mounted here when the host path hit box scratch.
 func ReadOnlyDefaultWorkdir(repo, homeInBox string) string {
 	if restrictedScratchDestination(repo, homeInBox) {
 		return BareWorkdir
