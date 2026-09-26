@@ -466,7 +466,7 @@ func checkAuthoritySource(source string, writable bool, projects, private []stri
 		}
 		generated := allowed[canonical] || slices.ContainsFunc(allowedTrees, func(root string) bool { return pathContains(root, canonical) })
 		if overlap && !generated {
-			return fmt.Errorf("runtime mount %q exposes Coop's private authority or credential state; remove it from COOP_RUN_ARGS or this run", source)
+			return fmt.Errorf("runtime mount %q overlaps Coop's protected host path %q (even read-only mounts are blocked); remove it from COOP_RUN_ARGS or use a source outside Coop's protected state", source, state)
 		}
 	}
 	for _, project := range projects {

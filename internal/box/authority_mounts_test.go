@@ -158,7 +158,7 @@ func TestAuthorityMountGuardInspectsNamedVolumesAndOpaqueInheritance(t *testing.
 	privateReader := func(context.Context, []string) (runtime.VolumeExposure, error) {
 		return runtime.VolumeExposure{Sources: []string{state}}, nil
 	}
-	if err := validateAuthorityMounts(context.Background(), spec, []string{"-v", "shared:/data:ro"}, state, privateReader, authorityMountAllowlist{}); err == nil || !strings.Contains(err.Error(), "private authority") {
+	if err := validateAuthorityMounts(context.Background(), spec, []string{"-v", "shared:/data:ro"}, state, privateReader, authorityMountAllowlist{}); err == nil || !strings.Contains(err.Error(), "protected host path") {
 		t.Fatalf("read-only private-state volume = %v", err)
 	}
 }
@@ -358,6 +358,13 @@ func TestAuthorityMountGuardProtectsHostConfigAndStateSiblings(t *testing.T) {
 				t.Fatalf("mount decision = %v, want allowed=%v", err, test.allowed)
 			}
 		})
+	}
+	bridge := filepath.Join(boxHome, "box", "bin", "emisar-mcp")
+	err = validateAuthorityMounts(context.Background(), spec,
+		[]string{"-v", bridge + ":/usr/local/bin/emisar-mcp:ro"}, networkState, nil, allow)
+	if err == nil || !strings.Contains(err.Error(), bridge) || !strings.Contains(err.Error(), boxHome) ||
+		!strings.Contains(err.Error(), "read-only mounts are blocked") || !strings.Contains(err.Error(), "remove it from COOP_RUN_ARGS") {
+		t.Fatalf("protected read-only bridge mount guidance = %v", err)
 	}
 }
 
