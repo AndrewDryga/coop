@@ -2,17 +2,14 @@ package sessionsvc
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"unicode"
 	"unicode/utf8"
 
@@ -24,7 +21,6 @@ const (
 	sessionReviewFindingLimit      = 64
 	sessionReviewFindingBytes      = 1024
 	sessionReviewFindingTotalBytes = 32 << 10
-	sessionReviewArtifactMaxBytes  = 64 << 20
 )
 
 var errSessionReviewSourceBranch = errors.New("review source is not on its bound branch")
@@ -60,7 +56,7 @@ type ReviewDossier struct {
 	OperationID           string                 `json:"operation_id"`
 	SessionID             string                 `json:"session_id"`
 	SessionRevision       int64                  `json:"session_revision"`
-	PolicyDigest          string                 `json:"policy_digest"`
+	JobDigest             string                 `json:"job_digest"`
 	Source                *session.SourceBinding `json:"source,omitempty"`
 	CreationBase          string                 `json:"creation_base"`
 	SourceHead            string                 `json:"source_head"`
@@ -69,15 +65,13 @@ type ReviewDossier struct {
 	ParentTree            string                 `json:"parent_tree"`
 	CandidateHead         string                 `json:"candidate_head"`
 	CandidateTree         string                 `json:"candidate_tree"`
+	CandidateRetained     bool                   `json:"candidate_retained"`
 	Rebase                ReviewRebaseStatus     `json:"rebase"`
 	Gate                  ReviewGateStatus       `json:"gate"`
 	GateError             string                 `json:"gate_error,omitempty"`
 	PolicyFindings        []string               `json:"policy_findings,omitempty"`
 	Patch                 []byte                 `json:"patch,omitempty"`
 	PatchTruncated        bool                   `json:"patch_truncated"`
-	PatchArtifactID       string                 `json:"patch_artifact_id,omitempty"`
-	PatchDigest           string                 `json:"patch_digest,omitempty"`
-	PatchBytes            int64                  `json:"patch_bytes"`
 	Publishable           bool                   `json:"publishable"`
 	NotPublishableReasons []string               `json:"not_publishable_reasons,omitempty"`
 }
@@ -121,7 +115,7 @@ type sessionReviewIntent struct {
 	SourceStatusDigest string                 `json:"source_status_digest"`
 	ParentHead         string                 `json:"parent_head"`
 	ParentTree         string                 `json:"parent_tree"`
-	PolicyDigest       string                 `json:"policy_digest"`
+	JobDigest          string                 `json:"job_digest"`
 	Source             *session.SourceBinding `json:"source,omitempty"`
 	MaxPatchBytes      int                    `json:"max_patch_bytes"`
 }
@@ -216,6 +210,17 @@ func (s *Service) resumeReview(
 				Code: session.CodeOperationUncertain, Detail: "review operation intent is unreadable",
 			},
 		}
+	}
+	unlock, ok := s.tryLockSessionRuntime(intent.SessionID)
+	if !ok {
+		return ReviewDossier{}, wrapServiceOperationError(op.ID, session.ErrOperationUncertain)
+	}
+	defer unlock()
+	bound, err := s.store.GetSession(ctx, intent.SessionID)
+	if err != nil || bound.State == session.SessionDiscarded {
+		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+			Code: session.CodeInvalidSessionState, Detail: "review session is unavailable",
+		})
 	}
 	dossier, err := s.executeReviewIntent(s.reviewExecutionContext(), op, intent)
 	if err != nil && session.CodeOf(err) == session.CodeOperationUncertain &&
@@ -427,7 +432,7 @@ func (s *Service) captureReviewIntent(ctx context.Context, operationID string, r
 		CreationBase:   base, SourceHead: source.Head, SourceTree: source.Tree,
 		SourceBranch: source.Branch, SourceStatusDigest: source.StatusDigest,
 		ParentHead: parent.Head, ParentTree: parent.Tree,
-		PolicyDigest: sess.PolicyDigest, Source: session.CloneSourceBinding(sess.Source),
+		JobDigest: sess.JobDigest, Source: session.CloneSourceBinding(sess.Source),
 		MaxPatchBytes: sess.MaxPatchBytes,
 	}, nil
 }
@@ -444,6 +449,9 @@ func captureSessionReviewSource(repo, workspace, branch string) (sessionReviewSo
 	if err != nil {
 		return sessionReviewSourceIdentity{}, err
 	}
+	if err := verifySessionSubmodules(context.Background(), workspace, head); err != nil {
+		return sessionReviewSourceIdentity{}, fmt.Errorf("%w: %v", errSessionReviewSourceDirty, err)
+	}
 	gotBranch, err := sessionWorkspaceBranch(workspace)
 	if err != nil {
 		if errors.Is(err, errSessionWorkspaceDetachedHead) {
@@ -451,8 +459,7 @@ func captureSessionReviewSource(repo, workspace, branch string) (sessionReviewSo
 		}
 		return sessionReviewSourceIdentity{}, err
 	}
-	status, truncated, err := runSessionWorkspaceGit(workspace, sessionWorkspaceGitOutputLimit,
-		"status", "--porcelain=v2", "--untracked-files=all", "--no-renames", "-z")
+	status, truncated, err := sessionWorkspaceStatusContext(context.Background(), workspace)
 	if err != nil {
 		return sessionReviewSourceIdentity{}, err
 	}
@@ -531,8 +538,20 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 	if intent.Source != nil && session.ValidateSourceBinding(*intent.Source) != nil {
 		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "review source binding is invalid")
 	}
+	if _, retained, err := s.retainedReviewCandidate(ctx, op.ID); err == nil {
+		if retained.SessionID != intent.SessionID || retained.SessionRevision != intent.SessionRevision ||
+			retained.JobDigest != intent.JobDigest || retained.ParentHead != intent.ParentHead ||
+			retained.ParentTree != intent.ParentTree || retained.SourceHead != intent.SourceHead ||
+			retained.SourceTree != intent.SourceTree || retained.CreationBase != intent.CreationBase {
+			return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "retained review authority changed")
+		}
+		return s.completeReview(ctx, retained)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "retained review custody is invalid")
+	}
 	bound, err := s.store.GetSession(ctx, intent.SessionID)
-	if err != nil || bound.Revision != intent.SessionRevision || bound.Repository != intent.Repository ||
+	if err != nil || intent.JobDigest == "" || bound.JobDigest != intent.JobDigest ||
+		bound.Revision != intent.SessionRevision || bound.Repository != intent.Repository ||
 		bound.Workspace != intent.Workspace || bound.ForkName != intent.SourceBranch ||
 		bound.ForkGeneration != intent.ForkGeneration {
 		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "review workspace authority changed")
@@ -540,14 +559,17 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 	if err := validateSessionForkAuthority(ctx, bound); err != nil {
 		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "review workspace authority changed")
 	}
-	candidate, err := prepareForkReviewCandidateFromIntent(intent)
+	if _, err := s.sessionExecution(ctx, bound); err != nil {
+		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "review has no valid controller job authority")
+	}
+	candidate, err := s.prepareForkReviewCandidateFromIntent(ctx, op.ID, intent)
 	if err != nil {
 		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, err)
 	}
 	defer candidate.cleanup()
 	dossier := ReviewDossier{
 		OperationID: op.ID, SessionID: intent.SessionID, SessionRevision: intent.SessionRevision,
-		PolicyDigest: intent.PolicyDigest, Source: session.CloneSourceBinding(intent.Source),
+		JobDigest: intent.JobDigest, Source: session.CloneSourceBinding(intent.Source),
 		CreationBase: intent.CreationBase,
 		SourceHead:   intent.SourceHead, SourceTree: intent.SourceTree,
 		ParentHead: intent.ParentHead, ParentTree: intent.ParentTree,
@@ -558,9 +580,12 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 		dossier.NotPublishableReasons = []string{"rebase_conflict"}
 		return s.completeReview(ctx, dossier)
 	}
-	candidateHead, candidateTree, err := ReviewGitIdentity(candidate.dir, candidate.name)
+	candidateHead, candidateTree, err := freezeReviewCommit(ctx, candidate, op)
 	if err != nil {
 		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("pin review candidate: %w", err))
+	}
+	if err := materializeSessionSubmodules(ctx, intent.Repository, candidate.dir, candidateHead, intent.Workspace); err != nil {
+		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, err)
 	}
 	candidateParentHead, candidateParentTree, err := ReviewGitIdentity(candidate.dir, candidate.base)
 	if err != nil {
@@ -571,7 +596,10 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 	if candidateParentHead != intent.ParentHead || candidateParentTree != intent.ParentTree {
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "parent_moved")
 	}
-	gateResult, err := s.reviewGate.Run(ctx, intent.Repository, candidate.dir)
+	var gateResult ReviewGateResult
+	if s.reviewGate != nil {
+		gateResult, err = s.reviewGate.Run(ctx, intent.Repository, candidate.dir)
+	}
 	if err != nil {
 		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("run review gate: %w", err))
 	}
@@ -592,7 +620,10 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 		dossier.Gate = ReviewGateFailed
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "gate_failed")
 	}
-	dossier.PolicyFindings = boundedSessionReviewFindings(s.host.policyScan(candidate.dir, candidateHead))
+	dossier.PolicyFindings, err = scanReviewCandidate(ctx, candidate.dir, candidateParentHead, candidateHead)
+	if err != nil {
+		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("scan review candidate: %w", err))
+	}
 	if len(dossier.PolicyFindings) > 0 {
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "policy_findings")
 	}
@@ -601,22 +632,6 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("compute review candidate patch: %w", err))
 	}
 	dossier.Patch, dossier.PatchTruncated = patch, truncated
-	artifact, err := s.writeReviewPatchArtifact(
-		candidate.dir,
-		candidateParentHead,
-		candidateHead,
-		op.ID,
-	)
-	if err != nil {
-		dossier.NotPublishableReasons = append(
-			dossier.NotPublishableReasons,
-			"patch_artifact_unavailable",
-		)
-	} else {
-		dossier.PatchArtifactID = op.ID
-		dossier.PatchDigest = artifact.Digest
-		dossier.PatchBytes = artifact.Bytes
-	}
 	currentParentMatches := false
 	if sess, err := s.store.GetSession(ctx, intent.SessionID); err == nil {
 		if currentHead, err := s.pinCurrentSessionParent(ctx, sess); err == nil {
@@ -634,14 +649,24 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 	if forkspace.NeedsStop(intent.Repository, intent.SourceBranch) {
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "fork_owner_active")
 	}
+	if candidateTree == candidateParentTree {
+		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "no_changes")
+	}
 	dossier.NotPublishableReasons = stableSessionReviewReasons(dossier.NotPublishableReasons)
-	dossier.Publishable = dossier.Rebase == ReviewRebaseClean &&
-		dossier.Gate == ReviewGatePassed &&
-		dossier.PatchArtifactID != "" &&
-		dossier.PatchDigest != "" &&
-		dossier.PatchBytes > 0 &&
-		len(dossier.PolicyFindings) == 0 &&
-		len(dossier.NotPublishableReasons) == 0
+	// Missing/failed gates remain useful review evidence. Only an exact, unchanged,
+	// security-clean candidate may be retained for a later controller decision.
+	dossier.CandidateRetained = len(dossier.PolicyFindings) == 0
+	for _, reason := range dossier.NotPublishableReasons {
+		if reason != "gate_not_configured" && reason != "gate_startup_error" && reason != "gate_failed" {
+			dossier.CandidateRetained = false
+		}
+	}
+	dossier.Publishable = dossier.CandidateRetained && dossier.Gate == ReviewGatePassed && len(dossier.NotPublishableReasons) == 0
+	if dossier.CandidateRetained {
+		if err := s.retainReviewCandidate(ctx, candidate.dir, dossier); err != nil {
+			return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("retain reviewed candidate: %w", err))
+		}
+	}
 	return s.completeReview(ctx, dossier)
 }
 
@@ -669,25 +694,32 @@ type reviewScratch struct {
 
 func (c reviewScratch) cleanup() { _ = os.RemoveAll(c.dir) }
 
-func (c reviewScratch) detachBase() error {
-	return forkspace.GitDetach(context.Background(), c.dir, c.base)
-}
-
-func newReviewScratch(repo string) (reviewScratch, error) {
-	dir, err := os.MkdirTemp("", "coop-fork-review-")
+func (s *Service) newReviewScratch(ctx context.Context, operationID, repo, commit string) (reviewScratch, error) {
+	path, err := s.reviewCandidatePath(operationID)
+	if err != nil {
+		return reviewScratch{}, err
+	}
+	staging := filepath.Join(filepath.Dir(path), ".staging")
+	if err := os.MkdirAll(staging, 0700); err != nil {
+		return reviewScratch{}, err
+	}
+	dir, err := os.MkdirTemp(staging, operationID+"-")
 	if err != nil {
 		return reviewScratch{}, err
 	}
 	c := reviewScratch{dir: dir}
-	if err := forkspace.GitClone(repo, dir); err != nil {
+	if err := forkspace.GitClonePinnedContext(ctx, repo, dir, commit); err != nil {
 		c.cleanup()
 		return reviewScratch{}, fmt.Errorf("clone parent into review scratch: %w", err)
 	}
 	return c, nil
 }
 
-func prepareForkReviewCandidateFromIntent(intent sessionReviewIntent) (c reviewScratch, err error) {
-	c, err = newReviewScratch(intent.Repository)
+func (s *Service) prepareForkReviewCandidateFromIntent(ctx context.Context, operationID string, intent sessionReviewIntent) (c reviewScratch, err error) {
+	if !forkspace.ValidExistingName(intent.SourceBranch) {
+		return c, errors.New("review intent has an invalid source branch")
+	}
+	c, err = s.newReviewScratch(ctx, operationID, intent.Repository, intent.ParentHead)
 	if err != nil {
 		return c, err
 	}
@@ -698,15 +730,8 @@ func prepareForkReviewCandidateFromIntent(intent sessionReviewIntent) (c reviewS
 			c = reviewScratch{}
 		}
 	}()
-	if !forkspace.ValidExistingName(intent.SourceBranch) {
-		return c, errors.New("review intent has an invalid source branch")
-	}
-	if err := forkspace.PropagateGitIdentity(intent.Repository, c.dir); err != nil {
+	if err := forkspace.PropagateGitIdentityContext(ctx, intent.Repository, c.dir); err != nil {
 		return c, fmt.Errorf("prepare session review Git identity: %w", err)
-	}
-	const capturedParentRef = "refs/coop/session-parent"
-	if err := gitRun(c.dir, "fetch", "--quiet", intent.Repository, "+"+intent.ParentHead+":"+capturedParentRef); err != nil {
-		return c, fmt.Errorf("fetch captured review parent: %w", err)
 	}
 	parentHead, parentTree, err := ReviewGitIdentity(c.dir, intent.ParentHead)
 	if err != nil {
@@ -716,11 +741,14 @@ func prepareForkReviewCandidateFromIntent(intent sessionReviewIntent) (c reviewS
 		return c, errors.New("captured review parent tree is unavailable")
 	}
 	c.base = intent.ParentHead
-	if err := c.detachBase(); err != nil {
+	if err := forkspace.GitRefCommand(ctx, c.dir, "update-ref", "--no-deref", "HEAD", c.base).Run(); err != nil {
 		return c, fmt.Errorf("detach captured review parent: %w", err)
 	}
+	if _, _, err := runSessionCompanionGitContext(ctx, c.dir, sessionWorkspaceGitOutputLimit, "reset", "--hard", "--quiet", c.base); err != nil {
+		return c, fmt.Errorf("checkout captured review parent: %w", err)
+	}
 	c.name = intent.SourceBranch
-	if err := gitRun(c.dir, "fetch", "--quiet", intent.Workspace, "+"+intent.SourceHead+":refs/heads/"+intent.SourceBranch); err != nil {
+	if err := forkspace.GitFetchPinnedContext(ctx, intent.Workspace, c.dir, intent.SourceHead); err != nil {
 		return c, fmt.Errorf("fetch captured review source: %w", err)
 	}
 	sourceHead, sourceTree, err := ReviewGitIdentity(c.dir, intent.SourceHead)
@@ -741,11 +769,18 @@ func prepareForkReviewCandidateFromIntent(intent sessionReviewIntent) (c reviewS
 	if !creationBaseIsAncestor {
 		return c, errors.New("captured creation base is not an ancestor of the review source")
 	}
+	// A detached clone may have no logs/refs. Create branch metadata on the real
+	// Git directory so a first reflog cannot replace the trusted view's link.
+	if err := forkspace.GitRefCommand(ctx, c.dir, "update-ref", "refs/heads/"+c.name, sourceHead).Run(); err != nil {
+		return c, fmt.Errorf("create captured review branch: %w", err)
+	}
 	// Replay exactly the task-local commits captured at session creation. Inferring the upstream
 	// from the current parent would also replay rewritten parent history after a force-push/rebase.
-	if err := gitRun(c.dir, "rebase", "--onto", c.base, creationBase, c.name); err != nil {
-		if abortErr := gitRun(c.dir, "rebase", "--abort"); abortErr != nil {
-			return c, fmt.Errorf("rebase captured review scratch failed and abort failed: %v; %w", err, abortErr)
+	if _, _, err := runSessionCompanionGitContext(ctx, c.dir, sessionWorkspaceGitOutputLimit, "-c", "user.useConfigOnly=true", "rebase", "--onto", c.base, creationBase, c.name); err != nil {
+		unmerged, _, inspectErr := runSessionCompanionGitContext(ctx, c.dir, 4096, "ls-files", "--unmerged", "-z")
+		_, _, abortErr := runSessionCompanionGitContext(ctx, c.dir, sessionWorkspaceGitOutputLimit, "rebase", "--abort")
+		if inspectErr != nil || abortErr != nil || len(unmerged) == 0 {
+			return c, fmt.Errorf("rebase captured review scratch failed: %w", errors.Join(err, inspectErr, abortErr))
 		}
 		c.conflict = true
 	}
@@ -755,179 +790,11 @@ func prepareForkReviewCandidateFromIntent(intent sessionReviewIntent) (c reviewS
 
 func sessionReviewPatch(dir, parentHead, candidateHead string, maxBytes int) ([]byte, bool, error) {
 	patch, truncated, err := runSessionWorkspaceGit(dir, maxBytes,
-		"diff", "--binary", "--no-ext-diff", "--no-textconv", parentHead, candidateHead, "--")
+		"diff", "--binary", "--no-ext-diff", "--no-textconv", "--ignore-submodules=dirty", "--submodule=short", parentHead, candidateHead, "--")
 	if err != nil {
 		return nil, false, err
 	}
 	return patch, truncated, nil
-}
-
-type sessionReviewPatchArtifact struct {
-	Digest string
-	Bytes  int64
-}
-
-type sessionReviewArtifactWriter struct {
-	file     *os.File
-	digest   hashWriter
-	written  int64
-	maxBytes int64
-}
-
-type hashWriter interface {
-	io.Writer
-	Sum([]byte) []byte
-}
-
-func (w *sessionReviewArtifactWriter) Write(p []byte) (int, error) {
-	if w.written+int64(len(p)) > w.maxBytes {
-		return 0, fmt.Errorf(
-			"review patch exceeds %d bytes",
-			w.maxBytes,
-		)
-	}
-	n, err := w.file.Write(p)
-	if n > 0 {
-		_, _ = w.digest.Write(p[:n])
-		w.written += int64(n)
-	}
-	return n, err
-}
-
-func (s *Service) writeReviewPatchArtifact(
-	dir string,
-	parentHead string,
-	candidateHead string,
-	operationID string,
-) (sessionReviewPatchArtifact, error) {
-	var artifact sessionReviewPatchArtifact
-	if s.stateRoot == "" || !validSessionPathComponent(operationID) {
-		return artifact, errors.New("review artifact identity is invalid")
-	}
-	root := filepath.Join(s.stateRoot, "review-artifacts")
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return artifact, fmt.Errorf("create review artifact root: %w", err)
-	}
-	if err := os.Chmod(root, 0o700); err != nil {
-		return artifact, fmt.Errorf("protect review artifact root: %w", err)
-	}
-	file, err := os.CreateTemp(root, "."+operationID+"-*.tmp")
-	if err != nil {
-		return artifact, fmt.Errorf("create review patch artifact: %w", err)
-	}
-	temp := file.Name()
-	keep := false
-	defer func() {
-		_ = file.Close()
-		if !keep {
-			_ = os.Remove(temp)
-		}
-	}()
-	if err := file.Chmod(0o600); err != nil {
-		return artifact, fmt.Errorf("protect review patch artifact: %w", err)
-	}
-	writer := &sessionReviewArtifactWriter{
-		file: file, digest: sha256.New(), maxBytes: sessionReviewArtifactMaxBytes,
-	}
-	stderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
-	args := []string{
-		"diff", "--binary", "--no-ext-diff", "--no-textconv",
-		parentHead, candidateHead, "--",
-	}
-	cmd, err := forkspace.GitCommand(context.Background(), dir, args...)
-	if err != nil {
-		return sessionReviewPatchArtifact{}, err
-	}
-	cmd.Stdout = writer
-	cmd.Stderr = stderr
-	if err := cmd.Run(); err != nil {
-		detail := strings.TrimSpace(stderr.buf.String())
-		if detail != "" {
-			return artifact, fmt.Errorf("write review patch artifact: %w: %s", err, detail)
-		}
-		return artifact, fmt.Errorf("write review patch artifact: %w", err)
-	}
-	if writer.written == 0 {
-		return artifact, errors.New("review patch artifact is empty")
-	}
-	if err := file.Sync(); err != nil {
-		return artifact, fmt.Errorf("sync review patch artifact: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		return artifact, fmt.Errorf("close review patch artifact: %w", err)
-	}
-	target := filepath.Join(root, operationID+".diff")
-	if err := os.Rename(temp, target); err != nil {
-		return artifact, fmt.Errorf("publish review patch artifact: %w", err)
-	}
-	keep = true
-	return sessionReviewPatchArtifact{
-		Digest: fmt.Sprintf("%x", writer.digest.Sum(nil)),
-		Bytes:  writer.written,
-	}, nil
-}
-
-func (s *Service) OpenReviewPatch(
-	ctx context.Context,
-	operationID string,
-) (*os.File, ReviewDossier, error) {
-	var dossier ReviewDossier
-	if !validSessionPathComponent(operationID) {
-		return nil, dossier, &session.Error{
-			Code: session.CodeInvalidRequest, Detail: "invalid review operation id",
-		}
-	}
-	op, err := s.store.GetOperationByID(ctx, operationID)
-	if err != nil {
-		return nil, dossier, err
-	}
-	if op.Method != "RunReview" || op.State != session.OperationSucceeded {
-		return nil, dossier, &session.Error{
-			Code:   session.CodeInvalidRequest,
-			Detail: "operation is not a completed review",
-		}
-	}
-	dossier, err = decodeSessionReviewDossier(op.Result)
-	if err != nil {
-		return nil, dossier, err
-	}
-	if dossier.OperationID != operationID ||
-		dossier.PatchArtifactID != operationID ||
-		dossier.PatchDigest == "" ||
-		dossier.PatchBytes < 1 ||
-		dossier.PatchBytes > sessionReviewArtifactMaxBytes {
-		return nil, dossier, errors.New("review patch artifact metadata is invalid")
-	}
-	path := filepath.Join(s.stateRoot, "review-artifacts", operationID+".diff")
-	lstat, err := os.Lstat(path)
-	if err != nil {
-		return nil, dossier, fmt.Errorf("inspect review patch artifact path: %w", err)
-	}
-	if lstat.Mode()&os.ModeSymlink != 0 || !lstat.Mode().IsRegular() {
-		return nil, dossier, errors.New("review patch artifact path is unsafe")
-	}
-	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, dossier, fmt.Errorf("open review patch artifact: %w", err)
-	}
-	file := os.NewFile(uintptr(fd), path)
-	if file == nil {
-		_ = syscall.Close(fd)
-		return nil, dossier, errors.New("open review patch artifact returned no file")
-	}
-	info, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return nil, dossier, fmt.Errorf("inspect review patch artifact: %w", err)
-	}
-	owner, ownerOK := sessionFileOwner(info)
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 ||
-		!ownerOK || (owner != uint64(os.Geteuid()) && owner != 0) ||
-		info.Size() != dossier.PatchBytes {
-		_ = file.Close()
-		return nil, dossier, errors.New("review patch artifact does not match its metadata")
-	}
-	return file, dossier, nil
 }
 
 func boundedSessionReviewFindings(findings []string) []string {
@@ -989,9 +856,7 @@ func (s *Service) completeReview(ctx context.Context, dossier ReviewDossier) (Re
 	dossier.NotPublishableReasons = stableSessionReviewReasons(dossier.NotPublishableReasons)
 	if dossier.Gate != ReviewGatePassed ||
 		dossier.Rebase != ReviewRebaseClean ||
-		dossier.PatchArtifactID == "" ||
-		dossier.PatchDigest == "" ||
-		dossier.PatchBytes < 1 ||
+		!dossier.CandidateRetained || dossier.CandidateTree == dossier.ParentTree ||
 		len(dossier.PolicyFindings) != 0 ||
 		len(dossier.NotPublishableReasons) != 0 {
 		dossier.Publishable = false

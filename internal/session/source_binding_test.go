@@ -43,8 +43,8 @@ func testSourceBinding(kind SourceKind) SourceBinding {
 }
 
 func repositoryBackedCreate(id string, binding *SourceBinding) CreateSessionRequest {
-	return CreateSessionRequest{
-		ID: id, Target: "target", Policy: "policy", Repository: "/repo",
+	return CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest,
+		ID: id, Target: "target", Repository: "/repo",
 		Workspace: "/workspace/" + id, ForkName: "fork-" + id,
 		BaseCommit: strings.Repeat("1", 40), Source: binding,
 	}
@@ -115,8 +115,8 @@ func TestStoreRefusesEverySelfInconsistentSourceBinding(t *testing.T) {
 		}
 	}
 	// A workspace-free session binds a policy and nothing repository-shaped.
-	_, err := store.CreateSession(ctx, "refuse-bare-source", CreateSessionRequest{
-		ID: "bare-source", Target: "target", Policy: "policy", Mode: "bare",
+	_, err := store.CreateSession(ctx, "refuse-bare-source", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest,
+		ID: "bare-source", Target: "target", Mode: "bare",
 		Source: mutate(SourceDefault, func(*SourceBinding) {}),
 	})
 	if CodeOf(err) != CodeInvalidRequest {

@@ -2,8 +2,8 @@
 name: worker-storage-accounting
 description: the worker measures allocated blocks and charges a hardlinked baseline once, stages a discard by renaming before deleting, and closes allocation on used-byte watermarks with a free-byte reserve underneath
 subsystem: worker
-sources: [internal/forkspace/usage.go, internal/forkspace/discard_stage.go, internal/sessionsvc/storage.go, internal/sessionsvc/workspace.go, internal/workerproto/storage.go, internal/workerconnector/storage.go, docs/session-api.md]
-updated: 2026-09-23
+sources: [internal/forkspace/usage.go, internal/forkspace/discard_stage.go, internal/sessionsvc/storage.go, internal/sessionsvc/checkpoint_storage.go, internal/sessionsvc/workspace.go, internal/workerproto/storage.go, internal/workerconnector/storage.go, docs/session-api.md]
+updated: 2026-09-27
 ---
 
 A worker accounts for its own disk so a control plane can bound workspace growth. Four things about
@@ -37,7 +37,11 @@ cannot flap the gate. The defaults track the reserve (close under one reserve fr
 rather than a "percent full" line on purpose: a worker does not own the whole volume, and refusing
 every session because unrelated host data fills the disk is not this policy's job. An unreadable
 statfs fails OPEN — turning a monitoring failure into a fleet outage is worse than missing one
-refusal — and publishes no storage object at all.
+refusal — and publishes no storage object at all. Checkpoint capture and restore are stricter:
+their separate pressure guard requires readable free-space measurements for both state and
+workspace volumes, reserves the known incoming copies, and cancels growing work at the reserve.
+This is not a filesystem quota. Restore recovery allocates new custody too, so it waits for space
+while retaining its exact body and execution fence; cleanup remains possible inside the reserve.
 
 **Unknown is never zero.** An unreadable subtree, an unattributable directory, or a scan past its
 bounds sets `Usage.Unknown`, which becomes `totals.unknown` and publishes
@@ -48,6 +52,8 @@ only seconds old is treated as a create still in flight, because
 `ensureSessionWorkspaceContext` writes the workspace before the session row exists.
 
 ## Changelog
+- 2026-09-27 — distinguished checkpoint allocation/recovery pressure protection from ordinary
+  admission monitoring; verified against checkpoint_storage.go and the interrupted-restore tests.
 - 2026-09-23 — corrected link-count accounting: directories commonly have `Nlink > 1` because of
   child directories but are still exclusively reclaimable; only multiply-linked non-directories
   enter the shared-inode set.

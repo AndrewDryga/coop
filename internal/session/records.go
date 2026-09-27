@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	SchemaVersion = 23
+	SchemaVersion = 24
 
 	MaxIDBytes             = 256
 	MaxMethodBytes         = 128
@@ -188,7 +188,6 @@ const (
 	CodeSessionNotFound         ErrorCode = "session_not_found"
 	CodeTurnNotFound            ErrorCode = "turn_not_found"
 	CodeRevisionConflict        ErrorCode = "revision_conflict"
-	CodePolicyDigestMismatch    ErrorCode = "policy_digest_mismatch"
 	CodeInvalidSessionState     ErrorCode = "invalid_session_state"
 	CodeQueueFull               ErrorCode = "queue_full"
 	CodeBudgetExhausted         ErrorCode = "budget_exhausted"
@@ -289,17 +288,23 @@ type Session struct {
 	ID              string `json:"id"`
 	ExternalRef     string `json:"external_ref"`
 	Target          string `json:"target"`
-	Policy          string `json:"policy"`
-	PolicyDigest    string `json:"policy_digest"`
-	AuthorityDigest string `json:"authority_digest"`
-	ProjectEnv      bool   `json:"project_env"`
-	ProjectMCP      bool   `json:"project_mcp"`
-	// ResponderBinding is controller-owned authority the canonical session row keeps privately.
-	// It never rides in JSON: operation receipts and replays carry ResponderBindingDigest instead,
+	Policy          string `json:"policy,omitempty"`           // Historical rows only.
+	PolicyDigest    string `json:"policy_digest,omitempty"`    // Historical rows only.
+	AuthorityDigest string `json:"authority_digest,omitempty"` // Historical rows only.
+	// JobDocument is the controller's immutable execution authority for a v2 worker session.
+	// Historical policy-backed rows leave both job fields empty. The document stays private:
+	// public session responses expose only its digest, never source-transfer descriptors.
+	JobDocument json.RawMessage `json:"-"`
+	JobRef      string          `json:"job_ref,omitempty"`
+	JobDigest   string          `json:"job_digest,omitempty"`
+	ProjectEnv  bool            `json:"project_env"`
+	ProjectMCP  bool            `json:"project_mcp"`
+	// ControllerTools is controller-owned authority the canonical session row keeps privately.
+	// It never rides in JSON: operation receipts and replays carry ControllerToolsDigest instead,
 	// so the bearer is stored exactly once.
-	ResponderBinding       *ResponderBinding     `json:"-"`
-	ResponderBindingDigest string                `json:"responder_binding_digest,omitempty"`
-	WorkspaceTask          *WorkspaceTaskBinding `json:"workspace_task,omitempty"`
+	ControllerTools       *ControllerTools      `json:"-"`
+	ControllerToolsDigest string                `json:"controller_tools_digest,omitempty"`
+	WorkspaceTask         *WorkspaceTaskBinding `json:"workspace_task,omitempty"`
 	// Mode is the execution mode the session was created under — normal, readonly or bare —
 	// fixed for its life. A row written before modes existed reads as normal.
 	Mode                string                       `json:"mode"`
@@ -362,18 +367,18 @@ type WorkspaceTaskBinding struct {
 	DraftSHA256 string `json:"draft_sha256"`
 }
 
-// ResponderBinding is one controller-owned MCP endpoint bound at session
+// ControllerTools is one controller-owned MCP endpoint bound at session
 // creation. It is not arbitrary MCP configuration: the caller cannot name a
 // command, environment variable, or local path, and the endpoint shape is
 // validated before persistence.
-type ResponderBinding struct {
+type ControllerTools struct {
 	Endpoint string `json:"endpoint"`
 	Token    string `json:"token"`
 }
 
-// ResponderBindingDigest is safe to expose in the public session projection:
+// ControllerToolsDigest is safe to expose in the public session projection:
 // it proves the exact endpoint and bearer digest without revealing the bearer.
-func ResponderBindingDigest(value *ResponderBinding) string {
+func ControllerToolsDigest(value *ControllerTools) string {
 	if value == nil {
 		return ""
 	}
@@ -656,14 +661,14 @@ type Turn struct {
 	// it only after that runtime and its private state have been reaped, so a
 	// terminal turn cannot erase the janitor's retry target.
 	RuntimeRunID string `json:"-"`
-	// ResponderBinding is controller-owned authority for exactly this logical
+	// ControllerTools is controller-owned authority for exactly this logical
 	// turn. It stays private, survives admission/restart, and may differ between
 	// turns that reuse one native provider session.
-	ResponderBinding *ResponderBinding `json:"-"`
-	// ResponderBindingDigest is populated only when an operation replay comes
+	ControllerTools *ControllerTools `json:"-"`
+	// ControllerToolsDigest is populated only when an operation replay comes
 	// from a compact receipt. The receipt keeps the public digest without
 	// duplicating the private bearer needed by the canonical turn row.
-	ResponderBindingDigest string `json:"-"`
+	ControllerToolsDigest string `json:"-"`
 }
 
 // TurnCandidate is a schema-valid result that still needs caller-owned
@@ -734,15 +739,14 @@ type Event struct {
 }
 
 type CreateSessionRequest struct {
-	ID               string            `json:"id"`
-	ExternalRef      string            `json:"external_ref"`
-	Target           string            `json:"target"`
-	Policy           string            `json:"policy"`
-	PolicyDigest     string            `json:"policy_digest"`
-	AuthorityDigest  string            `json:"authority_digest,omitempty"`
-	OmitEnv          bool              `json:"omit_env,omitempty"`
-	OmitMCP          bool              `json:"omit_mcp,omitempty"`
-	ResponderBinding *ResponderBinding `json:"responder_binding,omitempty"`
+	ID              string           `json:"id"`
+	ExternalRef     string           `json:"external_ref"`
+	Target          string           `json:"target"`
+	JobDocument     json.RawMessage  `json:"job_document,omitempty"`
+	JobDigest       string           `json:"job_digest,omitempty"`
+	OmitEnv         bool             `json:"omit_env,omitempty"`
+	OmitMCP         bool             `json:"omit_mcp,omitempty"`
+	ControllerTools *ControllerTools `json:"controller_tools,omitempty"`
 	// Mode is the execution mode; empty is normal. A bare session names no repository binding.
 	Mode                 string                       `json:"mode,omitempty"`
 	RepositoryReadOnly   bool                         `json:"repository_read_only,omitempty"`
@@ -775,10 +779,10 @@ type SubmitTurnRequest struct {
 	ExpectedRevision int64
 	Prompt           string
 	Artifacts        []InputArtifact
-	MinTargetIndex   int               `json:",omitempty"`
-	RewindTarget     bool              `json:",omitempty"`
-	OutputContract   *OutputContract   `json:",omitempty"`
-	ResponderBinding *ResponderBinding `json:"responder_binding,omitempty"`
+	MinTargetIndex   int              `json:",omitempty"`
+	RewindTarget     bool             `json:",omitempty"`
+	OutputContract   *OutputContract  `json:",omitempty"`
+	ControllerTools  *ControllerTools `json:"controller_tools,omitempty"`
 }
 
 // OutputContract declares the exact JSON Schema a turn's final assistant

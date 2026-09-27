@@ -264,6 +264,13 @@ const schemaV23 = `
 ALTER TABLE sessions ADD COLUMN source_binding TEXT NOT NULL DEFAULT '';
 `
 
+// New worker jobs carry complete immutable authority. Historical policy-backed sessions keep
+// empty fields and remain readable/closeable without inventing a job they never received.
+const schemaV24 = `
+ALTER TABLE sessions ADD COLUMN job_document TEXT NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN job_digest TEXT NOT NULL DEFAULT '';
+`
+
 // backfillSourceBindings derives the generic binding for pull-request sessions whose durable
 // values prove it, and leaves every other historical row exactly as it is. Nothing here guesses:
 // a row without receipts, or whose receipts disagree with its own columns, keeps no binding and
@@ -513,6 +520,12 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("migrate schema v23: %w", err)
 		}
 		version = 23
+	}
+	if version < 24 {
+		if _, err := tx.Exec(schemaV24); err != nil {
+			return fmt.Errorf("migrate schema v24: %w", err)
+		}
+		version = 24
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		return fmt.Errorf("set schema version: %w", err)

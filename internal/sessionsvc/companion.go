@@ -1,65 +1,29 @@
 package sessionsvc
 
 import (
-	"bufio"
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
 )
 
 const (
-	sessionCompanionBoxRoot                          = "/coop/repositories"
-	sessionCompanionMarker                           = "coop-session-companion-v1\n"
-	sessionCompanionMarkerFile                       = "coop-session-companion"
-	sessionCompanionHistoryFile                      = "coop-session-companion-history"
-	sessionCompanionHistoryFull                      = "full\n"
-	sessionCompanionHistoryBounded                   = "bounded\n"
-	sessionCompanionHistoryShallow                   = "shallow\n"
-	sessionCompanionFullHistoryMaxLogicalSize uint64 = 1 << 30
+	sessionCompanionBoxRoot        = "/coop/repositories"
+	sessionCompanionMarker         = "coop-session-companion-v1\n"
+	sessionCompanionMarkerFile     = "coop-session-companion"
+	sessionCompanionHistoryFile    = "coop-session-companion-history"
+	sessionCompanionHistoryFull    = "full\n"
+	sessionCompanionHistoryBounded = "bounded\n"
+	sessionCompanionHistoryShallow = "shallow\n"
 )
-
-// sessionCompanionHistoryWindows are the recent-history windows tried, longest
-// first, when a repository's whole history will not fit the budget.
-//
-// The choice used to be all of it or one commit, and one commit is not a
-// history: an agent asked what changed in a repository last week could see the
-// current source and nothing else, and reported — correctly — that the
-// checkout had no parent history. It could not even deepen it, because a
-// commit-only companion is created with no remote to fetch from.
-//
-// Most questions that need history need weeks of it, not years, and the tail
-// is where the bytes are. On the repository that produced that report, all
-// 850 commits measure 1.25 GiB against a 1 GiB budget while the last 90 days
-// are 281 commits and 0.81 GiB — the same budget buys a third of the history
-// instead of none of it.
-var sessionCompanionHistoryWindows = []time.Duration{
-	90 * 24 * time.Hour,
-	30 * 24 * time.Hour,
-	7 * 24 * time.Hour,
-}
-
-// sessionCompanionHistory is how much of a repository a companion gets, and
-// the cutoff that produced it.
-type sessionCompanionHistory struct {
-	mode  string
-	since string
-}
-
-func (h sessionCompanionHistory) shallow() bool {
-	return h.mode != sessionCompanionHistoryFull
-}
 
 type sessionCompanionGitConfig struct {
 	Key   string
@@ -138,18 +102,16 @@ func ensureSessionCompanionContext(
 	if err := verifySessionCompanionContext(ctx, binding); err != nil {
 		return session.CompanionRepository{}, err
 	}
+	if err := verifySessionSubmodules(ctx, binding.Workspace, binding.BaseCommit); err != nil {
+		return session.CompanionRepository{}, err
+	}
+	if err := materializeSessionSubmodules(ctx, binding.Repository, binding.Workspace, binding.BaseCommit); err != nil {
+		return session.CompanionRepository{}, err
+	}
 	return binding, nil
 }
 
-func createSessionCompanionContext(ctx context.Context, binding session.CompanionRepository) error {
-	return createSessionCompanionWithHistoryLimit(
-		ctx, binding, sessionCompanionFullHistoryMaxLogicalSize,
-	)
-}
-
-func createSessionCompanionWithHistoryLimit(
-	ctx context.Context, binding session.CompanionRepository, fullHistoryMaxLogicalSize uint64,
-) (returnErr error) {
+func createSessionCompanionContext(ctx context.Context, binding session.CompanionRepository) (returnErr error) {
 	stage, err := os.MkdirTemp(
 		filepath.Dir(binding.Workspace), "."+binding.Name+"-",
 	)
@@ -176,79 +138,35 @@ func createSessionCompanionWithHistoryLimit(
 		}
 	}()
 
-	formatBytes, err := sessionCompanionGitTextContext(
-		ctx, binding.Repository, 16, "rev-parse", "--show-object-format",
-	)
-	if err != nil {
-		return fmt.Errorf("resolve companion object format: %w", err)
+	// The worker has already fetched a self-contained object closure. Use the
+	// same credential-free pinned clone as primary workspaces, without a second
+	// pack builder or a history budget that rejects large working trees.
+	if err := forkspace.GitClonePinnedContext(ctx, binding.Repository, stage, binding.BaseCommit); err != nil {
+		return fmt.Errorf("clone companion source: %w", err)
 	}
-	objectFormat := strings.TrimSpace(string(formatBytes))
-	if (objectFormat != "sha1" || len(binding.BaseCommit) != 40) &&
-		(objectFormat != "sha256" || len(binding.BaseCommit) != 64) {
-		return errors.New("companion commit does not match its repository object format")
+	if err := forkspace.GitRefCommand(ctx, stage, "remote", "remove", "origin").Run(); err != nil {
+		return fmt.Errorf("remove companion transport: %w", err)
 	}
-	history, err := planSessionCompanionHistory(
-		ctx, binding, fullHistoryMaxLogicalSize, time.Now(),
-	)
-	if err != nil {
-		return err
-	}
-	emptyTemplate := filepath.Join(stage, ".coop-empty-git-template")
-	if err := os.Mkdir(emptyTemplate, 0o700); err != nil {
-		return fmt.Errorf("create empty companion Git template: %w", err)
-	}
-	initCmd := forkspace.GitRefCommand(ctx, stage, // no repository exists yet to view
-		"init", "--quiet", "--object-format="+objectFormat,
-		"--template="+emptyTemplate,
-	)
-	for _, entry := range sessionCompanionGitEnv() {
-		if !strings.HasPrefix(entry, "GIT_TEMPLATE_DIR=") {
-			initCmd.Env = append(initCmd.Env, entry)
-		}
-	}
-	if out, err := initCmd.CombinedOutput(); err != nil {
-		if ctx.Err() != nil {
-			err = errors.Join(ctx.Err(), err)
-		}
-		return fmt.Errorf(
-			"initialize companion workspace: %w: %s",
-			err, strings.TrimSpace(string(out)),
-		)
-	}
-	if err := os.Remove(emptyTemplate); err != nil {
-		return fmt.Errorf("remove empty companion Git template: %w", err)
-	}
-	if err := materializeSessionCompanionObjects(ctx, binding, stage, history); err != nil {
-		return err
-	}
-	historyMode := history.mode
-	if history.shallow() {
-		boundary, err := sessionCompanionShallowBoundary(ctx, binding, history)
-		if err != nil {
-			return err
-		}
-		if boundary == "" {
-			// The window turned out to reach the root, so nothing was cut and
-			// the companion is not shallow. Marking it otherwise would fail
-			// its own reuse check on the next session.
-			historyMode = sessionCompanionHistoryFull
-		} else if err := os.WriteFile(
-			filepath.Join(stage, ".git", "shallow"), []byte(boundary), 0o600,
-		); err != nil {
-			return fmt.Errorf("write companion shallow boundary: %w", err)
-		}
-	}
-	// Detach on the real git dir (HEAD is rewritten there), then populate the files under the
-	// trusted view with attributes fully off, so the checkout is byte-exact and driver-free.
 	if err := forkspace.GitRefCommand(ctx, stage, "update-ref", "--no-deref", "HEAD", binding.BaseCommit).Run(); err != nil {
+		return fmt.Errorf("pin companion commit: %w", err)
+	}
+	refs, err := forkspace.GitRefCommand(ctx, stage, "for-each-ref", "--format=delete %(refname)").Output()
+	if err != nil {
+		return fmt.Errorf("enumerate companion clone refs: %w", err)
+	}
+	prune := forkspace.GitRefCommand(ctx, stage, "update-ref", "--stdin")
+	prune.Stdin = bytes.NewReader(refs)
+	if err := prune.Run(); err != nil {
+		return fmt.Errorf("remove companion clone refs: %w", err)
+	}
+	if _, _, err := runSessionWorkspaceGitWithEnvContext(ctx, stage, sessionWorkspaceGitOutputLimit,
+		sessionCompanionCheckoutGitEnv(), "reset", "--hard", "--quiet", binding.BaseCommit); err != nil {
 		return fmt.Errorf("checkout companion commit: %w", err)
 	}
-	if _, _, err := runSessionWorkspaceGitWithEnvContext(
-		ctx, stage, sessionWorkspaceGitOutputLimit, sessionCompanionCheckoutGitEnv(),
-		"reset", "--hard", "--quiet", binding.BaseCommit,
-	); err != nil {
-		return fmt.Errorf("checkout companion commit: %w", err)
+	if err := materializeSessionSubmodules(ctx, binding.Repository, stage, binding.BaseCommit); err != nil {
+		return fmt.Errorf("materialize companion submodules: %w", err)
 	}
+
 	metadataPath := filepath.Join(stage, ".git")
 	if err := os.RemoveAll(filepath.Join(metadataPath, "logs")); err != nil {
 		return fmt.Errorf("remove companion reflogs: %w", err)
@@ -261,7 +179,7 @@ func createSessionCompanionWithHistoryLimit(
 	}
 	if err := os.WriteFile(
 		filepath.Join(metadataPath, sessionCompanionHistoryFile),
-		[]byte(historyMode), 0o600,
+		[]byte(sessionCompanionHistoryFull), 0o600,
 	); err != nil {
 		return fmt.Errorf("record companion history mode: %w", err)
 	}
@@ -278,286 +196,6 @@ func createSessionCompanionWithHistoryLimit(
 	}
 	stage = ""
 	return nil
-}
-
-func materializeSessionCompanionObjects(
-	ctx context.Context, binding session.CompanionRepository, stage string,
-	history sessionCompanionHistory,
-) (returnErr error) {
-	packPrefix := filepath.Join(stage, ".git", "objects", "pack", "pack")
-	if !history.shallow() {
-		packCmd, err := forkspace.GitCommand(ctx, binding.Repository, "pack-objects", "--quiet", "--revs", packPrefix)
-		if err != nil {
-			return err
-		}
-		packCmd.Env = sessionCompanionGitEnv()
-		packCmd.Stdin = strings.NewReader(binding.BaseCommit + "\n")
-		if out, err := packCmd.CombinedOutput(); err != nil {
-			if ctx.Err() != nil {
-				err = errors.Join(ctx.Err(), err)
-			}
-			return fmt.Errorf(
-				"materialize companion history: %w: %s",
-				err, strings.TrimSpace(string(out)),
-			)
-		}
-		return nil
-	}
-
-	objectList, err := os.CreateTemp(stage, ".coop-companion-objects-")
-	if err != nil {
-		return fmt.Errorf("create companion object list: %w", err)
-	}
-	objectListPath := objectList.Name()
-	defer func() {
-		if objectList != nil {
-			returnErr = errors.Join(returnErr, objectList.Close())
-		}
-		if objectListPath != "" {
-			if err := os.Remove(objectListPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-				returnErr = errors.Join(returnErr, fmt.Errorf("remove companion object list: %w", err))
-			}
-		}
-	}()
-	listArgs := sessionCompanionHistoryRevListArgs(
-		binding.BaseCommit, history.since, "--objects", "--no-object-names",
-	)
-	if history.since == "" {
-		// The pinned commit alone. Its own object is not reachable from its
-		// tree, so it is written before the tree walk rather than listed by it.
-		if _, err := objectList.WriteString(binding.BaseCommit + "\n"); err != nil {
-			return fmt.Errorf("write companion commit object: %w", err)
-		}
-		listArgs = []string{
-			"rev-list", "--objects", "--no-object-names",
-			binding.BaseCommit + "^{tree}",
-		}
-	}
-	stderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
-	listCmd, err := forkspace.GitCommand(ctx, binding.Repository, listArgs...)
-	if err != nil {
-		return err
-	}
-	listCmd.Env = append(listCmd.Env, sessionCompanionGitEnvExtras()...)
-	listCmd.Stdout = objectList
-	listCmd.Stderr = stderr
-	if err := listCmd.Run(); err != nil {
-		if ctx.Err() != nil {
-			err = errors.Join(ctx.Err(), err)
-		}
-		detail := strings.TrimSpace(stderr.buf.String())
-		if detail != "" {
-			return fmt.Errorf("enumerate companion tree objects: %w: %s", err, detail)
-		}
-		return fmt.Errorf("enumerate companion tree objects: %w", err)
-	}
-	if _, err := objectList.Seek(0, 0); err != nil {
-		return fmt.Errorf("rewind companion object list: %w", err)
-	}
-	packCmd, err := forkspace.GitCommand(ctx, binding.Repository, "pack-objects", "--quiet", "--window=0", "--depth=0", packPrefix)
-	if err != nil {
-		return err
-	}
-	packCmd.Env = sessionCompanionGitEnv()
-	packCmd.Stdin = objectList
-	if out, err := packCmd.CombinedOutput(); err != nil {
-		if ctx.Err() != nil {
-			err = errors.Join(ctx.Err(), err)
-		}
-		return fmt.Errorf(
-			"materialize companion objects: %w: %s",
-			err, strings.TrimSpace(string(out)),
-		)
-	}
-	if err := objectList.Close(); err != nil {
-		return fmt.Errorf("close companion object list: %w", err)
-	}
-	objectList = nil
-	if err := os.Remove(objectListPath); err != nil {
-		return fmt.Errorf("remove companion object list: %w", err)
-	}
-	objectListPath = ""
-	return nil
-}
-
-// sessionCompanionShallowBoundary is what goes in .git/shallow: the commits
-// this companion carries whose parents it does not.
-//
-// Not what "rev-list --boundary" prints. That reports the commits just outside
-// the walk — the missing parents themselves — and writing those produces a
-// repository git believes is truncated in the wrong place: it still thinks it
-// holds the oldest commit's parents, and fsck fails on the objects that are
-// genuinely absent. The grafted commits are the youngest ones on the far side,
-// which are present. This was caught by building a companion from a real
-// repository and running fsck against it; the two sets share no members.
-//
-// Getting it wrong is not cosmetic. Git trusts this file rather than checking,
-// so a wrong boundary is a repository that walks straight into a missing
-// object on the first command that reaches the edge.
-func sessionCompanionShallowBoundary(
-	ctx context.Context, binding session.CompanionRepository, history sessionCompanionHistory,
-) (string, error) {
-	if history.since == "" {
-		return binding.BaseCommit + "\n", nil
-	}
-	out, err := sessionCompanionGitTextContext(ctx, binding.Repository,
-		sessionWorkspaceGitOutputLimit,
-		sessionCompanionHistoryRevListArgs(binding.BaseCommit, history.since, "--parents")...,
-	)
-	if err != nil {
-		return "", fmt.Errorf("enumerate companion history boundary: %w", err)
-	}
-	lines := strings.Split(string(out), "\n")
-	carried := make(map[string]struct{}, len(lines))
-	for _, line := range lines {
-		commit, _, _ := strings.Cut(strings.TrimSpace(line), " ")
-		if validSessionWorkspaceCommit(commit) {
-			carried[commit] = struct{}{}
-		}
-	}
-	var boundary strings.Builder
-	for _, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) == 0 || !validSessionWorkspaceCommit(fields[0]) {
-			continue
-		}
-		for _, parent := range fields[1:] {
-			if _, held := carried[parent]; !held {
-				boundary.WriteString(fields[0] + "\n")
-				break
-			}
-		}
-	}
-	if boundary.Len() == 0 {
-		// Every parent of every carried commit is carried too, so the window
-		// reached the root and nothing is truncated. Claiming a cut that is
-		// not there would make git refuse to walk history it actually has.
-		return "", nil
-	}
-	return boundary.String(), nil
-}
-
-// sessionCompanionHistoryRevListArgs builds the walk that defines a history:
-// everything reachable from the pinned commit, stopping at the window when one
-// is set. Both the measurement and the packing use it, so what is measured is
-// exactly what is later written.
-func sessionCompanionHistoryRevListArgs(baseCommit, since string, extra ...string) []string {
-	args := append([]string{"rev-list"}, extra...)
-	if since != "" {
-		args = append(args, "--since="+since)
-	}
-	return append(args, baseCommit)
-}
-
-// planSessionCompanionHistory picks the most history that fits the budget:
-// all of it, else the longest window that fits, else the pinned commit alone.
-// The ladder only ever descends, so a companion can never grow past the budget
-// this function exists to enforce.
-func planSessionCompanionHistory(
-	ctx context.Context,
-	binding session.CompanionRepository,
-	limit uint64,
-	now time.Time,
-) (sessionCompanionHistory, error) {
-	full, err := sessionCompanionHistoryWithinLimit(ctx, binding, limit, "")
-	if err != nil {
-		return sessionCompanionHistory{}, err
-	}
-	if full {
-		return sessionCompanionHistory{mode: sessionCompanionHistoryFull}, nil
-	}
-	for _, window := range sessionCompanionHistoryWindows {
-		// A fixed instant rather than git's own "90.days.ago": the same cutoff
-		// has to reach the measurement and the pack, and a relative date
-		// evaluated twice is two different cutoffs.
-		since := now.UTC().Add(-window).Format(time.RFC3339)
-		fits, err := sessionCompanionHistoryWithinLimit(ctx, binding, limit, since)
-		if err != nil {
-			return sessionCompanionHistory{}, err
-		}
-		if fits {
-			return sessionCompanionHistory{
-				mode: sessionCompanionHistoryBounded, since: since,
-			}, nil
-		}
-	}
-	return sessionCompanionHistory{mode: sessionCompanionHistoryShallow}, nil
-}
-
-// sessionCompanionHistoryWithinLimit measures the uncompressed bytes of the
-// objects a history would carry. A window of "" measures the whole history;
-// otherwise the walk stops at commits older than that Git date, which is the
-// same commit-date boundary git's own --shallow-since draws.
-func sessionCompanionHistoryWithinLimit(
-	ctx context.Context, binding session.CompanionRepository, limit uint64, since string,
-) (bool, error) {
-	listStderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
-	listCmd, err := forkspace.GitCommand(ctx, binding.Repository,
-		sessionCompanionHistoryRevListArgs(binding.BaseCommit, since, "--objects", "--no-object-names")...)
-	if err != nil {
-		return false, err
-	}
-	listCmd.Env = sessionCompanionGitEnv()
-	objectIDs, err := listCmd.StdoutPipe()
-	if err != nil {
-		return false, fmt.Errorf("read companion history objects: %w", err)
-	}
-	listCmd.Stderr = listStderr
-	sizeStderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
-	sizeCmd, err := forkspace.GitCommand(ctx, binding.Repository, "cat-file", "--buffer", "--batch-check=%(objectsize)")
-	if err != nil {
-		return false, err
-	}
-	sizeCmd.Env = sessionCompanionGitEnv()
-	sizeCmd.Stdin = objectIDs
-	sizeCmd.Stderr = sizeStderr
-	sizes, err := sizeCmd.StdoutPipe()
-	if err != nil {
-		return false, fmt.Errorf("read companion history sizes: %w", err)
-	}
-	if err := sizeCmd.Start(); err != nil {
-		return false, fmt.Errorf("measure companion history: %w", err)
-	}
-	if err := listCmd.Start(); err != nil {
-		_ = sizeCmd.Process.Kill()
-		_ = sizeCmd.Wait()
-		return false, fmt.Errorf("enumerate companion history: %w", err)
-	}
-	complete := true
-	total := uint64(0)
-	scanner := bufio.NewScanner(sizes)
-	for scanner.Scan() {
-		size, err := strconv.ParseUint(strings.TrimSpace(scanner.Text()), 10, 64)
-		if err != nil || size > limit-total {
-			complete = false
-			_ = listCmd.Process.Kill()
-			_ = sizeCmd.Process.Kill()
-			break
-		}
-		total += size
-	}
-	if err := scanner.Err(); err != nil && complete {
-		_ = listCmd.Process.Kill()
-		_ = sizeCmd.Process.Kill()
-		_ = listCmd.Wait()
-		_ = sizeCmd.Wait()
-		return false, fmt.Errorf("scan companion history sizes: %w", err)
-	}
-	sizeWaitErr := sizeCmd.Wait()
-	if sizeWaitErr != nil {
-		_ = listCmd.Process.Kill()
-	}
-	listWaitErr := listCmd.Wait()
-	if !complete {
-		return false, nil
-	}
-	if sizeWaitErr != nil || listWaitErr != nil {
-		if ctx.Err() != nil {
-			return false, errors.Join(ctx.Err(), sizeWaitErr, listWaitErr)
-		}
-		return false, nil
-	}
-	return true, nil
 }
 
 func sessionCompanionGitEnv() []string {
@@ -609,6 +247,7 @@ func sessionCompanionCheckoutGitEnv() []string {
 			Key: "core.attributesFile", Value: os.DevNull,
 		}}),
 		"GIT_ATTR_NOSYSTEM=1",
+		"GIT_OPTIONAL_LOCKS=0",
 	)
 }
 
@@ -817,22 +456,64 @@ func sessionCompanionStatus(
 
 func sessionCompanionStatusContext(
 	ctx context.Context, binding session.CompanionRepository,
+) ([]byte, bool, error) {
+	status, truncated, err := sessionPinnedStatusContext(ctx, binding)
+	if err != nil {
+		return nil, false, err
+	}
+	clean, err := sessionCompanionGitlinksCleanContext(ctx, binding.Workspace, binding.BaseCommit)
+	if err != nil {
+		return nil, false, err
+	}
+	if !clean {
+		return nil, false, errors.New("companion gitlink worktree is modified")
+	}
+	return status, truncated, nil
+}
+
+// Compare content with a fresh pinned index: an agent's assume-unchanged and
+// skip-worktree bits must not conceal valuable work from review or discard.
+func sessionPinnedStatusContext(
+	ctx context.Context, binding session.CompanionRepository,
 ) (status []byte, truncated bool, returnErr error) {
+	returnErr = withSessionPrivateIndex(ctx, binding, func(env []string) error {
+		command := exec.CommandContext(ctx, "git", gitArgs(binding.Workspace, []string{
+			"status", "--porcelain=v2", "--untracked-files=all", "--no-renames",
+			"--ignore-submodules=all", "-z",
+		})...)
+		command.Env = env
+		output := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceGitOutputLimit}
+		err := forkspace.RunLFSStatus(ctx, binding.Workspace, command, output, func(limit int, args ...string) ([]byte, error) {
+			output, truncated, err := runSessionPrivateGitContext(ctx, binding.Workspace, limit, env, args...)
+			if truncated {
+				return nil, errors.New("LFS status read exceeds its bound")
+			}
+			return output, err
+		})
+		status, truncated = output.buf.Bytes(), output.truncated
+		return err
+	})
+	return status, truncated, returnErr
+}
+
+func withSessionPrivateIndex(
+	ctx context.Context, binding session.CompanionRepository, action func([]string) error,
+) (returnErr error) {
 	statusRoot, err := os.MkdirTemp(
 		filepath.Dir(binding.Workspace), ".coop-companion-status-",
 	)
 	if err != nil {
-		return nil, false, fmt.Errorf("create companion status repository: %w", err)
+		return fmt.Errorf("create companion status repository: %w", err)
 	}
 	statusInfo, err := os.Lstat(statusRoot)
 	if err != nil {
-		return nil, false, errors.Join(
+		return errors.Join(
 			fmt.Errorf("inspect companion status repository: %w", err), os.Remove(statusRoot),
 		)
 	}
 	statusIdentity, err := sessionWorkspaceIdentityFor(statusInfo)
 	if err != nil {
-		return nil, false, errors.Join(
+		return errors.Join(
 			fmt.Errorf("identify companion status repository: %w", err), os.Remove(statusRoot),
 		)
 	}
@@ -845,26 +526,26 @@ func sessionCompanionStatusContext(
 		binding.Workspace, 16, "rev-parse", "--show-object-format",
 	)
 	if err != nil {
-		return nil, false, fmt.Errorf("resolve companion status object format: %w", err)
+		return fmt.Errorf("resolve companion status object format: %w", err)
 	}
 	objectFormat := strings.TrimSpace(string(formatBytes))
 	if objectFormat != "sha1" && objectFormat != "sha256" {
-		return nil, false, errors.New("companion status object format is invalid")
+		return errors.New("companion status object format is invalid")
 	}
 	objectsBytes, _, err := runSessionWorkspaceGitRealContext(ctx,
 		binding.Workspace, sessionWorkspaceGitOutputLimit, sessionCompanionGitEnv(),
 		"rev-parse", "--path-format=absolute", "--git-path", "objects",
 	)
 	if err != nil {
-		return nil, false, fmt.Errorf("resolve companion status objects: %w", err)
+		return fmt.Errorf("resolve companion status objects: %w", err)
 	}
 	objectsPath, err := filepath.EvalSymlinks(strings.TrimSpace(string(objectsBytes)))
 	if err != nil || !filepath.IsAbs(objectsPath) || strings.ContainsAny(objectsPath, "\x00\r\n") {
-		return nil, false, errors.New("companion status objects are unavailable")
+		return errors.New("companion status objects are unavailable")
 	}
 	emptyTemplate := filepath.Join(statusRoot, "template")
 	if err := os.Mkdir(emptyTemplate, 0o700); err != nil {
-		return nil, false, fmt.Errorf("create companion status template: %w", err)
+		return fmt.Errorf("create companion status template: %w", err)
 	}
 	gitDir := filepath.Join(statusRoot, "git")
 	initCmd := exec.CommandContext(ctx,
@@ -876,7 +557,7 @@ func sessionCompanionStatusContext(
 		if ctx.Err() != nil {
 			err = errors.Join(ctx.Err(), err)
 		}
-		return nil, false, fmt.Errorf(
+		return fmt.Errorf(
 			"initialize companion status repository: %w: %s",
 			err, strings.TrimSpace(string(out)),
 		)
@@ -884,274 +565,51 @@ func sessionCompanionStatusContext(
 	if err := os.WriteFile(
 		filepath.Join(gitDir, "HEAD"), []byte(binding.BaseCommit+"\n"), 0o600,
 	); err != nil {
-		return nil, false, fmt.Errorf("pin companion status HEAD: %w", err)
+		return fmt.Errorf("pin companion status HEAD: %w", err)
 	}
 	alternatesPath := filepath.Join(gitDir, "objects", "info", "alternates")
 	if err := os.WriteFile(alternatesPath, []byte(objectsPath+"\n"), 0o600); err != nil {
-		return nil, false, fmt.Errorf("link companion status objects: %w", err)
+		return fmt.Errorf("link companion status objects: %w", err)
 	}
 	env := append(
 		sessionCompanionCheckoutGitEnv(),
 		"GIT_DIR="+gitDir,
-		"GIT_INDEX_FILE="+filepath.Join(statusRoot, "index"),
+		"GIT_INDEX_FILE="+filepath.Join(gitDir, "index"),
 		"GIT_WORK_TREE="+binding.Workspace,
 	)
-	if _, _, err := runSessionWorkspaceGitWithEnvContext(
+	if _, _, err := runSessionPrivateGitContext(
 		ctx, binding.Workspace, sessionWorkspaceGitOutputLimit, env,
 		"read-tree", binding.BaseCommit,
 	); err != nil {
-		return nil, false, fmt.Errorf("prepare companion status index: %w", err)
+		return fmt.Errorf("prepare companion status index: %w", err)
 	}
-	status, truncated, err = runSessionWorkspaceGitWithEnvContext(
-		ctx, binding.Workspace, sessionWorkspaceGitOutputLimit, env,
-		"status", "--porcelain=v2", "--untracked-files=all", "--no-renames",
-		"--ignore-submodules=all", "-z",
-	)
-	if err != nil {
-		return nil, false, fmt.Errorf("inspect isolated companion status: %w", err)
-	}
-	metadata, metadataErr := os.Lstat(filepath.Join(binding.Workspace, ".git"))
-	if metadataErr == nil && metadata.Mode().IsRegular() {
-		status = sessionCompanionStatusWithoutVerifiedLFSSmudges(ctx, binding, env, status)
-	}
-	gitlinksClean, err := sessionCompanionGitlinksCleanContext(ctx, binding.Workspace, env)
-	if err != nil {
-		return nil, false, err
-	}
-	if !gitlinksClean {
-		return nil, false, errors.New("companion gitlink worktree is modified")
-	}
-	return status, truncated, nil
+	return action(env)
 }
 
-// A legacy linked companion may have been checked out while Git LFS was
-// active. Its index then holds the committed pointer while the worktree holds
-// the smudged object. The isolated safety index intentionally executes no Git
-// filters, so recognize that one representation directly: the pointer itself
-// commits to both the byte count and SHA-256. Anything less exact stays dirty.
-func sessionCompanionStatusWithoutVerifiedLFSSmudges(
-	ctx context.Context,
-	binding session.CompanionRepository,
-	env []string,
-	status []byte,
-) []byte {
-	if len(status) == 0 {
-		return status
-	}
-	cleaned := make([]byte, 0, len(status))
-	for _, record := range bytes.Split(status, []byte{0}) {
-		if len(record) == 0 {
-			continue
-		}
-		if sessionCompanionStatusRecordIsVerifiedLFSSmudge(ctx, binding, env, record) {
-			continue
-		}
-		cleaned = append(cleaned, record...)
-		cleaned = append(cleaned, 0)
-	}
-	return cleaned
-}
-
-func sessionCompanionStatusRecordIsVerifiedLFSSmudge(
-	ctx context.Context,
-	binding session.CompanionRepository,
-	env []string,
-	record []byte,
-) bool {
-	fields := bytes.SplitN(record, []byte(" "), 9)
-	if len(fields) != 9 || string(fields[0]) != "1" || string(fields[1]) != ".M" ||
-		string(fields[2]) != "N..." || !bytes.Equal(fields[3], fields[4]) ||
-		!bytes.Equal(fields[4], fields[5]) {
-		return false
-	}
-	blobID := string(fields[7])
-	if !validSessionWorkspaceCommit(blobID) {
-		return false
-	}
-	relative := filepath.FromSlash(string(fields[8]))
-	if !filepath.IsLocal(relative) || relative == "." {
-		return false
-	}
-	attribute, truncated, err := runSessionWorkspaceGitWithEnvContext(
-		ctx, binding.Workspace, len(fields[8])+32, env,
-		"check-attr", "-z", "--cached", "filter", "--", string(fields[8]),
-	)
-	expectedAttribute := append(append(append([]byte{}, fields[8]...), 0), []byte("filter\x00lfs\x00")...)
-	if err != nil || truncated || !bytes.Equal(attribute, expectedAttribute) {
-		return false
-	}
-	pointer, truncated, err := runSessionWorkspaceGitWithEnvContext(
-		ctx, binding.Workspace, 512, env, "cat-file", "blob", blobID,
-	)
-	if err != nil || truncated {
-		return false
-	}
-	oid, size, ok := sessionCompanionLFSPointer(pointer)
-	if !ok {
-		return false
-	}
-	path := filepath.Join(binding.Workspace, relative)
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Size() != size {
-		return false
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer file.Close()
-	opened, err := file.Stat()
-	if err != nil || !opened.Mode().IsRegular() || opened.Size() != size ||
-		!os.SameFile(info, opened) {
-		return false
-	}
-	if !sessionCompanionHashMatchesContext(ctx, file, size, oid) {
-		return false
-	}
-	finalPath, err := os.Lstat(path)
-	finalFile, finalErr := file.Stat()
-	return err == nil && finalErr == nil && finalPath.Mode().IsRegular() &&
-		finalFile.Mode().IsRegular() && os.SameFile(info, finalPath) &&
-		os.SameFile(opened, finalFile) && finalPath.Size() == size &&
-		finalFile.Size() == size && finalPath.Mode() == info.Mode() &&
-		finalFile.Mode() == opened.Mode() && finalPath.ModTime() == info.ModTime() &&
-		finalFile.ModTime() == opened.ModTime()
-}
-
-func sessionCompanionHashMatchesContext(
-	ctx context.Context, reader io.Reader, size int64, oid string,
-) bool {
-	digest := sha256.New()
-	written := int64(0)
-	buffer := make([]byte, 64<<10)
-	for {
-		if ctx.Err() != nil {
-			return false
-		}
-		read, err := reader.Read(buffer)
-		if read > 0 {
-			written += int64(read)
-			if written > size {
-				return false
-			}
-			_, _ = digest.Write(buffer[:read])
-		}
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil || read == 0 {
-			return false
-		}
-	}
-	return written == size && fmt.Sprintf("%x", digest.Sum(nil)) == oid
-}
-
-func sessionCompanionLFSPointer(pointer []byte) (string, int64, bool) {
-	if bytes.Contains(pointer, []byte{'\r'}) {
-		return "", 0, false
-	}
-	lines := strings.Split(string(pointer), "\n")
-	if len(lines) != 4 || lines[3] != "" ||
-		lines[0] != "version https://git-lfs.github.com/spec/v1" ||
-		!strings.HasPrefix(lines[1], "oid sha256:") ||
-		!strings.HasPrefix(lines[2], "size ") {
-		return "", 0, false
-	}
-	oid := strings.TrimPrefix(lines[1], "oid sha256:")
-	if len(oid) != 64 || !validSessionWorkspaceCommit(oid) {
-		return "", 0, false
-	}
-	sizeText := strings.TrimPrefix(lines[2], "size ")
-	if sizeText == "" || len(sizeText) > 1 && sizeText[0] == '0' {
-		return "", 0, false
-	}
-	for _, digit := range sizeText {
-		if digit < '0' || digit > '9' {
-			return "", 0, false
-		}
-	}
-	size, err := strconv.ParseInt(sizeText, 10, 64)
-	if err != nil || size < 0 {
-		return "", 0, false
-	}
-	return oid, size, true
-}
-
-func sessionCompanionGitlinksCleanContext(ctx context.Context, workspace string, env []string) (bool, error) {
-	stderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
-	cmd, err := forkspace.GitCommandWithEnv(ctx, workspace, env, "ls-files", "--stage", "-z")
+func sessionCompanionGitlinksCleanContext(ctx context.Context, workspace, commit string) (bool, error) {
+	links, err := forkspace.Gitlinks(ctx, workspace, commit)
 	if err != nil {
 		return false, err
 	}
-	cmd.Stderr = stderr
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return false, fmt.Errorf("read companion gitlinks: %w", err)
-	}
-	if err := cmd.Start(); err != nil {
-		return false, fmt.Errorf("enumerate companion gitlinks: %w", err)
-	}
-
-	clean := true
-	scanner := bufio.NewScanner(stdout)
-	scanner.Split(func(data []byte, atEOF bool) (advance int, token []byte, err error) {
-		if index := bytes.IndexByte(data, 0); index >= 0 {
-			return index + 1, data[:index], nil
+	for path, head := range links {
+		child, err := forkspace.SubmoduleDirectory(workspace, path)
+		if err != nil {
+			return false, nil
 		}
-		if atEOF && len(data) != 0 {
-			return 0, nil, errors.New("unterminated companion index entry")
+		entries, err := os.ReadDir(child)
+		if err != nil {
+			return false, err
 		}
-		return 0, nil, nil
-	})
-	scanner.Buffer(make([]byte, 4096), sessionWorkspaceGitOutputLimit)
-	for scanner.Scan() {
-		headerAndPath := scanner.Text()
-		tab := strings.IndexByte(headerAndPath, '\t')
-		if tab < 0 {
-			clean = false
-			break
+		if len(entries) == 0 {
+			continue // Only historical cleanup accepts empty placeholders.
 		}
-		header := strings.Fields(headerAndPath[:tab])
-		if len(header) != 3 || header[0] != "160000" {
-			continue
+		if err := verifyPinnedSubmodule(ctx, child, head); err != nil {
+			return false, nil
 		}
-		relative := filepath.FromSlash(headerAndPath[tab+1:])
-		if !filepath.IsLocal(relative) || relative == "." {
-			clean = false
-			break
+		clean, err := sessionCompanionGitlinksCleanContext(ctx, child, head)
+		if err != nil || !clean {
+			return false, err
 		}
-		path := filepath.Join(workspace, relative)
-		info, err := os.Lstat(path)
-		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			clean = false
-			break
-		}
-		entries, err := os.ReadDir(path)
-		if err != nil || len(entries) != 0 {
-			clean = false
-			break
-		}
-	}
-	scanErr := scanner.Err()
-	if !clean || scanErr != nil {
-		_ = cmd.Process.Kill()
-	}
-	waitErr := cmd.Wait()
-	if ctx.Err() != nil {
-		return false, errors.Join(ctx.Err(), scanErr, waitErr)
-	}
-	if !clean {
-		return false, nil
-	}
-	if scanErr != nil {
-		return false, fmt.Errorf("scan companion gitlinks: %w", scanErr)
-	}
-	if waitErr != nil {
-		detail := strings.TrimSpace(stderr.buf.String())
-		if detail != "" {
-			return false, fmt.Errorf("enumerate companion gitlinks: %w: %s", waitErr, detail)
-		}
-		return false, fmt.Errorf("enumerate companion gitlinks: %w", waitErr)
 	}
 	return true, nil
 }

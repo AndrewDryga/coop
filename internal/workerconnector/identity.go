@@ -27,11 +27,8 @@ const maxEnrollmentTokenBytes = 128
 
 type identityConfig struct {
 	baseURL             *url.URL
-	caDER               []byte
 	identityFile        string
 	enrollmentTokenFile string
-	workerID            string
-	workspaceRef        string
 	renewBefore         time.Duration
 	timeout             time.Duration
 }
@@ -40,9 +37,11 @@ type identityManager struct {
 	config identityConfig
 	roots  *x509.CertPool
 
-	mu        sync.Mutex
-	client    *http.Client
-	expiresAt time.Time
+	mu           sync.Mutex
+	client       *http.Client
+	expiresAt    time.Time
+	workerID     string
+	workspaceRef string
 }
 
 type identityResponse struct {
@@ -54,11 +53,18 @@ type identityResponse struct {
 	WorkspaceRef       string `json:"workspace_ref"`
 }
 
+type persistedIdentity struct {
+	ControllerURL    string `json:"controller_url"`
+	WorkerID         string `json:"worker_id"`
+	WorkspaceRef     string `json:"workspace_ref"`
+	CertificatePEM   string `json:"certificate_pem"`
+	PrivateKeyPEM    string `json:"private_key_pem"`
+	CACertificatePEM string `json:"ca_certificate_pem"`
+}
+
 func newIdentityManager(config identityConfig, roots *x509.CertPool) (*identityManager, error) {
 	if config.baseURL == nil || roots == nil || !filepath.IsAbs(config.identityFile) ||
-		!reference(config.workerID, 256) || !reference(config.workspaceRef, 256) ||
-		config.renewBefore < time.Minute || config.renewBefore > 24*time.Hour ||
-		config.timeout <= 0 || len(config.caDER) == 0 {
+		config.renewBefore < time.Minute || config.renewBefore > 24*time.Hour || config.timeout <= 0 {
 		return nil, errors.New("worker identity configuration is invalid")
 	}
 	if config.enrollmentTokenFile != "" && !filepath.IsAbs(config.enrollmentTokenFile) {
@@ -112,8 +118,6 @@ func (m *identityManager) enroll(ctx context.Context, now time.Time) error {
 	document := map[string]string{
 		"public_key_pem": publicKeyPEM,
 		"token":          token,
-		"worker_id":      m.config.workerID,
-		"workspace_ref":  m.config.workspaceRef,
 	}
 	bootstrap := m.httpClient(nil)
 	response, err := m.postIdentity(ctx, bootstrap, "/v1/coop-workers/enroll", document, http.StatusCreated)
@@ -128,6 +132,7 @@ func (m *identityManager) enroll(ctx context.Context, now time.Time) error {
 		return err
 	}
 	m.client, m.expiresAt = client, expiresAt
+	m.workerID, m.workspaceRef = response.WorkerID, response.WorkspaceRef
 	if err := os.Remove(m.config.enrollmentTokenFile); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove consumed worker enrollment token: %w", err)
 	}
@@ -161,48 +166,73 @@ func (m *identityManager) renew(ctx context.Context, now time.Time) error {
 }
 
 func (m *identityManager) loadIdentity(now time.Time) (*http.Client, time.Time, error) {
-	info, err := os.Stat(m.config.identityFile)
+	info, err := os.Lstat(m.config.identityFile)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() > 64<<10 {
 		return nil, time.Time{}, errors.New("worker identity file must be a private regular file")
 	}
-	certificate, err := tls.LoadX509KeyPair(m.config.identityFile, m.config.identityFile)
-	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("load worker identity: %w", err)
-	}
-	leaf, err := validateIdentityCertificate(certificate, m.roots, m.config.workerID, now)
+	document, err := os.ReadFile(m.config.identityFile)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
+	var identity persistedIdentity
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&identity) != nil || decoder.Decode(&struct{}{}) != io.EOF ||
+		identity.ControllerURL != m.config.baseURL.String() ||
+		!reference(identity.WorkerID, 256) || !reference(identity.WorkspaceRef, 256) {
+		return nil, time.Time{}, errors.New("load worker identity: invalid identity or another controller")
+	}
+	certificate, err := tls.X509KeyPair([]byte(identity.CertificatePEM), []byte(identity.PrivateKeyPEM))
+	if err != nil {
+		return nil, time.Time{}, errors.New("worker identity key pair is invalid")
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM([]byte(identity.CACertificatePEM)) {
+		return nil, time.Time{}, errors.New("worker identity issuer is invalid")
+	}
+	leaf, err := validateIdentityCertificate(certificate, roots, identity.WorkerID, now)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	m.workerID, m.workspaceRef = identity.WorkerID, identity.WorkspaceRef
 	return m.httpClient(&certificate), leaf.NotAfter, nil
 }
 
 func (m *identityManager) prepareIdentity(response identityResponse, privateKey *rsa.PrivateKey, privateKeyPEM []byte, now time.Time) (*http.Client, time.Time, []byte, error) {
-	if response.WorkerID != m.config.workerID || response.WorkspaceRef != m.config.workspaceRef ||
+	if !reference(response.WorkerID, 256) || !reference(response.WorkspaceRef, 256) ||
+		(m.workerID != "" && (response.WorkerID != m.workerID || response.WorkspaceRef != m.workspaceRef)) ||
 		!digest(response.CertificateSHA256) {
 		return nil, time.Time{}, nil, errors.New("worker enrollment response identity does not match")
 	}
-	caBlock, rest := pem.Decode([]byte(response.CACertificatePEM))
-	if caBlock == nil || caBlock.Type != "CERTIFICATE" || len(bytes.TrimSpace(rest)) != 0 || !bytes.Equal(caBlock.Bytes, m.config.caDER) {
-		return nil, time.Time{}, nil, errors.New("worker enrollment response CA does not match configured trust")
+	// HTTPS authenticates the controller before its private client-certificate issuer is accepted.
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM([]byte(response.CACertificatePEM)) {
+		return nil, time.Time{}, nil, errors.New("worker enrollment issuer is invalid")
 	}
 	certBlock, rest := pem.Decode([]byte(response.CertificatePEM))
 	if certBlock == nil || certBlock.Type != "CERTIFICATE" || len(bytes.TrimSpace(rest)) != 0 || sha256sum(certBlock.Bytes) != response.CertificateSHA256 {
 		return nil, time.Time{}, nil, errors.New("worker enrollment certificate is invalid")
 	}
-	bundle := append(append([]byte{}, []byte(response.CertificatePEM)...), privateKeyPEM...)
-	certificate, err := tls.X509KeyPair(bundle, bundle)
+	certificate, err := tls.X509KeyPair([]byte(response.CertificatePEM), privateKeyPEM)
 	if err != nil {
-		return nil, time.Time{}, nil, fmt.Errorf("bind worker certificate to generated key: %w", err)
+		return nil, time.Time{}, nil, errors.New("worker certificate does not match generated key")
 	}
-	leaf, err := validateIdentityCertificate(certificate, m.roots, m.config.workerID, now)
+	leaf, err := validateIdentityCertificate(certificate, roots, response.WorkerID, now)
 	if err != nil {
 		return nil, time.Time{}, nil, err
 	}
 	if parsed, err := time.Parse(time.RFC3339Nano, response.CertificateExpires); err != nil || !parsed.Equal(leaf.NotAfter) {
 		return nil, time.Time{}, nil, errors.New("worker enrollment expiry does not match certificate")
+	}
+	bundle, err := json.Marshal(persistedIdentity{
+		ControllerURL: m.config.baseURL.String(), WorkerID: response.WorkerID, WorkspaceRef: response.WorkspaceRef,
+		CertificatePEM: response.CertificatePEM, PrivateKeyPEM: string(privateKeyPEM), CACertificatePEM: response.CACertificatePEM,
+	})
+	if err != nil {
+		return nil, time.Time{}, nil, err
 	}
 	return m.httpClient(&certificate), leaf.NotAfter, bundle, nil
 }
@@ -248,6 +278,7 @@ func (m *identityManager) httpClient(certificate *tls.Certificate) *http.Client 
 	transport.Proxy = nil
 	transport.ForceAttemptHTTP2 = true
 	transport.MaxResponseHeaderBytes = 64 << 10
+	transport.ResponseHeaderTimeout = m.config.timeout
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: m.roots}
 	if certificate != nil {
 		tlsConfig.Certificates = []tls.Certificate{*certificate}

@@ -284,13 +284,11 @@ func TestSessionEvidenceReportsEachUnreadableNetworkSectionSeparately(t *testing
 func TestSessionEvidenceRouteForAnOpenSessionWithoutATask(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
-	sess, err := service.CreateRemoteSession(context.Background(), "open-evidence", CreateRemoteSessionRequest{
-		Policy: "responder", Task: "open session",
-	})
+	sess, err := service.CreateRemoteSession(context.Background(), "open-evidence", service.request(t, "open-session"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 	response := sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions/"+sess.ID+"/evidence", "", "", "")
 	if response.Code != http.StatusOK {
 		t.Fatalf("evidence status=%d body=%s", response.Code, response.Body.String())
@@ -334,18 +332,18 @@ func TestSessionEvidenceRouteForAnOpenSessionWithoutATask(t *testing.T) {
 // observation — the receipt exists, provisional, with nothing observed — never an empty counter.
 func TestSessionEvidenceRouteForAFilteredSessionBeforeAnyRun(t *testing.T) {
 	for _, export := range []bool{false, true} {
-		service, repo := newHTTPTestSessionService(t)
-		fingerprint := admitTestNetworkSnapshot(t, repo, export)
-		service.testAdmitNetwork = func(Policy, string, string) (sessionNetworkBinding, error) {
+		service, _ := newHTTPTestSessionService(t)
+		service.Job.Egress.Mode, service.Job.Egress.ExportDestinations = "filtered", export
+		var fingerprint string
+		service.testAdmitNetwork = func(jobDigest, sessionID string, _ executionConfig, _, _ string) (sessionNetworkBinding, error) {
+			fingerprint = admitTestNetworkSnapshot(t, jobDigest, sessionID, export)
 			return sessionNetworkBinding{Mode: egress.Filtered, Fingerprint: fingerprint, Qualification: strings.Repeat("b", 64)}, nil
 		}
-		sess, err := service.CreateRemoteSession(context.Background(), "filtered-evidence", CreateRemoteSessionRequest{
-			Policy: "responder", Task: "filtered session",
-		})
+		sess, err := service.CreateRemoteSession(context.Background(), "filtered-evidence", service.request(t, "filtered-session"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		response := sessionHTTPTestRequest(t, NewHTTPHandler(service), http.MethodGet, "/v1/sessions/"+sess.ID+"/evidence", "", "", "")
+		response := sessionHTTPTestRequest(t, NewHTTPHandler(service.Service), http.MethodGet, "/v1/sessions/"+sess.ID+"/evidence", "", "", "")
 		if response.Code != http.StatusOK {
 			t.Fatalf("evidence status=%d body=%s", response.Code, response.Body.String())
 		}
@@ -382,10 +380,10 @@ func TestSessionEvidenceSnapshotsTheBoundTaskWithTheCheckpointDigest(t *testing.
 	}
 	git("add", ".gitignore")
 	git("commit", "-qm", "base")
-	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, nil)
 	defer service.Stop()
 	ctx := context.Background()
-	sess, err := service.CreateRemoteSession(ctx, "evidence-task", CreateRemoteSessionRequest{Policy: "responder", Task: "record:task_offer:evidence"})
+	sess, err := service.CreateRemoteSession(ctx, "evidence-task", service.request(t, "record:task_offer:evidence"))
 	if err != nil {
 		t.Fatal(err)
 	}

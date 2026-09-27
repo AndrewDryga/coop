@@ -4,10 +4,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 func TestSessionServiceRunReviewCompletesAfterClientCancellation(t *testing.T) {
@@ -24,6 +27,8 @@ func TestSessionServiceRunReviewCompletesAfterClientCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer service.Stop()
+	unblock := sync.OnceFunc(func() { close(release) })
+	defer unblock()
 	sess := createReviewSession(t, service, "client-cancel")
 	if err := os.WriteFile(filepath.Join(sess.Workspace, "change.txt"), []byte("reviewed\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -32,6 +37,7 @@ func TestSessionServiceRunReviewCompletesAfterClientCancellation(t *testing.T) {
 	sessionWorkspaceGit(t, sess.Workspace, "commit", "-qm", "review change")
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	type result struct {
 		dossier ReviewDossier
 		err     error
@@ -43,12 +49,19 @@ func TestSessionServiceRunReviewCompletesAfterClientCancellation(t *testing.T) {
 		})
 		resultCh <- result{dossier: dossier, err: err}
 	}()
-	gateCtx := <-started
+	var gateCtx context.Context
+	select {
+	case gateCtx = <-started:
+	case early := <-resultCh:
+		t.Fatalf("review ended before gate entry: %+v, %v", early.dossier, early.err)
+	case <-time.After(wait.Deadline):
+		t.Fatal("review did not enter gate")
+	}
 	cancel()
 	if err := gateCtx.Err(); err != nil {
 		t.Fatalf("review gate inherited client cancellation: %v", err)
 	}
-	close(release)
+	unblock()
 
 	got := <-resultCh
 	if got.err != nil || !got.dossier.Publishable {

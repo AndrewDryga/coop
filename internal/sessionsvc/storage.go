@@ -1,17 +1,15 @@
 package sessionsvc
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
@@ -53,7 +51,8 @@ const (
 // The watermarks are USED-byte levels on the accounted volume: allocation closes at or above the
 // high one and reopens only at or below the low one, which is what stops a worker from flapping
 // open the instant a single fork is reclaimed. ReserveBytes is a FREE-byte floor underneath both,
-// and it is never spent on new work: cleanup, control and recovery of existing work run inside it.
+// and it is never spent on new work: cleanup and control run inside it. Checkpoint
+// recovery allocates new custody and waits above the reserve, retaining its body and fence.
 //
 // The defaults are derived from the volume's measured capacity rather than written down as
 // absolutes, because the same worker binary runs on very different disks. They keep ONE reserve
@@ -125,44 +124,6 @@ func (l StorageLimits) Validate(capacityBytes int64) error {
 		return errors.New("storage limits exceed the measured volume capacity")
 	}
 	return nil
-}
-
-// LoadStorageLimits reads the optional `storage:` block from the operator's session policy file.
-// The second result is false when the file carries no block, which means the derived defaults
-// apply. An incoherent block is refused HERE, at the file the operator is looking at, rather than
-// the first time their volume fills up.
-func LoadStorageLimits(path string) (StorageLimits, bool, error) {
-	data, err := readSessionPolicyFile(path)
-	if err != nil {
-		return StorageLimits{}, false, err
-	}
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	decoder.KnownFields(true)
-	var raw rawSessionPolicyFile
-	if err := decoder.Decode(&raw); err != nil {
-		return StorageLimits{}, false, fmt.Errorf("decode session storage policy: %w", err)
-	}
-	if raw.Storage == nil {
-		return StorageLimits{}, false, nil
-	}
-	grace, err := time.ParseDuration(raw.Storage.GraceWindow)
-	if err != nil {
-		return StorageLimits{}, false, fmt.Errorf("session storage grace_window: %w", err)
-	}
-	measure, err := time.ParseDuration(raw.Storage.MeasureInterval)
-	if err != nil {
-		return StorageLimits{}, false, fmt.Errorf("session storage measure_interval: %w", err)
-	}
-	limits := StorageLimits{
-		ReserveBytes: raw.Storage.ReserveBytes, HighWatermarkBytes: raw.Storage.HighWatermarkBytes,
-		LowWatermarkBytes: raw.Storage.LowWatermarkBytes, DisposableBudgetBytes: raw.Storage.DisposableBudgetBytes,
-		ProtectedBudgetBytes: raw.Storage.ProtectedBudgetBytes, GraceWindow: grace,
-		MeasureInterval: measure, MaxReclaimPerPass: raw.Storage.MaxReclaimPerPass,
-	}
-	if err := limits.Validate(0); err != nil {
-		return StorageLimits{}, false, fmt.Errorf("session storage policy: %w", err)
-	}
-	return limits, true, nil
 }
 
 func (l StorageLimits) budget() StorageBudget {
@@ -379,10 +340,9 @@ func (s *Service) storageLimitsLocked(capacityBytes int64) StorageLimits {
 	return DefaultStorageLimits(capacityBytes)
 }
 
-// storageRepositories is every fork root this worker owns: the repositories its policies serve,
-// plus any repository a stored session still names, so a policy edited out of the file cannot hide
-// the forks it left behind.
-func (s *Service) storageRepositories(sessions []session.Session) []string {
+// Staging precedes session creation, so a crashed create can leave owned forks
+// with no session row. Historical rows also retain their original fork roots.
+func (s *Service) storageRepositories(sessions []session.Session) ([]string, error) {
 	seen := map[string]bool{}
 	var repos []string
 	add := func(repo string) {
@@ -392,14 +352,38 @@ func (s *Service) storageRepositories(sessions []session.Session) []string {
 		seen[repo] = true
 		repos = append(repos, repo)
 	}
-	for _, policy := range s.policies {
-		add(policy.Repository)
-	}
 	for _, sess := range sessions {
 		add(sess.Repository)
 	}
+	root := filepath.Join(s.stateRoot, "job-sources")
+	info, err := os.Lstat(root)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	if err == nil {
+		if !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+			return nil, errors.New("job source inventory is not a private directory")
+		}
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			return nil, fmt.Errorf("read job source inventory: %w", err)
+		}
+		if len(entries) > storageForkRootEntries {
+			return nil, errors.New("job source inventory exceeds its scan bound")
+		}
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), ".source-") {
+				continue // An unpublished source cannot own a session workspace.
+			}
+			info, err := entry.Info()
+			if err != nil || !validSessionDigest(entry.Name()) || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+				return nil, errors.New("job source inventory contains an unproven directory")
+			}
+			add(filepath.Join(root, entry.Name(), "repository"))
+		}
+	}
 	sort.Strings(repos)
-	return repos
+	return repos, nil
 }
 
 // storageMeasurePath is the existing path whose volume a repository's forks land on.
@@ -487,8 +471,17 @@ func (s *Service) measureStorage(ctx context.Context) (StorageReport, error) {
 	// Classification needs only the grace window, which does not depend on capacity; the
 	// capacity-bound limits are resolved once the tightest volume is known below.
 	limits := s.storageLimitsSnapshot()
-	for _, repo := range s.storageRepositories(sessions) {
+	repositories, err := s.storageRepositories(sessions)
+	if err != nil {
+		return StorageReport{}, err
+	}
+	for _, repo := range repositories {
 		s.measureForkRoot(scan, repo, byFork, limits, now, &report)
+		if filepath.Dir(filepath.Dir(repo)) == filepath.Join(s.stateRoot, "job-sources") {
+			usage := s.measureTree(scan, repo, &report)
+			report.Totals.ControlBytes += usage.ExclusiveBytes()
+			report.Totals.BaselineSharedBytes += usage.SharedBytes
+		}
 	}
 	s.measurePrivateState(scan, &report)
 
@@ -797,6 +790,7 @@ func (s *Service) measurePrivateState(scan *forkspace.UsageScan, report *Storage
 		"repositories":          &report.Totals.CompanionBytes,
 		"workspace-checkpoints": &report.Totals.CheckpointBytes,
 		"review-artifacts":      &report.Totals.ReviewArtifactBytes,
+		"review-candidates":     &report.Totals.ReviewArtifactBytes,
 	} {
 		usage := s.measureTree(scan, filepath.Join(s.stateRoot, name), report)
 		*into += usage.ExclusiveBytes()
@@ -868,7 +862,12 @@ func (s *Service) ReclaimOwnedOrphans(ctx context.Context) (StorageReclaim, erro
 	}
 	limits := s.storageLimitsSnapshot()
 	result := StorageReclaim{}
-	for _, repo := range s.storageRepositories(sessions) {
+	s.reclaimReviewStages(ctx, limits, &result)
+	repositories, err := s.storageRepositories(sessions)
+	if err != nil {
+		return result, err
+	}
+	for _, repo := range repositories {
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}

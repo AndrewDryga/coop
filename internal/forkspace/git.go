@@ -65,35 +65,70 @@ func GitCloneContext(ctx context.Context, src, dst string) error {
 	return err
 }
 
-func gitClonePinnedContext(ctx context.Context, src, dst, commit string) error {
-	view, err := gitOutputContext(ctx, src, "rev-parse", "--absolute-git-dir")
-	if err != nil {
-		return fmt.Errorf("open trusted source: %w", err)
+// GitClonePinnedContext copies an exact revision without checkout, hardlinks or
+// source-side executable configuration. The caller owns the new destination.
+func GitClonePinnedContext(ctx context.Context, src, dst, commit string) error {
+	if !validPinnedCommit(commit) {
+		return errors.New("invalid pinned clone commit")
 	}
-	args := append(append([]string{}, GitHardening...), "clone", "--quiet", "--no-local", "--no-checkout", "--", view, dst)
+	env := pinnedTransferEnv()
+	view, err := pinnedSourceView(ctx, src)
+	if err != nil {
+		return err
+	}
+	args := append(append([]string{}, GitHardening...), "clone", "--quiet", "--template=", "--no-local", "--no-checkout", "--", view, dst)
 	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Env = withoutGitEnv(os.Environ())
+	cmd.Env = env
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
 			return errors.Join(ctx.Err(), err)
 		}
 		return err
 	}
-	fetch, err := GitCommand(ctx, dst, "fetch", "--quiet", "--no-write-fetch-head", "--no-tags", "--", view, commit)
-	if err != nil {
+	if err := GitFetchPinnedContext(ctx, src, dst, commit); err != nil {
 		return err
 	}
-	if err := fetch.Run(); err != nil {
-		if ctx.Err() != nil {
-			return errors.Join(ctx.Err(), err)
-		}
-		return err
-	}
-	err = GitRefCommand(ctx, dst, "config", "remote.origin.url", src).Run()
+	configure := GitRefCommand(ctx, dst, "config", "remote.origin.url", src)
+	configure.Env = env
+	err = configure.Run()
 	if ctx.Err() != nil {
 		return errors.Join(ctx.Err(), err)
 	}
 	return err
+}
+
+// GitFetchPinnedContext imports exact objects from another local trusted view;
+// no source drivers, lazy network fetch or recursive submodule commands run.
+func GitFetchPinnedContext(ctx context.Context, src, dst, commit string) error {
+	if !validPinnedCommit(commit) {
+		return errors.New("invalid pinned fetch commit")
+	}
+	view, err := pinnedSourceView(ctx, src)
+	if err != nil {
+		return err
+	}
+	command, err := GitCommandWithEnv(ctx, dst, pinnedTransferEnv(), "fetch", "--quiet", "--no-write-fetch-head", "--no-tags", "--recurse-submodules=no", "--", view, commit)
+	if err != nil {
+		return err
+	}
+	return errors.Join(command.Run(), ctx.Err())
+}
+
+func pinnedTransferEnv() []string {
+	return []string{"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_ALLOW_PROTOCOL=file", "GIT_NO_LAZY_FETCH=1", "GIT_TERMINAL_PROMPT=0", "GIT_LFS_SKIP_SMUDGE=1"}
+}
+
+func pinnedSourceView(ctx context.Context, repository string) (string, error) {
+	query, err := GitCommandWithEnv(ctx, repository, pinnedTransferEnv(), "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return "", fmt.Errorf("open trusted source: %w", err)
+	}
+	output, err := query.Output()
+	if err != nil {
+		return "", fmt.Errorf("locate trusted source: %w", err)
+	}
+	return strings.TrimSpace(string(output)), nil
 }
 
 // gitCheckoutNewBranchContext runs on the real git dir: `checkout -b` rewrites HEAD, which a view

@@ -18,6 +18,10 @@ import (
 	"time"
 )
 
+var testJobDocument = json.RawMessage(`{"job_ref":"job:test","version":1}`)
+
+const testJobDigest = "23b2f09de62f9a1b0e915c955ae2a29cf30b386d55491b9b3451b70bf954d960"
+
 func TestOpenProtectsRootDatabaseAndRejectsUnsafeRoots(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
 	store := openTestStore(t, root)
@@ -106,7 +110,7 @@ func TestPersistenceAndOperationReplayBeforeRevisionValidation(t *testing.T) {
 	ctx := context.Background()
 	root := filepath.Join(t.TempDir(), "state")
 	store := openTestStore(t, root)
-	sess, err := store.CreateSession(ctx, "create-1", CreateSessionRequest{Target: "codex:model"})
+	sess, err := store.CreateSession(ctx, "create-1", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "codex:model"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +162,7 @@ func TestTurnRuntimeBindingSurvivesCompletionUntilExactCleanup(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "runtime-session", CreateSessionRequest{Target: "codex:model"})
+	sess, err := store.CreateSession(ctx, "runtime-session", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "codex:model"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +223,7 @@ func TestTurnArtifactsAreDurableBoundAndRemovedAfterCompletion(t *testing.T) {
 	ctx := context.Background()
 	root := filepath.Join(t.TempDir(), "state")
 	store := openTestStore(t, root)
-	sess, err := store.CreateSession(ctx, "artifact-session", CreateSessionRequest{Target: "codex:model"})
+	sess, err := store.CreateSession(ctx, "artifact-session", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "codex:model"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +282,7 @@ func TestTurnOutputContractIsDurableAndRejectsTheWrongSchemaDigest(t *testing.T)
 	ctx := context.Background()
 	root := filepath.Join(t.TempDir(), "state")
 	store := openTestStore(t, root)
-	sess, err := store.CreateSession(ctx, "contract-session", CreateSessionRequest{Target: "codex:model"})
+	sess, err := store.CreateSession(ctx, "contract-session", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "codex:model"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +330,7 @@ func TestSemanticCandidateMustBeAcceptedByDigestBeforeTheTurnCompletes(t *testin
 	ctx := context.Background()
 	root := filepath.Join(t.TempDir(), "state")
 	store := openTestStore(t, root)
-	sess, err := store.CreateSession(ctx, "semantic-session", CreateSessionRequest{
+	sess, err := store.CreateSession(ctx, "semantic-session", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest,
 		Target: "codex:model", MaxTurns: 3,
 	})
 	if err != nil {
@@ -495,7 +499,7 @@ func TestRejectedSemanticCandidateRequeuesTheSameLogicalTurn(t *testing.T) {
 	defer store.Close()
 	now := time.Date(2026, 9, 5, 5, 4, 29, 0, time.UTC)
 	store.clock = func() time.Time { return now }
-	sess, err := store.CreateSession(ctx, "semantic-repair-session", CreateSessionRequest{Target: "codex:model"})
+	sess, err := store.CreateSession(ctx, "semantic-repair-session", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "codex:model"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -584,7 +588,7 @@ func TestThirdRejectedSemanticCandidateFailsWithoutPublishingItsMessage(t *testi
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "semantic-exhaustion-session", CreateSessionRequest{
+	sess, err := store.CreateSession(ctx, "semantic-exhaustion-session", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest,
 		Target: "codex:model", MaxTurns: 1, MaxQueuedTurns: 3,
 	})
 	if err != nil {
@@ -683,7 +687,7 @@ func TestAResponderTurnKeepsFourCustomerArtifactsAndItsContract(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "five-artifact-session", CreateSessionRequest{Target: "codex:model"})
+	sess, err := store.CreateSession(ctx, "five-artifact-session", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "codex:model"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -714,7 +718,7 @@ func TestCompletedTurnOutputArtifactExposesMetadataAndExactBytes(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "output-session", CreateSessionRequest{Target: "codex:model"})
+	sess, err := store.CreateSession(ctx, "output-session", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "codex:model"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -759,7 +763,7 @@ func TestTurnArtifactValidationAndIdempotencyBinding(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "artifact-validation", CreateSessionRequest{Target: "target"})
+	sess, err := store.CreateSession(ctx, "artifact-validation", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -806,7 +810,7 @@ func TestAnEscalationFloorSurvivesTheStoreItWasAdmittedThrough(t *testing.T) {
 	ctx := context.Background()
 	root := filepath.Join(t.TempDir(), "state")
 	store := openTestStore(t, root)
-	sess, err := store.CreateSession(ctx, "floor-session", CreateSessionRequest{Target: "codex:model"})
+	sess, err := store.CreateSession(ctx, "floor-session", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "codex:model"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -846,7 +850,7 @@ func TestATargetRewindSurvivesTheStoreItWasAdmittedThrough(t *testing.T) {
 	ctx := context.Background()
 	root := filepath.Join(t.TempDir(), "state")
 	store := openTestStore(t, root)
-	sess, err := store.CreateSession(ctx, "rewind-session", CreateSessionRequest{Target: "claude:model"})
+	sess, err := store.CreateSession(ctx, "rewind-session", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "claude:model"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -879,7 +883,7 @@ func TestATargetRewindCannotAlsoDemandAHigherFloor(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "contradictory-target", CreateSessionRequest{Target: "claude:model"})
+	sess, err := store.CreateSession(ctx, "contradictory-target", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "claude:model"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -898,7 +902,7 @@ func TestANegativeEscalationFloorIsRefused(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "negative-floor", CreateSessionRequest{Target: "codex:model"})
+	sess, err := store.CreateSession(ctx, "negative-floor", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "codex:model"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1065,9 +1069,8 @@ func TestFenceOperationBeforeSubmitPreventsTheTurnFromStarting(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "fence-submit-session", CreateSessionRequest{
-		ID: "session-fence-submit", Target: "codex:model", Policy: "test",
-		PolicyDigest: strings.Repeat("a", 64), Repository: "/repo", Workspace: "/work",
+	sess, err := store.CreateSession(ctx, "fence-submit-session", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest,
+		ID: "session-fence-submit", Target: "codex:model", Repository: "/repo", Workspace: "/work",
 		ForkName: "fork-fence-submit", BaseCommit: strings.Repeat("b", 40),
 		MaxTurns: 3, MaxQueuedTurns: 3, MaxQueuedBytes: 1 << 20,
 	})
@@ -1100,9 +1103,8 @@ func TestFenceOperationAfterSubmitReturnsTheWinningResource(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "fence-race-session", CreateSessionRequest{
-		ID: "session-fence-race", Target: "codex:model", Policy: "test",
-		PolicyDigest: strings.Repeat("a", 64), Repository: "/repo", Workspace: "/work",
+	sess, err := store.CreateSession(ctx, "fence-race-session", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest,
+		ID: "session-fence-race", Target: "codex:model", Repository: "/repo", Workspace: "/work",
 		ForkName: "fork-fence-race", BaseCommit: strings.Repeat("b", 40),
 		MaxTurns: 3, MaxQueuedTurns: 3, MaxQueuedBytes: 1 << 20,
 	})
@@ -1220,7 +1222,7 @@ func TestFailOperationPreservesRunningIntentAndResourceIdentity(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	req := CreateSessionRequest{Target: "target", PolicyDigest: strings.Repeat("a", 64), TurnTimeout: time.Hour, MaxPatchBytes: DefaultMaxPatchBytes}
+	req := CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target", TurnTimeout: time.Hour, MaxPatchBytes: DefaultMaxPatchBytes}
 	op, replay, err := store.ReserveOperation(ctx, "CreateSession", "failure-preserve", req)
 	if err != nil || replay {
 		t.Fatalf("reserve operation = %+v, replay=%v, err=%v", op, replay, err)
@@ -1244,15 +1246,15 @@ func TestFailOperationPreservesRunningIntentAndResourceIdentity(t *testing.T) {
 	}
 }
 
-func TestSessionPersistsEffectivePolicyFieldsAndRejectsMalformedReplay(t *testing.T) {
+func TestSessionPersistsJobAndExecutionFieldsAndRejectsMalformedReplay(t *testing.T) {
 	ctx := context.Background()
 	root := filepath.Join(t.TempDir(), "state")
 	store := openTestStore(t, root)
-	sess, err := store.CreateSession(ctx, "policy-fields", CreateSessionRequest{
-		Target: "target", PolicyDigest: strings.Repeat("a", 64), AuthorityDigest: strings.Repeat("b", 64), OmitEnv: true, OmitMCP: true,
+	sess, err := store.CreateSession(ctx, "policy-fields", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest,
+		Target: "target", OmitEnv: true, OmitMCP: true,
 		RepositoryReadOnly: true,
 		TurnTimeout:        3 * time.Minute, MaxPatchBytes: 1234,
-		ResponderBinding: &ResponderBinding{
+		ControllerTools: &ControllerTools{
 			Endpoint: "https://responder.example/v1/state-tools/mcp",
 			Token:    strings.Repeat("t", 48),
 		},
@@ -1260,10 +1262,10 @@ func TestSessionPersistsEffectivePolicyFieldsAndRejectsMalformedReplay(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sess.PolicyDigest != strings.Repeat("a", 64) || sess.AuthorityDigest != strings.Repeat("b", 64) || sess.ProjectEnv || sess.ProjectMCP ||
+	if sess.JobDigest != testJobDigest || sess.JobRef != "job:test" || sess.Policy != "" || sess.PolicyDigest != "" || sess.AuthorityDigest != "" || sess.ProjectEnv || sess.ProjectMCP ||
 		!sess.RepositoryReadOnly ||
 		sess.TurnTimeout != 3*time.Minute || sess.MaxPatchBytes != 1234 ||
-		sess.ResponderBinding == nil || sess.ResponderBinding.Token != strings.Repeat("t", 48) {
+		sess.ControllerTools == nil || sess.ControllerTools.Token != strings.Repeat("t", 48) {
 		t.Fatalf("created policy fields = %+v", sess)
 	}
 	if err := store.Close(); err != nil {
@@ -1272,15 +1274,15 @@ func TestSessionPersistsEffectivePolicyFieldsAndRejectsMalformedReplay(t *testin
 	store = openTestStore(t, root)
 	defer store.Close()
 	reopened, err := store.GetSession(ctx, sess.ID)
-	if err != nil || reopened.PolicyDigest != sess.PolicyDigest || reopened.AuthorityDigest != sess.AuthorityDigest || reopened.ProjectEnv || reopened.ProjectMCP ||
+	if err != nil || reopened.JobDigest != sess.JobDigest || reopened.JobRef != sess.JobRef || reopened.ProjectEnv || reopened.ProjectMCP ||
 		!reopened.RepositoryReadOnly ||
 		reopened.TurnTimeout != sess.TurnTimeout || reopened.MaxPatchBytes != sess.MaxPatchBytes ||
-		reopened.ResponderBinding == nil || reopened.ResponderBinding.Endpoint != sess.ResponderBinding.Endpoint ||
-		reopened.ResponderBinding.Token != sess.ResponderBinding.Token {
+		reopened.ControllerTools == nil || reopened.ControllerTools.Endpoint != sess.ControllerTools.Endpoint ||
+		reopened.ControllerTools.Token != sess.ControllerTools.Token {
 		t.Fatalf("reopened policy fields = %+v, err=%v", reopened, err)
 	}
 
-	badSessionReq := CreateSessionRequest{Target: "target"}
+	badSessionReq := CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target"}
 	badSessionOp, _, err := store.ReserveOperation(ctx, "CreateSession", "malformed-session-result", badSessionReq)
 	if err != nil {
 		t.Fatal(err)
@@ -1304,40 +1306,53 @@ func TestSessionPersistsEffectivePolicyFieldsAndRejectsMalformedReplay(t *testin
 	}
 }
 
-func TestEachTurnPersistsItsOwnPrivateResponderBinding(t *testing.T) {
+func TestControllerToolsAcceptsOtherProductsWithoutWeakeningURLSafety(t *testing.T) {
+	for _, endpoint := range []string{"https://other-product.example/mcp", "https://controller.example/tenant/tools", "https://controller.example:443/"} {
+		if err := ValidateControllerTools(&ControllerTools{Endpoint: endpoint, Token: strings.Repeat("t", 48)}); err != nil {
+			t.Fatalf("generic endpoint %q refused: %v", endpoint, err)
+		}
+	}
+	for _, endpoint := range []string{"http://controller.example/mcp", "https://user:password@controller.example/mcp", "https://controller.example/mcp?token=secret", "https://controller.example/mcp#fragment", "https:opaque"} {
+		if err := ValidateControllerTools(&ControllerTools{Endpoint: endpoint, Token: strings.Repeat("t", 48)}); err == nil {
+			t.Fatalf("unsafe endpoint %q accepted", endpoint)
+		}
+	}
+}
+
+func TestEachTurnPersistsItsOwnPrivateControllerTools(t *testing.T) {
 	ctx := context.Background()
 	root := filepath.Join(t.TempDir(), "state")
 	store := openTestStore(t, root)
 
-	sess, err := store.CreateSession(ctx, "turn-bindings", CreateSessionRequest{Target: "target"})
+	sess, err := store.CreateSession(ctx, "turn-bindings", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstBinding := &ResponderBinding{
+	firstBinding := &ControllerTools{
 		Endpoint: "https://responder.example/v1/state-tools/mcp",
 		Token:    strings.Repeat("a", 48),
 	}
-	secondBinding := &ResponderBinding{
+	secondBinding := &ControllerTools{
 		Endpoint: "https://responder.example/v1/state-tools/mcp",
 		Token:    strings.Repeat("b", 48),
 	}
 	first, err := store.SubmitTurn(ctx, "turn-binding-1", SubmitTurnRequest{
 		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "first",
-		ResponderBinding: firstBinding,
+		ControllerTools: firstBinding,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	second, err := store.SubmitTurn(ctx, "turn-binding-2", SubmitTurnRequest{
 		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "second",
-		ResponderBinding: secondBinding,
+		ControllerTools: secondBinding,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.ResponderBinding == nil || first.ResponderBinding.Token != firstBinding.Token ||
-		second.ResponderBinding == nil || second.ResponderBinding.Token != secondBinding.Token {
-		t.Fatalf("submitted turn bindings = first:%+v second:%+v", first.ResponderBinding, second.ResponderBinding)
+	if first.ControllerTools == nil || first.ControllerTools.Token != firstBinding.Token ||
+		second.ControllerTools == nil || second.ControllerTools.Token != secondBinding.Token {
+		t.Fatalf("submitted turn bindings = first:%+v second:%+v", first.ControllerTools, second.ControllerTools)
 	}
 
 	if err := store.Close(); err != nil {
@@ -1354,16 +1369,16 @@ func TestEachTurnPersistsItsOwnPrivateResponderBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.ResponderBinding == nil || first.ResponderBinding.Token != firstBinding.Token ||
-		second.ResponderBinding == nil || second.ResponderBinding.Token != secondBinding.Token {
-		t.Fatalf("reopened turn bindings = first:%+v second:%+v", first.ResponderBinding, second.ResponderBinding)
+	if first.ControllerTools == nil || first.ControllerTools.Token != firstBinding.Token ||
+		second.ControllerTools == nil || second.ControllerTools.Token != secondBinding.Token {
+		t.Fatalf("reopened turn bindings = first:%+v second:%+v", first.ControllerTools, second.ControllerTools)
 	}
 	for _, turn := range []Turn{first, second} {
 		public, err := json.Marshal(turn)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if bytes.Contains(public, []byte(turn.ResponderBinding.Token)) || bytes.Contains(public, []byte("responder_binding")) {
+		if bytes.Contains(public, []byte(turn.ControllerTools.Token)) || bytes.Contains(public, []byte("controller_tools")) {
 			t.Fatalf("private turn binding leaked through durable JSON: %s", public)
 		}
 	}
@@ -1372,7 +1387,7 @@ func TestEachTurnPersistsItsOwnPrivateResponderBinding(t *testing.T) {
 func TestDiscardedSessionIsTerminal(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
-	sess, err := store.CreateSession(ctx, "create-terminal", CreateSessionRequest{Target: "target"})
+	sess, err := store.CreateSession(ctx, "create-terminal", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1435,10 +1450,10 @@ func TestOperationKeyConflictsAndTerminalErrorsSurviveRestart(t *testing.T) {
 		t.Fatalf("replayed operation = %+v, replay=%v, err=%v", replayed, replay, err)
 	}
 
-	if _, err := store.CreateSession(ctx, "bad-create", CreateSessionRequest{}); err == nil {
+	if _, err := store.CreateSession(ctx, "bad-create", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest}); err == nil {
 		t.Fatal("invalid create unexpectedly succeeded")
 	}
-	if _, err := store.CreateSession(ctx, "bad-create", CreateSessionRequest{}); CodeOf(err) != CodeInvalidRequest {
+	if _, err := store.CreateSession(ctx, "bad-create", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest}); CodeOf(err) != CodeInvalidRequest {
 		t.Fatalf("invalid create replay = %v", err)
 	}
 	failed, err := store.GetOperation(ctx, "bad-create")
@@ -1451,7 +1466,7 @@ func TestConcurrentAdmissionsGetFIFOOrdinalsAndOneRunningTurn(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{Target: "target", MaxQueuedTurns: 4, MaxQueuedBytes: 100})
+	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target", MaxQueuedTurns: 4, MaxQueuedBytes: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1515,7 +1530,7 @@ func TestQueueBoundsQueuedCancellationAndBudgetExhaustion(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{Target: "target", MaxQueuedTurns: 2, MaxQueuedBytes: 5})
+	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target", MaxQueuedTurns: 2, MaxQueuedBytes: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1559,7 +1574,7 @@ func TestEventOrderingAndCursorReplay(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{Target: "target"})
+	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1604,15 +1619,15 @@ func TestSessionBindingPersistenceAndFixedIDValidation(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
 	store := openTestStore(t, root)
 	pullBinding := testSourceBinding(SourcePullRequest)
-	sess, err := store.CreateSession(ctx, "create-fixed", CreateSessionRequest{
-		ID: "session-fixed", Target: "target", Policy: "policy", Repository: "/repo",
+	sess, err := store.CreateSession(ctx, "create-fixed", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest,
+		ID: "session-fixed", Target: "target", Repository: "/repo",
 		Workspace: "/workspace", ForkName: "fork-fixed", BaseCommit: "0123456789abcdef",
 		Source: &pullBinding,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sess.ID != "session-fixed" || sess.Policy != "policy" || sess.Repository != "/repo" || sess.Workspace != "/workspace" || sess.ForkName != "fork-fixed" || sess.BaseCommit != "0123456789abcdef" {
+	if sess.ID != "session-fixed" || sess.JobRef != "job:test" || sess.Repository != "/repo" || sess.Workspace != "/workspace" || sess.ForkName != "fork-fixed" || sess.BaseCommit != "0123456789abcdef" {
 		t.Fatalf("created session binding = %+v", sess)
 	}
 	if err := store.Close(); err != nil {
@@ -1624,26 +1639,26 @@ func TestSessionBindingPersistenceAndFixedIDValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reopened.Policy != sess.Policy || reopened.Repository != sess.Repository || reopened.Workspace != sess.Workspace || reopened.ForkName != sess.ForkName || reopened.BaseCommit != sess.BaseCommit ||
+	if reopened.JobRef != sess.JobRef || reopened.Repository != sess.Repository || reopened.Workspace != sess.Workspace || reopened.ForkName != sess.ForkName || reopened.BaseCommit != sess.BaseCommit ||
 		reopened.Source == nil || reopened.Source.PullRequestNumber != 514 ||
 		reopened.Source.SelectedRefValue() != "refs/pull/514/head" ||
 		reopened.Source.SelectedCommit != pullBinding.SelectedCommit {
 		t.Fatalf("reopened session binding = %+v", reopened)
 	}
 	for name, req := range map[string]CreateSessionRequest{
-		"partial binding": {ID: "partial", Target: "target", Policy: "policy"},
+		"partial binding": {ID: "partial", Target: "target", Repository: "/repo"},
 		"invalid id":      {ID: "bad\x00id", Target: "target"},
 		"long id":         {ID: strings.Repeat("x", MaxIDBytes+1), Target: "target"},
 		"source binding without session bindings": {
-			ID: "bad-source-bindings", Target: "target", Policy: "policy",
-			Source: func() *SourceBinding { b := testSourceBinding(SourceBranch); return &b }(),
+			ID: "bad-source-bindings", Target: "target", Source: func() *SourceBinding { b := testSourceBinding(SourceBranch); return &b }(),
 		},
 	} {
+		req.JobDocument, req.JobDigest = testJobDocument, testJobDigest
 		if _, err := store.CreateSession(ctx, "invalid-"+name, req); CodeOf(err) != CodeInvalidRequest {
 			t.Fatalf("%s error = %v", name, err)
 		}
 	}
-	if _, err := store.CreateSession(ctx, "duplicate-fixed", CreateSessionRequest{ID: sess.ID, Target: "target"}); CodeOf(err) != CodeInvalidRequest {
+	if _, err := store.CreateSession(ctx, "duplicate-fixed", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, ID: sess.ID, Target: "target"}); CodeOf(err) != CodeInvalidRequest {
 		t.Fatalf("duplicate fixed ID error = %v", err)
 	}
 }
@@ -1676,7 +1691,7 @@ func TestLeaseSendCheckpointsAndCompletion(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{Target: "target"})
+	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1718,7 +1733,7 @@ func TestCompletedTurnsPersistProviderCostAsCumulativeDeltas(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "cost-session", CreateSessionRequest{Target: "claude:model"})
+	sess, err := store.CreateSession(ctx, "cost-session", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "claude:model"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1772,7 +1787,7 @@ func TestNativeSessionBindingIsImmutableAfterFirstValidID(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{Target: "target"})
+	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1798,7 +1813,7 @@ func TestReconcileInterruptedTurnsRetainsSendEvidenceAndFIFO(t *testing.T) {
 	defer store.Close()
 	makeSession := func(prefix string) (Session, Turn, Turn) {
 		t.Helper()
-		sess, err := store.CreateSession(ctx, prefix+"-create", CreateSessionRequest{Target: "target"})
+		sess, err := store.CreateSession(ctx, prefix+"-create", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1876,7 +1891,7 @@ func TestReconcileInterruptedTurnsLeavesExcludedSessionUntouched(t *testing.T) {
 	defer store.Close()
 	makeInterrupted := func(key string) (Session, Turn) {
 		t.Helper()
-		sess, err := store.CreateSession(ctx, key+"-create", CreateSessionRequest{Target: "target"})
+		sess, err := store.CreateSession(ctx, key+"-create", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1933,7 +1948,7 @@ func TestFailTurnExhaustsQueuedTurnsAtBudget(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{Target: "target", MaxTurns: 1, MaxQueuedTurns: 3})
+	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target", MaxTurns: 1, MaxQueuedTurns: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1975,7 +1990,7 @@ func TestListTurnsCursorIsBounded(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{Target: "target"})
+	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2007,7 +2022,7 @@ func TestCloseRequiresEmptyQueueAndReplaysBeforeRevision(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{ID: "close-fixed", Target: "target", Policy: "policy", Repository: "/repo", Workspace: "/workspace", ForkName: "fork", BaseCommit: "base"})
+	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, ID: "close-fixed", Target: "target", Repository: "/repo", Workspace: "/workspace", ForkName: "fork", BaseCommit: "base"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2040,7 +2055,7 @@ func TestExtendBudgetReopensAndReplays(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{Target: "target", MaxTurns: 1})
+	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target", MaxTurns: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2085,7 +2100,7 @@ func TestReplayedFailureDetailDoesNotDuplicateStableCode(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{Target: "target"})
+	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2149,7 +2164,7 @@ func TestRotateTurnTargetSwapsTheRungAndDropsAForeignTranscript(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, t.TempDir())
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "rotate-1", CreateSessionRequest{Target: "codex:sol@oncall"})
+	sess, err := store.CreateSession(ctx, "rotate-1", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "codex:sol@oncall"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2265,16 +2280,15 @@ func TestRotateTurnTargetSwapsTheRungAndDropsAForeignTranscript(t *testing.T) {
 func TestSessionReceiptsCarryTheBindingDigestNotTheBearer(t *testing.T) {
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	token := strings.Repeat("s", 48)
-	sess, err := store.CreateSession(context.Background(), "create-receipt", CreateSessionRequest{
-		Target: "target", PolicyDigest: strings.Repeat("a", 64), AuthorityDigest: strings.Repeat("b", 64),
-		TurnTimeout: 3 * time.Minute, MaxPatchBytes: 1234,
-		ResponderBinding: &ResponderBinding{Endpoint: "https://responder.example/v1/state-tools/mcp", Token: token},
+	sess, err := store.CreateSession(context.Background(), "create-receipt", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest,
+		Target: "target", TurnTimeout: 3 * time.Minute, MaxPatchBytes: 1234,
+		ControllerTools: &ControllerTools{Endpoint: "https://responder.example/v1/state-tools/mcp", Token: token},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sess.ResponderBinding == nil || sess.ResponderBinding.Token != token || sess.ResponderBindingDigest != ResponderBindingDigest(sess.ResponderBinding) {
-		t.Fatalf("created session binding/digest = %+v / %q", sess.ResponderBinding, sess.ResponderBindingDigest)
+	if sess.ControllerTools == nil || sess.ControllerTools.Token != token || sess.ControllerToolsDigest != ControllerToolsDigest(sess.ControllerTools) {
+		t.Fatalf("created session binding/digest = %+v / %q", sess.ControllerTools, sess.ControllerToolsDigest)
 	}
 	op, err := store.GetOperation(context.Background(), "create-receipt")
 	if err != nil {
@@ -2283,19 +2297,19 @@ func TestSessionReceiptsCarryTheBindingDigestNotTheBearer(t *testing.T) {
 	if strings.Contains(string(op.Result), token) {
 		t.Fatalf("the create receipt duplicates the bearer:\n%s", op.Result)
 	}
-	if !strings.Contains(string(op.Result), `"responder_binding_digest":"`+sess.ResponderBindingDigest+`"`) {
+	if !strings.Contains(string(op.Result), `"controller_tools_digest":"`+sess.ControllerToolsDigest+`"`) {
 		t.Fatalf("the create receipt lacks the binding digest:\n%s", op.Result)
 	}
 	var replayed Session
 	if err := json.Unmarshal(op.Result, &replayed); err != nil {
 		t.Fatal(err)
 	}
-	if replayed.ResponderBinding != nil || replayed.ResponderBindingDigest != sess.ResponderBindingDigest {
-		t.Fatalf("replayed session = binding %+v, digest %q", replayed.ResponderBinding, replayed.ResponderBindingDigest)
+	if replayed.ControllerTools != nil || replayed.ControllerToolsDigest != sess.ControllerToolsDigest {
+		t.Fatalf("replayed session = binding %+v, digest %q", replayed.ControllerTools, replayed.ControllerToolsDigest)
 	}
 	reopened, err := store.GetSession(context.Background(), sess.ID)
-	if err != nil || reopened.ResponderBinding == nil || reopened.ResponderBinding.Token != token {
-		t.Fatalf("the canonical row must still hold the bearer: %+v, %v", reopened.ResponderBinding, err)
+	if err != nil || reopened.ControllerTools == nil || reopened.ControllerTools.Token != token {
+		t.Fatalf("the canonical row must still hold the bearer: %+v, %v", reopened.ControllerTools, err)
 	}
 }
 
@@ -2328,7 +2342,7 @@ func TestFailAndCancelKeepReportedUsage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 			defer store.Close()
-			sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{Target: "target", MaxTurns: 3, MaxQueuedTurns: 3})
+			sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target", MaxTurns: 3, MaxQueuedTurns: 3})
 			if err != nil {
 				t.Fatal(err)
 			}

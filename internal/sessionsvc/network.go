@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"iter"
-	"maps"
 	"slices"
 	"time"
 
@@ -33,42 +32,20 @@ type sessionNetworkBinding struct {
 	Qualification string
 }
 
-// admitSessionNetwork resolves this session's network posture ONCE, while it is being created,
-// and freezes the policy its runs will enforce. Later runs load the captured snapshot; they never
-// admit again, so an approval or configuration edit that lands mid-session can produce a visible
-// denial but never a wider policy.
-//
-// It is the only place a session's network authority is decided, which is why the operator policy
-// arrives here as a value and the repository's own requests arrive as requests.
-func (s *Service) admitSessionNetwork(policy Policy, workspace, forkName string, companions []session.CompanionRepository) (sessionNetworkBinding, error) {
-	if policy.Mode == agents.ModeBare {
-		// No project, so no remembered approval to admit against and nothing to capture: the
-		// posture is the policy's own written one, open when it wrote none. Filtered was
-		// refused when the policy loaded.
-		return sessionNetworkBinding{Mode: policy.Egress.resolvedMode()}, nil
-	}
+func (s *Service) admitControllerJobNetwork(jobDigest, sessionID string, policy executionConfig, workspace, forkName string, companions []session.CompanionRepository) (sessionNetworkBinding, error) {
 	if s.testAdmitNetwork != nil {
-		return s.testAdmitNetwork(policy, workspace, forkName)
+		return s.testAdmitNetwork(jobDigest, sessionID, policy, workspace, forkName)
 	}
-	if s.sourceCfg == nil {
-		// No host configuration means no credentials, no runtime and no authority root to
-		// resolve against. A policy that asked for a posture cannot be honored silently.
-		if policy.Egress.configured() && policy.Egress.resolvedMode() != egress.Open {
-			return sessionNetworkBinding{}, errors.New("restricted networking requires host configuration")
+	if policy.Egress.Mode == egress.Filtered {
+		if err := s.ensureRuntimeForNetwork(policy); err != nil {
+			return sessionNetworkBinding{}, err
 		}
-		return sessionNetworkBinding{Mode: egress.Open}, nil
 	}
-	if err := s.ensureRuntimeForNetwork(policy); err != nil {
-		return sessionNetworkBinding{}, err
-	}
-	mode, capture, err := box.AdmitSessionNetwork(s.sourceCfg, s.rt,
+	mode, capture, err := box.AdmitControllerJobNetwork(s.sourceCfg, s.rt,
 		sessionNetworkAdmissionSpec(s.sourceCfg, policy, workspace, forkName, companions),
-		box.SessionNetworkAdmission{
-			Mode:               sessionPolicyEgressMode(policy),
-			Rules:              policy.Egress.Rules,
-			ExportDestinations: policy.Egress.ExportDestinations,
-			OmitMCP:            policy.OmitMCP,
-		})
+		box.ControllerJobNetwork{JobDigest: jobDigest, SessionID: sessionID,
+			Mode: policy.Egress.Mode, Rules: policy.Egress.Rules,
+			ExportDestinations: policy.Egress.ExportDestinations})
 	if err != nil {
 		return sessionNetworkBinding{}, err
 	}
@@ -79,109 +56,11 @@ func (s *Service) admitSessionNetwork(policy Policy, workspace, forkName string,
 	return sessionNetworkBinding{Mode: mode, Fingerprint: capture.Fingerprint, Qualification: capture.QualificationID}, nil
 }
 
-// PolicyNetwork is one policy's effective network reach on THIS host: the posture its sessions
-// run under, and — for a filtered policy — the owner-keyed fingerprint of the exact rules a create
-// would freeze. A caller cannot compute that fingerprint from the policy file: the project's
-// remembered approval, the provider core bundles and the trusted MCP hosts all feed it. So the
-// daemon publishes it and a placement pins the value it was authorized against.
-//
-// An open or offline policy has no fingerprint, because nothing is captured for one.
-type PolicyNetwork struct {
-	Mode        egress.Mode `json:"mode"`
-	Fingerprint string      `json:"fingerprint,omitempty"`
-}
-
-// ResolvePolicyNetwork compiles what this policy reaches without writing any host state: no
-// approval, no published snapshot, no owner key. The daemon calls it once per policy when it loads
-// them and again on a fenced create, so an approval edited on the host between those two moments
-// becomes an explicit refusal instead of a session running under rules nobody pinned.
-func ResolvePolicyNetwork(cfg *config.Config, policy Policy) (PolicyNetwork, error) {
-	network, _, err := ResolvePolicyNetworkSnapshot(cfg, policy)
-	return network, err
-}
-
-// ResolvePolicyNetworkSnapshot is ResolvePolicyNetwork plus the compiled snapshot behind it, so a
-// reader can be shown the grants this policy actually resolves to — the provider bundles and the
-// project's approved rules together — rather than re-deriving them from the policy YAML, which
-// would omit whatever the project itself contributed. The PolicyNetwork is byte-identical to what
-// ResolvePolicyNetwork returns: this is evidence for a human view, not a new wire field.
-func ResolvePolicyNetworkSnapshot(cfg *config.Config, policy Policy) (PolicyNetwork, egress.Snapshot, error) {
-	if policy.Mode == agents.ModeBare {
-		// Nothing host-side feeds a bare policy's reach — see admitSessionNetwork.
-		return PolicyNetwork{Mode: policy.Egress.resolvedMode()}, egress.Snapshot{}, nil
-	}
-	if cfg == nil {
-		// No host configuration means no credentials, no runtime and no authority root to
-		// resolve against — the same answer admission gives.
-		if policy.Egress.configured() && policy.Egress.resolvedMode() != egress.Open {
-			return PolicyNetwork{}, egress.Snapshot{}, errors.New("restricted networking requires host configuration")
-		}
-		return PolicyNetwork{Mode: egress.Open}, egress.Snapshot{}, nil
-	}
-	// The session's own workspace, fork and companions do not exist yet, and none of them reach
-	// the compile: they describe what a launch MOUNTS, while the fingerprint is compiled from the
-	// project's approval, the policy's rules, the provider bundles and the shared MCP hosts. The
-	// policy's repository stands in for them, which is the project the approval belongs to anyway.
-	mode, snapshot, err := box.ResolveSessionNetworkSnapshot(cfg,
-		sessionNetworkAdmissionSpec(cfg, policy, policy.Repository, "", nil),
-		box.SessionNetworkAdmission{
-			Mode:               sessionPolicyEgressMode(policy),
-			Rules:              policy.Egress.Rules,
-			ExportDestinations: policy.Egress.ExportDestinations,
-			OmitMCP:            policy.OmitMCP,
-		})
-	if err != nil {
-		return PolicyNetwork{Mode: mode}, egress.Snapshot{}, err
-	}
-	return PolicyNetwork{Mode: mode, Fingerprint: snapshot.Fingerprint}, snapshot, nil
-}
-
-// resolvePolicyNetwork is the daemon's own resolution of one policy, fresh from host state.
-func (s *Service) resolvePolicyNetwork(policy Policy) (PolicyNetwork, error) {
-	if s.testResolveNetwork != nil {
-		return s.testResolveNetwork(policy)
-	}
-	return ResolvePolicyNetwork(s.sourceCfg, policy)
-}
-
-// resolvePolicyNetworks resolves every policy the daemon is about to serve. A policy whose network
-// cannot be resolved — no approval for its project, no host setup, a rule this release cannot
-// enforce — refuses the whole load with its own reason, exactly as an unparsable or credential-less
-// policy does: serving it unfenced would advertise a reach nobody could pin.
-func resolvePolicyNetworks(policies map[string]Policy, cfg *config.Config) (map[string]PolicyNetwork, error) {
-	networks := make(map[string]PolicyNetwork, len(policies))
-	for _, name := range slices.Sorted(maps.Keys(policies)) {
-		network, err := ResolvePolicyNetwork(cfg, policies[name])
-		if err != nil {
-			return nil, fmt.Errorf("policy %q: %w", name, err)
-		}
-		// A restricted policy that wrote no posture inherits the project's remembered one, and
-		// the restricted profile is not qualified under a filtered gateway: refuse the load, as
-		// an explicit `egress.mode: filtered` on the same policy already was.
-		if policies[name].Mode.Restricted() && network.Mode == egress.Filtered {
-			return nil, fmt.Errorf("policy %q: resolves to filtered networking on this host, which a %s session is not qualified under — set egress.mode to open or none", name, policies[name].Mode)
-		}
-		networks[name] = network
-	}
-	return networks, nil
-}
-
-// sessionPolicyEgressMode returns the operator's EXPLICIT posture, or "" when the policy file
-// wrote no `egress:` block at all. The built-in open default is not an explicit request to widen
-// access: a policy that stays silent lets the remembered project posture decide, exactly as a
-// direct `coop claude` in that project would.
-func sessionPolicyEgressMode(policy Policy) egress.Mode {
-	if !policy.Egress.configured() {
-		return ""
-	}
-	return policy.Egress.resolvedMode()
-}
-
 // ensureRuntimeForNetwork binds the container runtime admission needs to match a host setup
 // record against. Only a filtered policy needs it, so an open session still creates no runtime
 // dependency it did not have before.
-func (s *Service) ensureRuntimeForNetwork(policy Policy) error {
-	if sessionPolicyEgressMode(policy) != egress.Filtered {
+func (s *Service) ensureRuntimeForNetwork(policy executionConfig) error {
+	if policy.Egress.Mode != egress.Filtered {
 		return nil
 	}
 	return s.ensureRunner()
@@ -192,9 +71,9 @@ func (s *Service) ensureRuntimeForNetwork(policy Policy) error {
 // rung of the target ladder, so a rotation later in the session cannot reach an endpoint the
 // capture never froze.
 //
-// PolicyRepo is the session's REPOSITORY, not its workspace: network approval and the remembered
-// posture belong to the project an operator approved, and a workspace is agent-writable.
-func sessionNetworkAdmissionSpec(cfg *config.Config, policy Policy, workspace, forkName string, companions []session.CompanionRepository) box.RunSpec {
+// PolicyRepo is the private staged source, not the model-writable workspace. Controller jobs
+// derive authority solely from their saved job; repository settings cannot expand it.
+func sessionNetworkAdmissionSpec(cfg *config.Config, policy executionConfig, workspace, forkName string, companions []session.CompanionRepository) box.RunSpec {
 	repositories := make([]box.CompanionRepository, 0, len(companions))
 	for _, companion := range companions {
 		repositories = append(repositories, box.CompanionRepository{
@@ -205,14 +84,18 @@ func sessionNetworkAdmissionSpec(cfg *config.Config, policy Policy, workspace, f
 	if len(policy.Targets) != 0 {
 		lead = policy.Targets[0].Provider
 	}
+	network, cache := false, false
+	if cfg != nil {
+		network, cache = cfg.Network, cfg.Cache
+	}
 	return box.RunSpec{
 		Repo: workspace, Workdir: workspace, PolicyRepo: policy.Repository,
 		RepoReadOnly: policy.RepositoryReadOnly, ForkName: forkName,
 		Agent: lead, Peers: append([]agents.Target(nil), policy.Targets...),
 		NetworkClient:         egress.ClientACP,
 		Homes:                 true,
-		Network:               cfg.Network,
-		Cache:                 cfg.Cache,
+		Network:               network,
+		Cache:                 cache,
 		CompanionRepositories: repositories,
 	}
 }
@@ -221,20 +104,22 @@ func sessionNetworkAdmissionSpec(cfg *config.Config, policy Policy, workspace, f
 // child's HOST parent and scrubs every COOP_* from the environment it builds, so this is the only
 // way a session box can be launched filtered — and nothing inside a box can write it.
 func networkChildEnvironment(bound session.Session, runID string) ([]string, error) {
-	mode := bound.NetworkMode
-	if mode == "" || mode == string(egress.Open) {
-		return nil, nil
+	if !validSessionDigest(bound.JobDigest) || len(bound.JobDocument) == 0 {
+		return nil, errors.New("session controller job identity is invalid")
 	}
+	env := []string{box.ControllerJobEnv + "=" + bound.JobDigest}
+	mode := bound.NetworkMode
 	if _, err := egress.ParseMode(mode); err != nil {
 		return nil, fmt.Errorf("session network mode: %w", err)
 	}
-	env := []string{"COOP_EGRESS=" + mode}
+	env = append(env, "COOP_EGRESS="+mode)
 	if mode != string(egress.Filtered) {
 		return env, nil
 	}
 	capture, err := box.SessionNetworkCapture{
 		Project: bound.Repository, Fingerprint: bound.NetworkFingerprint,
 		Qualification: bound.NetworkQualification, SessionID: bound.ID, AttemptID: runID,
+		JobDigest: bound.JobDigest,
 	}.Encode()
 	if err != nil {
 		return nil, err
@@ -480,6 +365,9 @@ func loadSessionSnapshot(bound session.Session) (egress.Snapshot, error) {
 		return egress.Snapshot{}, err
 	}
 	defer store.Close()
+	if bound.JobDigest != "" {
+		return store.LoadJobSnapshot(networkstate.JobSnapshotRef{JobDigest: bound.JobDigest, SessionID: bound.ID}, bound.NetworkFingerprint)
+	}
 	return store.LoadSnapshot(bound.Repository, bound.NetworkFingerprint)
 }
 
@@ -591,7 +479,7 @@ func sessionPolicyRuleTexts(policy egress.Snapshot) (requested, effective []stri
 		}
 		asked := false
 		for _, origin := range grant.Origins {
-			if origin.Kind == "operator" || origin.Kind == "project" {
+			if origin.Kind == "controller" || origin.Kind == "operator" || origin.Kind == "project" {
 				asked = true
 			}
 		}
@@ -635,7 +523,7 @@ func (s *Service) SessionNetworkReceipt(ctx context.Context, id string) (Session
 		return SessionNetworkReceiptDTO{}, &session.Error{Code: session.CodeNetworkUnavailable, Detail: err.Error()}
 	}
 	identity := networkview.SessionNetworkIdentity{
-		ID: bound.ID, PolicyFingerprint: bound.NetworkFingerprint, AuthorityDigest: bound.AuthorityDigest,
+		ID: bound.ID, PolicyFingerprint: bound.NetworkFingerprint, AuthorityDigest: sessionNetworkAuthorityDigest(bound),
 		Mode: egress.Filtered, StartedAt: bound.CreatedAt, RunsComplete: complete,
 	}
 	if bound.State == session.SessionClosed || bound.State == session.SessionDiscarded {
@@ -673,7 +561,7 @@ func sessionRunObservations(evidence *networkstate.Evidence, bound session.Sessi
 				continue
 			}
 			observation := inspection.AggregateObservation
-			observation.Receipt.AuthorityDigest = bound.AuthorityDigest
+			observation.Receipt.AuthorityDigest = sessionNetworkAuthorityDigest(bound)
 			if err := observation.Receipt.SealDigest(); err != nil {
 				if !yield(networkview.RunObservation{}, err) {
 					return

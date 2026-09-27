@@ -1,20 +1,28 @@
 ---
 name: worker-connector
-description: the outbound worker journals every controller command before it runs, resends results until acknowledged, moves workspaces only as digest-verified bounded bundles, and never falls back to local execution
+description: the outbound worker journals every controller command before it runs, resends results until acknowledged, streams large API bodies under the same command identity, and never falls back to local execution
 subsystem: worker
-sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerproto/protocol.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, docs/examples/worker.json, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go]
-updated: 2026-09-11
+sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerproto/protocol.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go]
+updated: 2026-09-27
 ---
 
-`coop sessions connect --config <path>` connects this machine to a fleet controller. Its
+`coop sessions connect --controller <https-url> --token-file <path>` connects this machine to a fleet controller. Its
 shape is a poll loop, not a server: the connector opens a single outbound mutual-TLS stream to the
-controller, maps only versioned commands (`create_session`, `submit_turn`, `fence_operation`,
-`reconcile_operation`, the workspace ensure/checkpoint pair, …) onto the owner-private Unix API,
-and never listens on TCP or accepts a shell command (`internal/cli/session_connect.go`).
+controller and forwards protocol-v2 `api_request` envelopes to the owner-private Unix API.
+Method, relative path, allowed headers and JSON or streamed body carry every API endpoint without
+product-specific commands. The connector never listens on TCP or accepts a shell command (`internal/cli/session_connect.go`).
 
 The traps the code does not make obvious:
 
-- **Poll references are opaque correlation, not worker identity.** Config validation, connector
+- **Capacity follows live runtime custody.** The daemon's `/v1/capacity` measures four shared
+  active/warm slots; creation's Git concurrency is separate. Admission reserves before leasing a
+  turn or starting its timeout. Warm expiry holds the session lock through teardown, and failed
+  process/box cleanup retains its slot. Unknown startup or quarantined runtime custody advertises
+  busy, including record-only retirement; deleting a session record is not cleanup proof.
+- **Jobs are not worker advertisements.** Protocol v2 rejects the retired policy digests and
+  repository catalog. Capabilities describe daemon features; each immutable job authorizes its
+  own settings and exact source. Source selection has no separate advertised capability.
+- **Poll references are opaque correlation, not worker identity.** Identity validation, connector
   construction and polling share one formatter. IDs up to 230 bytes keep the legacy
   `poll:<ID>:<sequence>` shape, reserving all 20 uint64 digits. Longer IDs use
   `poll-sha256:<SHA256(ID)>:<sequence>`, a disjoint namespace so hash-like short IDs cannot collide.
@@ -28,7 +36,7 @@ The traps the code does not make obvious:
 - **Enrollment is not restart.** Identity begins absent, is generated privately and consumes its
   bootstrap token only after publication. Every restart must retain both identity and the entire
   journal, not only command receipts. A malformed/expired identity never falls back to enrollment.
-  The committed JSON example is loaded by tests; real TLS plus Unix-service integration rebuilds
+  Real TLS plus Unix-service integration rebuilds
   the transport/executor/connector before receipt and event ACKs, proving disk recovery rather
   than reuse of one in-memory identity manager. Test-only CA helpers never load production trust.
 - **Journal before execute; the receipt is the authority.** `journal.begin` publishes a receipt
@@ -49,11 +57,18 @@ The traps the code does not make obvious:
   resolves only that original key and operation ID, verifies a succeeded CreateRemoteSession/session
   resource, then fsyncs the stream before marking its origin bound. Uncertain operations remain
   pending. Only exact event ACKs advance cursors; lookup/activity errors cannot block response commands.
-- **A transport timeout does not erase a review.** A RunReview may finish on the service context
-  after its HTTP request expires. Its uncertain command receipt remains immutable. The existing
-  reconcile_operation command enriches only a succeeded RunReview with the public saved dossier,
-  read through the session-bound reviews endpoint; it never resumes a gate or exports raw
-  Operation.Result. The controller must enqueue this read on the original placement.
+- **Large bodies do not pause heartbeats.** Run owns a bounded FIFO and one execution goroutine;
+  polling remains live during source downloads, request preparation and response uploads. Only
+  identical command redelivery renews its in-memory lease. Expiry cancels preparation and both
+  lease and placement are checked again before forwarding a mutation. Shutdown waits for execution.
+- **Response uploads resume from saved bytes.** Binary and large JSON bodies are spooled privately,
+  hashed and journaled before upload. A lost upload acknowledgement resends that exact spool after
+  restart, without rerunning the API. The controller's command-result acknowledgement releases it.
+  Request bodies are verified before forwarding with their exact Content-Length.
+- **HTTP outcomes stay HTTP outcomes.** A successfully transported 409 is a successful transport
+  receipt containing status 409, not a succeeded session operation. Controllers must interpret the
+  HTTP status and body. Review reconciliation reads the saved operation and dossier explicitly;
+  the connector no longer makes hidden per-method follow-up calls.
 - **Generation markers outlive activity.** Bound/failed origins prevent old receipts from resurrecting
   a discarded or superseded stream. Legacy v1 streams remain readable; an acknowledged terminal
   legacy stream stays dormant if it is the only generation floor. Short metadata transitions use a
@@ -61,14 +76,19 @@ The traps the code does not make obvious:
   A visible rename is not durable proof after a failed directory sync: retries re-sync before receipt
   release, stream adoption or event publication. A corrupt origin suppresses its corresponding stream
   and reports an error while healthy siblings continue; it never enables legacy fallback.
-- **Bytes move only as verified bundles.** Input artifacts and workspace checkpoints are fetched
-  through the authenticated transfer, bounded, and digest-verified before any filesystem mutation;
-  member paths are canonical base64 bytes, and the restore writer refuses `.git` components and
-  symlinked parents. Restore applies the base-relative tracked patch to both index and worktree:
-  plain `git apply` loses the tracking identity of additions and fails exact verification. This
-  restores the logical candidate, not its source commit history or staged/unstaged split. Durable
-  task binding follows exact patch, untracked-file and task-projection verification. Durable
-  command records never carry raw bytes.
+- **Checkpoints preserve complete custody.** V2 streams raw typed Git objects and LFS payloads,
+  including intermediate new history, plus the final tracked tree, untracked files and task state.
+  Quarantine proves all bytes and task authority before live replacement. Exact HEAD survives;
+  the staged/unstaged split does not. GNU tar supports large members with bounded memory and
+  metadata; physical headers, padding and terminators are checked without hidden tar extensions.
+  V1 remains readable history, never a patch-only execution fallback. Changed historical gitlinks
+  require separate child custody and are refused. Paths cannot cross `.git` or symlinked parents.
+- **Restore holds a durable runtime fence.** The private body is fsynced before the Running intent.
+  Turns and competing restores are refused until same-operation recovery completes; a new key
+  cannot overwrite a bound session. Capture shares atomic turn admission exclusion. Operation-owned
+  staging is reclaimed only while its operation lock is idle; final capture/restore artifacts
+  carry private local session ownership for discard. Historical unmappable artifacts remain intact.
+  Disk pressure cancels new checkpoint allocation while retaining an interrupted restore's body.
 - **No local fallback.** Every command is a private-API call; nothing executes work directly or
   reads a shared filesystem when the daemon is unreachable — the error is reported and the
   controller redelivers.
@@ -81,6 +101,18 @@ The traps the code does not make obvious:
   start event. The reconnect/ACK regression proves this metadata survives durable delivery.
 
 ## Changelog
+- 2026-09-27 — replaced patch-only checkpoint execution with streamed v2 Git/LFS custody,
+  verified quarantine restore, durable admission fence, cancellation and exact-owned cleanup.
+- 2026-09-27 — replaced hard-coded free capacity with daemon accounting. Focused admission,
+  warm-expiry, failed-cleanup and cancellation tests passed, including race detection.
+- 2026-09-27 — removed policy/repository advertisements and the retired source-selector capability;
+  both protocol decoders reject old fields and mismatched worker versions. Focused wire tests passed.
+- 2026-09-26 — replaced the semantic dispatcher and specialized binary transports with one generic
+  API tunnel. Added streamed-body retry custody and continued polling during execution. Owning
+  package gates passed; renewal, stale-placement and saved-response regressions passed under race detection.
+- 2026-09-26 — removed worker JSON and local policy-file setup. Connect uses explicit controller,
+  token, optional state and CA flags; identity.json binds the saved certificate to its controller.
+  CLI startup and TLS/restart tests migrated. The generic API and publication cutover remains in progress.
 - 2026-09-11 — `coop worker` is RETIRED; the workflow is `coop sessions connect --config <path>`
   (`internal/cli/session_connect.go`). It validates the configuration first, then reuses a ready
   local service or starts an owned one, proving readiness through the same `/readyz` probe

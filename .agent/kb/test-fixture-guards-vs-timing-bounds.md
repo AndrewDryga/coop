@@ -2,8 +2,8 @@
 name: test-fixture-guards-vs-timing-bounds
 description: a test wait that guards a broken fixture is generous (testutil/wait, 60 s); a tight wall-clock bound is reserved for timing that IS the behavior under test, and then attributes its phases
 subsystem: testing
-sources: [internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/consult/instructions_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go]
-updated: 2026-09-25
+sources: [Makefile, internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/consult/instructions_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go]
+updated: 2026-09-27
 ---
 
 Two kinds of waits look alike in a test and fail alike on a loaded host, but mean opposite things.
@@ -69,6 +69,7 @@ the capture (`TestSessionServiceLogsSanitizedOperationFailureWithCorrelationID`)
 alone would still permit an empty-log assertion. Keep correlation and redaction assertions intact.
 
 ## Changelog
+- 2026-09-27 — the 360-test session-service package passed plain tests in 517 seconds but hit Go's default ten-minute package timeout under race instrumentation. The active subtest had run only one second and its entire family passed separately under race in 14 seconds; an earlier gate expired in a different test. Set the race target's whole-package guard to 20 minutes without changing any operation deadline or behavioral assertion. Swept both ordinary and race recipes; package bounds are distinct from fixture waits.
 - 2026-09-25 — verified the large ACP image-turn fixture guards against this rule: three 15-second guards expired only under the two-core Linux parallel race gate; all three tests passed three isolated race runs in 6–8 seconds. Reused the shared 60-second guard for all five large-image turn paths, leaving artifact assertions and production timeouts intact.
 - 2026-09-22 — the canonical race gate caught a log-buffer read before its background writer
   completed. Joined the service before inspection; swept both session-service logger captures,

@@ -32,17 +32,13 @@ type receiptPage struct {
 	settlementPending bool
 }
 
-func (j *journal) nextReceiptPage(base workerproto.Poll) (receiptPage, error) {
+func (j *journal) nextReceiptPage(base workerproto.Poll, entries []journalEntry) (receiptPage, error) {
 	page := receiptPage{poll: base}
 	if err := base.Validate(); err != nil {
 		return page, fmt.Errorf("validate outbound worker hello: %w", err)
 	}
 	if !pollFits(base) {
 		return page, errors.New("worker hello exceeds transport bound")
-	}
-	entries, err := j.pending()
-	if err != nil {
-		return page, err
 	}
 	if cursor, err := os.ReadFile(j.receiptScanPath()); err == nil {
 		if !reference(string(cursor), 256) {

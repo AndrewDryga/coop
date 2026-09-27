@@ -2,9 +2,9 @@
 name: model-is-the-rotation-axis
 description: "every rotation and fallback surface uses the same target grammar; accounts are part of a target, never a second axis"
 scope: architecture
-sources: [internal/agent/target.go, internal/cli/target.go, internal/cli/rotation.go, internal/cli/presetflag.go, internal/config/config.go, internal/preset/preset.go, internal/loopcfg/loopcfg.go, internal/sessionsvc/service.go]
+sources: [internal/agent/target.go, internal/cli/target.go, internal/cli/rotation.go, internal/cli/presetflag.go, internal/config/config.go, internal/preset/preset.go, internal/loopcfg/loopcfg.go, internal/sessionsvc/job.go, internal/workerproto/job.go]
 check: "none"
-updated: 2026-09-03
+updated: 2026-09-27
 ---
 
 # Use targets as the one rotation and fallback grammar
@@ -31,9 +31,9 @@ list, or surface-specific target shape.
 - There is no persistent rotation pool. On rotating surfaces, a bare target expresses “all
   runnable accounts,” and ladder order expresses fallback.
 
-The remote-session policy is the deliberate spelling exception: its deployed YAML key remains
-`target:`, accepting either one target or a list. It uses the same target parser and ladder meaning;
-do not rename it to `agent:` or add a parallel `models:` field.
+Remote-session jobs carry an ordered `targets` ladder in the immutable `JobSpec`. Admission uses
+the same target parser and ladder meaning; there is no worker-local policy YAML or parallel
+`models` field.
 
 **Why:** separate model, credential, and pool axes created overlapping ways to select the same
 execution identity. One target grammar keeps parsing, logging, failover, and policy review aligned.
@@ -55,6 +55,7 @@ stages, and nonexistent flag tombstones, putting current fallback and provider p
 Related: [[loop-failover-profiles]] and [[credentials-not-profiles]].
 
 ## Changelog
+- 2026-09-27 — swept job admission and the wire contract; replaced the retired local-policy YAML exception with the controller-owned target ladder. No alternate target parser or model axis found.
 - 2026-09-03 — `verify.agent` now goes through `loopcfg`'s shared load-time `Rungs` validation,
   matching the work, between, and signoff ladders before task recovery or box work begins.
 - 2026-09-03 — re-verified preset, loop, direct-launch, and session-policy grammar after target

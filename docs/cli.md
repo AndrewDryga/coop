@@ -1860,50 +1860,20 @@ coop sessions — let other applications start and manage agents
 Usage: coop sessions <command>
 
 COMMANDS
-  connect   connect this machine to a remote controller
-  serve     run the local session service on its own
-  doctor    check whether the local service is ready
-  policies  show the policies that control allowed sessions
-  compact   back up session data and reduce its disk usage
+  connect  connect this machine to a controller
+  doctor   check whether the local service is ready
+  compact  back up session data and reduce its disk usage
 
 CONNECT THIS MACHINE
-  coop sessions connect --config /path/to/worker.json
+  coop sessions connect --controller https://controller.example --token-file /path/to/token
 
-  Uses the running local service, or starts it if needed.
-  The configuration selects the controller and the sessions it is allowed to request.
+  The controller supplies each session's code, context, and execution settings.
+  Leave this command running; it starts the local service automatically.
 
 COMMAND HELP
   coop help sessions connect
-  coop help sessions serve
   coop help sessions doctor
-  coop help sessions policies
   coop help sessions compact
-
-==============================================================================
-
-coop sessions serve — start the local session service
-
-Usage:
-  coop sessions serve [options]
-
-OPTIONS
-  --state <path>     directory containing session data
-  --policies <path>  file defining the allowed sessions
-  --socket <path>    Unix socket used by local clients
-
-DEFAULT PATHS
-  Session data  ~/.local/state/coop/sessions
-  Policies      ~/.config/coop/session-policies.yaml
-  Socket        <session data>/control.sock
-
-RUNNING THE SERVICE
-  Leave this command running. Press Ctrl-C to stop it.
-
-  Check it from another terminal:
-  coop sessions doctor
-
-  To connect it to a remote controller:
-  coop help sessions connect
 
 ==============================================================================
 
@@ -1921,29 +1891,6 @@ EXAMPLES
   coop sessions doctor --socket /path/to/control.sock
 
   The command succeeds when the service responds and is ready for sessions.
-
-==============================================================================
-
-coop sessions policies — show remote session configurations
-
-Usage: coop sessions policies [options]
-
-Each configuration names the project a remote application can use, its agents and
-accounts, whether they can edit files, and the network rules they must follow.
-
-OPTIONS
-  --policies <path>  read configurations from this file
-  --json            print verification data for remote applications as JSON
-
-DEFAULT FILE
-  ~/.config/coop/session-policies.yaml
-
-EXAMPLES
-  coop sessions policies
-  coop sessions policies --json
-
-To connect this machine to a remote controller:
-  coop help sessions connect
 
 ==============================================================================
 
@@ -1971,27 +1918,27 @@ DEFAULT SESSION DATA
 
 ==============================================================================
 
-coop sessions connect — connect this machine to a remote controller
+coop sessions connect — run a worker for a remote controller
 
-Usage: coop sessions connect --config <path>
+Usage: coop sessions connect --controller <https-url> [options]
 
 OPTIONS
-  --config <path>  JSON file with this machine's connection and session settings
+  --controller <https-url>  controller to trust and connect to
+  --token-file <path>       enrollment token (only needed on first connection)
+  --state <path>            private worker data directory
+  --ca-file <path>          CA bundle for a controller using private TLS certificates
 
-CONFIGURATION
-  Selects the controller, certificates, repositories, and allowed session policies.
-  Uses the ready local service, or starts one when none is running.
-
-  Default session policies: ~/.config/coop/session-policies.yaml
-  Default session storage:  ~/.local/state/coop/sessions
-
-  Review session configurations:
-    coop sessions policies
+DEFAULT STORAGE
+  ~/.local/state/coop/sessions
 
 RUNNING
+  The controller supplies each session's code, context, and execution settings.
+  No local policy file or worker configuration file is needed.
+  The enrollment token is exchanged for a renewable worker identity and removed.
+
   Leave this command running. Connection failures are retried automatically.
-  Press Ctrl-C to stop connecting. A service started by this command also stops;
-  a service that was already running is left alone.
+  Press Ctrl-C to disconnect and stop the local service it started.
+  On restart, use the same controller and state directory; omit --token-file.
 
 ==============================================================================
 

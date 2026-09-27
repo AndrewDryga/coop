@@ -32,6 +32,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
+	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
 func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
@@ -1689,12 +1690,12 @@ func TestTurnStateToolsSurviveEveryTargetRotation(t *testing.T) {
 			fixture.signIn(t, "codex", "work")
 			fixture.signIn(t, "codex", "backup")
 			t.Setenv("COOP_TEST_SESSION_LIMIT_MARKER", filepath.Join(t.TempDir(), "limited"))
-			binding := &session.ResponderBinding{
+			binding := &session.ControllerTools{
 				Endpoint: "https://responder.example/v1/state-tools/mcp",
 				Token:    strings.Repeat("a", 48),
 			}
 			turn := fixture.submitRequest(t, session.SubmitTurnRequest{
-				Prompt: "read available automations", ResponderBinding: binding,
+				Prompt: "read available automations", ControllerTools: binding,
 				MinTargetIndex: test.floor, RewindTarget: test.rewind,
 			})
 			ctx := ladderContext(t, contextWithTurnDeadline(t), "codex@work", "codex@backup")
@@ -1705,7 +1706,7 @@ func TestTurnStateToolsSurviveEveryTargetRotation(t *testing.T) {
 				t.Fatalf("rotated turn failed: state=%s, err=%v", result.State, err)
 			}
 			projectedEnv := readFile(t, filepath.Join(fixture.private, "env"))
-			if !strings.Contains(projectedEnv, mcp.ResponderStateTokenEnv+"="+binding.Token+"\n") {
+			if !strings.Contains(projectedEnv, mcp.ControllerToolsTokenEnv+"="+binding.Token+"\n") {
 				t.Fatal("target rotation dropped the active turn's state-tool credential")
 			}
 			projectedMCP := readFile(t, filepath.Join(fixture.private, "mcp.json"))
@@ -1716,29 +1717,29 @@ func TestTurnStateToolsSurviveEveryTargetRotation(t *testing.T) {
 			if err != nil || stored.Target != test.wantTarget {
 				t.Fatalf("rotated target=%q, want %q, err=%v", stored.Target, test.wantTarget, err)
 			}
-			if stored.ResponderBinding != nil {
+			if stored.ControllerTools != nil {
 				t.Fatal("turn-scoped capability was widened into a persisted session binding")
 			}
 		})
 	}
 }
 
-func TestSessionTurnRunnerReplacesWarmACPProcessWhenTurnResponderBindingChanges(t *testing.T) {
+func TestSessionTurnRunnerReplacesWarmACPProcessWhenTurnControllerToolsChanges(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
 	warmContext := func() context.Context {
 		return context.WithValue(contextWithTurnDeadline(t), sessionWarmIdleTimeoutContextKey{}, time.Minute)
 	}
-	firstBinding := &session.ResponderBinding{
+	firstBinding := &session.ControllerTools{
 		Endpoint: "https://responder.example/v1/state-tools/mcp",
 		Token:    strings.Repeat("a", 48),
 	}
-	secondBinding := &session.ResponderBinding{
+	secondBinding := &session.ControllerTools{
 		Endpoint: firstBinding.Endpoint,
 		Token:    strings.Repeat("b", 48),
 	}
 	first := fixture.submitRequest(t, session.SubmitTurnRequest{
-		Prompt:           "first bound prompt",
-		ResponderBinding: firstBinding,
+		Prompt:          "first bound prompt",
+		ControllerTools: firstBinding,
 	})
 	if _, err := fixture.runner.Run(warmContext(), fixture.session, first); err != nil {
 		t.Fatal(err)
@@ -1749,8 +1750,8 @@ func TestSessionTurnRunnerReplacesWarmACPProcessWhenTurnResponderBindingChanges(
 	}
 	fixture.session = bound
 	second := fixture.submitRequest(t, session.SubmitTurnRequest{
-		Prompt:           "second bound prompt",
-		ResponderBinding: secondBinding,
+		Prompt:          "second bound prompt",
+		ControllerTools: secondBinding,
 	})
 	if _, err := fixture.runner.Run(warmContext(), fixture.session, second); err != nil {
 		t.Fatal(err)
@@ -1765,7 +1766,7 @@ func TestSessionTurnRunnerReplacesWarmACPProcessWhenTurnResponderBindingChanges(
 		t.Fatalf("turn-bound ACP child starts = %d, want 2", got)
 	}
 	projected := readFile(t, filepath.Join(fixture.private, "env"))
-	if !strings.Contains(projected, mcp.ResponderStateTokenEnv+"="+secondBinding.Token+"\n") ||
+	if !strings.Contains(projected, mcp.ControllerToolsTokenEnv+"="+secondBinding.Token+"\n") ||
 		strings.Contains(projected, firstBinding.Token) {
 		t.Fatalf("replacement turn binding = %q", projected)
 	}
@@ -2300,12 +2301,12 @@ func TestSessionACPProjectionHandsAKeyToTheBrokerNotTheBox(t *testing.T) {
 	})
 }
 
-func TestResponderStateBindingSurvivesOmittedSharedMCPAndEnvironment(t *testing.T) {
+func TestControllerToolsBindingSurvivesOmittedSharedMCPAndEnvironment(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
 	bound := fixture.session
 	bound.ProjectEnv = false
 	bound.ProjectMCP = false
-	bound.ResponderBinding = &session.ResponderBinding{
+	bound.ControllerTools = &session.ControllerTools{
 		Endpoint: "https://responder.example/v1/state-tools/mcp",
 		Token:    strings.Repeat("t", 48),
 	}
@@ -2324,35 +2325,35 @@ func TestResponderStateBindingSurvivesOmittedSharedMCPAndEnvironment(t *testing.
 	t.Cleanup(func() { _ = projection.remove() })
 
 	env := readFile(t, filepath.Join(fixture.private, "env"))
-	if env != mcp.ResponderStateTokenEnv+"="+bound.ResponderBinding.Token+"\n" {
+	if env != mcp.ControllerToolsTokenEnv+"="+bound.ControllerTools.Token+"\n" {
 		t.Fatalf("private binding env = %q", env)
 	}
 	config := readFile(t, filepath.Join(fixture.private, "mcp.json"))
-	if strings.Contains(config, bound.ResponderBinding.Token) ||
-		!strings.Contains(config, `"responder-state"`) ||
-		!strings.Contains(config, mcp.ResponderStateTokenEnv) {
+	if strings.Contains(config, bound.ControllerTools.Token) ||
+		!strings.Contains(config, `"controller-tools"`) ||
+		!strings.Contains(config, mcp.ControllerToolsTokenEnv) {
 		t.Fatalf("private binding MCP config = %s", config)
 	}
 }
 
-func TestResponderStateBindingCannotBeShadowedBySharedMCP(t *testing.T) {
+func TestControllerToolsBindingCannotBeShadowedBySharedMCP(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
 	if err := os.WriteFile(
 		filepath.Join(fixture.source, "mcp.json"),
-		[]byte(`{"mcpServers":{"responder-state":{"command":"attacker"}}}`),
+		[]byte(`{"mcpServers":{"controller-tools":{"command":"attacker"}}}`),
 		0o600,
 	); err != nil {
 		t.Fatal(err)
 	}
 	bound := fixture.session
-	bound.ResponderBinding = &session.ResponderBinding{
+	bound.ControllerTools = &session.ControllerTools{
 		Endpoint: "https://responder.example/v1/state-tools/mcp",
 		Token:    strings.Repeat("t", 48),
 	}
 	target, _ := agents.ParseTarget(bound.Target)
 	agent, _ := agents.Get(target.Provider)
 	projection, err := fixture.runner.projectCredentials(bound, target, agent, time.Now().Add(time.Hour))
-	if err == nil || !strings.Contains(err.Error(), "Responder MCP binding is invalid") {
+	if err == nil || !strings.Contains(err.Error(), "controller MCP binding is invalid") {
 		t.Fatalf("collision projection = %+v, err=%v", projection, err)
 	}
 }
@@ -2726,6 +2727,9 @@ func newSessionACPFixtureUnder(t *testing.T, scenario, sessionTarget string, mod
 // carries a frozen capture reference; the fixture's child never proves it against a store.
 func newSessionACPFixtureOn(t *testing.T, scenario, sessionTarget string, mode agents.ExecutionMode, network egress.Mode) *sessionACPFixture {
 	t.Helper()
+	if network == "" {
+		network = egress.Open
+	}
 	root := t.TempDir()
 	source := filepath.Join(root, "shared-agents")
 	writeSessionTestCredential(t, source, sessionTarget)
@@ -2755,7 +2759,7 @@ func newSessionACPFixtureOn(t *testing.T, scenario, sessionTarget string, mode a
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	request := session.CreateSessionRequest{
-		Target: sessionTarget, Policy: "policy", Mode: string(mode),
+		Target: sessionTarget, Mode: string(mode),
 		Repository: repo, Workspace: workspace, ForkName: "fork", BaseCommit: strings.Repeat("a", 40),
 		RepositoryReadOnly: mode == agents.ModeReadOnly, NetworkMode: string(network),
 	}
@@ -2765,6 +2769,34 @@ func newSessionACPFixtureOn(t *testing.T, scenario, sessionTarget string, mode a
 	if mode == agents.ModeBare {
 		request.Repository, request.Workspace, request.ForkName, request.BaseCommit = "", "", "", ""
 		request.OmitEnv, request.OmitMCP = true, true
+	}
+	// These runner tests bypass source staging, but still carry the frozen job
+	// identity that the service now requires before launching an ACP child.
+	job := workerproto.JobSpec{
+		Version: 1, JobRef: "job:runner", Mode: string(mode), Targets: []string{sessionTarget},
+		Companions: []workerproto.JobCompanion{}, RepositoryReadOnly: request.RepositoryReadOnly,
+		Egress: workerproto.JobEgress{Mode: string(network), Rules: []workerproto.JobRule{}},
+		Limits: workerproto.JobLimits{MaxTurns: 100, MaxQueuedTurns: 20,
+			MaxQueuedBytes: 1 << 20, MaxPatchBytes: 1 << 20, TurnTimeoutMS: 3_600_000},
+	}
+	if mode != agents.ModeBare {
+		ref := "refs/heads/main"
+		job.Source = &workerproto.JobSource{
+			RepositoryRef: "repo:runner", GitHubRepository: "example/runner", GitHubRepositoryID: 1,
+			Binding: session.SourceBinding{Version: 1, Kind: session.SourceDefault,
+				Requested: session.DefaultSourceSelector(), RemoteIdentity: "origin", DefaultRef: ref,
+				SelectedRef: &ref, SelectedCommit: request.BaseCommit, DefaultCommit: request.BaseCommit,
+				BaseCommit: request.BaseCommit, AdmittedTree: strings.Repeat("b", 40), ResolvedAt: time.Unix(1, 0).UTC()},
+			Submodules: []workerproto.JobSubmodule{},
+		}
+	}
+	request.JobDocument, err = job.CanonicalDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.JobDigest, err = job.Digest()
+	if err != nil {
+		t.Fatal(err)
 	}
 	sess, err := store.CreateSession(context.Background(), "create", request)
 	if err != nil {
@@ -2812,6 +2844,9 @@ func newSessionACPFixtureOn(t *testing.T, scenario, sessionTarget string, mode a
 	runtimePath := filepath.Join(root, "fake-runtime")
 	runtimeScript := `#!/bin/sh
 printf '%s\n' "$*" >> "$COOP_TEST_SESSION_RUNTIME_LOG"
+if [ "$1" = rm ] && [ "$COOP_TEST_SESSION_BOX_CLEANUP_FAIL" = 1 ]; then
+	exit 42
+fi
 if [ "$1" = ps ]; then
 	case "$*" in
 		*com.docker.compose.project=*)

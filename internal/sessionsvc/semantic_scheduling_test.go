@@ -12,6 +12,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/session"
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
 type semanticSchedulingRunner struct {
@@ -64,23 +65,27 @@ func TestSemanticTerminalDecisionsResumeQueuedTurnsWithinBudget(t *testing.T) {
 			for _, maxTurns := range []int{1, 3} {
 				t.Run(fmt.Sprintf("%s/%s/budget-%d", verdict, workerState, maxTurns), func(t *testing.T) {
 					ctx := context.Background()
+					repository, git := gitrepo.New(t)
+					git("commit", "--allow-empty", "-qm", "base")
 					runner := &semanticSchedulingRunner{staged: make(chan session.Turn, 1), release: make(chan struct{})}
-					service, err := NewService(Config{
+					service, err := openSessionFixture(t, Config{
 						StateRoot: filepath.Join(t.TempDir(), "state"), SourceConfig: &config.Config{},
-						Policies: map[string]Policy{"fixture": {Name: "fixture"}}, Runner: runner,
+						Runner:          runner,
 						CleanupInterval: time.Hour,
-					})
+					}, repository)
 					if err != nil {
 						t.Fatal(err)
 					}
 					t.Cleanup(func() { _ = service.Stop() })
+					service.Job.Targets = []string{"codex:test"}
+					service.Job.Limits.MaxTurns = maxTurns
+					service.Job.Limits.MaxQueuedTurns = 3
+					service.Job.Limits.MaxQueuedBytes = 4096
 					runner.store = service.Store()
 					if err := service.Start(ctx); err != nil {
 						t.Fatal(err)
 					}
-					sess, err := service.Store().CreateSession(ctx, "create", session.CreateSessionRequest{
-						Target: "codex:test", MaxTurns: maxTurns, MaxQueuedTurns: 3, MaxQueuedBytes: 4096,
-					})
+					sess, err := service.CreateRemoteSession(ctx, "create", service.request(t, "test:semantic-scheduling"))
 					if err != nil {
 						t.Fatal(err)
 					}

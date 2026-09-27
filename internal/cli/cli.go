@@ -416,7 +416,7 @@ func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
 			return 2, ui.UnknownCommandPath(path[:2], guess, asHelp)
 		}
 		// A leaf with its own page answers for itself. Leaf pages register under the FULL path
-		// ("sessions serve"), in the same commandHelp map as their family, so the manual and
+		// ("sessions connect"), in the same commandHelp map as their family, so the manual and
 		// `coop help <family> <leaf>` can never disagree about which page a leaf has.
 		if leaf := strings.Join(path, " "); commandHelp[leaf] != "" {
 			printTopicHelp(leaf, commandHelp[leaf])

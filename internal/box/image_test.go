@@ -231,6 +231,8 @@ func TestBaseDockerfileInstallsTheQualifiedClients(t *testing.T) {
 		// agent search/inspect tools, with fd symlinked from Debian's fdfind; shellcheck is a
 		// gate tool (coop's own `make check` lints install.sh) a non-root agent can't apt-get.
 		"ripgrep fd-find jq tree shellcheck", `ln -s "$(command -v fdfind)" /usr/local/bin/fd`,
+		// Models can commit LFS pointers without host publication credentials.
+		"git git-lfs", "git lfs install --system --skip-repo",
 		// coop-consult uses a kernel-held lock that must be present in the built image.
 		"inotify-tools util-linux", "command -v flock >/dev/null",
 		// bare python + pip so an agent reaching for them doesn't self-debug a missing tool.

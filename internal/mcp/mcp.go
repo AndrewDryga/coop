@@ -39,12 +39,12 @@ import (
 const maxMCPConfigBytes int64 = 4 << 20
 
 const (
-	// ResponderStateServer is reserved for the controller-owned state-tools
+	// ControllerToolsServer is reserved for the controller-owned tools
 	// binding. Operator MCP configuration cannot shadow it.
-	ResponderStateServer = "responder-state"
-	// ResponderStateTokenEnv is projected only into the session-private
+	ControllerToolsServer = "controller-tools"
+	// ControllerToolsTokenEnv is projected only into the session-private
 	// credential environment. The shared MCP file never contains the token.
-	ResponderStateTokenEnv = "COOP_RESPONDER_STATE_TOKEN"
+	ControllerToolsTokenEnv = "COOP_CONTROLLER_TOOLS_TOKEN"
 	// TaskToolsServer is reserved for coop's own task-tools binding (internal/taskmcp): the
 	// stdio server a loop box reaches its task queue through. Operator MCP configuration cannot
 	// shadow it either.
@@ -805,14 +805,14 @@ func ReadValidatedSnapshot(path string) ([]byte, bool, error) {
 	return data, true, nil
 }
 
-// BindResponderState merges Coop's one dedicated Responder state-tools server
+// BindControllerTools merges the controller-owned tools server
 // into an already validated shared MCP snapshot. It preserves unrelated root
 // fields, rejects an operator-owned collision, and returns canonical bytes so
 // every provider projection sees the same immutable server authority.
-func BindResponderState(snapshot []byte, endpoint string) ([]byte, error) {
-	return bindCoopServer(snapshot, ResponderStateServer, map[string]any{
+func BindControllerTools(snapshot []byte, endpoint string) ([]byte, error) {
+	return bindCoopServer(snapshot, ControllerToolsServer, map[string]any{
 		"type": "http", "url": endpoint,
-		"bearer_token_env_var": ResponderStateTokenEnv,
+		"bearer_token_env_var": ControllerToolsTokenEnv,
 	})
 }
 
@@ -820,7 +820,7 @@ func BindResponderState(snapshot []byte, endpoint string) ([]byte, error) {
 // a stdio server the box reaches with `socat STDIO UNIX-CONNECT:<socketPath>` — socat ships in
 // the image and needs no network, so the binding works under --network none. No token: the
 // socket is mounted only into this run's box, so the mount is the authority (see the
-// in-box-task-channel KB card). Same merge rules as BindResponderState.
+// in-box-task-channel KB card). Same merge rules as BindControllerTools.
 func BindTaskTools(snapshot []byte, socketPath string) ([]byte, error) {
 	if socketPath == "" {
 		return nil, errors.New("task tools binding needs the box-side socket path")

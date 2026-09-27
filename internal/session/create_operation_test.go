@@ -1,7 +1,11 @@
 package session
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,6 +13,91 @@ import (
 	"testing"
 	"time"
 )
+
+func TestRemoteCreatePersistsPrivateJobAuthorityAndRejectsChangedReplay(t *testing.T) {
+	store := openTestStore(t, t.TempDir())
+	defer store.Close()
+	ctx := context.Background()
+	op := runningRemoteCreateOperation(t, store, "job-create")
+	document := json.RawMessage(`{"job_ref":"job:one","version":1}`)
+	sum := sha256.Sum256(document)
+	req := CreateSessionRequest{
+		ID: "job-session", ExternalRef: "job:one", Target: "codex", Mode: "bare",
+		OmitEnv: true, OmitMCP: true, MaxTurns: 1, MaxQueuedTurns: 1, MaxQueuedBytes: 4096,
+		JobDocument: document, JobDigest: hex.EncodeToString(sum[:]),
+	}
+	created, err := store.CompleteCreateSessionOperation(ctx, op, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := store.GetSession(ctx, created.ID)
+	if err != nil || !bytes.Equal(stored.JobDocument, document) || stored.JobDigest != req.JobDigest {
+		t.Fatalf("stored job authority = %q/%q, err=%v", stored.JobDocument, stored.JobDigest, err)
+	}
+	public, err := json.Marshal(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(public, document) || bytes.Contains(public, []byte(`"job_document"`)) {
+		t.Fatalf("public session leaked private job document: %s", public)
+	}
+	for _, obsolete := range []string{"policy", "policy_digest", "authority_digest"} {
+		if bytes.Contains(public, []byte(`"`+obsolete+`"`)) {
+			t.Fatalf("new session still exposes obsolete %s: %s", obsolete, public)
+		}
+	}
+	if stored.JobRef != "job:one" || stored.Policy != "" || stored.PolicyDigest != "" || stored.AuthorityDigest != "" {
+		t.Fatalf("new session did not use job-only authority: %+v", stored)
+	}
+	if _, err := store.CompleteCreateSessionOperation(ctx, op, req); err != nil {
+		t.Fatalf("same job did not replay: %v", err)
+	}
+	changed := req
+	changed.JobDocument = json.RawMessage(`{"job_ref":"job:other","version":1}`)
+	sum = sha256.Sum256(changed.JobDocument)
+	changed.JobDigest = hex.EncodeToString(sum[:])
+	if _, err := store.CompleteCreateSessionOperation(ctx, op, changed); CodeOf(err) != CodeOperationIntentConflict {
+		t.Fatalf("changed job replay = %v, want intent conflict", err)
+	}
+	invalid := req
+	invalid.JobDigest = strings.Repeat("0", 64)
+	if _, err := store.CompleteCreateSessionOperation(ctx, op, invalid); CodeOf(err) != CodeInvalidRequest {
+		t.Fatalf("mismatched job digest = %v, want invalid request", err)
+	}
+}
+
+func TestStoredJobIdentityRejectsCorruptionButKeepsHistoricalRowsReadable(t *testing.T) {
+	store := openTestStore(t, t.TempDir())
+	defer store.Close()
+	ctx := context.Background()
+	req := remoteCreateSessionRequest("identity-row")
+	created, err := store.CreateSession(ctx, "identity-create", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, document := range map[string]string{
+		"missing document": "", "changed document": `{"job_ref":"other","version":1}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := store.db.Exec("UPDATE sessions SET job_document = ? WHERE id = ?", document, created.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.GetSession(ctx, created.ID); err == nil {
+				t.Fatal("corrupt job became a public session identity")
+			}
+		})
+	}
+	if _, err := store.db.Exec("UPDATE sessions SET job_document = '', job_digest = '', policy = 'historical', policy_digest = ? WHERE id = ?", strings.Repeat("a", 64), created.ID); err != nil {
+		t.Fatal(err)
+	}
+	historical, err := store.GetSession(ctx, created.ID)
+	if err != nil || historical.JobRef != "" || historical.JobDigest != "" || historical.Policy != "historical" {
+		t.Fatalf("historical row was reinterpreted: %+v, %v", historical, err)
+	}
+	if _, err := store.CloseSession(ctx, "historical-close", CloseSessionRequest{SessionID: created.ID, ExpectedRevision: historical.Revision}); err != nil {
+		t.Fatalf("historical row cannot be cleaned up: %v", err)
+	}
+}
 
 func TestCompleteCreateSessionOperationUsesOnlyTheOuterOperation(t *testing.T) {
 	store := openTestStore(t, t.TempDir())
@@ -145,8 +234,8 @@ func TestCompleteCreateSessionOperationAcceptsABareSessionWithoutARepository(t *
 	defer store.Close()
 	ctx := context.Background()
 	op := runningRemoteCreateOperation(t, store, "bare-create")
-	req := CreateSessionRequest{
-		ID: "bare-session", ExternalRef: "route", Target: "claude", Policy: "routing", Mode: "bare",
+	req := CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest,
+		ID: "bare-session", ExternalRef: "route", Target: "claude", Mode: "bare",
 		OmitEnv: true, OmitMCP: true, MaxTurns: 1, MaxQueuedTurns: 1, MaxQueuedBytes: 4096,
 	}
 	sess, err := store.CompleteCreateSessionOperation(ctx, op, req)
@@ -245,9 +334,8 @@ func runningRemoteCreateOperation(t *testing.T, store *Store, key string) Operat
 
 func remoteCreateSessionRequest(id string) CreateSessionRequest {
 	base := "0123456789abcdef0123456789abcdef01234567"
-	return CreateSessionRequest{
-		ID: id, ExternalRef: "task", Target: "codex:model", Policy: "responder",
-		Repository: "/repo", Workspace: "/workspace", ForkName: "remote-fork",
+	return CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest,
+		ID: id, ExternalRef: "task", Target: "codex:model", Repository: "/repo", Workspace: "/workspace", ForkName: "remote-fork",
 		ForkGeneration: "0123456789abcdef0123456789abcdef",
 		BaseCommit:     base,
 		RepositoryFreshness: []RepositoryFreshnessReceipt{{
@@ -259,30 +347,22 @@ func remoteCreateSessionRequest(id string) CreateSessionRequest {
 	}
 }
 
-// A replayed create is an IDENTITY check: the stored session must be the one the request is asking
-// for, or the caller gets a conflict. A stored session with NO authority digest used to match ANY
-// requested digest, so a replay could quietly hand back a session under an authority it was never
-// created with instead of refusing.
-func TestCompleteCreateSessionOperationRefusesAReplayClaimingAnAuthority(t *testing.T) {
+func TestCompleteCreateSessionOperationRefusesMissingJobAuthority(t *testing.T) {
 	store := openTestStore(t, t.TempDir())
 	defer store.Close()
 	ctx := context.Background()
 	op := runningRemoteCreateOperation(t, store, "outer-create")
-	req := remoteCreateSessionRequest("remote-session") // carries no authority digest
-	sess, err := store.CompleteCreateSessionOperation(ctx, op, req)
-	if err != nil || sess.AuthorityDigest != "" {
-		t.Fatalf("create = %+v, %v; want a stored session with no authority digest", sess, err)
+	req := remoteCreateSessionRequest("remote-session")
+	req.JobDocument, req.JobDigest = nil, ""
+	if _, err := store.CompleteCreateSessionOperation(ctx, op, req); CodeOf(err) != CodeInvalidRequest {
+		t.Fatalf("create without a job = %v, want invalid request", err)
 	}
-	claimed := req
-	claimed.AuthorityDigest = strings.Repeat("ab", 32)
-	if _, err := store.CompleteCreateSessionOperation(ctx, op, claimed); CodeOf(err) != CodeOperationIntentConflict {
-		t.Fatalf("replay claiming an authority the session never had = %v, want an intent conflict", err)
+	if _, err := store.GetSession(ctx, req.ID); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("refused create persisted a session: %v", err)
 	}
 }
 
-// The strict comparison must not punish a caller that never sends a digest: blank against blank is
-// the same session, and pre-v19 operation results decode to a blank digest through `omitempty`.
-func TestCompleteCreateSessionOperationReplaysADigestLessCreate(t *testing.T) {
+func TestCompleteCreateSessionOperationReplaysJobIdentity(t *testing.T) {
 	store := openTestStore(t, t.TempDir())
 	defer store.Close()
 	ctx := context.Background()
@@ -292,7 +372,7 @@ func TestCompleteCreateSessionOperationReplaysADigestLessCreate(t *testing.T) {
 		t.Fatal(err)
 	}
 	replayed, err := store.CompleteCreateSessionOperation(ctx, op, req)
-	if err != nil || replayed.ID != req.ID || replayed.AuthorityDigest != "" {
-		t.Fatalf("digest-less replay = %+v, %v; want the stored session back", replayed, err)
+	if err != nil || replayed.ID != req.ID || replayed.JobRef != "job:test" || replayed.JobDigest != req.JobDigest {
+		t.Fatalf("job replay = %+v, %v; want the stored session back", replayed, err)
 	}
 }

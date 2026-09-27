@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -10,11 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
-	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -104,48 +100,23 @@ func captureSessionDoctorJSON(t *testing.T, socket string) (int, string) {
 	return code, string(data)
 }
 
-func TestSessionCLIPathsUseConfiguredDefaults(t *testing.T) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for name, xdg := range map[string]string{"home fallback": "", "XDG config home": t.TempDir()} {
-		t.Run(name, func(t *testing.T) {
-			t.Setenv("XDG_CONFIG_HOME", xdg)
-			state, policy, socket, err := sessionCLIPaths("", "", "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			configHome := filepath.Join(home, ".config")
-			if xdg != "" {
-				configHome = xdg
-			}
-			if !strings.HasPrefix(state, filepath.Join(home, ".local", "state", "coop", "sessions")) || policy != filepath.Join(configHome, "coop", "session-policies.yaml") || socket != filepath.Join(state, "control.sock") {
-				t.Fatalf("defaults = state %q policy %q socket %q", state, policy, socket)
-			}
-		})
+func TestSessionPaths(t *testing.T) {
+	state, socket, err := sessionSocketPath("", "")
+	home, _ := os.UserHomeDir()
+	if err != nil || !strings.HasPrefix(state, filepath.Join(home, ".local", "state", "coop", "sessions")) || socket != filepath.Join(state, "control.sock") {
+		t.Fatalf("defaults = %q %q %v", state, socket, err)
 	}
 }
 
-func TestSessionPoliciesFlagsAreNarrow(t *testing.T) {
-	_, policy, _, jsonOutput, err := parseSessionsFlags(
-		[]string{"--policies", "/etc/coop/session-policies.yaml", "--json"},
-		"policies",
-	)
-	if err != nil || policy != "/etc/coop/session-policies.yaml" || !jsonOutput {
-		t.Fatalf("sessions policies flags = policy %q json %v err %v", policy, jsonOutput, err)
+func TestSessionDoctorFlags(t *testing.T) {
+	socket, output, err := parseSessionDoctorFlags([]string{"--socket", "/tmp/control.sock", "--json"})
+	if err != nil || socket != "/tmp/control.sock" || !output {
+		t.Fatalf("doctor flags = %q %v %v", socket, output, err)
 	}
-	for _, args := range [][]string{
-		{"--state", "/tmp/state"},
-		{"--socket", "/tmp/control.sock"},
-	} {
-		if _, _, _, _, err := parseSessionsFlags(args, "policies"); err == nil {
-			t.Fatalf("sessions policies unexpectedly accepted %v", args)
+	for _, args := range [][]string{{"--policies", "/tmp/policies"}, {"--json", "--json"}, {"--state", "/tmp/state"}} {
+		if _, _, err := parseSessionDoctorFlags(args); err == nil {
+			t.Fatalf("accepted %v", args)
 		}
-	}
-	if _, _, _, _, err := parseSessionsFlags([]string{"--json", "--json"}, "policies"); err == nil ||
-		!strings.Contains(err.Error(), "sessions policies") {
-		t.Fatalf("duplicate policies --json error = %v", err)
 	}
 }
 
@@ -201,187 +172,5 @@ func TestRunSessionCompactCreatesANewBackup(t *testing.T) {
 	}
 	if info, err := os.Stat(backup); err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("backup info = %+v err=%v", info, err)
-	}
-}
-
-func TestSessionPoliciesPrintsDigestsFromTheTrustedPolicyFile(t *testing.T) {
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
-	repo, err := filepath.EvalSymlinks(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	configRoot := t.TempDir()
-	profile := filepath.Join(configRoot, "codex", "profiles", "work")
-	if err := os.MkdirAll(profile, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(profile, "auth.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("COOP_CONFIG_DIR", configRoot)
-	conf := filepath.Join(t.TempDir(), "coop.conf")
-	if err := os.WriteFile(conf, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("COOP_CONF", conf)
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	policyRoot, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(policyRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	policyPath := filepath.Join(policyRoot, "session-policies.yaml")
-	body := "version: 1\npolicies:\n" +
-		"  write:\n    repository: " + repo + "\n    target: codex@work\n" +
-		"    max_turns: 20\n    max_queued_turns: 10\n    max_queued_bytes: 4096\n" +
-		"    max_patch_bytes: 8192\n    turn_timeout: 1h\n" +
-		"  read:\n    repository: " + repo + "\n    repository_read_only: true\n" +
-		"    target: codex@work\n    max_turns: 5\n    max_queued_turns: 2\n" +
-		"    max_queued_bytes: 2048\n    max_patch_bytes: 4096\n    turn_timeout: 30m\n"
-	if err := os.WriteFile(policyPath, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	var code int
-	var runErr error
-	output := captureStdout(t, func() {
-		code, runErr = (&app{cfg: cfg}).cmdSessions([]string{"policies", "--policies", policyPath, "--json"})
-	})
-	if runErr != nil || code != 0 {
-		t.Fatalf("sessions policies = code %d err %v output %q", code, runErr, output)
-	}
-	var result sessionPoliciesResult
-	if err := json.Unmarshal([]byte(output), &result); err != nil {
-		t.Fatalf("decode sessions policies output %q: %v", output, err)
-	}
-	loaded, err := sessionsvc.LoadPolicies(policyPath, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.PolicyFile != policyPath || len(result.PolicyDigests) != len(loaded) ||
-		len(result.PolicyAuthorityDigests) != len(loaded) {
-		t.Fatalf("sessions policies result = %+v", result)
-	}
-	for name, policy := range loaded {
-		if got, want := result.PolicyDigests[name], sessionsvc.ResolvedPolicyDigest(policy); got != want {
-			t.Errorf("policy %q digest = %q, want %q", name, got, want)
-		}
-		if got, want := result.PolicyAuthorityDigests[name], sessionsvc.ResolvedPolicyAuthorityDigest(policy); got != want {
-			t.Errorf("policy %q authority digest = %q, want %q", name, got, want)
-		}
-		// The reach is RESOLVED against this host, exactly as the daemon publishes it. An open
-		// policy reports its mode and no fingerprint: there is nothing captured for one to pin.
-		network := result.PolicyNetworks[name]
-		if network.Mode != string(egress.Open) || network.Fingerprint != "" || network.Unresolved != "" {
-			t.Errorf("policy %q network = %+v; want the resolved open mode and no fingerprint", name, network)
-		}
-	}
-}
-
-// A policy whose network this host cannot resolve still lists — with the reason in place of the
-// fingerprint. The daemon refuses to SERVE it; this read is where the operator sees why.
-func TestSessionPolicyNetworkReportsWhatItCannotResolve(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
-	real, err := filepath.EvalSymlinks(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	configRoot := t.TempDir()
-	profile := filepath.Join(configRoot, "codex", "profiles", "work")
-	if err := os.MkdirAll(profile, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(profile, "auth.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("COOP_CONFIG_DIR", configRoot)
-	conf := filepath.Join(t.TempDir(), "coop.conf")
-	if err := os.WriteFile(conf, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("COOP_CONF", conf)
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := "version: 1\npolicies:\n  filtered:\n    repository: " + real + "\n" +
-		"    target: codex@work\n    max_turns: 5\n    max_queued_turns: 2\n" +
-		"    max_queued_bytes: 2048\n    max_patch_bytes: 4096\n    turn_timeout: 30m\n" +
-		"    egress:\n      mode: filtered\n      rules:\n        - to: {domain: example.com}\n" +
-		"          protocol: tls\n          ports: [443]\n"
-	policyRoot, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(policyRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	policyPath := filepath.Join(policyRoot, "session-policies.yaml")
-	if err := os.WriteFile(policyPath, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	policies, err := sessionsvc.LoadPolicies(policyPath, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	network, snapshot := sessionPolicyNetworkOf(cfg, policies["filtered"])
-	if network.Mode != string(egress.Filtered) || network.Fingerprint != "" || !strings.Contains(network.Unresolved, "coop net setup") {
-		t.Fatalf("unresolvable policy network = %+v; want no fingerprint and the reason", network)
-	}
-	// The human view raises the unresolved reach as an ISSUE instead of listing rules it could not
-	// compile — a partial list would read as this configuration's complete access.
-	var out bytes.Buffer
-	view := sessionConfigurationViewOf("filtered", policies["filtered"], network, snapshot)
-	renderSessionConfigurations(&out, ui.Palette{}, policyPath, []sessionConfigurationView{view})
-	got := out.String()
-	for _, want := range []string{"⚠ Network access is not ready", "coop net setup"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("unresolved configuration lacks %q:\n%s", want, got)
-		}
-	}
-	for _, forbidden := range []string{"Network access needs approval", "coop approve", "Network  ", "example.com"} {
-		if strings.Contains(got, forbidden) {
-			t.Fatalf("setup failure contains %q:\n%s", forbidden, got)
-		}
-	}
-
-	if err := os.MkdirAll(filepath.Join(real, ".agent"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	silent := policies["filtered"]
-	silent.Egress = sessionsvc.EgressPolicy{}
-	projectFile := filepath.Join(real, ".agent", "project.yaml")
-	if err := os.WriteFile(projectFile, []byte("box:\n  egress: filtered\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	inherited, _ := sessionPolicyNetworkOf(cfg, silent)
-	if inherited.Mode != string(egress.Filtered) || inherited.Unresolved == "" {
-		t.Fatalf("inherited filtered failure = %+v", inherited)
-	}
-
-	if err := os.WriteFile(projectFile, []byte("box:\n  egress: open\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	pending, pendingSnapshot := sessionPolicyNetworkOf(cfg, silent)
-	out.Reset()
-	renderSessionConfigurations(&out, ui.Palette{}, policyPath,
-		[]sessionConfigurationView{sessionConfigurationViewOf("filtered", silent, pending, pendingSnapshot)})
-	got = out.String()
-	for _, want := range []string{"⚠ Network access needs approval", "Run coop approve in " + real + ".\n"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("pending approval lacks %q:\n%s", want, got)
-		}
-	}
-	if strings.Contains(got, "Network  ") || strings.Contains(got, "example.com") {
-		t.Fatalf("an unresolved configuration must not print a rule summary:\n%s", got)
 	}
 }

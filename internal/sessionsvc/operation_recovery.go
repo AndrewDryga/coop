@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"os"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/session"
@@ -16,8 +18,8 @@ func (s *Service) reconcileInterruptedOperations(ctx context.Context, startup bo
 	}
 	now := time.Now().UTC()
 	for _, op := range operations {
-		if op.Method == "CreateRemoteSession" && op.State == session.OperationRunning {
-			s.scheduleCreateOperation(op.ID)
+		if backgroundOperation(op) {
+			s.scheduleBackgroundOperation(op.ID)
 			continue
 		}
 		if !startup && now.Sub(op.UpdatedAt) < s.operationStaleAfter {
@@ -35,6 +37,40 @@ func (s *Service) reconcileInterruptedOperations(ctx context.Context, startup bo
 		if latest.State != op.State || !latest.UpdatedAt.Equal(op.UpdatedAt) {
 			unlock()
 			continue
+		}
+		if op.Method == "RestoreWorkspaceCheckpoint" && op.State == session.OperationRunning {
+			var req RestoreWorkspaceCheckpointRequest
+			artifact, restoreErr := s.readWorkspaceCheckpointArtifact(ctx, op.ID)
+			if restoreErr == nil {
+				restoreErr = json.Unmarshal(op.Result, &req)
+			}
+			if restoreErr == nil {
+				var file *os.File
+				file, restoreErr = os.Open(artifact.path)
+				if restoreErr == nil {
+					_, restoreErr = file.Seek(artifact.offset, io.SeekStart)
+					if restoreErr == nil {
+						req.Stream = file
+						_, restoreErr = s.executeRestoreWorkspaceCheckpoint(ctx, op, req)
+					}
+					restoreErr = errors.Join(restoreErr, file.Close())
+				}
+			}
+			unlock()
+			if restoreErr != nil {
+				s.log.Warn("checkpoint restore remains fenced", "operation_id", op.ID, "error", restoreErr)
+			}
+			continue
+		}
+		if op.Method == "RunReview" && op.State == session.OperationRunning {
+			if _, _, err := s.retainedReviewCandidate(ctx, op.ID); err == nil {
+				_, err := s.resumeReview(ctx, op)
+				unlock()
+				if err != nil {
+					return err
+				}
+				continue
+			}
 		}
 		if op.Method == "CancelTurn" && op.State == session.OperationRunning {
 			handled, err := s.reconcileCancelOperation(ctx, op)
@@ -121,9 +157,16 @@ func (s *Service) reconcileCancelOperation(ctx context.Context, op session.Opera
 	return active, nil
 }
 
-func (s *Service) scheduleCreateOperation(operationID string) {
+func backgroundOperation(op session.Operation) bool {
+	return op.State == session.OperationRunning && (op.Method == "CreateRemoteSession" || op.Method == "PublishReview")
+}
+
+func (s *Service) scheduleBackgroundOperation(operationID string) {
 	op, err := s.store.GetOperationByID(context.Background(), operationID)
-	if err == nil && op.Method == "CreateRemoteSession" && op.State == session.OperationRunning &&
+	if err != nil || !backgroundOperation(op) {
+		return
+	}
+	if op.Method == "CreateRemoteSession" &&
 		s.sessionQuarantined(deterministicSessionID(op.ID)) {
 		return
 	}
@@ -133,14 +176,14 @@ func (s *Service) scheduleCreateOperation(operationID string) {
 		return
 	}
 	s.operationMu.Lock()
-	if s.createActive[operationID] {
+	if s.backgroundActive[operationID] {
 		s.operationMu.Unlock()
 		s.mu.Unlock()
 		return
 	}
 	select {
-	case s.createSlots <- struct{}{}:
-		s.createActive[operationID] = true
+	case s.backgroundSlots <- struct{}{}:
+		s.backgroundActive[operationID] = true
 	default:
 		s.operationMu.Unlock()
 		s.mu.Unlock()
@@ -152,36 +195,44 @@ func (s *Service) scheduleCreateOperation(operationID string) {
 	s.mu.Unlock()
 	go func() {
 		defer s.wg.Done()
+		completed := false
 		defer func() {
-			<-s.createSlots
+			<-s.backgroundSlots
 			s.operationMu.Lock()
-			delete(s.createActive, operationID)
+			delete(s.backgroundActive, operationID)
 			s.operationMu.Unlock()
-			if ctx.Err() == nil {
-				s.scheduleWaitingCreateOperations(ctx, operationID)
+			if completed && ctx.Err() == nil {
+				s.scheduleWaitingBackgroundOperations(ctx, operationID)
 			}
 		}()
-		if err := s.runCreateOperation(ctx, operationID); err != nil && ctx.Err() == nil {
+		var err error
+		if op.Method == "PublishReview" {
+			err = s.runPublishOperation(ctx, operationID)
+		} else {
+			err = s.runCreateOperation(ctx, operationID)
+		}
+		completed = err == nil || op.Method == "CreateRemoteSession"
+		if err != nil && ctx.Err() == nil {
 			code := session.CodeOf(err)
 			if code == "" {
 				code = session.CodeInternal
 			}
-			s.log.Error("asynchronous session creation stopped",
-				"operation_id", operationID, "error_code", code,
+			s.log.Error("background session operation stopped",
+				"operation_id", operationID, "method", op.Method, "error_code", code,
 			)
 		}
 	}()
 }
 
-func (s *Service) scheduleWaitingCreateOperations(ctx context.Context, completedID string) {
+func (s *Service) scheduleWaitingBackgroundOperations(ctx context.Context, completedID string) {
 	operations, err := s.store.ListIncompleteOperations(ctx)
 	if err != nil {
-		s.log.Error("list queued session creations", "error", err)
+		s.log.Error("list queued session operations", "error", err)
 		return
 	}
 	for _, op := range operations {
-		if op.Method == "CreateRemoteSession" && op.State == session.OperationRunning && op.ID != completedID {
-			s.scheduleCreateOperation(op.ID)
+		if backgroundOperation(op) && op.ID != completedID {
+			s.scheduleBackgroundOperation(op.ID)
 		}
 	}
 }

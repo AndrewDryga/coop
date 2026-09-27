@@ -1,80 +1,13 @@
 package cli
 
 import (
-	"bytes"
 	"errors"
+	"github.com/AndrewDryga/coop/internal/sessionsvc"
 	"strings"
 	"syscall"
 	"testing"
-
-	"github.com/AndrewDryga/coop/internal/sessionsvc"
-	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-const approvedPolicyFile = "~/.config/coop/session-policies.yaml"
-
-func review() sessionConfigurationView {
-	return sessionConfigurationView{
-		Name: "code-review", Repository: "/Users/andrewdryga/Projects/os/coop", Access: "Read-only",
-		Targets: []string{"codex:gpt-5.6-sol/high@personal"},
-		Network: "Filtered — only approved network traffic is allowed",
-		Rules:   []string{"OpenAI provider endpoints", "github.com:443 · TLS"},
-	}
-}
-
-// TestApprovedSessionConfigurations pins the human view of `coop sessions policies` — the question
-// it answers is what a remote application may ask this machine to do, so every block leads with the
-// project, the agents, the file access and the resolved network rules. Digests stay in --json.
-func TestApprovedSessionConfigurations(t *testing.T) {
-	work := sessionConfigurationView{
-		Name: "code-work", Repository: "/Users/andrewdryga/Projects/os/coop",
-		Access:  "Read, edit, and commit in a separate project copy",
-		Targets: []string{"codex:gpt-5.6-sol/high@personal", "claude:opus/high@work"},
-		Network: "Filtered — only approved network traffic is allowed",
-		Rules: []string{"OpenAI and Anthropic provider endpoints", "github.com:443 · TLS",
-			"registry.npmjs.org:443 · TLS"},
-	}
-	export := review()
-	export.Export = true
-	unresolved := sessionConfigurationView{
-		Name: "code-review", Repository: "/Users/andrewdryga/Projects/os/coop", Access: "Read-only",
-		Targets:          []string{"codex:gpt-5.6-sol/high@personal"},
-		Issue:            "This project's network rules have not been approved.",
-		ApprovalRequired: true,
-	}
-	bare := sessionConfigurationView{
-		Name: "questions", Access: "Questions and answers only; no project files or tools",
-		Targets: []string{"claude:opus@personal"}, Network: "Unrestricted",
-	}
-	cases := []struct {
-		fixture string
-		views   []sessionConfigurationView
-	}{
-		{"71-sessions-policies", []sessionConfigurationView{review(), work}},
-		{"71-sessions-policies-export", []sessionConfigurationView{export}},
-		{"71-sessions-policies-unresolved", []sessionConfigurationView{unresolved}},
-		{"71-sessions-policies-bare", []sessionConfigurationView{bare}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.fixture, func(t *testing.T) {
-			var out bytes.Buffer
-			renderSessionConfigurations(&out, ui.Palette{}, approvedPolicyFile, tc.views)
-			assertApprovedOutput(t, tc.fixture, out.String())
-		})
-	}
-}
-
-// A configuration file that defines nothing is INVALID, not a successful empty list.
-func TestApprovedEmptySessionConfigurations(t *testing.T) {
-	err := ui.CommandFailed("Could not load remote session configurations",
-		"/Users/andrewdryga/.config/coop/session-policies.yaml must define at least one configuration.",
-		[2]string{"Help:", "coop help sessions policies"})
-	assertApprovedOutput(t, "71-sessions-policies-empty", usageBlock(t, err))
-}
-
-// The doctor's failures name what is actually wrong. "No service is listening" is claimed only for
-// a socket that refused the connection; a service that answered but is not ready is its own
-// failure; and a socket the user named keeps its own remedy rather than the default service's.
 func TestApprovedSessionDoctorFailures(t *testing.T) {
 	const socket = "/Users/andrewdryga/.local/state/coop/sessions/control.sock"
 	cases := []struct {

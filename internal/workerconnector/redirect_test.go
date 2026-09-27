@@ -34,9 +34,6 @@ func TestProductionWorkerRequestsRefuseRedirects(t *testing.T) {
 		t.Fatalf("direct TLS enrollment/poll control: %v", err)
 	}
 	identity := readRedirectFixtureFile(t, configuration.IdentityFile)
-	checkpoint, bundle := testWorkspaceCheckpoint(t, now)
-	output := []byte{137, 80, 78, 71, 13, 10, 26, 10, 'o'}
-	patch := []byte("diff --git a/a b/a\n+reviewed\n")
 	for _, operation := range []struct {
 		name, method, path string
 		call               func(*HTTPTransport) error
@@ -53,25 +50,11 @@ func TestProductionWorkerRequestsRefuseRedirects(t *testing.T) {
 			return err
 		}},
 		{"poll", "POST", "/v1/coop-workers/poll", func(transport *HTTPTransport) error { _, err := transport.Poll(ctx, poll); return err }},
-		{"input", "GET", "/v1/coop-workers/commands/command-1/input-artifacts/input-1", func(transport *HTTPTransport) error {
-			_, err := transport.FetchInputArtifact(ctx, "command-1", "input-1")
-			return err
+		{"request_body", "GET", "/v1/coop-workers/commands/command-1/request-body", func(transport *HTTPTransport) error {
+			return transport.FetchRequestBody(ctx, "command-1", workerproto.BodyReference{SHA256: sha256sum([]byte("body")), ByteSize: 4}, io.Discard)
 		}},
-		{"checkpoint_download", "GET", "/v1/coop-workers/commands/command-1/workspace-checkpoints/transfer-1", func(transport *HTTPTransport) error {
-			_, _, err := transport.FetchWorkspaceCheckpoint(ctx, "command-1", "transfer-1")
-			return err
-		}},
-		{"output", "PUT", "/v1/coop-workers/commands/command-1/output-artifacts/output-1", func(transport *HTTPTransport) error {
-			_, err := transport.UploadOutputArtifact(ctx, "command-1", Artifact{ID: "output-1", Name: "chart.png", MediaType: "image/png", SHA256: sha256sum(output), Data: output})
-			return err
-		}},
-		{"review", "PUT", "/v1/coop-workers/commands/command-1/review-patches/review-1", func(transport *HTTPTransport) error {
-			_, err := transport.UploadReviewPatch(ctx, "command-1", "review-1", sha256sum(patch), patch)
-			return err
-		}},
-		{"checkpoint_upload", "PUT", "/v1/coop-workers/commands/command-1/workspace-checkpoints/" + checkpoint.CheckpointRef, func(transport *HTTPTransport) error {
-			_, err := transport.UploadWorkspaceCheckpoint(ctx, "command-1", checkpoint, bundle)
-			return err
+		{"response_body", "PUT", "/v1/coop-workers/commands/command-1/response-body", func(transport *HTTPTransport) error {
+			return transport.UploadResponseBody(ctx, "command-1", workerproto.BodyReference{SHA256: sha256sum([]byte("body")), ByteSize: 4}, strings.NewReader("body"))
 		}},
 	} {
 		t.Run(operation.name, func(t *testing.T) {
@@ -135,7 +118,7 @@ func TestRedirectedWorkerPollRetainsReceiptsUntilDirectAcknowledgement(t *testin
 	}
 	executor := open()
 	command := createCommand(now.Add(time.Minute))
-	command.Kind, command.Payload = "get_session", json.RawMessage(`{"coop_session_id":"session-1"}`)
+	command.Kind, command.Payload = "api_request", apiPayload("GET", "/v1/sessions/session-1", nil)
 	result, err := executor.Execute(ctx, command)
 	if err != nil || result.State != "succeeded" {
 		t.Fatalf("seed real command receipt: %+v, %v", result, err)
@@ -270,7 +253,7 @@ func newWorkerRedirectFixture(t *testing.T) *workerRedirectFixture {
 		switch r.URL.Path {
 		case "/v1/coop-workers/enroll":
 			var document map[string]string
-			if err := json.NewDecoder(r.Body).Decode(&document); err != nil || document["token"] != f.token || document["worker_id"] != "worker-a" || document["workspace_ref"] != "workspace-main" {
+			if err := json.NewDecoder(r.Body).Decode(&document); err != nil || document["token"] != f.token || len(document) != 2 {
 				http.Error(w, "invalid bootstrap authority", http.StatusForbidden)
 				return
 			}
@@ -296,7 +279,7 @@ func newWorkerRedirectFixture(t *testing.T) *workerRedirectFixture {
 	if err := os.WriteFile(caPath, ca.PEM, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	f.base = HTTPTransportConfig{BaseURL: controller.URL, CAFile: caPath, WorkerID: "worker-a", WorkspaceRef: "workspace-main", Timeout: 5 * time.Second, RenewBefore: time.Minute}
+	f.base = HTTPTransportConfig{BaseURL: controller.URL, CAFile: caPath, Timeout: 5 * time.Second, RenewBefore: time.Minute}
 	return f
 }
 

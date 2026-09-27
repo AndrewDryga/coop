@@ -2,6 +2,8 @@ package sessionsvc
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -15,6 +17,29 @@ import (
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
+
+// Store-only fixtures exercise accounting and receipts, not execution-contract admission.
+var storedTestJobDocument = json.RawMessage(`{"job_ref":"job:test","version":1}`)
+
+const storedTestJobDigest = "23b2f09de62f9a1b0e915c955ae2a29cf30b386d55491b9b3451b70bf954d960"
+
+// Historical fixtures seed the old database shape explicitly; production create never accepts it.
+func clearHistoricalJob(t *testing.T, store *session.Store, id string) session.Session {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(store.Root(), "session.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("UPDATE sessions SET job_document = '', job_digest = '', policy = 'legacy' WHERE id = ?", id); err != nil {
+		t.Fatal(err)
+	}
+	value, err := store.GetSession(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
 
 // Ordinary fixtures need room for small temporary workspaces, not the production worker's
 // share of the developer's disk. Storage-policy tests still set their own explicit limits.
@@ -85,7 +110,7 @@ func TestSessionOperationWaitReportsTerminalFailures(t *testing.T) {
 }
 
 func TestSessionFixturesConfigureStorageWithoutChangingProductionDefaults(t *testing.T) {
-	cfg := Config{StateRoot: filepath.Join(t.TempDir(), "state"), Policies: bareTestPolicies()}
+	cfg := Config{StateRoot: filepath.Join(t.TempDir(), "state")}
 	ordinary, err := newSessionServiceWithTestStorage(t, cfg)
 	if err != nil {
 		t.Fatal(err)

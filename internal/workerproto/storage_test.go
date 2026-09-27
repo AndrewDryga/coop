@@ -21,7 +21,7 @@ func samplePoll() Poll {
 	return Poll{
 		Version: Version, PollRef: "poll:worker-a:1",
 		Worker: WorkerHello{
-			ID: "worker-a", WorkspaceRef: "workspace-a", ProtocolVersion: "1", BuildVersion: "3.0.0",
+			ID: "worker-a", WorkspaceRef: "workspace-a", ProtocolVersion: "2", BuildVersion: "3.0.0",
 			ClockAt:       time.Date(2026, 9, 11, 4, 5, 6, 0, time.UTC),
 			SandboxDigest: strings.Repeat("a", 64),
 			Capacity: Capacity{

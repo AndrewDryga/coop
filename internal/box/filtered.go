@@ -31,6 +31,7 @@ type CapturedEgress struct {
 	Store                                 *networkstate.Store
 	Project, Fingerprint, QualificationID string
 	SessionID, AttemptID                  string
+	JobDigest                             string
 }
 
 // Close releases the authority handle a capture holds. A nil capture closes
@@ -157,7 +158,18 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	if err != nil || runRepo != project && !capturedSessionWorkspace(capture, spec, runRepo) {
 		return nil, errors.New("these rules were approved for a different project directory")
 	}
-	policy, err := capture.Store.LoadSnapshot(project, capture.Fingerprint)
+	var policy egress.Snapshot
+	if capture.JobDigest != "" {
+		if !spec.ControllerJob {
+			return nil, errors.New("controller job capture requires controller job execution")
+		}
+		policy, err = capture.Store.LoadJobSnapshot(networkstate.JobSnapshotRef{JobDigest: capture.JobDigest, SessionID: capture.SessionID}, capture.Fingerprint)
+	} else {
+		if spec.ControllerJob {
+			return nil, errors.New("controller job execution lacks job-scoped network capture")
+		}
+		policy, err = capture.Store.LoadSnapshot(project, capture.Fingerprint)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +344,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	executionSpec := networkstate.ExecutionSpec{Project: project, PolicyFingerprint: policy.Fingerprint,
 		QualificationID: capture.QualificationID, ClientImage: candidate.ClientImage, ProjectImage: projectImage,
 		Runtime: "docker", DaemonID: docker.Info().ID, Endpoint: docker.Endpoint(), GatewayImage: candidate.GatewayImage,
-		SessionID: capture.SessionID, AttemptID: capture.AttemptID, Protected: protected}
+		SessionID: capture.SessionID, AttemptID: capture.AttemptID, JobDigest: capture.JobDigest, Protected: protected}
 	if smoke == nil {
 		f.record, err = f.store.CreateExecution(ctx, executionSpec)
 	} else {

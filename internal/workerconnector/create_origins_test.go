@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -20,6 +22,10 @@ type originAPI struct {
 	eventAPI
 	operation createOperation
 	lookup    func(context.Context, Request) (json.RawMessage, error)
+}
+
+func (a *originAPI) Forward(ctx context.Context, request Request, body io.Reader) (*http.Response, error) {
+	return forwardTestAPI(ctx, a, request, body)
 }
 
 func (a *originAPI) Do(ctx context.Context, request Request) (json.RawMessage, error) {
@@ -53,7 +59,7 @@ func originReceipt(t *testing.T, executor *Executor, command workerproto.Command
 	}
 	entry, err = executor.journal.complete(entry, workerproto.CommandResult{
 		CommandID: command.CommandID, OperationKey: command.IdempotencyKey, State: "succeeded",
-		Resource: json.RawMessage(resource), Error: json.RawMessage("null"),
+		Resource: responsePayload(json.RawMessage(resource)), Error: json.RawMessage("null"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -139,8 +145,8 @@ func TestCreateOriginPreservationFailureKeepsOnlyItsReceiptAndReportsAfterComman
 		t.Fatal(err)
 	}
 	healthy := command
-	healthy.CommandID, healthy.IdempotencyKey, healthy.Kind = "healthy", "healthy-key", "get_session"
-	healthy.Payload = json.RawMessage(`{"coop_session_id":"coop-session-1"}`)
+	healthy.CommandID, healthy.IdempotencyKey, healthy.Kind = "healthy", "healthy-key", "api_request"
+	healthy.Payload = apiPayload("GET", "/v1/sessions/coop-session-1", nil)
 	if _, err := executor.Execute(context.Background(), healthy); err != nil {
 		t.Fatal(err)
 	}
@@ -393,8 +399,8 @@ func TestActivityQuarantinesCorruptOriginAndScansPastSlowLookups(t *testing.T) {
 		api.lookup = nil
 		delivered := command
 		delivered.SessionRef = "unrelated-later-command"
-		delivered.CommandID, delivered.IdempotencyKey, delivered.Kind = "get-new", "get-new-key", "get_session"
-		delivered.Payload = json.RawMessage(`{"coop_session_id":"coop-session-1"}`)
+		delivered.CommandID, delivered.IdempotencyKey, delivered.Kind = "get-new", "get-new-key", "api_request"
+		delivered.Payload = apiPayload("GET", "/v1/sessions/coop-session-1", nil)
 		// Settle the existing create first, so the next poll actually collects activity.
 		if err := executor.journal.acknowledgeResults([]string{command.CommandID}); err != nil {
 			t.Fatal(err)

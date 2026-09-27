@@ -9,6 +9,28 @@ import (
 
 const turnOperationResultVersion = 1
 
+// DecodeSessionOperationResult preserves old receipt evidence without accepting
+// the retired binding field on any execution request.
+func DecodeSessionOperationResult(data []byte) (Session, error) {
+	var receipt struct {
+		Session
+		HistoricalToolsDigest string `json:"responder_binding_digest"`
+	}
+	if err := json.Unmarshal(data, &receipt); err != nil {
+		return Session{}, fmt.Errorf("decode session operation result: %w", err)
+	}
+	if receipt.ID == "" {
+		return Session{}, errors.New("decode session operation result: missing session id")
+	}
+	if receipt.ControllerToolsDigest != "" && receipt.HistoricalToolsDigest != "" && receipt.ControllerToolsDigest != receipt.HistoricalToolsDigest {
+		return Session{}, errors.New("decode session operation result: conflicting controller tools digests")
+	}
+	if receipt.ControllerToolsDigest == "" {
+		receipt.ControllerToolsDigest = receipt.HistoricalToolsDigest
+	}
+	return receipt.Session, nil
+}
+
 // turnOperationResult is the exact public turn snapshot needed for an
 // idempotent mutation replay. Execution inputs and authority stay only in the
 // canonical turn row: operation receipts must not duplicate prompts, request
@@ -34,7 +56,7 @@ type turnOperationResult struct {
 	ValidationAttempt         int              `json:"validation_attempt,omitempty"`
 	ValidationError           string           `json:"validation_error,omitempty"`
 	ValidationReceipt         string           `json:"validation_receipt,omitempty"`
-	ResponderBindingDigest    string           `json:"responder_binding_digest,omitempty"`
+	ControllerToolsDigest     string           `json:"controller_tools_digest,omitempty"`
 }
 
 // EncodeTurnOperationResult records only the immutable public result of one
@@ -79,20 +101,29 @@ func decodeTurnOperationResult(data []byte) (Turn, bool, error) {
 	if version != turnOperationResultVersion {
 		return Turn{}, false, fmt.Errorf("decode turn operation result: unsupported receipt version %d", version)
 	}
-	var result turnOperationResult
+	var result struct {
+		turnOperationResult
+		HistoricalToolsDigest string `json:"responder_binding_digest"`
+	}
 	if err := json.Unmarshal(data, &result); err != nil {
 		return Turn{}, false, fmt.Errorf("decode turn operation result: %w", err)
 	}
 	if result.ID == "" {
 		return Turn{}, false, errors.New("decode turn operation result: missing turn id")
 	}
+	if result.ControllerToolsDigest != "" && result.HistoricalToolsDigest != "" && result.ControllerToolsDigest != result.HistoricalToolsDigest {
+		return Turn{}, false, errors.New("decode turn operation result: conflicting controller tools digests")
+	}
+	if result.ControllerToolsDigest == "" {
+		result.ControllerToolsDigest = result.HistoricalToolsDigest
+	}
 	return result.turn(), false, nil
 }
 
 func turnOperationResultFromTurn(turn Turn) turnOperationResult {
-	digest := turn.ResponderBindingDigest
+	digest := turn.ControllerToolsDigest
 	if digest == "" {
-		digest = ResponderBindingDigest(turn.ResponderBinding)
+		digest = ControllerToolsDigest(turn.ControllerTools)
 	}
 	artifacts := make([]OutputArtifact, 0, len(turn.OutputArtifacts))
 	for _, artifact := range turn.OutputArtifacts {
@@ -114,7 +145,7 @@ func turnOperationResultFromTurn(turn Turn) turnOperationResult {
 		Candidate:                 candidate,
 		ValidationCandidateSHA256: turn.CandidateSHA256,
 		ValidationAttempt:         turn.ValidationAttempt, ValidationError: turn.ValidationError,
-		ValidationReceipt: turn.ValidationReceipt, ResponderBindingDigest: digest,
+		ValidationReceipt: turn.ValidationReceipt, ControllerToolsDigest: digest,
 	}
 }
 
@@ -128,7 +159,7 @@ func (result turnOperationResult) turn() Turn {
 		OutputArtifacts: append([]OutputArtifact(nil), result.OutputArtifacts...), Usage: result.Usage,
 		Candidate: cloneTurnCandidate(result.Candidate), CandidateSHA256: result.ValidationCandidateSHA256,
 		ValidationAttempt: result.ValidationAttempt, ValidationError: result.ValidationError,
-		ValidationReceipt: result.ValidationReceipt, ResponderBindingDigest: result.ResponderBindingDigest,
+		ValidationReceipt: result.ValidationReceipt, ControllerToolsDigest: result.ControllerToolsDigest,
 	}
 }
 

@@ -18,6 +18,39 @@ import (
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
+func TestPollDefersResultsCompletedDuringCapacitySnapshot(t *testing.T) {
+	connector, _, requests := pollReferenceConnector(t, "worker-a", nil)
+	command := createCommand(connector.now().Add(time.Minute))
+	command.Payload = apiPayload("GET", "/v1/sessions/session-1", nil)
+	if _, err := connector.executor.journal.begin(command); err != nil {
+		t.Fatal(err)
+	}
+	originalHello := connector.hello
+	helloCalls := 0
+	connector.hello = func(ctx context.Context, now time.Time) workerproto.WorkerHello {
+		helloCalls++
+		worker := originalHello(ctx, now)
+		// Completion after measuring free capacity cannot release the controller's
+		// reservation using a snapshot from before daemon admission.
+		if _, err := connector.executor.Execute(ctx, command); err != nil {
+			t.Fatal(err)
+		}
+		return worker
+	}
+	for index := range 2 {
+		if err := connector.PollOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		poll := <-requests
+		if len(poll.CommandResults) != index || len(poll.AcknowledgedCommandIDs) != 1 {
+			t.Fatalf("poll %d mixed newer receipts with older capacity: %+v", index, poll)
+		}
+	}
+	if helloCalls != 2 {
+		t.Fatalf("capacity measured %d times for two polls", helloCalls)
+	}
+}
+
 func TestReceiptPagesRespectCountAndWireBytesAcrossRestart(t *testing.T) {
 	for _, fixture := range []struct {
 		name     string
@@ -48,11 +81,12 @@ func TestReceiptPagesRespectCountAndWireBytesAcrossRestart(t *testing.T) {
 			executor := open()
 			receivedBytes := make(map[string][]byte)
 			completed := make(map[string]workerproto.CommandResult)
+			executed := 0
 			for index := range fixture.count {
 				command := createCommand(now.Add(time.Minute))
 				command.CommandID = fmt.Sprintf("command:%03d", index)
 				command.IdempotencyKey = fmt.Sprintf("operation:%03d", index)
-				command.Kind, command.Payload = "get_session", json.RawMessage(`{"coop_session_id":"session-1"}`)
+				command.Kind, command.Payload = "api_request", apiPayload("GET", "/v1/sessions/session-1", nil)
 				if fixture.received && index < fixture.count-25 {
 					if _, err := executor.journal.begin(command); err != nil {
 						t.Fatal(err)
@@ -64,7 +98,18 @@ func TestReceiptPagesRespectCountAndWireBytesAcrossRestart(t *testing.T) {
 					receivedBytes[command.CommandID] = body
 					continue
 				}
-				result, err := executor.Execute(ctx, command)
+				var result workerproto.CommandResult
+				var err error
+				if len(api.response) > 256<<10 {
+					entry, beginErr := executor.journal.begin(command)
+					if beginErr != nil {
+						t.Fatal(beginErr)
+					}
+					result, err = executor.complete(entry, workerproto.CommandResult{CommandID: command.CommandID, OperationKey: command.IdempotencyKey, State: "succeeded", Resource: responsePayload(api.response), Error: json.RawMessage("null")})
+				} else {
+					result, err = executor.Execute(ctx, command)
+					executed++
+				}
 				if err != nil || result.State != "succeeded" {
 					t.Fatalf("execute %s: state=%s, err=%v", command.CommandID, result.State, err)
 				}
@@ -163,8 +208,8 @@ func TestReceiptPagesRespectCountAndWireBytesAcrossRestart(t *testing.T) {
 					t.Fatalf("received custody changed for %s: %v", id, err)
 				}
 			}
-			if len(api.requests) != len(completed) {
-				t.Fatalf("API executed %d times for %d completed receipts", len(api.requests), len(completed))
+			if len(api.requests) != executed {
+				t.Fatalf("API executed %d times, want %d; replay must not execute again", len(api.requests), executed)
 			}
 		})
 	}
@@ -189,7 +234,7 @@ func TestLegacyUnsendableReceiptDoesNotBlockSettlementOrCommands(t *testing.T) {
 	}
 	legacy := createCommand(now.Add(time.Minute))
 	legacy.CommandID, legacy.IdempotencyKey = "command:legacy", "operation:legacy"
-	legacy.Kind, legacy.Payload = "get_session", json.RawMessage(`{"coop_session_id":"session-1"}`)
+	legacy.Kind, legacy.Payload = "api_request", apiPayload("GET", "/v1/sessions/session-1", nil)
 	entry, err := executor.journal.begin(legacy)
 	if err != nil {
 		t.Fatal(err)
@@ -329,7 +374,7 @@ func TestLegacyUnsendableReceiptDoesNotBlockSettlementOrCommands(t *testing.T) {
 func TestReceiptEncodingKeepsLegacyCommandIdentity(t *testing.T) {
 	now := time.Date(2026, 9, 5, 18, 0, 0, 0, time.UTC)
 	command := createCommand(now.Add(time.Minute))
-	command.Payload = json.RawMessage(`{"external_ref":"episode:<>&` + "\u2028\u2029" + `","policy":"work-read-only","policy_digest":"` + repeatedDigest("b") + `"}`)
+	command.Payload = apiPayload("POST", "/v1/sessions", json.RawMessage(`{"task":"episode:<>&`+"\u2028\u2029"+`"}`))
 	result := workerproto.CommandResult{
 		CommandID: command.CommandID, OperationKey: command.IdempotencyKey, State: "succeeded",
 		Resource: json.RawMessage(`{"session":{"id":"session-1"},"value":"<>&` + "\u2028\u2029" + `"}`), Error: json.RawMessage("null"),
@@ -363,10 +408,14 @@ func TestReceiptEncodingKeepsLegacyCommandIdentity(t *testing.T) {
 			} else if _, err := executor.Execute(context.Background(), command); err != nil {
 				t.Fatal(err)
 			}
+			expected := result
+			if !legacy {
+				expected.Resource = responsePayload(result.Resource)
+			}
 			for range 2 {
 				executor = open()
 				got, err := executor.Execute(context.Background(), command)
-				if err != nil || !sameResult(got, result) {
+				if err != nil || !sameResult(got, expected) {
 					t.Fatalf("receipt replay differs: %v", err)
 				}
 				stored, err := executor.journal.read(executor.journal.path(command.CommandID))
@@ -396,15 +445,10 @@ func TestHeavyWorkerHelloAndMaximumResultFitTheActualWireEncoding(t *testing.T) 
 			now := time.Date(2026, 9, 5, 18, 0, 0, 0, time.UTC)
 			advertisement := hello(now)
 			advertisement.WorkspaceRef = strings.Repeat("w", 256)
-			advertisement.ProtocolVersion = strings.Repeat("p", 256)
+			advertisement.ID = strings.Repeat("i", 256)
 			advertisement.BuildVersion = strings.Repeat("b", 256)
-			advertisement.PolicyDigests = make(map[string]string)
-			advertisement.PolicyAuthorityDigests = make(map[string]string)
 			for index := range workerproto.MaxBatchItems {
 				name := fmt.Sprintf("%03d", index) + strings.Repeat("n", 253)
-				advertisement.PolicyDigests[name] = repeatedDigest("a")
-				advertisement.PolicyAuthorityDigests[name] = repeatedDigest("b")
-				advertisement.Repositories = append(advertisement.Repositories, workerproto.Repository{Ref: name, Revision: strings.Repeat("r", 256)})
 				advertisement.Capabilities = append(advertisement.Capabilities, workerproto.Capability{Name: name, Version: strings.Repeat("v", 128)})
 			}
 			const payloadBytes = 768 << 10
@@ -418,8 +462,12 @@ func TestHeavyWorkerHelloAndMaximumResultFitTheActualWireEncoding(t *testing.T) 
 			}
 			command := createCommand(now.Add(time.Minute))
 			command.CommandID, command.IdempotencyKey = strings.Repeat("c", 256), strings.Repeat("k", 512)
-			command.Kind, command.Payload = "get_session", json.RawMessage(`{"coop_session_id":"session-1"}`)
-			if _, err := executor.Execute(context.Background(), command); err != nil {
+			command.Kind, command.Payload = "api_request", apiPayload("GET", "/v1/sessions/session-1", nil)
+			entry, err := executor.journal.begin(command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := executor.journal.complete(entry, workerproto.CommandResult{CommandID: command.CommandID, OperationKey: command.IdempotencyKey, State: "succeeded", Resource: resource, Error: json.RawMessage("null")}); err != nil {
 				t.Fatal(err)
 			}
 			executor, err = NewExecutor(ExecutorConfig{API: api, JournalDir: dir, Now: func() time.Time { return now }, WorkerID: "worker-a"})
@@ -459,7 +507,7 @@ func TestHeavyWorkerHelloAndMaximumResultFitTheActualWireEncoding(t *testing.T) 
 			if err := connector.PollOnce(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			if received.Load() != 1 || len(api.requests) != 1 {
+			if received.Load() != 1 || len(api.requests) != 0 {
 				t.Fatal("maximal receipt did not deliver exactly once")
 			}
 			if _, err := os.Stat(executor.journal.path(command.CommandID)); !os.IsNotExist(err) {

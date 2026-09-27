@@ -11,10 +11,13 @@ import (
 )
 
 const (
-	WorkspaceCheckpointVersion         = 1
-	WorkspaceCheckpointBundleMediaType = "application/vnd.coop.workspace-checkpoint.v1+tar"
-	MaxWorkspaceCheckpointBundleBytes  = 64 << 20
-	MaxWorkspaceCheckpointSubtasks     = 64
+	WorkspaceCheckpointVersion         = 2
+	WorkspaceCheckpointBundleMediaType = "application/vnd.coop.workspace-checkpoint.v2+tar"
+	LegacyWorkspaceCheckpointMediaType = "application/vnd.coop.workspace-checkpoint.v1+tar"
+	// Historical v1 artifacts used an in-memory patch. New artifacts are streamed.
+	MaxWorkspaceCheckpointBundleBytes = 64 << 20
+	MaxWorkspaceCheckpointStreamBytes = 1<<63 - 2
+	MaxWorkspaceCheckpointSubtasks    = 64
 )
 
 var (
@@ -77,7 +80,7 @@ func DecodeWorkspaceCheckpoint(document []byte) (WorkspaceCheckpoint, error) {
 }
 
 func (c WorkspaceCheckpoint) Validate() error {
-	if c.Version != WorkspaceCheckpointVersion {
+	if c.Version != 1 && c.Version != WorkspaceCheckpointVersion {
 		return fmt.Errorf("unsupported workspace checkpoint version %d", c.Version)
 	}
 	for field, value := range map[string]string{
@@ -115,7 +118,7 @@ func (c WorkspaceCheckpoint) Validate() error {
 	if err := c.Gate.validate(); err != nil {
 		return err
 	}
-	return c.Bundle.validate()
+	return c.Bundle.validate(c.Version)
 }
 
 func validateWorkspaceCheckpointBranch(value string) error {
@@ -173,15 +176,19 @@ func (g WorkspaceCheckpointGate) validate() error {
 	return reference(g.ReceiptRef, 256, "gate receipt_ref")
 }
 
-func (b WorkspaceCheckpointBundle) validate() error {
-	if b.MediaType != WorkspaceCheckpointBundleMediaType {
+func (b WorkspaceCheckpointBundle) validate(version int) error {
+	media, maximum := WorkspaceCheckpointBundleMediaType, int64(MaxWorkspaceCheckpointStreamBytes)
+	if version == 1 {
+		media, maximum = LegacyWorkspaceCheckpointMediaType, MaxWorkspaceCheckpointBundleBytes
+	}
+	if b.MediaType != media {
 		return errors.New("invalid checkpoint bundle media type")
 	}
 	if !digestPattern.MatchString(b.SHA256) {
 		return errors.New("checkpoint bundle sha256 must be a lowercase SHA-256 digest")
 	}
-	if b.ByteSize < 1 || b.ByteSize > MaxWorkspaceCheckpointBundleBytes {
-		return fmt.Errorf("checkpoint bundle must contain 1 to %d bytes", MaxWorkspaceCheckpointBundleBytes)
+	if b.ByteSize < 1 || b.ByteSize > maximum {
+		return fmt.Errorf("checkpoint bundle must contain 1 to %d bytes", maximum)
 	}
 	return nil
 }

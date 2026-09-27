@@ -75,7 +75,7 @@ func filteredProjectTag(repo, lockedImage string) string {
 // filteredProjectImage consumes an explicit host build, never executing repository build
 // instructions. Both results are empty without a project Dockerfile: the locked image runs as-is.
 func filteredProjectImage(ctx context.Context, rt runtime.Runtime, cfg *config.Config, docker filteredDocker, store *networkstate.Store, spec RunSpec, candidate networkstate.CandidateSpec) (image, imageTag string, err error) {
-	if spec.Login {
+	if spec.Login || spec.ControllerJob {
 		return "", "", nil // sign-in uses the locked client, never the project's build instructions
 	}
 	repo := projectPolicyRepo(spec)

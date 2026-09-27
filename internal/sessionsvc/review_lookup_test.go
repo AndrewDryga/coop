@@ -33,7 +33,7 @@ func TestCompletedReviewCanBeReadWithoutRunningTheGateAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 	path := "/v1/sessions/" + sess.ID + "/reviews/" + dossier.OperationID
 	for range 2 {
 		response := sessionHTTPTestRequest(t, handler, http.MethodGet, path, "", "", "")

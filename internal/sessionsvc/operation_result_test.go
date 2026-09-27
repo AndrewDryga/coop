@@ -17,8 +17,8 @@ func TestCompactTurnResultReplaysTheExactPublicProjection(t *testing.T) {
 		ErrorCode: session.CodeSessionCleanupError, ErrorDetail: "runtime cleanup failed: /secret/runtime/path",
 		AssistantMessage: "answer", Candidate: &session.TurnCandidate{Message: "candidate", SHA256: "candidate-sha", Attempt: 1},
 		CandidateSHA256: "candidate-sha", ValidationAttempt: 1,
-		OutputArtifacts:  []session.OutputArtifact{{ID: "artifact", Name: "file.txt", MediaType: "text/plain", SHA256: "artifact-sha", Bytes: 3}},
-		ResponderBinding: &session.ResponderBinding{Endpoint: "https://responder.example/mcp", Token: strings.Repeat("t", 48)},
+		OutputArtifacts: []session.OutputArtifact{{ID: "artifact", Name: "file.txt", MediaType: "text/plain", SHA256: "artifact-sha", Bytes: 3}},
+		ControllerTools: &session.ControllerTools{Endpoint: "https://responder.example/mcp", Token: strings.Repeat("t", 48)},
 	}
 	want := publicTurn(turn)
 	result, err := session.EncodeTurnOperationResult(turn)

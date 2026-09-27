@@ -4,7 +4,7 @@ description: "loop, editor ACP, and remote sessions share target rotation but ke
 scope: architecture
 sources: [internal/ladder/ladder.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/loop.go, internal/acpctl/control.go, internal/sessionsvc/acp.go, internal/session/store.go]
 check: "none"
-updated: 2026-09-09
+updated: 2026-09-27
 ---
 
 # Preserve each surface's session lifecycle when rotating targets
@@ -46,13 +46,14 @@ or durable replay behavior as if it were obsolete compatibility.
   time, and exclude output exhaustion even when the provider offers retry.
 - Resolve every selected account through the private credential store; targets may name accounts,
   but credentials themselves never enter repository state.
-- Reapply the active turn's Responder binding after a target rotation reloads the durable session
+- Reapply the active turn's controller-tools binding after a target rotation reloads the durable session
   and before projecting credentials or MCP. A turn-scoped endpoint/token must survive quota
   failover, escalation floors and explicit failback without being persisted as session authority.
 
 Related: [[model-is-the-rotation-axis]] and [[credentials-not-profiles]].
 
 ## Changelog
+- 2026-09-27 — swept the session runner's rotation overlay and MCP projection; updated the active binding name to controller tools. The same turn-scoped endpoint/token survives reloads without becoming durable session authority.
 - 2026-09-09 — two fresh live Responder checks lost state tools on quota failover and recovered only
   on semantic correction. Swept quota, floor and explicit-failback paths; the same session reload
   dropped all three overlays. The execution-loop overlay fixes them with a three-path regression.

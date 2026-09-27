@@ -18,12 +18,12 @@ install: ## Build from source and install to ~/.local/bin/coop
 	@go build -trimpath -ldflags "$(LDFLAGS)" -o "$(HOME)/.local/bin/coop" .
 	@echo "installed $(HOME)/.local/bin/coop ($(VERSION)) — run 'coop build' to build the box image"
 
-test: ## Run unit tests (no container runtime needed)
+test: require-git-lfs ## Run unit tests (no container runtime needed)
 	@# -p 4 for the same reason as the race target: every package at once oversubscribes a laptop
 	@# until fixture guards and production grace periods expire in tests that pass alone.
 	@go test -p 4 ./...
 
-cover: ## Run unit tests with a coverage summary
+cover: require-git-lfs ## Run unit tests with a coverage summary
 	@go test -cover ./...
 
 lint: ## gofmt check + go vet + Staticcheck at the pinned version, for Linux and macOS alike
@@ -70,6 +70,9 @@ shellcheck: ## ShellCheck every tracked .sh: the installer, both sweep queue gua
 require-python3:
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 is not installed — run: brew install python3 (macOS) or apt-get install -y python3 (Debian)"; exit 1; }
 
+require-git-lfs:
+	@command -v git-lfs >/dev/null 2>&1 || { echo "git-lfs is not installed — run: brew install git-lfs (macOS) or apt-get install -y git-lfs (Debian)"; exit 1; }
+
 # Signing is intentionally skipped: release signatures are keyless (Sigstore via GitHub
 # OIDC), which only exists in the release workflow — a local snapshot validates packaging.
 snapshot: ## Build a local release snapshot with GoReleaser (no publish, no signing)
@@ -114,12 +117,14 @@ build-all: ## Compile every package (a package no test imports can still break t
 # internal/acpproxy is concurrent (the editor-reader goroutine and the main loop share
 # p.mu-guarded state) — a data race there does not fail the plain `make test` run. Its own
 # target so a race failure is legible; -race is ~2-3× slower, which is why it runs last.
-race: ## Full unit suite under the race detector (the slowest gate step)
+race: require-git-lfs ## Full unit suite under the race detector (the slowest gate step)
 	@# -p 4: the race detector multiplies each test binary's CPU, and running every package at
 	@# once oversubscribes the host badly enough that production grace periods (a 3 s TERM wait
 	@# before a fork's box is reaped) expire in tests that pass alone. Bounded parallelism, not a
 	@# longer grace, is the fix: the gate must fail on a real regression, not on a busy laptop.
-	@go test -race -p 4 ./...
+	@# Session Git/LFS fixtures approach ten minutes without instrumentation. This is the whole
+	@# package's hang guard, not a per-operation deadline; keep behavioral timing assertions tight.
+	@go test -race -p 4 -timeout 20m ./...
 
 # THE GATE. One recipe, run identically on a laptop, in a box, and by CI's check job — which
 # installs the pinned tools and then calls this target. A new check belongs HERE, never in the
@@ -246,3 +251,4 @@ help: ## List targets
 
 .PHONY: build install test cover lint staticcheck-version govulncheck-version vuln shellcheck require-python3 snapshot doctor docs docs-check align casts casts-check tools-test rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all provider-qualify acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e clean help
 .PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all
+.PHONY: require-git-lfs

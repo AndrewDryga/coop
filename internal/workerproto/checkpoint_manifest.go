@@ -27,7 +27,9 @@ type WorkspaceCheckpointBundleManifest struct {
 	BranchRef           string                            `json:"branch_ref"`
 	CommittedRevision   string                            `json:"committed_revision"`
 	CandidateTreeSHA256 string                            `json:"candidate_tree_sha256"`
-	TrackedPatch        WorkspaceCheckpointBundleEntry    `json:"tracked_patch"`
+	TrackedPatch        WorkspaceCheckpointBundleEntry    `json:"tracked_patch,omitzero"`
+	Repository          *WorkspaceCheckpointBundleEntry   `json:"repository,omitempty"`
+	TrackedTree         string                            `json:"tracked_tree,omitempty"`
 	UntrackedFiles      []WorkspaceCheckpointFileEntry    `json:"untracked_files"`
 	TaskProjection      WorkspaceCheckpointTaskProjection `json:"task_projection"`
 	GateReceipt         *WorkspaceCheckpointBundleEntry   `json:"gate_receipt"`
@@ -111,7 +113,7 @@ func ValidateWorkspaceCheckpointPair(
 }
 
 func (m *WorkspaceCheckpointBundleManifest) validate() error {
-	if m.Version != WorkspaceCheckpointVersion {
+	if m.Version != 1 && m.Version != WorkspaceCheckpointVersion {
 		return fmt.Errorf("unsupported workspace checkpoint bundle version %d", m.Version)
 	}
 	for field, value := range map[string]string{
@@ -130,14 +132,29 @@ func (m *WorkspaceCheckpointBundleManifest) validate() error {
 		!digestPattern.MatchString(m.CandidateTreeSHA256) {
 		return errors.New("checkpoint bundle workspace identity is invalid")
 	}
-	if err := validateWorkspaceCheckpointBundleEntry(m.TrackedPatch, "workspace.patch", true); err != nil {
-		return fmt.Errorf("tracked patch: %w", err)
+	content := m.TrackedPatch
+	if m.Version == 1 {
+		if m.Repository != nil || m.TrackedTree != "" {
+			return errors.New("historical checkpoint cannot carry repository objects")
+		}
+		if err := validateWorkspaceCheckpointBundleEntry(content, "workspace.patch", true); err != nil {
+			return fmt.Errorf("tracked patch: %w", err)
+		}
+	} else {
+		if m.TrackedPatch != (WorkspaceCheckpointBundleEntry{}) || m.Repository == nil ||
+			!workspaceCheckpointRevisionPattern.MatchString(m.TrackedTree) {
+			return errors.New("checkpoint requires repository objects and an exact tracked tree")
+		}
+		content = *m.Repository
+		if err := validateWorkspaceCheckpointBundleEntry(content, "repository.tar", false); err != nil {
+			return err
+		}
 	}
 	if len(m.UntrackedFiles) > MaxWorkspaceCheckpointFiles {
 		return fmt.Errorf("checkpoint contains more than %d untracked files", MaxWorkspaceCheckpointFiles)
 	}
-	entries := map[string]bool{workspaceCheckpointManifestEntry: true, m.TrackedPatch.Entry: true}
-	total := m.TrackedPatch.ByteSize
+	entries := map[string]bool{workspaceCheckpointManifestEntry: true, content.Entry: true}
+	total := content.ByteSize
 	if err := validateWorkspaceCheckpointFiles(m.UntrackedFiles, "untracked", MaxWorkspaceCheckpointFiles, entries, &total); err != nil {
 		return err
 	}
@@ -152,9 +169,12 @@ func (m *WorkspaceCheckpointBundleManifest) validate() error {
 			return errors.New("checkpoint bundle entry is duplicated")
 		}
 		entries[m.GateReceipt.Entry] = true
+		if m.GateReceipt.ByteSize > MaxWorkspaceCheckpointStreamBytes-total {
+			return errors.New("checkpoint content size overflows")
+		}
 		total += m.GateReceipt.ByteSize
 	}
-	if total > MaxWorkspaceCheckpointBundleBytes {
+	if m.Version == 1 && total > MaxWorkspaceCheckpointBundleBytes {
 		return errors.New("checkpoint bundle content exceeds its bound")
 	}
 	return nil
@@ -202,7 +222,7 @@ func validateWorkspaceCheckpointFiles(
 		if file.Mode != 0o644 && file.Mode != 0o755 {
 			return errors.New("checkpoint file mode is invalid")
 		}
-		if !digestPattern.MatchString(file.SHA256) || file.ByteSize < 0 || file.ByteSize > MaxWorkspaceCheckpointBundleBytes {
+		if !digestPattern.MatchString(file.SHA256) || file.ByteSize < 0 || file.ByteSize > MaxWorkspaceCheckpointStreamBytes {
 			return errors.New("checkpoint file metadata is invalid")
 		}
 		decoded, err := decodeWorkspaceCheckpointPath(file.PathB64)
@@ -214,17 +234,17 @@ func validateWorkspaceCheckpointFiles(
 		}
 		paths[string(decoded)] = true
 		file.PathBytes = decoded
-		*total += file.ByteSize
-		if *total > MaxWorkspaceCheckpointBundleBytes {
+		if file.ByteSize > MaxWorkspaceCheckpointStreamBytes-*total {
 			return errors.New("checkpoint bundle content exceeds its bound")
 		}
+		*total += file.ByteSize
 	}
 	return nil
 }
 
 func validateWorkspaceCheckpointBundleEntry(entry WorkspaceCheckpointBundleEntry, expected string, emptyAllowed bool) error {
 	if entry.Entry != expected || !digestPattern.MatchString(entry.SHA256) || entry.ByteSize < 0 ||
-		(!emptyAllowed && entry.ByteSize == 0) || entry.ByteSize > MaxWorkspaceCheckpointBundleBytes {
+		(!emptyAllowed && entry.ByteSize == 0) || entry.ByteSize > MaxWorkspaceCheckpointStreamBytes {
 		return errors.New("checkpoint bundle entry metadata is invalid")
 	}
 	return nil

@@ -1054,8 +1054,8 @@ func TestACPServersRefuseAMalformedMCPFile(t *testing.T) {
 	}
 }
 
-func TestResponderStateBindingMergesWithoutExposingItsToken(t *testing.T) {
-	snapshot, err := BindResponderState(
+func TestControllerToolsBindingMergesWithoutExposingItsToken(t *testing.T) {
+	snapshot, err := BindControllerTools(
 		[]byte(`{"other":{"preserved":true},"mcpServers":{"shared":{"command":"true"}}}`),
 		"https://responder.example/v1/state-tools/mcp",
 	)
@@ -1066,7 +1066,7 @@ func TestResponderStateBindingMergesWithoutExposingItsToken(t *testing.T) {
 		t.Fatalf("bound snapshot = %s", snapshot)
 	}
 	servers, err := ACPServers(writeTmp(t, "bound.json", string(snapshot)), func(key string) (string, bool) {
-		if key == ResponderStateTokenEnv {
+		if key == ControllerToolsTokenEnv {
 			return "secret-token", true
 		}
 		return "", false
@@ -1078,16 +1078,16 @@ func TestResponderStateBindingMergesWithoutExposingItsToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := string(encoded); !strings.Contains(got, `"name":"responder-state"`) ||
+	if got := string(encoded); !strings.Contains(got, `"name":"controller-tools"`) ||
 		!strings.Contains(got, `"value":"Bearer secret-token"`) ||
 		!strings.Contains(got, `"name":"shared"`) {
 		t.Fatalf("ACP servers = %s", got)
 	}
 }
 
-func TestResponderStateBindingCannotBeShadowedBySharedConfiguration(t *testing.T) {
-	_, err := BindResponderState(
-		[]byte(`{"mcpServers":{"responder-state":{"command":"attacker"}}}`),
+func TestControllerToolsBindingCannotBeShadowedBySharedConfiguration(t *testing.T) {
+	_, err := BindControllerTools(
+		[]byte(`{"mcpServers":{"controller-tools":{"command":"attacker"}}}`),
 		"https://responder.example/v1/state-tools/mcp",
 	)
 	if err == nil || !strings.Contains(err.Error(), "reserves server") {
@@ -1144,11 +1144,11 @@ func TestTaskToolsBindingRendersForEveryConsumer(t *testing.T) {
 		t.Fatalf("ACP servers = %s", encoded)
 	}
 	// Both coop bindings coexist on one snapshot.
-	both, err := BindResponderState(snapshot, "https://responder.example/v1/state-tools/mcp")
+	both, err := BindControllerTools(snapshot, "https://responder.example/v1/state-tools/mcp")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(both), `"coop-tasks"`) || !strings.Contains(string(both), `"responder-state"`) {
+	if !strings.Contains(string(both), `"coop-tasks"`) || !strings.Contains(string(both), `"controller-tools"`) {
 		t.Fatalf("combined = %s", both)
 	}
 }

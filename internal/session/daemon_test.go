@@ -139,7 +139,7 @@ func TestFailingIDGeneratorPanicsWithoutCorruptingState(t *testing.T) {
 				t.Fatal("expected the failing id generator to panic")
 			}
 		}()
-		_, _ = store.CreateSession(ctx, "panic-key", CreateSessionRequest{Target: "target"})
+		_, _ = store.CreateSession(ctx, "panic-key", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target"})
 	}()
 
 	// The deferred tx.Rollback() must still run during the panic's stack unwind: the
@@ -153,7 +153,7 @@ func TestFailingIDGeneratorPanicsWithoutCorruptingState(t *testing.T) {
 	// And the store keeps working normally afterward: the panic doesn't wedge the connection,
 	// leave a stale transaction open, or poison the idempotency key it was reserving.
 	store.id = func(prefix string) string { return prefix + "-recovered" }
-	sess, err := store.CreateSession(ctx, "panic-key", CreateSessionRequest{Target: "target"})
+	sess, err := store.CreateSession(ctx, "panic-key", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target"})
 	if err != nil || sess.ID != "ses-recovered" {
 		t.Fatalf("store unusable after a panicking id generator: %+v, %v", sess, err)
 	}

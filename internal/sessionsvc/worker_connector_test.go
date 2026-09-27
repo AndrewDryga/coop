@@ -31,15 +31,13 @@ func TestWorkerActivitySurvivesAsyncCreateAcknowledgementAndRestart(t *testing.T
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
-	policy := testSessionPolicies(repo)["responder"]
-	service, err := newSessionServiceWithTestStorage(t, Config{
+	service, err := openSessionFixture(t, Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"), SourceConfig: &config.Config{},
-		Policies: map[string]Policy{"responder": policy},
 		Runner: RunnerFunc(func(context.Context, session.Session, session.Turn) (session.Turn, error) {
 			t.Error("activity qualification unexpectedly ran a provider")
 			return session.Turn{}, nil
 		}),
-	})
+	}, repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +57,7 @@ func TestWorkerActivitySurvivesAsyncCreateAcknowledgementAndRestart(t *testing.T
 		t.Fatal(err)
 	}
 	var creates atomic.Int32
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/sessions" {
 			creates.Add(1)
@@ -74,8 +72,8 @@ func TestWorkerActivitySurvivesAsyncCreateAcknowledgementAndRestart(t *testing.T
 	now := time.Now().UTC()
 	command := workerproto.Command{
 		CommandID: "command:create", WorkerID: "worker-a", SessionRef: "remote-session", PlacementGeneration: 1,
-		LeaseRef: "lease:create", LeaseExpiresAt: now.Add(time.Hour), Kind: "create_session", CommandVersion: workerproto.Version,
-		Payload:        json.RawMessage(`{"external_ref":"async activity","policy":"responder","policy_digest":"` + ResolvedPolicyDigest(policy) + `"}`),
+		LeaseRef: "lease:create", LeaseExpiresAt: now.Add(time.Hour), Kind: "api_request", CommandVersion: workerproto.Version,
+		Payload:        connectorCreatePayload(t, service.request(t, "test:async-activity")),
 		IdempotencyKey: "operation:create",
 	}
 	dir := t.TempDir()
@@ -100,7 +98,7 @@ func TestWorkerActivitySurvivesAsyncCreateAcknowledgementAndRestart(t *testing.T
 		if r.URL.Path == "/v1/coop-workers/enroll" {
 			var document map[string]string
 			if err := json.NewDecoder(r.Body).Decode(&document); err != nil || document["token"] != token ||
-				document["worker_id"] != command.WorkerID || document["workspace_ref"] != "workspace-main" {
+				len(document) != 2 {
 				http.Error(w, "invalid enrollment authority", http.StatusForbidden)
 				return
 			}
@@ -159,43 +157,19 @@ func TestWorkerActivitySurvivesAsyncCreateAcknowledgementAndRestart(t *testing.T
 			t.Fatalf("anonymous %s returned %d", route, response.StatusCode)
 		}
 	}
-	configurationPath := filepath.Join(dir, "worker.json")
-	identityPath, tokenPath := filepath.Join(dir, "identity.pem"), filepath.Join(dir, "enrollment-token")
-	example, err := os.ReadFile("../../docs/examples/worker.json")
-	if err != nil {
-		t.Fatal(err)
+	identityPath, tokenPath := filepath.Join(dir, "identity.json"), filepath.Join(dir, "enrollment-token")
+	configuration := workerconnector.HTTPTransportConfig{
+		BaseURL: controller.URL, CAFile: filepath.Join(dir, "ca.pem"),
+		IdentityFile: identityPath, EnrollmentTokenFile: tokenPath, RenewBefore: time.Minute, Timeout: time.Second,
 	}
-	var document map[string]any
-	if err := json.Unmarshal(example, &document); err != nil {
-		t.Fatal(err)
-	}
-	for key, value := range map[string]any{
-		"responder_url": controller.URL, "ca_file": filepath.Join(dir, "ca.pem"),
-		"identity_file": identityPath, "enrollment_token_file": tokenPath, "coop_socket": socket,
-		"journal_dir": filepath.Join(dir, "journal"), "renew_before_seconds": 60,
-		"policy_digests":           map[string]string{"responder": ResolvedPolicyDigest(policy)},
-		"policy_authority_digests": map[string]string{"responder": ResolvedPolicyAuthorityDigest(policy)},
-	} {
-		document[key] = value
-	}
-	configurationJSON, err := json.Marshal(document)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for path, contents := range map[string][]byte{
-		configurationPath: configurationJSON, filepath.Join(dir, "ca.pem"): ca.PEM, tokenPath: []byte(token),
-	} {
-		if err := os.WriteFile(path, contents, 0o600); err != nil {
+	for path, contents := range map[string][]byte{configuration.CAFile: ca.PEM, tokenPath: []byte(token)} {
+		if err := os.WriteFile(path, contents, 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	newTransport := func(configuration workerconnector.Config) *workerconnector.HTTPTransport {
+	newTransport := func() *workerconnector.HTTPTransport {
 		t.Helper()
-		transport, err := workerconnector.NewHTTPTransport(workerconnector.HTTPTransportConfig{
-			BaseURL: configuration.ResponderURL, CAFile: configuration.CAFile, IdentityFile: configuration.IdentityFile,
-			EnrollmentTokenFile: configuration.EnrollmentTokenFile, WorkerID: configuration.Hello.ID,
-			WorkspaceRef: configuration.Hello.WorkspaceRef, RenewBefore: configuration.RenewBefore, Timeout: configuration.RequestTimeout,
-		})
+		transport, err := workerconnector.NewHTTPTransport(configuration)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -203,20 +177,21 @@ func TestWorkerActivitySurvivesAsyncCreateAcknowledgementAndRestart(t *testing.T
 	}
 	poll := func() workerproto.Poll {
 		t.Helper()
-		configuration, err := workerconnector.LoadConfig(configurationPath, "test", now)
-		if err != nil {
-			t.Fatal(err)
-		}
-		api, err := workerconnector.NewUnixAPI(configuration.CoopSocket, configuration.RequestTimeout)
+		api, err := workerconnector.NewUnixAPI(socket, time.Second)
 		if err != nil {
 			t.Fatal(err)
 		}
 		// A new transport reloads the identity from disk; retaining it would not
 		// prove enrollment/identity recovery across connector restart.
-		transport := newTransport(configuration)
+		transport := newTransport()
+		sources, err := workerconnector.NewJobSourceStager(transport, service.stateRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
 		executor, err := workerconnector.NewExecutor(workerconnector.ExecutorConfig{
-			API: api, ArtifactTransport: transport, JournalDir: configuration.JournalDir,
-			Now: func() time.Time { return now }, WorkerID: configuration.Hello.ID,
+			API: api, BodyTransport: transport, JournalDir: filepath.Join(dir, "journal"),
+			JobSourceStager: sources,
+			Now:             func() time.Time { return now }, WorkerID: "worker-a",
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -224,9 +199,15 @@ func TestWorkerActivitySurvivesAsyncCreateAcknowledgementAndRestart(t *testing.T
 		connector, err := workerconnector.NewConnector(workerconnector.ConnectorConfig{
 			Executor: executor, Now: func() time.Time { return now },
 			Hello: func(ctx context.Context, clock time.Time) workerproto.WorkerHello {
-				current := configuration.Hello
+				current := workerproto.WorkerHello{
+					ID: "worker-a", WorkspaceRef: "workspace-main", ProtocolVersion: "2", BuildVersion: "test",
+					State: "eligible", SandboxDigest: strings.Repeat("a", 64),
+
+					Capabilities: []workerproto.Capability{},
+					Capacity:     workerproto.Capacity{SessionSlotsFree: 2, SessionSlotsTotal: 2, TurnSlotsFree: 2, TurnSlotsTotal: 2, WorkspaceSlotsFree: 2, WorkspaceSlotsTotal: 2, State: "eligible"},
+				}
 				current.ClockAt = clock
-				current.Capabilities = workerconnector.LiveCapabilities(ctx, api, current.Capabilities)
+				current.Capabilities = workerconnector.LiveCapabilities(ctx, api)
 				return current
 			},
 			Transport: transport,
@@ -275,7 +256,11 @@ func TestWorkerActivitySurvivesAsyncCreateAcknowledgementAndRestart(t *testing.T
 		Operation OperationDTO    `json:"operation"`
 		Session   json.RawMessage `json:"session"`
 	}
-	if err := json.Unmarshal(receipt.CommandResults[0].Resource, &accepted); err != nil ||
+	var createResponse workerproto.APIResponse
+	if err := json.Unmarshal(receipt.CommandResults[0].Resource, &createResponse); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(createResponse.Body, &accepted); err != nil ||
 		accepted.Operation.State != session.OperationRunning || len(accepted.Session) != 0 {
 		t.Fatalf("create was not the real asynchronous response: %+v, %v", accepted, err)
 	}
@@ -338,12 +323,8 @@ func TestWorkerActivitySurvivesAsyncCreateAcknowledgementAndRestart(t *testing.T
 	if err := os.WriteFile(tokenPath, []byte(token), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	configuration, err := workerconnector.LoadConfig(configurationPath, "test", now)
-	if err != nil {
-		t.Fatal(err)
-	}
 	beforePolls := polls.Load()
-	if _, err := newTransport(configuration).Poll(ctx, first); err == nil || !strings.Contains(err.Error(), "load worker identity") {
+	if _, err := newTransport().Poll(ctx, first); err == nil || !strings.Contains(err.Error(), "load worker identity") {
 		t.Fatalf("malformed identity did not fail at identity loading: %v", err)
 	}
 	if enrolls.Load() != 1 || polls.Load() != beforePolls || creates.Load() != 1 {
@@ -361,60 +342,32 @@ func TestWorkerActivitySurvivesAsyncCreateAcknowledgementAndRestart(t *testing.T
 // advertising that policy's digests, the daemon restarts with a same-name policy that resolves
 // differently, and the pinned create is refused by the daemon at admission — a definite failure
 // on the worker side, a failed operation with no session on the daemon side.
-func TestWorkerCreatePinnedToAnOldPolicyIsRefusedAfterTheDaemonRestartsWithAChangedPolicy(t *testing.T) {
-	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
-	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
-	authorized := testSessionPolicies(repo)["responder"]
-	changed := authorized
-	changed.RepositoryReadOnly = !authorized.RepositoryReadOnly // same name, different authority after the restart
-	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), map[string]Policy{"responder": changed}, nil)
-	ctx := context.Background()
-	if err := service.Start(ctx); err != nil {
-		t.Fatal(err)
+func TestWorkerCannotSendRetiredPolicyCreate(t *testing.T) {
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), "", nil)
+	defer service.Stop()
+	response := sessionHTTPTestRequest(t, NewHTTPHandler(service.Service), http.MethodPost, "/v1/sessions",
+		`{"task":"test:legacy","policy":"responder"}`, "legacy-create", "application/json")
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("retired create = %d %s", response.Code, response.Body.String())
 	}
-	t.Cleanup(func() { _ = service.Stop() })
-	socketRoot := shortSessionSocketRoot(t)
-	socket := filepath.Join(socketRoot, "control.sock")
-	listener, cleanup, err := ListenSocket(socketRoot, socket)
-	if err != nil {
-		t.Fatal(err)
+	if rows, err := service.ListSessions(context.Background(), 10); err != nil || len(rows) != 0 {
+		t.Fatalf("retired create wrote sessions: %v, %v", rows, err)
 	}
-	server := &http.Server{Handler: NewHTTPHandler(service)}
-	go func() { _ = server.Serve(listener) }()
-	t.Cleanup(func() { _ = server.Close(); cleanup() })
+}
 
-	api, err := workerconnector.NewUnixAPI(socket, 5*time.Second)
+func connectorCreatePayload(t *testing.T, request CreateRemoteSessionRequest) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(workerproto.APIRequest{Method: "POST", Path: "/v1/sessions", Body: mustConnectorJSON(t, request)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now().UTC()
-	executor, err := workerconnector.NewExecutor(workerconnector.ExecutorConfig{
-		API: api, JournalDir: t.TempDir(), Now: func() time.Time { return now }, WorkerID: "worker-a",
-	})
+	return raw
+}
+func mustConnectorJSON(t *testing.T, value any) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(value)
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := workerproto.Command{
-		CommandID: "command:create-stale", WorkerID: "worker-a", SessionRef: "remote-session", PlacementGeneration: 1,
-		LeaseRef: "lease:create", LeaseExpiresAt: now.Add(time.Hour), Kind: "create_session", CommandVersion: workerproto.Version,
-		Payload: json.RawMessage(`{"external_ref":"stale authority","policy":"responder","policy_digest":"` + ResolvedPolicyDigest(authorized) +
-			`","authority_digest":"` + ResolvedPolicyAuthorityDigest(authorized) + `"}`),
-		IdempotencyKey: "operation:create-stale",
-	}
-	result, err := executor.Execute(ctx, command)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.State != "failed" || !strings.Contains(string(result.Error), string(session.CodePolicyDigestMismatch)) {
-		t.Fatalf("stale create result = %+v; want a definite policy_digest_mismatch failure", result)
-	}
-	op, err := service.GetOperation(ctx, command.IdempotencyKey)
-	if err != nil || op.State != session.OperationFailed || op.ErrorCode != session.CodePolicyDigestMismatch || op.ResourceID != "" {
-		t.Fatalf("daemon operation = %+v, %v; want it failed at admission with no session", op, err)
-	}
-	if sessions, err := service.Store().ListSessions(ctx, 10); err != nil || len(sessions) != 0 {
-		t.Fatalf("sessions after the refused create = %+v, %v; want none", sessions, err)
-	}
+	return raw
 }

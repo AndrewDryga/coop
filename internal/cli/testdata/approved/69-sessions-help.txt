@@ -3,21 +3,17 @@ coop sessions — let other applications start and manage agents
 Usage: coop sessions <command>
 
 COMMANDS
-  connect   connect this machine to a remote controller
-  serve     run the local session service on its own
-  doctor    check whether the local service is ready
-  policies  show the policies that control allowed sessions
-  compact   back up session data and reduce its disk usage
+  connect  connect this machine to a controller
+  doctor   check whether the local service is ready
+  compact  back up session data and reduce its disk usage
 
 CONNECT THIS MACHINE
-  coop sessions connect --config /path/to/worker.json
+  coop sessions connect --controller https://controller.example --token-file /path/to/token
 
-  Uses the running local service, or starts it if needed.
-  The configuration selects the controller and the sessions it is allowed to request.
+  The controller supplies each session's code, context, and execution settings.
+  Leave this command running; it starts the local service automatically.
 
 COMMAND HELP
   coop help sessions connect
-  coop help sessions serve
   coop help sessions doctor
-  coop help sessions policies
   coop help sessions compact

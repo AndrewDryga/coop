@@ -4,115 +4,25 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/AndrewDryga/coop/internal/workerproto"
 )
-
-func evidenceFixture(t *testing.T) string {
-	t.Helper()
-	body, err := os.ReadFile("../workerproto/testdata/session_evidence.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return strings.TrimSpace(string(body))
-}
 
 // The evidence read is a plain owner-private GET, like the networking reads beside it: the
 // connector chooses the path and forwards the daemon's answer verbatim. It holds no projection,
 // no destination and no task — the daemon already decided what this session discloses.
-func TestExecutorMapsTheSessionEvidenceCommand(t *testing.T) {
-	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
-	api := &fakeAPI{response: json.RawMessage(evidenceFixture(t))}
-	executor, err := NewExecutor(ExecutorConfig{
-		API: api, JournalDir: t.TempDir(), Now: func() time.Time { return now }, WorkerID: "worker-a",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	command := createCommand(now.Add(time.Minute))
-	command.Kind, command.Payload = "get_session_evidence", json.RawMessage(`{"coop_session_id":"coop/session-1"}`)
-	result, err := executor.Execute(context.Background(), command)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "/v1/sessions/coop%2Fsession-1/evidence"
-	if result.State != "succeeded" || len(api.requests) != 1 || api.requests[0].Method != "GET" || api.requests[0].Path != want {
-		t.Fatalf("evidence requests = %+v (result %+v), want one GET %s", api.requests, result, want)
-	}
-	// A read carries no idempotency key and no body: it changes nothing.
-	if api.requests[0].IdempotencyKey != "" || len(api.requests[0].Body) != 0 {
-		t.Fatalf("a read sent a mutation: %+v", api.requests[0])
-	}
-	if string(result.Resource) != evidenceFixture(t) {
-		t.Fatalf("the connector rewrote the daemon's answer: %s", result.Resource)
-	}
-}
-
 // A daemon answer that does not satisfy the evidence contract is a definite failure the
 // controller records as "not captured". Forwarding it would make a control plane guess whether a
 // missing section meant an empty network or a daemon that answered something else entirely.
-func TestExecutorRefusesSessionEvidenceOutsideItsContract(t *testing.T) {
-	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
-	for name, body := range map[string]string{
-		"unsupported version": strings.Replace(evidenceFixture(t), `"version":1`, `"version":2`, 1),
-		"unknown field":       strings.Replace(evidenceFixture(t), `"version":1,`, `"version":1,"host_path":"/home/coop",`, 1),
-		"leaked destination under a withheld projection": strings.Replace(evidenceFixture(t),
-			`"destination":null,"destination_withheld":true`, `"destination":"api.example.com","destination_withheld":true`, 1),
-		"not an object": `[]`,
-	} {
-		api := &fakeAPI{response: json.RawMessage(body)}
-		executor, err := NewExecutor(ExecutorConfig{
-			API: api, JournalDir: t.TempDir(), Now: func() time.Time { return now }, WorkerID: "worker-a",
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		command := createCommand(now.Add(time.Minute))
-		command.Kind, command.Payload = "get_session_evidence", json.RawMessage(`{"coop_session_id":"coop/session-1"}`)
-		result, err := executor.Execute(context.Background(), command)
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		if result.State != "failed" || !strings.Contains(string(result.Error), "invalid_session_evidence") {
-			t.Fatalf("%s produced %+v", name, result)
-		}
-	}
-
-	api := &fakeAPI{}
-	executor, err := NewExecutor(ExecutorConfig{
-		API: api, JournalDir: t.TempDir(), Now: func() time.Time { return now }, WorkerID: "worker-a",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	command := createCommand(now.Add(time.Minute))
-	command.Kind, command.Payload = "get_session_evidence", json.RawMessage(`{"coop_session_id":""}`)
-	result, err := executor.Execute(context.Background(), command)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.State != "failed" || len(api.requests) != 0 {
-		t.Fatalf("an evidence read with no identity = %+v (requests %d)", result, len(api.requests))
-	}
-}
-
 // A worker only advertises the evidence capability once the daemon behind it proves it. Without
 // that proof a control plane cannot tell an older worker's silence from a session that genuinely
 // observed nothing, and the two render differently.
 func TestSessionEvidenceCapabilityRequiresLiveSessionDaemonProof(t *testing.T) {
-	configured := []workerproto.Capability{
-		{Name: "responder-state", Version: "1"},
-		{Name: sessionEvidenceCapabilityName, Version: "999"},
-	}
 	api := &capabilityAPI{response: json.RawMessage(
-		`{"repository_freshness_receipt_versions":[2],"repository_source_selector_versions":[1],"session_evidence_versions":[1]}`)}
-	got := LiveCapabilities(context.Background(), api, configured)
-	if len(got) != 4 || got[0].Name != "responder-state" || got[3].Name != sessionEvidenceCapabilityName ||
-		got[3].Version != sessionEvidenceCapabilityVersion {
+		`{"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1]}`)}
+	got := LiveCapabilities(context.Background(), api)
+	if len(got) != 2 || got[1].Name != sessionEvidenceCapabilityName ||
+		got[1].Version != sessionEvidenceCapabilityVersion {
 		t.Fatalf("live capabilities = %+v", got)
 	}
 	for name, scripted := range map[string]*capabilityAPI{
@@ -121,7 +31,7 @@ func TestSessionEvidenceCapabilityRequiresLiveSessionDaemonProof(t *testing.T) {
 		"other version":     {response: json.RawMessage(`{"repository_freshness_receipt_versions":[2],"session_evidence_versions":[2]}`)},
 	} {
 		t.Run(name, func(t *testing.T) {
-			for _, capability := range LiveCapabilities(context.Background(), scripted, configured) {
+			for _, capability := range LiveCapabilities(context.Background(), scripted) {
 				if capability.Name == sessionEvidenceCapabilityName {
 					t.Fatalf("unproven evidence capability advertised: %+v", capability)
 				}

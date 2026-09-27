@@ -43,7 +43,7 @@ func setupContext(ctx context.Context, repo, name, commit string) (ws string, er
 	clone := GitCloneContext
 	if commit != "" {
 		clone = func(ctx context.Context, src, dst string) error {
-			return gitClonePinnedContext(ctx, src, dst, commit)
+			return GitClonePinnedContext(ctx, src, dst, commit)
 		}
 	}
 	if err := clone(ctx, repo, ws); err != nil {
@@ -140,6 +140,10 @@ func propagateGitEnvContext(ctx context.Context, repo, ws string) error {
 	if gi := gitGlobalOutContext(ctx, "--path", "core.excludesfile"); gi != "" {
 		if data, err := os.ReadFile(gi); err == nil && len(data) > 0 {
 			excl := filepath.Join(ws, ".git", "info", "exclude")
+			// Pinned clones disable templates, so Git has not created info/ yet.
+			if err := os.MkdirAll(filepath.Dir(excl), 0o755); err != nil {
+				return fmt.Errorf("create fork Git excludes directory: %w", err)
+			}
 			if err := appendFile(excl, append([]byte("\n# carried from your global core.excludesfile\n"), data...)); err != nil {
 				return fmt.Errorf("carry global Git excludes into fork: %w", err)
 			}

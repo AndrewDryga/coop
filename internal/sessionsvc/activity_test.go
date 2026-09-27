@@ -21,8 +21,8 @@ func newActivityTestStore(t *testing.T) (*session.Store, session.Session) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	sess, err := store.CreateSession(context.Background(), "create", session.CreateSessionRequest{
-		Target: "codex@work", Policy: "policy", Repository: t.TempDir(),
+	sess, err := store.CreateSession(context.Background(), "create", session.CreateSessionRequest{JobDocument: storedTestJobDocument, JobDigest: storedTestJobDigest,
+		Target: "codex@work", Repository: t.TempDir(),
 		Workspace: t.TempDir(), ForkName: "fork", BaseCommit: strings.Repeat("a", 40),
 	})
 	if err != nil {
@@ -225,7 +225,7 @@ func TestSessionActivityNarratesToolCall(t *testing.T) {
 func TestSessionActivityRetainsLateArgumentsAndFailureEvidence(t *testing.T) {
 	store, sess := newActivityTestStore(t)
 	activity := newSessionActivity(store, sess, "turn-1")
-	activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call","toolCallId":"exec-fea1da1f","title":"responder-state · plan_goal","kind":"mcp"}}`))
+	activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call","toolCallId":"exec-fea1da1f","title":"controller-tools · plan_goal","kind":"mcp"}}`))
 	activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call_update","toolCallId":"exec-fea1da1f","rawInput":{"arguments":{"read_only_repositories":["emisar"]}},"status":"in_progress"}}`))
 	activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call_update","toolCallId":"exec-fea1da1f","rawOutput":{"error":"unauthorized"},"status":"failed"}}`))
 	activity.close(context.Background())

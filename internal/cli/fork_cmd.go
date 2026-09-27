@@ -1043,6 +1043,12 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		spec.Ctx = ctx
 	}
 	// A remote session's network authority arrives from the daemon that started
+	controllerJob, err := box.ControllerJobFromEnvironment()
+	if err != nil {
+		return 1, err
+	}
+	spec.ControllerJob = controllerJob
+	// A remote session's network authority arrives from the daemon that started
 	// this child, and only from there. Nothing in the box can set it, and the
 	// reference still has to be proved against the owner-private store below.
 	capture, err := box.CapturedEgressFromEnvironment(a.cfg, spec)

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,23 +14,27 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 func TestSessionServiceRunReviewCleanGreenReplayAndIsolation(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	var gateCalls atomic.Int32
+	var stagedRepository string
 	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(_ context.Context, gateRepo, candidate string) (ReviewGateResult, error) {
 		gateCalls.Add(1)
-		if gateRepo != repo || candidate == repo || !pathExists(candidate) {
+		if gateRepo != stagedRepository || gateRepo == repo || candidate == gateRepo || candidate == repo || !pathExists(candidate) {
 			t.Errorf("gate inputs = (%q, %q)", gateRepo, candidate)
 		}
 		return ReviewGateResult{Configured: true, Passed: true}, nil
 	}))
 	defer service.Stop()
 	sess := createReviewSession(t, service, "clean")
+	stagedRepository = sess.Repository
 	if err := os.WriteFile(filepath.Join(sess.Workspace, "change.txt"), []byte("reviewed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +74,37 @@ func TestSessionServiceRunReviewCleanGreenReplayAndIsolation(t *testing.T) {
 	}
 	if _, err := service.RunReview(context.Background(), "review-clean", RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision + 1}); session.CodeOf(err) != session.CodeIdempotencyConflict {
 		t.Fatalf("idempotency conflict = %v", err)
+	}
+}
+
+func TestSessionServiceReviewReportsMissingIdentityAsAnErrorNotAConflict(t *testing.T) {
+	global := filepath.Join(t.TempDir(), "global")
+	if err := os.WriteFile(global, []byte("[user]\nuseConfigOnly = true\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "no-system"))
+	repo, git := gitrepo.New(t)
+	git("commit", "--allow-empty", "-qm", "base")
+	fixture := newReviewTestService(t, repo, 1<<20, nil)
+	defer fixture.Stop()
+	created := createReviewSession(t, fixture, "missing-identity")
+	if err := os.WriteFile(filepath.Join(created.Workspace, "work.txt"), []byte("work\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	sessionWorkspaceGit(t, created.Workspace, "add", "work.txt")
+	sessionWorkspaceGit(t, created.Workspace, "commit", "-qm", "work")
+	git("commit", "--allow-empty", "-qm", "default advanced")
+	for _, key := range []string{"user.name", "user.email"} {
+		if err := forkspace.GitRefCommand(context.Background(), created.Repository, "config", "--unset", key).Run(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dossier, err := fixture.RunReview(context.Background(), "missing-identity-review", RunReviewRequest{
+		SessionID: created.ID, ExpectedRevision: created.Revision,
+	})
+	if err == nil || dossier.Rebase == "conflict" {
+		t.Fatalf("missing committer identity was reported as a merge conflict: %s, %v", dossier.Rebase, err)
 	}
 }
 
@@ -189,23 +223,9 @@ func TestSessionServiceRunReviewUsesConfiguredRemoteParent(t *testing.T) {
 	seedGit("push", "-q", "origin", "main")
 	remoteHead := gitOut(seed, "rev-parse", "HEAD")
 
-	policies := testSessionPolicies(checkout)
-	policy := policies["responder"]
-	policy.Remote, policy.Branch = "origin", "main"
-	policies["responder"] = policy
-	service, err := newSessionServiceWithTestStorage(t, Config{
-		StateRoot: filepath.Join(t.TempDir(), "state"),
-		Policies:  policies,
-		ReviewGate: ReviewGateFunc(func(_ context.Context, _, _ string) (ReviewGateResult, error) {
-			return ReviewGateResult{Configured: true, Passed: true}, nil
-		}),
-		Runner: RunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
-			return turn, nil
-		}),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	service := newReviewTestService(t, seed, 1<<20, ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+		return ReviewGateResult{Configured: true, Passed: true}, nil
+	}))
 	defer service.Stop()
 	sess := createReviewSession(t, service, "remote-parent")
 	if sess.BaseCommit != remoteHead {
@@ -351,7 +371,9 @@ func TestSessionServiceRunReviewGateOutcomes(t *testing.T) {
 		wantPublish   bool
 		wantReason    string
 		wantGateError string
+		noGate        bool
 	}{
+		{name: "absent", noGate: true, wantGate: ReviewGateNone, wantReason: "gate_not_configured"},
 		{name: "none", gate: ReviewGateResult{}, wantGate: ReviewGateNone, wantReason: "gate_not_configured"},
 		{name: "red", gate: ReviewGateResult{Configured: true}, wantGate: ReviewGateFailed, wantReason: "gate_failed"},
 		{name: "startup", gate: ReviewGateResult{Configured: true, StartupError: "runtime unavailable\nsecret"}, wantGate: ReviewGateStartupError, wantReason: "gate_startup_error", wantGateError: "runtime unavailable secret"},
@@ -363,6 +385,9 @@ func TestSessionServiceRunReviewGateOutcomes(t *testing.T) {
 			service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
 				return tc.gate, nil
 			}))
+			if tc.noGate {
+				service.reviewGate = nil
+			}
 			defer service.Stop()
 			sess := createReviewSession(t, service, tc.name)
 			if err := os.WriteFile(filepath.Join(sess.Workspace, "change.txt"), []byte("reviewed\n"), 0o644); err != nil {
@@ -552,17 +577,19 @@ func TestSessionReviewScratchIsZeroedOnFailedPrepare(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	tmp := t.TempDir()
-	t.Setenv("TMPDIR", tmp)
+	service := &Service{stateRoot: tmp}
 
 	// Fails after the scratch clone exists, which is the only case where the result could leak a path.
-	scratch, err := prepareForkReviewCandidateFromIntent(sessionReviewIntent{Repository: repo, SourceBranch: "not a branch"})
+	scratch, err := service.prepareForkReviewCandidateFromIntent(context.Background(), "op-invalid", sessionReviewIntent{
+		Repository: repo, SourceBranch: "main", ParentHead: gitOut(repo, "rev-parse", "HEAD"), ParentTree: strings.Repeat("0", 40),
+	})
 	if err == nil {
-		t.Fatal("an invalid source branch should fail the prepare")
+		t.Fatal("a mismatched parent tree should fail the prepare")
 	}
 	if scratch != (reviewScratch{}) {
 		t.Fatalf("failed prepare returned %+v, want the zero value", scratch)
 	}
-	assertReviewScratchEmpty(t, tmp)
+	assertReviewScratchEmpty(t, filepath.Join(tmp, "review-candidates", ".staging"))
 }
 
 func TestSessionServiceRunReviewResumesFrozenRunningAndUncertainIntent(t *testing.T) {
@@ -708,6 +735,8 @@ func TestSessionServiceRunReviewConcurrentReplayWaitsForFirst(t *testing.T) {
 	}))
 	defer service.Stop()
 	sess := createReviewSession(t, service, "concurrent")
+	unblock := sync.OnceFunc(func() { close(release) })
+	defer unblock()
 	if err := os.WriteFile(filepath.Join(sess.Workspace, "change.txt"), []byte("reviewed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -727,7 +756,13 @@ func TestSessionServiceRunReviewConcurrentReplayWaitsForFirst(t *testing.T) {
 		dossier, err := service.RunReview(context.Background(), "review-concurrent", req)
 		results <- result{dossier: dossier, err: err}
 	}()
-	<-started
+	select {
+	case <-started:
+	case early := <-results:
+		t.Fatalf("review ended before gate entry: %+v, %v", early.dossier, early.err)
+	case <-time.After(wait.Deadline):
+		t.Fatal("review did not enter gate")
+	}
 	go func() {
 		defer callers.Done()
 		dossier, err := service.RunReview(context.Background(), "review-concurrent", req)
@@ -738,7 +773,7 @@ func TestSessionServiceRunReviewConcurrentReplayWaitsForFirst(t *testing.T) {
 		t.Fatalf("duplicate review returned before the first completed: %+v", got)
 	case <-time.After(50 * time.Millisecond):
 	}
-	close(release)
+	unblock()
 	callers.Wait()
 	close(results)
 
@@ -754,7 +789,7 @@ func TestSessionServiceRunReviewConcurrentReplayWaitsForFirst(t *testing.T) {
 	}
 }
 
-func TestSessionServiceRunReviewKeepsBoundedPreviewAndCompleteArtifact(t *testing.T) {
+func TestSessionServiceRunReviewKeepsBoundedPreviewAndExactCandidate(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	service := newReviewTestService(t, repo, 48, ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
@@ -762,7 +797,7 @@ func TestSessionServiceRunReviewKeepsBoundedPreviewAndCompleteArtifact(t *testin
 	}))
 	defer service.Stop()
 	sess := createReviewSession(t, service, "truncated")
-	if err := os.WriteFile(filepath.Join(sess.Workspace, "large.txt"), []byte(strings.Repeat("large review line\n", 32)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(sess.Workspace, "large.txt"), []byte(strings.Repeat("large review line\n", (66<<20)/18)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	sessionWorkspaceGit(t, sess.Workspace, "add", "large.txt")
@@ -770,28 +805,18 @@ func TestSessionServiceRunReviewKeepsBoundedPreviewAndCompleteArtifact(t *testin
 	dossier, err := service.RunReview(context.Background(), "review-truncated", RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
 	if err != nil || !dossier.PatchTruncated || !dossier.Publishable ||
 		len(dossier.NotPublishableReasons) != 0 || len(dossier.Patch) > 48 ||
-		dossier.PatchArtifactID == "" || dossier.PatchDigest == "" ||
-		dossier.PatchBytes <= int64(len(dossier.Patch)) {
+		!dossier.CandidateRetained {
 		t.Fatalf("truncated review = %+v, err=%v", dossier, err)
 	}
-	file, artifactDossier, err := service.OpenReviewPatch(
-		context.Background(),
-		dossier.OperationID,
-	)
+	retained, artifactDossier, err := service.retainedReviewCandidate(context.Background(), dossier.OperationID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	artifact, readErr := io.ReadAll(file)
-	_ = file.Close()
-	if readErr != nil || int64(len(artifact)) != dossier.PatchBytes ||
-		artifactDossier.PatchDigest != dossier.PatchDigest ||
-		!bytes.Contains(artifact, []byte("large review line")) {
-		t.Fatalf(
-			"review artifact bytes=%d dossier=%+v read=%v",
-			len(artifact),
-			artifactDossier,
-			readErr,
-		)
+	if !reflect.DeepEqual(artifactDossier, dossier) || !strings.Contains(gitOut(retained, "show", dossier.CandidateHead+":large.txt"), "large review line") {
+		t.Fatal("retained candidate does not match the complete reviewed result")
+	}
+	if pathExists(filepath.Join(retained, "large.txt")) {
+		t.Fatal("retaining a candidate duplicated its working tree")
 	}
 	if data, err := json.Marshal(dossier); err != nil || len(data) > session.MaxOperationResultBytes {
 		t.Fatalf("truncated dossier size = %d, err=%v", len(data), err)
@@ -830,11 +855,28 @@ func TestSessionReviewArtifactIsRemovedWithDiscardedSession(t *testing.T) {
 	}
 	artifactPath := filepath.Join(
 		service.stateRoot,
-		"review-artifacts",
-		dossier.OperationID+".diff",
+		"review-candidates",
+		dossier.OperationID,
 	)
 	if !pathExists(artifactPath) {
 		t.Fatal("review artifact was not created")
+	}
+	// A second review retained its candidate but lost its completion write.
+	// Ownership comes from the durable intent, not a completed resource receipt.
+	pending, _, err := service.Store().ReserveOperation(context.Background(), "RunReview", "interrupted-artifact-gc", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, _ := json.Marshal(sessionReviewIntent{SessionID: sess.ID})
+	if err := service.Store().MarkOperationRunning(context.Background(), pending.ID, intent); err != nil {
+		t.Fatal(err)
+	}
+	pendingPath, err := service.reviewCandidatePath(pending.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(pendingPath, 0700); err != nil {
+		t.Fatal(err)
 	}
 	closed, err := service.Close(
 		context.Background(),
@@ -867,28 +909,27 @@ func TestSessionReviewArtifactIsRemovedWithDiscardedSession(t *testing.T) {
 	if pathExists(artifactPath) {
 		t.Fatal("review artifact remained after session discard")
 	}
+	if pathExists(pendingPath) {
+		t.Fatal("interrupted review candidate remained after discard")
+	}
+	if op, err := service.Store().GetOperationByID(context.Background(), pending.ID); err != nil || op.State != session.OperationFailed {
+		t.Fatal("discard did not settle interrupted review custody")
+	}
 }
 
-func newReviewTestService(t *testing.T, repo string, maxPatchBytes int, gate ReviewGate) *Service {
+func newReviewTestService(t *testing.T, repo string, maxPatchBytes int, gate ReviewGate) *sessionFixture {
 	t.Helper()
-	policies := testSessionPolicies(repo)
-	policies["responder"] = Policy{
-		Name: "responder", Repository: repo, Targets: mustTargets("codex@work"), MaxTurns: 10,
-		MaxQueuedTurns: 5, MaxQueuedBytes: 1 << 20, MaxPatchBytes: maxPatchBytes, TurnTimeout: time.Second,
-	}
-	service, err := newSessionServiceWithTestStorage(t, Config{
-		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: policies, ReviewGate: gate,
+	service := newSessionFixture(t, Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"), ReviewGate: gate,
 		Runner: RunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) { return turn, nil }),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	}, repo)
+	service.Job.Limits.MaxPatchBytes = maxPatchBytes
 	return service
 }
 
-func createReviewSession(t *testing.T, service *Service, task string) session.Session {
+func createReviewSession(t *testing.T, service *sessionFixture, task string) session.Session {
 	t.Helper()
-	sess, err := service.CreateRemoteSession(context.Background(), "create-"+task, CreateRemoteSessionRequest{Policy: "responder", Task: task})
+	sess, err := service.CreateRemoteSession(context.Background(), "create-"+task, service.request(t, task))
 	if err != nil {
 		t.Fatal(err)
 	}

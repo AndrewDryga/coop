@@ -437,9 +437,9 @@ func TestMCPSnapshotsAreWrittenOnlyAfterTheBrokerRewrite(t *testing.T) {
 
 // A session's Responder binding is one more bearer server, so a filtered session brokers its state
 // tools like any other server and keeps the Responder token out of the box.
-func TestFilteredSessionBrokersTheResponderBinding(t *testing.T) {
-	cfg, spec := brokerFixture(t, mcp.ResponderStateTokenEnv+"=responder-secret\n")
-	snapshot, err := mcp.BindResponderState(nil, "https://responder.example/v1/state-tools/mcp")
+func TestFilteredSessionBrokersTheControllerTools(t *testing.T) {
+	cfg, spec := brokerFixture(t, mcp.ControllerToolsTokenEnv+"=responder-secret\n")
+	snapshot, err := mcp.BindControllerTools(nil, "https://responder.example/v1/state-tools/mcp")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -450,7 +450,7 @@ func TestFilteredSessionBrokersTheResponderBinding(t *testing.T) {
 	if route := plan.gatewayRoutes()[0]; route.Upstream != "responder.example" || route.Path != "/v1/state-tools/mcp" {
 		t.Fatalf("Responder route = %+v", route)
 	}
-	if names, err := mcp.CredentialReferences(snapshot); err != nil || !slices.Contains(names, mcp.ResponderStateTokenEnv) {
+	if names, err := mcp.CredentialReferences(snapshot); err != nil || !slices.Contains(names, mcp.ControllerToolsTokenEnv) {
 		t.Fatalf("scrub names = %q, %v", names, err)
 	}
 }

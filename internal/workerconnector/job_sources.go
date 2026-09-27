@@ -1,0 +1,606 @@
+package workerconnector
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/workerproto"
+)
+
+var ErrJobSourceIntegrity = errors.New("job source identity or working tree does not match")
+
+// The credential is transient host-side transport data, never part of the durable job.
+type JobSourceGrant struct {
+	RepositoryRef      string    `json:"repository_ref"`
+	GitHubRepository   string    `json:"github_repository"`
+	GitHubRepositoryID int64     `json:"github_repository_id"`
+	Token              string    `json:"token"`
+	ExpiresAt          time.Time `json:"expires_at"`
+}
+
+type JobSourceTransport interface {
+	FetchJobSourceGrant(context.Context, string, workerproto.RepositoryIdentity) (JobSourceGrant, error)
+}
+
+type JobSourceStager interface {
+	Stage(context.Context, string, workerproto.JobSource) error
+}
+
+type privateJobSourceStager struct {
+	transport JobSourceTransport
+	stateRoot string
+	// Tests substitute a local Git remote; production always derives github.com from the job.
+	remoteForTest           string
+	lfsEndpointForTest      string
+	submoduleRemotesForTest map[string]string
+	lookupTimeoutForTest    time.Duration
+	gitForTest              func(context.Context, string, string, string, ...string) (string, error)
+}
+
+func NewJobSourceStager(transport JobSourceTransport, stateRoot string) (*privateJobSourceStager, error) {
+	if transport == nil || !filepath.IsAbs(stateRoot) {
+		return nil, errors.New("job source stager needs a transport and absolute private state root")
+	}
+	return &privateJobSourceStager{transport: transport, stateRoot: stateRoot}, nil
+}
+
+func (e *Executor) stageCreateJobSources(ctx context.Context, body []byte) error {
+	var payload struct {
+		Job json.RawMessage `json:"job"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return fmt.Errorf("%w: invalid create body", ErrRequestRejected)
+	}
+	if len(payload.Job) == 0 {
+		return nil
+	}
+	job, err := workerproto.DecodeJobSpec(payload.Job)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrRequestRejected, err)
+	}
+	if job.Source == nil && len(job.Companions) == 0 {
+		return nil
+	}
+	if e.jobSourceStager == nil {
+		return fmt.Errorf("%w: job source transfer is not configured", ErrRequestRejected)
+	}
+	var sources []workerproto.JobSource
+	if job.Source != nil {
+		sources = append(sources, *job.Source)
+	}
+	for _, companion := range job.Companions {
+		sources = append(sources, companion.Source)
+	}
+	for _, source := range sources {
+		if err := e.jobSourceStager.Stage(ctx, job.JobRef, source); err != nil {
+			if errors.Is(err, ErrJobSourceIntegrity) {
+				return fmt.Errorf("%w: %v", ErrRequestRejected, err)
+			}
+			return classifyArtifactFetch(err, "fetch job source")
+		}
+	}
+	return nil
+}
+
+func (s *privateJobSourceStager) Stage(ctx context.Context, jobRef string, source workerproto.JobSource) error {
+	ctx, err := withSourceCredentials(ctx, s.stateRoot)
+	if err != nil {
+		return err
+	}
+	key, err := source.StagingKey()
+	if err != nil {
+		return err
+	}
+	if err := requirePrivateDirectory(s.stateRoot); err != nil {
+		return err
+	}
+	parent := filepath.Join(s.stateRoot, "job-sources")
+	if err := os.Mkdir(parent, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("create private job source directory: %w", err)
+	}
+	if err := requirePrivateDirectory(parent); err != nil {
+		return err
+	}
+	final := filepath.Join(parent, key)
+	if _, err := os.Lstat(final); err == nil {
+		if err := verifyStagedJobSource(ctx, final, source); err != nil {
+			return err
+		}
+		return configureSourceGitIdentity(ctx, filepath.Join(final, "repository"))
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	grant, err := s.sourceGrant(ctx, jobRef, source.RepositoryIdentity())
+	if err != nil {
+		return err
+	}
+	temporary, err := os.MkdirTemp(parent, ".source-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(temporary)
+	if err := os.Chmod(temporary, 0o700); err != nil {
+		return err
+	}
+	remote, protocol := s.remote(source.RepositoryIdentity())
+	if err := fetchVerifiedSource(ctx, filepath.Join(temporary, "repository"), remote, protocol, grant.Token, source); err != nil {
+		return err
+	}
+	if err := s.fetchLFS(ctx, filepath.Join(temporary, "repository"), source.RepositoryIdentity(), protocol, grant.Token,
+		source.Binding.SelectedCommit, source.Binding.DefaultCommit); err != nil {
+		return err
+	}
+	if err := s.stageSubmodules(ctx, jobRef, filepath.Join(temporary, "repository"), source.Binding.SelectedCommit, source.Submodules); err != nil {
+		return err
+	}
+	if err := verifySourceRepository(ctx, filepath.Join(temporary, "repository"), source); err != nil {
+		return err
+	}
+	document, err := json.Marshal(source)
+	if err != nil {
+		return err
+	}
+	receipt, err := os.OpenFile(filepath.Join(temporary, "source.json"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	_, writeErr := receipt.Write(document)
+	syncErr := receipt.Sync()
+	closeErr := receipt.Close()
+	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
+		return err
+	}
+	if err := os.Rename(temporary, final); err != nil {
+		if _, statErr := os.Lstat(final); statErr == nil {
+			return verifyStagedJobSource(ctx, final, source)
+		}
+		return fmt.Errorf("publish private job source: %w", err)
+	}
+	return nil
+}
+
+func (s *privateJobSourceStager) remote(source workerproto.RepositoryIdentity) (string, string) {
+	if remote := s.submoduleRemotesForTest[source.GitHubRepository]; remote != "" {
+		return remote, "file"
+	}
+	if s.remoteForTest != "" {
+		return s.remoteForTest, "file"
+	}
+	return "https://github.com/" + source.GitHubRepository + ".git", "https"
+}
+
+func (s *privateJobSourceStager) sourceGrant(ctx context.Context, jobRef string, source workerproto.RepositoryIdentity) (JobSourceGrant, error) {
+	grant, err := s.transport.FetchJobSourceGrant(ctx, jobRef, source)
+	if err != nil {
+		return JobSourceGrant{}, err
+	}
+	if grant.RepositoryRef != source.RepositoryRef || grant.GitHubRepository != source.GitHubRepository ||
+		grant.GitHubRepositoryID != source.GitHubRepositoryID || len(grant.Token) == 0 || len(grant.Token) > 4096 ||
+		!grant.ExpiresAt.After(time.Now().Add(30*time.Second)) {
+		return JobSourceGrant{}, ErrJobSourceIntegrity
+	}
+	return grant, nil
+}
+
+// RefreshDefault proves the current default without rewriting the frozen source. Each call
+// obtains current job authority: review checks again after its gate to detect a moving parent.
+func (s *privateJobSourceStager) RefreshDefault(ctx context.Context, jobRef string, source workerproto.JobSource, repository string) (string, error) {
+	ctx, err := withSourceCredentials(ctx, s.stateRoot)
+	if err != nil {
+		return "", err
+	}
+	key, err := source.StagingKey()
+	if err != nil {
+		return "", err
+	}
+	parent := filepath.Join(s.stateRoot, "job-sources")
+	directory := filepath.Join(parent, key)
+	if repository != filepath.Join(directory, "repository") {
+		return "", ErrJobSourceIntegrity
+	}
+	for _, path := range []string{s.stateRoot, parent} {
+		if err := requirePrivateDirectory(path); err != nil {
+			return "", err
+		}
+	}
+	if err := verifyStagedJobSource(ctx, directory, source); err != nil {
+		return "", err
+	}
+	grant, err := s.sourceGrant(ctx, jobRef, source.RepositoryIdentity())
+	if err != nil {
+		return "", err
+	}
+	run, lookupTimeout := sourceGitValue, 30*time.Second
+	if s.gitForTest != nil {
+		run = s.gitForTest
+	}
+	if s.lookupTimeoutForTest != 0 {
+		lookupTimeout = s.lookupTimeoutForTest
+	}
+	remote, protocol := s.remote(source.RepositoryIdentity())
+	lookupCtx, cancel := context.WithTimeout(ctx, lookupTimeout)
+	resolved, err := run(lookupCtx, repository, grant.Token, protocol, "ls-remote", "--exit-code", "--refs", "--", remote, source.Binding.DefaultRef)
+	cancel()
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Split(resolved, "\t")
+	if len(fields) != 2 || fields[1] != source.Binding.DefaultRef {
+		return "", ErrJobSourceIntegrity
+	}
+	head := fields[0]
+	decoded, err := hex.DecodeString(head)
+	if err != nil || len(decoded) != 20 || hex.EncodeToString(decoded) != head {
+		return "", ErrJobSourceIntegrity
+	}
+	if _, err := run(ctx, repository, "", "", "cat-file", "-e", head+"^{commit}"); err != nil {
+		// The lookup's budget is over. A progressing transfer has no total-time cap;
+		// HTTP low-speed bounds below abort stalls, and the owning operation can cancel it.
+		if _, err := run(ctx, repository, grant.Token, protocol, "fetch", "--quiet", "--no-write-fetch-head", "--no-tags", "--", remote, head); err != nil {
+			return "", err
+		}
+	}
+	if actual, err := run(ctx, repository, "", "", "rev-parse", head+"^{commit}"); err != nil || actual != head {
+		return "", ErrJobSourceIntegrity
+	}
+	if err := s.fetchLFS(ctx, repository, source.RepositoryIdentity(), protocol, grant.Token, source.Binding.SelectedCommit, head); err != nil {
+		return "", err
+	}
+	if err := verifyStagedJobSource(ctx, directory, source); err != nil {
+		return "", err
+	}
+	return head, nil
+}
+
+func fetchVerifiedSource(ctx context.Context, destination, remote, protocol, token string, source workerproto.JobSource) error {
+	if err := runSourceGit(ctx, "", token, protocol, "init", "--quiet", "--template=", "--object-format=sha1", destination); err != nil {
+		return err
+	}
+	if err := os.Chmod(destination, 0o700); err != nil {
+		return err
+	}
+	if err := configureSourceGitIdentity(ctx, destination); err != nil {
+		return err
+	}
+	if err := runSourceGit(ctx, destination, token, protocol, "remote", "add", "origin", remote); err != nil {
+		return err
+	}
+	binding := source.Binding
+	if err := runSourceGit(ctx, destination, token, protocol, "fetch", "--quiet", "--no-tags", "origin", "+"+binding.DefaultRef+":refs/remotes/origin/job-default"); err != nil {
+		return err
+	}
+	if actual, err := sourceGitValue(ctx, destination, token, protocol, "rev-parse", "refs/remotes/origin/job-default^{commit}"); err != nil || actual != binding.DefaultCommit {
+		return ErrJobSourceIntegrity
+	}
+	if selected := binding.SelectedRefValue(); selected != "" && selected != binding.DefaultRef {
+		if err := runSourceGit(ctx, destination, token, protocol, "fetch", "--quiet", "--no-tags", "origin", "+"+selected+":refs/remotes/origin/job-selected"); err != nil {
+			return err
+		}
+		if actual, err := sourceGitValue(ctx, destination, token, protocol, "rev-parse", "refs/remotes/origin/job-selected^{commit}"); err != nil || actual != binding.SelectedCommit {
+			return ErrJobSourceIntegrity
+		}
+	} else if selected == "" {
+		if err := runSourceGit(ctx, destination, token, protocol, "fetch", "--quiet", "--no-tags", "origin", binding.SelectedCommit); err != nil {
+			return err
+		}
+	}
+	if actual, err := sourceGitValue(ctx, destination, token, protocol, "merge-base", binding.DefaultCommit, binding.SelectedCommit); err != nil || actual != binding.BaseCommit {
+		return ErrJobSourceIntegrity
+	}
+	if actual, err := sourceGitValue(ctx, destination, token, protocol, "rev-parse", binding.SelectedCommit+"^{tree}"); err != nil || actual != binding.AdmittedTree {
+		return ErrJobSourceIntegrity
+	}
+	if err := runSourceGit(ctx, destination, token, protocol, "checkout", "--quiet", "--detach", binding.SelectedCommit); err != nil {
+		return err
+	}
+	return verifySourceHead(ctx, destination, binding.SelectedCommit, binding.AdmittedTree)
+}
+
+func (s *privateJobSourceStager) stageSubmodules(ctx context.Context, jobRef, repository, commit string, modules []workerproto.JobSubmodule) error {
+	if err := verifySourceGitlinks(ctx, repository, commit, modules); err != nil {
+		return err
+	}
+	for _, module := range modules {
+		directory, err := forkspace.SubmoduleDirectory(repository, module.Path)
+		if err != nil {
+			return ErrJobSourceIntegrity
+		}
+		entries, err := os.ReadDir(directory)
+		if err != nil || len(entries) != 0 {
+			return ErrJobSourceIntegrity
+		}
+		grant, err := s.sourceGrant(ctx, jobRef, module.RepositoryIdentity())
+		if err != nil {
+			return err
+		}
+		remote, protocol := s.remote(module.RepositoryIdentity())
+		if err := runSourceGit(ctx, "", "", protocol, "init", "--quiet", "--template=", "--object-format=sha1", directory); err != nil {
+			return err
+		}
+		if err := os.Chmod(directory, 0o700); err != nil {
+			return err
+		}
+		if err := configureSourceGitIdentity(ctx, directory); err != nil {
+			return err
+		}
+		if err := runSourceGit(ctx, directory, "", protocol, "remote", "add", "origin", remote); err != nil {
+			return err
+		}
+		if err := runSourceGit(ctx, directory, grant.Token, protocol, "fetch", "--quiet", "--no-tags", "origin", module.Commit); err != nil {
+			return err
+		}
+		if err := runSourceGit(ctx, directory, "", "", "checkout", "--quiet", "--detach", module.Commit); err != nil {
+			return err
+		}
+		if err := verifySourceHead(ctx, directory, module.Commit, module.Tree); err != nil {
+			return err
+		}
+		if err := s.fetchLFS(ctx, directory, module.RepositoryIdentity(), protocol, grant.Token, module.Commit); err != nil {
+			return err
+		}
+		if err := s.stageSubmodules(ctx, jobRef, directory, module.Commit, module.Submodules); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *privateJobSourceStager) fetchLFS(ctx context.Context, repository string, identity workerproto.RepositoryIdentity, protocol, token string, commits ...string) error {
+	if _, err := exec.LookPath("git-lfs"); err != nil {
+		return errors.New("git-lfs is required on the worker to fetch complete working trees")
+	}
+	endpoint := "https://github.com/" + identity.GitHubRepository + ".git/info/lfs"
+	if s.lfsEndpointForTest != "" {
+		endpoint = s.lfsEndpointForTest
+	}
+	args := []string{
+		"-c", "lfs.url=" + endpoint, "-c", "remote.origin.lfsurl=" + endpoint,
+		"-c", "lfs.basictransfersonly=true", "-c", "lfs.standalonetransferagent=",
+		"-c", "lfs.remote.autodetect=false", "-c", "lfs.remote.searchall=false",
+		"-c", "lfs.transfer.enablehrefrewrite=false", "-c", "lfs.skipdownloaderrors=false",
+		"-c", "lfs.fetchrecentalways=false", "lfs", "fetch", "-I", "", "-X", "", "origin",
+	}
+	refs := slices.Clone(commits)
+	slices.Sort(refs)
+	args = append(args, slices.Compact(refs)...)
+	if err := runSourceGit(ctx, repository, token, protocol, args...); err != nil {
+		return errors.New("job source LFS transfer failed")
+	}
+	return forkspace.HydrateLFS(ctx, repository, commits[0])
+}
+
+func verifySourceGitlinks(ctx context.Context, repository, commit string, modules []workerproto.JobSubmodule) error {
+	links, err := forkspace.Gitlinks(ctx, repository, commit)
+	if err != nil || len(links) != len(modules) {
+		return ErrJobSourceIntegrity
+	}
+	for _, module := range modules {
+		if links[module.Path] != module.Commit {
+			return ErrJobSourceIntegrity
+		}
+	}
+	return nil
+}
+
+func configureSourceGitIdentity(ctx context.Context, repository string) error {
+	// Automated work must not depend on (or impersonate) the worker operator's
+	// global Git identity. Forks and review scratch inherit these explicit values.
+	for _, setting := range [][2]string{{"user.name", "Coop"}, {"user.email", "coop@localhost"}} {
+		if err := runSourceGit(ctx, repository, "", "", "config", setting[0], setting[1]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runSourceGit(ctx context.Context, directory, token, protocol string, args ...string) error {
+	_, err := sourceGitValue(ctx, directory, token, protocol, args...)
+	return err
+}
+
+func sourceGitValue(ctx context.Context, directory, token, protocol string, args ...string) (string, error) {
+	output, err := sourceGitBytes(ctx, directory, token, protocol, args...)
+	return strings.TrimSpace(string(output)), err
+}
+
+func sourceGitBytes(ctx context.Context, directory, token, protocol string, args ...string) ([]byte, error) {
+	var output sourceGitOutput
+	err := sourceGitIO(ctx, directory, token, protocol, nil, &output, args...)
+	if output.exceeded {
+		return nil, ErrJobSourceIntegrity
+	}
+	return output.buf.Bytes(), err
+}
+
+func sourceGitIO(ctx context.Context, directory, token, protocol string, input io.Reader, output io.Writer, args ...string) (returnErr error) {
+	command := sourceGitCommand(ctx, directory, protocol, args...)
+	if token != "" {
+		// Git LFS includes every GIT_* environment value in diagnostic logs.
+		// A transient owner-only config outside all checkouts keeps credentials
+		// out of those logs as well as argv, repository config and model mounts.
+		directory, _ := ctx.Value(sourceCredentialDirectory{}).(string)
+		if directory == "" {
+			return errors.New("authenticated host Git requires private credential storage")
+		}
+		if err := requirePrivateDirectory(directory); err != nil {
+			return err
+		}
+		credential, err := os.CreateTemp(directory, "git-")
+		if err != nil {
+			return err
+		}
+		defer func() { returnErr = errors.Join(returnErr, os.Remove(credential.Name())) }()
+		header := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
+		_, writeErr := fmt.Fprintf(credential, "[http \"https://github.com/\"]\nextraHeader = Authorization: Basic %s\n", header)
+		if err := errors.Join(writeErr, credential.Close()); err != nil {
+			return err
+		}
+		for i, value := range command.Env {
+			if strings.HasPrefix(value, "GIT_CONFIG_GLOBAL=") {
+				command.Env[i] = "GIT_CONFIG_GLOBAL=" + credential.Name()
+			}
+		}
+	}
+	command.Stdin, command.Stdout = input, output
+	err := command.Run()
+	if errors.Is(err, exec.ErrWaitDelay) && command.Process != nil {
+		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+	}
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return errors.New("host Git operation failed")
+	}
+	return nil
+}
+
+type sourceGitOutput struct {
+	buf      bytes.Buffer
+	exceeded bool
+}
+
+func (b *sourceGitOutput) Len() int { return b.buf.Len() }
+
+func (b *sourceGitOutput) Write(data []byte) (int, error) {
+	if len(data) > 4096-b.Len() {
+		b.exceeded = true
+		return 0, ErrJobSourceIntegrity
+	}
+	return b.buf.Write(data)
+}
+
+func sourceGitCommand(ctx context.Context, directory, protocol string, args ...string) *exec.Cmd {
+	args = append(append([]string{}, forkspace.GitHardening...), append([]string{"-c", "submodule.recurse=false", "-c", "fetch.recurseSubmodules=false"}, args...)...)
+	if directory != "" {
+		args = append([]string{"-C", directory}, args...)
+	}
+	command := exec.CommandContext(ctx, "git", args...)
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Cancel = func() error {
+		err := syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+		if errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+		return err
+	}
+	command.WaitDelay = time.Second
+	command.Env = []string{
+		"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_TEMPLATE_DIR=/dev/null", "GIT_TERMINAL_PROMPT=0", "GIT_LFS_SKIP_SMUDGE=1",
+		"GIT_ATTR_NOSYSTEM=1",
+		"GIT_ALLOW_PROTOCOL=" + protocol, "GIT_CONFIG_COUNT=3",
+		"GIT_CONFIG_KEY_0=credential.helper", "GIT_CONFIG_VALUE_0=",
+		"GIT_CONFIG_KEY_1=http.lowSpeedLimit", "GIT_CONFIG_VALUE_1=1",
+		"GIT_CONFIG_KEY_2=http.lowSpeedTime", "GIT_CONFIG_VALUE_2=120",
+	}
+	return command
+}
+
+func requirePrivateDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
+		return errors.New("job source directory is not private")
+	}
+	if stat, ok := info.Sys().(*syscall.Stat_t); !ok || stat.Uid != uint32(os.Geteuid()) {
+		return errors.New("job source directory has another owner")
+	}
+	return nil
+}
+
+func verifyStagedJobSource(ctx context.Context, directory string, source workerproto.JobSource) error {
+	if err := requirePrivateDirectory(directory); err != nil {
+		return err
+	}
+	receiptPath := filepath.Join(directory, "source.json")
+	info, err := os.Lstat(receiptPath)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() > 256<<10 {
+		return ErrJobSourceIntegrity
+	}
+	document, err := os.ReadFile(receiptPath)
+	if err != nil || len(document) > 256<<10 {
+		return ErrJobSourceIntegrity
+	}
+	var recorded workerproto.JobSource
+	if err := json.Unmarshal(document, &recorded); err != nil {
+		return ErrJobSourceIntegrity
+	}
+	expected, _ := json.Marshal(source)
+	actual, _ := json.Marshal(recorded)
+	if string(actual) != string(expected) {
+		return ErrJobSourceIntegrity
+	}
+	return verifySourceRepository(ctx, filepath.Join(directory, "repository"), source)
+}
+
+func verifySourceRepository(ctx context.Context, repository string, source workerproto.JobSource) error {
+	return verifySourceTree(ctx, repository, source.Binding.SelectedCommit, source.Binding.AdmittedTree, source.Submodules)
+}
+
+func verifySourceTree(ctx context.Context, repository, commit, tree string, modules []workerproto.JobSubmodule) error {
+	if err := verifySourceHead(ctx, repository, commit, tree); err != nil {
+		return err
+	}
+	if err := verifySourceGitlinks(ctx, repository, commit, modules); err != nil {
+		return err
+	}
+	if err := forkspace.VerifyLFS(ctx, repository, commit); err != nil {
+		return ErrJobSourceIntegrity
+	}
+	for _, module := range modules {
+		directory, err := forkspace.SubmoduleDirectory(repository, module.Path)
+		if err != nil {
+			return ErrJobSourceIntegrity
+		}
+		if err := verifySourceTree(ctx, directory, module.Commit, module.Tree, module.Submodules); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func verifySourceHead(ctx context.Context, repository, commit, tree string) error {
+	if err := requirePrivateDirectory(repository); err != nil {
+		return ErrJobSourceIntegrity
+	}
+	for _, check := range []struct {
+		args     []string
+		expected string
+	}{
+		{[]string{"rev-parse", "HEAD"}, commit},
+		{[]string{"rev-parse", "HEAD^{tree}"}, tree},
+	} {
+		actual, err := sourceGitValue(ctx, repository, "", "https", check.args...)
+		if err != nil || actual != check.expected {
+			return ErrJobSourceIntegrity
+		}
+	}
+	command := sourceGitCommand(ctx, repository, "", "-c", "core.attributesFile=/dev/null",
+		"status", "--porcelain=v2", "--untracked-files=all", "--no-renames", "--ignore-submodules=all", "-z")
+	var status sourceGitOutput
+	err := forkspace.RunLFSStatus(ctx, repository, command, &status, func(limit int, args ...string) ([]byte, error) {
+		output, err := sourceGitBytes(ctx, repository, "", "", args...)
+		if len(output) > limit {
+			return nil, ErrJobSourceIntegrity
+		}
+		return output, err
+	})
+	if err != nil || status.Len() != 0 {
+		return ErrJobSourceIntegrity
+	}
+	return nil
+}

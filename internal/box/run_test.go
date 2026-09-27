@@ -729,6 +729,36 @@ func TestRunUsesTrustedPolicyRepo(t *testing.T) {
 	}
 }
 
+func TestControllerJobRunIgnoresRepositoryBoxSettings(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// This would fail project.Load and could otherwise alter network, env, services, and limits.
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte("box: [not a box]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"), []byte("services:\n  database:\n    image: postgres:18\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "open", AutoUp: true, ServicesNet: "shared-services"}
+	spec := RunSpec{Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"},
+		Batch: true, Quiet: true, ControllerJob: true, Serve: true, Network: true, Cache: true}
+	if code, err := Run(cfg, recorderRuntime(t, recorder), spec); err != nil || code != 0 {
+		t.Fatalf("controller job Run = %d, %v", code, err)
+	}
+	args, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"shared-services", "up -d", "coop-cache", "postgres:18", "--publish"} {
+		if strings.Contains(string(args), forbidden) {
+			t.Fatalf("controller job inherited repository/host setting %q: %s", forbidden, args)
+		}
+	}
+}
+
 func TestRunAppliesTrustedReviewEnvironment(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {

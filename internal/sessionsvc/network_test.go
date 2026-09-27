@@ -2,12 +2,7 @@ package sessionsvc
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,122 +11,16 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/egress"
-	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/session"
-	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
-
-const testSessionPolicyHeader = "version: 1\npolicies:\n  responder:\n    repository: %s\n" +
-	"    target: codex@work\n    max_turns: 10\n    max_queued_turns: 5\n" +
-	"    max_queued_bytes: 4096\n    max_patch_bytes: 8192\n    turn_timeout: 1h\n"
-
-func parseNetworkPolicy(t *testing.T, repo, block string) (Policy, error) {
-	t.Helper()
-	body := strings.Replace(testSessionPolicyHeader, "%s", repo, 1) + block
-	policies, err := parseSessionPolicies([]byte(body), nil)
-	if err != nil {
-		return Policy{}, err
-	}
-	return policies["responder"], nil
-}
-
-// The `egress:` block is operator authority written by hand, so it is parsed strictly: an unknown
-// key is a typo that would otherwise silently grant nothing, and rules under a posture that cannot
-// enforce them are a contradiction, not a preference.
-func TestSessionPolicyEgressParsesStrictly(t *testing.T) {
-	repo := realGitRepoFixture(t)
-	for name, test := range map[string]struct {
-		block  string
-		reject string
-	}{
-		"unknown field": {
-			block:  "    egress:\n      mode: filtered\n      allow: [example.com]\n",
-			reject: "field allow not found",
-		},
-		"missing mode": {
-			block:  "    egress:\n      export_destinations: true\n",
-			reject: "egress.mode is required",
-		},
-		"invalid mode": {
-			block:  "    egress:\n      mode: partial\n",
-			reject: "egress.mode",
-		},
-		"rules without filtered": {
-			block:  "    egress:\n      mode: open\n      rules:\n        - to: {domain: example.com}\n          protocol: tls\n          ports: [443]\n",
-			reject: "egress.rules require egress.mode: filtered",
-		},
-		"unknown rule field": {
-			block:  "    egress:\n      mode: filtered\n      rules:\n        - to: {domain: example.com}\n          transport: tls\n",
-			reject: "unknown, duplicate or null field",
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, err := parseNetworkPolicy(t, repo, test.block); err == nil ||
-				!strings.Contains(err.Error(), test.reject) {
-				t.Fatalf("error = %v, want one naming %q", err, test.reject)
-			}
-		})
-	}
-
-	policy, err := parseNetworkPolicy(t, repo,
-		"    egress:\n      mode: filtered\n      export_destinations: true\n"+
-			"      rules:\n        - to: {domain: example.com}\n          protocol: tls\n          ports: [443]\n")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if policy.Egress.Mode != egress.Filtered || !policy.Egress.ExportDestinations ||
-		len(policy.Egress.Rules) != 1 || policy.Egress.Rules[0].To.Domain != "example.com" {
-		t.Fatalf("parsed egress = %+v", policy.Egress)
-	}
-}
-
-// Network reach is authority, and it is also part of the policy's identity: an edit has to move
-// BOTH digests, or a controller that pinned either one would keep launching under a policy whose
-// destinations changed under it. A policy with no block must keep its pre-networking digests.
-func TestSessionPolicyEgressBindsIntoBothDigests(t *testing.T) {
-	repo := realGitRepoFixture(t)
-	silent, err := parseNetworkPolicy(t, repo, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// A policy file written before `egress:` existed must keep the digests it already had, or
-	// every session created under it would stop matching its own policy. That holds because an
-	// unwritten block contributes NOTHING to the canonical form, not because it digests as open.
-	if digestedSessionEgress(silent.Egress) != nil {
-		t.Fatal("a policy with no egress block contributed a network block to its digests")
-	}
-	for name, block := range map[string]string{
-		// `mode: open` is explicit operator authority and a silent policy is not, so even the
-		// posture that resolves the same way has to be a distinguishable policy.
-		"explicit open": "    egress:\n      mode: open\n",
-		"filtered":      "    egress:\n      mode: filtered\n",
-		"offline":       "    egress:\n      mode: none\n",
-		"one rule":      "    egress:\n      mode: filtered\n      rules:\n        - to: {domain: example.com}\n          protocol: tls\n          ports: [443]\n",
-		"another rule":  "    egress:\n      mode: filtered\n      rules:\n        - to: {domain: other.example}\n          protocol: tls\n          ports: [443]\n",
-		"exported":      "    egress:\n      mode: filtered\n      export_destinations: true\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			edited, err := parseNetworkPolicy(t, repo, block)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if ResolvedPolicyDigest(edited) == ResolvedPolicyDigest(silent) {
-				t.Fatalf("%s left the policy digest unchanged", name)
-			}
-			if ResolvedPolicyAuthorityDigest(edited) == ResolvedPolicyAuthorityDigest(silent) {
-				t.Fatalf("%s left the authority digest unchanged", name)
-			}
-		})
-	}
-}
 
 // Creation freezes the posture on the immutable row. Every later run reads it from there, so if
 // it were not persisted the session would silently fall back to open on the next turn.
 func TestCreateFreezesTheSessionNetworkBinding(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
-	service.testAdmitNetwork = func(_ Policy, workspace, forkName string) (sessionNetworkBinding, error) {
+	service.testAdmitNetwork = func(_, _ string, _ executionConfig, workspace, forkName string) (sessionNetworkBinding, error) {
 		if workspace == "" || forkName == "" {
 			t.Errorf("admission ran without a workspace (%q) or fork (%q)", workspace, forkName)
 		}
@@ -140,9 +29,7 @@ func TestCreateFreezesTheSessionNetworkBinding(t *testing.T) {
 		}, nil
 	}
 	ctx := context.Background()
-	sess, err := service.CreateRemoteSession(ctx, "create-network", CreateRemoteSessionRequest{
-		Policy: "responder", Task: "freeze the posture",
-	})
+	sess, err := service.CreateRemoteSession(ctx, "create-network", service.request(t, "freeze-the-posture"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +41,7 @@ func TestCreateFreezesTheSessionNetworkBinding(t *testing.T) {
 	if err != nil || reread.NetworkFingerprint != sess.NetworkFingerprint {
 		t.Fatalf("reread session network = %+v, err %v", reread.NetworkFingerprint, err)
 	}
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 	response := sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions/"+sess.ID, "", "", "")
 	var dto struct {
 		Network SessionNetworkSummaryDTO `json:"network"`
@@ -172,12 +59,10 @@ func TestCreateFreezesTheSessionNetworkBinding(t *testing.T) {
 func TestCreateRefusesWhenNetworkAdmissionFails(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
-	service.testAdmitNetwork = func(Policy, string, string) (sessionNetworkBinding, error) {
+	service.testAdmitNetwork = func(string, string, executionConfig, string, string) (sessionNetworkBinding, error) {
 		return sessionNetworkBinding{}, errNetworkFixture
 	}
-	_, err := service.CreateRemoteSession(context.Background(), "create-network-refused", CreateRemoteSessionRequest{
-		Policy: "responder", Task: "refuse the posture",
-	})
+	_, err := service.CreateRemoteSession(context.Background(), "create-network-refused", service.request(t, "refuse-the-posture"))
 	if err == nil || session.CodeOf(err) != session.CodeNetworkUnavailable ||
 		!strings.Contains(err.Error(), "this host is not set up for filtered runs") {
 		t.Fatalf("create error = %v (code %q)", err, session.CodeOf(err))
@@ -188,40 +73,43 @@ func TestCreateRefusesWhenNetworkAdmissionFails(t *testing.T) {
 // servers — a bound Responder endpoint among the ones left out. The binding is refused by name,
 // at create and at a turn on a session created before that refusal existed, instead of being
 // accepted and then silently dropped while the receipt still claims one is bound.
-func TestAnOfflineSessionRefusesAResponderBinding(t *testing.T) {
+func TestAnOfflineSessionRefusesAControllerTools(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
-	offline := service.policies["responder"]
-	offline.Name, offline.Egress = "offline", EgressPolicy{Mode: egress.None}
-	service.policies["offline"] = offline
-	service.testAdmitNetwork = func(policy Policy, _, _ string) (sessionNetworkBinding, error) {
-		return sessionNetworkBinding{Mode: policy.Egress.resolvedMode(), Fingerprint: strings.Repeat("a", 64),
+	offline := service.Job
+	offline.Egress.Mode = "none"
+	service.testAdmitNetwork = func(_, _ string, policy executionConfig, _, _ string) (sessionNetworkBinding, error) {
+		return sessionNetworkBinding{Mode: policy.Egress.Mode, Fingerprint: strings.Repeat("a", 64),
 			Qualification: strings.Repeat("b", 64)}, nil
 	}
-	binding := &session.ResponderBinding{Endpoint: "https://responder.example/v1/state-tools/mcp", Token: strings.Repeat("b", 48)}
+	binding := &session.ControllerTools{Endpoint: "https://responder.example/v1/state-tools/mcp", Token: strings.Repeat("b", 48)}
 	ctx := context.Background()
-	if _, err := service.CreateRemoteSession(ctx, "create-offline-bound", CreateRemoteSessionRequest{
-		Policy: "offline", Task: "bind me", ResponderBinding: binding,
-	}); err == nil || !strings.Contains(err.Error(), "binds no Responder MCP endpoint") {
+	if _, err := service.CreateRemoteSession(ctx, "create-offline-bound", func() CreateRemoteSessionRequest {
+		request := jobRequest(t, offline, "test:offline")
+		request.ControllerTools = binding
+		return request
+	}()); err == nil || !strings.Contains(err.Error(), "binds no controller MCP endpoint") {
 		t.Fatalf("offline create with a Responder binding = %v", err)
 	}
 	// The same binding on an online session is still accepted: the refusal is about the posture.
-	if _, err := service.CreateRemoteSession(ctx, "create-open-bound", CreateRemoteSessionRequest{
-		Policy: "responder", Task: "bind me", ResponderBinding: binding,
-	}); err != nil {
+	if _, err := service.CreateRemoteSession(ctx, "create-open-bound", func() CreateRemoteSessionRequest {
+		request := service.request(t, "test:online")
+		request.ControllerTools = binding
+		return request
+	}()); err != nil {
 		t.Fatalf("open create with a Responder binding = %v", err)
 	}
 	// A turn binding on an offline session — the shape a session created by an earlier binary can
 	// still carry — is refused the same way.
-	sess, err := service.CreateRemoteSession(ctx, "create-offline", CreateRemoteSessionRequest{Policy: "offline", Task: "work"})
+	sess, err := service.CreateRemoteSession(ctx, "create-offline", jobRequest(t, offline, "test:offline-work"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if sess.NetworkMode != string(egress.None) {
 		t.Fatalf("offline session network mode = %q", sess.NetworkMode)
 	}
-	err = service.validateTurnEscalation(ctx, session.SubmitTurnRequest{SessionID: sess.ID, Prompt: "x", ResponderBinding: binding})
-	if err == nil || !strings.Contains(err.Error(), "binds no Responder MCP endpoint") {
+	err = service.validateTurnEscalation(ctx, session.SubmitTurnRequest{SessionID: sess.ID, Prompt: "x", ControllerTools: binding})
+	if err == nil || !strings.Contains(err.Error(), "binds no controller MCP endpoint") {
 		t.Fatalf("offline turn with a Responder binding = %v", err)
 	}
 	if err := service.validateTurnEscalation(ctx, session.SubmitTurnRequest{SessionID: sess.ID, Prompt: "x"}); err != nil {
@@ -233,28 +121,29 @@ var errNetworkFixture = &session.Error{
 	Code: session.CodeInvalidRequest, Detail: "this host is not set up for filtered runs with this Docker and these agents",
 }
 
-// The child receives the capture from its host parent and nothing else. An open session must be
-// launched exactly as it is at HEAD: no COOP_EGRESS override, no capture.
+// The child receives only explicit frozen job authority, never ambient host defaults.
 func TestNetworkChildEnvironmentCarriesOnlyAFrozenPosture(t *testing.T) {
-	open := session.Session{ID: "remote_1", Repository: "/srv/app", NetworkMode: "open"}
-	if env, err := networkChildEnvironment(open, "session-abc"); err != nil || len(env) != 0 {
+	open := session.Session{ID: "remote_1", Repository: "/srv/app", NetworkMode: "open",
+		JobDigest: strings.Repeat("c", 64), JobDocument: []byte(`{"version":1}`)}
+	if env, err := networkChildEnvironment(open, "session-abc"); err != nil || len(env) != 2 || env[0] != "COOP_CONTROLLER_JOB="+open.JobDigest || env[1] != "COOP_EGRESS=open" {
 		t.Fatalf("open session env = %v, err %v", env, err)
 	}
 	offline := open
 	offline.NetworkMode = "none"
 	env, err := networkChildEnvironment(offline, "session-abc")
-	if err != nil || len(env) != 1 || env[0] != "COOP_EGRESS=none" {
+	if err != nil || len(env) != 2 || env[1] != "COOP_EGRESS=none" {
 		t.Fatalf("offline session env = %v, err %v", env, err)
 	}
 	filtered := session.Session{
 		ID: "remote_1", Repository: "/srv/app", NetworkMode: "filtered",
 		NetworkFingerprint: strings.Repeat("a", 64), NetworkQualification: strings.Repeat("b", 64),
+		JobDigest: open.JobDigest, JobDocument: open.JobDocument,
 	}
 	env, err = networkChildEnvironment(filtered, "session-abc")
-	if err != nil || len(env) != 2 || env[0] != "COOP_EGRESS=filtered" {
+	if err != nil || len(env) != 3 || env[1] != "COOP_EGRESS=filtered" {
 		t.Fatalf("filtered session env = %v, err %v", env, err)
 	}
-	value, ok := strings.CutPrefix(env[1], "COOP_NETWORK_CAPTURE=")
+	value, ok := strings.CutPrefix(env[2], "COOP_NETWORK_CAPTURE=")
 	if !ok {
 		t.Fatalf("filtered session env = %v", env)
 	}
@@ -264,13 +153,14 @@ func TestNetworkChildEnvironmentCarriesOnlyAFrozenPosture(t *testing.T) {
 		Qualification string `json:"qualification"`
 		SessionID     string `json:"session_id"`
 		AttemptID     string `json:"attempt_id"`
+		JobDigest     string `json:"job_digest"`
 	}
 	if err := json.Unmarshal([]byte(value), &capture); err != nil {
 		t.Fatal(err)
 	}
 	if capture.Project != "/srv/app" || capture.Fingerprint != filtered.NetworkFingerprint ||
 		capture.Qualification != filtered.NetworkQualification ||
-		capture.SessionID != "remote_1" || capture.AttemptID != "session-abc" {
+		capture.SessionID != "remote_1" || capture.AttemptID != "session-abc" || capture.JobDigest != open.JobDigest {
 		t.Fatalf("capture = %+v", capture)
 	}
 	// A filtered session with no captured policy is a broken row, not an open launch.
@@ -278,6 +168,15 @@ func TestNetworkChildEnvironmentCarriesOnlyAFrozenPosture(t *testing.T) {
 	broken.NetworkFingerprint = ""
 	if _, err := networkChildEnvironment(broken, "session-abc"); err == nil {
 		t.Fatal("a filtered session with no fingerprint produced a launch environment")
+	}
+	for _, broken := range []session.Session{
+		{NetworkMode: "open"},
+		{JobDigest: open.JobDigest, JobDocument: open.JobDocument},
+		{JobDigest: open.JobDigest, NetworkMode: "open"},
+	} {
+		if _, err := networkChildEnvironment(broken, "session-abc"); err == nil {
+			t.Fatal("incomplete or legacy authority produced a launch environment")
+		}
 	}
 }
 
@@ -307,13 +206,11 @@ func networkExecutionFixture(id, fingerprint string) networkstate.Execution {
 func TestSessionNetworkRoutesForAnOpenSession(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
-	sess, err := service.CreateRemoteSession(context.Background(), "open-network", CreateRemoteSessionRequest{
-		Policy: "responder", Task: "open session",
-	})
+	sess, err := service.CreateRemoteSession(context.Background(), "open-network", service.request(t, "open-session"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 	response := sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions/"+sess.ID+"/network", "", "", "")
 	if response.Code != http.StatusOK {
 		t.Fatalf("network status=%d body=%s", response.Code, response.Body.String())
@@ -355,21 +252,21 @@ func TestSessionNetworkRoutesProjectDestinationsByPolicy(t *testing.T) {
 			name = "exported"
 		}
 		t.Run(name, func(t *testing.T) {
-			service, repo := newHTTPTestSessionService(t)
+			service, _ := newHTTPTestSessionService(t)
 			defer service.Stop()
-			fingerprint := admitTestNetworkSnapshot(t, repo, export)
-			service.testAdmitNetwork = func(Policy, string, string) (sessionNetworkBinding, error) {
+			service.Job.Egress.Mode, service.Job.Egress.ExportDestinations = "filtered", export
+			var fingerprint string
+			service.testAdmitNetwork = func(jobDigest, sessionID string, _ executionConfig, _, _ string) (sessionNetworkBinding, error) {
+				fingerprint = admitTestNetworkSnapshot(t, jobDigest, sessionID, export)
 				return sessionNetworkBinding{
 					Mode: egress.Filtered, Fingerprint: fingerprint, Qualification: strings.Repeat("b", 64),
 				}, nil
 			}
-			sess, err := service.CreateRemoteSession(context.Background(), "filtered-network", CreateRemoteSessionRequest{
-				Policy: "responder", Task: "filtered session",
-			})
+			sess, err := service.CreateRemoteSession(context.Background(), "filtered-network", service.request(t, "filtered-session"))
 			if err != nil {
 				t.Fatal(err)
 			}
-			handler := NewHTTPHandler(service)
+			handler := NewHTTPHandler(service.Service)
 			response := sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions/"+sess.ID+"/network", "", "", "")
 			if response.Code != http.StatusOK {
 				t.Fatalf("network status=%d body=%s", response.Code, response.Body.String())
@@ -422,9 +319,7 @@ func TestSessionNetworkEventReachesTheEventStream(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
 	ctx := context.Background()
-	sess, err := service.CreateRemoteSession(ctx, "network-event", CreateRemoteSessionRequest{
-		Policy: "responder", Task: "network event",
-	})
+	sess, err := service.CreateRemoteSession(ctx, "network-event", service.request(t, "network-event"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,7 +332,7 @@ func TestSessionNetworkEventReachesTheEventStream(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 	response := sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions/"+sess.ID+"/events", "", "", "")
 	if response.Code != http.StatusOK {
 		t.Fatalf("events status=%d body=%s", response.Code, response.Body.String())
@@ -471,7 +366,7 @@ func TestSessionNetworkEventReachesTheEventStream(t *testing.T) {
 
 // admitTestNetworkSnapshot freezes a real owner-keyed snapshot for the session's repository, so
 // the read routes authenticate against the same store a launch would.
-func admitTestNetworkSnapshot(t *testing.T, repo string, export bool) string {
+func admitTestNetworkSnapshot(t *testing.T, jobDigest, sessionID string, export bool) string {
 	t.Helper()
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	root := filepath.Join(os.Getenv("XDG_STATE_HOME"), "coop", "network")
@@ -480,21 +375,13 @@ func admitTestNetworkSnapshot(t *testing.T, repo string, export bool) string {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	canonical, err := filepath.EvalSymlinks(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mode := egress.Filtered
 	rules, err := egress.NormalizeRules([]egress.Rule{
 		{To: egress.Destination{Domain: "example.com"}, Protocol: "tls", Ports: []int{443}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, err := store.Admit(canonical, networkstate.Admission{
-		InvocationMode: &mode, ExportDestinations: export,
-		Operator: []egress.Input{{Origin: egress.Origin{Kind: "operator", Name: "session-policy"}, Rules: rules}},
-	})
+	policy, err := store.CaptureJob(networkstate.JobSnapshotRef{JobDigest: jobDigest, SessionID: sessionID}, rules, nil, export)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -508,18 +395,6 @@ func boxNetworkReportFixture() box.NetworkReport {
 		Denials: []box.NetworkDenial{{Destination: "blocked.example", Basis: "dns", Count: 3}},
 		Event:   "n1",
 	}
-}
-
-// realGitRepoFixture is a policy-shaped repository path: absolute, clean, and its own real
-// directory, which is what LoadPolicies requires and what a macOS temp dir is not.
-func realGitRepoFixture(t *testing.T) string {
-	t.Helper()
-	repo, _ := gitrepo.New(t)
-	real, err := filepath.EvalSymlinks(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return real
 }
 
 func contains(values []string, want string) bool {
@@ -537,15 +412,13 @@ func TestSessionNetworkMismatchFailsTheTurnAndReachesTheStream(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
 	fingerprint := strings.Repeat("a", 64)
-	service.testAdmitNetwork = func(Policy, string, string) (sessionNetworkBinding, error) {
+	service.testAdmitNetwork = func(string, string, executionConfig, string, string) (sessionNetworkBinding, error) {
 		return sessionNetworkBinding{
 			Mode: egress.Filtered, Fingerprint: fingerprint, Qualification: strings.Repeat("b", 64),
 		}, nil
 	}
 	ctx := context.Background()
-	sess, err := service.CreateRemoteSession(ctx, "network-mismatch", CreateRemoteSessionRequest{
-		Policy: "responder", Task: "custody",
-	})
+	sess, err := service.CreateRemoteSession(ctx, "network-mismatch", service.request(t, "custody"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -563,7 +436,7 @@ func TestSessionNetworkMismatchFailsTheTurnAndReachesTheStream(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "run-9") || !strings.Contains(err.Error(), sess.ID) {
 		t.Fatalf("mismatch outcome = %v, want a turn failure naming the run", err)
 	}
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 	response := sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions/"+sess.ID+"/events", "", "", "")
 	var page []struct {
 		Type    string          `json:"type"`
@@ -594,15 +467,13 @@ func TestSessionNetworkOutcomeIsSilentForAMatchingQuietRun(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
 	fingerprint := strings.Repeat("a", 64)
-	service.testAdmitNetwork = func(Policy, string, string) (sessionNetworkBinding, error) {
+	service.testAdmitNetwork = func(string, string, executionConfig, string, string) (sessionNetworkBinding, error) {
 		return sessionNetworkBinding{
 			Mode: egress.Filtered, Fingerprint: fingerprint, Qualification: strings.Repeat("b", 64),
 		}, nil
 	}
 	ctx := context.Background()
-	sess, err := service.CreateRemoteSession(ctx, "network-quiet", CreateRemoteSessionRequest{
-		Policy: "responder", Task: "quiet",
-	})
+	sess, err := service.CreateRemoteSession(ctx, "network-quiet", service.request(t, "quiet"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -621,7 +492,7 @@ func TestSessionNetworkOutcomeIsSilentForAMatchingQuietRun(t *testing.T) {
 	if err := runner.sessionNetworkOutcome(bound, "", "session-abc", true); err != nil {
 		t.Fatalf("matching run failed the turn: %v", err)
 	}
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 	response := sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions/"+sess.ID+"/events", "", "", "")
 	if strings.Contains(response.Body.String(), `"type":"network"`) {
 		t.Fatalf("an unsealed, quiet run produced an event: %s", response.Body.String())
@@ -634,11 +505,11 @@ func TestSessionNetworkOutcomeFailsOnIncompleteEvidence(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
 	fingerprint := strings.Repeat("a", 64)
-	service.testAdmitNetwork = func(Policy, string, string) (sessionNetworkBinding, error) {
+	service.testAdmitNetwork = func(string, string, executionConfig, string, string) (sessionNetworkBinding, error) {
 		return sessionNetworkBinding{Mode: egress.Filtered, Fingerprint: fingerprint, Qualification: strings.Repeat("b", 64)}, nil
 	}
 	ctx := context.Background()
-	sess, err := service.CreateRemoteSession(ctx, "network-incomplete", CreateRemoteSessionRequest{Policy: "responder", Task: "partial"})
+	sess, err := service.CreateRemoteSession(ctx, "network-incomplete", service.request(t, "partial"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -658,7 +529,7 @@ func TestSessionNetworkOutcomeFailsOnIncompleteEvidence(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "network evidence for this session is incomplete") {
 		t.Fatalf("incomplete evidence certified the turn: %v", err)
 	}
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 	response := sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions/"+sess.ID+"/events", "", "", "")
 	if !strings.Contains(response.Body.String(), "is incomplete") {
 		t.Fatalf("no network event reported the incomplete inventory: %s", response.Body.String())
@@ -678,13 +549,11 @@ func TestSessionNetworkOutcomeFailsOnIncompleteEvidence(t *testing.T) {
 func TestSessionNetworkConnectionAndExplanationRoutes(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
-	sess, err := service.CreateRemoteSession(context.Background(), "network-parity", CreateRemoteSessionRequest{
-		Policy: "responder", Task: "parity",
-	})
+	sess, err := service.CreateRemoteSession(context.Background(), "network-parity", service.request(t, "parity"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 	response := sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions/"+sess.ID+"/network/connections", "", "", "")
 	if response.Code != http.StatusOK {
 		t.Fatalf("connections status=%d body=%s", response.Code, response.Body.String())
@@ -719,170 +588,5 @@ func TestSessionNetworkConnectionAndExplanationRoutes(t *testing.T) {
 	response = sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions/"+sess.ID+"/network/explanations", "", "", "")
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("explanations index status=%d, want 404", response.Code)
-	}
-}
-
-// hostStateDigest is every path under a host state root, with each file's bytes: the evidence that
-// resolving a policy's network reach wrote nothing — no owner key, no approval, no snapshot.
-func hostStateDigest(t *testing.T, root string) string {
-	t.Helper()
-	sum := sha256.New()
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(sum, "%s\x00%v\x00", rel, entry.IsDir())
-		if entry.IsDir() {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		sum.Write(data)
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return hex.EncodeToString(sum.Sum(nil))
-}
-
-// The daemon resolves every policy's network reach when it loads them, and writes nothing doing
-// it. A filtered policy this host cannot resolve — nothing is approved and no setup record exists
-// — refuses the load by name instead of being served with no fence at all, and the refusal itself
-// creates no authority: resolving is a compile, never an approval.
-func TestPolicyNetworksResolveAtLoadWithoutWritingHostState(t *testing.T) {
-	stateHome := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", stateHome)
-	repo := realGitRepoFixture(t)
-	runGitTest(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
-	policies := testSessionPolicies(repo)
-	filtered := policies["responder"]
-	filtered.Name = "filtered"
-	filtered.Egress = EgressPolicy{Mode: egress.Filtered, Rules: []egress.Rule{
-		{To: egress.Destination{Domain: "example.com"}, Protocol: "tls", Ports: []int{443}},
-	}}
-	policies["filtered"] = filtered
-
-	before := hostStateDigest(t, stateHome)
-	_, err := NewService(Config{StateRoot: filepath.Join(t.TempDir(), "state"), Policies: policies})
-	if err == nil || !strings.Contains(err.Error(), `policy "filtered"`) ||
-		!strings.Contains(err.Error(), "coop net setup") {
-		t.Fatalf("load with an unresolvable policy = %v; want it refused by name, with the fix", err)
-	}
-	if after := hostStateDigest(t, stateHome); after != before {
-		t.Fatal("refusing to serve a policy wrote host network state")
-	}
-
-	delete(policies, "filtered")
-	service, err := NewService(Config{StateRoot: filepath.Join(t.TempDir(), "state"), Policies: policies})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer service.Stop()
-	networks := service.PolicyNetworks()
-	if len(networks) != 1 || networks["responder"].Mode != egress.Open || networks["responder"].Fingerprint != "" {
-		t.Fatalf("published policy networks = %+v; want the open mode and no fingerprint", networks)
-	}
-	if after := hostStateDigest(t, stateHome); after != before {
-		t.Fatal("resolving the served policies wrote host network state")
-	}
-}
-
-// A create may pin the network reach it was authorized against. The daemon resolves FRESH — an
-// approval edited since it published the value is exactly what this catches — and refuses a
-// mismatch with its typed code before any intent is journaled, any workspace exists, or a session row is written.
-func TestCreateRemoteSessionFencesTheResolvedNetworkFingerprint(t *testing.T) {
-	current, stale := strings.Repeat("c", 64), strings.Repeat("d", 64)
-	newFencedService := func(t *testing.T, resolve func(Policy) (PolicyNetwork, error)) (*Service, string) {
-		t.Helper()
-		service, repo := newHTTPTestSessionService(t)
-		t.Cleanup(func() { _ = service.Stop() })
-		service.testResolveNetwork = resolve
-		service.testAdmitNetwork = func(Policy, string, string) (sessionNetworkBinding, error) {
-			return sessionNetworkBinding{Mode: egress.Filtered, Fingerprint: current, Qualification: strings.Repeat("b", 64)}, nil
-		}
-		return service, repo
-	}
-	resolved := func(Policy) (PolicyNetwork, error) {
-		return PolicyNetwork{Mode: egress.Filtered, Fingerprint: current}, nil
-	}
-
-	for name, tc := range map[string]struct {
-		resolve func(Policy) (PolicyNetwork, error)
-		pin     string
-		code    session.ErrorCode
-	}{
-		"matching pin":  {resolve: resolved, pin: current},
-		"absent pin":    {resolve: resolved},
-		"stale pin":     {resolve: resolved, pin: stale, code: session.CodeNetworkFingerprintMismatch},
-		"malformed pin": {resolve: resolved, pin: "not-a-fingerprint", code: session.CodeInvalidRequest},
-		"unresolvable": {
-			resolve: func(Policy) (PolicyNetwork, error) { return PolicyNetwork{}, errNetworkFixture },
-			pin:     current, code: session.CodeNetworkUnavailable,
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			service, repo := newFencedService(t, tc.resolve)
-			key := "network-fence-" + strings.ReplaceAll(name, " ", "-")
-			req := CreateRemoteSessionRequest{
-				Policy: "responder", Task: "fence the reach", ExpectedNetworkFingerprint: tc.pin,
-			}
-			ctx := context.Background()
-			sess, err := service.CreateRemoteSession(ctx, key, req)
-			if tc.code == "" {
-				if err != nil || sess.ID == "" || sess.NetworkFingerprint != current {
-					t.Fatalf("create = %+v, %v; want a session bound to the resolved reach", sess, err)
-				}
-				return
-			}
-			if session.CodeOf(err) != tc.code {
-				t.Fatalf("create error = %v; want code %s", err, tc.code)
-			}
-			if tc.code == session.CodeNetworkFingerprintMismatch && !strings.Contains(err.Error(), "coop approve") {
-				t.Fatalf("refusal = %v; want it to name what changed on the host", err)
-			}
-			if tc.code == session.CodeInvalidRequest {
-				return // rejected before an operation was ever reserved
-			}
-			// Nothing was journaled: the operation is a failed receipt with no resource, the
-			// session it would have been does not exist, and neither does its workspace.
-			op, opErr := service.GetOperation(ctx, key)
-			if opErr != nil || op.State != session.OperationFailed || op.ResourceID != "" || op.ErrorCode != tc.code {
-				t.Fatalf("refused create left operation %+v, %v; want a failed receipt with no session", op, opErr)
-			}
-			if _, err := service.store.GetSession(ctx, deterministicSessionID(op.ID)); !errors.Is(err, session.ErrSessionNotFound) {
-				t.Fatalf("refused create left a session: %v", err)
-			}
-			if _, err := os.Lstat(forkspace.Workspace(repo, deterministicForkName(op.ID))); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("refused create left a workspace: %v", err)
-			}
-			// Asynchronous admission refuses just the same, before anything is scheduled.
-			if _, err := service.CreateRemoteSessionAsync(ctx, key+"-async", req); session.CodeOf(err) != tc.code {
-				t.Fatalf("async create error = %v; want code %s", err, tc.code)
-			}
-		})
-	}
-}
-
-// The refusal reaches an API caller as a 409 with the typed code, which is what lets a fleet
-// worker report a definite failure instead of retrying a placement this host will never accept.
-func TestNetworkFingerprintMismatchIsAConflictOverHTTP(t *testing.T) {
-	service, _ := newHTTPTestSessionService(t)
-	defer service.Stop()
-	service.testResolveNetwork = func(Policy) (PolicyNetwork, error) {
-		return PolicyNetwork{Mode: egress.Filtered, Fingerprint: strings.Repeat("c", 64)}, nil
-	}
-	body := `{"policy":"responder","task":"fence","expected_network_fingerprint":"` + strings.Repeat("d", 64) + `"}`
-	response := sessionHTTPTestRequest(t, NewHTTPHandler(service), http.MethodPost, "/v1/sessions", body,
-		"network-fence-http", "application/json")
-	if response.Code != http.StatusConflict ||
-		!strings.Contains(response.Body.String(), `"code":"network_fingerprint_mismatch"`) {
-		t.Fatalf("stale pin over HTTP = %d %s", response.Code, response.Body.String())
 	}
 }

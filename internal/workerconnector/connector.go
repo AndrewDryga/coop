@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/workerproto"
@@ -55,6 +57,19 @@ func pollReference(workerID string, sequence uint64) string {
 }
 
 func (c *Connector) PollOnce(ctx context.Context) error {
+	return c.pollOnce(ctx, func(command workerproto.Command) error {
+		_, err := c.executor.Execute(ctx, command)
+		return err
+	})
+}
+
+func (c *Connector) pollOnce(ctx context.Context, dispatch func(workerproto.Command) error) error {
+	// A receipt may release a controller reservation. Sample it before capacity so
+	// a completion during Hello cannot accompany a pre-admission free-slot count.
+	entries, err := c.executor.journal.pending()
+	if err != nil {
+		return err
+	}
 	c.sequence++
 	pollRef := pollReference(c.workerID, c.sequence)
 	poll := workerproto.Poll{
@@ -62,7 +77,7 @@ func (c *Connector) PollOnce(ctx context.Context) error {
 		AcknowledgedCommandIDs: []string{}, CommandResults: []workerproto.CommandResult{},
 		EventBatches: []workerproto.EventBatch{},
 	}
-	page, err := c.executor.journal.nextReceiptPage(poll)
+	page, err := c.executor.journal.nextReceiptPage(poll, entries)
 	if err != nil {
 		return err
 	}
@@ -86,7 +101,7 @@ func (c *Connector) PollOnce(ctx context.Context) error {
 		return err
 	}
 	if err := response.Validate(); err != nil {
-		return fmt.Errorf("validate responder worker response: %w", err)
+		return fmt.Errorf("validate controller worker response: %w", err)
 	}
 	if response.PollRef != pollRef {
 		return errors.New("worker response poll identity does not match")
@@ -102,7 +117,7 @@ func (c *Connector) PollOnce(ctx context.Context) error {
 	// starve the rest of the batch or the event acknowledgements behind it. Each failure is
 	// reported; the command's receipt (if any) waits for the controller's redelivery.
 	for _, command := range response.Commands {
-		if _, err := c.executor.Execute(ctx, command); err != nil {
+		if err := dispatch(command); err != nil {
 			if ctx.Err() != nil {
 				return errors.Join(pollErr, err)
 			}
@@ -118,21 +133,114 @@ func (c *Connector) Run(ctx context.Context, interval time.Duration, onError fun
 	if interval <= 0 || interval > time.Minute || onError == nil {
 		return errors.New("worker connector run configuration is invalid")
 	}
-	for {
-		if err := c.PollOnce(ctx); err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			onError(err)
+	ctx, cancel := context.WithCancel(ctx)
+	var workers sync.WaitGroup
+	defer func() { cancel(); workers.Wait() }()
+	type pendingCommand struct {
+		command workerproto.Command
+		digest  string
+		expiry  atomic.Int64
+		renewed chan struct{}
+	}
+	type completion struct {
+		job *pendingCommand
+		err error
+	}
+	completed := make(chan completion, 1)
+	pending := make(map[string]*pendingCommand)
+	var queue []*pendingCommand
+	var active *pendingCommand
+	dispatch := func(command workerproto.Command) error {
+		digest, err := commandDigest(command)
+		if err != nil {
+			return err
 		}
-		timer := time.NewTimer(interval)
+		if job := pending[command.CommandID]; job != nil {
+			if job.digest != digest {
+				return ErrCommandConflict
+			}
+			job.expiry.Store(command.LeaseExpiresAt.UnixNano())
+			select {
+			case job.renewed <- struct{}{}:
+			default:
+			}
+			return nil
+		}
+		if len(pending) >= workerproto.MaxBatchItems {
+			return errors.New("worker command queue is full; awaiting redelivery")
+		}
+		job := &pendingCommand{command: command, digest: digest, renewed: make(chan struct{}, 1)}
+		job.expiry.Store(command.LeaseExpiresAt.UnixNano())
+		pending[command.CommandID] = job
+		queue = append(queue, job)
+		return nil
+	}
+	// One executor owns mutation order. Polling stays live during large source/body
+	// transfers, and only identical redelivery can renew an in-flight command's lease.
+	startNext := func() {
+		if active != nil || len(queue) == 0 {
+			return
+		}
+		job := queue[0]
+		queue = queue[1:]
+		active = job
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			expiresAt := func() time.Time { return time.Unix(0, job.expiry.Load()) }
+			commandCtx, stopLease := watchCommandLease(ctx, c.now, expiresAt, job.renewed)
+			defer stopLease()
+			_, err := c.executor.execute(commandCtx, job.command, expiresAt)
+			completed <- completion{job, err}
+		}()
+	}
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	for {
 		select {
 		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
 			return ctx.Err()
+		case done := <-completed:
+			delete(pending, done.job.command.CommandID)
+			active = nil
+			if done.err != nil && ctx.Err() == nil {
+				onError(fmt.Errorf("command %s: %w", done.job.command.CommandID, done.err))
+			}
+			startNext()
 		case <-timer.C:
+			if err := c.pollOnce(ctx, dispatch); err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				onError(err)
+			}
+			startNext()
+			timer.Reset(interval)
 		}
 	}
+}
+
+func watchCommandLease(parent context.Context, now, expiresAt func() time.Time, renewed <-chan struct{}) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(parent)
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		for {
+			remaining := expiresAt().Sub(now())
+			if remaining <= 0 {
+				cancel()
+				return
+			}
+			timer := time.NewTimer(remaining)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-renewed:
+			case <-timer.C:
+			}
+			timer.Stop()
+		}
+	}()
+	return ctx, func() { cancel(); <-stopped }
 }

@@ -72,7 +72,7 @@ var allowedEdges = map[string][]string{
 	"safefile":              nil,
 	"scaffold":              {"agent", "project", "taskstate", "ui"},
 	"session":               nil,
-	"sessionsvc":            {"agent", "box", "config", "egress", "forkspace", "ladder", "mcp", "networkstate", "networkview", "runtime", "secretscan", "session", "tasks", "workerproto"},
+	"sessionsvc":            {"agent", "box", "config", "egress", "forkspace", "hostsurface", "ladder", "mcp", "networkstate", "networkview", "runtime", "secretscan", "session", "tasks", "workerproto"},
 	"secretscan":            {},
 	"shadowpath":            {"safefile"},
 	"taskchannel":           nil,
@@ -85,8 +85,8 @@ var allowedEdges = map[string][]string{
 	"testutil/wait":         nil,
 	"testutil/workertls":    nil,
 	"ui":                    nil,
-	"workerconnector":       {"secretscan", "workerproto"},
-	"workerproto":           nil,
+	"workerconnector":       {"forkspace", "workerproto"},
+	"workerproto":           {"session"},
 }
 
 // uiPresentationOwners are the only packages allowed to import internal/ui. Terminal rendering

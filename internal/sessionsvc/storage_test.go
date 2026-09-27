@@ -62,9 +62,19 @@ func storageTestRepo(t *testing.T) string {
 
 func storageTestService(t *testing.T, repo string) *Service {
 	t.Helper()
-	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, nil)
 	t.Cleanup(func() { _ = service.Stop() })
-	return service
+	return service.Service
+}
+
+func storageTestStagedRepository(t *testing.T, service *Service, upstream string) string {
+	t.Helper()
+	source := stageTestJobSource(t, service.stateRoot, upstream)
+	repository, err := stagedJobRepository(context.Background(), service.stateRoot, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return repository
 }
 
 // storageTestFork creates one real fork workspace and, when sessionID is set, the session row that
@@ -87,8 +97,8 @@ func storageTestFork(t *testing.T, service *Service, repo, name, sessionID strin
 	if sessionID == "" {
 		return identity
 	}
-	if _, err := service.Store().CreateSession(context.Background(), sessionID+"-create", session.CreateSessionRequest{
-		ID: sessionID, Target: "codex@work", Policy: "responder",
+	if _, err := service.Store().CreateSession(context.Background(), sessionID+"-create", session.CreateSessionRequest{JobDocument: storedTestJobDocument, JobDigest: storedTestJobDigest,
+		ID: sessionID, Target: "codex@work",
 		Repository: repo, Workspace: workspace, ForkName: name, ForkGeneration: string(identity.Generation),
 		BaseCommit: gitOut(repo, "rev-parse", "HEAD"),
 		MaxTurns:   3, MaxQueuedTurns: 3, MaxQueuedBytes: 4096,
@@ -484,6 +494,7 @@ func TestReclaimOwnedOrphansRemovesProvenGarbageAndReportsEverythingElse(t *test
 func TestReclaimOwnedOrphansWaitsOutTheGraceWindowBeforeTouchingAnything(t *testing.T) {
 	repo := storageTestRepo(t)
 	service := storageTestService(t, repo)
+	repo = storageTestStagedRepository(t, service, repo)
 	limits := storageTestLimits(t)
 	limits.GraceWindow = time.Hour
 	mustSetStorageLimits(t, service, limits)
@@ -510,6 +521,7 @@ func TestDiscardStagesItsWorkspaceAndRefusesAReceiptUntilTheBytesAreGone(t *test
 	git("add", "locked/payload.bin")
 	git("commit", "-qm", "payload")
 	service := storageTestService(t, repo)
+	repo = storageTestStagedRepository(t, service, repo)
 	mustSetStorageLimits(t, service, storageTestLimits(t))
 	storageTestFork(t, service, repo, "fork-stuck", "")
 	workspace := forkspace.Workspace(repo, "fork-stuck")
@@ -535,6 +547,7 @@ func TestDiscardStagesItsWorkspaceAndRefusesAReceiptUntilTheBytesAreGone(t *test
 	if err != nil || len(staged) != 1 {
 		t.Fatalf("staged discards = %v, %v, want the interrupted tree retained", staged, err)
 	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(staged[0], "locked"), 0o700) })
 	report, err := service.StorageReport(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -561,6 +574,7 @@ func TestDiscardStagesItsWorkspaceAndRefusesAReceiptUntilTheBytesAreGone(t *test
 func TestReclaimOwnedOrphansFinishesAnInterruptedDelete(t *testing.T) {
 	repo := storageTestRepo(t)
 	service := storageTestService(t, repo)
+	repo = storageTestStagedRepository(t, service, repo)
 	mustSetStorageLimits(t, service, storageTestLimits(t))
 	storageTestFork(t, service, repo, "fork-interrupted", "")
 
@@ -599,6 +613,25 @@ func TestReclaimOwnedOrphansFinishesAnInterruptedDelete(t *testing.T) {
 	}
 	if _, ok, _ := forkspace.ReadGeneration(repo, "fork-interrupted"); ok {
 		t.Fatal("the finished delete left its generation record behind")
+	}
+}
+
+func TestStorageInventoryRefusesLinkedJobSources(t *testing.T) {
+	repo := storageTestRepo(t)
+	service := storageTestService(t, repo)
+	foreign := t.TempDir()
+	link := filepath.Join(service.stateRoot, "job-sources", strings.Repeat("e", 64))
+	if err := os.Symlink(foreign, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.StorageReport(context.Background()); err == nil {
+		t.Fatal("linked source produced an authoritative storage report")
+	}
+	if _, err := service.ReclaimOwnedOrphans(context.Background()); err == nil {
+		t.Fatal("reclamation followed an unproven source inventory")
+	}
+	if _, err := os.Stat(foreign); err != nil {
+		t.Fatal("foreign source was removed")
 	}
 }
 
@@ -642,75 +675,6 @@ func TestSessionHTTPStorageReportsTheWorkerAccounting(t *testing.T) {
 // The derived defaults are policy, not law: an operator whose volume is shared with something else
 // has to be able to say so, in the file they already own, and be told at load if what they wrote
 // cannot hold.
-func TestLoadStorageLimitsReadsTheOperatorBlockAndRefusesAnIncoherentOne(t *testing.T) {
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
-	repo, err := filepath.EvalSymlinks(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	policies := "version: 1\npolicies:\n  responder:\n    repository: " + repo +
-		"\n    target: codex@work\n    max_turns: 1\n    max_queued_turns: 1\n    max_queued_bytes: 1\n" +
-		"    max_patch_bytes: 1\n    turn_timeout: 1s\n"
-	write := func(t *testing.T, body string) string {
-		t.Helper()
-		// The loader refuses a path through a symlinked ancestor, and macOS temp roots are one.
-		root, err := filepath.EvalSymlinks(t.TempDir())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chmod(root, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		path := filepath.Join(root, "session-policies.yaml")
-		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		return path
-	}
-
-	bare := write(t, policies)
-	if limits, configured, err := LoadStorageLimits(bare); err != nil || configured {
-		t.Fatalf("a file with no storage block = %+v, %v, %v, want the derived defaults", limits, configured, err)
-	}
-
-	block := "storage:\n  reserve_bytes: 5368709120\n  high_watermark_bytes: 95000000000\n" +
-		"  low_watermark_bytes: 90000000000\n  disposable_budget_bytes: 10737418240\n" +
-		"  protected_budget_bytes: 90000000000\n  grace_window: 15m\n  measure_interval: 5m\n" +
-		"  max_reclaim_per_pass: 4\n"
-	path := write(t, policies+block)
-	limits, configured, err := LoadStorageLimits(path)
-	if err != nil || !configured {
-		t.Fatalf("LoadStorageLimits = %+v, %v, %v", limits, configured, err)
-	}
-	if limits.ReserveBytes != 5368709120 || limits.LowWatermarkBytes != 90000000000 ||
-		limits.GraceWindow != 15*time.Minute || limits.MeasureInterval != 5*time.Minute ||
-		limits.MaxReclaimPerPass != 4 {
-		t.Fatalf("configured limits = %+v", limits)
-	}
-	// The same file still parses as policies: one document, two readers.
-	if loaded, err := LoadPolicies(path, nil); err != nil || len(loaded) != 1 {
-		t.Fatalf("policies alongside a storage block = %d, %v", len(loaded), err)
-	}
-
-	for name, body := range map[string]string{
-		"inverted watermarks": "storage:\n  reserve_bytes: 1\n  high_watermark_bytes: 10\n  low_watermark_bytes: 20\n" +
-			"  disposable_budget_bytes: 1\n  protected_budget_bytes: 1\n  grace_window: 1m\n  measure_interval: 1m\n  max_reclaim_per_pass: 1\n",
-		"unbounded reclamation": "storage:\n  reserve_bytes: 1\n  high_watermark_bytes: 20\n  low_watermark_bytes: 10\n" +
-			"  disposable_budget_bytes: 1\n  protected_budget_bytes: 1\n  grace_window: 1m\n  measure_interval: 1m\n  max_reclaim_per_pass: 0\n",
-		"unreadable duration": "storage:\n  reserve_bytes: 1\n  high_watermark_bytes: 20\n  low_watermark_bytes: 10\n" +
-			"  disposable_budget_bytes: 1\n  protected_budget_bytes: 1\n  grace_window: soon\n  measure_interval: 1m\n  max_reclaim_per_pass: 1\n",
-		"partial block": "storage:\n  reserve_bytes: 1\n",
-		"unknown field": "storage:\n  reserve_percent: 5\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, _, err := LoadStorageLimits(write(t, policies+body)); err == nil {
-				t.Fatal("an incoherent storage block was accepted")
-			}
-		})
-	}
-}
-
 func TestStorageLimitsValidateRejectsIncoherentBudgets(t *testing.T) {
 	capacity := int64(100 << 30)
 	if err := DefaultStorageLimits(capacity).Validate(capacity); err != nil {

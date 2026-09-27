@@ -17,7 +17,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -25,12 +24,11 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkctl"
-	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
 	"github.com/AndrewDryga/coop/internal/ui"
+	"github.com/AndrewDryga/coop/internal/workerconnector"
 )
 
 func defaultSessionStateRoot() (string, error) {
@@ -41,34 +39,16 @@ func defaultSessionStateRoot() (string, error) {
 	return filepath.Join(home, ".local", "state", "coop", "sessions"), nil
 }
 
-func defaultSessionPolicyPath() (string, error) {
-	return filepath.Join(config.RootDir(), "session-policies.yaml"), nil
-}
-
-func sessionCLIPaths(state, policy, socket string) (string, string, string, error) {
+func sessionSocketPath(state, socket string) (string, string, error) {
 	state, err := sessionStatePath(state)
 	if err != nil {
-		return "", "", "", err
-	}
-	if policy == "" {
-		policy, err = defaultSessionPolicyPath()
-		if err != nil {
-			return "", "", "", err
-		}
+		return "", "", err
 	}
 	if socket == "" {
 		socket = filepath.Join(state, "control.sock")
-	} else {
-		socket, err = filepath.Abs(filepath.Clean(socket))
-		if err != nil {
-			return "", "", "", fmt.Errorf("resolve session socket path: %w", err)
-		}
 	}
-	policy, err = filepath.Abs(filepath.Clean(policy))
-	if err != nil {
-		return "", "", "", fmt.Errorf("resolve session policy path: %w", err)
-	}
-	return state, policy, socket, nil
+	socket, err = filepath.Abs(filepath.Clean(socket))
+	return state, socket, err
 }
 
 func sessionStatePath(state string) (string, error) {
@@ -86,47 +66,25 @@ func sessionStatePath(state string) (string, error) {
 	return state, nil
 }
 
-func parseSessionsFlags(args []string, command string) (state, policy, socket string, jsonOutput bool, err error) {
+func parseSessionDoctorFlags(args []string) (socket string, jsonOutput bool, err error) {
 	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--json" && (command == "doctor" || command == "policies") {
+		switch args[i] {
+		case "--json":
 			if jsonOutput {
-				return "", "", "", false, fmt.Errorf("sessions %s: --json may be specified once", command)
+				return "", false, errors.New("sessions doctor: --json may be specified once")
 			}
 			jsonOutput = true
-			continue
-		}
-		var target *string
-		switch arg {
-		case "--state":
-			target = &state
-		case "--policies":
-			target = &policy
 		case "--socket":
-			target = &socket
+			if socket != "" || i+1 == len(args) || strings.HasPrefix(args[i+1], "-") {
+				return "", false, errors.New("sessions doctor: --socket requires one value")
+			}
+			i++
+			socket = args[i]
 		default:
-			return "", "", "", false, fmt.Errorf("sessions %s: unknown flag %q", command, arg)
-		}
-		if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
-			return "", "", "", false, fmt.Errorf("sessions %s: flag %s requires a value", command, arg)
-		}
-		i++
-		if *target != "" {
-			return "", "", "", false, fmt.Errorf("sessions %s: flag %s may be specified once", command, arg)
-		}
-		*target = args[i]
-	}
-	switch command {
-	case "doctor":
-		if state != "" || policy != "" {
-			return "", "", "", false, errors.New("sessions doctor: only --socket and --json are supported")
-		}
-	case "policies":
-		if state != "" || socket != "" {
-			return "", "", "", false, errors.New("sessions policies: only --policies and --json are supported")
+			return "", false, fmt.Errorf("sessions doctor: unknown flag %q", args[i])
 		}
 	}
-	return state, policy, socket, jsonOutput, nil
+	return socket, jsonOutput, nil
 }
 
 func parseSessionCompactFlags(args []string) (state, backup string, err error) {
@@ -158,7 +116,7 @@ func parseSessionCompactFlags(args []string) (state, backup string, err error) {
 
 // sessionCommands are the `coop sessions` subcommands — the one list the dispatch below, the
 // unknown-subcommand correction, the help router and shell completion all read.
-var sessionCommands = []string{"connect", "serve", "doctor", "policies", "compact"}
+var sessionCommands = []string{"connect", "doctor", "compact"}
 
 func (a *app) cmdSessions(args []string) (int, error) {
 	if len(args) == 0 {
@@ -171,24 +129,12 @@ func (a *app) cmdSessions(args []string) (int, error) {
 			return 2, err
 		}
 		return runSessionConnect(a.cfg, path)
-	case "serve":
-		state, policy, socket, _, err := parseSessionsFlags(args[1:], "serve")
-		if err != nil {
-			return 2, err
-		}
-		return runSessionServe(a.cfg, state, policy, socket)
 	case "doctor":
-		_, _, socket, jsonOutput, err := parseSessionsFlags(args[1:], "doctor")
+		socket, jsonOutput, err := parseSessionDoctorFlags(args[1:])
 		if err != nil {
 			return 2, err
 		}
 		return runSessionDoctor(socket, jsonOutput)
-	case "policies":
-		_, policy, _, jsonOutput, err := parseSessionsFlags(args[1:], "policies")
-		if err != nil {
-			return 2, err
-		}
-		return runSessionPolicies(a.cfg, policy, jsonOutput)
 	case "compact":
 		state, backup, err := parseSessionCompactFlags(args[1:])
 		if err != nil {
@@ -286,148 +232,25 @@ func sessionCompactFailure(result sessionsvc.CompactionResult, err error) error 
 	}
 }
 
-type sessionPoliciesResult struct {
-	PolicyFile             string                          `json:"policy_file"`
-	PolicyDigests          map[string]string               `json:"policy_digests"`
-	PolicyAuthorityDigests map[string]string               `json:"policy_authority_digests"`
-	PolicyNetworks         map[string]sessionPolicyNetwork `json:"policy_networks"`
-}
-
-// sessionPolicyNetwork is what a policy's sessions may reach. It is printed beside the digests
-// because it IS authority: an operator authorizing a fleet worker has to see the posture and the
-// rules the same way they see the repository and the target.
-//
-// Fingerprint is the reach RESOLVED on this host — the project's remembered approval and the
-// provider and MCP dependencies included — which is the value a placement pins and the daemon
-// publishes. Unresolved carries the reason instead, for a policy this host cannot resolve at all;
-// the daemon refuses to serve that policy, and this read says why.
-type sessionPolicyNetwork struct {
-	Mode               string   `json:"mode"`
-	Rules              []string `json:"rules,omitempty"`
-	ExportDestinations bool     `json:"export_destinations,omitempty"`
-	Fingerprint        string   `json:"fingerprint,omitempty"`
-	Unresolved         string   `json:"unresolved,omitempty"`
-	ApprovalRequired   bool     `json:"-"`
-}
-
-// sessionPolicyNetworkOf is the JSON projection AND, beside it, the compiled snapshot the human
-// view reads. The projection's fields, names and digests are unchanged: a remote application
-// verifies against them, so the human view takes the snapshot rather than widening the wire.
-func sessionPolicyNetworkOf(cfg *config.Config, policy sessionsvc.Policy) (sessionPolicyNetwork, egress.Snapshot) {
-	out := sessionPolicyNetwork{
-		Mode: string(policy.Egress.Mode), ExportDestinations: policy.Egress.ExportDestinations,
-	}
-	if out.Mode == "" {
-		out.Mode = "open (default)"
-	}
-	for _, rule := range policy.Egress.Rules {
-		out.Rules = append(out.Rules, box.NetworkRuleText(rule))
-	}
-	resolved, snapshot, err := sessionsvc.ResolvePolicyNetworkSnapshot(cfg, policy)
-	switch {
-	case err != nil:
-		out.Unresolved = err.Error()
-		if resolved.Mode != "" {
-			out.Mode = string(resolved.Mode)
-		}
-		var pending *networkstate.PendingApproval
-		out.ApprovalRequired = errors.As(err, &pending)
-	case resolved.Fingerprint != "":
-		out.Mode, out.Fingerprint = string(resolved.Mode), resolved.Fingerprint
-	default:
-		out.Mode = string(resolved.Mode)
-	}
-	return out, snapshot
-}
-
-func runSessionPolicies(cfg *config.Config, policyPath string, jsonOutput bool) (int, error) {
-	_, policyPath, _, err := sessionCLIPaths("", policyPath, "")
-	if err != nil {
-		return 2, err
-	}
-	policies, err := sessionsvc.LoadPolicies(policyPath, cfg)
-	if err != nil {
-		// The loader's own validation — ownership, writable ancestry, symlinks, limits, version,
-		// names, repositories, accounts — keeps its cause; only the file is added in front of it.
-		cause := policyPath + " " + err.Error()
-		if strings.Contains(err.Error(), "must define at least one policy") {
-			cause = policyPath + " must define at least one configuration."
-		}
-		return 1, ui.CommandFailed("Could not load remote session configurations", cause,
-			[2]string{"Help:", "coop help sessions policies"})
-	}
-	result := sessionPoliciesResult{
-		PolicyFile:             policyPath,
-		PolicyDigests:          make(map[string]string, len(policies)),
-		PolicyAuthorityDigests: make(map[string]string, len(policies)),
-		PolicyNetworks:         make(map[string]sessionPolicyNetwork, len(policies)),
-	}
-	names := make([]string, 0, len(policies))
-	snapshots := make(map[string]egress.Snapshot, len(policies))
-	for name, policy := range policies {
-		names = append(names, name)
-		result.PolicyDigests[name] = sessionsvc.ResolvedPolicyDigest(policy)
-		result.PolicyAuthorityDigests[name] = sessionsvc.ResolvedPolicyAuthorityDigest(policy)
-		network, snapshot := sessionPolicyNetworkOf(cfg, policy)
-		result.PolicyNetworks[name], snapshots[name] = network, snapshot
-	}
-	if jsonOutput { // the verification data a remote application reads — unchanged fields and digests
-		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
-			return 1, err
-		}
-		return 0, nil
-	}
-	sort.Strings(names)
-	views := make([]sessionConfigurationView, 0, len(names))
-	for _, name := range names {
-		views = append(views, sessionConfigurationViewOf(name, policies[name], result.PolicyNetworks[name], snapshots[name]))
-	}
-	renderSessionConfigurations(os.Stdout, ui.For(os.Stdout), tildeify(policyPath), views)
-	return 0, nil
-}
-
-func runSessionServe(cfg *config.Config, state, policy, socket string) (int, error) {
-	state, policy, socket, err := sessionCLIPaths(state, policy, socket)
-	if err != nil {
-		return 2, err
-	}
-	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stopSignals()
-	if err := serveLocalSession(ctx, cfg, state, policy, socket, nil); err != nil {
-		return 1, err
-	}
-	return 0, nil
-}
-
-// serveLocalSession runs the local session service until ctx ends: it owns the state root's lock,
-// the policy file and the socket, and returns only when the server has shut down. listening, when
-// given, is called once the socket is accepting — the caller still has to PROVE readiness before
-// claiming it (see sessionServiceReady); binding a socket is not a promise to accept sessions.
-// `coop sessions serve` and `coop sessions connect`'s autostart share this one body, so a service
-// started either way is the same service.
-func serveLocalSession(ctx context.Context, cfg *config.Config, state, policy, socket string, listening func()) error {
+// serveLocalSession is the private API owned by the controller connection.
+func serveLocalSession(ctx context.Context, cfg *config.Config, state, socket string, refresh sessionsvc.SourceRefresher, publish sessionsvc.ReviewPublisher, listening func()) error {
 	if err := sessionsvc.EnsureAncestors(filepath.Dir(state)); err != nil {
 		return err
 	}
-	// The optional `storage:` block in the same policy file. Absent, the daemon derives its limits
-	// from the measured volume; present and incoherent, it refuses to start rather than discovering
-	// the problem the first time the disk fills.
-	storageLimits, configuredStorage, err := sessionsvc.LoadStorageLimits(policy)
-	if err != nil {
-		return err
-	}
 	serviceConfig := sessionsvc.Config{
-		StateRoot: state, PolicyPath: policy, SourceConfig: cfg, Executable: os.Args[0],
-		Host: sessionHost(), Logger: slog.New(slog.NewJSONHandler(os.Stderr, nil)),
-	}
-	if configuredStorage {
-		serviceConfig.StorageLimits = &storageLimits
+		StateRoot: state, SourceConfig: cfg, Executable: os.Args[0],
+		SourceRefresher: refresh,
+		ReviewPublisher: publish,
+		Host:            sessionHost(), Logger: slog.New(slog.NewJSONHandler(os.Stderr, nil)),
 	}
 	service, err := sessionsvc.NewService(serviceConfig)
 	if err != nil {
 		return err
 	}
 	defer service.Stop()
+	if err := workerconnector.ReclaimInterruptedTransfers(state); err != nil {
+		return err
+	}
 	if err := service.Start(ctx); err != nil {
 		return err
 	}
@@ -468,7 +291,6 @@ func serveLocalSession(ctx context.Context, cfg *config.Config, state, policy, s
 // the merge policy. Each field is one existing cli function, forwarded.
 func sessionHost() sessionsvc.Host {
 	return sessionsvc.Host{
-		PolicyScan:        forkctl.PolicyScan,
 		ReviewGateFactory: defaultSessionReviewGate,
 		Warnf:             ui.Warn,
 	}
@@ -544,7 +366,7 @@ type sessionDoctorResult struct {
 
 func runSessionDoctor(socket string, jsonOutput bool) (int, error) {
 	socketGiven := socket != "" // a named socket keeps its own remedy; the default's is the default service
-	_, _, socket, err := sessionCLIPaths("", "", socket)
+	_, socket, err := sessionSocketPath("", socket)
 	if err != nil {
 		return 2, err
 	}
@@ -592,9 +414,9 @@ func runSessionDoctor(socket string, jsonOutput bool) (int, error) {
 // listening" is claimed only for a socket that refused the connection — a permission error, an
 // unreadable socket or a malformed response each keeps its own cause. A service that answered but
 // is not ready is a different failure from one that is not there. When the user named the socket,
-// the remedy stays with THAT service: `coop sessions serve` alone would listen somewhere else.
+// the remedy stays with THAT service: `coop sessions connect` alone would listen somewhere else.
 func sessionDoctorFailure(result sessionDoctorResult, socketGiven bool, healthErr error) error {
-	start := [2]string{"", "Run coop sessions serve to start it."}
+	start := [2]string{"", "Run coop sessions connect to start it."}
 	if socketGiven {
 		start = [2]string{"", "Start the service that listens at " + result.Socket + "."}
 	}
@@ -602,7 +424,7 @@ func sessionDoctorFailure(result sessionDoctorResult, socketGiven bool, healthEr
 	case healthErr == nil && !result.Ready:
 		return ui.CommandFailed("Session service is not ready",
 			"The service responded but cannot accept sessions yet.",
-			[2]string{"", "Check the output of coop sessions serve."})
+			[2]string{"", "Check the output of coop sessions connect."})
 	case errors.Is(healthErr, syscall.ENOENT) || errors.Is(healthErr, syscall.ECONNREFUSED):
 		return ui.CommandFailed("Session service is unavailable",
 			"No service is listening at "+result.Socket+".", start)

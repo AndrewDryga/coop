@@ -42,7 +42,7 @@ It's the working tooling behind two write-ups:
 - [Agents & config](#agents--config) — authentication · credentials · models · presets · instructions · MCP servers
 - [Evaluations](#evaluations) — try a suite · inspect failures · compare changes
 - [Second opinions](#second-opinions---peer) — named read-only peers for hard calls
-- [Drive it from a local service](#drive-it-from-a-local-service)
+- [Drive it from a controller](#drive-it-from-a-controller)
 - [Drive it from Zed (ACP)](#drive-it-from-zed-acp)
 - [Run it unattended](#run-it-unattended) — the loop · the `.agent/` folder · monorepos · parallel forks
 - [Project toolchain & services](#project-toolchain--services) — `.tool-versions` · `.agent/Dockerfile` · services · dev-server ports
@@ -242,13 +242,13 @@ spelled out here (there's room to render them).
 | `coop tasks decisions [-i]` · `lint` | what's blocked on a decision (`-i` to answer) · check the canonical tree |
 | `coop backlog` · `add "<title>"` · `promote <id>` · `rm <id>` | park unscheduled ideas in the `xx_backlog/` drawer — same folder format, but outside the lifecycle (never auto-worked, never nagged); `promote` moves one into `00_todo/` when it's ready |
 
-**Sessions** — the local remote-session controller ([details](#drive-it-from-a-local-service))
+**Sessions** — isolated workers for a controller ([details](#drive-it-from-a-controller))
 
 | Command | What it does |
 |---|---|
-| `coop sessions serve [--state <path>] [--policies <path>] [--socket <path>]` | run the session controller over an owner-only Unix socket (it never listens on TCP) |
-| `coop sessions doctor [--json]` · `policies [--json]` · `compact --backup <path>` | check the socket · print the trusted policy and authority digests a fleet worker must advertise · back up, then compact turn retry receipts |
-| `coop sessions connect --config <path>` | connect this machine to an external fleet controller over an outbound mutual-TLS poll stream, using the running local service or starting one; see [connect this machine](docs/session-api.md#connect-this-machine-to-a-remote-controller) |
+| `coop sessions connect --controller <https-url> --token-file <path>` | start the private session service and connect outbound to a trusted controller |
+| `coop sessions doctor [--json]` | check local worker readiness |
+| `coop sessions compact --backup <path>` | back up, then compact old turn retry receipts while the worker is stopped |
 
 **Services** — the box's `.agent/compose.yml` sidecars ([details](#services))
 
@@ -350,7 +350,7 @@ run on Docker only, native restricted modes are offered only for `claude`, and `
 and `COOP_IMAGE` are refused. A `COOP_RUN_ARGS` entry other than `-e KEY=VALUE` stops the launch
 by name. Direct `--readonly` runs support `--egress filtered`; `--bare` accepts only open or
 offline networking. Restricted runs do not start services, so a filtered policy with service
-grants is refused. Remote-session policies using either restricted mode still reject filtered
+grants is refused. Remote-session jobs using either restricted mode still reject filtered
 networking. The answer is the run's only output; a run that needs artifacts back is a normal run.
 
 ### Your git identity, not the box's
@@ -637,7 +637,7 @@ remote sessions. Every teammate of that provider in the box uses the one key thr
 signed-in accounts of other providers mix freely; one filtered policy cannot switch a provider
 between an API key and a sign-in. Direct Claude `--readonly --egress filtered` runs can also broker
 `ANTHROPIC_API_KEY`. API-key runs using open/offline networking, login or bare mode are refused;
-remote-session policies using restricted modes still reject filtered networking. Coop never falls
+remote-session jobs using restricted modes still reject filtered networking. Coop never falls
 back to putting the reusable key in a box. Provider-native OAuth/access-token files keep their
 existing behavior and are not claimed as API-key brokered.
 
@@ -1172,49 +1172,32 @@ opinion. Only the peers you name are consulted — there's no implicit "consult
 everyone signed in", and only a named peer's credentials mount (read-only). And it's
 scoped to the agent you launched, so peers it spawns never recurse.
 
-## Drive it from a local service
+## Drive it from a controller
 
-`coop sessions serve` is the transport-neutral boundary for a trusted local service that needs
-long-lived conversations and isolated code work without driving a TTY:
-
-```bash
-coop sessions serve
-coop sessions doctor --json
-```
-
-It exposes strict HTTP/JSON over an owner-only Unix socket, never TCP. One session owns one
-generated fork, a persistent FIFO of turns, private provider/ACP state, structured change
-inspection, a read-only review, non-destructive close, and explicit two-step discard. By default,
-each turn starts a boxed ACP child and tears it down before parking, so an idle conversation consumes
-no box. Policies with `warm_idle_timeout` can instead prepare the authenticated child before the first
-turn and retain it between turns; see the [session lifecycle](docs/session-api.md#lifecycle).
-
-Older databases may contain full prompt copies in successful turn retry receipts. During a
-maintenance window, stop the controller and compact those receipts with an explicit new backup:
+Run one outbound worker, on the controller's VM or a separate VM:
 
 ```bash
-coop sessions compact --backup "$HOME/session-before-compact.sqlite"
+coop sessions connect --controller https://controller.example/coop --token-file /run/secrets/coop-token
 ```
 
-The command refuses an active state root, a backup inside that root, or an existing backup path. It verifies the SQLite backup,
-rewrites only successful turn-operation receipts, checks database integrity, and vacuums only after
-the rewrite commits. Canonical turns and their prompts are unchanged. The owner-only backup still
-contains the old prompt copies and is sensitive; delete it after the compacted controller and its
-ordinary backup cycle are verified. For recovery, stop the
-controller, move `session.sqlite` plus any `session.sqlite-wal` and `session.sqlite-shm` files aside
-as one rollback set, copy the backup to `session.sqlite` with mode `0600`, restart, and run
-`coop sessions doctor`. Keep the rollback set until the restored controller is verified.
+The controller supplies immutable jobs: exact repositories and context, model targets, network
+settings and execution limits. Coop authenticates the controller, fetches complete Git/LFS and
+authorized submodule working trees, runs models in isolation and retains durable session state.
+No local policy catalog or worker configuration file is needed. The same generic protocol works
+with any controller; Ryker is one consumer.
 
-An operator-owned session policy may also declare up to 32 companion Git repositories. Coop pins
-each at session creation and mounts a self-contained snapshot read-only at
-`/coop/repositories/<alias>`. Snapshots retain complete reachable history through 1 GiB of logical
-object data; larger or locally incomplete histories use an exact one-commit shallow snapshot. The
-primary fork remains the only writable and reviewable tree; companion host paths never enter the
-request or public API.
+The private Unix API owns sessions, FIFO turns, inspection, checkpoints, review, publication,
+cancellation, budgets and explicit cleanup. It never listens on TCP or enters a model sandbox.
+By default a parked session has no box; jobs with a warm-idle timeout may retain a prepared
+runtime. Companion repositories are exact pinned read-only snapshots. The trusted host can push
+an immutable reviewed candidate and create a draft PR using a fresh repository-scoped grant;
+models never receive the GitHub credential. See the [session API](docs/session-api.md).
 
-The API deliberately cannot merge, sign, push, publish a PR, accept arbitrary host paths, or choose
-credentials and sandbox settings from a request. A same-UID caller is trusted at the Unix-account
-boundary. See the complete [local remote-session API](docs/session-api.md).
+`coop sessions doctor --json` checks the service started by `connect`.
+For old databases with duplicate prompts in retry receipts, stop the worker and run
+`coop sessions compact --backup /safe/path/session-before-compact.sqlite`.
+The backup must be new and outside the state root; it remains sensitive.
+Canonical turns and prompts are preserved. Follow the API's backup/recovery instructions.
 
 ## Drive it from Zed (ACP)
 
@@ -2110,7 +2093,7 @@ internal/preset/      orchestration presets (.agent/presets/<name>/preset.yaml):
 internal/project/     .agent/project.yaml — a monorepo's subprojects + the serve ports
 internal/mcp/         one mcp.json → Claude / Codex / Gemini / Grok native configs (pure Go, no Python)
 internal/session/     durable local remote sessions: idempotent operations, FIFO turns, events, recovery
-internal/sessionsvc/  the remote-session service ON that store: policy, HTTP/UDS API, one-turn ACP, workspaces, review
+internal/sessionsvc/  the remote-session service ON that store: immutable jobs, Unix API, isolated ACP, workspaces, review, publication
 internal/scaffold/    `coop init` templates + the workflow skills (embedded in the binary)
 internal/cli/         command dispatch, fork lifecycle, the loop + ACP control planes, doctor
 internal/config·runtime·ui/   settings · runtime detection · terminal output

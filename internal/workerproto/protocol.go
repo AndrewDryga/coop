@@ -1,7 +1,5 @@
-// Package workerproto defines the bounded v1 contract between an outbound Coop
-// worker connector and the Responder control plane. It carries the exact
-// bounded frozen model submission selected by Responder, but never provider
-// credentials, repository content, or a generic command surface.
+// Package workerproto defines the product-neutral outbound Coop worker contract.
+// Commands forward private Coop API requests; large bodies use authenticated transfers.
 package workerproto
 
 import (
@@ -16,7 +14,7 @@ import (
 )
 
 const (
-	Version          = 1
+	Version          = 2
 	MaxDocumentBytes = 1 << 20
 	SessionEventKind = "session_event"
 	MaxBatchItems    = 100
@@ -26,7 +24,7 @@ const (
 var (
 	referencePattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
 	digestPattern    = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	commandKinds     = []string{"ensure_workspace", "create_session", "get_session", "get_network", "get_network_receipt", "get_network_connections", "get_network_explanation", "submit_turn", "get_turn", "get_output_artifact", "get_changes", "get_changes_page", "run_review", "plan_discard", "discard_session", "get_review_patch", "validate_candidate", "cancel_turn", "fence_operation", "checkpoint_workspace", "close_session", "reconcile_operation", "get_session_evidence"}
+	commandKinds     = []string{"api_request"}
 	workerStates     = []string{"eligible", "busy", "draining", "needs_auth"}
 	capacityStates   = []string{"eligible", "busy", "cooldown", "needs_auth"}
 	resultStates     = []string{"succeeded", "failed", "uncertain"}
@@ -48,27 +46,19 @@ type Poll struct {
 }
 
 type WorkerHello struct {
-	ID                     string            `json:"id"`
-	WorkspaceRef           string            `json:"workspace_ref"`
-	ProtocolVersion        string            `json:"protocol_version"`
-	BuildVersion           string            `json:"build_version"`
-	ClockAt                time.Time         `json:"clock_at"`
-	SandboxDigest          string            `json:"sandbox_digest"`
-	PolicyDigests          map[string]string `json:"policy_digests"`
-	PolicyAuthorityDigests map[string]string `json:"policy_authority_digests,omitempty"`
-	Repositories           []Repository      `json:"repositories"`
-	Capabilities           []Capability      `json:"capabilities"`
-	Capacity               Capacity          `json:"capacity"`
-	State                  string            `json:"state"`
+	ID              string       `json:"id"`
+	WorkspaceRef    string       `json:"workspace_ref"`
+	ProtocolVersion string       `json:"protocol_version"`
+	BuildVersion    string       `json:"build_version"`
+	ClockAt         time.Time    `json:"clock_at"`
+	SandboxDigest   string       `json:"sandbox_digest"`
+	Capabilities    []Capability `json:"capabilities"`
+	Capacity        Capacity     `json:"capacity"`
+	State           string       `json:"state"`
 	// Storage is OPTIONAL. A worker that cannot measure its own disk keeps polling without it, and
 	// a control plane that does not understand it ignores it; neither may treat its absence as an
 	// empty disk.
 	Storage *Storage `json:"storage,omitempty"`
-}
-
-type Repository struct {
-	Ref      string `json:"ref"`
-	Revision string `json:"revision"`
 }
 
 type Capability struct {
@@ -237,7 +227,10 @@ func (r Response) Validate() error {
 }
 
 func (w WorkerHello) validate() error {
-	for field, value := range map[string]string{"worker id": w.ID, "workspace_ref": w.WorkspaceRef, "protocol_version": w.ProtocolVersion, "build_version": w.BuildVersion} {
+	if w.ProtocolVersion != "2" {
+		return errors.New("unsupported worker protocol version")
+	}
+	for field, value := range map[string]string{"worker id": w.ID, "workspace_ref": w.WorkspaceRef, "build_version": w.BuildVersion} {
 		if err := reference(value, 256, field); err != nil {
 			return err
 		}
@@ -248,46 +241,26 @@ func (w WorkerHello) validate() error {
 	if !slices.Contains(workerStates, w.State) {
 		return errors.New("invalid worker state")
 	}
-	if len(w.PolicyDigests) > MaxBatchItems || len(w.PolicyAuthorityDigests) > MaxBatchItems || len(w.Repositories) > MaxBatchItems || len(w.Capabilities) > MaxBatchItems {
-		return errors.New("worker advertisement exceeds 100 items")
-	}
-	for name, digest := range w.PolicyDigests {
-		if reference(name, 256, "policy name") != nil || !digestPattern.MatchString(digest) {
-			return errors.New("invalid policy advertisement")
-		}
-	}
-	if len(w.PolicyAuthorityDigests) > 0 {
-		if len(w.PolicyAuthorityDigests) != len(w.PolicyDigests) {
-			return errors.New("policy authority advertisement does not match policy advertisement")
-		}
-		for name, digest := range w.PolicyAuthorityDigests {
-			if _, ok := w.PolicyDigests[name]; !ok || reference(name, 256, "policy name") != nil || !digestPattern.MatchString(digest) {
-				return errors.New("invalid policy authority advertisement")
-			}
-		}
-	}
-	for _, repository := range w.Repositories {
-		if reference(repository.Ref, 256, "repository ref") != nil || reference(repository.Revision, 256, "repository revision") != nil {
-			return errors.New("invalid repository advertisement")
-		}
+	if len(w.Capabilities) > MaxBatchItems {
+		return errors.New("worker capabilities exceed 100 items")
 	}
 	for _, capability := range w.Capabilities {
 		if reference(capability.Name, 256, "capability name") != nil || reference(capability.Version, 128, "capability version") != nil {
 			return errors.New("invalid capability advertisement")
 		}
 	}
-	if !uniqueRepositoryRefs(w.Repositories) || !uniqueCapabilityNames(w.Capabilities) {
-		return errors.New("duplicate worker authority advertisement")
+	if !uniqueCapabilityNames(w.Capabilities) {
+		return errors.New("duplicate worker capability")
 	}
 	if w.Storage != nil {
 		if err := w.Storage.validate(); err != nil {
 			return err
 		}
 	}
-	return w.Capacity.validate()
+	return w.Capacity.Validate()
 }
 
-func (c Capacity) validate() error {
+func (c Capacity) Validate() error {
 	if !slots(c.SessionSlotsFree, c.SessionSlotsTotal) || !slots(c.TurnSlotsFree, c.TurnSlotsTotal) || !slots(c.WorkspaceSlotsFree, c.WorkspaceSlotsTotal) {
 		return errors.New("invalid worker capacity slots")
 	}
@@ -429,17 +402,6 @@ func uniqueReferences(values []string, field string) error {
 		seen[value] = struct{}{}
 	}
 	return nil
-}
-
-func uniqueRepositoryRefs(values []Repository) bool {
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		if _, exists := seen[value.Ref]; exists {
-			return false
-		}
-		seen[value.Ref] = struct{}{}
-	}
-	return true
 }
 
 func uniqueCapabilityNames(values []Capability) bool {

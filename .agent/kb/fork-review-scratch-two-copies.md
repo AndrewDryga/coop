@@ -3,7 +3,7 @@ name: fork-review-scratch-two-copies
 description: forkctl and sessionsvc each keep their own review-scratch clone on purpose — the same 18-line scaffold under opposite anchoring contracts; do not unify them
 subsystem: fork
 sources: [internal/forkctl/review.go, internal/sessionsvc/review.go, internal/forkspace/git.go, internal/forkspace/create.go]
-updated: 2026-08-10
+updated: 2026-09-27
 ---
 
 Two packages build a disposable rebased clone for a review gate, and they read like copy-paste:
@@ -12,18 +12,15 @@ Two packages build a disposable rebased clone for a review gate, and they read l
 sessionsvc extraction, ruled again in the fork Stage 1 (ruling 8), then assessed on its own. Do not
 "fix" it.
 
-**What is genuinely identical** — roughly 18 lines of scaffolding: the four-field value
-(`dir/base/name/conflict`), `cleanup()` (one `os.RemoveAll`), `detachBase()` (one
-`git checkout --quiet --detach`), and `os.MkdirTemp("", "coop-fork-review-")` + `forkspace.GitClone`
-under the same wrapped error. Both packages' `gitRun` are identical too (`forkspace.GitHardening`
-through a local `gitArgs`), as is the leak assertion each test suite carries
-(`internal/forkctl/review_gate_test.go:358`, `internal/sessionsvc/helpers_test.go:56`).
+**What is genuinely identical** — the four-field value (`dir/base/name/conflict`), scratch-directory
+ownership, cleanup and leak assertions. Session review now uses the shared pinned clone/fetch
+primitives with request cancellation; ordinary fork previews retain their own creation path.
 
 **What differs is the entire contract** — each one's anchor would be a bug in the other:
 
 | | forkctl — a preview | sessionsvc — an attested rebuild |
 |---|---|---|
-| base | the parent's CURRENT HEAD, read inside the scratch (`review.go:80-82`) | the CAPTURED `intent.ParentHead`, fetched by SHA into `refs/coop/session-parent` (`review.go:529-532`) |
+| base | the parent's CURRENT HEAD, read inside the scratch | the CAPTURED `intent.ParentHead`, cloned/fetched by SHA through the trusted source view |
 | source | the fork branch by NAME, whatever it points at now (`:90`) | `intent.SourceHead` by SHA (`:545`) |
 | verification | base is non-empty (`:80-82`) | parent head+tree, source head+tree, and `CreationBase` ancestry must all match the intent or it refuses (`:537-539,552-554,559-565`) |
 | replay | `rebase base name` (`:93`) | `rebase --onto base creationBase name` (`:568`) — exactly the commits captured at session creation |
@@ -60,6 +57,8 @@ HEAD, or a fork preview that verifies a captured intent. Then one type would car
 this note is obsolete. See [[fork-lifecycle-state-file]] for the fork state this machinery reviews.
 
 ## Changelog
+- 2026-09-27 — session scratch now uses exact, credential-free pinned clone/fetch with request
+  cancellation. The separate anchoring contracts still apply; no shared review orchestration added.
 - 2026-08-10 — the last accidental difference is gone: sessionsvc now zeroes its named result on a
   failed prepare like forkctl, pinned by `TestSessionReviewScratchIsZeroedOnFailedPrepare`. Every
   `internal/sessionsvc/review.go` line reference re-verified (the fix shifted them by one).

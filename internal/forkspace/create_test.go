@@ -47,6 +47,27 @@ func TestSetupAcceptsCloneAlreadyOnRequestedBranch(t *testing.T) {
 	}
 }
 
+func TestPinnedSetupCarriesGlobalExcludesWithoutGitTemplates(t *testing.T) {
+	repo := committedSetupRepo(t)
+	ignore := filepath.Join(t.TempDir(), "ignore")
+	if err := os.WriteFile(ignore, []byte("local-output\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "config", "--global", "core.excludesfile", ignore)
+	commit, err := gitOutputContext(context.Background(), repo, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := SetupPinnedContext(context.Background(), repo, "pinned", commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(ws, ".git", "info", "exclude"))
+	if err != nil || !strings.Contains(string(data), "local-output\n") || !strings.Contains(string(data), ".coop/") {
+		t.Fatalf("pinned fork exclusions = %q, %v", data, err)
+	}
+}
+
 func TestSetupRefusesNameWhilePriorSessionWorkspaceIsStaged(t *testing.T) {
 	repo := committedSetupRepo(t)
 	ws, err := Setup(repo, "remote")

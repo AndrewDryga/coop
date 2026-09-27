@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -24,7 +25,7 @@ func TestWriteRestoredCheckpointFileRefusesGitDirAndSymlinkParents(t *testing.T)
 	}
 	defer root.Close()
 	for _, bad := range []string{".git/hooks/pre-commit", "vendor/.GIT/config", "l/pre-commit", "l/deeper/pre-commit"} {
-		if err := writeRestoredCheckpointFile(root, []byte(bad), 0o755, []byte("#!/bin/sh\n")); err == nil {
+		if err := writeRestoredCheckpointStream(root, []byte(bad), 0o755, strings.NewReader("#!/bin/sh\n")); err == nil {
 			t.Errorf("%s: restored a member toward the Git directory", bad)
 		}
 	}
@@ -32,13 +33,13 @@ func TestWriteRestoredCheckpointFileRefusesGitDirAndSymlinkParents(t *testing.T)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf(".git/hooks after refused restores = %v, %v; want empty", entries, err)
 	}
-	if err := writeRestoredCheckpointFile(root, []byte("nested/dir/file.txt"), 0o644, []byte("ok\n")); err != nil {
+	if err := writeRestoredCheckpointStream(root, []byte("nested/dir/file.txt"), 0o644, strings.NewReader("ok\n")); err != nil {
 		t.Fatalf("ordinary nested member: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(workspace, "nested", "dir", "file.txt")); err != nil {
 		t.Fatalf("ordinary member missing: %v", err)
 	}
-	if err := writeRestoredCheckpointFile(root, []byte("nested/dir/file.txt"), 0o644, []byte("dup\n")); !errors.Is(err, os.ErrExist) {
+	if err := writeRestoredCheckpointStream(root, []byte("nested/dir/file.txt"), 0o644, strings.NewReader("dup\n")); !errors.Is(err, os.ErrExist) {
 		t.Fatalf("second write of one member = %v, want exclusive creation to refuse", err)
 	}
 }

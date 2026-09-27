@@ -75,6 +75,9 @@ type RunSpec struct {
 	Mode agents.ExecutionMode
 	// PolicyRepo is the trusted source for .agent/project.yaml box policy. Empty uses Repo.
 	PolicyRepo string
+	// ControllerJob suppresses repository-authored box settings for a Ryker-owned session.
+	// The host child sets this only from the daemon's session environment, never from a box.
+	ControllerJob bool `json:"-"`
 	// GradeSnapshot marks this launch as `coop eval`'s grader running against a trial snapshot, and
 	// turns OFF secret shadowing of the mounted tree — a grader must see what the candidate actually
 	// wrote, including a file named like a secret. It is refused together with Homes, so it can never
@@ -580,17 +583,30 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		return -1, errors.New("network preflight requires a filtered capture")
 	}
 	policyRepo := projectPolicyRepo(spec)
-	p, err := project.Load(policyRepo)
-	if err != nil {
-		return -1, err
+	var p *project.Project
+	var err error
+	if spec.ControllerJob {
+		p = &project.Project{}
+		local := *cfg
+		local.AutoUp = false
+		cfg = &local
+		spec.Network, spec.Serve, spec.Cache = false, false, false
+	} else {
+		p, err = project.Load(policyRepo)
+		if err != nil {
+			return -1, err
+		}
+		cfg = applyProjectPolicy(cfg, p, &spec)
 	}
-	cfg = applyProjectPolicy(cfg, p, &spec)
 	// MCP assembly may replace cfg with a generated snapshot later. Mount authority still protects
 	// the operator's original config and MCP source, not merely that disposable copy.
 	authorityConfig := cfg
 	projectEnv := p.Box.Env
 	spec.projectEnv = projectEnv
 	composeFile := ComposeFileAt(spec.Repo, p.ComposeRel())
+	if spec.ControllerJob {
+		composeFile = ""
+	}
 	serviceOwner := runServiceOwner(spec)
 	spec.servePorts = p.Serve.Ports
 	if spec.Login {

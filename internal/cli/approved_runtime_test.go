@@ -15,9 +15,7 @@ func TestApprovedRuntimeHelpPages(t *testing.T) {
 		{"15-shell-help", "shell"},
 		{"67-acp-help", "acp"},
 		{"69-sessions-help", "sessions"},
-		{"69-sessions-serve-help", "sessions serve"},
 		{"69-sessions-doctor-help", "sessions doctor"},
-		{"69-sessions-policies-help", "sessions policies"},
 		{"69-sessions-compact-help", "sessions compact"},
 		{"73-sessions-connect-help", "sessions connect"},
 		{"74-sign-help", "sign"},
@@ -38,8 +36,8 @@ func TestApprovedRuntimeHelpRoutes(t *testing.T) {
 	cfg := freshConfig(t)
 	for _, path := range [][]string{
 		{"run"}, {"shell"}, {"acp"}, {"sign"}, {"completion"}, {"prompt"}, {"version"},
-		{"sessions"}, {"sessions", "connect"}, {"sessions", "serve"},
-		{"sessions", "doctor"}, {"sessions", "policies"}, {"sessions", "compact"},
+		{"sessions"}, {"sessions", "connect"},
+		{"sessions", "doctor"}, {"sessions", "compact"},
 	} {
 		name := strings.Join(path, " ")
 		t.Run(name, func(t *testing.T) {

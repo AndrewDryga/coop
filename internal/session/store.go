@@ -587,6 +587,20 @@ func (s *Store) GetOperationByID(ctx context.Context, id string) (Operation, err
 	return s.getOperation(ctx, `WHERE id = ?`, id)
 }
 
+// A partially restored workspace remains fenced across process death. The
+// operation intent is the authority; a missing in-memory lock proves nothing.
+const pendingWorkspaceRestore = `SELECT EXISTS (
+		SELECT 1 FROM operations WHERE method = 'RestoreWorkspaceCheckpoint'
+		AND state IN ('running', 'uncertain') AND id <> ?
+		AND CASE WHEN json_valid(result) THEN json_extract(result, '$.session_id') = ? ELSE 1 END
+	)`
+
+func (s *Store) HasPendingWorkspaceRestore(ctx context.Context, sessionID, exceptOperation string) (bool, error) {
+	var pending bool
+	err := s.db.QueryRowContext(ctx, pendingWorkspaceRestore, exceptOperation, sessionID).Scan(&pending)
+	return pending, err
+}
+
 // ListIncompleteOperations returns every durable mutation that has not reached
 // a terminal receipt. Reserved rows are included because a process can crash
 // between admission and persisting its recoverable running intent.
@@ -614,40 +628,26 @@ func (s *Store) ListIncompleteOperations(ctx context.Context) ([]Operation, erro
 	return operations, nil
 }
 
-func (s *Store) ListOperationIDsForResource(
-	ctx context.Context,
-	method string,
-	resourceType string,
-	resourceID string,
-) ([]string, error) {
-	if method == "" || resourceType == "" || resourceID == "" {
-		return nil, errors.New("operation resource query is incomplete")
-	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id
-		FROM operations
-		WHERE method = ? AND resource_type = ? AND resource_id = ?
-		ORDER BY created_at, id`,
-		method,
-		resourceType,
-		resourceID,
-	)
+// Artifact ownership is a local journal fact, never the controller's opaque
+// session_ref. Historical records without this fact are deliberately retained.
+func (s *Store) ListSessionArtifactOperationIDs(ctx context.Context, method, sessionID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM operations
+		WHERE method = ?
+		AND CASE WHEN json_valid(result) THEN json_extract(result, '$.session_id') = ? ELSE 0 END
+		ORDER BY created_at, id`, method, sessionID)
 	if err != nil {
-		return nil, fmt.Errorf("list operation resource IDs: %w", err)
+		return nil, err
 	}
 	defer rows.Close()
-	var result []string
+	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan operation resource ID: %w", err)
+			return nil, err
 		}
-		result = append(result, id)
+		ids = append(ids, id)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list operation resource IDs: %w", err)
-	}
-	return result, nil
+	return ids, rows.Err()
 }
 
 func (s *Store) getOperation(ctx context.Context, where string, arg string) (Operation, error) {
@@ -785,6 +785,14 @@ func (s *Store) CompleteCreateSessionOperation(
 		if err != nil {
 			return Session{}, err
 		}
+		if req.JobDigest != "" {
+			// Public operation results deliberately omit the private job document. A v2 replay
+			// compares the durable session row, never a redacted projection of that authority.
+			sess, err = scanSession(tx.QueryRowContext(ctx, sessionSelect+" WHERE id = ?", req.ID))
+			if err != nil {
+				return Session{}, ErrOperationIntentConflict
+			}
+		}
 		if !initialSessionMatchesRequest(sess, req) {
 			return Session{}, ErrOperationIntentConflict
 		}
@@ -842,40 +850,41 @@ func (s *Store) CompleteCreateSessionOperation(
 
 func (s *Store) initialSession(req CreateSessionRequest) Session {
 	now := s.now()
+	jobRef, _ := jobIdentity(req.JobDocument, req.JobDigest) // The request was validated before the transaction.
 	sess := Session{
-		ID:                     req.ID,
-		ExternalRef:            req.ExternalRef,
-		Target:                 req.Target,
-		Policy:                 req.Policy,
-		PolicyDigest:           req.PolicyDigest,
-		AuthorityDigest:        req.AuthorityDigest,
-		ProjectEnv:             !req.OmitEnv,
-		ProjectMCP:             !req.OmitMCP,
-		ResponderBinding:       cloneResponderBinding(req.ResponderBinding),
-		ResponderBindingDigest: ResponderBindingDigest(req.ResponderBinding),
-		Mode:                   normalizedMode(req.Mode),
-		RepositoryReadOnly:     req.RepositoryReadOnly,
-		Repository:             req.Repository,
-		Workspace:              req.Workspace,
-		ForkName:               req.ForkName,
-		ForkGeneration:         req.ForkGeneration,
-		BaseCommit:             req.BaseCommit,
-		RepositoryFreshness:    append([]RepositoryFreshnessReceipt(nil), req.RepositoryFreshness...),
-		Source:                 cloneSourceBinding(req.Source),
-		Companions:             append([]CompanionRepository(nil), req.Companions...),
-		NetworkMode:            normalizedNetworkMode(req.NetworkMode),
-		NetworkFingerprint:     req.NetworkFingerprint,
-		NetworkQualification:   req.NetworkQualification,
-		TurnTimeout:            req.TurnTimeout,
-		MaxPatchBytes:          req.MaxPatchBytes,
-		Revision:               1,
-		State:                  SessionOpen,
-		Activity:               ActivityParked,
-		MaxTurns:               normalized(req.MaxTurns, DefaultMaxTurns),
-		MaxQueuedTurns:         normalized(req.MaxQueuedTurns, DefaultMaxQueuedTurns),
-		MaxQueuedBytes:         normalized(req.MaxQueuedBytes, DefaultMaxQueuedBytes),
-		CreatedAt:              now,
-		UpdatedAt:              now,
+		ID:                    req.ID,
+		ExternalRef:           req.ExternalRef,
+		Target:                req.Target,
+		JobRef:                jobRef,
+		JobDocument:           append(json.RawMessage(nil), req.JobDocument...),
+		JobDigest:             req.JobDigest,
+		ProjectEnv:            !req.OmitEnv,
+		ProjectMCP:            !req.OmitMCP,
+		ControllerTools:       cloneControllerTools(req.ControllerTools),
+		ControllerToolsDigest: ControllerToolsDigest(req.ControllerTools),
+		Mode:                  normalizedMode(req.Mode),
+		RepositoryReadOnly:    req.RepositoryReadOnly,
+		Repository:            req.Repository,
+		Workspace:             req.Workspace,
+		ForkName:              req.ForkName,
+		ForkGeneration:        req.ForkGeneration,
+		BaseCommit:            req.BaseCommit,
+		RepositoryFreshness:   append([]RepositoryFreshnessReceipt(nil), req.RepositoryFreshness...),
+		Source:                cloneSourceBinding(req.Source),
+		Companions:            append([]CompanionRepository(nil), req.Companions...),
+		NetworkMode:           normalizedNetworkMode(req.NetworkMode),
+		NetworkFingerprint:    req.NetworkFingerprint,
+		NetworkQualification:  req.NetworkQualification,
+		TurnTimeout:           req.TurnTimeout,
+		MaxPatchBytes:         req.MaxPatchBytes,
+		Revision:              1,
+		State:                 SessionOpen,
+		Activity:              ActivityParked,
+		MaxTurns:              normalized(req.MaxTurns, DefaultMaxTurns),
+		MaxQueuedTurns:        normalized(req.MaxQueuedTurns, DefaultMaxQueuedTurns),
+		MaxQueuedBytes:        normalized(req.MaxQueuedBytes, DefaultMaxQueuedBytes),
+		CreatedAt:             now,
+		UpdatedAt:             now,
 	}
 	if sess.ID == "" {
 		sess.ID = s.id("ses")
@@ -898,12 +907,12 @@ func (s *Store) insertInitialSessionTx(ctx context.Context, tx *sql.Tx, sess *Se
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO sessions
-		(id, external_ref, target, policy, policy_digest, authority_digest, project_env, project_mcp, responder_endpoint, responder_token, mode, repository_read_only, repository, workspace, fork_name, fork_generation, base_commit, companions, repository_freshness,
+		(id, external_ref, target, policy, policy_digest, authority_digest, job_document, job_digest, project_env, project_mcp, responder_endpoint, responder_token, mode, repository_read_only, repository, workspace, fork_name, fork_generation, base_commit, companions, repository_freshness,
 		 source_binding,
 		 network_mode, network_fingerprint, network_qualification,
 		 turn_timeout, max_patch_bytes, revision, state, activity, max_turns, max_queued_turns, max_queued_bytes, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
-		sess.Policy, sess.PolicyDigest, sess.AuthorityDigest, sess.ProjectEnv, sess.ProjectMCP, responderEndpoint(sess.ResponderBinding), responderToken(sess.ResponderBinding), normalizedMode(sess.Mode), sess.RepositoryReadOnly, sess.Repository, sess.Workspace, sess.ForkName, sess.ForkGeneration, sess.BaseCommit,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
+		sess.Policy, sess.PolicyDigest, sess.AuthorityDigest, string(sess.JobDocument), sess.JobDigest, sess.ProjectEnv, sess.ProjectMCP, responderEndpoint(sess.ControllerTools), responderToken(sess.ControllerTools), normalizedMode(sess.Mode), sess.RepositoryReadOnly, sess.Repository, sess.Workspace, sess.ForkName, sess.ForkGeneration, sess.BaseCommit,
 		string(companions), string(repositoryFreshness), string(sourceBinding),
 		normalizedNetworkMode(sess.NetworkMode), sess.NetworkFingerprint, sess.NetworkQualification,
 		int64(sess.TurnTimeout), sess.MaxPatchBytes, sess.Revision, string(sess.State), string(sess.Activity), sess.MaxTurns,
@@ -932,15 +941,13 @@ func sameOperationSnapshot(current, expected Operation) bool {
 
 // initialSessionMatchesRequest is the identity check behind an idempotent create replay: the
 // stored session must be the one the request describes, field for field. Every comparison is plain
-// equality on purpose — an "or it was blank" escape on the AUTHORITY digest would let a replay be
-// answered with a session that carries a different authority than the one it asked for. Blank
-// against blank still matches, so a caller that sends no digest is unaffected.
+// equality on purpose: a missing job is never a wildcard for another execution authority.
 func initialSessionMatchesRequest(sess Session, req CreateSessionRequest) bool {
 	return sess.ID == req.ID && sess.ExternalRef == req.ExternalRef && sess.Target == req.Target &&
-		sess.Policy == req.Policy && sess.PolicyDigest == req.PolicyDigest &&
-		sess.AuthorityDigest == req.AuthorityDigest &&
+		sess.JobDigest == req.JobDigest &&
+		bytes.Equal(sess.JobDocument, req.JobDocument) &&
 		sess.ProjectEnv == !req.OmitEnv && sess.ProjectMCP == !req.OmitMCP &&
-		equalResponderBinding(sess.ResponderBinding, req.ResponderBinding) &&
+		equalControllerTools(sess.ControllerTools, req.ControllerTools) &&
 		sess.Mode == normalizedMode(req.Mode) &&
 		sess.RepositoryReadOnly == req.RepositoryReadOnly && sess.Repository == req.Repository &&
 		sess.Workspace == req.Workspace && sess.ForkName == req.ForkName &&
@@ -963,7 +970,7 @@ func equalRepositoryFreshness(left, right []RepositoryFreshnessReceipt) bool {
 	return slices.Equal(left, right)
 }
 
-func equalResponderBinding(left, right *ResponderBinding) bool {
+func equalControllerTools(left, right *ControllerTools) bool {
 	return (left == nil && right == nil) ||
 		(left != nil && right != nil && left.Endpoint == right.Endpoint && left.Token == right.Token)
 }
@@ -1006,14 +1013,7 @@ func (s *Store) replaySession(op Operation) (Session, error) {
 	if op.State != OperationSucceeded {
 		return Session{}, ErrOperationUncertain
 	}
-	var sess Session
-	if err := json.Unmarshal(op.Result, &sess); err != nil {
-		return Session{}, fmt.Errorf("decode session operation result: %w", err)
-	}
-	if sess.ID == "" {
-		return Session{}, errors.New("decode session operation result: missing session id")
-	}
-	return sess, nil
+	return DecodeSessionOperationResult(op.Result)
 }
 
 func normalizeCreateRequest(req CreateSessionRequest) CreateSessionRequest {
@@ -1023,26 +1023,41 @@ func normalizeCreateRequest(req CreateSessionRequest) CreateSessionRequest {
 	if req.MaxPatchBytes == 0 {
 		req.MaxPatchBytes = DefaultMaxPatchBytes
 	}
-	if req.PolicyDigest == "" {
-		companions, _ := json.Marshal(req.Companions)
-		bindings := []string{
-			req.Policy, req.Target, req.Repository, req.Workspace, req.ForkName, req.BaseCommit,
-			string(companions), sourceBindingDigestBinding(req.Source),
-			fmt.Sprintf("%d", req.TurnTimeout), fmt.Sprintf("%d", req.MaxPatchBytes),
-		}
-		if req.ForkGeneration != "" {
-			bindings = append(bindings, "fork-generation="+req.ForkGeneration)
-		}
-		if req.OmitEnv || req.OmitMCP {
-			bindings = append(bindings, fmt.Sprintf("omit-env=%t", req.OmitEnv), fmt.Sprintf("omit-mcp=%t", req.OmitMCP))
-		}
-		sum := sha256.Sum256([]byte(strings.Join(bindings, "\x00")))
-		req.PolicyDigest = hex.EncodeToString(sum[:])
-	}
 	return req
 }
 
+// The service validates the complete execution contract before admission. The store checks
+// its canonical identity again, including when rebuilding a public receipt from a saved row.
+func jobIdentity(document json.RawMessage, digest string) (string, error) {
+	if len(document) == 0 || digest == "" {
+		return "", errors.New("job document and digest are required")
+	}
+	if len(document) > 256<<10 || len(digest) != sha256.Size*2 {
+		return "", errors.New("job document or digest is outside bounds")
+	}
+	var value map[string]any
+	if err := json.Unmarshal(document, &value); err != nil || value == nil {
+		return "", errors.New("job document is invalid JSON")
+	}
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		return "", errors.New("job document cannot be canonicalized")
+	}
+	sum := sha256.Sum256(canonical)
+	if hex.EncodeToString(sum[:]) != digest || !bytes.Equal(canonical, document) {
+		return "", errors.New("job document does not match its canonical digest")
+	}
+	ref, ok := value["job_ref"].(string)
+	if !ok || ref == "" || !validBoundedText(ref, MaxExternalRefBytes) {
+		return "", errors.New("job reference is outside bounds")
+	}
+	return ref, nil
+}
+
 func validateCreateRequest(req CreateSessionRequest) error {
+	if _, err := jobIdentity(req.JobDocument, req.JobDigest); err != nil {
+		return &Error{Code: CodeInvalidRequest, Detail: err.Error()}
+	}
 	if req.ID != "" && !validBoundedText(req.ID, MaxIDBytes) {
 		return &Error{Code: CodeInvalidRequest, Detail: "session id is outside bounds"}
 	}
@@ -1055,27 +1070,13 @@ func validateCreateRequest(req CreateSessionRequest) error {
 	if req.MaxTurns < 0 || req.MaxTurns > MaxTurnsLimit || req.MaxQueuedTurns < 0 || req.MaxQueuedTurns > MaxQueuedTurnsLimit || req.MaxQueuedBytes < 0 || req.MaxQueuedBytes > MaxQueuedBytesLimit {
 		return &Error{Code: CodeInvalidRequest, Detail: "session limits are outside bounds"}
 	}
-	if len(req.PolicyDigest) != sha256.Size*2 || !validBoundedText(req.PolicyDigest, sha256.Size*2) {
-		return &Error{Code: CodeInvalidRequest, Detail: "policy digest is outside bounds"}
-	}
-	if _, err := hex.DecodeString(req.PolicyDigest); err != nil {
-		return &Error{Code: CodeInvalidRequest, Detail: "policy digest is not hexadecimal"}
-	}
-	if req.AuthorityDigest != "" {
-		if len(req.AuthorityDigest) != sha256.Size*2 || !validBoundedText(req.AuthorityDigest, sha256.Size*2) {
-			return &Error{Code: CodeInvalidRequest, Detail: "authority digest is outside bounds"}
-		}
-		if _, err := hex.DecodeString(req.AuthorityDigest); err != nil {
-			return &Error{Code: CodeInvalidRequest, Detail: "authority digest is not hexadecimal"}
-		}
-	}
 	if req.TurnTimeout <= 0 || req.TurnTimeout > MaxTurnTimeout || req.MaxPatchBytes <= 0 || req.MaxPatchBytes > MaxPatchBytesLimit {
 		return &Error{Code: CodeInvalidRequest, Detail: "session policy bounds are outside limits"}
 	}
-	if err := ValidateResponderBinding(req.ResponderBinding); err != nil {
+	if err := ValidateControllerTools(req.ControllerTools); err != nil {
 		return err
 	}
-	bindings := []string{req.Policy, req.Repository, req.Workspace, req.ForkName, req.BaseCommit}
+	bindings := []string{req.Repository, req.Workspace, req.ForkName, req.BaseCommit}
 	boundCount := 0
 	for _, binding := range bindings {
 		if binding != "" {
@@ -1086,11 +1087,9 @@ func validateCreateRequest(req CreateSessionRequest) error {
 		}
 	}
 	if normalizedMode(req.Mode) == "bare" {
-		// A bare session is a policy with no repository behind it: the policy binds, the four
-		// repository bindings stay empty, and nothing repository-shaped may ride along.
-		if req.Policy == "" || boundCount != 1 || req.ForkGeneration != "" || req.Source != nil ||
+		if boundCount != 0 || req.ForkGeneration != "" || req.Source != nil ||
 			len(req.Companions) != 0 || len(req.RepositoryFreshness) != 0 {
-			return &Error{Code: CodeInvalidRequest, Detail: "a bare session binds a policy and no repository"}
+			return &Error{Code: CodeInvalidRequest, Detail: "a bare session cannot bind a repository"}
 		}
 	} else if boundCount != 0 && boundCount != len(bindings) {
 		return &Error{Code: CodeInvalidRequest, Detail: "session bindings must be all-or-none"}
@@ -1302,6 +1301,33 @@ func (s *Store) ListSessionsForRecovery(ctx context.Context) ([]Session, error) 
 	return sessions, nil
 }
 
+// RetiredQuarantinedSessions retains uncertainty after record-only retirement.
+// That operation deliberately leaves the old host runtime untouched; a restart
+// must not turn its discarded tombstone into evidence of free worker capacity.
+func (s *Store) RetiredQuarantinedSessions(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT session_id, payload FROM events WHERE type = ?", string(EventWorkspaceDiscarded))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		var payload []byte
+		if err := rows.Scan(&id, &payload); err != nil {
+			return nil, err
+		}
+		var receipt struct{ Retired bool }
+		if err := json.Unmarshal(payload, &receipt); err != nil {
+			return nil, err
+		}
+		if receipt.Retired {
+			ids = append(ids, id)
+		}
+	}
+	return ids, rows.Err()
+}
+
 // ListRuntimeCleanupTurns returns turns whose runtime may still exist after their durable work is
 // recoverable. An exact runtime receipt outlives a terminal turn until teardown succeeds. Legacy
 // active turns without a receipt remain eligible through their deterministic turn runtime ID.
@@ -1362,7 +1388,7 @@ func (s *Store) ListSessionRuntimeCleanupTurns(ctx context.Context, sessionID st
 	return turns, nil
 }
 
-const sessionSelect = `SELECT id, external_ref, target, policy, policy_digest, authority_digest, project_env, project_mcp, responder_endpoint, responder_token, workspace_task, mode, repository_read_only, repository, workspace, fork_name, fork_generation,
+const sessionSelect = `SELECT id, external_ref, target, policy, policy_digest, authority_digest, job_document, job_digest, project_env, project_mcp, responder_endpoint, responder_token, workspace_task, mode, repository_read_only, repository, workspace, fork_name, fork_generation,
 	   base_commit, companions, repository_freshness, source_binding,
 	   network_mode, network_fingerprint, network_qualification,
 	   native_session_id, turn_timeout, max_patch_bytes, revision, state, activity,
@@ -1376,10 +1402,10 @@ func scanSession(row rowScanner) (Session, error) {
 	var sess Session
 	var state, activity, active string
 	var companions, repositoryFreshness, sourceBinding string
-	var responderEndpointValue, responderTokenValue, workspaceTaskValue string
+	var responderEndpointValue, responderTokenValue, workspaceTaskValue, jobDocument string
 	var turnTimeout int64
 	var createdAt, updatedAt int64
-	if err := row.Scan(&sess.ID, &sess.ExternalRef, &sess.Target, &sess.Policy, &sess.PolicyDigest, &sess.AuthorityDigest,
+	if err := row.Scan(&sess.ID, &sess.ExternalRef, &sess.Target, &sess.Policy, &sess.PolicyDigest, &sess.AuthorityDigest, &jobDocument, &sess.JobDigest,
 		&sess.ProjectEnv, &sess.ProjectMCP, &responderEndpointValue, &responderTokenValue, &workspaceTaskValue, &sess.Mode, &sess.RepositoryReadOnly, &sess.Repository, &sess.Workspace, &sess.ForkName, &sess.ForkGeneration, &sess.BaseCommit, &companions, &repositoryFreshness,
 		&sourceBinding,
 		&sess.NetworkMode, &sess.NetworkFingerprint, &sess.NetworkQualification, &sess.NativeSessionID,
@@ -1388,6 +1414,16 @@ func scanSession(row rowScanner) (Session, error) {
 		&sess.QueuedPromptBytes, &active,
 		&sess.LastEventSequence, &createdAt, &updatedAt); err != nil {
 		return Session{}, err
+	}
+	if jobDocument != "" {
+		sess.JobDocument = json.RawMessage(jobDocument)
+	}
+	if jobDocument != "" || sess.JobDigest != "" {
+		jobRef, err := jobIdentity(sess.JobDocument, sess.JobDigest)
+		if err != nil {
+			return Session{}, fmt.Errorf("decode session job identity: %w", err)
+		}
+		sess.JobRef = jobRef
 	}
 	if err := json.Unmarshal([]byte(companions), &sess.Companions); err != nil {
 		return Session{}, fmt.Errorf("decode companion repositories: %w", err)
@@ -1405,8 +1441,8 @@ func scanSession(row rowScanner) (Session, error) {
 		sess.Source = &binding
 	}
 	if responderEndpointValue != "" {
-		sess.ResponderBinding = &ResponderBinding{Endpoint: responderEndpointValue, Token: responderTokenValue}
-		sess.ResponderBindingDigest = ResponderBindingDigest(sess.ResponderBinding)
+		sess.ControllerTools = &ControllerTools{Endpoint: responderEndpointValue, Token: responderTokenValue}
+		sess.ControllerToolsDigest = ControllerToolsDigest(sess.ControllerTools)
 	}
 	if workspaceTaskValue != "" {
 		var binding WorkspaceTaskBinding
@@ -1455,18 +1491,7 @@ func encodeSourceBinding(value *SourceBinding) (string, error) {
 	return string(encoded), nil
 }
 
-// sourceBindingDigestBinding contributes the selected source to a synthesized policy digest. Only
-// the immutable identities belong in it; the resolution instant would make two identical sessions
-// digest differently.
-func sourceBindingDigestBinding(value *SourceBinding) string {
-	if value == nil {
-		return ""
-	}
-	return fmt.Sprintf("source=%d/%s/%s/%s/%s",
-		value.Version, value.Kind, value.SelectedRefValue(), value.SelectedCommit, value.BaseCommit)
-}
-
-func cloneResponderBinding(value *ResponderBinding) *ResponderBinding {
+func cloneControllerTools(value *ControllerTools) *ControllerTools {
 	if value == nil {
 		return nil
 	}
@@ -1474,34 +1499,34 @@ func cloneResponderBinding(value *ResponderBinding) *ResponderBinding {
 	return &clone
 }
 
-func responderEndpoint(value *ResponderBinding) string {
+func responderEndpoint(value *ControllerTools) string {
 	if value == nil {
 		return ""
 	}
 	return value.Endpoint
 }
 
-func responderToken(value *ResponderBinding) string {
+func responderToken(value *ControllerTools) string {
 	if value == nil {
 		return ""
 	}
 	return value.Token
 }
 
-// ValidateResponderBinding validates the one controller-owned MCP binding a
+// ValidateControllerTools validates the one controller-owned MCP binding a
 // session may carry. The service layer calls this before doing repository work;
 // the store repeats it as the final durable boundary.
-func ValidateResponderBinding(value *ResponderBinding) error {
+func ValidateControllerTools(value *ControllerTools) error {
 	if value == nil {
 		return nil
 	}
 	if !validBoundedText(value.Endpoint, 2048) || !validResponderToken(value.Token) {
-		return &Error{Code: CodeInvalidRequest, Detail: "Responder binding is outside bounds"}
+		return &Error{Code: CodeInvalidRequest, Detail: "controller tools binding is outside bounds"}
 	}
 	endpoint, err := url.Parse(value.Endpoint)
 	if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil ||
-		endpoint.RawQuery != "" || endpoint.Fragment != "" || endpoint.Path != "/v1/state-tools/mcp" {
-		return &Error{Code: CodeInvalidRequest, Detail: "Responder binding endpoint is invalid"}
+		endpoint.RawQuery != "" || endpoint.Fragment != "" || endpoint.Opaque != "" {
+		return &Error{Code: CodeInvalidRequest, Detail: "controller tools endpoint must be an HTTPS URL without credentials, query or fragment"}
 	}
 	return nil
 }
@@ -1539,6 +1564,14 @@ func (s *Store) SubmitTurn(ctx context.Context, key string, req SubmitTurnReques
 		}
 		return s.replayTurn(op)
 	}
+	var restoring bool
+	if err := tx.QueryRowContext(ctx, pendingWorkspaceRestore, "", req.SessionID).Scan(&restoring); err != nil {
+		return Turn{}, err
+	}
+	if restoring {
+		// Roll back admission as well: this same key may retry after recovery.
+		return Turn{}, &Error{Code: CodeInvalidSessionState, Detail: "a workspace restore is in progress on this session"}
+	}
 	if err := validateSubmitRequest(req); err != nil {
 		return Turn{}, s.failAndCommit(tx, op.ID, err)
 	}
@@ -1567,19 +1600,19 @@ func (s *Store) SubmitTurn(ctx context.Context, key string, req SubmitTurnReques
 		return Turn{}, fmt.Errorf("reserve turn ordinal: %w", err)
 	}
 	turn := Turn{
-		ID:               s.id("turn"),
-		SessionID:        req.SessionID,
-		Ordinal:          ordinal,
-		IdempotencyKey:   key,
-		RequestHash:      hash,
-		State:            TurnQueued,
-		SendState:        SendStateNone,
-		Prompt:           req.Prompt,
-		QueuedAt:         now,
-		MinTargetIndex:   req.MinTargetIndex,
-		RewindTarget:     req.RewindTarget,
-		OutputContract:   cloneOutputContract(req.OutputContract),
-		ResponderBinding: cloneResponderBinding(req.ResponderBinding),
+		ID:              s.id("turn"),
+		SessionID:       req.SessionID,
+		Ordinal:         ordinal,
+		IdempotencyKey:  key,
+		RequestHash:     hash,
+		State:           TurnQueued,
+		SendState:       SendStateNone,
+		Prompt:          req.Prompt,
+		QueuedAt:        now,
+		MinTargetIndex:  req.MinTargetIndex,
+		RewindTarget:    req.RewindTarget,
+		OutputContract:  cloneOutputContract(req.OutputContract),
+		ControllerTools: cloneControllerTools(req.ControllerTools),
 	}
 	outputSchema := []byte{}
 	var outputSchemaSHA256 string
@@ -1594,7 +1627,7 @@ func (s *Store) SubmitTurn(ctx context.Context, key string, req SubmitTurnReques
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, turn.ID, turn.SessionID, turn.Ordinal, turn.IdempotencyKey,
 		turn.RequestHash, string(turn.State), string(turn.SendState), turn.Prompt, now.UnixNano(),
 		turn.MinTargetIndex, turn.RewindTarget, outputSchema, outputSchemaSHA256, outputSemanticValidation,
-		responderEndpoint(turn.ResponderBinding), responderToken(turn.ResponderBinding)); err != nil {
+		responderEndpoint(turn.ControllerTools), responderToken(turn.ControllerTools)); err != nil {
 		return Turn{}, fmt.Errorf("insert turn: %w", err)
 	}
 	for ordinal, artifact := range req.Artifacts {
@@ -1648,7 +1681,7 @@ func validateSubmitRequest(req SubmitTurnRequest) error {
 	if _, err := CompileOutputContract(req.OutputContract); err != nil {
 		return err
 	}
-	if err := ValidateResponderBinding(req.ResponderBinding); err != nil {
+	if err := ValidateControllerTools(req.ControllerTools); err != nil {
 		return err
 	}
 	if len(req.Artifacts) > MaxTurnArtifacts {
@@ -2480,7 +2513,7 @@ func scanTurn(row rowScanner) (Turn, error) {
 		return Turn{}, err
 	}
 	if responderEndpointValue != "" || responderTokenValue != "" {
-		turn.ResponderBinding = &ResponderBinding{Endpoint: responderEndpointValue, Token: responderTokenValue}
+		turn.ControllerTools = &ControllerTools{Endpoint: responderEndpointValue, Token: responderTokenValue}
 	}
 	if len(outputSchema) > 0 || outputSchemaSHA256 != "" {
 		turn.OutputContract = &OutputContract{

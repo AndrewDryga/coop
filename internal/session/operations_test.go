@@ -7,6 +7,47 @@ import (
 	"testing"
 )
 
+func TestPendingWorkspaceRestoreFencesTurnAdmissionAcrossRestart(t *testing.T) {
+	ctx := context.Background()
+	root := filepath.Join(t.TempDir(), "state")
+	store := openTestStore(t, root)
+	sess, err := store.CreateSession(ctx, "session", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := map[string]string{"session_id": sess.ID}
+	op, _, err := store.ReserveOperation(ctx, "RestoreWorkspaceCheckpoint", "restore", intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkOperationRunning(ctx, op.ID, mustJSON(intent)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store = openTestStore(t, root)
+	defer store.Close()
+	req := SubmitTurnRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "Wait for the entire restore."}
+	for _, state := range []OperationState{OperationRunning, OperationUncertain} {
+		if state == OperationUncertain {
+			if err := store.MarkOperationUncertain(ctx, op.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var refusal *Error
+		if _, err := store.SubmitTurn(ctx, "turn", req); !errors.As(err, &refusal) || refusal.Code != CodeInvalidSessionState {
+			t.Fatalf("turn during %s restore: %v", state, err)
+		}
+	}
+	if err := store.CompleteOperation(ctx, op.ID, "session", sess.ID, mustJSON(sess)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SubmitTurn(ctx, "turn", req); err != nil {
+		t.Fatalf("same admission key after recovery: %v", err)
+	}
+}
+
 // The operations table is a write-ahead intent record: MarkOperationRunning durably records
 // what a cross-process operation is about to do, and MarkOperationUncertain records that its
 // outcome became unknown, specifically so a daemon that crashes mid-operation can recover
@@ -23,7 +64,7 @@ func TestOperationCrashReplayAtEachIntermediateStateReturnsUncertain(t *testing.
 
 			// Reserve exactly the way CreateSession would, so a later retry through the
 			// public API lands on this same operation.
-			req := normalizeCreateRequest(CreateSessionRequest{Target: "codex"})
+			req := normalizeCreateRequest(CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "codex"})
 			key := "crash-" + string(state)
 			op, replay, err := store.ReserveOperation(ctx, "CreateSession", key, req)
 			if err != nil || replay {
@@ -67,7 +108,7 @@ func TestOperationCrashReplayAtEachIntermediateStateReturnsUncertain(t *testing.
 
 			// The documented resolution for a retry landing on any non-terminal state: never
 			// a silent false success or failure, always "the outcome is unknown, come back."
-			if _, err := recovered.CreateSession(ctx, key, CreateSessionRequest{Target: "codex"}); !errors.Is(err, ErrOperationUncertain) {
+			if _, err := recovered.CreateSession(ctx, key, CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "codex"}); !errors.Is(err, ErrOperationUncertain) {
 				t.Fatalf("replay at %s = %v, want ErrOperationUncertain", state, err)
 			}
 
@@ -83,7 +124,7 @@ func TestOperationCrashReplayAtEachIntermediateStateReturnsUncertain(t *testing.
 			}
 
 			// A further replay now returns the real, resolved result instead of uncertainty.
-			final, err := recovered.CreateSession(ctx, key, CreateSessionRequest{Target: "codex"})
+			final, err := recovered.CreateSession(ctx, key, CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "codex"})
 			if err != nil || final.ID != "recovered-session" {
 				t.Fatalf("final replay after resolution = %+v, err=%v", final, err)
 			}

@@ -115,9 +115,9 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [acp-rewrites-must-keep-line-framing](acp-rewrites-must-keep-line-framing.md) — an ACP line rewrite that drops the trailing newline hangs the session silently; parsing tests still pass
 - [codex-acp-agent-mode](codex-acp-agent-mode.md) — Codex ACP must select full-access mode explicitly because session config does not override its per-turn sandbox policy
 - [session-api-dto-is-a-second-projection](session-api-dto-is-a-second-projection.md) — a field on the durable session record stays invisible to API clients until the hand-written DTO and its public* copier carry it too
-- [session-source-selection](session-source-selection.md) — one bounded selector picks default/branch/pull_request/commit inside the policy's repository; `git fetch <remote> <oid>` short-circuits on a cached object, so commit custody needs a second anchor
+- [session-source-selection](session-source-selection.md) — controller jobs freeze exact source bindings; private staging is immutable while review refreshes the current default separately
 - [session-awaiting-validation-runtime-cleanup](session-awaiting-validation-runtime-cleanup.md) — every started turn retains its exact runtime receipt through teardown; awaiting-validation owns durable candidate authority but no live provider runtime
-- [session-operation-intents-cross-versions](session-operation-intents-cross-versions.md) — running session operations survive binary upgrades, so persisted intent JSON needs explicit compatibility normalization before replay
+- [session-operation-intents-cross-versions](session-operation-intents-cross-versions.md) — durable intents survive upgrades; replay requires frozen job authority and never reconstructs it from retired local policies
 - [session-companions-own-git-metadata](session-companions-own-git-metadata.md) — companion boxes mount only the pinned workspace, so each snapshot must own usable Git metadata rather than point back to its source checkout
 - [review-host-owned-verdicts](review-host-owned-verdicts.md) — review boxes report bounded evidence; Coop alone applies validated task lifecycle changes
 - [signoff-scope-is-run-anchored](signoff-scope-is-run-anchored.md) — signoff subjects are a run-anchored folder diff; re-anchor only on receipt-consistent rounds, from the post-review done set

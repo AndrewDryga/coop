@@ -41,12 +41,11 @@ type SessionDTO struct {
 	ID                        string                               `json:"id"`
 	ExternalRef               string                               `json:"external_ref"`
 	Target                    string                               `json:"target"`
-	Policy                    string                               `json:"policy"`
-	PolicyDigest              string                               `json:"policy_digest"`
-	AuthorityDigest           string                               `json:"authority_digest"`
+	JobRef                    string                               `json:"job_ref,omitempty"`
+	JobDigest                 string                               `json:"job_digest,omitempty"`
 	ProjectEnv                bool                                 `json:"project_env"`
 	ProjectMCP                bool                                 `json:"project_mcp"`
-	ResponderBindingDigest    string                               `json:"responder_binding_digest,omitempty"`
+	ControllerToolsDigest     string                               `json:"controller_tools_digest,omitempty"`
 	WorkspaceTask             *SessionWorkspaceTaskDTO             `json:"workspace_task,omitempty"`
 	Mode                      string                               `json:"mode"`
 	RepositoryReadOnly        bool                                 `json:"repository_read_only"`
@@ -114,7 +113,7 @@ type TurnDTO struct {
 	ValidationAttempt         int                    `json:"validation_attempt,omitempty"`
 	ValidationError           string                 `json:"validation_error,omitempty"`
 	ValidationReceipt         string                 `json:"validation_receipt,omitempty"`
-	ResponderBindingDigest    string                 `json:"responder_binding_digest,omitempty"`
+	ControllerToolsDigest     string                 `json:"controller_tools_digest,omitempty"`
 }
 
 type TurnArtifactDTO struct {
@@ -158,14 +157,14 @@ type operationFenceEnvelope struct {
 }
 
 type operationFenceSubmitTurnRequest struct {
-	SessionID        string                    `json:"session_id"`
-	ExpectedRevision int64                     `json:"expected_revision"`
-	Prompt           string                    `json:"prompt"`
-	Artifacts        []session.InputArtifact   `json:"artifacts,omitempty"`
-	MinTargetIndex   int                       `json:"min_target_index,omitempty"`
-	RewindTarget     bool                      `json:"rewind_target,omitempty"`
-	OutputContract   *session.OutputContract   `json:"output_contract,omitempty"`
-	ResponderBinding *session.ResponderBinding `json:"responder_binding,omitempty"`
+	SessionID        string                   `json:"session_id"`
+	ExpectedRevision int64                    `json:"expected_revision"`
+	Prompt           string                   `json:"prompt"`
+	Artifacts        []session.InputArtifact  `json:"artifacts,omitempty"`
+	MinTargetIndex   int                      `json:"min_target_index,omitempty"`
+	RewindTarget     bool                     `json:"rewind_target,omitempty"`
+	OutputContract   *session.OutputContract  `json:"output_contract,omitempty"`
+	ControllerTools  *session.ControllerTools `json:"controller_tools,omitempty"`
 }
 
 type SessionChangeDTO struct {
@@ -209,7 +208,7 @@ type SessionReviewDTO struct {
 	OperationID           string                 `json:"operation_id"`
 	SessionID             string                 `json:"session_id"`
 	SessionRevision       int64                  `json:"session_revision"`
-	PolicyDigest          string                 `json:"policy_digest"`
+	JobDigest             string                 `json:"job_digest"`
 	Source                *session.SourceBinding `json:"source,omitempty"`
 	CreationBase          string                 `json:"creation_base"`
 	SourceHead            string                 `json:"source_head"`
@@ -218,15 +217,13 @@ type SessionReviewDTO struct {
 	ParentTree            string                 `json:"parent_tree"`
 	CandidateHead         string                 `json:"candidate_head"`
 	CandidateTree         string                 `json:"candidate_tree"`
+	CandidateRetained     bool                   `json:"candidate_retained"`
 	Rebase                ReviewRebaseStatus     `json:"rebase"`
 	Gate                  ReviewGateStatus       `json:"gate"`
 	GateError             string                 `json:"gate_error,omitempty"`
 	PolicyFindings        []string               `json:"policy_findings"`
 	Patch                 []byte                 `json:"patch,omitempty"`
 	PatchTruncated        bool                   `json:"patch_truncated"`
-	PatchArtifactID       string                 `json:"patch_artifact_id,omitempty"`
-	PatchDigest           string                 `json:"patch_digest,omitempty"`
-	PatchBytes            int64                  `json:"patch_bytes"`
 	Publishable           bool                   `json:"publishable"`
 	NotPublishableReasons []string               `json:"not_publishable_reasons"`
 }
@@ -291,20 +288,13 @@ type sessionReadyDTO struct {
 }
 
 type sessionCapabilitiesDTO struct {
+	ControllerToolsVersions            []int `json:"controller_tools_versions"`
 	RepositoryFreshnessReceiptVersions []int `json:"repository_freshness_receipt_versions"`
 	// SessionEvidenceVersions is the proof that this daemon serves GET /v1/sessions/{id}/evidence
 	// in the named contract version. A controller reads it off the worker's advertised
 	// capability, so an older worker's missing evidence reads as "not exported by this build"
 	// rather than as an empty network or an unbound task.
 	SessionEvidenceVersions []int `json:"session_evidence_versions"`
-	// RepositorySourceSelectorVersions is the independently versioned proof that this daemon
-	// resolves and persists the generic source selector. A controller must not place
-	// selector-bound work on a worker whose daemon does not publish it.
-	RepositorySourceSelectorVersions []int `json:"repository_source_selector_versions"`
-	// Policies is each served policy's network reach as this daemon resolved it: the mode, and for
-	// a filtered policy the fingerprint a create may pin. It is the published half of the network
-	// fence — a caller cannot compute it, because host approval feeds it.
-	Policies map[string]PolicyNetwork `json:"policies,omitempty"`
 }
 
 type sessionHTTPErrorBody struct {
@@ -362,11 +352,16 @@ func (h *sessionHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeSessionJSON(w, http.StatusOK, sessionCapabilitiesDTO{
+			ControllerToolsVersions:            []int{1},
 			RepositoryFreshnessReceiptVersions: []int{2},
 			SessionEvidenceVersions:            []int{workerproto.SessionEvidenceVersion},
-			RepositorySourceSelectorVersions:   []int{session.SourceBindingVersion},
-			Policies:                           h.service.PolicyNetworks(),
 		})
+		return
+	case "/v1/capacity":
+		if !sessionHTTPMethod(w, r, http.MethodGet) || !sessionQueryOnly(w, r) {
+			return
+		}
+		writeSessionJSON(w, http.StatusOK, h.service.RuntimeCapacity())
 		return
 	case "/v1/storage":
 		// The worker's own storage accounting, on the owner-private socket the connector and
@@ -440,7 +435,7 @@ func (h *sessionHTTPHandler) fenceOperation(w http.ResponseWriter, r *http.Reque
 				SessionID: request.SessionID, ExpectedRevision: request.ExpectedRevision,
 				Prompt: request.Prompt, Artifacts: request.Artifacts,
 				MinTargetIndex: request.MinTargetIndex, RewindTarget: request.RewindTarget,
-				OutputContract: request.OutputContract, ResponderBinding: request.ResponderBinding,
+				OutputContract: request.OutputContract, ControllerTools: request.ControllerTools,
 			},
 		)
 	default:
@@ -563,6 +558,14 @@ func (h *sessionHTTPHandler) serveSessionPath(w http.ResponseWriter, r *http.Req
 		if sessionHTTPMethod(w, r, http.MethodGet) && sessionQueryOnly(w, r) {
 			h.getReview(w, r, sessionID, parts[2])
 		}
+	case len(parts) == 4 && parts[1] == "reviews" && validSessionHTTPPathID(parts[2]) && parts[3] == "publish":
+		if sessionHTTPMethod(w, r, http.MethodPost) {
+			h.publishReview(w, r, sessionID, parts[2])
+		}
+	case len(parts) == 3 && parts[1] == "publications" && validSessionHTTPPathID(parts[2]):
+		if sessionHTTPMethod(w, r, http.MethodGet) && sessionQueryOnly(w, r) {
+			h.getPublication(w, r, sessionID, parts[2])
+		}
 	case len(parts) == 2 && parts[1] == "close":
 		if sessionHTTPMethod(w, r, http.MethodPost) {
 			h.closeSession(w, r, sessionID)
@@ -654,7 +657,7 @@ func (h *sessionHTTPHandler) restoreWorkspaceCheckpoint(w http.ResponseWriter, r
 		return
 	}
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || mediaType != workerproto.WorkspaceCheckpointBundleMediaType {
+	if err != nil || (mediaType != workerproto.WorkspaceCheckpointBundleMediaType && mediaType != workerproto.LegacyWorkspaceCheckpointMediaType) {
 		writeSessionHTTPError(w, http.StatusUnsupportedMediaType, "invalid_request", "workspace checkpoint media type is invalid")
 		return
 	}
@@ -673,17 +676,12 @@ func (h *sessionHTTPHandler) restoreWorkspaceCheckpoint(w http.ResponseWriter, r
 		writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "workspace checkpoint descriptor is invalid")
 		return
 	}
-	if r.ContentLength <= 0 || r.ContentLength > workerproto.MaxWorkspaceCheckpointBundleBytes {
+	if r.ContentLength <= 0 || r.ContentLength != checkpoint.Bundle.ByteSize || mediaType != checkpoint.Bundle.MediaType {
 		writeSessionHTTPError(w, http.StatusRequestEntityTooLarge, "invalid_request", "workspace checkpoint bundle length is invalid")
 		return
 	}
-	bundle, err := io.ReadAll(io.LimitReader(r.Body, workerproto.MaxWorkspaceCheckpointBundleBytes+1))
-	if err != nil || int64(len(bundle)) != r.ContentLength || len(bundle) > workerproto.MaxWorkspaceCheckpointBundleBytes {
-		writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "workspace checkpoint bundle is invalid")
-		return
-	}
 	sess, err := h.service.RestoreWorkspaceCheckpoint(r.Context(), key, RestoreWorkspaceCheckpointRequest{
-		SessionID: sessionID, ExpectedRevision: revision, Checkpoint: checkpoint, Bundle: bundle,
+		SessionID: sessionID, ExpectedRevision: revision, Checkpoint: checkpoint, Stream: r.Body,
 	})
 	if err != nil {
 		writeSessionServiceError(w, err)
@@ -731,11 +729,6 @@ func (h *sessionHTTPHandler) serveOperationPath(w http.ResponseWriter, r *http.R
 		return
 	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/operations/"), "/")
-	if len(parts) == 2 && parts[1] == "review-patch" &&
-		validSessionHTTPPathID(parts[0]) {
-		h.reviewPatch(w, r, parts[0])
-		return
-	}
 	if len(parts) == 2 && parts[1] == "checkpoint-bundle" &&
 		validSessionHTTPPathID(parts[0]) {
 		h.workspaceCheckpointBundle(w, r, parts[0])
@@ -758,59 +751,27 @@ func (h *sessionHTTPHandler) workspaceCheckpointBundle(
 	r *http.Request,
 	operationID string,
 ) {
-	bundle, err := h.service.OpenWorkspaceCheckpointBundle(r.Context(), operationID)
+	bundle, checkpoint, err := h.service.OpenWorkspaceCheckpointBundle(r.Context(), operationID)
 	if err != nil {
 		writeSessionServiceError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", workerproto.WorkspaceCheckpointBundleMediaType)
-	w.Header().Set("Content-Length", strconv.Itoa(len(bundle)))
-	w.Header().Set("ETag", `"`+checkpointSHA256(bundle)+`"`)
+	defer bundle.Close()
+	w.Header().Set("Content-Type", checkpoint.Bundle.MediaType)
+	w.Header().Set("Content-Length", strconv.FormatInt(checkpoint.Bundle.ByteSize, 10))
+	w.Header().Set("ETag", `"`+checkpoint.Bundle.SHA256+`"`)
 	w.Header().Set("Content-Disposition", `attachment; filename="workspace-checkpoint.tar"`)
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(bundle)
-}
-
-func (h *sessionHTTPHandler) reviewPatch(
-	w http.ResponseWriter,
-	r *http.Request,
-	operationID string,
-) {
-	file, dossier, err := h.service.OpenReviewPatch(r.Context(), operationID)
-	if err != nil {
-		writeSessionServiceError(w, err)
-		return
-	}
-	defer file.Close()
-	w.Header().Set("Content-Type", "text/x-diff; charset=utf-8")
-	w.Header().Set("Content-Length", strconv.FormatInt(dossier.PatchBytes, 10))
-	w.Header().Set("ETag", `"`+dossier.PatchDigest+`"`)
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(http.StatusOK)
-	_, _ = io.Copy(w, file)
+	_, _ = io.CopyN(w, bundle, checkpoint.Bundle.ByteSize)
 }
 
 func (h *sessionHTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePost(w, r) {
 		return
 	}
-	var body struct {
-		Policy                     string                    `json:"policy"`
-		Task                       string                    `json:"task"`
-		Source                     *session.SourceSelector   `json:"source,omitempty"`
-		ResponderBinding           *session.ResponderBinding `json:"responder_binding,omitempty"`
-		ExpectedPolicyDigest       string                    `json:"expected_policy_digest,omitempty"`
-		ExpectedAuthorityDigest    string                    `json:"expected_authority_digest,omitempty"`
-		ExpectedNetworkFingerprint string                    `json:"expected_network_fingerprint,omitempty"`
-	}
-	if !decodeSessionJSON(w, r, &body) {
+	var request CreateRemoteSessionRequest
+	if !decodeSessionJSON(w, r, &request) {
 		return
-	}
-	request := CreateRemoteSessionRequest{
-		Policy: body.Policy, Task: body.Task, Source: body.Source,
-		ResponderBinding:     body.ResponderBinding,
-		ExpectedPolicyDigest: body.ExpectedPolicyDigest, ExpectedAuthorityDigest: body.ExpectedAuthorityDigest,
-		ExpectedNetworkFingerprint: body.ExpectedNetworkFingerprint,
 	}
 	if sessionPreferAsync(r) {
 		op, err := h.service.CreateRemoteSessionAsync(
@@ -952,13 +913,13 @@ func (h *sessionHTTPHandler) submitTurn(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	var body struct {
-		ExpectedRevision int64                     `json:"expected_revision"`
-		Prompt           string                    `json:"prompt"`
-		Artifacts        []session.InputArtifact   `json:"artifacts,omitempty"`
-		MinTargetIndex   int                       `json:"min_target_index,omitempty"`
-		RewindTarget     bool                      `json:"rewind_target,omitempty"`
-		OutputContract   *session.OutputContract   `json:"output_contract,omitempty"`
-		ResponderBinding *session.ResponderBinding `json:"responder_binding,omitempty"`
+		ExpectedRevision int64                    `json:"expected_revision"`
+		Prompt           string                   `json:"prompt"`
+		Artifacts        []session.InputArtifact  `json:"artifacts,omitempty"`
+		MinTargetIndex   int                      `json:"min_target_index,omitempty"`
+		RewindTarget     bool                     `json:"rewind_target,omitempty"`
+		OutputContract   *session.OutputContract  `json:"output_contract,omitempty"`
+		ControllerTools  *session.ControllerTools `json:"controller_tools,omitempty"`
 	}
 	if !decodeSessionJSONLimit(w, r, &body, sessionHTTPTurnMaxBody) {
 		return
@@ -967,7 +928,7 @@ func (h *sessionHTTPHandler) submitTurn(w http.ResponseWriter, r *http.Request, 
 		SessionID: sessionID, ExpectedRevision: body.ExpectedRevision, Prompt: body.Prompt,
 		Artifacts: body.Artifacts, MinTargetIndex: body.MinTargetIndex,
 		RewindTarget: body.RewindTarget, OutputContract: body.OutputContract,
-		ResponderBinding: body.ResponderBinding,
+		ControllerTools: body.ControllerTools,
 	})
 	if err != nil {
 		writeSessionServiceError(w, err)
@@ -1255,6 +1216,32 @@ func (h *sessionHTTPHandler) review(w http.ResponseWriter, r *http.Request, sess
 		return
 	}
 	writeSessionJSON(w, http.StatusOK, sessionMutationReviewResponse{Operation: publicOperation(op), Review: publicReview(dossier)})
+}
+
+func (h *sessionHTTPHandler) publishReview(w http.ResponseWriter, r *http.Request, sessionID, reviewID string) {
+	var body workerproto.PublishRequest
+	if !decodeSessionJSON(w, r, &body) {
+		return
+	}
+	op, err := h.service.PublishReview(r.Context(), sessionIdempotencyKey(r), sessionID, reviewID, body)
+	if err != nil {
+		writeSessionServiceError(w, err)
+		return
+	}
+	if op.State == session.OperationSucceeded {
+		h.getPublication(w, r, sessionID, op.ID)
+		return
+	}
+	writeSessionJSON(w, http.StatusAccepted, map[string]any{"operation": publicOperation(op)})
+}
+
+func (h *sessionHTTPHandler) getPublication(w http.ResponseWriter, r *http.Request, sessionID, operationID string) {
+	op, result, err := h.service.GetPublication(r.Context(), sessionID, operationID)
+	if err != nil {
+		writeSessionServiceError(w, err)
+		return
+	}
+	writeSessionJSON(w, http.StatusOK, map[string]any{"operation": publicOperation(op), "publication": result})
 }
 
 func (h *sessionHTTPHandler) closeSession(w http.ResponseWriter, r *http.Request, sessionID string) {
@@ -1549,12 +1536,12 @@ func publicSession(value session.Session) SessionDTO {
 		})
 	}
 	return SessionDTO{
-		ID: value.ID, ExternalRef: value.ExternalRef, Target: value.Target, Policy: value.Policy,
-		PolicyDigest: value.PolicyDigest, AuthorityDigest: value.AuthorityDigest,
+		ID: value.ID, ExternalRef: value.ExternalRef, Target: value.Target,
+		JobRef: value.JobRef, JobDigest: value.JobDigest,
 		ProjectEnv: value.ProjectEnv, ProjectMCP: value.ProjectMCP,
 		Mode:                      normalizedSessionMode(value.Mode),
 		RepositoryReadOnly:        value.RepositoryReadOnly,
-		ResponderBindingDigest:    sessionResponderBindingDigest(value),
+		ControllerToolsDigest:     sessionControllerToolsDigest(value),
 		WorkspaceTask:             publicWorkspaceTask(value.WorkspaceTask),
 		BaseCommit:                value.BaseCommit,
 		RepositoryFreshnessStatus: repositoryFreshnessStatus(value.RepositoryFreshness),
@@ -1590,20 +1577,20 @@ func publicWorkspaceTask(value *session.WorkspaceTaskBinding) *SessionWorkspaceT
 	}
 }
 
-// sessionResponderBindingDigest reads the digest from the private binding when the session came
+// sessionControllerToolsDigest reads the digest from the private binding when the session came
 // from its canonical row, and from the receipt field when it was replayed from an operation
 // result, which carries the digest and never the bearer.
-func sessionResponderBindingDigest(value session.Session) string {
-	if value.ResponderBinding != nil {
-		return session.ResponderBindingDigest(value.ResponderBinding)
+func sessionControllerToolsDigest(value session.Session) string {
+	if value.ControllerTools != nil {
+		return session.ControllerToolsDigest(value.ControllerTools)
 	}
-	return value.ResponderBindingDigest
+	return value.ControllerToolsDigest
 }
 
 func publicTurn(value session.Turn) TurnDTO {
-	responderBindingDigest := value.ResponderBindingDigest
-	if responderBindingDigest == "" {
-		responderBindingDigest = session.ResponderBindingDigest(value.ResponderBinding)
+	controllerToolsDigest := value.ControllerToolsDigest
+	if controllerToolsDigest == "" {
+		controllerToolsDigest = session.ControllerToolsDigest(value.ControllerTools)
 	}
 	artifacts := make([]TurnArtifactDTO, 0, len(value.OutputArtifacts))
 	for _, artifact := range value.OutputArtifacts {
@@ -1626,7 +1613,7 @@ func publicTurn(value session.Turn) TurnDTO {
 		ValidationAttempt:         value.ValidationAttempt,
 		ValidationError:           value.ValidationError,
 		ValidationReceipt:         value.ValidationReceipt,
-		ResponderBindingDigest:    responderBindingDigest,
+		ControllerToolsDigest:     controllerToolsDigest,
 	}
 }
 
@@ -1670,14 +1657,13 @@ func publicChanges(value WorkspaceChanges) SessionChangesDTO {
 func publicReview(value ReviewDossier) SessionReviewDTO {
 	result := SessionReviewDTO{
 		OperationID: value.OperationID, SessionID: value.SessionID, SessionRevision: value.SessionRevision,
-		PolicyDigest: value.PolicyDigest, Source: session.CloneSourceBinding(value.Source),
+		JobDigest: value.JobDigest, Source: session.CloneSourceBinding(value.Source),
 		CreationBase: value.CreationBase, SourceHead: value.SourceHead,
 		SourceTree: value.SourceTree, ParentHead: value.ParentHead, ParentTree: value.ParentTree,
 		CandidateHead: value.CandidateHead, CandidateTree: value.CandidateTree, Rebase: value.Rebase,
 		Gate: value.Gate, PolicyFindings: append([]string{}, value.PolicyFindings...),
 		Patch: append([]byte(nil), value.Patch...), PatchTruncated: value.PatchTruncated,
-		PatchArtifactID: value.PatchArtifactID, PatchDigest: value.PatchDigest,
-		PatchBytes: value.PatchBytes, Publishable: value.Publishable,
+		CandidateRetained: value.CandidateRetained, Publishable: value.Publishable,
 		NotPublishableReasons: append([]string{}, value.NotPublishableReasons...),
 	}
 	if value.GateError != "" {
@@ -1750,7 +1736,7 @@ func sessionHTTPError(err error) (string, int, string) {
 		session.CodeOperationFenced,
 		session.CodeRevisionConflict, session.CodeInvalidSessionState, session.CodeQueueFull,
 		session.CodeBudgetExhausted, session.CodeTurnNotRunnable, session.CodeNativeSessionConflict,
-		session.CodeDiscardPlanStale, session.CodePolicyDigestMismatch, session.CodeNetworkFingerprintMismatch:
+		session.CodeDiscardPlanStale, session.CodeNetworkFingerprintMismatch:
 		status = http.StatusConflict
 	case session.CodeInternal:
 		status = http.StatusInternalServerError

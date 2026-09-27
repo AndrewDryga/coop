@@ -3,7 +3,7 @@ name: session-awaiting-validation-runtime-cleanup
 description: every started turn retains its exact runtime receipt through teardown; awaiting-validation owns durable candidate authority but no live provider runtime
 subsystem: sessions
 sources: [internal/session/store.go, internal/sessionsvc/acp.go, internal/sessionsvc/service.go, internal/forkspace/generation.go, internal/forkspace/reservation.go]
-updated: 2026-09-06
+updated: 2026-09-27
 ---
 
 # Awaiting validation is durable authority, not runtime authority
@@ -54,7 +54,16 @@ proof the session is quarantined: interrupted-turn reconciliation excludes it tr
 workers and janitors skip it, and every workspace/runtime/destructive API fails before touching the
 fork. Read-only durable session and turn history remains available for manual recovery.
 
+Active and warm children share the service's four runtime permits. Cleanup errors retain a permit
+even when the answer succeeds. A failed host-process stop retains its process identity separately
+from the warm pool; successful Docker cleanup cannot release it. Preparation invalidates the idle
+cleanup stamp before starting, including failed attempts. Warm expiry/eviction and subsequent
+turn admission share the session lock. Quarantined history, even record-only retirement, is not
+proof that old runtime resources stopped and cannot advertise free capacity.
+
 ## Changelog
+- 2026-09-27 — added runtime capacity ownership and failure-path proof; reviewed active/warm,
+  expiry, Prepare failure, surviving host process and retained quarantine paths.
 - 2026-09-06 — a checkpoint restore holds the session runtime (`beginWorkspaceRestore`, `internal/sessionsvc/service.go`) from validation through the task binding and marks the session restoring; `SubmitTurn` refuses with `invalid_session_state` while the mark is set (no receipt journaled, same key retries), so a restore and a first turn never interleave.
 - 2026-09-05 — semantic acceptance removes terminal input bytes while preserving repair input
   custody, candidate outputs and idempotent validation proof across database reopen.

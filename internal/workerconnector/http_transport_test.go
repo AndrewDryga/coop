@@ -1,17 +1,12 @@
 package workerconnector
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -129,7 +124,6 @@ func TestProductionHTTPTransportEnrollsAndRotatesAWorkerOwnedIdentity(t *testing
 	transport, err := NewHTTPTransport(HTTPTransportConfig{
 		BaseURL: server.URL, CAFile: caPath, EnrollmentTokenFile: tokenPath,
 		IdentityFile: identityPath, RenewBefore: time.Minute, Timeout: time.Minute,
-		WorkerID: "worker-a", WorkspaceRef: "workspace-main",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -164,102 +158,6 @@ func TestProductionHTTPTransportEnrollsAndRotatesAWorkerOwnedIdentity(t *testing
 	}
 }
 
-func TestHTTPTransportMovesArtifactBytesOnlyThroughTheCommandScopedRoutes(t *testing.T) {
-	input := []byte("exact authenticated input")
-	inputSHA := sha256.Sum256(input)
-	output := []byte{137, 80, 78, 71, 13, 10, 26, 10, 'o'}
-	outputSHA := sha256.Sum256(output)
-	reviewPatch := []byte("diff --git a/a b/a\n+reviewed\n")
-	reviewSHA := sha256.Sum256(reviewPatch)
-	checkpoint, checkpointBundle := testWorkspaceCheckpoint(t, time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC))
-
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch {
-		case request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/input-artifacts/artifact:input:1"):
-			response.Header().Set("Content-Type", "text/plain")
-			response.Header().Set("X-Responder-Artifact-Name", base64.RawURLEncoding.EncodeToString([]byte("input.txt")))
-			response.Header().Set("X-Responder-Artifact-SHA256", hex.EncodeToString(inputSHA[:]))
-			_, _ = response.Write(input)
-
-		case request.Method == http.MethodPut && strings.HasSuffix(request.URL.Path, "/output-artifacts/artifact_chart"):
-			body, _ := io.ReadAll(request.Body)
-			if string(body) != string(output) || request.Header.Get("Content-Type") != "image/png" ||
-				request.Header.Get("X-Responder-Artifact-SHA256") != hex.EncodeToString(outputSHA[:]) {
-				t.Errorf("output upload headers=%v body=%q", request.Header, body)
-			}
-			response.Header().Set("Content-Type", "application/json")
-			_, _ = response.Write([]byte(`{"transfer_id":"018f04f4-3333-7000-8000-000000000001"}`))
-
-		case request.Method == http.MethodPut && strings.HasSuffix(request.URL.Path, "/review-patches/review-artifact-1"):
-			body, _ := io.ReadAll(request.Body)
-			if string(body) != string(reviewPatch) || request.Header.Get("Content-Type") != "text/x-diff" ||
-				request.Header.Get("X-Responder-Artifact-SHA256") != hex.EncodeToString(reviewSHA[:]) {
-				t.Errorf("review upload headers=%v body=%q", request.Header, body)
-			}
-			response.Header().Set("Content-Type", "application/json")
-			_, _ = response.Write([]byte(`{"transfer_id":"018f04f4-4444-7000-8000-000000000001"}`))
-
-		case request.Method == http.MethodPut && strings.HasSuffix(request.URL.Path, "/workspace-checkpoints/"+checkpoint.CheckpointRef):
-			body, _ := io.ReadAll(request.Body)
-			descriptor, decodeErr := base64.RawURLEncoding.DecodeString(request.Header.Get("X-Responder-Checkpoint-Descriptor"))
-			decoded, descriptorErr := workerproto.DecodeWorkspaceCheckpoint(descriptor)
-			if !bytes.Equal(body, checkpointBundle) || request.Header.Get("Content-Type") != workerproto.WorkspaceCheckpointBundleMediaType ||
-				request.Header.Get("X-Responder-Checkpoint-SHA256") != checkpoint.Bundle.SHA256 || decodeErr != nil || descriptorErr != nil ||
-				decoded.CheckpointRef != checkpoint.CheckpointRef {
-				t.Errorf("checkpoint upload headers=%v body_bytes=%d decode=%v descriptor=%v", request.Header, len(body), decodeErr, descriptorErr)
-			}
-			response.Header().Set("Content-Type", "application/json")
-			_, _ = response.Write([]byte(`{"checkpoint_ref":"` + checkpoint.CheckpointRef + `","state":"stored"}`))
-
-		case request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/workspace-checkpoints/018f04f4-5555-7000-8000-000000000001"):
-			descriptor, _ := json.Marshal(checkpoint)
-			response.Header().Set("Content-Type", workerproto.WorkspaceCheckpointBundleMediaType)
-			response.Header().Set("X-Responder-Checkpoint-Descriptor", base64.RawURLEncoding.EncodeToString(descriptor))
-			response.Header().Set("X-Responder-Checkpoint-SHA256", checkpoint.Bundle.SHA256)
-			_, _ = response.Write(checkpointBundle)
-
-		default:
-			http.NotFound(response, request)
-		}
-	}))
-	defer server.Close()
-	transport, err := newHTTPTransport(server.URL, server.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	inputArtifact, err := transport.FetchInputArtifact(context.Background(), "018f04f4-1111-7000-8000-000000000001", "artifact:input:1")
-	if err != nil || string(inputArtifact.Data) != string(input) || inputArtifact.Name != "input.txt" {
-		t.Fatalf("input artifact = %+v, %v", inputArtifact, err)
-	}
-	resource, err := transport.UploadOutputArtifact(context.Background(), "018f04f4-1111-7000-8000-000000000001", Artifact{
-		ID: "artifact_chart", Name: "chart.png", MediaType: "image/png", SHA256: hex.EncodeToString(outputSHA[:]), Data: output,
-	})
-	if err != nil || !strings.Contains(string(resource), "transfer_id") {
-		t.Fatalf("upload resource = %s, %v", resource, err)
-	}
-	reviewResource, err := transport.UploadReviewPatch(
-		context.Background(), "018f04f4-1111-7000-8000-000000000001",
-		"review-artifact-1", hex.EncodeToString(reviewSHA[:]), reviewPatch,
-	)
-	if err != nil || !strings.Contains(string(reviewResource), "transfer_id") {
-		t.Fatalf("review resource = %s, %v", reviewResource, err)
-	}
-	checkpointResource, err := transport.UploadWorkspaceCheckpoint(
-		context.Background(), "018f04f4-1111-7000-8000-000000000001", checkpoint, checkpointBundle,
-	)
-	if err != nil || !strings.Contains(string(checkpointResource), checkpoint.CheckpointRef) {
-		t.Fatalf("checkpoint resource = %s, %v", checkpointResource, err)
-	}
-	fetchedCheckpoint, fetchedBundle, err := transport.FetchWorkspaceCheckpoint(
-		context.Background(), "018f04f4-1111-7000-8000-000000000001",
-		"018f04f4-5555-7000-8000-000000000001",
-	)
-	if err != nil || fetchedCheckpoint.CheckpointRef != checkpoint.CheckpointRef ||
-		!bytes.Equal(fetchedBundle, checkpointBundle) {
-		t.Fatalf("fetched checkpoint = %+v bytes=%d, %v", fetchedCheckpoint, len(fetchedBundle), err)
-	}
-}
-
 func TestProductionHTTPTransportRequiresHTTPSAndAWorkerOwnedIdentityFile(t *testing.T) {
 	if _, err := NewHTTPTransport(HTTPTransportConfig{BaseURL: "http://responder.example"}); err == nil {
 		t.Fatal("plaintext worker control plane was accepted")
@@ -285,7 +183,7 @@ func TestProductionHTTPTransportRequiresHTTPSAndAWorkerOwnedIdentityFile(t *test
 
 	transport, err := NewHTTPTransport(HTTPTransportConfig{
 		BaseURL: server.URL, CAFile: caPath, IdentityFile: identityPath,
-		RenewBefore: time.Hour, Timeout: time.Minute, WorkerID: "worker-a", WorkspaceRef: "workspace-main",
+		RenewBefore: time.Hour, Timeout: time.Minute,
 	})
 	if err != nil {
 		t.Fatal(err)

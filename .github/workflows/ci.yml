@@ -30,6 +30,8 @@ jobs:
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@"$(make -s staticcheck-version)"
           go install golang.org/x/vuln/cmd/govulncheck@"$(make -s govulncheck-version)"
+      - name: install Git LFS for source and workspace integration tests
+        run: sudo apt-get update && sudo apt-get install -y git-lfs
       - name: gate
         # ONE recipe: everything this job checks is `make check` — the same target a laptop and a
         # box run — so the two can never drift again. A new check goes in the Makefile, never as a

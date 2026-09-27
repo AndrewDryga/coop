@@ -1,21 +1,21 @@
-coop sessions connect — connect this machine to a remote controller
+coop sessions connect — run a worker for a remote controller
 
-Usage: coop sessions connect --config <path>
+Usage: coop sessions connect --controller <https-url> [options]
 
 OPTIONS
-  --config <path>  JSON file with this machine's connection and session settings
+  --controller <https-url>  controller to trust and connect to
+  --token-file <path>       enrollment token (only needed on first connection)
+  --state <path>            private worker data directory
+  --ca-file <path>          CA bundle for a controller using private TLS certificates
 
-CONFIGURATION
-  Selects the controller, certificates, repositories, and allowed session policies.
-  Uses the ready local service, or starts one when none is running.
-
-  Default session policies: ~/.config/coop/session-policies.yaml
-  Default session storage:  ~/.local/state/coop/sessions
-
-  Review session configurations:
-    coop sessions policies
+DEFAULT STORAGE
+  ~/.local/state/coop/sessions
 
 RUNNING
+  The controller supplies each session's code, context, and execution settings.
+  No local policy file or worker configuration file is needed.
+  The enrollment token is exchanged for a renewable worker identity and removed.
+
   Leave this command running. Connection failures are retried automatically.
-  Press Ctrl-C to stop connecting. A service started by this command also stops;
-  a service that was already running is left alone.
+  Press Ctrl-C to disconnect and stop the local service it started.
+  On restart, use the same controller and state directory; omit --token-file.

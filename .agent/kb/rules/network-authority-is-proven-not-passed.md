@@ -1,19 +1,20 @@
 ---
 name: network-authority-is-proven-not-passed
-description: a filtered launch proves its network authority against the owner-private store; a boundary crossing carries a name, never a grant
+description: a filtered child proves its network authority against the owner-private store; controller grants are admitted once, never passed to the child
 scope: security
-sources: [internal/box/run.go, internal/box/network_session.go, internal/networkstate/authority.go, internal/networkstate/approval_review.go, internal/sessionsvc/network.go, internal/cli/net_approve.go]
-check: "go test ./internal/box -run 'TestFilteredPublicLaunchRequiresCaptureAndRejectsExtraArgs|TestProjectFilteredLaunchRequiresCaptureBeforeRuntime|TestCapturedEgressFromEnvironmentAuthenticatesAgainstTheOwnerStore'"
-updated: 2026-09-14
+sources: [internal/box/run.go, internal/box/network_session.go, internal/networkstate/authority.go, internal/networkstate/job.go, internal/networkstate/approval_review.go, internal/sessionsvc/network.go, internal/cli/net_approve.go]
+check: "go test ./internal/box -run 'TestFilteredPublicLaunchRequiresCaptureAndRejectsExtraArgs|TestProjectFilteredLaunchRequiresCaptureBeforeRuntime|TestCapturedEgressFromEnvironmentAuthenticatesAgainstTheOwnerStore|TestControllerJobChildReprovesItsOwnSnapshot'"
+updated: 2026-09-26
 ---
 
 # Network authority is proven against the owner store, never accepted from its carrier
 
-When restricted networking crosses a process, an API or a box boundary, what crosses is a
-REFERENCE — the canonical project plus the owner-keyed snapshot fingerprint. The receiving side
-reopens `~/.local/state/coop/network` and loads that exact snapshot; if it cannot, the launch is
-refused, never downgraded to open. Nothing that a repository, a request payload or a box can write
-is ever authority.
+An authenticated controller may submit a job's network rules to the worker daemon, which validates
+and captures them once in the owner-private store. From the daemon to an ACP child or box, what
+crosses is only a REFERENCE — the owner-keyed snapshot fingerprint and its project or job identity.
+The child reopens `~/.local/state/coop/network` and loads that exact snapshot; if it cannot, the
+launch is refused, never downgraded to open. Repository content, task text and the box never
+publish network authority.
 
 **Why:** the pre-salvage networking WIP moved authority around instead: a launch catalog, one-use
 handoff frames and FD bootstrap carried grants between processes, and the whole apparatus went in
@@ -25,18 +26,19 @@ proves it.
 **How to apply:**
 - Fail CLOSED at the boundary. `box.Run` refuses a filtered posture that arrived without a host
   capture (`internal/box/run.go:305`); it never launches open instead.
-- A child re-authenticates: `OpenExisting` + `LoadSnapshot` of exactly the referenced project and
-  fingerprint (`internal/box/network_session.go:195`). `OpenExisting`, never `Open` — a child must
-  not create an owner key as a side effect of starting.
+- A child re-authenticates: `OpenExisting` + `LoadSnapshot` for a legacy project capture, or
+  `LoadJobSnapshot` for the exact job digest and session ID. `OpenExisting`, never `Open` — a child
+  must not create an owner key as a side effect of starting.
 - Keep the carrier unforgeable by keeping it host-only. `COOP_NETWORK_CAPTURE` is set by the daemon
   parent (`internal/sessionsvc/network.go:148`) and read in exactly ONE function; the daemon scrubs
   every `COOP_*` from the environment it builds, so no box can set it.
 - Keep the capture off every wire shape. `RunSpec.CapturedEgress` is `json:"-"`; a DTO, a worker
   command or a session request that could carry one is the bug.
-- Approvals have ONE host writer. `Store.Approve` is reached through `coop approve`
+- Local approvals have ONE host writer. `Store.Approve` is reached through `coop approve`
   (`internal/cli/net_approve.go`), which requires a terminal. `coop net approve` only points to
-  that command; it is not a second authority path. See [[project-edits-request-access]]. A launch,
-  an API call or an unattended loop never widens access — see [[destructive-confirm-gate]].
+  that command; it is not a second local approval path. See [[project-edits-request-access]].
+  `CaptureJob` is a separate authenticated-controller admission path: it never consumes a local
+  approval or repository request, and cannot be called by a child.
 - Verify after the fact too: the daemon checks every run's recorded fingerprint against the
   immutable session row and fails the turn on a mismatch.
 
@@ -44,6 +46,9 @@ Background: [[restricted-networking]] (where authority lives), [[network-consume
 reference).
 
 ## Changelog
+- 2026-09-26 — checked the four production snapshot loaders and added a separate job-scoped
+  capture/re-proof path; local project approvals remain only on legacy/direct launches. The
+  controller's grant-bearing admission is distinct from the daemon-to-child reference boundary.
 - 2026-09-14 — moved the box's capture check after project-policy resolution and added a regression
   proving project-requested filtered mode cannot reach the runtime through an unadmitted caller.
 - 2026-09-13 — moved the sole CLI writer to `coop approve`; the retired network subcommand now

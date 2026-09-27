@@ -10,7 +10,7 @@ import (
 )
 
 func TestSharedWorkerGoldenAcceptsOnlyTheVersionedBoundedContract(t *testing.T) {
-	document, err := os.ReadFile(filepath.Join("..", "..", "testdata", "protocol", "coop-worker-v1.json"))
+	document, err := os.ReadFile(filepath.Join("..", "..", "testdata", "protocol", "coop-worker-v2.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestSharedWorkerGoldenAcceptsOnlyTheVersionedBoundedContract(t *testing.T) 
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
-	if len(response.Commands) != 1 || response.Commands[0].Kind != "submit_turn" {
+	if len(response.Commands) != 1 || response.Commands[0].Kind != "api_request" {
 		t.Fatalf("response = %+v", response)
 	}
 	if len(response.AcknowledgedResultCommandIDs) != 1 || response.AcknowledgedResultCommandIDs[0] != "command:create:1" {
@@ -45,12 +45,12 @@ func TestSharedWorkerGoldenAcceptsOnlyTheVersionedBoundedContract(t *testing.T) 
 	}
 
 	unknown := append([]byte(nil), fixture.Poll...)
-	unknown = []byte(strings.Replace(string(unknown), `"version": 1`, `"version": 1, "provider_credentials": ["forbidden"]`, 1))
+	unknown = []byte(strings.Replace(string(unknown), `"version": 2`, `"version": 2, "provider_credentials": ["forbidden"]`, 1))
 	if _, err := DecodePoll(unknown); err == nil {
 		t.Fatal("unknown authority field was accepted")
 	}
 
-	shell := []byte(strings.Replace(string(fixture.Response), `"kind": "submit_turn"`, `"kind": "shell"`, 1))
+	shell := []byte(strings.Replace(string(fixture.Response), `"kind": "api_request"`, `"kind": "shell"`, 1))
 	if _, err := DecodeResponse(shell); err == nil {
 		t.Fatal("generic shell command was accepted")
 	}
@@ -61,7 +61,7 @@ func TestWorkerProtocolRejectsOversizeAndSequenceGaps(t *testing.T) {
 		t.Fatal("oversized poll was accepted")
 	}
 
-	document, err := os.ReadFile(filepath.Join("..", "..", "testdata", "protocol", "coop-worker-v1.json"))
+	document, err := os.ReadFile(filepath.Join("..", "..", "testdata", "protocol", "coop-worker-v2.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestCommandResultRequiresANullInactiveField(t *testing.T) {
 }
 
 func TestWorkerProtocolCarriesOneExactPublicSessionEvent(t *testing.T) {
-	document, err := os.ReadFile(filepath.Join("..", "..", "testdata", "protocol", "coop-worker-v1.json"))
+	document, err := os.ReadFile(filepath.Join("..", "..", "testdata", "protocol", "coop-worker-v2.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,8 +133,8 @@ func TestWorkerProtocolCarriesOneExactPublicSessionEvent(t *testing.T) {
 	}
 }
 
-func TestWorkerProtocolRejectsDuplicateAuthorityAdvertisements(t *testing.T) {
-	document, err := os.ReadFile(filepath.Join("..", "..", "testdata", "protocol", "coop-worker-v1.json"))
+func TestWorkerProtocolRejectsDuplicateCapabilities(t *testing.T) {
+	document, err := os.ReadFile(filepath.Join("..", "..", "testdata", "protocol", "coop-worker-v2.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,19 +145,48 @@ func TestWorkerProtocolRejectsDuplicateAuthorityAdvertisements(t *testing.T) {
 		t.Fatal(err)
 	}
 	worker := fixture.Poll["worker"].(map[string]any)
-	repositories := worker["repositories"].([]any)
-	worker["repositories"] = append(repositories, repositories[0])
+	capabilities := worker["capabilities"].([]any)
+	worker["capabilities"] = append(capabilities, capabilities[0])
 	duplicate, err := json.Marshal(fixture.Poll)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := DecodePoll(duplicate); err == nil {
-		t.Fatal("duplicate repository advertisement was accepted")
+		t.Fatal("duplicate capability was accepted")
 	}
 }
 
-func TestWorkerProtocolAllowsOnlyNamedSemanticAndFenceMutations(t *testing.T) {
-	document, err := os.ReadFile(filepath.Join("..", "..", "testdata", "protocol", "coop-worker-v1.json"))
+func TestWorkerProtocolRejectsRetiredAdvertisementsAndVersions(t *testing.T) {
+	document, err := os.ReadFile(filepath.Join("..", "..", "testdata", "protocol", "coop-worker-v2.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"policy_digests", "policy_authority_digests", "repositories", "protocol_version"} {
+		t.Run(field, func(t *testing.T) {
+			var fixture struct {
+				Poll map[string]any `json:"poll"`
+			}
+			if err := json.Unmarshal(document, &fixture); err != nil {
+				t.Fatal(err)
+			}
+			worker := fixture.Poll["worker"].(map[string]any)
+			worker[field] = map[string]any{}
+			if field == "protocol_version" {
+				worker[field] = "1"
+			}
+			encoded, err := json.Marshal(fixture.Poll)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := DecodePoll(encoded); err == nil {
+				t.Fatalf("retired worker field/version %s was accepted", field)
+			}
+		})
+	}
+}
+
+func TestWorkerProtocolReplacesProductSpecificCommandsWithOneAPIRequest(t *testing.T) {
+	document, err := os.ReadFile(filepath.Join("..", "..", "testdata", "protocol", "coop-worker-v2.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,14 +198,14 @@ func TestWorkerProtocolAllowsOnlyNamedSemanticAndFenceMutations(t *testing.T) {
 	}
 	commands := fixture.Response["commands"].([]any)
 	command := commands[0].(map[string]any)
-	for _, kind := range []string{"get_session", "get_turn", "validate_candidate", "fence_operation"} {
+	for _, kind := range []string{"api_request", "get_session", "get_turn", "validate_candidate", "fence_operation", "shell"} {
 		command["kind"] = kind
 		encoded, err := json.Marshal(fixture.Response)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := DecodeResponse(encoded); err != nil {
-			t.Fatalf("%s rejected: %v", kind, err)
+		if _, err := DecodeResponse(encoded); (err == nil) != (kind == "api_request") {
+			t.Fatalf("kind %s: %v", kind, err)
 		}
 	}
 }

@@ -96,6 +96,7 @@ type Execution struct {
 type ExecutionSpec struct {
 	Project, PolicyFingerprint, Runtime, DaemonID, Endpoint, GatewayImage string
 	SessionID, AttemptID                                                  string
+	JobDigest                                                             string
 	QualificationID, ClientImage, ProjectImage                            string
 	Protected                                                             []netip.Prefix
 }
@@ -143,7 +144,13 @@ func (s *Store) createExecution(ctx context.Context, spec ExecutionSpec, smoke *
 	if err := s.authorityAvailable(); err != nil {
 		return Execution{}, err
 	}
-	policy, err := s.LoadSnapshot(spec.Project, spec.PolicyFingerprint)
+	var policy egress.Snapshot
+	var err error
+	if spec.JobDigest != "" {
+		policy, err = s.LoadJobSnapshot(JobSnapshotRef{JobDigest: spec.JobDigest, SessionID: spec.SessionID}, spec.PolicyFingerprint)
+	} else {
+		policy, err = s.LoadSnapshot(spec.Project, spec.PolicyFingerprint)
+	}
 	if err != nil {
 		return Execution{}, err
 	}

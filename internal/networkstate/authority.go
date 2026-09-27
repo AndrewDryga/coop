@@ -758,15 +758,19 @@ func (s *Store) saveSnapshot(snapshot egress.Snapshot) error {
 // submitted by an agent. Existing runs retain their captured authority even if
 // current approvals narrow; project binding prevents cross-project substitution.
 func (s *Store) LoadSnapshot(project, fingerprint string) (egress.Snapshot, error) {
+	id, err := s.projectID(project)
+	if err != nil {
+		return egress.Snapshot{}, err
+	}
+	return s.loadSnapshotScope(id, fingerprint)
+}
+
+func (s *Store) loadSnapshotScope(id, fingerprint string) (egress.Snapshot, error) {
 	if len(fingerprint) != 64 {
 		return egress.Snapshot{}, errors.New("invalid network snapshot reference")
 	}
 	if _, err := hex.DecodeString(fingerprint); err != nil {
 		return egress.Snapshot{}, errors.New("invalid network snapshot reference")
-	}
-	id, err := s.projectID(project)
-	if err != nil {
-		return egress.Snapshot{}, err
 	}
 	data, err := s.read("snapshot-"+fingerprint+".json", maxPrivateRecordBytes)
 	if err != nil {

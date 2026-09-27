@@ -329,6 +329,11 @@ func (a *app) cmdACP(args []string) (int, error) {
 		ActivitySource: os.Getenv("COOP_ACP_SUPERVISOR"),
 		Homes:          a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	}
+	controllerJob, err := box.ControllerJobFromEnvironment()
+	if err != nil {
+		return 1, err
+	}
+	spec.ControllerJob = controllerJob
 	if forkIdentity != nil {
 		spec.ActivityKind = forkspace.ExecutionForkACP
 		spec.ForkName = forkIdentity.Name

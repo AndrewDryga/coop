@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
@@ -18,9 +19,10 @@ var ErrCommandConflict = errors.New("worker command identity conflicts with its 
 const journalVersion = 1
 
 type journal struct {
-	dir     string
-	streams string
-	origins string
+	publication sync.Mutex
+	dir         string
+	streams     string
+	origins     string
 	// Fault injection for the rename-visible / directory-not-yet-durable crash window.
 	testSyncActivityDir func(string) error
 }
@@ -32,6 +34,7 @@ type journalEntry struct {
 	Command       *workerproto.Command       `json:"command"`
 	State         string                     `json:"state"`
 	Result        *workerproto.CommandResult `json:"result"`
+	Response      *workerproto.APIResponse   `json:"response,omitempty"`
 }
 
 type commandIdentity struct {
@@ -129,12 +132,15 @@ func (j *journal) begin(command workerproto.Command) (journalEntry, error) {
 	if err := temporary.Close(); err != nil {
 		return journalEntry{}, fmt.Errorf("close worker command receipt: %w", err)
 	}
+	j.publication.Lock()
 	if err := os.Link(temporaryPath, path); err != nil {
+		j.publication.Unlock()
 		if errors.Is(err, os.ErrExist) {
 			return j.begin(command)
 		}
 		return journalEntry{}, fmt.Errorf("publish worker command receipt: %w", err)
 	}
+	defer j.publication.Unlock()
 	if err := syncDir(j.dir); err != nil {
 		return journalEntry{}, err
 	}
@@ -150,6 +156,10 @@ func (j *journal) complete(entry journalEntry, result workerproto.CommandResult)
 	}
 	entry.State = "completed"
 	entry.Result = &result
+	return j.save(entry)
+}
+
+func (j *journal) save(entry journalEntry) (journalEntry, error) {
 	encoded, err := encodeWireJSON(entry)
 	if err != nil {
 		return journalEntry{}, fmt.Errorf("encode completed worker command receipt: %w", err)
@@ -176,6 +186,8 @@ func (j *journal) complete(entry journalEntry, result workerproto.CommandResult)
 	if err := temporary.Close(); err != nil {
 		return journalEntry{}, fmt.Errorf("close worker command result: %w", err)
 	}
+	j.publication.Lock()
+	defer j.publication.Unlock()
 	if err := os.Rename(temporaryPath, path); err != nil {
 		return journalEntry{}, fmt.Errorf("publish worker command result: %w", err)
 	}
@@ -186,6 +198,8 @@ func (j *journal) complete(entry journalEntry, result workerproto.CommandResult)
 }
 
 func (j *journal) read(path string) (journalEntry, error) {
+	j.publication.Lock()
+	defer j.publication.Unlock()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return journalEntry{}, err
@@ -244,6 +258,9 @@ func (j *journal) acknowledgeResults(commandIDs []string) error {
 		if err := j.preserveCreateOrigin(entry); err != nil {
 			failures = errors.Join(failures, fmt.Errorf("preserve worker create %s before acknowledgement: %w", commandID, err))
 			continue
+		}
+		if err := os.Remove(path + ".body"); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove acknowledged response body: %w", err)
 		}
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove acknowledged worker command result: %w", err)

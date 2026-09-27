@@ -1,475 +1,59 @@
-# Local remote-session API
+# Coop worker API
 
-Coop can be driven by a trusted local service without a TTY or CLI-output parsing. The service
-creates one Coop fork per session, submits persistent conversation turns, inspects changes, runs a
-read-only review, and closes or explicitly discards the fork.
+A trusted controller supplies code, context and execution settings; Coop owns isolated model
+execution and durable workspaces. The worker can share a VM with its controller or run on a
+separate VM. The protocol is product-neutral: Ryker is a consumer, not part of its vocabulary.
 
-This is a generic local control plane. Slack, incident routing, authorization, audit storage,
-GitHub publication, signing, merging, and deployment remain outside Coop.
-
-## Boundary
-
-`coop sessions serve` exposes HTTP/JSON over one Unix socket. It never listens on TCP.
-
-```text
-trusted local service
-  -> owner-only Unix socket
-  -> durable Coop session controller
-  -> one Coop fork and private ACP state per session
-  -> boxed ACP child, cold per turn or bounded warm by operator policy
-```
-
-The socket and state files are mode `0600`; their directories are mode `0700`. The daemon refuses
-a symlink state root, socket, or socket parent and takes an exclusive lock on its state root. One
-daemon owns a state root at a time.
-
-This authorizes the Unix account, not an application identity. Any compromised process already
-running as the Coop operator can normally read that user's repositories and state without using
-this API. A hostile caller needs a separate OS identity and an authenticated broker. Do not expose
-the socket through a TCP proxy or mount it into an untrusted container.
-
-## Configure
-
-The operator owns the policy file. A request selects a policy name; it cannot provide a repository,
-command, host path, target, credential, mount, environment variable, image, MCP definition, egress
-mode, or runtime argument.
-
-Default path: `~/.config/coop/session-policies.yaml`
-
-The policy file must be a real regular file owned by the daemon user (or root) and not writable by
-group or world. Existing path components leading to it must be real directories, owned by the daemon
-user (or root), and not writable by group or world. Coop rejects symlinks in the policy path.
-
-```yaml
-version: 1
-policies:
-  emisar-observe:
-    repository: /srv/repos/emisar
-    remote: origin
-    branch: main
-    companions:
-      - name: coop
-        repository: /srv/repos/coop
-        remote: origin
-        branch: main
-      - name: responder
-        repository: /srv/repos/responder
-    target: [codex:gpt-5.6/medium@oncall, claude@oncall]
-    project_env: false
-    project_mcp: false
-    repository_read_only: true
-    egress:
-      mode: filtered
-      rules:
-        - to: {domain: docs.example.com}
-          protocol: tls
-          ports: [443]
-      export_destinations: false
-    max_turns: 100
-    max_queued_turns: 20
-    max_queued_bytes: 1048576
-    turn_timeout: 1h
-    warm_idle_timeout: 15m
-    max_patch_bytes: 1048576
-```
-
-The parser rejects unknown fields and requires:
-
-- `mode`: optional execution mode, `normal` (the default, and every policy written before the
-  key existed), `readonly`, or `bare`. It is fixed at creation, bound into both digests and
-  persisted with the session, so an edit rotates new sessions and never changes an existing one.
-  Both restricted modes run the box under the restricted filesystem profile of `coop <target>
-  --readonly` / `--bare`: a read-only container root, run-private in-memory scratch discarded with
-  the box, every host path read-only, nothing project-defined loaded, and the provider seeded with
-  the access-only projection of its login. `readonly` pins and forks the repository exactly as a
-  normal policy does and mounts the fork and its companions read-only (`repository_read_only` is
-  implied). `bare` mounts nothing: it names no repository, remote, branch or companion, runs no
-  Git and creates no workspace, and it implies `project_env: false` and `project_mcp: false`. The
-  provider is started under the same switches the CLI proves — no repository or home extensions
-  in either mode, and in `bare` no tool at all (`claude --tools ""` plus a stated no-tools system
-  prompt) — sent on the ACP `session/new` the way the adapter reads them; only `claude` has a
-  proven switch, so every rung of a restricted policy's ladder must be `claude`. Refused by name:
-  a bare policy with any repository-shaped key, `repository_read_only`, `project_env: true` or
-  `project_mcp: true`; a readonly policy without a repository; either with `warm_idle_timeout`
-  (each turn is a fresh box) or `egress.mode: filtered` (the profile is not qualified under a
-  gateway; a readonly policy whose project resolves to filtered is refused at load, and at create
-  if the approval changed since). A restricted session keeps no provider history: every turn is a
-  fresh native session, so a turn's prompt must carry whatever earlier context it needs, and
-  `require_semantic_validation` is refused because there is no native session to re-prompt (a
-  schema-invalid structured result is regenerated from the admitted prompt, up to the same three
-  attempts). A bare session takes no `source` and no `responder_binding`, at create or on a
-  turn. A legacy `repository_read_only: true` policy is not a readonly policy: it keeps its normal
-  mode and a writable `.coop-output` path inside the box, backed by session-owned scratch outside
-  the read-only checkout;
-- `repository`: the absolute, canonical root of an existing Git worktree (omitted for `mode: bare`);
-- `remote` and `branch`: optional, paired fields that make Coop fetch and pin the exact current
-  remote branch commit without switching, pulling, resetting, or otherwise changing the local
-  checkout; a refresh failure stops session creation rather than falling back to stale `HEAD`;
-- `companions`: at most 32 uniquely named absolute, canonical Git worktree roots; aliases use
-  lowercase letters, numbers, hyphens, or underscores and cannot be `primary`; each companion may
-  configure its own paired `remote` and `branch`;
-- `target`: an ACP-capable target, or a list of up to 4 of them forming a fallback ladder; each
-  rung names at most one credential, and no rung may repeat another;
-- `project_env` and `project_mcp`: optional booleans, defaulting to `true`, that let a policy omit
-  the daemon's shared environment or MCP configuration while retaining the selected provider
-  credential and trusted instructions;
-- `repository_read_only`: optional boolean, defaulting to `false`. When true, the primary isolated
-  fork is mounted read-only for every provider turn. Use it for conversation, watch, and
-  investigation policies whose repository access is evidence-only; writable engineering policies
-  must leave it false. The value is bound into the policy digest and persisted with the session, so
-  changing the policy rotates rather than widening an existing session;
-- `egress`: optional restricted-networking authority for this policy's sessions. `mode` is
-  required when the block is present and is one of `open`, `filtered`, or `none`; `rules` uses the
-  same grammar as a repository's `box.egress_rules` and requires `mode: filtered`;
-  `export_destinations` defaults to `false`. The block is explicit operator authority: it is bound
-  into both digests, resolved once when the session is created, and frozen on the session row, so a
-  later edit applies to new sessions only. A policy with no `egress` block is not a request to
-  widen access — the project's remembered posture still decides, exactly as it does for a direct
-  launch in that repository. When the policy and the remembered posture disagree, creation is
-  refused with `network_unavailable`; the API cannot reconcile that, an operator must
-  (`coop approve`). Filtered creation also requires a completed `coop net setup` on the host
-  and the repository's `box.egress_rules` to be inside its approved envelope. Beyond the rules you
-  write, admission adds only what the session's own box will have: the selected targets' provider
-  endpoints, and the HTTP hosts of the shared MCP configuration unless `project_mcp: false`
-  withheld that file. Nothing a request carries becomes a grant, so a policy whose sessions call
-  back to a Responder endpoint must allow that host itself — otherwise the callback is refused at
-  the gateway like any other unlisted destination;
-- `max_turns`: `1..10000`;
-- `max_queued_turns`: `1..1000`;
-- `max_queued_bytes`: `1..67108864`;
-- `turn_timeout`: positive and no longer than 24 hours;
-- `warm_idle_timeout`: optional, positive, and no longer than one hour;
-- `max_patch_bytes`: `1..1048576`.
-
-Every rung's credential must already be authenticated. A rung that omits `@credential` resolves to
-that provider's current default when Coop loads the policy. Presets are not supported.
-
-An optional top-level `storage:` block replaces the workspace-storage limits the daemon otherwise
-derives from the measured volume:
-
-```yaml
-storage:
-  reserve_bytes: 26843545600
-  high_watermark_bytes: 510027366400
-  low_watermark_bytes: 483183820800
-  disposable_budget_bytes: 10737418240
-  protected_budget_bytes: 483183820800
-  grace_window: 15m
-  measure_interval: 5m
-  max_reclaim_per_pass: 4
-```
-
-Every field is required when the block is present. The reserve and the two watermarks are one
-ordered policy — see [`GET /v1/storage`](#health) for what each one means — and a high watermark
-written without a low one would defer an incoherent configuration to the first time the volume
-filled up. `coop sessions serve` refuses to start on a block that cannot hold, and on numbers that
-do not fit the volume it measures the daemon publishes no storage advertisement and reports the
-mismatch in `/v1/storage`. Omit the block and the daemon keeps one reserve of 5% free, closing
-allocation under it and reopening once two reserves are free.
-
-## Target ladders
-
-A `target` list is an ordered fallback ladder, and it may be cross-provider:
-
-```yaml
-    target: [codex:gpt-5.6-sol/xhigh@oncall, claude@oncall]
-```
-
-Sessions start on the first rung. When a provider rate limits an in-flight turn, Coop marks that
-rung as cooling, moves the session to the next rung that is not, and delivers the same turn again —
-so a usage limit costs a retry rather than the turn. Only a proven rate limit rotates: an
-expired credential, a protocol error, or limit wording inside the model's own answer all surface
-as the failure they are.
-
-Sessions that survive a policy edit keep their fallback: the ladder applies whenever the
-session's current target is one of the current policy's rungs, even when the rest of the policy
-(and so its digest) has changed. Rotation only ever moves a session between rungs the operator
-currently names, and only when the session already sits on one; a session whose rung was removed
-keeps its pinned target and does not rotate. Teardown never requires the digest to match at all —
-closing and discarding a drifted session works, with the dirty and unmerged guards intact, so a
-policy edit cannot orphan the workspaces its old sessions own.
-
-A rotation is durable. `target` on the session becomes the rung now in use, and a
-`session.target_rotated` event carries `from`, `to`, and `native_session_reset`. The last is what a
-client needs to know: model or effort changes on the same provider and credential account preserve
-the native session. Changing either the provider or account clears the native-session binding,
-because the new target cannot load the previous account's session. A client that wants continuity
-across that reset re-seeds it from its own durable context.
-
-### Starting above the first rung
-
-One turn may name the rung it is delivered on:
+## Connect
 
 ```bash
-curl --unix-socket "$SOCKET" \
-  -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: responder:turn:01J...' \
-  -d '{"expected_revision":4,"prompt":"Re-deliver the corrected answer.","min_target_index":1}' \
-  http://localhost/v1/sessions/remote_.../turns
+coop sessions connect --controller https://controller.example --token-file /run/secrets/coop-token
 ```
 
-`min_target_index` is a zero-based index into the policy's `target` ladder, and it governs that one
-turn: the turn is delivered no lower than that rung. A session already on that rung or above does
-not move — it is a floor, not a seat assignment. Absent, or zero (which is rung zero), is the
-ordinary turn, unchanged.
+This is the only worker startup command. It starts the private local service and connects
+outbound to the controller; no inbound TCP port is required. There is no worker JSON file or
+local policy YAML. Optional `--state <path>` chooses private storage, and `--ca-file <path>`
+trusts a private TLS CA. Public HTTPS uses the system trust store.
 
-It is a floor for the whole turn, not a starting hint. Rotation continues upward from it exactly as
-it would otherwise, and when every rung at or above it is cooling the turn fails with `rate_limited`
-naming the rung rather than falling back below it. A corrected answer re-delivered by the model that
-produced the answer being corrected would reach the client looking exactly like an honored
-escalation, so the client owns that retry.
+The single-use token determines the worker identity. Coop saves the renewable identity under
+the state directory and removes the token file only after saving it. Reconnect using the same
+controller and state directory without `--token-file`. A saved identity cannot be reused with
+a different controller.
 
-The move is durable in the same way a rotation is: `target` on the session becomes that rung, a
-`session.target_rotated` event carries `from`, `to`, and `native_session_reset`, and later turns
-start there unless the ladder moves again. Nothing is narrated as a backoff, because nothing was
-throttled.
+Default state: `~/.local/state/coop/sessions`. The internal Unix socket is
+`<state>/control.sock`. Run the command under a process supervisor. Ctrl-C stops the connection
+and any local service it started. It does not stop an already-running service it reused.
 
-An index that names no rung of the session's current ladder is refused at admission with
-`invalid_request`, naming how many rungs there are. A policy edited between admission and delivery
-is caught at delivery instead, where the turn fails with `invalid_session_target`.
-
-### Rewinding one turn to the first rung
-
-An ordinary turn inherits the session's durable current target. That is normally the desired
-continuity, but it cannot recover an escalated session when every provider at or above that rung is
-limited and a lower rung is healthy. Such a retry can set `rewind_target: true`:
-
-```bash
-curl --unix-socket "$SOCKET" \
-  -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: responder:turn:01J...:fallback' \
-  -d '{"expected_revision":5,"prompt":"Continue on the healthy fallback.","rewind_target":true}' \
-  http://localhost/v1/sessions/remote_.../turns
-```
-
-The turn starts on rung zero before any provider receives the prompt. The move becomes the
-session's durable target and publishes the ordinary `session.target_rotated` event; a
-rewind that changes provider or account clears the previous native-session binding. The field governs
-one admission decision and cannot be combined with a positive `min_target_index`. Omitting it preserves
-the existing behavior and request hash.
-
-A rejection that is not a rate limit still fails the turn as `acp_protocol_error`, but its detail
-now carries the adapter's own message — normalised to one bounded line — instead of a fixed
-"ACP request was rejected" that named neither the cause nor the fix.
-
-When every rung is cooling the turn fails with `rate_limited`, whose detail names the soonest
-reset. Coop does not hold a queued turn waiting for one: the client owns retry and its own backoff.
-Cooldowns live only in the running controller — a restart resumes on the session's stored rung and
-re-probes the others.
-
-Repository, target ladder, and limits are immutable session fields. `policy_digest` identifies those
-resolved fields; a one-rung ladder digests exactly as the equivalent pre-ladder policy did. Explicit non-secret box settings from the daemon's Coop configuration and the
-repository's trusted box policy control the child. Raw runtime arguments, task queues, and merge
-gates are not forwarded into a turn.
-
-`authority_digest` separately identifies the model-independent authority: repository source,
-companions, project environment and MCP projection, repository write mode, and provider account
-selection. It excludes policy name, model, reasoning effort, and resource budgets. Controllers may
-therefore require conversational, standard, and deep policies to share one authority digest while
-still pinning each policy's full `policy_digest`.
-
-A create may pin either or both: `expected_policy_digest` and `expected_authority_digest` on
-`POST /v1/sessions`. Admission compares each against the daemon's current resolution of the named
-policy and refuses with `policy_digest_mismatch` (409) before any intent is journaled or a
-workspace exists, so a daemon restarted with a changed same-name policy cannot run a create that
-was authorized against the old one. A fleet worker forwards the digests its command was pinned to;
-a direct client that pins nothing is unchanged.
-
-Neither digest covers the network reach that policy text RESOLVES to on the serving host: the
-project's remembered approval, the provider core bundles and the trusted MCP hosts all feed it, so
-two daemons with identical policy files and different approvals advertise the same authority and
-grant different access. The daemon therefore resolves each policy's effective network fingerprint
-when it loads its policies and publishes it in `GET /v1/capabilities` and `coop sessions policies`.
-A policy whose network it cannot resolve — nothing approved for its project, no completed `coop net
-setup`, a rule this release cannot enforce — is refused at load with its reason rather than served
-unfenced. Resolving writes nothing: no approval, no published snapshot, no owner key.
-
-A create may pin that value as `expected_network_fingerprint`. The daemon resolves the policy again
-— freshly, because an approval edited since it published the value is exactly what this catches —
-and refuses with `network_fingerprint_mismatch` (409) before any intent is journaled or a workspace
-exists. The refusal names the fingerprint the policy resolves to now and `coop approve` as the
-thing that changed on the host. An open or offline policy publishes its mode and no fingerprint,
-so pinning one for such a policy is itself a mismatch. The published value is resolved when you
-ask for it, so approving a change on the host changes what callers are told without restarting the
-daemon; a policy the host cannot resolve at that moment publishes its mode and no fingerprint.
-
-On session creation Coop resolves all configured repositories concurrently. A repository with
-`remote` and `branch` is pinned to that remote branch's exact commit; otherwise Coop preserves the
-legacy local-`HEAD` behavior. Remote refresh imports only the immutable commit object and does not
-move local branches, update tracking refs, write `FETCH_HEAD`, or touch working-tree changes. Coop
-then creates each companion as a detached, clean snapshot with self-contained Git metadata under
-the owner-private session state root. Repositories whose pinned history contains at most 1 GiB of
-logical object data retain that complete reachable history. Above that bound—or when a partial
-clone cannot prove its complete history is locally available—the companion becomes a one-commit
-shallow snapshot containing the exact pinned commit and its complete tree. This keeps large-session
-creation bounded by the checked-out revision instead of the source repository's lifetime while
-preserving historical Git operations for smaller repositories. Selection and materialization do not
-lazy-fetch from repository-configured promisor remotes: the trusted policy remote refresh must leave
-the pinned commit and complete tree available locally, or session creation fails. The agent sees only
-read-only mounts at `/coop/repositories/<alias>` plus
-`COOP_COMPANION_REPOSITORIES_JSON` containing aliases, in-box paths, and commits. The primary
-repository remains the current working directory and is the only writable, reviewable tree.
-Companion creation and verification ignore host global and system Git configuration and host
-attribute files, so repository attributes cannot invoke host-configured LFS, smudge, clean, or
-process filters and operator attributes cannot rewrite checkout bytes. Verification computes status
-with an isolated Git directory, config, and index backed only by the pinned companion objects.
-Gitlink placeholders are checked directly and must remain real empty directories, avoiding
-submodule config execution without weakening discard's modified-snapshot rejection.
-Companion host paths are never returned by the API. Discard verifies and removes both the primary
-fork and every owned companion snapshot.
-
-Unless the session policy disables them, the daemon's `mcp.json` and `env` are copied into private
-session state with `INSTRUCTIONS.md` only while a turn runs, then removed with the projected
-provider credential. This lets an operator run
-the daemon under a dedicated least-privilege Coop configuration, for example an observe-only Emisar
-MCP credential, without mounting the shared provider home. These files apply to every policy served
-by that daemon; use a separate state root/socket and dedicated Coop configuration for a distinct
-authority tier. API callers cannot replace or select them. MCP uses the same canonical-path,
-regular-file, 4 MiB, and ambiguity checks as an ordinary box; Coop captures it before changing
-private session state, and an unsafe active authority fails the turn before the ACP child starts.
-
-## Run
-
-Run the daemon under a process supervisor:
-
-```bash
-coop sessions serve
-```
-
-Paths can be overridden:
-
-```bash
-coop sessions serve \
-  --state /var/lib/coop-sessions \
-  --policies /etc/coop/session-policies.yaml \
-  --socket /var/lib/coop-sessions/control.sock
-```
-
-Defaults:
-
-| Item | Path |
-| --- | --- |
-| State | `~/.local/state/coop/sessions` |
-| Policy | `~/.config/coop/session-policies.yaml` |
-| Socket | `<state>/control.sock` |
-
-The process stays in the foreground and handles `SIGINT` and `SIGTERM`. Shutdown stops HTTP
-admission, cancels workers, waits for their cleanup, closes the durable store, and removes only the
-socket inode created by that process.
-
-Check it:
+Workers need Git, Git LFS and a supported container runtime. The bundled worker image includes
+Git LFS; on a native worker install `git-lfs` with your package manager.
 
 ```bash
 coop sessions doctor
-coop sessions doctor --json
-coop sessions doctor --socket /var/lib/coop-sessions/control.sock
+coop sessions doctor --socket /var/lib/coop-sessions/control.sock --json
 ```
 
-`doctor` exits nonzero when either `/healthz` or `/readyz` fails.
+The local socket and state are private to the worker OS account. Never mount that socket into
+a model sandbox or expose it through an unauthenticated proxy. Outbound connectivity alone
+does not authenticate the remote controller: TLS verifies the destination before Coop sends
+an enrollment token or accepts work.
 
-## Connect this machine to a remote controller
+## Session authority
 
-`coop sessions connect` connects this machine's local session service to a compatible fleet
-controller. It makes outbound mutual-TLS HTTPS requests; it does not open an inbound TCP port. The
-controller sends versioned commands, not arbitrary shell commands. Provider work still runs through
-the local service and its trusted policies, never as a connector-local fallback.
+The controller supplies one immutable job with the source, model targets, execution mode,
+network access and resource limits. Coop validates and saves it before creating a workspace.
+Retries must carry the same configuration; restart uses the saved configuration. Repository
+instructions and model output cannot widen it. Old session history remains readable, but an
+old row without verifiable execution authority must not resume model work.
 
-```bash
-coop sessions connect --config /etc/coop/worker.json
-```
-
-One command is enough: it validates the configuration first, then uses the ready local service, or
-starts one when none is running. A service that is listening but not ready is not absent — its
-socket is left alone and no second service is started. Ctrl-C stops the connection and, only if this
-invocation created it, the service it started; a service that was already running is left alone.
-
-Which local service a configuration is about comes from two optional fields, so autostart is never a
-guess:
-
-| Field | Default |
-| --- | --- |
-| `session_state_dir` | `~/.local/state/coop/sessions` |
-| `session_policy_path` | `~/.config/coop/session-policies.yaml` |
-
-`coop_socket` is still required and must sit inside the resolved `session_state_dir`: the socket is
-the service's front door, and pointing it at a service that stores its sessions somewhere else would
-connect a controller to a machine whose policies nobody checked. The state root is never inferred
-from the socket's parent directory, and no session policy file is ever generated.
-
-To run the local service on its own instead — for a supervisor that manages the two separately —
-see [Run](#run) above; `coop sessions serve` is unchanged.
-
-Export the policy digests from the same file the service loads:
-
-```bash
-coop sessions policies --policies /etc/coop/session-policies.yaml --json
-```
-
-Copy `policy_digests` and `policy_authority_digests` from that output into the worker configuration.
-Keep the service's policies, worker advertisements and controller placement authority aligned. The
-fleet operator supplies the worker/workspace identities, controller origin, trusted CA, enrollment
-token and expected sandbox/repository advertisements. Do not derive those values from the example or
-substitute a different digest that merely has the right length.
-
-### Configure and enroll
-
-Start with [worker.json](examples/worker.json), saving your completed configuration as
-`/etc/coop/worker.json`. The example passes configuration validation, but its hostname, hashes,
-policy name, paths and capacity are demonstration values, not deployment authority.
-
-The format is strict JSON: no comments, unknown fields, trailing documents or environment-variable
-expansion. Use literal absolute paths, not `~` or `$HOME` in JSON. In particular:
-
-- `responder_url` is the controller's HTTPS origin, without an API endpoint, query or fragment.
-  Serve its worker API routes directly, or rewrite internally at your proxy. The connector refuses
-  HTTP redirects, including same-origin redirects; it does not forward credentials or transfer
-  bytes to a redirect destination.
-- `ca_file` contains exactly one trusted CA certificate in PEM format.
-- `enrollment_token_file` is an owner-private regular file, at most 128 bytes. Its token must be
-  32–128 bytes with no embedded whitespace. Obtain it through your controller's enrollment process;
-  do not place the token in command arguments or the JSON file.
-- `identity_file` starts absent. Do not precreate an empty file: the connector generates the key
-  and saves its certificate bundle here during enrollment, with mode `0600`.
-- `journal_dir` is persistent, owner-private storage, not a cache or disposable directory.
-- `session_state_dir` and `session_policy_path` are optional and name the LOCAL session service this
-  configuration is about, so `coop sessions connect` knows exactly which service it would start.
-  Omitted, the documented defaults apply. `coop_socket` must resolve inside `session_state_dir`.
-- `repositories`, `capabilities` and `capacity` are deployment advertisements. Populate them to
-  match the controller's contract and actual worker resources. Coop only advertises its
-  implementation capabilities — `repository-freshness` version `2` and
-  `repository-source-selector` version `1` — after the running local daemon proves each one in
-  `GET /v1/capabilities`; putting either in JSON cannot override that check, and a configured
-  claim is removed. The two are versioned independently, so a partially upgraded fleet advertises
-  only what each daemon actually supports and a controller can withhold source-selecting work
-  from workers that do not have it.
-
-Keep the configuration and enrollment file private (`0600`) and their containing directories
-owned by the daemon/connector user. That user must be able to create the identity and journal,
-and remove the enrollment token after use. Do not copy another worker's identity or journal.
-
-A `create_session` command may carry a `source` selector beside its policy and digests
-(`{"kind":"default"}`, `{"kind":"branch","name":…}`, `{"kind":"pull_request","number":…}` with an
-optional `expected_head_commit`, or `{"kind":"commit","sha":…}`). The connector validates its
-shape and bounds, forwards it unchanged to the daemon — which owns the authority decision — and
-refuses a malformed one with `invalid_command` before any daemon call. A create fence carries the
-same request, selector included, so it occupies the create's exact ledger identity. See
-the endpoint reference below for what each selector resolves to.
-
-Run it under your process supervisor:
-
-```bash
-coop sessions connect --config /etc/coop/worker.json
-```
-
-The first poll enrolls using the supplied token, saves the worker-owned identity, consumes the
-local token file, then polls with its client certificate. Successful polls are quiet. Verify
-enrollment and worker eligibility in your controller, not just by checking that the process lives.
-
-`poll_interval_ms` must be 100–60000 and `request_timeout_ms` 100–300000. The example polls each
-second with a 30-second request timeout. `renew_before_seconds` is 60–86400; omitted or zero
-defaults to one hour. Choose a renewal window shorter than your controller's certificate lifetime.
+The trusted worker fetches repository data directly from GitHub using a short-lived,
+repository-scoped grant supplied by the controller. The model receives the full working tree,
+including verified LFS payloads and every explicitly authorized recursive submodule. Tokens never
+enter model mounts, repository configuration or exported results. Repository files cannot redirect
+the worker's authenticated fetches. Missing objects, unauthorized submodules and unsupported LFS
+pointer formats fail creation rather than leaving an incomplete tree.
 
 ### Workspace storage
+
 
 Every hello carries an optional `storage` object: the worker's own account of the volume its fork
 workspaces land on, taken from the daemon's [`GET /v1/storage`](#health) and forwarded
@@ -515,6 +99,11 @@ Stop the connector with `SIGINT` or `SIGTERM`. Preserve the identity file and th
 directory across restarts, together with the same worker/workspace configuration. A restart loads
 the existing identity rather than enrolling again; certificate renewal is automatic over mutual TLS.
 
+Startup, under the exclusive state lock, reclaims only unpublished source stages, transfer temps
+and host-only Git credential files. Published sources and journaled response bodies are retained.
+Run managed workers under a service manager that stops the whole process group or cgroup: a host
+Git/LFS child surviving a forced parent kill can keep deleted blocks open until it exits.
+
 Commands are journaled before execution. Unacknowledged terminal results are resent after restart.
 Redelivery of a command with a recorded result reuses its receipt rather than executing it again;
 reusing that command ID with a different payload is refused. An asynchronous
@@ -524,10 +113,8 @@ only after exact acknowledgements, so unacknowledged events replay and acknowled
 Do not prune journal files or keep only the `commands` directory when moving or backing up a worker.
 
 If a review outlives its request, its uncertain transport receipt stays unchanged.
-The existing `reconcile_operation` command returns the saved public operation/review
-envelope once that exact review succeeds; pending or failed operations still return
-their operation metadata. This reads the completed result and never reruns the gate.
-The daemon and connector must both support completed-review lookup.
+Read the saved operation through `GET /v1/operations?key=<original-key>` and, once successful,
+fetch its retained review dossier. These are ordinary API requests; neither lookup reruns the gate.
 
 An unavailable daemon or controller is reported and retried; it does not authorize local execution
 or receipt deletion. A malformed or expired saved identity fails closed instead of silently
@@ -544,7 +131,7 @@ daemon's answer verbatim; it selects nothing, derives nothing and adds no disclo
 
 The object carries the session's frozen network posture and what its runs were observed doing,
 plus the host-approved task bound into its workspace as the task folder stands at capture. It
-never carries a credential, a host path, a packet body, or — unless the session policy set
+never carries a credential, a host path, a packet body, or — unless the session job set
 `egress.export_destinations: true` — a destination name. The agent-written `state.md` is bounded
 and withheld whole when it scans as carrying a secret.
 
@@ -723,8 +310,9 @@ does not spend a caller-review attempt.
 Close is non-destructive. It preserves the fork, conversation state, events, and reviews. Discard is
 a separate two-step compare-and-swap action available only for a closed, idle session.
 
-The API cannot merge, sign, push, publish a pull request, mutate the parent ref, run an arbitrary
-host command, or return a host workspace path.
+The API can publish an explicitly authorized reviewed candidate as a draft pull request. It
+cannot merge, sign, mutate the local parent ref, run an arbitrary host command, or return a host
+workspace path.
 
 ## Endpoints
 
@@ -734,13 +322,15 @@ host command, or return a host workspace path.
 | --- | --- | --- |
 | `GET` | `/healthz` | `{"healthy":true}` |
 | `GET` | `/readyz` | `{"ready":true}` after controller startup |
-| `GET` | `/v1/capabilities` | `{"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1],"policies":{"<name>":{"mode":"filtered","fingerprint":"<64 hex>"}}}` for caller-side protocol negotiation and network placement |
+| `GET` | `/v1/capabilities` | `{"controller_tools_versions":[1],"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1]}` for caller-side protocol negotiation |
+| `GET` | `/v1/capacity` | current shared active/warm runtime slots; the connector forwards this measurement in each heartbeat |
 | `GET` | `/v1/storage` | this daemon's own workspace-storage accounting: `storage` (the object a fleet controller reads), `budget`, `totals`, `roots`, `forks` and `problems` |
 
-The `policies` map is each served policy's network reach as this daemon resolved it against this
-host; an open or offline policy reports its mode with no fingerprint. It is published because a
-caller cannot compute it — host approval feeds it — and a create pins it as
-`expected_network_fingerprint`.
+Runtime capacity is four shared slots for active and warm model processes. The session, turn and
+workspace counts describe that same pool, not independent allocations. A queued turn waits before
+its model timeout starts. Failed teardown retains its slot until cleanup succeeds; unresolved
+startup runtime custody reports busy with zero free slots. A failed capacity read also reports
+busy, without preventing the worker from polling for reads and cleanup.
 
 `/v1/storage` measures allocated blocks, never apparent size, and it never opens a file — so it can
 account credential-bearing private session state without reading any of it. A fork's git objects are
@@ -759,142 +349,108 @@ refusals with a reason. A directory with no coop generation record is `unattribu
 reported, and it is never deleted on a guess.
 
 Under storage pressure the daemon refuses a NEW workspace with `storage_unavailable` and names its
-cause. It does not refuse anything else: recovery of a workspace that already exists, cleanup,
-discard and every read keep working, and nothing protected is deleted to make room. The refusal
+cause. Cleanup, discard and reads keep working, and nothing protected is deleted to make room.
+Checkpoint capture and restore allocate additional copies, including during recovery, so their
+separate pressure guard waits above the reserve while keeping interrupted restores fenced. The refusal
 closes at `storage.high_watermark_bytes` of USED space and reopens only under
 `storage.low_watermark_bytes`, so reclaiming one workspace cannot flap it open and shut.
 `storage.reserve_bytes` is the free-space floor underneath both, and new work never spends it.
 None of this bounds what an already-running task writes inside its own workspace.
 
-The outbound worker connector reports `repository-freshness` capability version `2`,
-`repository-source-selector` version `1` and `session-evidence` version `1` only after the session
-daemon on its configured Unix socket returns the matching versions in `GET /v1/capabilities`
-(`repository_freshness_receipt_versions`, `repository_source_selector_versions`,
-`session_evidence_versions`). The three are
-versioned independently, so a daemon that resolves freshness but not source selectors advertises
-only the first and receives no selector-bound work, and a control plane can tell a worker that
-does not export inspection evidence from a session that genuinely observed nothing. The connector removes any configured claim to
-either and drops the advertised capability again if live proof is unavailable. Responder therefore
-negotiates the exact worker and daemon currently serving a placed session during rolling upgrades.
+The outbound connector reports `repository-freshness:2`, `session-evidence:1` and
+`controller-tools:1` only after its local daemon proves the corresponding versions through
+`GET /v1/capabilities`. Missing proof removes that capability from the next heartbeat.
+The controller can distinguish an unsupported evidence export from a session that observed nothing.
+Worker protocol v2 carries capabilities, capacity and optional storage measurements, not policy
+or repository catalogs. Exact code and execution settings belong to each immutable controller job.
 
 ### Sessions
 
-Create:
+The controller creates `create-session.json` with `task` (an opaque external reference),
+`job` (a version-1 JobSpec), and its canonical SHA-256 `expected_job_digest`.
+Optional `controller_tools` binds the controller's authenticated tool endpoint.
+See the shared [protocol fixture](../testdata/protocol/coop-worker-v2.json) and
+[JobSpec definition](../internal/workerproto/job.go) for exact fields and validation.
 
 ```bash
 curl --unix-socket "$SOCKET" \
   -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: responder:create:01J...' \
+  -H 'Idempotency-Key: controller:create:01J...' \
   -H 'Prefer: respond-async' \
-  -d '{"policy":"emisar-observe","task":"incident/repository binding 01J..."}' \
+  --data-binary @create-session.json \
   http://localhost/v1/sessions
 ```
 
-The `task` is a bounded opaque external reference, not a shell command or authority-bearing
-configuration.
+The job selects model targets, execution mode, project environment/MCP exposure, network
+rules and queue/turn limits. Coop freezes it before creating a workspace; a changed retry is
+refused. Job settings cannot exceed worker hard limits. Task text is not execution authority.
+There is no local policy name, policy catalog, separate source selector or worker JSON file.
 
-#### Selecting a source
+#### Frozen repository source
 
-A create may name which source INSIDE the policy's already-authorized repository the session
-starts from, with one bounded `source` selector:
+The controller resolves the requested default branch, branch, PR or commit before creating
+the job. `job.source` identifies the GitHub repository by immutable ID and slug, and contains
+the exact default/selected/base commits, admitted tree and source binding. It also lists every
+authorized recursive submodule with its exact repository, commit and tree. No host checkout
+path, remote URL or GitHub token belongs in this document.
 
-```json
-{"kind":"default"}
-{"kind":"branch","name":"feature/payments"}
-{"kind":"pull_request","number":514}
-{"kind":"commit","sha":"0123456789abcdef0123456789abcdef01234567"}
-```
+The trusted worker obtains short-lived repository-scoped grants through its authenticated
+controller connection, fetches Git/LFS directly from GitHub and verifies the complete working
+tree. Untrusted `.gitmodules` and `.lfsconfig` cannot redirect authenticated requests.
+Missing history, missing LFS payloads, mismatched gitlinks or insufficient disk fail closed.
+A job with `source: null` uses an isolated empty workspace (or no workspace in bare mode).
 
-Omitting `source` means `{"kind":"default"}`. The caller cannot name a repository, filesystem
-path, remote, URL or raw ref: Coop derives every ref from the operator policy plus that one value.
-A branch name is validated with Git's own ref rules and derives only `refs/heads/<name>`; a pull
-request number derives only `refs/pull/<number>/head`; a commit must be a complete lowercase
-40- or 64-character object id. Trusted ingress may add `expected_head_commit` to a pull-request
-selector as host-owned evidence of the head it observed — a push racing session creation then
-fails closed instead of silently changing the approved source. A policy with no configured
-`remote` is intentionally local: it keeps local semantics for its own default and refuses
-`branch`, `pull_request` and `commit`.
+The public session carries the immutable source binding, `job_ref`, `job_digest`, target,
+execution mode, project exposure flags, frozen network posture and repository freshness.
+It also includes companion aliases, base commits, generated fork name, revision, state,
+activity, queue/budget counters, event cursor and timestamps. Host paths, provider state,
+prompts and credentials are private. Historical sessions without verifiable jobs remain
+inspectable but cannot resume model work.
 
-For a non-default selection Coop pins the configured default branch head AND the selected head,
-uses their merge base as the session's creation base, and starts the generated bound branch at the
-selected commit — so review covers the complete inherited change and the baseline always
-represents divergence from the configured default branch. A source with no common history is
-refused with `invalid_request` before any workspace exists, rather than reviewed against an
-invented ancestor.
-
-A branch, pull request or default selection is proven with `git ls-remote --exit-code --refs` on
-its exact derived ref, followed by an object fetch only when the cache lacks it. An exact commit
-has no advertised ref, so the remote is contacted on every create; note that `git fetch <remote>
-<oid>` answers success WITHOUT contacting the server when the object is already in the local
-object database, so a commit that is already cached is additionally anchored to the remote's
-current advertisement of `refs/heads/*` and `refs/pull/*/head`. A commit that exists only in the
-local cache is therefore refused. Hosted Git must serve object ids that are not ref tips
-(`uploadpack.allowReachableSHA1InWant`, which GitHub sets) for commit selection to resolve
-anything below a tip; a server that refuses fails the create closed.
-
-The create response and the public session carry the immutable version-1 binding:
-
-```json
-{
-  "version": 1,
-  "kind": "branch",
-  "requested": {"kind": "branch", "name": "feature/payments"},
-  "remote_identity": "origin",
-  "default_ref": "refs/heads/main",
-  "default_commit": "<full object id>",
-  "selected_ref": "refs/heads/feature/payments",
-  "selected_commit": "<full object id>",
-  "base_commit": "<merge base>",
-  "admitted_tree": "<tree object id>",
-  "resolved_at": "<UTC timestamp>"
-}
-```
-
-`selected_ref` is `null` for an exact commit, which advertises none; for the default source the
-selected and default identities are equal. A pull-request binding adds `pull_request_number` and,
-when the caller supplied one, `pull_request_expected_head`. The binding never carries a remote URL
-or credential. It is resolved and journaled into the durable create intent BEFORE the workspace is
-created, so a lost response, a daemon restart, or the same idempotency key replays the exact
-commits instead of landing on a branch that moved in between; the same key with a DIFFERENT
-selector is a different request and conflicts.
-
-With `Prefer: respond-async`, this endpoint returns only the public operation and status 202. The
-operation's successful `resource_type` is `session`; `resource_id` is then safe to fetch through
-`GET /v1/sessions/{session_id}`. Without that preference, it waits and returns the historical
-operation-plus-session response.
+With `Prefer: respond-async`, creation returns status 202 and the operation. Poll that operation;
+a successful `resource_type: session` identifies the session to fetch. Without the preference,
+creation waits and returns the operation and session together.
 
 | Method | Path | Body/query |
 | --- | --- | --- |
-| `POST` | `/v1/sessions` | `policy`, `task`, optional `source`, optional `expected_policy_digest` / `expected_authority_digest` / `expected_network_fingerprint` |
+| `POST` | `/v1/sessions` | `task`, `job`, `expected_job_digest`; optional `controller_tools` |
 | `GET` | `/v1/sessions?limit=100` | `limit` is `1..1000` |
 | `GET` | `/v1/sessions/{session_id}` | none |
-| `POST` | `/v1/sessions/{session_id}/prepare` | `expected_revision`; policy must enable warm execution |
+| `POST` | `/v1/sessions/{session_id}/prepare` | `expected_revision`; the job must enable warm execution |
 
-The public session includes IDs, target, policy digest, its execution `mode` (`normal`,
-`readonly` or `bare`; a session created before modes existed reads `normal`), the exact
-`project_env`, `project_mcp`, and
-`repository_read_only` authority flags, its frozen `network` posture (`{"mode":"filtered",
-"fingerprint":"<64 hex>"}`, or just `{"mode":"open"}`), primary base commit, its immutable `source`
-binding, companion aliases, and one version-2 repository freshness receipt per
-configured alias. Each receipt contains the requested revision, immutable fetched revision,
-sanitized remote identity, UTC fetch time, and stale-base status. The primary receipt also carries
-`workspace_base_revision`: normally the fetched base head, or the exact merge base for a
-non-default selected source. A non-default selection adds one receipt named `source`; a default
-selection needs none, because the `primary` receipt already proves the same ref and object. Legacy sessions expose explicit unavailable freshness instead; a caller requiring current
-source evidence must fail closed or replace that session rather than infer freshness. The remaining
-session fields include
-in-box paths and pinned commits, generated fork name, revision, state, activity, queue/budget
-counters, event cursor, and timestamps. It excludes host repository and workspace paths, native
-session ID, prompts, credentials, environment, caller-defined mounts, and runtime data.
+A bare session has no workspace. Changes, workspace binding, checkpoint, restore and review
+refuse it. Turns, events, budget, cancel, close and discard remain available.
 
-A `bare` session has no workspace: `fork_name` and `base_commit` are empty, its freshness is
-`unavailable` because there is no repository to be fresh about, and every repository-specific
-operation — `GET .../changes`, `POST .../checkpoint`, `POST .../workspace`,
-`POST .../workspace/restore`, and `POST .../review` — refuses it with `invalid_session_state`
-(409) and `session has no workspace: its policy is bare` (review answers with its own bound-fork
-refusal). Turns, events, budget, cancel, close, and the discard plan/discard pair work as for any
-session; a bare discard removes the session's private state and retires the record, since there is
-no fork to remove.
+### Workspace checkpoints
+
+| Method | Path | Input/output |
+| --- | --- | --- |
+| `POST` | `/v1/sessions/{id}/checkpoint` | JSON: `session_ref`, `expected_revision`, `placement_generation`, `repository_ref`; returns operation and descriptor |
+| `GET` | `/v1/operations/{id}/checkpoint-bundle` | Streamed tar, exact `Content-Length`, SHA-256 `ETag` |
+| `POST` | `/v1/sessions/{id}/workspace/restore` | Binary body plus `X-Coop-Expected-Revision` and base64-JSON `X-Coop-Workspace-Checkpoint` headers |
+
+Capture requires an idle writable session with a bound task. Restore requires an unused
+replacement session with the same authorized base and task offer. All mutations need an
+idempotency key. Restore's content type is
+`application/vnd.coop.workspace-checkpoint.v2+tar`; its Content-Length must equal the descriptor.
+
+V2 streams raw typed Git objects and verified LFS payloads, including new committed history,
+the final tracked tree, untracked files and task state. It restores the exact HEAD and working
+tree, not the original staged/unstaged split. Changed submodule commits require separate
+authorized custody and are refused, including intermediate changes later reverted.
+Memory and metadata are bounded; there is no 64-MiB data cap. Disk-pressure checks and
+cancellation apply throughout transfer and Git work. These are pressure protection, not a
+filesystem quota against other host writers.
+
+Every member and task binding is verified in quarantine before live files change. Coop retains
+the exact body before marking restore Running; incomplete restores refuse execution across
+restart and resume from that body. Retry the same operation, never a new key against an already
+bound session. Capture holds the runtime too, so it cannot race a model turn. A restored
+checkpoint does not inherit a publication approval: review the candidate again before publishing.
+
+Discard removes only checkpoint artifacts whose local session ownership is proven and settles
+interrupted restores of that discarded session. Historical v1 artifacts remain readable;
+their patch-only format cannot prove full Git/LFS custody, so v1 restore is explicitly refused.
 
 ### Turns
 
@@ -903,7 +459,7 @@ Submit:
 ```bash
 curl --unix-socket "$SOCKET" \
   -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: responder:turn:01J...' \
+  -H 'Idempotency-Key: controller:turn:01J...' \
   -d '{"expected_revision":1,"prompt":"Investigate the failing readiness check."}' \
   http://localhost/v1/sessions/remote_.../turns
 ```
@@ -1005,7 +561,7 @@ run costs no event, so this stream carries refusals rather than a per-turn heart
 bounded by construction: destinations are grouped and capped with an `omitted_destinations` count,
 alerts are capped, and `evidence_id` names the retained event `coop net blocked` can open. It
 follows the same disclosure scope as the network routes, so a destination appears only when the
-session policy set `egress.export_destinations: true`.
+session job set `egress.export_destinations: true`.
 
 Activity events narrate the interior of a turn — what the model did, as against what Coop decided —
 and are always sequenced before the turn's own terminal event, so a caller that stops polling at
@@ -1058,7 +614,7 @@ silent-turn deadline is for.
 ```bash
 curl --unix-socket "$SOCKET" \
   -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: responder:extend:01J...' \
+  -H 'Idempotency-Key: controller:extend:01J...' \
   -d '{"expected_revision":9,"additional_turns":20}' \
   http://localhost/v1/sessions/remote_.../budget
 ```
@@ -1087,7 +643,7 @@ curl --unix-socket "$SOCKET" \
 
 Call
 `GET /v1/sessions/{session_id}/changes?patch_offset=<next>&patch_limit=<bytes>` to read another
-bounded page. `patch_limit` cannot exceed the session policy's `max_patch_bytes`; offsets are
+bounded page. `patch_limit` cannot exceed the session job's `max_patch_bytes`; offsets are
 bounded to 1 GiB. Consumers must bind navigation to `patch_digest` and restart at offset zero if
 the digest changes. The legacy `truncated` field is true whenever the response is not the complete
 patch.
@@ -1128,11 +684,10 @@ session's own runs: the event, the reason, its provenance and whether a candidat
 An event that aged out of its run's bounded ring answers `{"available":false,"reason":
 "event_not_retained"}`, which is not proof the id never existed.
 
-`projection` states the disclosure scope. It is `destinations-withheld` unless the session policy
+`projection` states the disclosure scope. It is `destinations-withheld` unless the session job
 set `egress.export_destinations: true`, in which case it is `destinations-included` and the rule
 texts and observed names are present. The daemon owns that projection; the outbound worker forwards
-exactly what the daemon answered, through the four read commands `get_network`,
-`get_network_connections`, `get_network_explanation` and `get_network_receipt` — each one a plain
+exactly what the daemon answered through ordinary GET API requests — each one a plain
 GET of the route above, with no destination, rule or disclosure scope of its own to choose.
 
 | Method | Path | Body/query |
@@ -1198,7 +753,7 @@ folder has gone missing reports `unavailable` with its identity intact, never an
 ```bash
 curl --unix-socket "$SOCKET" \
   -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: responder:review:01J...' \
+  -H 'Idempotency-Key: controller:review:01J...' \
   -d '{"expected_revision":12}' \
   http://localhost/v1/sessions/remote_.../review
 ```
@@ -1212,14 +767,16 @@ against current parent `HEAD`, runs the trusted parent gate read-only, and retur
 - rebase status and gate status;
 - bounded policy findings;
 - a bounded inline patch preview from parent tree to candidate tree;
-- `patch_truncated`, complete `patch_digest` and `patch_bytes`, an opaque
-  `patch_artifact_id`, `publishable`, and stable not-publishable reason codes.
+- `patch_truncated`, `candidate_retained`, `publishable`, and stable not-publishable reason codes.
 
 The preview is base64 in JSON. A truncated preview is a transport condition and does not by itself
-make the review unpublishable. The complete owner-private artifact is capped at 64 MiB and is
-available only through
-`GET /v1/operations/{patch_artifact_id}/review-patch`. The response is raw `text/x-diff`, with the
-review digest as its ETag. Consumers must verify its size and SHA-256 digest before use.
+make the review unpublishable. Coop retains the exact candidate commit and its verified LFS
+objects in private host storage, independently of the model workspace. There is no full-patch
+transfer or patch-size publication limit. The candidate is one deterministic commit on the
+reviewed parent, created before the gate; `source_head` preserves the original model provenance.
+Secret checks cover the actual parent-to-candidate delta, including large/binary Git blobs and
+LFS payloads. Changing LFS attributes also scans the resulting LFS payloads. Read failures refuse
+the review rather than treating unreadable content as safe.
 
 Reviews may outlive the requesting connection. Look up the original operation key,
 then retrieve a succeeded review with
@@ -1230,12 +787,50 @@ session, a non-review operation, and an unfinished review are refused. Both
 
 `publishable` is evidence about this exact candidate, not permission to push or merge. It is false
 for conflict, no/failed gate, startup failure, policy findings, parent or source movement, active
-fork ownership, or an unavailable/oversized complete artifact. An external publisher applies the
-verified artifact to the exact `parent_head` in an isolated checkout and verifies that the resulting
-tree equals `candidate_tree`. It must stop on any mismatch and owns all GitHub credentials,
-branching, secret scans, commit creation, and draft-PR idempotency. For an existing pull request,
-the publisher must also compare-and-swap the recorded repository/ref at the recorded head before
-pushing and verify that the same pull request points to the resulting exact commit afterward.
+fork ownership, or an empty change. `candidate_retained` distinguishes custody from gate readiness:
+a missing or failed gate can still leave an exact snapshot, but grants no publication authority.
+Publication must use the retained `candidate_head` unchanged, with a separate controller grant
+and compare-and-swap on the destination ref. It must never reconstruct the result from a patch
+or from the model's later workspace. Explicit session discard removes its retained candidates;
+controllers must keep sessions whose reviews still await publication.
+
+### Publish a reviewed candidate
+
+`POST /v1/sessions/{session_id}/reviews/{review_operation_id}/publish` uses a new
+`Idempotency-Key` and this JSON body:
+
+```json
+{
+  "authorization_ref": "approval:42",
+  "candidate_head": "<exact reviewed commit>",
+  "candidate_tree": "<exact reviewed tree>",
+  "branch": "automation/fix",
+  "base_branch": "main",
+  "expected_head": "",
+  "pull_request_number": 0,
+  "title": "Fix retry handling",
+  "body": "Reviewed changes and verification details."
+}
+```
+
+An empty `expected_head` requires a new branch. Updating a previously authorized PR requires
+its number and exact expected head. The operation returns `202` while running; reconcile its
+key and read `GET /v1/sessions/{session_id}/publications/{operation_id}` for the completed
+`operation` and `publication` envelope. A retry uses the same key and identical request.
+The result is `published` with the exact commit/tree and PR receipt, `conflict` with a verified
+existing PR and observed remote head, or `refused` with a stable error code.
+
+The trusted host requests fresh credentials from the authenticated controller at
+`POST /v1/coop-workers/jobs/{job_ref}/publication-grants`. The request binds the session, job
+digest, review operation, original command key, repository identity and publication body.
+The controller returns the same repository identity plus `token`, `expires_at` and its GitHub
+App `actor_id`. A `403` permanently refuses this operation; temporary failures remain retryable.
+The controller owns approval rules. No product-specific approval format is required by Coop.
+
+Git and LFS bytes go directly from the private retained candidate to GitHub. Coop creates a
+draft, or updates the exact App-owned PR while preserving a person's ready-for-review choice.
+Lost push and PR responses reconcile before retrying. An active publication prevents discard
+of its candidate; model workspace changes cannot alter the reviewed result.
 
 ### Close and discard
 
@@ -1244,7 +839,7 @@ Close:
 ```bash
 curl --unix-socket "$SOCKET" \
   -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: responder:close:01J...' \
+  -H 'Idempotency-Key: controller:close:01J...' \
   -d '{"expected_revision":15}' \
   http://localhost/v1/sessions/remote_.../close
 ```
@@ -1256,7 +851,7 @@ Plan a discard only after close:
 ```bash
 curl --unix-socket "$SOCKET" \
   -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: responder:discard-plan:01J...' \
+  -H 'Idempotency-Key: controller:discard-plan:01J...' \
   -d '{"expected_revision":16}' \
   http://localhost/v1/sessions/remote_.../discard-plan
 ```
@@ -1273,7 +868,7 @@ Execute that exact plan:
 ```bash
 curl --unix-socket "$SOCKET" \
   -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: responder:discard:01J...' \
+  -H 'Idempotency-Key: controller:discard:01J...' \
   -d '{"plan_operation_id":"op_..."}' \
   http://localhost/v1/sessions/remote_.../discard
 ```
@@ -1289,7 +884,7 @@ way, because Coop cannot prove it owns the workspace. Retire the record instead:
 ```bash
 curl --unix-socket "$SOCKET" \
   -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: responder:retire:01J...' \
+  -H 'Idempotency-Key: controller:retire:01J...' \
   -d '{"retire_quarantined":true,"expected_revision":16}' \
   http://localhost/v1/sessions/remote_.../discard
 ```
@@ -1298,6 +893,10 @@ This tombstones the session row only: queued turns are exhausted, a turn that wa
 daemon lost authority stays in history as it was, and the workspace, sidecar services, and private
 ACP state stay on disk for the operator to inspect and remove. A session that is not quarantined
 is refused with `invalid_session_state`.
+
+Record-only retirement does not restore runtime capacity, including after restart: it provides no
+proof that those processes stopped. Inspect and stop the old runtime before bringing up a worker
+with a fresh `--state` directory; retain the old directory for its session history.
 
 ## Errors
 
@@ -1325,7 +924,7 @@ Common status mapping:
 | --- | --- |
 | `400` | invalid or over-bounds request |
 | `404` | session, turn, or operation not found |
-| `409` | idempotency, operation fence, revision, state, queue, budget, resume, uncertainty, discard, policy digest, or network fingerprint conflict |
+| `409` | idempotency, operation fence, revision, state, queue, budget, resume, uncertainty, or discard conflict |
 | `413` | ordinary request body exceeds 128 KiB, or turn submission exceeds 12 MiB |
 | `500` | internal failure; host paths and raw internal errors are suppressed |
 | `503` | readiness is not ready, or repository/runtime/network/storage authority is temporarily unavailable |
@@ -1336,22 +935,15 @@ limits, so it will not create another workspace until space is returned or, when
 which bytes are held and why. Place the session on another worker or clear the storage; do not
 retry in a tight loop and do not delete protected workspaces to satisfy the quota.
 
-`network_unavailable` is a `503` an operator has to clear, not a retryable one: the host has no
-approval for the project, no completed `coop net setup`, or the named policy disagrees with the
-project's remembered posture. Creation refuses rather than falling back to an open session. A
-create that pinned `expected_network_fingerprint` reports it for the same reason: a pin nobody can
-confirm is not a pin.
-
-`network_fingerprint_mismatch` is a `409` with the same fix: the policy still resolves, but to a
-different reach than the caller was authorized against, because an approval on this host changed.
-Nothing was journaled, so the caller re-reads the fingerprint (from the refusal, or from
-`coop sessions policies`) and places again.
+`network_unavailable` is a `503`: the worker cannot enforce or prove the session's frozen network
+authority. Inspect the worker's runtime and network readiness. The worker refuses execution rather
+than falling back to open networking; do not alter a saved job to get past the refusal.
 
 Treat `operation_uncertain` and `turn.interrupted` as reconciliation states. Never retry a mutation
 under a new key merely because its result is unknown.
 
 `RunReview` is the narrow read-only exception: after Coop captures immutable source, parent, and
-policy identities, replaying the exact request under the same key resumes that frozen review under
+job identities, replaying the exact request under the same key resumes that frozen review under
 the same operation ID. It never recaptures moving repository state. Unreadable or invalid captured
 intent remains `operation_uncertain`.
 
@@ -1367,13 +959,14 @@ intent remains `operation_uncertain`.
 | Queued turn at restart | Coop resumes it in FIFO order |
 | Running session create at restart | Coop resumes its durable create intent automatically |
 | Reserved operation at restart | Coop records an interrupted-admission failure; nothing external was attempted |
+| Running checkpoint restore at restart | Resume its retained body under the execution fence; never submit a fresh key |
 | Other running operation at restart | Coop marks it `operation_uncertain`; reconcile rather than replaying under a new key |
 | Operation remains running after startup | The periodic watchdog resumes safe creates and marks stale ambiguous mutations uncertain |
 | Turn interrupted after send intent | Surface interrupted; do not submit the same human input automatically |
 | Active turn must stop | Use the idempotent cancel endpoint, then reconcile the terminal turn |
 | Session should stop costing runtime | Wait for park; no agent or Compose service container remains between turns |
 | Incident is over | Close; retain the fork for review or an explicit later discard |
-| Review patch is truncated | Do not publish; reduce/split the change or use a separate human host workflow |
+| Review patch preview is truncated | Use paged inspection; publish the retained reviewed candidate, never reconstruct it from the preview |
 
 Back up the entire state root while the daemon is stopped. Restoring a database without its
 corresponding forks requires operator reconciliation; Coop does not infer ownership from names.
@@ -1388,7 +981,7 @@ A production consumer still needs:
 - event cursors and reconciliation workers;
 - prompt framing and output redaction appropriate to its transport;
 - retention, audit, capacity, and spend policy;
-- GitHub or other publication machinery;
+- approval and short-lived repository credential grants for GitHub publication;
 - secret scanning before data leaves the host;
 - supervision and a kill switch.
 

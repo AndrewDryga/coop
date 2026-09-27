@@ -32,6 +32,87 @@ func TestSessionNetworkCaptureRoundTripsEveryField(t *testing.T) {
 	}
 }
 
+func TestControllerJobEnvironmentRequiresExactDigest(t *testing.T) {
+	t.Setenv(ControllerJobEnv, strings.Repeat("a", 64))
+	if selected, err := ControllerJobFromEnvironment(); err != nil || !selected {
+		t.Fatalf("valid controller job marker = %t, %v", selected, err)
+	}
+	for _, invalid := range []string{"short", strings.Repeat("A", 64), strings.Repeat("x", 64)} {
+		t.Setenv(ControllerJobEnv, invalid)
+		if selected, err := ControllerJobFromEnvironment(); err == nil || selected {
+			t.Fatalf("invalid controller job marker %q = %t, %v", invalid, selected, err)
+		}
+	}
+}
+
+func TestControllerJobNetworkingIgnoresRepositoryAndLocalPosture(t *testing.T) {
+	cfg, repo, root := admissionFixture(t)
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte("box: [invalid local settings]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rememberFilteredPosture(t, root, repo, nil)
+	spec := RunSpec{Repo: repo, PolicyRepo: repo, ControllerJob: true}
+	job := ControllerJobNetwork{JobDigest: strings.Repeat("a", 64), SessionID: "remote_one", Mode: egress.Open}
+	mode, capture, err := AdmitControllerJobNetwork(cfg, runtime.Runtime{Name: "must-not-execute"}, spec, job)
+	if err != nil || mode != egress.Open || capture != nil {
+		t.Fatalf("controller open networking = %q %+v %v", mode, capture, err)
+	}
+	job.Mode = egress.None
+	mode, capture, err = AdmitControllerJobNetwork(cfg, runtime.Runtime{Name: "must-not-execute"}, spec, job)
+	if err != nil || mode != egress.None || capture != nil {
+		t.Fatalf("controller offline networking = %q %+v %v", mode, capture, err)
+	}
+	job.Mode = egress.Filtered
+	if _, capture, err = AdmitControllerJobNetwork(cfg, runtime.Runtime{Name: "must-not-execute"}, spec, job); capture != nil || err == nil || !strings.Contains(err.Error(), filteredReachedRuntimePreflight) {
+		t.Fatalf("controller filtered runtime preflight = %+v %v", capture, err)
+	}
+}
+
+func TestControllerJobChildReprovesItsOwnSnapshot(t *testing.T) {
+	cfg, repo, root := admissionFixture(t)
+	store, err := networkstate.Open(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := networkstate.JobSnapshotRef{JobDigest: strings.Repeat("a", 64), SessionID: "remote_one"}
+	snapshot, err := store.CaptureJob(ref, []egress.Rule{{To: egress.Destination{Domain: "job.example.com"}, Protocol: "tls", Ports: []int{443}}}, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(ControllerJobEnv, ref.JobDigest)
+	reference := SessionNetworkCapture{Project: repo, Fingerprint: snapshot.Fingerprint,
+		Qualification: strings.Repeat("b", 64), SessionID: ref.SessionID, AttemptID: "turn_one", JobDigest: ref.JobDigest}
+	encoded, err := reference.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(SessionNetworkCaptureEnv, encoded)
+	if capture, err := CapturedEgressFromEnvironment(cfg, RunSpec{Repo: repo, ControllerJob: true}); capture != nil || err == nil || !strings.Contains(err.Error(), "no longer set up") {
+		if capture != nil {
+			_ = capture.Close()
+		}
+		t.Fatalf("authentic job snapshot reached qualification = %+v %v", capture, err)
+	}
+	reference.SessionID = "remote_other"
+	encoded, err = reference.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(SessionNetworkCaptureEnv, encoded)
+	if capture, err := CapturedEgressFromEnvironment(cfg, RunSpec{Repo: repo, ControllerJob: true}); capture != nil || err == nil || !strings.Contains(err.Error(), "not on this host") {
+		if capture != nil {
+			_ = capture.Close()
+		}
+		t.Fatalf("wrong job session reused snapshot = %+v %v", capture, err)
+	}
+}
+
 func TestSessionNetworkCaptureRefusesIncompleteAndUnknownShapes(t *testing.T) {
 	for name, raw := range map[string]string{
 		"unknown field": `{"project":"/srv/app","fingerprint":"` + strings.Repeat("a", 64) +
@@ -121,109 +202,5 @@ func TestCapturedEgressFromEnvironmentAuthenticatesAgainstTheOwnerStore(t *testi
 				t.Fatalf("%s error = %v, want one saying %q", name, err, test.reject)
 			}
 		})
-	}
-}
-
-// A session policy is EXPLICIT operator authority. When it disagrees with the posture an operator
-// remembered for the project, creation is refused: the API may not reconcile that on its own.
-func TestAdmitSessionNetworkRefusesAPolicyThatDisagreesWithTheRememberedPosture(t *testing.T) {
-	cfg, repo, root := admissionFixture(t)
-	rememberFilteredPosture(t, root, repo, nil)
-	workspace := sessionWorkspaceFixture(t, repo, "remote-1")
-	_, capture, err := AdmitSessionNetwork(cfg, runtime.Runtime{Name: "must-not-execute"},
-		RunSpec{Repo: workspace, PolicyRepo: repo, ForkName: "remote-1"},
-		SessionNetworkAdmission{Mode: egress.Open})
-	if capture != nil {
-		_ = capture.Close()
-	}
-	if err == nil || !strings.Contains(err.Error(), "network_policy_conflict") {
-		t.Fatalf("open policy against a remembered restriction = %v, want a policy conflict", err)
-	}
-}
-
-// A policy with no `egress:` block is not a request to widen anything, so the project's own
-// remembered posture still decides — exactly as it does for a direct launch in that repository.
-func TestAdmitSessionNetworkLetsTheRememberedPostureDecideWithoutAPolicyMode(t *testing.T) {
-	cfg, repo, root := admissionFixture(t)
-	rememberFilteredPosture(t, root, repo, nil)
-	workspace := sessionWorkspaceFixture(t, repo, "remote-1")
-	_, capture, err := AdmitSessionNetwork(cfg, runtime.Runtime{Name: "must-not-execute"},
-		RunSpec{Repo: workspace, PolicyRepo: repo, ForkName: "remote-1"}, SessionNetworkAdmission{})
-	if capture != nil {
-		_ = capture.Close()
-	}
-	// Resolution reached filtered; this fixture's runtime is not Docker, so the runtime preflight
-	// stops it before any authority state exists.
-	if err == nil || !strings.Contains(err.Error(), filteredReachedRuntimePreflight) {
-		t.Fatalf("silent policy under a remembered restriction = %v, want filtered resolution", err)
-	}
-}
-
-// Admission must not mutate the daemon's shared configuration: one process serves every session,
-// so a posture written onto cfg by one create would leak into the next.
-func TestAdmitSessionNetworkLeavesTheSharedConfigurationAlone(t *testing.T) {
-	cfg, repo, _ := admissionFixture(t)
-	workspace := sessionWorkspaceFixture(t, repo, "remote-1")
-	mode, capture, err := AdmitSessionNetwork(cfg, runtime.Runtime{Name: "must-not-execute"},
-		RunSpec{Repo: workspace, PolicyRepo: repo, ForkName: "remote-1"},
-		SessionNetworkAdmission{Mode: egress.Open})
-	if capture != nil {
-		_ = capture.Close()
-	}
-	if err != nil || mode != egress.Open {
-		t.Fatalf("open session admission = %q, err %v", mode, err)
-	}
-	if cfg.Egress != "open" {
-		t.Fatalf("shared configuration egress = %q, want it untouched", cfg.Egress)
-	}
-}
-
-// sessionWorkspaceFixture creates the fork workspace a remote session's box would mount, so the
-// admission spec describes the same two paths the child later presents.
-func sessionWorkspaceFixture(t *testing.T, repo, fork string) string {
-	t.Helper()
-	workspace := filepath.Join(filepath.Dir(repo), filepath.Base(repo)+"-forks", fork)
-	if err := os.MkdirAll(workspace, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return workspace
-}
-
-// A repository that asks for restricted egress gets it for its remote sessions too. The named
-// policy outranks it when it writes a posture; when it stays silent, the project still speaks —
-// exactly as it does for a direct launch in the same checkout.
-func TestAdmitSessionNetworkHonorsTheProjectRequestedMode(t *testing.T) {
-	cfg, repo, _ := admissionFixture(t)
-	writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), "box:\n  egress: filtered\n")
-	workspace := sessionWorkspaceFixture(t, repo, "remote-1")
-	spec := RunSpec{Repo: workspace, PolicyRepo: repo, ForkName: "remote-1"}
-	// Resolution reached filtered; this fixture's runtime is not Docker, so the runtime preflight
-	// stops it.
-	if _, capture, err := AdmitSessionNetwork(cfg, runtime.Runtime{Name: "must-not-execute"},
-		spec, SessionNetworkAdmission{}); capture != nil || err == nil ||
-		!strings.Contains(err.Error(), filteredReachedRuntimePreflight) {
-		t.Fatalf("project-requested filtered = %v", err)
-	}
-	// An explicit policy posture is operator authority and outranks the repository's request.
-	mode, capture, err := AdmitSessionNetwork(cfg, runtime.Runtime{Name: "must-not-execute"},
-		spec, SessionNetworkAdmission{Mode: egress.Open})
-	if capture != nil {
-		_ = capture.Close()
-	}
-	if err != nil || mode != egress.Open {
-		t.Fatalf("named open policy over a project request = %q, err %v", mode, err)
-	}
-}
-
-// The destinations a session may reach are the ones its box can actually use. A policy that
-// withholds the shared MCP configuration withholds its hosts with it.
-func TestSessionAutomaticDependenciesFollowTheMCPProjection(t *testing.T) {
-	cfg, spec := mcpDependencyFixture(t, `{"mcpServers":{"remote":{"url":"https://mcp.example.com"}}}`)
-	automatic, err := sessionAutomaticDependencies(cfg, spec, SessionNetworkAdmission{})
-	if err != nil || len(automatic) != 1 || automatic[0].Rules[0].To.Domain != "mcp.example.com" {
-		t.Fatalf("session with MCP derived %+v, err %v", automatic, err)
-	}
-	if automatic, err = sessionAutomaticDependencies(cfg, spec, SessionNetworkAdmission{OmitMCP: true}); err != nil || automatic != nil {
-		t.Fatalf("session policy with project_mcp: false derived %+v, err %v", automatic, err)
 	}
 }

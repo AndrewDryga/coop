@@ -1,46 +1,33 @@
 ---
 name: session-operation-intents-cross-versions
-description: running session operations survive binary upgrades, so persisted intent JSON needs explicit compatibility normalization before replay
+description: persisted operation intents survive upgrades; replay requires proven frozen job authority and never reconstructs it from retired local policies
 subsystem: session-api
-sources: [internal/sessionsvc/service.go, internal/session/store.go]
-updated: 2026-09-05
+sources: [internal/sessionsvc/service.go, internal/sessionsvc/review.go, internal/session/store.go]
+updated: 2026-09-26
 ---
 
-`operations.result` is also the write-ahead intent for a running cross-process operation
-(`internal/session/store.go`). A daemon restart can therefore replay intent bytes written by an
-older binary through current `sessionsvc` code. Those bytes are a durable wire format even when
-the Go structs were originally package-private.
+operations.result doubles as the write-ahead intent for a running cross-process operation.
+Its JSON is durable even when the Go struct is private. Validate authority before filesystem
+work, indexing or gate execution; missing proof becomes operation_uncertain, never a panic,
+an indefinitely running row, or inferred replacement authority.
 
-Compatibility must be handled before filesystem work or slice indexing. In particular, create
-intents written before target ladders contain `Policy.Target` and no `Policy.Targets`; replay
-normalizes that single target into a one-rung ladder. Missing or malformed authority data moves
-the operation to `uncertain` and fails closed. It must never panic the HTTP handler or leave the
-operation indefinitely `running`.
+Create has one frozen intent: canonical JobDocument/JobDigest, task reference, deterministic
+session/fork identities and the admitted endpoint binding. Sources have already been privately
+staged. There is no policy snapshot, target-ladder normalization or second source-pinning phase.
+A retry checks the exact saved document and staging receipt before creating/reusing the workspace.
+The create store transaction compares the captured intent before publishing the session result.
 
-Create admission now intentionally has two durable intent phases. The first records the complete
-operator policy, deterministic session/workspace identities, and optional governed pull-request
-binding before remote Git resolution starts. The create worker resolves immutable repository pins,
-then advances that exact running intent with an optimistic compare-and-swap before creating any
-workspace. A restart may safely resume either phase because pinning is read-only and workspace
-creation is deterministic. No other mutation receives this treatment: startup and the periodic
-watchdog make arbitrary stale running operations `uncertain` instead of guessing whether an
-external side effect happened. A stranded `reserved` row has no attempted side effect; the same
-reconciler terminalizes it as a failed interrupted admission rather than leaving it invisible.
+Historical policy-only create intents cannot execute after the cutover. Existing sessions and
+evidence are preserved, but replay never turns an old policy name into a new controller grant.
+Recovered reviews likewise prove the bound session's job before any gate can run.
 
-Clients may request this lifecycle with `Prefer: respond-async`, but the intent format and recovery
-rules belong to the operation record, not HTTP. An exact idempotent replay coalesces onto the same
-operation, and operation-correlated errors must preserve the operation ID while keeping internal
-paths and secrets out of the public projection.
-
-A pinned create intent must now retain the acquired repository-freshness receipts. A historical
-base SHA without receipts is rejected with `repository_unavailable`; replay must not acquire new
-authority under the old request. Successful replay fixtures must call the real pinning boundary
-before advancing the parent, and preserve its exact receipt in both intent and session.
+Prefer: respond-async changes HTTP waiting, not custody. An exact retry coalesces onto the same
+operation. Correlated failures retain the operation ID while public errors redact paths/secrets.
+Startup and the watchdog reconcile other stale operations rather than guessing external effects;
+a stranded reserved row can fail as interrupted admission because no effect was attempted.
 
 ## Changelog
-- 2026-09-05 — aligned replay fixtures with the enforced freshness contract; kept explicit
-  missing-receipt rejection and conflict/non-rollback coverage. No production fence changed.
-- 2026-08-12 — documented the admitted-to-pinned create-intent transition, bounded async worker,
-  and general stale-operation reconciliation.
-- 2026-08-12 — created after recovering an Aug 7 production create intent that crossed the
-  single-target to target-ladder schema change.
+- 2026-09-26 — removed obsolete policy/target normalization and two-phase pinning notes;
+  reviewed current create CAS and added a regression denying jobless recovered review execution.
+- 2026-09-05 — aligned replay fixtures with exact freshness custody.
+- 2026-08-12 — documented durable intents and interrupted-operation reconciliation.

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,7 +8,6 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
-	"github.com/AndrewDryga/coop/internal/workerconnector"
 )
 
 // Every sign refusal names what the signer actually found and the one action that resolves it. A
@@ -90,61 +88,14 @@ func TestApprovedPromptLine(t *testing.T) {
 	}
 }
 
-// `coop sessions connect` validates the configuration BEFORE anything else: a bad file must never
-// start a service, and the refusal names the file, the loader's own cause, and the page.
-func TestApprovedSessionConnectRejectsItsConfigurationFirst(t *testing.T) {
-	assertApprovedOutput(t, "73-sessions-connect-invalid-config", usageBlock(t,
-		sessionConnectFailure("/path/to/worker.json", errors.New("unsupported worker configuration version 2"))))
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "worker.json")
-	if err := os.WriteFile(path, []byte(`{"version":99}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	state := filepath.Join(dir, "sessions")
-	t.Setenv("HOME", dir)
-	code, err := runSessionConnect(freshConfig(t), path)
+// A rejected controller must not start a local service.
+func TestSessionConnectRejectsInvalidControllerBeforeStartup(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "sessions")
+	code, err := runSessionConnect(freshConfig(t), sessionConnectOptions{Controller: "http://controller.example", State: state})
 	if code != 1 || err == nil {
-		t.Fatalf("an unsupported configuration = (%d, %v), want a refusal", code, err)
+		t.Fatalf("insecure controller = %d, %v", code, err)
 	}
-	if block := usageBlock(t, err); !strings.Contains(block, "Could not start the worker") ||
-		!strings.Contains(block, "coop help sessions connect") {
-		t.Errorf("configuration refusal lost its shape:\n%s", block)
+	if _, err := os.Stat(state); !os.IsNotExist(err) {
+		t.Fatalf("invalid controller created state: %v", err)
 	}
-	// Nothing was started: a rejected configuration never creates session state.
-	if _, err := os.Stat(state); err == nil {
-		t.Error("a rejected configuration started a local session service")
-	}
-}
-
-// A configured coop_socket must AGREE with the resolved session data directory. A socket pointing
-// somewhere else would connect the controller to a service whose policies nobody checked.
-func TestSessionConnectPathsRefuseAForeignSocket(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	state := filepath.Join(home, "sessions")
-	_, _, socket, err := sessionConnectPaths(workerConfigFor(state, filepath.Join(state, "control.sock")))
-	if err != nil || socket != filepath.Join(state, "control.sock") {
-		t.Fatalf("a socket inside the state root = (%q, %v), want it accepted", socket, err)
-	}
-	if _, _, _, err := sessionConnectPaths(workerConfigFor(state, filepath.Join(home, "elsewhere.sock"))); err == nil {
-		t.Fatal("a socket outside the session data directory was accepted")
-	}
-	// With no explicit state directory, the documented default decides — never the socket's parent.
-	resolvedState, policy, _, err := sessionConnectPaths(workerConfigFor("", ""))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resolvedState != filepath.Join(home, ".local", "state", "coop", "sessions") {
-		t.Errorf("default session data directory = %q", resolvedState)
-	}
-	if policy != filepath.Join(home, ".config", "coop", "session-policies.yaml") {
-		t.Errorf("default session policy = %q", policy)
-	}
-}
-
-// workerConfigFor is the minimum of a worker configuration this slice reads: which local session
-// service it is about, and the socket it expects to reach it on.
-func workerConfigFor(state, socket string) workerconnector.Config {
-	return workerconnector.Config{SessionStateDir: state, CoopSocket: socket}
 }

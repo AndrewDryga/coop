@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-09-23
+updated: 2026-09-27
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -46,6 +46,17 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-09-27 — added `sessionsvc -> hostsurface`: remote review owns its mandatory
+  parent-to-candidate scan, sharing the path classifier instead of an optional CLI
+  callback that compared the candidate to itself. Content scans stream large Git/LFS
+  payloads. Swept with TestInternalImportDAG; no other edges changed.
+- 2026-09-27 — added `workerconnector -> forkspace`: private source staging reuses the
+  hardened Git tree reader and path checks to prove authorized submodule closure. It does
+  not introduce a second Git configuration execution boundary.
+- 2026-09-26 — removed `workerconnector -> secretscan`: checkpoint scanning belongs to the
+  session service before export and restore, not the generic API transport. Added
+  `workerproto -> session` so a job reuses the existing immutable source binding rather
+  than introducing another representation. Neither session nor the scanner imports the wire package.
 - 2026-09-23 — added `box -> fsidentity`: service approvals now bind their public marker to
   private host state, so a copied or replaced repository cannot inherit another checkout's
   secret-file or external-volume grants. This is service authority, not fork lifecycle.

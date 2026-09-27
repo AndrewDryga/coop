@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -70,8 +69,8 @@ func TestWorkerPollReferenceMismatchPreservesCustody(t *testing.T) {
 	id := strings.Repeat("w", 256)
 	var mode atomic.Int32
 	command := createCommand(time.Date(2026, 9, 6, 13, 0, 0, 0, time.UTC))
-	command.WorkerID, command.Kind = id, "get_session"
-	command.Payload = json.RawMessage(`{"coop_session_id":"session-1"}`)
+	command.WorkerID, command.Kind = id, "api_request"
+	command.Payload = apiPayload("GET", "/v1/sessions/session-1", nil)
 	next := command
 	next.CommandID, next.IdempotencyKey = "next-command", "next-operation"
 	connector, api, requests := pollReferenceConnector(t, id, func(response *workerproto.Response) {
@@ -140,9 +139,6 @@ func TestWorkerPollHashingDoesNotPermitInvalidIdentity(t *testing.T) {
 	now := time.Now().UTC()
 	for _, id := range []string{"", strings.Repeat("w", 257), strings.Repeat("w", 230) + "/", strings.Repeat("w", 230) + "\x00"} {
 		t.Run(fmt.Sprintf("%d-%x", len(id), sha256.Sum256([]byte(id))), func(t *testing.T) {
-			if _, err := LoadConfig(pollReferenceConfigPath(t, id), "coop-test", now); err == nil || !strings.Contains(err.Error(), "worker id") {
-				t.Fatalf("invalid worker configuration accepted or rejected for wrong reason: %v", err)
-			}
 			if _, err := NewConnector(ConnectorConfig{
 				Executor: &Executor{}, Transport: &HTTPTransport{}, Now: func() time.Time { return now },
 				Hello: func(_ context.Context, clock time.Time) workerproto.WorkerHello {
@@ -157,35 +153,11 @@ func TestWorkerPollHashingDoesNotPermitInvalidIdentity(t *testing.T) {
 	}
 }
 
-func pollReferenceConfigPath(t *testing.T, id string) string {
-	t.Helper()
-	document, err := os.ReadFile("../../docs/examples/worker.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var raw fileConfig
-	if err := json.Unmarshal(document, &raw); err != nil {
-		t.Fatal(err)
-	}
-	raw.WorkerID = id
-	document, err = json.Marshal(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(t.TempDir(), "worker.json")
-	if err := os.WriteFile(path, document, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
 func pollReferenceConnector(t *testing.T, id string, respond func(*workerproto.Response)) (*Connector, *fakeAPI, <-chan workerproto.Poll) {
 	t.Helper()
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
-	configuration, err := LoadConfig(pollReferenceConfigPath(t, id), "coop-test", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	worker := hello(now)
+	worker.ID = id
 	requests := make(chan workerproto.Poll, 8)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(io.LimitReader(r.Body, workerproto.MaxDocumentBytes+1))
@@ -223,7 +195,7 @@ func pollReferenceConnector(t *testing.T, id string, respond func(*workerproto.R
 	connector, err := NewConnector(ConnectorConfig{
 		Executor: executor, Transport: transport, Now: func() time.Time { return now },
 		Hello: func(_ context.Context, clock time.Time) workerproto.WorkerHello {
-			worker := configuration.Hello
+			worker := worker
 			worker.ClockAt = clock
 			return worker
 		},

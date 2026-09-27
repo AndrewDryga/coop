@@ -3,4 +3,4 @@
 
       No service is listening at /Users/andrewdryga/.local/state/coop/sessions/control.sock.
 
-  Run coop sessions serve to start it.
+  Run coop sessions connect to start it.

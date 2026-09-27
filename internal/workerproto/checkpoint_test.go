@@ -23,7 +23,7 @@ func TestSharedWorkspaceCheckpointGoldenBindsPortableTaskAndWorkspaceIdentity(t 
 		len(checkpoint.Task.Subtasks) != 2 || !checkpoint.Task.Subtasks[0] || checkpoint.Task.Subtasks[1] {
 		t.Fatalf("checkpoint = %+v", checkpoint)
 	}
-	if checkpoint.Bundle.MediaType != WorkspaceCheckpointBundleMediaType || checkpoint.Bundle.ByteSize != 16384 {
+	if checkpoint.Bundle.MediaType != LegacyWorkspaceCheckpointMediaType || checkpoint.Bundle.ByteSize != 16384 {
 		t.Fatalf("bundle = %+v", checkpoint.Bundle)
 	}
 }

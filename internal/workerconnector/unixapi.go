@@ -3,7 +3,6 @@ package workerconnector
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -82,177 +81,6 @@ func (a *UnixAPI) ListEvents(ctx context.Context, sessionID string, after int64,
 	return events, nil
 }
 
-func (a *UnixAPI) FetchOutputArtifact(ctx context.Context, sessionID, turnID, artifactID string) (Artifact, error) {
-	if !reference(sessionID, 1024) || !reference(turnID, 1024) || !reference(artifactID, 256) {
-		return Artifact{}, errors.New("private Coop output artifact identity is invalid")
-	}
-	path := "/v1/sessions/" + url.PathEscape(sessionID) + "/turns/" + url.PathEscape(turnID) + "/artifacts/" + url.PathEscape(artifactID)
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix"+path, nil)
-	if err != nil {
-		return Artifact{}, err
-	}
-	response, err := a.client.Do(request)
-	if err != nil {
-		return Artifact{}, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, maxPrivateResponseBytes+1))
-		return Artifact{}, decodeAPIError(response.StatusCode, body)
-	}
-	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
-	if err != nil {
-		return Artifact{}, errors.New("private Coop output artifact media type is invalid")
-	}
-	_, disposition, err := mime.ParseMediaType(response.Header.Get("Content-Disposition"))
-	if err != nil {
-		return Artifact{}, errors.New("private Coop output artifact disposition is invalid")
-	}
-	expectedBytes, err := strconv.Atoi(response.Header.Get("Content-Length"))
-	if err != nil || expectedBytes <= 0 || expectedBytes > maxArtifactBytes {
-		return Artifact{}, errors.New("private Coop output artifact length is invalid")
-	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, maxArtifactBytes+1))
-	if err != nil {
-		return Artifact{}, fmt.Errorf("read private Coop output artifact: %w", err)
-	}
-	if len(body) != expectedBytes {
-		return Artifact{}, errors.New("private Coop output artifact length does not match")
-	}
-	sha := strings.Trim(response.Header.Get("ETag"), `"`)
-	artifact := Artifact{
-		ID: artifactID, Name: disposition["filename"], MediaType: mediaType, SHA256: sha, Data: body,
-	}
-	if err := validateArtifact(artifact, true); err != nil || !outputArtifactMediaType(artifact.MediaType) {
-		return Artifact{}, errors.New("private Coop output artifact identity is invalid")
-	}
-	return artifact, nil
-}
-
-func (a *UnixAPI) FetchReviewPatch(ctx context.Context, artifactID, expectedSHA256 string, expectedBytes int64) ([]byte, error) {
-	if !reference(artifactID, 256) || !digest(expectedSHA256) || expectedBytes <= 0 || expectedBytes > maxReviewPatchBytes {
-		return nil, errors.New("private Coop review patch identity is invalid")
-	}
-	path := "/v1/operations/" + url.PathEscape(artifactID) + "/review-patch"
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix"+path, nil)
-	if err != nil {
-		return nil, err
-	}
-	response, err := a.client.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, maxPrivateResponseBytes+1))
-		return nil, decodeAPIError(response.StatusCode, body)
-	}
-	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
-	if err != nil || mediaType != "text/x-diff" {
-		return nil, errors.New("private Coop review patch media type is invalid")
-	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, maxReviewPatchBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("read private Coop review patch: %w", err)
-	}
-	if int64(len(body)) != expectedBytes || sha256sum(body) != expectedSHA256 {
-		return nil, errors.New("private Coop review patch identity does not match")
-	}
-	return body, nil
-}
-
-func (a *UnixAPI) FetchWorkspaceCheckpointBundle(
-	ctx context.Context,
-	operationID string,
-	checkpoint workerproto.WorkspaceCheckpoint,
-) ([]byte, error) {
-	if !reference(operationID, 256) || checkpoint.Validate() != nil {
-		return nil, errors.New("private Coop workspace checkpoint identity is invalid")
-	}
-	path := "/v1/operations/" + url.PathEscape(operationID) + "/checkpoint-bundle"
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix"+path, nil)
-	if err != nil {
-		return nil, err
-	}
-	response, err := a.client.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, maxPrivateResponseBytes+1))
-		return nil, decodeAPIError(response.StatusCode, body)
-	}
-	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
-	if err != nil || mediaType != workerproto.WorkspaceCheckpointBundleMediaType {
-		return nil, errors.New("private Coop workspace checkpoint media type is invalid")
-	}
-	expectedBytes, err := strconv.ParseInt(response.Header.Get("Content-Length"), 10, 64)
-	if err != nil || expectedBytes != checkpoint.Bundle.ByteSize || expectedBytes > workerproto.MaxWorkspaceCheckpointBundleBytes {
-		return nil, errors.New("private Coop workspace checkpoint length is invalid")
-	}
-	if strings.Trim(response.Header.Get("ETag"), `"`) != checkpoint.Bundle.SHA256 {
-		return nil, errors.New("private Coop workspace checkpoint digest is invalid")
-	}
-	bundle, err := io.ReadAll(io.LimitReader(response.Body, workerproto.MaxWorkspaceCheckpointBundleBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("read private Coop workspace checkpoint: %w", err)
-	}
-	if _, err := workerproto.ValidateWorkspaceCheckpointBundle(checkpoint, bundle); err != nil {
-		return nil, fmt.Errorf("validate private Coop workspace checkpoint: %w", err)
-	}
-	return bundle, nil
-}
-
-func (a *UnixAPI) RestoreWorkspaceCheckpoint(
-	ctx context.Context,
-	sessionID, key string,
-	expectedRevision int,
-	checkpoint workerproto.WorkspaceCheckpoint,
-	bundle []byte,
-) (json.RawMessage, error) {
-	if !reference(sessionID, 1024) || !reference(key, 512) || expectedRevision <= 0 {
-		return nil, errors.New("private Coop workspace restore identity is invalid")
-	}
-	if _, err := workerproto.ValidateWorkspaceCheckpointBundle(checkpoint, bundle); err != nil {
-		return nil, fmt.Errorf("validate private Coop workspace restore: %w", err)
-	}
-	descriptor, err := json.Marshal(checkpoint)
-	if err != nil || len(descriptor) == 0 || len(descriptor) > maxPrivateRequestBytes {
-		return nil, errors.New("private Coop workspace restore descriptor is invalid")
-	}
-	path := "/v1/sessions/" + url.PathEscape(sessionID) + "/workspace/restore"
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix"+path, bytes.NewReader(bundle))
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Content-Type", workerproto.WorkspaceCheckpointBundleMediaType)
-	request.Header.Set("Idempotency-Key", key)
-	request.Header.Set("X-Coop-Expected-Revision", strconv.Itoa(expectedRevision))
-	request.Header.Set("X-Coop-Workspace-Checkpoint", base64.StdEncoding.EncodeToString(descriptor))
-	response, err := a.client.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, maxPrivateResponseBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("read private Coop workspace restore response: %w", err)
-	}
-	if len(body) > maxPrivateResponseBytes {
-		return nil, errors.New("private Coop workspace restore response is oversized")
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, decodeAPIError(response.StatusCode, body)
-	}
-	mediaType, _, mediaErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
-	if mediaErr != nil || mediaType != "application/json" || !jsonObject(body) {
-		return nil, errors.New("private Coop workspace restore response is not JSON")
-	}
-	return json.RawMessage(body), nil
-}
-
 func NewUnixAPI(socket string, timeout time.Duration) (*UnixAPI, error) {
 	if socket == "" || !filepath.IsAbs(socket) || strings.ContainsRune(socket, 0) {
 		return nil, errors.New("private Coop API socket must be an absolute path")
@@ -265,9 +93,10 @@ func NewUnixAPI(socket string, timeout time.Duration) (*UnixAPI, error) {
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return dialer.DialContext(ctx, "unix", socket)
 		},
-		DisableCompression: true,
+		DisableCompression:    true,
+		ResponseHeaderTimeout: timeout,
 	}
-	return &UnixAPI{client: &http.Client{Transport: transport, Timeout: timeout}}, nil
+	return &UnixAPI{client: &http.Client{Transport: transport, Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 
 // ErrRequestRejected marks a private request the connector refused before sending anything: the
@@ -275,60 +104,69 @@ func NewUnixAPI(socket string, timeout time.Duration) (*UnixAPI, error) {
 // controller would have to reconcile.
 var ErrRequestRejected = errors.New("private Coop API request was rejected before it was sent")
 
-func (a *UnixAPI) Do(ctx context.Context, request Request) (json.RawMessage, error) {
-	if request.Method != http.MethodGet && request.Method != http.MethodPost {
-		return nil, fmt.Errorf("%w: method is not allowed", ErrRequestRejected)
+func (a *UnixAPI) Forward(ctx context.Context, request Request, body io.Reader) (*http.Response, error) {
+	shape := workerproto.APIRequest{Method: request.Method, Path: request.Path, Headers: request.Headers}
+	if err := shape.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrRequestRejected, err)
 	}
-	if len(request.Body) > maxPrivateRequestBytes {
-		return nil, fmt.Errorf("%w: body exceeds %d bytes", ErrRequestRejected, maxPrivateRequestBytes)
-	}
-	parsed, err := url.ParseRequestURI(request.Path)
-	if err != nil || parsed.IsAbs() || parsed.Host != "" || !strings.HasPrefix(parsed.Path, "/v1/") {
-		return nil, fmt.Errorf("%w: path is invalid", ErrRequestRejected)
-	}
-	if request.Method == http.MethodGet && len(request.Body) != 0 {
-		return nil, fmt.Errorf("%w: GET cannot carry a body", ErrRequestRejected)
-	}
-
-	httpRequest, err := http.NewRequestWithContext(
-		ctx,
-		request.Method,
-		"http://unix"+request.Path,
-		bytes.NewReader(request.Body),
-	)
+	httpRequest, err := http.NewRequestWithContext(ctx, request.Method, "http://unix"+request.Path, body)
 	if err != nil {
-		return nil, fmt.Errorf("build private Coop API request: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrRequestRejected, err)
 	}
-	if request.Method == http.MethodPost {
+	if request.BodyBytes > 0 {
+		httpRequest.ContentLength = request.BodyBytes
+	}
+	for name, value := range request.Headers {
+		httpRequest.Header.Set(name, value)
+	}
+	if request.Method != "GET" && request.Method != "HEAD" {
 		if request.IdempotencyKey == "" {
 			return nil, fmt.Errorf("%w: mutation needs an idempotency key", ErrRequestRejected)
 		}
-		httpRequest.Header.Set("Content-Type", "application/json")
 		httpRequest.Header.Set("Idempotency-Key", request.IdempotencyKey)
-		httpRequest.Header.Set("Prefer", "respond-async")
+		if httpRequest.Header.Get("Content-Type") == "" {
+			httpRequest.Header.Set("Content-Type", "application/json")
+		}
+		if httpRequest.Header.Get("Prefer") == "" {
+			httpRequest.Header.Set("Prefer", "respond-async")
+		}
 	}
+	client := *a.client
+	client.Timeout = 0
+	return client.Do(httpRequest)
+}
 
-	response, err := a.client.Do(httpRequest)
+func (a *UnixAPI) Do(ctx context.Context, request Request) (json.RawMessage, error) {
+	if len(request.Body) > maxPrivateRequestBytes {
+		return nil, fmt.Errorf("%w: request body is too large", ErrRequestRejected)
+	}
+	if (request.Method == "GET" || request.Method == "HEAD") && len(request.Body) > 0 {
+		return nil, fmt.Errorf("%w: read cannot carry a body", ErrRequestRejected)
+	}
+	request.BodyBytes = int64(len(request.Body))
+	if _, bounded := ctx.Deadline(); !bounded {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, a.client.Timeout)
+		defer cancel()
+	}
+	response, err := a.Forward(ctx, request, bytes.NewReader(request.Body))
 	if err != nil {
 		return nil, err
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxPrivateResponseBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("read private Coop API response: %w", err)
+		return nil, err
 	}
 	if len(body) > maxPrivateResponseBytes {
 		return nil, errors.New("private Coop API response is oversized")
 	}
-	mediaType, _, mediaErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
-	if mediaErr != nil || mediaType != "application/json" {
-		return nil, errors.New("private Coop API response is not JSON")
-	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, decodeAPIError(response.StatusCode, body)
 	}
-	if !jsonObject(body) {
-		return nil, errors.New("private Coop API response is not an object")
+	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" || !json.Valid(body) {
+		return nil, errors.New("private Coop API response is not JSON")
 	}
 	return json.RawMessage(body), nil
 }

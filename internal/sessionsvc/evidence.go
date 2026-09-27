@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"io"
+	"os"
 	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -56,7 +59,7 @@ func (s *Service) SessionEvidence(ctx context.Context, id string) (workerproto.S
 		Version: workerproto.SessionEvidenceVersion, CapturedAt: now, SessionID: bound.ID,
 		Revision: bound.Revision, State: string(bound.State),
 		Network: s.sessionNetworkEvidence(bound, now),
-		Task:    sessionTaskEvidence(bound),
+		Task:    sessionTaskEvidence(ctx, bound),
 	}
 	if err := out.Validate(); err != nil {
 		return workerproto.SessionEvidence{}, &session.Error{Code: session.CodeInternal,
@@ -101,7 +104,7 @@ func (s *Service) readSessionNetwork(bound session.Session, now time.Time) sessi
 		reads.inspection, reads.inspectErr = evidence.Inspect(newest.ID, now, reads.policy.ExportDestinations)
 	}
 	identity := networkview.SessionNetworkIdentity{
-		ID: bound.ID, PolicyFingerprint: bound.NetworkFingerprint, AuthorityDigest: bound.AuthorityDigest,
+		ID: bound.ID, PolicyFingerprint: bound.NetworkFingerprint, AuthorityDigest: sessionNetworkAuthorityDigest(bound),
 		Mode: egress.Filtered, StartedAt: bound.CreatedAt, RunsComplete: reads.complete,
 	}
 	if bound.State == session.SessionClosed || bound.State == session.SessionDiscarded {
@@ -348,7 +351,7 @@ func networkLoss(loss networkview.Loss) *workerproto.NetworkLoss {
 
 // sessionTaskEvidence reads the bound task folder through the same projection a checkpoint uses,
 // so the state digest here equals the one a checkpoint of the same folder state records.
-func sessionTaskEvidence(bound session.Session) workerproto.TaskEvidence {
+func sessionTaskEvidence(ctx context.Context, bound session.Session) workerproto.TaskEvidence {
 	if bound.WorkspaceTask == nil {
 		return workerproto.TaskEvidence{Status: workerproto.EvidenceStatusUnbound}
 	}
@@ -357,7 +360,7 @@ func sessionTaskEvidence(bound session.Session) workerproto.TaskEvidence {
 		Status: workerproto.EvidenceStatusBound, QueueID: text(binding.QueueID), TaskID: text(binding.TaskID),
 		ID: text(binding.ID), OfferRef: text(binding.OfferRef), DraftSHA256: text(binding.DraftSHA256),
 	}
-	snapshot, err := sessionTaskSnapshot(bound)
+	snapshot, err := sessionTaskSnapshot(ctx, bound)
 	if err != nil {
 		reason := evidenceReason("bound task unreadable", err)
 		out.Status, out.Reason = workerproto.EvidenceStatusUnavailable, &reason
@@ -367,11 +370,11 @@ func sessionTaskEvidence(bound session.Session) workerproto.TaskEvidence {
 	return out
 }
 
-func sessionTaskSnapshot(bound session.Session) (workerproto.TaskSnapshot, error) {
+func sessionTaskSnapshot(ctx context.Context, bound session.Session) (workerproto.TaskSnapshot, error) {
 	if err := requireSessionWorkspace(bound); err != nil {
 		return workerproto.TaskSnapshot{}, err
 	}
-	projection, blobs, _, err := checkpointTaskProjection(bound)
+	projection, blobs, _, err := checkpointTaskProjection(ctx, bound)
 	if err != nil {
 		return workerproto.TaskSnapshot{}, err
 	}
@@ -402,11 +405,25 @@ func sessionTaskSnapshot(bound session.Session) (workerproto.TaskSnapshot, error
 		if strings.Count(name, "/") != 2 {
 			continue
 		}
+		if path.Base(name) != "task.md" && path.Base(name) != "state.md" {
+			continue
+		}
+		file, err := os.OpenFile(blob.path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+		if err != nil {
+			return workerproto.TaskSnapshot{}, err
+		}
+		// Evidence is a bounded text projection, not the checkpoint transport.
+		body, readErr := io.ReadAll(io.LimitReader(file, (1<<20)+1))
+		closeErr := file.Close()
+		if readErr != nil || closeErr != nil || len(body) > 1<<20 ||
+			int64(len(body)) != blob.entry.ByteSize || checkpointSHA256(body) != blob.entry.SHA256 {
+			return workerproto.TaskSnapshot{}, errors.New("task document changed or exceeds the evidence text bound")
+		}
 		switch path.Base(name) {
 		case "task.md":
-			taskDocument, taskDocumentFound = string(blob.path), true
+			taskDocument, taskDocumentFound = string(body), true
 		case "state.md":
-			stateNote, stateNoteFound = string(blob.path), true
+			stateNote, stateNoteFound = string(body), true
 		}
 	}
 	if !taskDocumentFound {

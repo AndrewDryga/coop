@@ -283,12 +283,12 @@ func TestSessionEvidenceValidateRejectsIncoherentEvidence(t *testing.T) {
 	}
 }
 
-// The command is on the protocol allowlist, and its result is exactly the evidence object.
+// Evidence uses the same API envelope as every other private service resource.
 func TestWorkerProtocolAdmitsTheSessionEvidenceCommand(t *testing.T) {
 	command := Command{
 		CommandID: "command-1", WorkerID: "worker-a", SessionRef: "session-a", PlacementGeneration: 1,
 		LeaseRef: "lease-1", LeaseExpiresAt: time.Date(2026, 9, 11, 4, 5, 6, 0, time.UTC),
-		Kind: "get_session_evidence", CommandVersion: Version, Payload: json.RawMessage(`{"coop_session_id":"remote_1"}`),
+		Kind: "api_request", CommandVersion: Version, Payload: json.RawMessage(`{"method":"GET","path":"/v1/sessions/remote_1/evidence"}`),
 		IdempotencyKey: "responder:evidence:1",
 	}
 	if err := command.Validate(); err != nil {

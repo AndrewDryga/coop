@@ -21,7 +21,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
-	"github.com/AndrewDryga/coop/internal/sessionsvc"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -331,7 +330,7 @@ func sessionCompanionRepositoriesFromEnvironment() ([]box.CompanionRepository, e
 	if raw == "" {
 		return nil, nil
 	}
-	if len(raw) > sessionsvc.PolicyFileLimit {
+	if len(raw) > 1<<20 {
 		return nil, errors.New("session companion repository binding is too large")
 	}
 	var bindings []struct {

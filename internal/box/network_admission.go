@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -362,34 +361,6 @@ func currentQualification(ctx context.Context, docker *runtime.Docker, store *ne
 		}
 	}
 	return nil, nil
-}
-
-// resolveFilteredNetwork is admitFilteredNetwork's non-publishing twin: the same sources, the
-// same authority, the same host setup requirement — compiled and returned instead of captured.
-// It stops before the runtime inspection, because which qualified image this Docker will run is a
-// launch's question, not a fence's.
-func resolveFilteredNetwork(cfg *config.Config, spec RunSpec, store *networkstate.Store, canonicalProject string, input networkstate.Admission) (egress.Snapshot, error) {
-	input, err := filteredNetworkSources(cfg, spec, input)
-	if err != nil {
-		return egress.Snapshot{}, err
-	}
-	policy, err := store.Resolve(canonicalProject, input)
-	if err != nil {
-		return egress.Snapshot{}, err
-	}
-	if policy.Mode != egress.Filtered {
-		return egress.Snapshot{}, errors.New("this project's egress resolves to a posture that captures no rules")
-	}
-	// A fence is published before anyone asks for a launch, so it cannot set the
-	// host up on the way: it needs a record that already covers this policy.
-	qualifications, err := store.Qualifications(networkAdmissionContext(spec))
-	if err != nil {
-		return egress.Snapshot{}, err
-	}
-	if !slices.ContainsFunc(qualifications, func(q networkstate.Qualification) bool { return q.RequireLaunch(policy) == nil }) {
-		return egress.Snapshot{}, errors.New("this host is not set up for filtered runs with these agents — run 'coop net setup' first")
-	}
-	return policy, nil
 }
 
 // filteredNetworkSources completes the inputs every filtered compile shares: the provider core

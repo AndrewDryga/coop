@@ -24,7 +24,7 @@ func TestTurnOperationResultContainsOnlyPublicReplayData(t *testing.T) {
 		Candidate:       &TurnCandidate{Message: "public-candidate", SHA256: "public-candidate-digest", Attempt: 2},
 		CandidateSHA256: "public-candidate-digest", ValidationAttempt: 2,
 		ValidationError: "public-validation-error", ValidationReceipt: "public-validation-receipt",
-		RuntimeRunID: "private-runtime", ResponderBinding: &ResponderBinding{
+		RuntimeRunID: "private-runtime", ControllerTools: &ControllerTools{
 			Endpoint: "https://private.example/mcp", Token: strings.Repeat("s", 48),
 		},
 	}
@@ -59,11 +59,35 @@ func TestTurnOperationResultContainsOnlyPublicReplayData(t *testing.T) {
 		t.Fatalf("public replay changed:\n got  %+v\n want %+v", got, want)
 	}
 	if replayed.Prompt != "" || replayed.IdempotencyKey != "" || replayed.RequestHash != "" ||
-		replayed.OutputContract != nil || replayed.RuntimeRunID != "" || replayed.ResponderBinding != nil {
+		replayed.OutputContract != nil || replayed.RuntimeRunID != "" || replayed.ControllerTools != nil {
 		t.Fatalf("compact replay restored private fields: %+v", replayed)
 	}
-	if replayed.ResponderBindingDigest != ResponderBindingDigest(turn.ResponderBinding) {
-		t.Fatalf("responder digest = %q, want %q", replayed.ResponderBindingDigest, ResponderBindingDigest(turn.ResponderBinding))
+	if replayed.ControllerToolsDigest != ControllerToolsDigest(turn.ControllerTools) {
+		t.Fatalf("responder digest = %q, want %q", replayed.ControllerToolsDigest, ControllerToolsDigest(turn.ControllerTools))
+	}
+}
+
+func TestHistoricalControllerToolsReceiptsKeepTheirDigest(t *testing.T) {
+	digest := strings.Repeat("b", 64)
+	data := []byte(`{"receipt_version":1,"id":"old","responder_binding_digest":"` + digest + `"}`)
+	sess, err := DecodeSessionOperationResult(data)
+	if err != nil || sess.ControllerToolsDigest != digest || sess.ControllerTools != nil {
+		t.Fatalf("historical session receipt: %+v, %v", sess, err)
+	}
+	turn, err := DecodeTurnOperationResult(data)
+	if err != nil || turn.ControllerToolsDigest != digest || turn.ControllerTools != nil {
+		t.Fatalf("historical turn receipt: %+v, %v", turn, err)
+	}
+	encoded, err := EncodeTurnOperationResult(turn)
+	if err != nil || strings.Contains(string(encoded), "responder_binding") || !strings.Contains(string(encoded), digest) {
+		t.Fatalf("new receipt must use only the neutral name: %s, %v", encoded, err)
+	}
+	conflict := []byte(`{"receipt_version":1,"id":"old","responder_binding_digest":"old","controller_tools_digest":"different"}`)
+	if _, err := DecodeSessionOperationResult(conflict); err == nil {
+		t.Fatal("conflicting session receipt digests accepted")
+	}
+	if _, err := DecodeTurnOperationResult(conflict); err == nil {
+		t.Fatal("conflicting turn receipt digests accepted")
 	}
 }
 

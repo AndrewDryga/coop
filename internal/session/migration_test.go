@@ -87,6 +87,9 @@ func buildLegacyDatabase(t *testing.T, path string, version int) {
 	if version >= 22 {
 		ddl += schemaV22
 	}
+	if version >= 23 {
+		ddl += schemaV23
+	}
 	if _, err := db.Exec(ddl); err != nil {
 		t.Fatalf("build v%d schema: %v", version, err)
 	}
@@ -164,6 +167,9 @@ func TestMigrationFromEachHistoricalVersionReachesCurrentSchema(t *testing.T) {
 				sess.MaxPatchBytes != 1048576 || !sess.ProjectEnv || !sess.ProjectMCP {
 				t.Fatalf("legacy session after v%d migration = %+v", version, sess)
 			}
+			if len(sess.JobDocument) != 0 || sess.JobDigest != "" {
+				t.Fatalf("historical session gained invented job authority after v%d migration", version)
+			}
 			wantCompanions := 0
 			if version >= 2 {
 				wantCompanions = 1
@@ -197,7 +203,7 @@ func TestMigrationFromEachHistoricalVersionReachesCurrentSchema(t *testing.T) {
 
 			// The migrated store is not just readable, it is fully writable under the
 			// current schema.
-			created, err := store.CreateSession(ctx, fmt.Sprintf("post-migration-v%d", version), CreateSessionRequest{Target: "codex"})
+			created, err := store.CreateSession(ctx, fmt.Sprintf("post-migration-v%d", version), CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "codex"})
 			if err != nil || len(created.Companions) != 0 {
 				t.Fatalf("post-migration create after v%d = %+v, err=%v", version, created, err)
 			}

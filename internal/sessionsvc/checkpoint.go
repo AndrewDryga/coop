@@ -14,13 +14,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/workerproto"
@@ -38,6 +36,7 @@ type CheckpointWorkspaceRequest struct {
 
 type CheckpointWorkspaceResult struct {
 	OperationID string                          `json:"operation_id"`
+	SessionID   string                          `json:"session_id,omitempty"` // private custody; omitted by the HTTP projection
 	Checkpoint  workerproto.WorkspaceCheckpoint `json:"checkpoint"`
 }
 
@@ -45,17 +44,18 @@ type RestoreWorkspaceCheckpointRequest struct {
 	SessionID        string                          `json:"session_id"`
 	ExpectedRevision int64                           `json:"expected_revision"`
 	Checkpoint       workerproto.WorkspaceCheckpoint `json:"checkpoint"`
-	Bundle           []byte                          `json:"-"`
+	Stream           io.Reader                       `json:"-"`
 }
 
 type checkpointBlob struct {
-	path  []byte
+	path  string
 	entry workerproto.WorkspaceCheckpointFileEntry
 }
 
 type checkpointPrivateArtifact struct {
 	descriptor []byte
-	bundle     []byte
+	path       string
+	offset     int64
 }
 
 func (s *Service) CheckpointWorkspace(
@@ -94,103 +94,31 @@ func (s *Service) RestoreWorkspaceCheckpoint(
 	if err != nil {
 		return session.Session{}, err
 	}
-	if replay && op.State != session.OperationReserved && op.State != session.OperationRunning {
+	if replay && op.State != session.OperationReserved && op.State != session.OperationRunning && op.State != session.OperationUncertain {
 		return replaySessionOperation(op)
 	}
 	return s.executeRestoreWorkspaceCheckpoint(ctx, op, req)
 }
 
-func (s *Service) executeRestoreWorkspaceCheckpoint(
-	ctx context.Context,
-	op session.Operation,
-	req RestoreWorkspaceCheckpointRequest,
-) (session.Session, error) {
-	if req.SessionID == "" || req.ExpectedRevision <= 0 {
+func (s *Service) executeRestoreWorkspaceCheckpoint(ctx context.Context, op session.Operation, req RestoreWorkspaceCheckpointRequest) (session.Session, error) {
+	if req.Checkpoint.Version != workerproto.WorkspaceCheckpointVersion {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
-			Code: session.CodeInvalidRequest, Detail: "restore session and revision are required",
+			Code: session.CodeInvalidRequest, Detail: "historical checkpoint v1 is read-only; restore requires complete repository custody in v2",
 		})
 	}
-	manifest, err := workerproto.ValidateWorkspaceCheckpointBundle(req.Checkpoint, req.Bundle)
-	if err != nil {
+	if req.Stream == nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
-			Code: session.CodeInvalidRequest, Detail: err.Error(),
+			Code: session.CodeInvalidRequest, Detail: "checkpoint body is required",
 		})
 	}
-	members, err := workspaceCheckpointMembers(req.Bundle)
-	if err != nil {
-		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
-	}
-	intent, _ := json.Marshal(req)
-	if op.State == session.OperationReserved {
-		if err := s.store.MarkOperationRunning(ctx, op.ID, intent); err != nil {
-			return session.Session{}, err
-		}
-	}
-	// Hold the session's runtime from validation through the binding: a turn cannot start on a
-	// workspace mid-rewrite, and one cannot be queued into that window either.
-	release, ok := s.beginWorkspaceRestore(req.SessionID)
-	if !ok {
-		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
-			Code:   session.CodeInvalidSessionState,
-			Detail: "restore requires a parked session; a turn or another runtime operation is in progress",
-		})
-	}
-	defer release()
-	sess, err := s.store.GetSession(ctx, req.SessionID)
-	if err != nil {
-		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
-	}
-	if err := validateRestoreWorkspaceSession(ctx, sess, req); err != nil {
-		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
-	}
-	if s.testDuringRestoreFiles != nil {
-		s.testDuringRestoreFiles()
-	}
-	if err := restoreWorkspaceCheckpointFiles(sess.Workspace, req.Checkpoint, manifest, members); err != nil {
-		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
-			Code: session.CodeInvalidSessionState, Detail: err.Error(),
-		})
-	}
-	recovered, err := tasks.ReadControllerTaskBinding(sess.Workspace, req.Checkpoint.Task.ID)
-	if err != nil || recovered.QueueID != req.Checkpoint.Task.QueueID ||
-		recovered.TaskID != req.Checkpoint.Task.TaskID || recovered.ID != req.Checkpoint.Task.ID ||
-		recovered.OfferRef != sess.ExternalRef {
-		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
-			Code: session.CodeInvalidSessionState, Detail: "restored workspace task authority does not match",
-		})
-	}
-	binding := session.WorkspaceTaskBinding{
-		QueueID: recovered.QueueID, TaskID: recovered.TaskID, ID: recovered.ID,
-		OfferRef: recovered.OfferRef, DraftSHA256: recovered.DraftSHA256,
-	}
-	verification := sess
-	verification.BaseCommit = req.Checkpoint.BaseRevision
-	verification.WorkspaceTask = &binding
-	if err := verifyRestoredWorkspaceCheckpoint(verification, req.Checkpoint, manifest, members); err != nil {
-		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
-			Code: session.CodeInvalidSessionState, Detail: err.Error(),
-		})
-	}
-	bound, err := s.store.RestoreWorkspaceTask(
-		ctx, req.SessionID, req.ExpectedRevision, req.Checkpoint.BaseRevision, binding,
-	)
-	if err != nil {
-		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
-	}
-	result, err := json.Marshal(bound)
-	if err != nil {
-		return session.Session{}, err
-	}
-	if err := s.store.CompleteOperation(ctx, op.ID, "session", bound.ID, result); err != nil {
-		return session.Session{}, err
-	}
-	return bound, nil
+	return s.restoreStreamedCheckpoint(ctx, op, req)
 }
 
 func validateRestoreWorkspaceSession(
 	ctx context.Context,
 	sess session.Session,
 	req RestoreWorkspaceCheckpointRequest,
+	recovering bool,
 ) error {
 	if err := requireSessionWorkspace(sess); err != nil {
 		return err
@@ -208,92 +136,25 @@ func validateRestoreWorkspaceSession(
 		return &session.Error{Code: session.CodeRevisionConflict, Detail: "session revision changed"}
 	}
 	if bound := sess.WorkspaceTask; bound != nil {
-		// A bound session takes only its own checkpoint again (an exact re-restore). Anything else
-		// is refused here, before reset --hard and clean would replace the files it already holds:
-		// the store's own refusal comes after the workspace is rewritten, so it alone would leave the
-		// files from one checkpoint under a session record bound to another.
+		// Only the same journaled operation can finish a partially completed restore.
+		// Its immutable request hash pins the whole checkpoint, not merely the task ID.
+		// A new key must never reset files in an already-bound session.
 		task := req.Checkpoint.Task
-		if task.QueueID != bound.QueueID || task.TaskID != bound.TaskID || task.ID != bound.ID ||
+		if !recovering || task.QueueID != bound.QueueID || task.TaskID != bound.TaskID || task.ID != bound.ID ||
 			req.Checkpoint.BaseRevision != sess.BaseCommit {
 			return &session.Error{Code: session.CodeInvalidSessionState,
 				Detail: "session is already bound to another restored workspace task"}
 		}
 	}
-	base, err := sessionWorkspaceCommit(sess.Repository, req.Checkpoint.BaseRevision)
-	if err != nil || base != req.Checkpoint.BaseRevision {
+	base, err := sessionWorkspaceCommitContext(ctx, sess.Repository, req.Checkpoint.BaseRevision)
+	if err != nil || base != req.Checkpoint.BaseRevision || base != sess.BaseCommit {
 		return &session.Error{Code: session.CodeInvalidSessionState,
 			Detail: "checkpoint base revision is unavailable in the authorized repository"}
 	}
 	return nil
 }
 
-func workspaceCheckpointMembers(bundle []byte) (map[string][]byte, error) {
-	reader := tar.NewReader(bytes.NewReader(bundle))
-	members := make(map[string][]byte)
-	for {
-		header, err := reader.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		body, err := io.ReadAll(io.LimitReader(reader, workerproto.MaxWorkspaceCheckpointBundleBytes+1))
-		if err != nil || len(body) > workerproto.MaxWorkspaceCheckpointBundleBytes {
-			return nil, errors.New("workspace checkpoint member exceeds its bound")
-		}
-		members[header.Name] = body
-	}
-	return members, nil
-}
-
-func restoreWorkspaceCheckpointFiles(
-	workspace string,
-	checkpoint workerproto.WorkspaceCheckpoint,
-	manifest workerproto.WorkspaceCheckpointBundleManifest,
-	members map[string][]byte,
-) error {
-	if _, _, err := runSessionWorkspaceGit(workspace, sessionWorkspaceGitOutputLimit,
-		"reset", "--hard", checkpoint.BaseRevision); err != nil {
-		return fmt.Errorf("reset replacement workspace: %w", err)
-	}
-	if _, _, err := runSessionWorkspaceGit(workspace, sessionWorkspaceGitOutputLimit,
-		"clean", "-qfdx", "-e", "/"+forkspace.GenerationMarkerName); err != nil {
-		return fmt.Errorf("clean replacement workspace: %w", err)
-	}
-	patch := members[manifest.TrackedPatch.Entry]
-	if len(patch) > 0 {
-		stderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
-		command, err := forkspace.GitCommand(context.Background(), workspace, "apply", "--index", "--binary", "--whitespace=nowarn", "-")
-		if err != nil {
-			return err
-		}
-		command.Stdin = bytes.NewReader(patch)
-		command.Stderr = stderr
-		if err := command.Run(); err != nil {
-			return fmt.Errorf("apply checkpoint patch: %w: %s", err, strings.TrimSpace(stderr.buf.String()))
-		}
-	}
-	root, err := os.OpenRoot(workspace)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	for _, file := range manifest.UntrackedFiles {
-		if err := writeRestoredCheckpointFile(root, file.PathBytes, file.Mode, members[file.Entry]); err != nil {
-			return err
-		}
-	}
-	for _, file := range manifest.TaskProjection.Files {
-		path := append([]byte(tasks.TasksRoot+"/"), file.PathBytes...)
-		if err := writeRestoredCheckpointFile(root, path, file.Mode, members[file.Entry]); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func writeRestoredCheckpointFile(root *os.Root, pathBytes []byte, mode int64, body []byte) error {
+func writeRestoredCheckpointStream(root *os.Root, pathBytes []byte, mode int64, body io.Reader) error {
 	if len(pathBytes) == 0 || pathBytes[0] == '/' || bytes.Contains(pathBytes, []byte{0}) {
 		return errors.New("restored checkpoint path is invalid")
 	}
@@ -336,45 +197,11 @@ func writeRestoredCheckpointFile(root *os.Root, pathBytes []byte, mode int64, bo
 	if err != nil {
 		return fmt.Errorf("create restored checkpoint file: %w", err)
 	}
-	_, writeErr := file.Write(body)
+	_, writeErr := io.Copy(file, body)
 	chmodErr := file.Chmod(os.FileMode(mode))
 	closeErr := file.Close()
 	if writeErr != nil || chmodErr != nil || closeErr != nil {
 		return errors.Join(writeErr, chmodErr, closeErr)
-	}
-	return nil
-}
-
-func verifyRestoredWorkspaceCheckpoint(
-	sess session.Session,
-	checkpoint workerproto.WorkspaceCheckpoint,
-	manifest workerproto.WorkspaceCheckpointBundleManifest,
-	members map[string][]byte,
-) error {
-	patch, truncated, err := runSessionWorkspaceGit(sess.Workspace, workerproto.MaxWorkspaceCheckpointBundleBytes+1,
-		"diff", "--no-ext-diff", "--no-textconv", "--binary", checkpoint.BaseRevision, "--")
-	if err != nil || truncated || !bytes.Equal(patch, members[manifest.TrackedPatch.Entry]) {
-		return errors.New("restored workspace tracked patch does not match")
-	}
-	untracked, err := checkpointUntrackedFiles(sess.Workspace)
-	if err != nil || !checkpointFileEntriesEqual(checkpointEntries(untracked), manifest.UntrackedFiles) {
-		return errors.New("restored workspace untracked files do not match")
-	}
-	projection, _, subtasks, err := checkpointTaskProjection(sess)
-	if err != nil || projection.QueueID != manifest.TaskProjection.QueueID ||
-		projection.TaskID != manifest.TaskProjection.TaskID || projection.ID != manifest.TaskProjection.ID ||
-		projection.State != manifest.TaskProjection.State || projection.StateSHA256 != manifest.TaskProjection.StateSHA256 ||
-		!slices.Equal(subtasks, checkpoint.Task.Subtasks) {
-		return errors.New("restored workspace task projection does not match")
-	}
-	candidate := checkpointSHA256(mustCheckpointJSON(struct {
-		Base      string                                     `json:"base"`
-		Committed string                                     `json:"committed"`
-		Patch     workerproto.WorkspaceCheckpointBundleEntry `json:"patch"`
-		Untracked []workerproto.WorkspaceCheckpointFileEntry `json:"untracked"`
-	}{checkpoint.BaseRevision, checkpoint.CommittedRevision, manifest.TrackedPatch, manifest.UntrackedFiles}))
-	if candidate != checkpoint.CandidateTreeSHA256 {
-		return errors.New("restored workspace candidate identity does not match")
 	}
 	return nil
 }
@@ -396,11 +223,6 @@ func (s *Service) executeCheckpointWorkspace(
 			Code: session.CodeInvalidRequest, Detail: "checkpoint identity is incomplete",
 		})
 	}
-	if stored, err := s.readWorkspaceCheckpointArtifact(op.ID); err == nil {
-		return s.completeWorkspaceCheckpoint(ctx, op, stored)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
-	}
 	sess, err := s.store.GetSession(ctx, req.SessionID)
 	if err != nil {
 		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
@@ -408,12 +230,64 @@ func (s *Service) executeCheckpointWorkspace(
 	if err := validateCheckpointSession(ctx, sess, req.ExpectedRevision); err != nil {
 		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
 	}
+	release, ok := s.beginWorkspaceRestore(req.SessionID)
+	if !ok {
+		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+			Code: session.CodeInvalidSessionState, Detail: "checkpoint requires a parked runtime",
+		})
+	}
+	defer release()
+	if stored, err := s.readWorkspaceCheckpointArtifact(ctx, op.ID); err == nil {
+		return s.completeWorkspaceCheckpoint(ctx, op, req.SessionID, stored)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
+	}
+	if pending, err := s.store.HasPendingWorkspaceRestore(ctx, req.SessionID, ""); err != nil || pending {
+		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID,
+			errors.Join(err, errors.New("workspace restore must finish before capture")))
+	}
+	// Re-read under the runtime hold: no queued turn may race this snapshot.
+	sess, err = s.store.GetSession(ctx, req.SessionID)
+	if err != nil {
+		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
+	}
+	if err := validateCheckpointSession(ctx, sess, req.ExpectedRevision); err != nil {
+		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
+	}
+	if evicter, ok := s.runner.(sessionRunnerWarmEvicter); ok {
+		if err := evicter.EvictWarmSession(sess.ID); err != nil {
+			return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
+		}
+	}
+	ctx, stopDiskWatch, err := s.checkpointDiskContext(ctx, sess.Workspace, 0)
+	if err != nil {
+		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
+	}
+	defer stopDiskWatch()
+	if op.State == session.OperationReserved {
+		intent, _ := json.Marshal(req)
+		if err := s.store.MarkOperationRunning(ctx, op.ID, intent); err != nil {
+			return CheckpointWorkspaceResult{}, err
+		}
+		op.State = session.OperationRunning
+	}
+	stageRoot := filepath.Join(s.stateRoot, "workspace-checkpoints", ".staging")
+	if err := os.MkdirAll(stageRoot, 0700); err != nil {
+		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
+	}
+	stage, err := os.MkdirTemp(stageRoot, op.ID+"-")
+	if err != nil {
+		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
+	}
+	defer os.RemoveAll(stage)
 	checkpoint, manifest, bundle, err := buildWorkspaceCheckpoint(
-		sess, req, op.ID, time.Now().UTC(),
+		ctx, stage, sess, req, op.ID, time.Now().UTC(),
 	)
 	if err != nil {
 		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
 	}
+	defer os.Remove(bundle.Name())
+	defer bundle.Close()
 	if err := workerproto.ValidateWorkspaceCheckpointPair(checkpoint, manifest); err != nil {
 		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
 	}
@@ -421,11 +295,11 @@ func (s *Service) executeCheckpointWorkspace(
 	if err != nil {
 		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
 	}
-	artifact := checkpointPrivateArtifact{descriptor: descriptor, bundle: bundle}
-	if err := s.writeWorkspaceCheckpointArtifact(op.ID, artifact); err != nil {
+	artifact := checkpointPrivateArtifact{descriptor: descriptor, path: bundle.Name()}
+	if err := s.writeWorkspaceCheckpointArtifact(ctx, op.ID, artifact); err != nil {
 		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
 	}
-	return s.completeWorkspaceCheckpoint(ctx, op, artifact)
+	return s.completeWorkspaceCheckpoint(ctx, op, req.SessionID, artifact)
 }
 
 func validateCheckpointSession(ctx context.Context, sess session.Session, expectedRevision int64) error {
@@ -448,59 +322,77 @@ func validateCheckpointSession(ctx context.Context, sess session.Session, expect
 }
 
 func buildWorkspaceCheckpoint(
+	ctx context.Context,
+	stage string,
 	sess session.Session,
 	req CheckpointWorkspaceRequest,
 	operationID string,
 	createdAt time.Time,
-) (workerproto.WorkspaceCheckpoint, workerproto.WorkspaceCheckpointBundleManifest, []byte, error) {
-	base, err := sessionWorkspaceCommit(sess.Repository, sess.BaseCommit)
+) (workerproto.WorkspaceCheckpoint, workerproto.WorkspaceCheckpointBundleManifest, *os.File, error) {
+	base, err := sessionWorkspaceCommitContext(ctx, sess.Repository, sess.BaseCommit)
 	if err != nil {
 		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil, err
 	}
-	committed, err := sessionWorkspaceCommit(sess.Workspace, "HEAD")
+	committed, err := sessionWorkspaceCommitContext(ctx, sess.Workspace, "HEAD")
 	if err != nil {
 		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil, err
 	}
-	branchBytes, err := sessionWorkspaceGitText(sess.Workspace, 257, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if err := verifyUnchangedSessionSubmodules(ctx, sess.Repository, sess.Workspace, committed); err != nil {
+		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil,
+			fmt.Errorf("nested work needs separate custody before checkpoint: %w", err)
+	}
+	branchBytes, truncated, err := runSessionWorkspaceGitWithEnvContext(ctx, sess.Workspace, 257, nil, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if truncated {
+		err = errors.New("checkpoint branch exceeds its bound")
+	}
 	if err != nil {
 		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil, err
 	}
 	branch := strings.TrimSpace(string(branchBytes))
-	conflicts, truncated, err := runSessionWorkspaceGit(sess.Workspace, 1, "ls-files", "-u", "-z")
+	conflicts, truncated, err := runSessionWorkspaceGitWithEnvContext(ctx, sess.Workspace, 1, nil, "ls-files", "-u", "-z")
 	if err != nil || truncated || len(conflicts) != 0 {
 		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil,
 			errors.New("checkpoint workspace contains unresolved Git conflicts")
 	}
-	patch, truncated, err := runSessionWorkspaceGit(
-		sess.Workspace, workerproto.MaxWorkspaceCheckpointBundleBytes+1,
-		"diff", "--no-ext-diff", "--no-textconv", "--binary", base, "--",
-	)
-	if err != nil || truncated {
-		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil,
-			errors.New("checkpoint tracked patch exceeds its bound")
-	}
-	untracked, err := checkpointUntrackedFiles(sess.Workspace)
+	repository, err := os.CreateTemp(stage, "repository-")
 	if err != nil {
 		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil, err
 	}
-	taskProjection, taskBlobs, subtasks, err := checkpointTaskProjection(sess)
+	defer os.Remove(repository.Name())
+	defer repository.Close()
+	var tree string
+	digest := sha256.New()
+	err = withSessionTrackedTree(ctx, sess.Workspace, func(captured string, env []string) error {
+		tree = captured
+		return writeCheckpointRepository(ctx, sess.Workspace, base, committed, tree, env, io.MultiWriter(repository, digest))
+	})
 	if err != nil {
 		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil, err
 	}
-	patchEntry := workerproto.WorkspaceCheckpointBundleEntry{
-		Entry: "workspace.patch", SHA256: checkpointSHA256(patch), ByteSize: int64(len(patch)),
+	size, err := repository.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil, err
+	}
+	content := workerproto.WorkspaceCheckpointBundleEntry{Entry: "repository.tar", SHA256: fmt.Sprintf("%x", digest.Sum(nil)), ByteSize: size}
+	untracked, err := checkpointUntrackedFiles(ctx, sess.Workspace)
+	if err != nil {
+		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil, err
+	}
+	taskProjection, taskBlobs, subtasks, err := checkpointTaskProjection(ctx, sess)
+	if err != nil {
+		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil, err
 	}
 	candidate := checkpointSHA256(mustCheckpointJSON(struct {
 		Base      string                                     `json:"base"`
 		Committed string                                     `json:"committed"`
-		Patch     workerproto.WorkspaceCheckpointBundleEntry `json:"patch"`
+		Tree      string                                     `json:"tree"`
 		Untracked []workerproto.WorkspaceCheckpointFileEntry `json:"untracked"`
-	}{Base: base, Committed: committed, Patch: patchEntry, Untracked: checkpointEntries(untracked)}))
+	}{Base: base, Committed: committed, Tree: tree, Untracked: checkpointEntries(untracked)}))
 	checkpointRef := "checkpoint:" + checkpointSHA256([]byte(operationID + "\x00" + candidate + "\x00" + taskProjection.StateSHA256))[:32]
 	manifest := workerproto.WorkspaceCheckpointBundleManifest{
 		Version: workerproto.WorkspaceCheckpointVersion, CheckpointRef: checkpointRef,
 		RepositoryRef: req.RepositoryRef, BaseRevision: base, BranchRef: branch,
-		CommittedRevision: committed, CandidateTreeSHA256: candidate, TrackedPatch: patchEntry,
+		CommittedRevision: committed, CandidateTreeSHA256: candidate, Repository: &content, TrackedTree: tree,
 		UntrackedFiles: checkpointEntries(untracked), TaskProjection: taskProjection,
 	}
 	if err := manifest.ValidateForCapture(); err != nil {
@@ -510,7 +402,7 @@ func buildWorkspaceCheckpoint(
 	if err != nil {
 		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil, err
 	}
-	bundle, err := writeWorkspaceCheckpointTar(manifestBytes, patch, untracked, taskBlobs)
+	bundle, bundleIdentity, err := writeWorkspaceCheckpointTar(ctx, manifestBytes, repository, content, untracked, taskBlobs)
 	if err != nil {
 		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil, err
 	}
@@ -523,22 +415,21 @@ func buildWorkspaceCheckpoint(
 			QueueID: taskProjection.QueueID, TaskID: taskProjection.TaskID, ID: taskProjection.ID,
 			State: taskProjection.State, Subtasks: subtasks, StateSHA256: taskProjection.StateSHA256,
 		},
-		Gate: workerproto.WorkspaceCheckpointGate{Status: "not_run"},
-		Bundle: workerproto.WorkspaceCheckpointBundle{
-			MediaType: workerproto.WorkspaceCheckpointBundleMediaType,
-			SHA256:    checkpointSHA256(bundle), ByteSize: int64(len(bundle)),
-		},
+		Gate:      workerproto.WorkspaceCheckpointGate{Status: "not_run"},
+		Bundle:    bundleIdentity,
 		CreatedAt: createdAt,
 	}
 	if err := checkpoint.Validate(); err != nil {
+		_ = bundle.Close()
+		_ = os.Remove(bundle.Name())
 		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil, err
 	}
 	return checkpoint, manifest, bundle, nil
 }
 
-func checkpointUntrackedFiles(workspace string) ([]checkpointBlob, error) {
+func checkpointUntrackedFiles(ctx context.Context, workspace string) ([]checkpointBlob, error) {
 	limit := workerproto.MaxWorkspaceCheckpointFiles*(workerproto.MaxWorkspaceCheckpointPathBytes+1) + 1
-	raw, truncated, err := runSessionWorkspaceGit(workspace, limit, "ls-files", "--others", "--exclude-standard", "-z")
+	raw, truncated, err := runSessionWorkspaceGitWithEnvContext(ctx, workspace, limit, nil, "ls-files", "--others", "--exclude-standard", "-z")
 	if err != nil || truncated {
 		return nil, errors.New("checkpoint untracked path list exceeds its bound")
 	}
@@ -562,10 +453,11 @@ func checkpointUntrackedFiles(workspace string) ([]checkpointBlob, error) {
 		return nil, err
 	}
 	defer root.Close()
-	return checkpointFilesFromPaths(root, filtered, "untracked", workerproto.MaxWorkspaceCheckpointBundleBytes)
+	return checkpointFilesFromPaths(ctx, root, filtered, "untracked", workerproto.MaxWorkspaceCheckpointStreamBytes)
 }
 
 func checkpointTaskProjection(
+	ctx context.Context,
 	sess session.Session,
 ) (workerproto.WorkspaceCheckpointTaskProjection, []checkpointBlob, []bool, error) {
 	queue := filepath.Join(sess.Workspace, tasks.TasksRoot)
@@ -617,7 +509,7 @@ func checkpointTaskProjection(
 		return workerproto.WorkspaceCheckpointTaskProjection{}, nil, nil, err
 	}
 	defer root.Close()
-	blobs, err := checkpointFilesFromPaths(root, paths, "task", workerproto.MaxWorkspaceCheckpointBundleBytes)
+	blobs, err := checkpointFilesFromPaths(ctx, root, paths, "task", workerproto.MaxWorkspaceCheckpointStreamBytes)
 	if err != nil {
 		return workerproto.WorkspaceCheckpointTaskProjection{}, nil, nil, err
 	}
@@ -637,7 +529,7 @@ func checkpointTaskProjection(
 	return projection, blobs, append([]bool(nil), item.Subtasks...), nil
 }
 
-func checkpointFilesFromPaths(root *os.Root, paths [][]byte, prefix string, maximum int64) ([]checkpointBlob, error) {
+func checkpointFilesFromPaths(ctx context.Context, root *os.Root, paths [][]byte, prefix string, maximum int64) ([]checkpointBlob, error) {
 	result := make([]checkpointBlob, 0, len(paths))
 	var total int64
 	for index, rawPath := range paths {
@@ -656,23 +548,24 @@ func checkpointFilesFromPaths(root *os.Root, paths [][]byte, prefix string, maxi
 		if err != nil {
 			return nil, err
 		}
-		body, readErr := io.ReadAll(io.LimitReader(file, maximum-total+1))
+		hash := sha256.New()
+		written, readErr := io.Copy(hash, io.LimitReader(reviewScanReader{ctx, file}, before.Size()+1))
 		after, statErr := file.Stat()
 		closeErr := file.Close()
-		if readErr != nil || statErr != nil || closeErr != nil || !os.SameFile(before, after) || int64(len(body)) != before.Size() {
+		if readErr != nil || statErr != nil || closeErr != nil || !os.SameFile(before, after) || written != before.Size() {
 			return nil, errors.New("checkpoint file changed while reading")
 		}
-		total += int64(len(body))
+		total += written
 		mode := int64(0o644)
 		if before.Mode().Perm()&0o111 != 0 {
 			mode = 0o755
 		}
 		result = append(result, checkpointBlob{
-			path: body,
+			path: file.Name(),
 			entry: workerproto.WorkspaceCheckpointFileEntry{
 				PathB64: base64.StdEncoding.EncodeToString(rawPath),
 				Entry:   fmt.Sprintf("%s/%06d", prefix, index), Mode: mode,
-				SHA256: checkpointSHA256(body), ByteSize: int64(len(body)),
+				SHA256: fmt.Sprintf("%x", hash.Sum(nil)), ByteSize: written,
 			},
 		})
 	}
@@ -688,55 +581,70 @@ func checkpointEntries(blobs []checkpointBlob) []workerproto.WorkspaceCheckpoint
 }
 
 func writeWorkspaceCheckpointTar(
+	ctx context.Context,
 	manifest []byte,
-	patch []byte,
+	repository *os.File,
+	content workerproto.WorkspaceCheckpointBundleEntry,
 	untracked []checkpointBlob,
 	taskFiles []checkpointBlob,
-) ([]byte, error) {
-	var output bytes.Buffer
-	writer := tar.NewWriter(&output)
-	write := func(name string, mode int64, body []byte) error {
-		header := &tar.Header{
-			Name: name, Mode: mode, Size: int64(len(body)), Typeflag: tar.TypeReg,
-			ModTime: time.Unix(0, 0).UTC(),
-			Format:  tar.FormatUSTAR,
+) (output *os.File, identity workerproto.WorkspaceCheckpointBundle, returnErr error) {
+	output, err := os.CreateTemp(filepath.Dir(repository.Name()), ".checkpoint-bundle-")
+	if err != nil {
+		return nil, identity, err
+	}
+	defer func() {
+		if returnErr != nil {
+			_ = output.Close()
+			_ = os.Remove(output.Name())
 		}
-		if err := writer.WriteHeader(header); err != nil {
+	}()
+	hash := sha256.New()
+	counter := &checkpointCountWriter{writer: io.MultiWriter(output, hash)}
+	writer := tar.NewWriter(counter)
+	write := func(name string, mode, size int64, digest string, input io.Reader) error {
+		if err := checkpointTarHeader(writer, name, mode, size); err != nil {
 			return err
 		}
-		_, err := writer.Write(body)
-		return err
+		return copyCheckpointContent(ctx, writer, input, size, digest)
 	}
-	if err := write("manifest.json", 0o644, manifest); err != nil {
-		return nil, err
+	if err := write("manifest.json", 0644, int64(len(manifest)), "", bytes.NewReader(manifest)); err != nil {
+		return output, identity, err
 	}
-	if err := write("workspace.patch", 0o644, patch); err != nil {
-		return nil, err
+	if _, err := repository.Seek(0, io.SeekStart); err != nil {
+		return output, identity, err
+	}
+	if err := write(content.Entry, 0644, content.ByteSize, content.SHA256, repository); err != nil {
+		return output, identity, err
 	}
 	for _, blob := range append(append([]checkpointBlob(nil), untracked...), taskFiles...) {
-		if err := write(blob.entry.Entry, blob.entry.Mode, blob.path); err != nil {
-			return nil, err
+		file, err := os.OpenFile(blob.path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+		if err != nil {
+			return output, identity, err
+		}
+		err = write(blob.entry.Entry, blob.entry.Mode, blob.entry.ByteSize, blob.entry.SHA256, file)
+		if err = errors.Join(err, file.Close()); err != nil {
+			return output, identity, err
 		}
 	}
-	if err := writer.Close(); err != nil {
-		return nil, err
+	if err := errors.Join(writer.Close(), output.Sync()); err != nil {
+		return output, identity, err
 	}
-	if output.Len() == 0 || output.Len() > workerproto.MaxWorkspaceCheckpointBundleBytes {
-		return nil, errors.New("workspace checkpoint tar exceeds its bound")
-	}
-	return output.Bytes(), nil
+	identity = workerproto.WorkspaceCheckpointBundle{MediaType: workerproto.WorkspaceCheckpointBundleMediaType,
+		SHA256: fmt.Sprintf("%x", hash.Sum(nil)), ByteSize: counter.bytes}
+	return output, identity, nil
 }
 
 func (s *Service) completeWorkspaceCheckpoint(
 	ctx context.Context,
 	op session.Operation,
+	sessionID string,
 	artifact checkpointPrivateArtifact,
 ) (CheckpointWorkspaceResult, error) {
 	var checkpoint workerproto.WorkspaceCheckpoint
 	if err := json.Unmarshal(artifact.descriptor, &checkpoint); err != nil {
 		return CheckpointWorkspaceResult{}, err
 	}
-	result := CheckpointWorkspaceResult{OperationID: op.ID, Checkpoint: checkpoint}
+	result := CheckpointWorkspaceResult{OperationID: op.ID, SessionID: sessionID, Checkpoint: checkpoint}
 	encoded, err := json.Marshal(result)
 	if err != nil {
 		return CheckpointWorkspaceResult{}, err
@@ -763,7 +671,7 @@ func replayCheckpointWorkspace(op session.Operation) (CheckpointWorkspaceResult,
 	return result, nil
 }
 
-func (s *Service) writeWorkspaceCheckpointArtifact(operationID string, artifact checkpointPrivateArtifact) error {
+func (s *Service) writeWorkspaceCheckpointArtifact(ctx context.Context, operationID string, artifact checkpointPrivateArtifact) error {
 	if !validSessionPathComponent(operationID) {
 		return errors.New("checkpoint operation identity is invalid")
 	}
@@ -771,15 +679,14 @@ func (s *Service) writeWorkspaceCheckpointArtifact(operationID string, artifact 
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return err
 	}
-	var body bytes.Buffer
-	body.WriteString(workspaceCheckpointPrivateMagic)
+	var header bytes.Buffer
+	header.WriteString(workspaceCheckpointPrivateMagic)
 	if len(artifact.descriptor) == 0 || len(artifact.descriptor) > workerproto.MaxWorkspaceCheckpointManifest {
 		return errors.New("workspace checkpoint descriptor exceeds its bound")
 	}
-	_ = binary.Write(&body, binary.BigEndian, uint32(len(artifact.descriptor)))
-	body.Write(artifact.descriptor)
-	body.Write(artifact.bundle)
-	tmp, err := os.CreateTemp(root, ".checkpoint-")
+	_ = binary.Write(&header, binary.BigEndian, uint32(len(artifact.descriptor)))
+	header.Write(artifact.descriptor)
+	tmp, err := os.CreateTemp(filepath.Dir(artifact.path), "artifact-")
 	if err != nil {
 		return err
 	}
@@ -789,7 +696,21 @@ func (s *Service) writeWorkspaceCheckpointArtifact(operationID string, artifact 
 		_ = tmp.Close()
 		return err
 	}
-	if _, err := tmp.Write(body.Bytes()); err != nil {
+	if _, err := tmp.Write(header.Bytes()); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	input, err := os.Open(artifact.path)
+	if err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	defer input.Close()
+	if _, err := input.Seek(artifact.offset, io.SeekStart); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := io.Copy(tmp, reviewScanReader{ctx, input}); err != nil {
 		_ = tmp.Close()
 		return err
 	}
@@ -801,66 +722,83 @@ func (s *Service) writeWorkspaceCheckpointArtifact(operationID string, artifact 
 		return err
 	}
 	destination := filepath.Join(root, operationID+".checkpoint")
-	if existing, err := s.readWorkspaceCheckpointArtifact(operationID); err == nil {
-		if !bytes.Equal(existing.descriptor, artifact.descriptor) || !bytes.Equal(existing.bundle, artifact.bundle) {
+	if existing, err := s.readWorkspaceCheckpointArtifact(ctx, operationID); err == nil {
+		if !bytes.Equal(existing.descriptor, artifact.descriptor) {
 			return errors.New("workspace checkpoint artifact conflicts with its operation")
 		}
 		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return os.Rename(tmpName, destination)
+	if err := os.Rename(tmpName, destination); err != nil {
+		return err
+	}
+	return syncReviewPath(root)
 }
 
-func (s *Service) readWorkspaceCheckpointArtifact(operationID string) (checkpointPrivateArtifact, error) {
+func (s *Service) readWorkspaceCheckpointArtifact(ctx context.Context, operationID string) (checkpointPrivateArtifact, error) {
 	if !validSessionPathComponent(operationID) {
 		return checkpointPrivateArtifact{}, errors.New("checkpoint operation identity is invalid")
 	}
 	path := filepath.Join(s.stateRoot, "workspace-checkpoints", operationID+".checkpoint")
-	body, err := os.ReadFile(path)
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return checkpointPrivateArtifact{}, err
 	}
-	maximum := len(workspaceCheckpointPrivateMagic) + 4 + workerproto.MaxWorkspaceCheckpointManifest + workerproto.MaxWorkspaceCheckpointBundleBytes
-	if len(body) > maximum || !bytes.HasPrefix(body, []byte(workspaceCheckpointPrivateMagic)) {
+	defer file.Close()
+	header := make([]byte, len(workspaceCheckpointPrivateMagic)+4)
+	if _, err := io.ReadFull(file, header); err != nil || !bytes.HasPrefix(header, []byte(workspaceCheckpointPrivateMagic)) {
 		return checkpointPrivateArtifact{}, errors.New("private workspace checkpoint artifact is invalid")
 	}
-	offset := len(workspaceCheckpointPrivateMagic)
-	if len(body) < offset+4 {
-		return checkpointPrivateArtifact{}, errors.New("private workspace checkpoint artifact is truncated")
-	}
-	descriptorBytes := int(binary.BigEndian.Uint32(body[offset : offset+4]))
-	offset += 4
-	if descriptorBytes <= 0 || descriptorBytes > workerproto.MaxWorkspaceCheckpointManifest || len(body) <= offset+descriptorBytes {
+	descriptorBytes := int(binary.BigEndian.Uint32(header[len(workspaceCheckpointPrivateMagic):]))
+	if descriptorBytes <= 0 || descriptorBytes > workerproto.MaxWorkspaceCheckpointManifest {
 		return checkpointPrivateArtifact{}, errors.New("private workspace checkpoint descriptor is invalid")
 	}
 	artifact := checkpointPrivateArtifact{
-		descriptor: append([]byte(nil), body[offset:offset+descriptorBytes]...),
-		bundle:     append([]byte(nil), body[offset+descriptorBytes:]...),
+		descriptor: make([]byte, descriptorBytes), path: path,
+		offset: int64(len(header) + descriptorBytes),
+	}
+	if _, err := io.ReadFull(file, artifact.descriptor); err != nil {
+		return checkpointPrivateArtifact{}, err
 	}
 	checkpoint, err := workerproto.DecodeWorkspaceCheckpoint(artifact.descriptor)
-	if err != nil || int64(len(artifact.bundle)) != checkpoint.Bundle.ByteSize ||
-		checkpointSHA256(artifact.bundle) != checkpoint.Bundle.SHA256 {
+	if err != nil {
+		return checkpointPrivateArtifact{}, err
+	}
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size()-artifact.offset != checkpoint.Bundle.ByteSize {
+		return checkpointPrivateArtifact{}, errors.New("private workspace checkpoint length does not match")
+	}
+	hash := sha256.New()
+	if _, err := io.Copy(hash, reviewScanReader{ctx, file}); err != nil || fmt.Sprintf("%x", hash.Sum(nil)) != checkpoint.Bundle.SHA256 {
 		return checkpointPrivateArtifact{}, errors.New("private workspace checkpoint identity does not match")
 	}
 	return artifact, nil
 }
 
-func (s *Service) OpenWorkspaceCheckpointBundle(ctx context.Context, operationID string) ([]byte, error) {
+func (s *Service) OpenWorkspaceCheckpointBundle(ctx context.Context, operationID string) (*os.File, workerproto.WorkspaceCheckpoint, error) {
 	op, err := s.store.GetOperationByID(ctx, operationID)
 	if err != nil || op.Method != "CheckpointWorkspace" || op.State != session.OperationSucceeded ||
 		op.ResourceType != "workspace_checkpoint" || op.ResourceID == "" {
-		return nil, session.ErrOperationNotFound
+		return nil, workerproto.WorkspaceCheckpoint{}, session.ErrOperationNotFound
 	}
-	artifact, err := s.readWorkspaceCheckpointArtifact(operationID)
+	artifact, err := s.readWorkspaceCheckpointArtifact(ctx, operationID)
 	if err != nil {
-		return nil, err
+		return nil, workerproto.WorkspaceCheckpoint{}, err
 	}
 	checkpoint, err := workerproto.DecodeWorkspaceCheckpoint(artifact.descriptor)
 	if err != nil || checkpoint.CheckpointRef != op.ResourceID {
-		return nil, errors.New("workspace checkpoint operation identity does not match")
+		return nil, workerproto.WorkspaceCheckpoint{}, errors.New("workspace checkpoint operation identity does not match")
 	}
-	return append([]byte(nil), artifact.bundle...), nil
+	file, err := os.OpenFile(artifact.path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, checkpoint, err
+	}
+	if _, err := file.Seek(artifact.offset, io.SeekStart); err != nil {
+		_ = file.Close()
+		return nil, checkpoint, err
+	}
+	return file, checkpoint, nil
 }
 
 func checkpointSHA256(value []byte) string {

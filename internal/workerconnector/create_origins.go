@@ -39,7 +39,7 @@ type createOperation struct {
 }
 
 func (j *journal) preserveCreateOrigin(entry journalEntry) error {
-	if entry.Command == nil || entry.Result == nil || entry.Command.Kind != "create_session" || entry.Result.State != "succeeded" {
+	if entry.Command == nil || entry.Result == nil || !isCreateRequest(*entry.Command) || entry.Result.State != "succeeded" {
 		return nil
 	}
 	return j.withActivityLock(func() error { return j.preserveCreateOriginLocked(entry) })
@@ -58,7 +58,11 @@ func (j *journal) preserveCreateOriginLocked(entry journalEntry) error {
 			ID string `json:"id"`
 		} `json:"session"`
 	}
-	if err := json.Unmarshal(result.Resource, &resource); err != nil {
+	var response workerproto.APIResponse
+	if err := json.Unmarshal(result.Resource, &response); err != nil || response.Status < 200 || response.Status >= 300 {
+		return nil
+	}
+	if err := json.Unmarshal(response.Body, &resource); err != nil {
 		return errors.New("worker create receipt resource is malformed")
 	}
 	op := resource.Operation

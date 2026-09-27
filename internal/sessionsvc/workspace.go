@@ -219,6 +219,38 @@ func runSessionWorkspaceGitWithEnvContext(
 	return stdout.buf.Bytes(), stdout.truncated, nil
 }
 
+func sessionWorkspaceStatusContext(ctx context.Context, workspace string) ([]byte, bool, error) {
+	env := sessionCompanionCheckoutGitEnv()
+	command, err := forkspace.GitCommandWithEnv(ctx, workspace, env,
+		"status", "--porcelain=v2", "--untracked-files=all", "--no-renames", "--ignore-submodules=all", "-z")
+	if err != nil {
+		return nil, false, err
+	}
+	status := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceGitOutputLimit}
+	err = forkspace.RunLFSStatus(ctx, workspace, command, status, func(limit int, args ...string) ([]byte, error) {
+		output, truncated, err := runSessionWorkspaceGitWithEnvContext(ctx, workspace, limit, env, args...)
+		if truncated {
+			return nil, errors.New("LFS status read exceeds its bound")
+		}
+		return output, err
+	})
+	return status.buf.Bytes(), status.truncated, err
+}
+
+// The caller just created this private metadata and index. Passing it through
+// GitCommandWithEnv would replace GIT_DIR/GIT_INDEX_FILE with the real checkout
+// view and accidentally reset the agent's index during an inspection.
+func runSessionPrivateGitContext(ctx context.Context, workspace string, limit int, env []string, args ...string) ([]byte, bool, error) {
+	stdout := &sessionWorkspaceLimitedWriter{limit: limit}
+	command := exec.CommandContext(ctx, "git", gitArgs(workspace, args)...)
+	command.Env = env
+	command.Stdout = stdout
+	if err := command.Run(); err != nil {
+		return nil, false, errors.Join(err, ctx.Err())
+	}
+	return stdout.buf.Bytes(), stdout.truncated, nil
+}
+
 func (w *sessionWorkspaceWindowWriter) Write(p []byte) (int, error) {
 	if w.offset < 0 || w.limit < 0 {
 		return 0, errors.New("negative output window")
@@ -246,7 +278,7 @@ func runSessionWorkspaceGitWindow(
 	dir string,
 	offset int64,
 	limit int,
-	args ...string,
+	base string,
 ) ([]byte, int64, string, bool, error) {
 	if offset < 0 || limit < 1 || limit > sessionWorkspacePatchLimit {
 		return nil, 0, "", false, errors.New("invalid output window")
@@ -256,24 +288,8 @@ func runSessionWorkspaceGitWindow(
 		offset: offset,
 		limit:  int64(limit),
 	}
-	stderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
-	cmd, err := forkspace.GitCommand(context.Background(), dir, args...)
-	if err != nil {
+	if err := streamSessionTrackedPatch(context.Background(), dir, base, stdout); err != nil {
 		return nil, 0, "", false, err
-	}
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	if err := cmd.Run(); err != nil {
-		detail := strings.TrimSpace(stderr.buf.String())
-		if detail != "" {
-			return nil, 0, "", false, fmt.Errorf(
-				"git %s: %w: %s",
-				strings.Join(args, " "),
-				err,
-				detail,
-			)
-		}
-		return nil, 0, "", false, fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 	}
 	if offset > stdout.total {
 		return nil, stdout.total, hex.EncodeToString(stdout.digest.Sum(nil)), false,
@@ -464,6 +480,12 @@ func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuar
 		}
 	}
 
+	if err := materializeSessionSubmodules(ctx, repo, ws, base); err != nil {
+		if created {
+			return sessionWorkspace{}, removeCreatedSessionWorkspace(repo, ws, err)
+		}
+		return sessionWorkspace{}, err
+	}
 	workspace, err := verifySessionWorkspaceContext(ctx, repo, generatedName, ws, base)
 	if err != nil {
 		if created {
@@ -581,8 +603,7 @@ func verifySessionWorkspaceContext(ctx context.Context, repo, name, workspace, b
 	if head != base {
 		return sessionWorkspace{}, fmt.Errorf("workspace HEAD is %s, want persisted base %s", head, base)
 	}
-	status, truncated, err := runSessionWorkspaceGitWithEnvContext(ctx, workspace, sessionWorkspaceGitOutputLimit, nil,
-		"status", "--porcelain=v2", "--untracked-files=all", "--no-renames", "-z")
+	status, truncated, err := sessionWorkspaceStatusContext(ctx, workspace)
 	if err != nil {
 		return sessionWorkspace{}, fmt.Errorf("verify workspace cleanliness: %w", err)
 	}
@@ -790,6 +811,9 @@ func inspectSessionChangesPageAtParent(
 	if err != nil {
 		return WorkspaceChanges{}, fmt.Errorf("resolve workspace HEAD: %w", err)
 	}
+	if err := verifySessionSubmodules(context.Background(), workspace, forkHead); err != nil {
+		return WorkspaceChanges{}, fmt.Errorf("inspect nested workspace: %w", err)
+	}
 	forkTree, err := sessionWorkspaceTree(workspace, forkHead)
 	if err != nil {
 		return WorkspaceChanges{}, fmt.Errorf("resolve workspace tree: %w", err)
@@ -799,8 +823,7 @@ func inspectSessionChangesPageAtParent(
 		return WorkspaceChanges{}, fmt.Errorf("resolve current parent: %w", err)
 	}
 
-	statusRaw, statusTruncated, err := runSessionWorkspaceGit(workspace, sessionWorkspaceGitOutputLimit,
-		"status", "--porcelain=v2", "--untracked-files=all", "--no-renames", "-z")
+	statusRaw, statusTruncated, err := sessionWorkspaceStatusContext(context.Background(), workspace)
 	if err != nil {
 		return WorkspaceChanges{}, fmt.Errorf("inspect workspace status: %w", err)
 	}
@@ -812,7 +835,7 @@ func inspectSessionChangesPageAtParent(
 		return WorkspaceChanges{}, fmt.Errorf("parse workspace status: %w", err)
 	}
 	committedRaw, committedTruncated, err := runSessionWorkspaceGit(workspace, sessionWorkspaceGitOutputLimit,
-		"diff", "--name-status", "--no-renames", "--no-ext-diff", "--no-textconv", "-z", baseCommit, forkHead, "--")
+		"diff", "--name-status", "--no-renames", "--no-ext-diff", "--no-textconv", "--ignore-submodules=dirty", "--submodule=short", "-z", baseCommit, forkHead, "--")
 	if err != nil {
 		return WorkspaceChanges{}, fmt.Errorf("inspect committed workspace changes: %w", err)
 	}
@@ -828,7 +851,7 @@ func inspectSessionChangesPageAtParent(
 		workspace,
 		patchOffset,
 		patchLimit,
-		"diff", "--no-ext-diff", "--no-textconv", "--binary", baseCommit, "--")
+		baseCommit)
 	if err != nil {
 		return WorkspaceChanges{}, fmt.Errorf("inspect tracked workspace patch: %w", err)
 	}
@@ -989,8 +1012,10 @@ func planSessionWorkspaceDiscardAtParent(
 	if err != nil {
 		return WorkspaceDiscardPlan{}, err
 	}
-	statusRaw, truncated, err := runSessionWorkspaceGit(workspace, sessionWorkspaceGitOutputLimit,
-		"status", "--porcelain=v2", "--untracked-files=all", "--no-renames", "-z")
+	if err := verifySessionSubmodules(context.Background(), workspace, head); err != nil {
+		return WorkspaceDiscardPlan{}, fmt.Errorf("nested work needs separate custody before discard: %w", err)
+	}
+	statusRaw, truncated, err := sessionWorkspaceStatusContext(context.Background(), workspace)
 	if err != nil {
 		return WorkspaceDiscardPlan{}, fmt.Errorf("inspect discard status: %w", err)
 	}
@@ -1161,8 +1186,10 @@ func validateSessionWorkspaceDiscardLocked(plan WorkspaceDiscardPlan) (*validate
 	if err != nil {
 		return fail(fmt.Errorf("discard plan is stale: HEAD: %w", err))
 	}
-	statusRaw, truncated, err := runSessionWorkspaceGit(plan.Workspace, sessionWorkspaceGitOutputLimit,
-		"status", "--porcelain=v2", "--untracked-files=all", "--no-renames", "-z")
+	if err := verifySessionSubmodules(context.Background(), plan.Workspace, head); err != nil {
+		return fail(fmt.Errorf("discard plan is stale: nested work changed: %w", err))
+	}
+	statusRaw, truncated, err := sessionWorkspaceStatusContext(context.Background(), plan.Workspace)
 	if err != nil {
 		return fail(fmt.Errorf("discard plan is stale: status: %w", err))
 	}

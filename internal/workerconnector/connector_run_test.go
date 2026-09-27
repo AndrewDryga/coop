@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -14,6 +16,106 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
+
+type pollTransportFunc func(context.Context, workerproto.Poll) (workerproto.Response, error)
+
+func (f pollTransportFunc) Poll(ctx context.Context, poll workerproto.Poll) (workerproto.Response, error) {
+	return f(ctx, poll)
+}
+
+type waitingBodyTransport struct {
+	testBodyTransport
+	started chan struct{}
+	release chan struct{}
+	fetches atomic.Int32
+}
+
+func (b *waitingBodyTransport) FetchRequestBody(ctx context.Context, _ string, _ workerproto.BodyReference, writer io.Writer) error {
+	if b.fetches.Add(1) == 1 {
+		close(b.started)
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-b.release:
+		_, err := writer.Write([]byte("body"))
+		return err
+	}
+}
+
+func TestConnectorPollsAndRenewsWhileOneLargeCommandIsPreparing(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	body := &waitingBodyTransport{started: make(chan struct{}), release: make(chan struct{})}
+	var calls, polls atomic.Int32
+	var clock atomic.Int64
+	base := time.Now()
+	clock.Store(base.UnixNano())
+	now := func() time.Time { return time.Unix(0, clock.Load()) }
+	executor := tunnelFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}), body)
+	executor.now = now
+	command := createCommand(base.Add(2 * time.Second))
+	command.Payload, _ = json.Marshal(workerproto.APIRequest{Method: "POST", Path: "/v1/sessions/s/workspace/restore", BodyRef: &workerproto.BodyReference{SHA256: sha256sum([]byte("body")), ByteSize: 4}})
+	released := false
+	transport := pollTransportFunc(func(_ context.Context, poll workerproto.Poll) (workerproto.Response, error) {
+		n := polls.Add(1)
+		clock.Store(base.Add(time.Duration(n) * time.Second).UnixNano())
+		command.LeaseExpiresAt = now().Add(10 * time.Second)
+		response := workerproto.Response{Version: workerproto.Version, PollRef: poll.PollRef, ServerTime: now(), Commands: []workerproto.Command{command}}
+		if n >= 4 && !released {
+			select {
+			case <-body.started:
+				close(body.release)
+				released = true
+			default:
+			}
+		}
+		if len(poll.CommandResults) > 0 {
+			if poll.CommandResults[0].State != "succeeded" {
+				t.Errorf("result %+v", poll.CommandResults[0])
+			}
+			response.Commands = nil
+			response.AcknowledgedResultCommandIDs = []string{command.CommandID}
+			cancel()
+		}
+		return response, nil
+	})
+	connector, err := NewConnector(ConnectorConfig{Executor: executor, Hello: func(_ context.Context, clock time.Time) workerproto.WorkerHello { return hello(clock) }, Now: now, Transport: transport})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := connector.Run(ctx, time.Millisecond, func(err error) { t.Errorf("connector: %v", err) }); !errors.Is(err, context.Canceled) {
+		t.Fatalf("run: %v", err)
+	}
+	if polls.Load() < 4 || calls.Load() != 1 || body.fetches.Load() != 1 {
+		t.Fatalf("polls=%d calls=%d downloads=%d", polls.Load(), calls.Load(), body.fetches.Load())
+	}
+}
+
+func TestCommandLeaseCancellationStopsPreparationAndCanRenew(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var expiry atomic.Int64
+		expiry.Store(time.Now().Add(time.Second).UnixNano())
+		renew := make(chan struct{}, 1)
+		ctx, stop := watchCommandLease(context.Background(), time.Now, func() time.Time { return time.Unix(0, expiry.Load()) }, renew)
+		defer stop()
+		synctest.Wait()
+		expiry.Store(time.Now().Add(3 * time.Second).UnixNano())
+		renew <- struct{}{}
+		time.Sleep(2 * time.Second)
+		if ctx.Err() != nil {
+			t.Fatal("original deadline canceled a renewed lease")
+		}
+		time.Sleep(2 * time.Second)
+		if ctx.Err() == nil {
+			t.Fatal("expired lease did not cancel preparation")
+		}
+	})
+}
 
 // Existing event projection tests inspect best-effort batches; origin/error recovery tests
 // exercise collectActivity and PollOnce directly, including their reported failures.
@@ -215,14 +317,22 @@ func TestCommandSettlementKeepsItsWireBudgetAheadOfActivity(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := createCommand(now.Add(time.Minute))
-	if _, err := executor.Execute(context.Background(), command); err != nil {
+	entry, err := executor.journal.begin(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executor.complete(entry, resultFromCall(command, responsePayload(api.response), nil)); err != nil {
 		t.Fatal(err)
 	}
 	secondCommand := command
 	secondCommand.CommandID = "018f04f4-1111-7000-8000-000000000002"
 	secondCommand.SessionRef = "018f04f4-2222-7000-8000-000000000002"
 	secondCommand.IdempotencyKey = "responder:work:create:session-2:g1"
-	if _, err := executor.Execute(context.Background(), secondCommand); err != nil {
+	entry, err = executor.journal.begin(secondCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executor.complete(entry, resultFromCall(secondCommand, responsePayload(api.response), nil)); err != nil {
 		t.Fatal(err)
 	}
 	transport := &scriptedTransport{responses: []workerproto.Response{{

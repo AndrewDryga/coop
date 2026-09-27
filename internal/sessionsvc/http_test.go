@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -19,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 	"github.com/AndrewDryga/coop/internal/workerproto"
@@ -117,7 +115,7 @@ func TestSessionHTTPCapabilitiesAdvertiseRepositoryFreshnessVersionsAndPolicyNet
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
 	response := sessionHTTPTestRequest(
-		t, NewHTTPHandler(service), http.MethodGet, "/v1/capabilities", "", "", "",
+		t, NewHTTPHandler(service.Service), http.MethodGet, "/v1/capabilities", "", "", "",
 	)
 	if response.Code != http.StatusOK {
 		t.Fatalf("capabilities status=%d body=%s", response.Code, response.Body.String())
@@ -127,72 +125,30 @@ func TestSessionHTTPCapabilitiesAdvertiseRepositoryFreshnessVersionsAndPolicyNet
 		t.Fatal(err)
 	}
 	versions, ok := document["repository_freshness_receipt_versions"].([]any)
-	if !ok || len(document) != 4 || len(versions) != 1 || versions[0] != float64(2) {
+	if !ok || len(document) != 3 || len(versions) != 1 || versions[0] != float64(2) {
 		t.Fatalf("capabilities = %#v", document)
-	}
-	selectors, ok := document["repository_source_selector_versions"].([]any)
-	if !ok || len(selectors) != 1 || selectors[0] != float64(1) {
-		t.Fatalf("capabilities source selector versions = %#v", document["repository_source_selector_versions"])
 	}
 	evidence, ok := document["session_evidence_versions"].([]any)
 	if !ok || len(evidence) != 1 || evidence[0] != float64(workerproto.SessionEvidenceVersion) {
 		t.Fatalf("capabilities session evidence versions = %#v", document["session_evidence_versions"])
 	}
-	policies, ok := document["policies"].(map[string]any)
-	if !ok || len(policies) != 1 {
-		t.Fatalf("capabilities policies = %#v", document["policies"])
+	tools, ok := document["controller_tools_versions"].([]any)
+	if !ok || len(tools) != 1 || tools[0] != float64(1) {
+		t.Fatalf("controller tools versions = %#v", document["controller_tools_versions"])
 	}
-	responder, ok := policies["responder"].(map[string]any)
-	if !ok || len(responder) != 1 || responder["mode"] != string(egress.Open) {
-		t.Fatalf("open policy network = %#v; want its mode and no fingerprint", policies["responder"])
-	}
+
 }
 
 // What a daemon advertises has to be what a create would accept RIGHT NOW. Approving a change on
 // the host is not a restart, and a caller told the old value would pin something every create then
 // refuses — a fleet that bounces until somebody notices the daemon is stale.
-func TestSessionHTTPCapabilitiesFollowTheHostWithoutARestart(t *testing.T) {
-	service, _ := newHTTPTestSessionService(t)
-	defer service.Stop()
-	handler := NewHTTPHandler(service)
-	reach := func() map[string]any {
-		t.Helper()
-		response := sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/capabilities", "", "", "")
-		var document map[string]any
-		if err := json.Unmarshal(response.Body.Bytes(), &document); err != nil {
-			t.Fatal(err)
-		}
-		policies, _ := document["policies"].(map[string]any)
-		reported, _ := policies["responder"].(map[string]any)
-		return reported
-	}
-	approved := strings.Repeat("a", 64)
-	service.testResolveNetwork = func(Policy) (PolicyNetwork, error) {
-		return PolicyNetwork{Mode: egress.Filtered, Fingerprint: approved}, nil
-	}
-	if got := reach(); got["fingerprint"] != approved || got["mode"] != string(egress.Filtered) {
-		t.Fatalf("advertised reach = %#v; want the one this host resolves now", got)
-	}
-	approved = strings.Repeat("b", 64) // the operator approves a change on the host
-	if got := reach(); got["fingerprint"] != approved {
-		t.Fatalf("advertised reach = %#v; want the value after the approval, without a restart", got)
-	}
-	// A host that cannot answer right now advertises the posture and no fingerprint: there is
-	// nothing a create could pin, and the create itself reports why.
-	service.testResolveNetwork = func(Policy) (PolicyNetwork, error) {
-		return PolicyNetwork{}, errors.New("no approval for this project")
-	}
-	if got := reach(); got["fingerprint"] != nil || got["mode"] == nil {
-		t.Fatalf("unresolvable policy = %#v; want its mode and no fingerprint", got)
-	}
-}
 
 func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 	service, repo := newHTTPTestSessionService(t)
 	defer service.Stop()
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 
-	response := sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", `{"policy":"responder","task":"task"}`, "", "application/json")
+	response := sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", service.body(t, "task"), "", "application/json")
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_request"`) {
 		t.Fatalf("missing idempotency response = %d %s", response.Code, response.Body.String())
 	}
@@ -212,11 +168,11 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 	if response.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversize status = %d body=%s", response.Code, response.Body.String())
 	}
-	response = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions?unexpected=true", `{"policy":"responder","task":"task"}`, "create-query", "application/json")
+	response = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions?unexpected=true", service.body(t, "task"), "create-query", "application/json")
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("mutation query status = %d body=%s", response.Code, response.Body.String())
 	}
-	duplicate := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{"policy":"responder","task":"task"}`))
+	duplicate := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(service.body(t, "task")))
 	duplicate.Header.Add("Idempotency-Key", "first")
 	duplicate.Header.Add("Idempotency-Key", "second")
 	duplicate.Header.Set("Content-Type", "application/json")
@@ -227,24 +183,22 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 	}
 	response = sessionHTTPTestRequest(
 		t, handler, http.MethodPost, "/v1/sessions",
-		`{"policy":"responder","task":"pull request","source":{"kind":"pull_request","number":514}}`,
+		`{"task":"retired-source","source":{"kind":"pull_request","number":514}}`,
 		"create-pull-request", "application/json",
 	)
-	if response.Code != http.StatusBadRequest ||
-		!strings.Contains(response.Body.String(), "operator-configured remote") {
+	if response.Code != http.StatusBadRequest {
 		t.Fatalf("pull request body status = %d body=%s", response.Code, response.Body.String())
 	}
 	response = sessionHTTPTestRequest(
 		t, handler, http.MethodPost, "/v1/sessions",
-		`{"policy":"responder","task":"bad source","source":{"kind":"tag","name":"v1"}}`,
+		strings.Replace(service.body(t, "unknown-job-field"), `"job":{`, `"job":{"unknown":true,`, 1),
 		"create-bad-source", "application/json",
 	)
-	if response.Code != http.StatusBadRequest ||
-		!strings.Contains(response.Body.String(), "source kind must be") {
-		t.Fatalf("unknown source kind status = %d body=%s", response.Code, response.Body.String())
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unknown job field status = %d body=%s", response.Code, response.Body.String())
 	}
 
-	response = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", `{"policy":"responder","task":"task"}`, "create", "application/json")
+	response = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", service.body(t, "task"), "create", "application/json")
 	if response.Code != http.StatusOK {
 		t.Fatalf("create status = %d body=%s", response.Code, response.Body.String())
 	}
@@ -352,9 +306,9 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 func TestSessionHTTPOperationFenceLinearizesStopAgainstAdmission(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 
-	createBody := `{"method":"CreateRemoteSession","request":{"policy":"responder","task":"stopped before send"}}`
+	createBody := `{"method":"CreateRemoteSession","request":` + service.body(t, "stopped-before-send") + `}`
 	fencedCreate := sessionHTTPTestRequest(
 		t, handler, http.MethodPost, "/v1/operations/fence", createBody,
 		"fenced-http-create", "application/json",
@@ -367,7 +321,7 @@ func TestSessionHTTPOperationFenceLinearizesStopAgainstAdmission(t *testing.T) {
 	}
 	staleCreate := sessionHTTPTestRequest(
 		t, handler, http.MethodPost, "/v1/sessions",
-		`{"policy":"responder","task":"stopped before send"}`,
+		service.body(t, "stopped-before-send"),
 		"fenced-http-create", "application/json",
 	)
 	if staleCreate.Code != http.StatusConflict ||
@@ -377,7 +331,7 @@ func TestSessionHTTPOperationFenceLinearizesStopAgainstAdmission(t *testing.T) {
 
 	createdResponse := sessionHTTPTestRequest(
 		t, handler, http.MethodPost, "/v1/sessions",
-		`{"policy":"responder","task":"turn fence owner"}`,
+		service.body(t, "turn-fence-owner"),
 		"turn-fence-session", "application/json",
 	)
 	if createdResponse.Code != http.StatusOK {
@@ -389,7 +343,7 @@ func TestSessionHTTPOperationFenceLinearizesStopAgainstAdmission(t *testing.T) {
 	}
 	winningCreate := sessionHTTPTestRequest(
 		t, handler, http.MethodPost, "/v1/operations/fence",
-		`{"method":"CreateRemoteSession","request":{"policy":"responder","task":"turn fence owner"}}`,
+		`{"method":"CreateRemoteSession","request":`+service.body(t, "turn-fence-owner")+`}`,
 		"turn-fence-session", "application/json",
 	)
 	if winningCreate.Code != http.StatusOK ||
@@ -454,11 +408,11 @@ func TestSessionHTTPOperationFenceLinearizesStopAgainstAdmission(t *testing.T) {
 func TestSessionHTTPTurnBindingIsPrivateAndBoundToTheExactTurn(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 
 	createdResponse := sessionHTTPTestRequest(
 		t, handler, http.MethodPost, "/v1/sessions",
-		`{"policy":"responder","task":"turn-bound authority"}`,
+		service.body(t, "turn-bound-authority"),
 		"turn-binding-session", "application/json",
 	)
 	if createdResponse.Code != http.StatusOK {
@@ -468,23 +422,23 @@ func TestSessionHTTPTurnBindingIsPrivateAndBoundToTheExactTurn(t *testing.T) {
 	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
-	binding := session.ResponderBinding{
-		Endpoint: "https://responder.example/v1/state-tools/mcp",
+	binding := session.ControllerTools{
+		Endpoint: "https://other-product.example/tenant/tools",
 		Token:    strings.Repeat("t", 48),
 	}
 	body := fmt.Sprintf(
-		`{"expected_revision":%d,"prompt":"bound turn","responder_binding":{"endpoint":%q,"token":%q}}`,
+		`{"expected_revision":%d,"prompt":"bound turn","controller_tools":{"endpoint":%q,"token":%q}}`,
 		created.Session.Revision, binding.Endpoint, binding.Token,
 	)
 	submitted := sessionHTTPTestRequest(
 		t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/turns",
 		body, "turn-binding-submit", "application/json",
 	)
-	wantDigest := session.ResponderBindingDigest(&binding)
+	wantDigest := session.ControllerToolsDigest(&binding)
 	if submitted.Code != http.StatusOK ||
-		!strings.Contains(submitted.Body.String(), `"responder_binding_digest":"`+wantDigest+`"`) ||
+		!strings.Contains(submitted.Body.String(), `"controller_tools_digest":"`+wantDigest+`"`) ||
 		strings.Contains(submitted.Body.String(), binding.Token) ||
-		strings.Contains(submitted.Body.String(), `"responder_binding"`) {
+		strings.Contains(submitted.Body.String(), `"controller_tools"`) {
 		t.Fatalf("submit turn binding response = %d %s", submitted.Code, submitted.Body.String())
 	}
 	var turnResponse sessionMutationTurnResponse
@@ -497,13 +451,13 @@ func TestSessionHTTPTurnBindingIsPrivateAndBoundToTheExactTurn(t *testing.T) {
 		"", "", "",
 	)
 	if get.Code != http.StatusOK ||
-		!strings.Contains(get.Body.String(), `"responder_binding_digest":"`+wantDigest+`"`) ||
+		!strings.Contains(get.Body.String(), `"controller_tools_digest":"`+wantDigest+`"`) ||
 		strings.Contains(get.Body.String(), binding.Token) ||
-		strings.Contains(get.Body.String(), `"responder_binding"`) {
+		strings.Contains(get.Body.String(), `"controller_tools"`) {
 		t.Fatalf("get turn binding response = %d %s", get.Code, get.Body.String())
 	}
 	fenceBody := fmt.Sprintf(
-		`{"method":"SubmitTurn","request":{"session_id":%q,"expected_revision":%d,"prompt":"bound turn","responder_binding":{"endpoint":%q,"token":%q}}}`,
+		`{"method":"SubmitTurn","request":{"session_id":%q,"expected_revision":%d,"prompt":"bound turn","controller_tools":{"endpoint":%q,"token":%q}}}`,
 		created.Session.ID, created.Session.Revision, binding.Endpoint, binding.Token,
 	)
 	fenced := sessionHTTPTestRequest(
@@ -519,20 +473,30 @@ func TestSessionHTTPTurnBindingIsPrivateAndBoundToTheExactTurn(t *testing.T) {
 
 	malformed := sessionHTTPTestRequest(
 		t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/turns",
-		fmt.Sprintf(`{"expected_revision":%d,"prompt":"bad binding","responder_binding":{"endpoint":"http://localhost/v1/state-tools/mcp","token":%q}}`, created.Session.Revision, binding.Token),
+		fmt.Sprintf(`{"expected_revision":%d,"prompt":"bad binding","controller_tools":{"endpoint":"http://localhost/v1/state-tools/mcp","token":%q}}`, created.Session.Revision, binding.Token),
 		"turn-binding-invalid", "application/json",
 	)
 	if malformed.Code != http.StatusBadRequest || !strings.Contains(malformed.Body.String(), `"code":"invalid_request"`) {
 		t.Fatalf("malformed turn binding = %d %s", malformed.Code, malformed.Body.String())
+	}
+	for _, test := range []struct{ path, body string }{
+		{"/v1/sessions/" + created.Session.ID + "/turns", strings.ReplaceAll(body, "controller_tools", "responder_binding")},
+		{"/v1/operations/fence", strings.ReplaceAll(fenceBody, "controller_tools", "responder_binding")},
+		{"/v1/sessions", strings.TrimSuffix(service.body(t, "old-binding"), "}") + `,"responder_binding":{"endpoint":"https://controller.example/mcp","token":"` + binding.Token + `"}}`},
+	} {
+		response := sessionHTTPTestRequest(t, handler, http.MethodPost, test.path, test.body, "retired-binding", "application/json")
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("retired field accepted at %s: %d %s", test.path, response.Code, response.Body.String())
+		}
 	}
 }
 
 func TestSemanticCandidateIsAcceptedEndToEndByExactDigest(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 	ctx := context.Background()
-	sess, err := service.Store().CreateSession(ctx, "semantic-http-session", session.CreateSessionRequest{Target: "codex:model"})
+	sess, err := service.Store().CreateSession(ctx, "semantic-http-session", session.CreateSessionRequest{JobDocument: storedTestJobDocument, JobDigest: storedTestJobDigest, Target: "codex:model"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -597,17 +561,14 @@ func TestSemanticCandidateCleanupFailureHasCorrelatedRetryGuidance(t *testing.T)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	runner := &httpTestSessionRunner{}
 	var logs bytes.Buffer
-	service, err := NewService(Config{
-		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: testSessionPolicies(repo), Runner: runner,
+	service := newSessionFixture(t, Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"), Runner: runner,
 		Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	}, repo)
 	defer service.Stop()
 	sess, turn, _ := stageAwaitingValidationTurn(t, service, "http_cleanup_failure")
 	runner.reapErr = fmt.Errorf("runtime inventory under %s is unavailable", service.stateRoot)
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 	body := fmt.Sprintf(`{"candidate_sha256":%q,"verdict":"accept"}`, turn.Candidate.SHA256)
 
 	request := func(key string) (*httptest.ResponseRecorder, string) {
@@ -701,12 +662,16 @@ func TestSessionHTTPAsyncCreateReturnsOperationAndCoalescesReplay(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer service.Stop()
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 
-	requestAsync := func(key, policy string) *httptest.ResponseRecorder {
+	requestAsync := func(key string, payload CreateRemoteSessionRequest) *httptest.ResponseRecorder {
+		body, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
 		request := httptest.NewRequest(
 			http.MethodPost, "http://unix/v1/sessions",
-			strings.NewReader(fmt.Sprintf(`{"policy":%q,"task":"cold session"}`, policy)),
+			bytes.NewReader(body),
 		)
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("Idempotency-Key", key)
@@ -715,7 +680,8 @@ func TestSessionHTTPAsyncCreateReturnsOperationAndCoalescesReplay(t *testing.T) 
 		handler.ServeHTTP(response, request)
 		return response
 	}
-	response := requestAsync("async-http-create", "responder")
+	create := service.request(t, "cold-session")
+	response := requestAsync("async-http-create", create)
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("async create status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -731,7 +697,7 @@ func TestSessionHTTPAsyncCreateReturnsOperationAndCoalescesReplay(t *testing.T) 
 	case <-time.After(time.Second):
 		t.Fatal("asynchronous create did not begin")
 	}
-	replay := requestAsync("async-http-create", "responder")
+	replay := requestAsync("async-http-create", create)
 	var replayed sessionAsyncOperationResponse
 	if replay.Code != http.StatusAccepted || json.Unmarshal(replay.Body.Bytes(), &replayed) != nil ||
 		replayed.Operation.ID != admitted.Operation.ID {
@@ -758,7 +724,9 @@ func TestSessionHTTPAsyncCreateReturnsOperationAndCoalescesReplay(t *testing.T) 
 		t.Fatalf("completed async operation = %+v", operation)
 	}
 
-	failure := requestAsync("async-http-invalid", "missing")
+	invalid := jobRequest(t, bareWorkerJob(), "invalid-bare-binding")
+	invalid.ControllerTools = &session.ControllerTools{Endpoint: "https://controller.example/v1/state-tools/mcp", Token: strings.Repeat("b", 48)}
+	failure := requestAsync("async-http-invalid", invalid)
 	if failure.Code != http.StatusBadRequest ||
 		!strings.Contains(failure.Body.String(), `"operation_id":"`) ||
 		!strings.Contains(failure.Body.String(), `"code":"invalid_request"`) {
@@ -795,19 +763,16 @@ func TestSessionHTTPPublishesTheGenericSourceBindingThroughCreateAndReview(t *te
 
 	checkout := filepath.Join(t.TempDir(), "checkout")
 	runGitTest(t, "", "clone", "-q", "-b", "main", remote, checkout)
-	policies := testSessionPolicies(checkout)
-	policy := policies["responder"]
-	policy.Remote, policy.Branch = "origin", "main"
-	policies["responder"] = policy
-	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), policies, nil)
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), seed, nil)
+	service.pullSource(t, seed, 514, pullHead, gitOut(seed, "rev-parse", "main"), gitOut(seed, "merge-base", "main", pullHead))
 	service.reviewGate = ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
 		return ReviewGateResult{Configured: true, Passed: true}, nil
 	})
 	defer service.Stop()
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 	create := sessionHTTPTestRequest(
 		t, handler, http.MethodPost, "/v1/sessions",
-		fmt.Sprintf(`{"policy":"responder","task":"pull request","source":{"kind":"pull_request","number":514,"expected_head_commit":%q}}`, pullHead),
+		service.body(t, "test:pull-request"),
 		"create-pull-http", "application/json",
 	)
 	if create.Code != http.StatusOK {
@@ -880,7 +845,8 @@ func TestSessionHTTPPublishesTheGenericSourceBindingThroughCreateAndReview(t *te
 		"review-pull-http", "application/json",
 	)
 	if review.Code != http.StatusOK {
-		t.Fatalf("review status=%d body=%s", review.Code, review.Body.String())
+		op, _ := service.Store().GetOperation(context.Background(), "review-pull-http")
+		t.Fatalf("review status=%d body=%s operation error=%s: %s", review.Code, review.Body.String(), op.ErrorCode, op.ErrorDetail)
 	}
 	reviewed := wireSource(review.Body.Bytes(), "review", "source")
 	if reviewed["kind"] != "pull_request" || reviewed["selected_commit"] != pullHead ||
@@ -892,7 +858,7 @@ func TestSessionHTTPPublishesTheGenericSourceBindingThroughCreateAndReview(t *te
 func TestSessionHTTPRouteWiring(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 	post := func(path, body, key string) *httptest.ResponseRecorder {
 		return sessionHTTPTestRequest(t, handler, http.MethodPost, path, body, key, "application/json")
 	}
@@ -900,7 +866,7 @@ func TestSessionHTTPRouteWiring(t *testing.T) {
 		return sessionHTTPTestRequest(t, handler, http.MethodGet, path, "", "", "")
 	}
 
-	createdResponse := post("/v1/sessions", `{"policy":"responder","task":"routes"}`, "route-create")
+	createdResponse := post("/v1/sessions", service.body(t, "routes"), "route-create")
 	var created sessionMutationSessionResponse
 	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
@@ -985,9 +951,9 @@ func TestSessionHTTPRouteWiring(t *testing.T) {
 func TestSessionHTTPGeneratedArtifactIsSeparateFromTurnJSON(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 	createdResponse := sessionHTTPTestRequest(
-		t, handler, http.MethodPost, "/v1/sessions", `{"policy":"responder","task":"image"}`,
+		t, handler, http.MethodPost, "/v1/sessions", service.body(t, "image"),
 		"image-create", "application/json",
 	)
 	var created sessionMutationSessionResponse
@@ -1053,9 +1019,9 @@ func TestSessionHTTPGeneratedArtifactIsSeparateFromTurnJSON(t *testing.T) {
 func TestSessionHTTPTurnPublishesRecordedUsage(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 	createdResponse := sessionHTTPTestRequest(
-		t, handler, http.MethodPost, "/v1/sessions", `{"policy":"responder","task":"usage"}`,
+		t, handler, http.MethodPost, "/v1/sessions", service.body(t, "usage"),
 		"usage-create", "application/json",
 	)
 	var created sessionMutationSessionResponse
@@ -1145,9 +1111,9 @@ func TestSessionHTTPTurnPublishesRecordedUsage(t *testing.T) {
 func TestATurnSubmittedWithAnEscalationFloorCarriesItOffTheWire(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t, "codex@work", "codex:fallback-model@work")
 	defer service.Stop()
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 	createdResponse := sessionHTTPTestRequest(
-		t, handler, http.MethodPost, "/v1/sessions", `{"policy":"responder","task":"escalation"}`,
+		t, handler, http.MethodPost, "/v1/sessions", service.body(t, "escalation"),
 		"floor-create", "application/json",
 	)
 	var created sessionMutationSessionResponse
@@ -1188,9 +1154,9 @@ func TestATurnSubmittedWithAnEscalationFloorCarriesItOffTheWire(t *testing.T) {
 func TestATurnSubmittedWithATargetRewindCarriesItOffTheWire(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t, "codex@work", "claude@work")
 	defer service.Stop()
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 	createdResponse := sessionHTTPTestRequest(
-		t, handler, http.MethodPost, "/v1/sessions", `{"policy":"responder","task":"fallback"}`,
+		t, handler, http.MethodPost, "/v1/sessions", service.body(t, "fallback"),
 		"rewind-create", "application/json",
 	)
 	var created sessionMutationSessionResponse
@@ -1232,22 +1198,16 @@ func (r *preparingHTTPRunner) PrepareSession(_ context.Context, _ session.Sessio
 func TestSessionHTTPPreparesPolicyOptedWarmExecution(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
-	policies := testSessionPolicies(repo)
-	policy := policies["responder"]
-	policy.WarmIdleTimeout = 15 * time.Minute
-	policies["responder"] = policy
 	runner := &preparingHTTPRunner{}
-	service, err := newSessionServiceWithTestStorage(t, Config{
-		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: policies, Runner: runner,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	service := newSessionFixture(t, Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"), Runner: runner,
+	}, repo)
+	service.Job.Limits.WarmIdleTimeoutMS = int64((15 * time.Minute) / time.Millisecond)
 	defer service.Stop()
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 	createdResponse := sessionHTTPTestRequest(
 		t, handler, http.MethodPost, "/v1/sessions",
-		`{"policy":"responder","task":"warm route"}`, "warm-create", "application/json",
+		service.body(t, "warm-route"), "warm-create", "application/json",
 	)
 	var created sessionMutationSessionResponse
 	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
@@ -1265,7 +1225,7 @@ func TestSessionHTTPPreparesPolicyOptedWarmExecution(t *testing.T) {
 
 // newHTTPTestSessionService builds the handler's service on the one-rung test policy, or on the
 // ladder given — which a test needs before it can name a rung above the first.
-func newHTTPTestSessionService(t *testing.T, ladder ...string) (*Service, string) {
+func newHTTPTestSessionService(t *testing.T, ladder ...string) (*sessionFixture, string) {
 	t.Helper()
 	repo, git := gitrepo.New(t)
 	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".agent/tasks/\n"), 0o644); err != nil {
@@ -1273,23 +1233,21 @@ func newHTTPTestSessionService(t *testing.T, ladder ...string) (*Service, string
 	}
 	git("add", ".gitignore")
 	git("commit", "-q", "-m", "base")
-	policies := testSessionPolicies(repo)
-	if len(ladder) > 0 {
-		policy := policies["responder"]
-		policy.Targets = mustTargets(ladder...)
-		policies["responder"] = policy
-	}
-	service, err := newSessionServiceWithTestStorage(t, Config{
-		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: policies,
-		Runner: &httpTestSessionRunner{},
+	fixture := newSessionFixture(t, Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"),
+		Runner:    &httpTestSessionRunner{},
 		ReviewGate: ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
 			return ReviewGateResult{Configured: true, Passed: true}, nil
 		}),
-	})
+	}, repo)
+	if len(ladder) > 0 {
+		fixture.Job.Targets = ladder
+	}
+	staged, err := stagedJobRepository(context.Background(), fixture.stateRoot, *fixture.Job.Source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return service, repo
+	return fixture, staged
 }
 
 type httpTestSessionRunner struct {
@@ -1341,13 +1299,13 @@ func shortSessionSocketRoot(t *testing.T) string {
 // request: a controller revoking authority must keep retrying rather than stop on a false 400.
 func TestSessionHTTPFenceReportsServiceFailuresAsInternal(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 	if err := service.Stop(); err != nil {
 		t.Fatal(err)
 	}
 	response := sessionHTTPTestRequest(
 		t, handler, http.MethodPost, "/v1/operations/fence",
-		`{"method":"CreateRemoteSession","request":{"policy":"responder","task":"after stop"}}`,
+		`{"method":"CreateRemoteSession","request":`+service.body(t, "after-stop")+`}`,
 		"fenced-after-stop", "application/json",
 	)
 	if response.Code == http.StatusBadRequest || strings.Contains(response.Body.String(), `"code":"invalid_request"`) {
@@ -1369,9 +1327,9 @@ func TestSessionHTTPFenceReportsServiceFailuresAsInternal(t *testing.T) {
 func TestSessionHTTPDiscardRetireQuarantinedBody(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
-	handler := NewHTTPHandler(service)
+	handler := NewHTTPHandler(service.Service)
 	response := sessionHTTPTestRequest(
-		t, handler, http.MethodPost, "/v1/sessions", `{"policy":"responder","task":"retire body"}`,
+		t, handler, http.MethodPost, "/v1/sessions", service.body(t, "retire-body"),
 		"create-retire-body", "application/json",
 	)
 	if response.Code != http.StatusOK {

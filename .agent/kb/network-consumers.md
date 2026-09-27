@@ -2,8 +2,8 @@
 name: network-consumers
 description: how the loop, direct/ACP runs and remote sessions consume one frozen network capture, and which surface reads which evidence
 subsystem: networking
-sources: [internal/networkreport/report.go, internal/box/run.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/acpctl/warm.go, internal/cli/fork_cmd.go, internal/cli/fork_acp.go, internal/cli/boxsweep.go, internal/forkctl/merge.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/cli/session_policies_view.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/session/schema.go, internal/workerproto/protocol.go]
-updated: 2026-09-25
+sources: [internal/networkreport/report.go, internal/box/run.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/acpctl/warm.go, internal/cli/fork_cmd.go, internal/cli/fork_acp.go, internal/cli/boxsweep.go, internal/forkctl/merge.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/networkstate/job.go, internal/session/schema.go, internal/workerproto/protocol.go]
+updated: 2026-09-26
 ---
 
 Admission happens ONCE per unit of work and the resulting `*box.CapturedEgress` is passed down; no
@@ -39,35 +39,20 @@ frozen policy, or it would meet a denial instead of a refusal at launch. Refusal
 an iteration and print between iterations, never over the live bar, plus one ranked closing summary
 (`loop/network.go:91`, `:158`).
 
-A **session policy** is the one consumer that publishes its reach BEFORE anyone asks for a launch.
-The daemon resolves each policy's effective fingerprint when it loads them AND again whenever it is
-asked (`/v1/capabilities`, `coop sessions policies`, every fenced create), so an approval edited on
-the host is reflected without a restart — the same inputs
-`Admit` compiles, through the same assembly (`box/network_session.go:159` builds the plan;
-`networkstate/admission.go:152` builds the authority), but through `Store.Resolve` instead of
-`Store.Admit`, so nothing is published: no approval, no snapshot, not even an owner key
-(`OpenExisting`, never `Open`, and a first-seen provider bundle is matched, not pinned). A policy it
-cannot resolve refuses the whole load by name, exactly as an unparsable one does
-(`sessionsvc/network.go:131`) — serving it would advertise a reach nobody could pin. The value
-reaches callers through `GET /v1/capabilities` and `coop sessions policies`, and a create pins it
-as `expected_network_fingerprint`: the fence resolves FRESH and refuses
-`network_fingerprint_mismatch` (409) beside the existing digest fence, before any intent is
-journaled (`sessionsvc/service.go:987`). The published value is the daemon's LOAD-time resolution,
-so after an approval edit it is stale until a restart; the refusal names the current one, and
-`coop sessions policies` (a fresh process) always resolves fresh.
-
-**Remote sessions** freeze the posture at create. The session row stores mode, owner-keyed
-fingerprint and qualification id (schema 21, `session/schema.go:245`); every later run — cold turn,
-warm child, resume, replay — loads that snapshot instead of admitting again, so an approval or
-config edit landing mid-session can only produce a visible denial. Then:
+**Remote sessions** receive one canonical controller-authored job at create. The job supplies
+network mode and explicit rules; no local policy registry, project requests or remembered operator
+approval participates. `box.AdmitControllerJobNetwork` freezes the rules plus provider dependencies
+in an owner-private snapshot scoped to job digest and session id (`networkstate.CaptureJob`). The
+session row stores mode, fingerprint and qualification; cold turn, warm child, resume and replay
+reuse that exact snapshot. Repository settings cannot change its reach. Then:
 
 - The daemon is the child's HOST parent and scrubs every `COOP_*` from the environment it builds, so
   `COOP_NETWORK_CAPTURE` (`box/network_session.go:22`) can only be set there
   (`sessionsvc/network.go:129`). It carries a *reference* — project, fingerprint, qualification,
   session, attempt — not authority.
 - The child proves it: `OpenExisting` (never `Open`, so a child cannot create an owner key) plus
-  `LoadSnapshot` of that exact project+fingerprint pair (`box/network_session.go:195`). A forged or
-  cross-project reference produces no snapshot and no launch.
+  `LoadJobSnapshot` of the exact job digest, session id and fingerprint. A forged or cross-job
+  reference produces no snapshot and no launch. Local ACP continues to prove a project snapshot.
 - After the child exits the daemon checks every run registered against the session against the
   immutable row's fingerprint and FAILS the turn on a mismatch (`sessionsvc/network.go:210`). An
   inventory it could not read WHOLE fails the turn too (`sessionsvc/network.go:311`): the record it
@@ -81,10 +66,9 @@ The API adds four reads under `GET /v1/sessions/{id}/network`: the live summary,
 (the newest run's bounded rows), `/explanations/{event}` (one retained refusal) and `/receipt`
 (aggregate, final once closed) (`sessionsvc/http.go:483`), a `network` event on the session stream
 whose payload is bounded by construction (refusals grouped and capped, alerts capped),
-`SessionDTO.network`, and the four mirroring worker commands `get_network`,
-`get_network_connections`, `get_network_explanation`, `get_network_receipt`
-(`workerproto/protocol.go:29`). None of them is a path to authority: the API has no approval verb
-at all, and the daemon owns the destination projection every one of them applies.
+`SessionDTO.network`, and the same reads through the generic worker `api_request` transport.
+There is no second worker command vocabulary. None of these reads grants authority: the saved job
+controls whether destination names are exported, and the daemon applies that projection.
 
 `coop net` is the host operator's read surface, grouped by the job a person arrives with
 (`cli/net_cmd.go:49`): ACCESS (what a new run may reach), RUNS (what recorded runs did), REPAIR
@@ -153,6 +137,9 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-09-26 — removed the retired policy-resolution path and its unused box adapter; reverified
+  controller admission, job-scoped snapshots, child proofs and generic API network reads. Local
+  project/ACP/loop admission is unchanged.
 - 2026-09-25 — reverified local fork ACP after the live editor test: its new fixed-target supervisor
   admits once, hands each child a proved capture reference plus account bindings, and leaves the
   remote/restricted direct adapter path unchanged.

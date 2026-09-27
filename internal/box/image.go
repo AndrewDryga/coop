@@ -111,7 +111,7 @@ ARG ASDF_VERSION=0.19.0
 # shells — but agents commonly shell out through a profile-sourcing login shell).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      build-essential autoconf m4 libncurses-dev libssl-dev unzip locales curl git ca-certificates \
+      build-essential autoconf m4 libncurses-dev libssl-dev unzip locales curl git git-lfs ca-certificates \
       postgresql-client procps inotify-tools util-linux socat \
       python3 python-is-python3 python3-pip \
       ripgrep fd-find jq tree shellcheck \
@@ -125,6 +125,7 @@ RUN apt-get update \
       | tar -C /usr/local/bin -xzf - asdf \
  && apt-get clean && rm -rf /var/lib/apt/lists/* \
  && git config --system --add safe.directory '*' \
+ && git lfs install --system --skip-repo \
  && mkdir -p /home/node/.asdf /home/node/.cache && chown node:node /home/node/.asdf /home/node/.cache \
  && %s
 
