@@ -70,6 +70,9 @@ func protectRunPrivateState(cfg *config.Config, spec RunSpec, allow authorityMou
 		}
 		if stateRoot := remoteSessionStateRoot(cfg, spec); stateRoot != "" {
 			allow.privateRoots = appendUniqueAuthorityPath(allow.privateRoots, stateRoot)
+			if err := allowControllerJobSources(cfg, spec, stateRoot, &allow); err != nil {
+				return allow, err
+			}
 			if spec.SessionOutputRoot != "" && filepath.Clean(filepath.Dir(spec.SessionOutputRoot)) != filepath.Join(stateRoot, "output") {
 				return allow, errors.New("read-only session output is outside its private session state")
 			}
@@ -81,6 +84,113 @@ func protectRunPrivateState(cfg *config.Config, spec RunSpec, allow authorityMou
 		allow.sources[spec.SessionOutputRoot] = true
 	}
 	return allow, nil
+}
+
+// A controller job's fetched source and companion snapshots live inside the service's otherwise
+// protected state. Admit only this run's bound, owner-private mount roots; the rest of that tree
+// (including the source mirror, other sessions and control socket) stays behind the fence.
+func allowControllerJobSources(cfg *config.Config, spec RunSpec, stateRoot string, allow *authorityMountAllowlist) error {
+	if !spec.ControllerJob || spec.RunID == "" || spec.ForkName == "" || spec.ForkGeneration == "" {
+		return nil
+	}
+	sessionID := filepath.Base(cfg.ConfigDir)
+	if spec.ActivityKind != "" && spec.ActivityKind != forkspace.ExecutionRemoteSession ||
+		spec.ActivityReservationOwner != "" && spec.ActivityReservationOwner != sessionID {
+		return nil
+	}
+	sourceRepo, identity, err := forkspace.ResolveProjectBinding(spec.Repo)
+	if err != nil {
+		return err
+	}
+	if identity == nil || identity.Name != spec.ForkName || string(identity.Generation) != spec.ForkGeneration ||
+		spec.ActivityRepo != "" && spec.ActivityRepo != sourceRepo {
+		return nil
+	}
+	reservation, reserved, err := forkspace.ReadWorkspaceReservation(sourceRepo, *identity)
+	if err != nil {
+		return err
+	}
+	if !reserved || reservation.Kind != forkspace.WorkspaceReservationRemoteSession || reservation.OwnerID != sessionID {
+		return nil
+	}
+	// The service may have staged the primary under a state-root alias (for example macOS
+	// /var -> /private/var); the credential projection uses the canonical root. Permit that
+	// ancestor alias, but never a symlink inside the service-owned source tree.
+	sourceStateRoot := filepath.Dir(filepath.Dir(filepath.Dir(sourceRepo)))
+	canonicalRoot, err := filepath.EvalSymlinks(sourceStateRoot)
+	if err != nil {
+		return err
+	}
+	configuredRoot, err := filepath.EvalSymlinks(stateRoot)
+	if err != nil {
+		return err
+	}
+	if canonicalRoot != configuredRoot {
+		return nil
+	}
+	rel, err := filepath.Rel(filepath.Join(sourceStateRoot, "job-sources"), sourceRepo)
+	if err != nil {
+		return err
+	}
+	parts := strings.Split(rel, string(filepath.Separator))
+	if len(parts) != 2 || len(parts[0]) != 64 || parts[1] != "repository" ||
+		!lowerHex(parts[0]) || spec.Repo != forkspace.Workspace(sourceRepo, spec.ForkName) {
+		return nil
+	}
+	if err := validateGeneratedSessionSource(sourceStateRoot, spec.Repo); err != nil {
+		return err
+	}
+	allow.sources[spec.Repo] = true
+	for _, companion := range spec.CompanionRepositories {
+		if companion.Name == "" || filepath.Base(companion.Name) != companion.Name ||
+			companion.Name == "." || companion.Name == ".." ||
+			companion.HostPath != filepath.Join(stateRoot, "repositories", sessionID, companion.Name) {
+			return errors.New("controller job companion mount is outside its session")
+		}
+		if err := validateGeneratedSessionSource(stateRoot, companion.HostPath); err != nil {
+			return err
+		}
+		if allow.readonlySources == nil {
+			allow.readonlySources = map[string]bool{}
+		}
+		allow.readonlySources[companion.HostPath] = true
+	}
+	return nil
+}
+
+func validateGeneratedSessionSource(root, source string) error {
+	rel, err := filepath.Rel(root, source)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return errors.New("controller job mount is outside session state")
+	}
+	parts := strings.Split(rel, string(filepath.Separator))
+	path := root
+	for index := -1; index < len(parts); index++ {
+		if index >= 0 {
+			path = filepath.Join(path, parts[index])
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return fmt.Errorf("inspect controller job mount %q: %w", path, err)
+		}
+		stat, owned := info.Sys().(*syscall.Stat_t)
+		// The service state, source store and per-session directory are private. Fork homes
+		// and Git checkouts may be 0755, but their private ancestor keeps them unreachable.
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !owned || stat.Uid != uint32(os.Geteuid()) ||
+			index < 2 && info.Mode().Perm()&0o077 != 0 {
+			return fmt.Errorf("controller job mount %q has an unsafe directory", path)
+		}
+	}
+	return nil
+}
+
+func lowerHex(value string) bool {
+	for _, digit := range value {
+		if digit < '0' || digit > '9' && digit < 'a' || digit > 'f' {
+			return false
+		}
+	}
+	return true
 }
 
 func remoteSessionStateRoot(cfg *config.Config, spec RunSpec) string {
@@ -199,7 +309,7 @@ func validateAuthorityMounts(ctx context.Context, spec RunSpec, options []string
 			return err
 		}
 		if bind.writable && readonlySources[canonical] {
-			return fmt.Errorf("eval verifier mount %q must be read-only", bind.source)
+			return fmt.Errorf("runtime mount %q must be read-only", bind.source)
 		}
 		if err := checkAuthoritySource(bind.source, bind.writable, projects, private, allowedSources, allowedSourceTrees); err != nil {
 			return err

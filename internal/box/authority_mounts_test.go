@@ -522,6 +522,142 @@ func TestAuthorityMountGuardAllowsOnlyOneRemoteSessionOutputSubtree(t *testing.T
 	}
 }
 
+func TestAuthorityMountGuardAllowsOnlyBoundControllerJobSources(t *testing.T) {
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "sessions")
+	t.Setenv(ServiceStateRootEnv, stateRoot)
+	sessionID := "remote_123"
+	repo := filepath.Join(stateRoot, "job-sources", strings.Repeat("a", 64), "repository")
+	workspace := forkspace.Workspace(repo, "remote-fork")
+	companion := filepath.Join(stateRoot, "repositories", sessionID, "docs")
+	for _, dir := range []string{repo, workspace, companion, filepath.Join(stateRoot, "acp", sessionID)} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unlock, err := forkspace.LockState(repo, "remote-fork")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := forkspace.EnsureGenerationLocked(repo, "remote-fork")
+	if err == nil {
+		err = forkspace.ReserveWorkspaceLocked(repo, forkspace.WorkspaceReservation{
+			Version: forkspace.WorkspaceReservationVersion, Fork: identity,
+			Kind: forkspace.WorkspaceReservationRemoteSession, OwnerID: sessionID,
+			CreatedAt: time.Now().UTC(),
+		})
+	}
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{forkspace.Home(repo), workspace, companion} {
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := &config.Config{ConfigDir: filepath.Join(stateRoot, "acp", sessionID)}
+	spec := RunSpec{
+		Repo: workspace, ActivityRepo: repo, ForkName: identity.Name,
+		ForkGeneration: string(identity.Generation), RunID: "session-" + strings.Repeat("ab", 12),
+		ActivityKind: forkspace.ExecutionRemoteSession, ActivityReservationOwner: sessionID,
+		ControllerJob:         true,
+		CompanionRepositories: []CompanionRepository{{Name: "docs", HostPath: companion}},
+	}
+	allow, err := protectRunPrivateState(cfg, spec, authorityMountAllowlist{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, source string
+		allowed      bool
+	}{
+		{"bound workspace", workspace, true},
+		{"bound companion", companion, true},
+		{"whole session state", stateRoot, false},
+		{"source mirror", repo, false},
+		{"other session companion", filepath.Join(stateRoot, "repositories", "remote_other", "docs"), false},
+		{"other session workspace", filepath.Join(stateRoot, "job-sources", strings.Repeat("b", 64), "repository-forks", "remote-fork"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateAuthorityMounts(context.Background(), spec,
+				[]string{"-v", tc.source + ":/host:ro"}, "", nil, allow)
+			if (err == nil) != tc.allowed {
+				t.Fatalf("mount decision = %v, want allowed=%v", err, tc.allowed)
+			}
+		})
+	}
+	if err := validateAuthorityMounts(context.Background(), spec,
+		[]string{"-v", companion + ":/host"}, "", nil, allow); err == nil {
+		t.Fatal("controller job companion accepted a writable mount")
+	}
+	restricted := spec
+	restricted.ActivityRepo = ""
+	restricted.ActivityKind = ""
+	restricted.ActivityReservationOwner = ""
+	restrictedAllow, err := protectRunPrivateState(cfg, restricted, authorityMountAllowlist{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateAuthorityMounts(context.Background(), restricted,
+		[]string{"-v", workspace + ":/host:ro"}, "", nil, restrictedAllow); err != nil {
+		t.Fatalf("restricted controller job workspace refused: %v", err)
+	}
+	aliasParent := filepath.Join(root, "alias-parent")
+	if err := os.Symlink(root, aliasParent); err != nil {
+		t.Fatal(err)
+	}
+	aliased := spec
+	aliased.ActivityRepo = filepath.Join(aliasParent, "sessions", "job-sources", strings.Repeat("a", 64), "repository")
+	aliased.Repo = forkspace.Workspace(aliased.ActivityRepo, aliased.ForkName)
+	aliasedAllow, err := protectRunPrivateState(cfg, aliased, authorityMountAllowlist{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateAuthorityMounts(context.Background(), aliased,
+		[]string{"-v", aliased.Repo + ":/host:ro"}, "", nil, aliasedAllow); err != nil {
+		t.Fatalf("state-root ancestor alias refused: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		edit func(*RunSpec)
+	}{
+		{"not a controller job", func(s *RunSpec) { s.ControllerJob = false }},
+		{"not a remote session", func(s *RunSpec) { s.RunID = "" }},
+		{"wrong session owner", func(s *RunSpec) { s.ActivityReservationOwner = "remote_other" }},
+		{"companion outside owner tree", func(s *RunSpec) { s.CompanionRepositories[0].HostPath = filepath.Join(stateRoot, "acp", sessionID) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			changed := spec
+			changed.CompanionRepositories = append([]CompanionRepository(nil), spec.CompanionRepositories...)
+			tc.edit(&changed)
+			allowed, err := protectRunPrivateState(cfg, changed, authorityMountAllowlist{})
+			if err == nil {
+				err = validateAuthorityMounts(context.Background(), changed,
+					[]string{"-v", workspace + ":/host"}, "", nil, allowed)
+			}
+			if err == nil {
+				t.Fatal("unbound controller job mounted protected workspace")
+			}
+		})
+	}
+	alias := filepath.Join(stateRoot, "repositories", sessionID, "alias")
+	if err := os.Symlink(companion, alias); err != nil {
+		t.Fatal(err)
+	}
+	changed := spec
+	changed.CompanionRepositories = []CompanionRepository{{Name: "alias", HostPath: alias}}
+	if _, err := protectRunPrivateState(cfg, changed, authorityMountAllowlist{}); err == nil {
+		t.Fatal("controller job companion accepted a symlinked snapshot")
+	}
+	if err := os.Chmod(filepath.Dir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := protectRunPrivateState(cfg, spec, authorityMountAllowlist{}); err == nil {
+		t.Fatal("controller job accepted a shared source-store ancestor")
+	}
+}
+
 func TestAuthorityMountGuardAllowsOnlyScopedEnvironmentFiles(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv(ServiceStateRootEnv, filepath.Join(root, "service-state"))

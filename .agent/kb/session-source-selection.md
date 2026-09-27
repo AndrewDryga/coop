@@ -2,7 +2,7 @@
 name: session-source-selection
 description: controller jobs freeze exact source bindings; the worker verifies private staging and refreshes the default separately without changing the admitted checkout
 subsystem: sessions
-sources: [internal/workerproto/job.go, internal/workerconnector/job_sources.go, internal/forkspace/lfs.go, internal/sessionsvc/job.go, internal/sessionsvc/job_tree.go, internal/sessionsvc/empty_source.go, internal/sessionsvc/source.go, internal/sessionsvc/service.go, internal/sessionsvc/workspace.go, internal/session/records.go]
+sources: [internal/workerproto/job.go, internal/workerconnector/job_sources.go, internal/forkspace/lfs.go, internal/sessionsvc/job.go, internal/sessionsvc/job_tree.go, internal/sessionsvc/empty_source.go, internal/sessionsvc/source.go, internal/sessionsvc/service.go, internal/sessionsvc/workspace.go, internal/box/authority_mounts.go, internal/session/records.go]
 updated: 2026-09-27
 ---
 
@@ -39,6 +39,13 @@ including each companion's name, repository, workspace and selected commit. The 
 budget is extendable; source and execution authority are not. Historical rows without a job
 remain inspectable and eligible for exact-owned cleanup, never a fallback execution path.
 
+Job workspaces and companion snapshots live below Coop's otherwise protected session state.
+The box mount guard admits only the reserved fork and that session's companion checkouts beneath
+owner-private service directories;
+companions remain read-only. The source mirror, control socket, parent directories, symlinked
+roots and another session's files are never sandbox mounts. A host alias above the service state
+(such as `/var` on macOS) is canonicalized; an alias within its job-source tree is not trusted.
+
 Review and changes need a fresh upstream default, not the private staged HEAD. SourceRefresher
 is the trusted-host boundary for that fetch. It must use the saved job and source, import the
 current default's objects without updating a ref, and leave staged HEAD at the original selected
@@ -51,6 +58,8 @@ fetch the selected commit. Neither a branch advance nor an idempotent create ret
 code. The API exposes source metadata through explicit DTO projection, never JobDocument.
 
 ## Changelog
+- 2026-09-27 — live v2 turn exposed the mount guard rejecting its own staged fork; admitted only
+  generation-bound controller-job workspace and session-owned read-only companion snapshots.
 - 2026-09-27 — implemented full Git/recursive source custody, scoped LFS transfer and offline
   materialization; verified cold/warm, nested, hostile-URL, zero-size and model-edited binary paths.
   Reproduced LFS diagnostic credential retention and eliminated secret-valued environment entries.
