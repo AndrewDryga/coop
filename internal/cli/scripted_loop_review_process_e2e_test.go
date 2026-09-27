@@ -20,6 +20,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/loopcfg"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 func TestProviderScriptedLoopReviewProcess(t *testing.T) {
@@ -1607,7 +1608,7 @@ func runLoopReview(t *testing.T, suite *directProcessSuite, target string, timeo
 func runLoopReviewPTY(t *testing.T, suite *directProcessSuite, target string) procharness.Result {
 	t.Helper()
 	command := terminalLoopCommand(t, loopReviewCommand(suite, target))
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
 	defer cancel()
 	return procharness.Run(ctx, command)
 }
