@@ -10,7 +10,3 @@ var (
 )
 
 const CoopIgnoreFile = shadowpath.CoopIgnoreFile
-
-type UserGlobs = shadowpath.UserGlobs
-
-func LoadUserGlobs(repo string) UserGlobs { return shadowpath.LoadUserGlobs(repo) }

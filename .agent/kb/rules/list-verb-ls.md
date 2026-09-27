@@ -4,7 +4,7 @@ description: "listing subcommands are `ls`, the only spelling (no `list` alias i
 scope: cli-grammar
 sources: [internal/cli/help.go, internal/cli/conformance_test.go]
 check: "go test ./internal/cli -run TestCLIConformance"
-updated: 2026-09-10
+updated: 2026-09-27
 ---
 
 # Listing subcommands use `ls` — the only spelling (no `list` alias in v3)
@@ -20,7 +20,7 @@ dual-accepting compat. This mirrors [[destructive-verb-rm]] exactly (rm is the o
 
 **How to apply:**
 - A new listing subcommand: name it `ls`; do NOT add a `list` alias. Advertise `ls` in the help row,
-  group-help line, usage string, and `unknownErr` suggestion list.
+  group-help line, usage string, and unknown-subcommand suggestions.
 - Dispatch is a single `case "ls":` (no `, "list"`), and `list` is NOT in `tasksVerbs`/`isTasksSubcommand`.
 - Prose descriptions may still say "list" as the English verb ("ls — list tasks by state"); that's
   the *description*, not an accepted subcommand.
@@ -29,6 +29,8 @@ dual-accepting compat. This mirrors [[destructive-verb-rm]] exactly (rm is the o
 See also [[destructive-verb-rm]] (the sibling: rm is the only destructive verb) and [[help-output-style]].
 
 ## Changelog
+- 2026-09-27 — removed a reference to the obsolete test-only `unknownErr` helper; the
+  `TestCLIConformance` command still checks the accepted listing verb.
 - 2026-06-29 — created
 - 2026-07-02 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged

@@ -125,8 +125,7 @@ func lastLines(s string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
-// truncate shortens s to n runes, marking elision with an ellipsis. internal/cli/util.go keeps its
-// own copy (used well beyond the task views) for the same reason gitOut does; see git.go.
+// truncate shortens s to n runes, marking elision with an ellipsis.
 func truncate(s string, n int) string {
 	if n <= 0 {
 		return "" // guards the r[:n-1] / r[:n] negative-index panic on a non-positive width

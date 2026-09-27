@@ -118,7 +118,7 @@ func TestCmdForkListRetired(t *testing.T) {
 }
 
 // A typo'd --profile must fail (exit 2) before any image/clone work, so it never leaves a stray
-// fork behind. The check runs before resolveImage, so it returns without a runtime.
+// fork behind. The check runs before resolveLaunchImage, so it returns without a runtime.
 func TestForkCreateRejectsUnknownProfileBeforeClone(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}} // no profiles signed in
 	if code, err := a.forkCreate([]string{"scratchfork", "claude", "--profile", "ghost"}); code != 2 || err == nil {

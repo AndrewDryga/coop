@@ -392,7 +392,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	var nudges []string
 	if capture == nil {
 		if !box.ImageExists(c.rt, img) {
-			// Same rule as resolveImage: a dead daemon looks exactly like a missing image, and an
+			// Same rule as requireLaunchImage: a dead daemon looks exactly like a missing image, and an
 			// overnight drain that dies on "run 'coop build'" hides the real cause until morning.
 			if err := c.rt.EnsureDaemon(); err != nil {
 				return -1, err

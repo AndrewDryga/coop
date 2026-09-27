@@ -13,7 +13,6 @@ import (
 const ConsultWrapperPath = "/usr/local/bin/coop-consult"
 
 const (
-	consultStreamLimitBytes  = 1 << 20
 	consultPromptLimitBytes  = 512 << 10
 	consultContextLimitBytes = 512 << 10
 )

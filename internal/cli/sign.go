@@ -215,10 +215,6 @@ func headUnsigned(repo string) bool {
 	return obj != "" && !strings.Contains(obj, "\ngpgsig ")
 }
 
-// promptSignWarn reports whether `coop prompt` should show an unsigned nudge: you sign by default
-// but HEAD is unsigned (a box commit not yet signed). Pure — the caller supplies the two facts.
-func promptSignWarn(signs, headUnsigned bool) bool { return signs && headUnsigned }
-
 // cmdSign re-signs the current branch's unpushed commits with your host signing key — for a remote
 // (a protected main) that requires signatures, since box commits are unsigned. Never pushes, never
 // rewrites pushed history.

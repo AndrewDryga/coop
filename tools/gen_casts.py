@@ -2,11 +2,13 @@
 """
 Generate asciinema v2 .cast files for the coop website (site/casts/*.cast).
 
-No third-party dependencies — just the stdlib. The scripted scenes reconstruct coop's
-live output faithfully: every line, color, and glyph matches internal/ui/ui.go and
-internal/cli/streamjson.go. They cover flows that need a container runtime and signed-in
-(paid) agents to run for real: an agent, the loop, forks, doctor, and check-secrets. To
-capture a real one instead, run e.g. `asciinema rec -c "coop loop" site/casts/loop.cast`.
+No third-party dependencies — just the stdlib. These illustrative scripted scenes use
+terminal colors and glyphs inspired by internal/ui/ui.go and internal/loop/streamjson.go;
+they are not current command-output recordings. They cover flows that need a container
+runtime and signed-in (paid) agents to run for real: an agent, the loop, forks, doctor,
+and check-secrets. To
+capture a real one instead, use `tools/capture_cast.py --task <id> --name <name> -- <command>`;
+review its task artifact before publishing it under site/casts/.
 
 Usage:  python3 tools/gen_casts.py              # (re)write every cast
         python3 tools/gen_casts.py loop fork    # only the named ones
@@ -66,7 +68,7 @@ def coop(rest):
 
 
 def chk(msg):
-    """A doctor check line — green ✓ then plain text (ui.Check)."""
+    """A doctor check line — green ✓ then plain text."""
     return "  " + green("✓") + " " + msg
 
 
@@ -227,9 +229,9 @@ class LoopBar:
 def scene_loop():
     """The headline: a fresh agent per iteration drains the .agent/tasks/ queue unattended, with the
     live bottom bar (spinner · progress · done/total · now: <task> · elapsed) pinned below the
-    scrolling activity — exactly what an interactive `coop loop` shows. Three small, real tasks ship
-    one commit each, then an audit pass verifies the work. Scripted to mirror ui.go's Region +
-    streamjson.go; to record a live run instead: asciinema rec -c "coop loop" site/casts/loop.cast"""
+    scrolling activity, illustrating the loop rather than reproducing current command output.
+    Three example tasks ship one commit each, then an audit pass verifies the work.
+    To record a live run instead, use tools/capture_cast.py with a task."""
     c = Cast("loop", cols=92, rows=26, title="coop loop — ship the backlog overnight")
     c.command("coop loop")
     c.line(coop("starting unattended loop on .agent/tasks with claude — 0/3 done (Ctrl-C to stop)"), after=0.5)

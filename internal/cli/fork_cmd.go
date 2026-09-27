@@ -466,7 +466,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 	}
 	// --fresh recreates an existing fork by destroying it first — run the same guard `fork rm` uses so
 	// it can't silently discard an agent's unmerged/uncommitted work (--fresh --force overrides). Do it
-	// BEFORE resolveImage (like parseForkCreate's flag checks): fail fast, never spin up an image to refuse.
+	// BEFORE resolveLaunchImage (like parseForkCreate's flag checks): fail fast, never spin up an image to refuse.
 	var originalHandle *os.File
 	var originalWS os.FileInfo
 	var originalGeneration forkspace.Identity
@@ -529,7 +529,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if fa.agent == "" {
 		return 2, noProviderErr("fork <name>")
 	}
-	_, img, err := a.resolveLaunchImage(true)
+	_, img, err := a.resolveLaunchImage()
 	if err != nil {
 		return -1, err
 	}
@@ -950,7 +950,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		if repo, err = box.ResolveRepo(a.cfg.RepoOverride); err != nil {
 			return -1, err
 		}
-	} else if repo, img, err = a.resolveLaunchImage(true); err != nil {
+	} else if repo, img, err = a.resolveLaunchImage(); err != nil {
 		return -1, err
 	}
 	ws := forkspace.Workspace(repo, name)

@@ -156,7 +156,7 @@ func (c *Control) MergeGate(repo string) (string, error) {
 		}
 	}
 	if !box.ImageExists(c.rt, img) {
-		// Same rule as resolveImage: `image inspect` cannot tell a missing image from a dead daemon,
+		// Same rule as requireLaunchImage: `image inspect` cannot tell a missing image from a dead daemon,
 		// and a merge blocked on the wrong one sends the fix at a build that would not have helped.
 		if err := c.rt.EnsureDaemon(); err != nil {
 			return "", err

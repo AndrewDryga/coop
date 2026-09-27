@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -23,30 +22,6 @@ func fileExists(path string) bool {
 func pathExists(path string) bool {
 	_, err := os.Lstat(path)
 	return err == nil
-}
-
-// paintCount renders a count, applying paint only when it's nonzero so a zero stays
-// plain — a "0 blocked" shouldn't read as an alarm.
-func paintCount(v int, paint func(string) string) string {
-	if v > 0 {
-		return paint(strconv.Itoa(v))
-	}
-	return strconv.Itoa(v)
-}
-
-// truncate shortens s to n runes, marking elision with an ellipsis.
-func truncate(s string, n int) string {
-	if n <= 0 {
-		return "" // guards the r[:n-1] / r[:n] negative-index panic on a non-positive width
-	}
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	if n <= 1 {
-		return string(r[:n])
-	}
-	return string(r[:n-1]) + "…"
 }
 
 // levenshtein returns the edit distance between a and b, for "did you mean" suggestions.
@@ -109,21 +84,6 @@ func rejectArgs(cmd string, args []string) error {
 	return ui.UnexpectedArgument(args[0], "coop "+cmd, "coop "+cmd)
 }
 
-// colWidth is the width to size a table column to: the widest value (counted in runes), clamped
-// to [min, max]. Values longer than max are meant to be ellipsis-truncated to max by the caller.
-func colWidth(values []string, min, max int) int {
-	w := min
-	for _, v := range values {
-		if n := utf8.RuneCountInString(v); n > w {
-			w = n
-		}
-	}
-	if w > max {
-		w = max
-	}
-	return w
-}
-
 // padRight right-pads s to w columns counted in RUNES — unlike fmt's %-Ns, which counts bytes and
 // so mis-pads a value carrying a multibyte glyph (e.g. a truncated name's "…").
 func padRight(s string, w int) string {
@@ -150,16 +110,6 @@ func unknownOptionErr(option, command string, valid []string) error {
 		suggestion = command + " " + guess
 	}
 	return ui.UnknownOption(option, command, suggestion)
-}
-
-// unknownErr is the shape for a rejected VALUE — an agent name, a credential attribute: `unknown
-// <noun> "<token>" — use: a, b, c`, with a "did you mean X?" when the token is a near-miss.
-// Rejected commands and options have their own approved blocks above.
-func unknownErr(noun, token string, valid []string) error {
-	if guess, ok := nearestCommand(token, valid); ok {
-		return fmt.Errorf("unknown %s %q — use: %s (did you mean %q?)", noun, token, strings.Join(valid, ", "), guess)
-	}
-	return fmt.Errorf("unknown %s %q — use: %s", noun, token, strings.Join(valid, ", "))
 }
 
 // gitOut runs `git -C dir <args>` hardened and returns trimmed stdout, or "" on error. Every repo

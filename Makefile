@@ -81,7 +81,7 @@ snapshot: ## Build a local release snapshot with GoReleaser (no publish, no sign
 doctor: build ## Integration check: prove isolation holds (needs a runtime)
 	@./coop doctor
 
-docs: ## Regenerate docs/cli.md + site/llms.txt from internal/cli (help.go is the single source)
+docs: ## Regenerate CLI, manpage, and site docs from internal/cli/help.go
 	@go run ./tools/gendocs
 
 docs-check: ## Fail if the committed CLI docs drifted from help.go (run 'make docs' to fix)

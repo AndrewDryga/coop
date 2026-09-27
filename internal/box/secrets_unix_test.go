@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func TestLoadUserGlobsRefusesUnboundedOrBlockingPolicyFiles(t *testing.T) {
+func TestNewShadowDeciderRefusesUnboundedOrBlockingPolicyFiles(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		plant func(*testing.T, string)
@@ -25,6 +25,10 @@ func TestLoadUserGlobsRefusesUnboundedOrBlockingPolicyFiles(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if _, err := file.WriteString("private.txt\n"); err != nil {
+				_ = file.Close()
+				t.Fatal(err)
+			}
 			if err := file.Truncate(coopIgnoreSnapshotLimit + 1); err != nil {
 				_ = file.Close()
 				t.Fatal(err)
@@ -33,7 +37,7 @@ func TestLoadUserGlobsRefusesUnboundedOrBlockingPolicyFiles(t *testing.T) {
 		}},
 		{"outward symlink", func(t *testing.T, path string) {
 			outside := filepath.Join(t.TempDir(), "policy")
-			if err := os.WriteFile(outside, []byte("*.secret\n"), 0o600); err != nil {
+			if err := os.WriteFile(outside, []byte("private.txt\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.Symlink(outside, path); err != nil {
@@ -45,12 +49,16 @@ func TestLoadUserGlobsRefusesUnboundedOrBlockingPolicyFiles(t *testing.T) {
 			repo := t.TempDir()
 			path := filepath.Join(repo, CoopIgnoreFile)
 			tc.plant(t, path)
-			done := make(chan UserGlobs, 1)
-			go func() { done <- LoadUserGlobs(repo) }()
+			type decision struct{ private, builtin bool }
+			done := make(chan decision, 1)
+			go func() {
+				hidden := NewShadowDecider(repo)
+				done <- decision{hidden("private.txt"), hidden(".env")}
+			}()
 			select {
 			case got := <-done:
-				if len(got.Base) != 0 || len(got.Path) != 0 {
-					t.Fatalf("unsafe policy produced globs: %+v", got)
+				if got.private || !got.builtin {
+					t.Fatalf("unsafe policy changed visibility: %+v", got)
 				}
 			case <-time.After(2 * time.Second):
 				if tc.name == "fifo" {
@@ -61,5 +69,12 @@ func TestLoadUserGlobsRefusesUnboundedOrBlockingPolicyFiles(t *testing.T) {
 				t.Fatal("unsafe .coopignore blocked policy loading")
 			}
 		})
+	}
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, CoopIgnoreFile), []byte("private.txt\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !NewShadowDecider(repo)("private.txt") {
+		t.Fatal("valid project policy did not hide its requested file")
 	}
 }

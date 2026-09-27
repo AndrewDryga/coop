@@ -15,6 +15,11 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
+func readNativeConfigWith(path string, open func(string) (*os.File, error), read func(io.Reader) ([]byte, error)) ([]byte, error) {
+	data, _, err := readConfigFileWith(path, "native MCP config", open, read)
+	return data, err
+}
+
 func writeTmp(t *testing.T, name, body string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), name)

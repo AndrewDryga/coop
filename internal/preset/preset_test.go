@@ -72,8 +72,8 @@ func TestLoadFrontier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Lead().Provider != "claude" || p.LeadModel() != "claude-fable-5" {
-		t.Errorf("lead = %s/%s", p.Lead().Provider, p.LeadModel())
+	if p.Lead().Provider != "claude" || p.Lead().Model != "claude-fable-5" {
+		t.Errorf("lead = %s/%s", p.Lead().Provider, p.Lead().Model)
 	}
 	if len(p.LeadTargets) != 2 || p.LeadTargets[0].String() != "claude:claude-fable-5" || p.LeadTargets[1].String() != "claude:claude-opus-4-8@work" {
 		t.Errorf("lead targets = %v", p.LeadTargets)
@@ -308,8 +308,8 @@ func TestScaffold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the scaffolded template must load cleanly: %v", err)
 	}
-	if p.Lead().Provider != "claude" || p.LeadModel() != "claude-fable-5" {
-		t.Errorf("template lead = %s/%s", p.Lead().Provider, p.LeadModel())
+	if p.Lead().Provider != "claude" || p.Lead().Model != "claude-fable-5" {
+		t.Errorf("template lead = %s/%s", p.Lead().Provider, p.Lead().Model)
 	}
 	wantLadder := []string{"claude:claude-fable-5/xhigh", "codex:gpt-5.6-sol/xhigh"}
 	if len(p.LeadTargets) != len(wantLadder) {

@@ -37,13 +37,9 @@ func loadProject(repoOverride string) (string, *project.Project, error) {
 	return repo, p, nil
 }
 
-// resolveImage resolves the repo and its image, verifying the image is built. After an upgrade,
-// Coop's own base is built here, before any box needs it.
-func (a *app) resolveImage() (repo, img string, err error) { return a.resolveLaunchImage(false) }
-
 // A launch defers availability until admission: filtered mode runs a separately approved image,
 // not the ordinary tag selected here. Nonfiltered callers must then requireLaunchImage.
-func (a *app) resolveLaunchImage(deferImage bool) (repo, img string, err error) {
+func (a *app) resolveLaunchImage() (repo, img string, err error) {
 	repo, _, err = loadProject(a.cfg.RepoOverride)
 	if err != nil {
 		return "", "", err
@@ -54,11 +50,6 @@ func (a *app) resolveLaunchImage(deferImage bool) (repo, img string, err error) 
 	img = box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
 	if a.loginProvider != "" && a.cfg.ImageOverride == "" {
 		img = a.cfg.BaseImage // authentication must not depend on the project's toolchain image
-	}
-	if !deferImage {
-		if err := a.requireLaunchImage(img); err != nil {
-			return "", "", err
-		}
 	}
 	return repo, img, nil
 }
@@ -187,7 +178,7 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 	if err != nil {
 		return -1, err
 	}
-	repo, img, err := a.resolveLaunchImage(true)
+	repo, img, err := a.resolveLaunchImage()
 	if err != nil {
 		return -1, err
 	}
@@ -273,7 +264,7 @@ func (a *app) restrictedImage() (img string, code int, err error) {
 		return "", 1, err
 	}
 	if !box.ImageExists(a.rt, img) {
-		if err := a.rt.EnsureDaemon(); err != nil { // as resolveImage: blame a stopped daemon, not the image
+		if err := a.rt.EnsureDaemon(); err != nil { // as requireLaunchImage: blame a stopped daemon, not the image
 			return "", -1, err
 		}
 		return "", 1, fmt.Errorf("image %q not built — run 'coop build --egress open' in a directory without a project Dockerfile", img)

@@ -784,6 +784,7 @@ exec "$@"`
 }
 
 func TestConsultWrapperCodexTelemetryWaitsForFullAttemptAcceptance(t *testing.T) {
+	const consultStreamLimitBytes = 1 << 20
 	const passTimeout = `shift 3
 exec "$@"`
 	// Opts into a bound: this asserts that a REJECTED attempt appends no telemetry, so it needs
@@ -1243,7 +1244,7 @@ printf '"}\n{"type":"result","status":"success"}\n'
 // COOP_CONSULT_STREAM_LIMIT bounds bounded_capture, the CAPTURE path that spools a reply or
 // diagnostics stream to disk. COOP_CONSULT_TIMEOUT bounds how long the peer's own process may
 // keep the STREAM open before run() cuts it off. Neither subtest touches the provider watchdog's
-// attempt ceiling (internal/cli/watchdog.go) — that ceiling is a documented, separate exception
+// attempt ceiling (internal/loop/watchdog.go) — that ceiling is a documented, separate exception
 // (.agent/kb/loop-provider-watchdog.md: "the one bound deliberately NOT
 // transport-bounds-do-not-abort-valid-work material") bounding a hostile stream's wall clock at a
 // multiple no legitimate consult reaches, not the volume of valid work.

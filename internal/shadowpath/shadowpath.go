@@ -219,25 +219,6 @@ func cleanParts(rel string) ([]string, error) {
 	return parts, nil
 }
 
-// LoadUserGlobs reads one directory's .coopignore without following links. An unreadable policy
-// contributes no exceptions; the built-in denylist remains in force.
-func LoadUserGlobs(dir string) UserGlobs {
-	canonical, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		return UserGlobs{}
-	}
-	root, err := safefile.OpenRoot(canonical)
-	if err != nil {
-		return UserGlobs{}
-	}
-	defer root.Close()
-	data, err := safefile.ReadRegular(root, CoopIgnoreFile, ignoreLimit)
-	if err != nil {
-		return UserGlobs{}
-	}
-	return ParseUserGlobs(data)
-}
-
 func ParseUserGlobs(data []byte) UserGlobs {
 	var g UserGlobs
 	for _, line := range strings.Split(string(data), "\n") {

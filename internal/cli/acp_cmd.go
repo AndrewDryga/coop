@@ -293,7 +293,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// Built AFTER the model selection: gemini's ACP command is its own binary and carries
 	// the resolved model as a flag. tool passed agents.Valid above, so this can't miss.
 	cmd := acpCommand(a.cfg, tool)
-	repo, img, err := a.resolveLaunchImage(true)
+	repo, img, err := a.resolveLaunchImage()
 	if err != nil {
 		return -1, err
 	}

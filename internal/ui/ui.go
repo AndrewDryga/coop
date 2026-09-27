@@ -266,10 +266,6 @@ func Red(s string) string    { return cRed + s + cReset }
 func Yellow(s string) string { return cYellow + s + cReset }
 func Cyan(s string) string   { return cCyan + s + cReset }
 
-// Check and Cross are the doctor pass/fail marks.
-func Check() string { return cGreen + "✓" + cReset }
-func Cross() string { return cRed + "✗" + cReset }
-
 // Palette applies ANSI color gated on a chosen stream. Use For(os.Stdout) for a stdout view —
 // `coop tasks ls` — so a redirect or pipe (`coop tasks ls > file`) stays plain text, where the
 // package-level color helpers gate on stderr (coop's progress stream). Each method is the

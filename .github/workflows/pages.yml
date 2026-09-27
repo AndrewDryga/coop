@@ -15,7 +15,7 @@ permissions:
   pages: write
   id-token: write
 
-# Let an in-progress deploy finish, but only keep the newest queued one.
+# Cancel an older Pages deploy when a newer one is queued.
 concurrency:
   group: pages
   cancel-in-progress: true

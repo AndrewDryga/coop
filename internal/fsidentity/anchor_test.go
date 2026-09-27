@@ -215,10 +215,15 @@ func TestAnchorRemovalRequiresTheExactBinding(t *testing.T) {
 	_ = root.Close()
 	wrong := binding
 	wrong.Body = []byte("another binding\n")
-	if err := Remove(wrong); err == nil {
+	if err := Retire(wrong); err == nil {
 		t.Fatal("mismatched cleanup removed authority")
 	}
-	if err := Remove(binding); err != nil {
+	valid, err := Open(binding)
+	if err != nil {
+		t.Fatalf("wrong binding damaged the valid authority: %v", err)
+	}
+	_ = valid.Close()
+	if err := Retire(binding); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{

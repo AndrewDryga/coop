@@ -150,7 +150,7 @@ func Main(argv []string) int {
 	}
 
 	// The runtime is detected lazily (a.ensureRuntime), only by box-running commands — so pure-local
-	// families work with no container runtime installed. See dispatch and resolveImage.
+	// families work with no container runtime installed. See dispatch and resolveLaunchImage.
 	a := &app{cfg: cfg, argv: argv}
 	return reportExit(a.dispatch(argv))
 }
@@ -258,7 +258,7 @@ func (a *app) dispatch(argv []string) (int, error) {
 	// These commands always run a container, so detect the runtime up front (fail fast with the
 	// actionable "runtime not found"). The mixed command fork (ls/path are local) and update
 	// (--self-only is local) — and every pure-local family detect lazily in their box-running paths
-	// (resolveImage, forkStop, mergeGate, cmdUpdate), so they work with no runtime. loop detects
+	// (resolveLaunchImage, forkStop, mergeGate, cmdUpdate), so they work with no runtime. loop detects
 	// after its usage and config validation (cmdLoop), so a bad flag, target, or loop.yaml is
 	// reported as such rather than as a missing runtime.
 	switch sub {

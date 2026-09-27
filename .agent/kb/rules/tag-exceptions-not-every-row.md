@@ -4,7 +4,7 @@ description: "tag only the exceptional row; explain the scheme once in a dim cap
 scope: cli-output
 sources: [internal/cli/models.go, internal/cli/profiles.go]
 check: "none"
-updated: 2026-09-11
+updated: 2026-09-27
 ---
 
 # Tag the exception row, not every row
@@ -27,9 +27,9 @@ the eye on the signal.
   those rows, after the content — like the credentials list's single `default`.
 - Say what untagged rows mean once, in a dim caption under the list — or make the tag a
   short sentence that carries its own meaning — never a marker repeated per row.
-- Compute the name-column width once (`colWidth`) and pass it to every block that renders
-  that column; never hardcode a width next to a computed one.
-- Multi-column how-to/legend blocks: pad every column (`colWidth` + `padRight`) so the dim
+- Compute the name-column width once from plain rendered labels and pass it to every block
+  that renders that column; never hardcode a width next to a computed one.
+- Multi-column how-to/legend blocks: pad every column (`padRight`) so the dim
   notes align — no ad-hoc gaps.
 - When the "tag" is really a fact with detail behind it (how fresh, since when), promote
   it to a labeled field in a per-entity block instead — see [[entity-blocks-with-labeled-fields]].
@@ -38,6 +38,8 @@ the eye on the signal.
 See also [[no-color-in-width-fields]], [[command-output-tiers]], [[help-output-style]].
 
 ## Changelog
+- 2026-09-27 — removed current-tense references to obsolete test-only `colWidth` after
+  rechecking the live credentials/menu renderers; the shared-width rule remains.
 - 2026-09-11 — the reviewed copy split that self-explaining tag in two: the row says WHICH list is
   on screen (`⚠ Could not refresh — showing the list saved yesterday`, or `— showing example
   models`) and the reason it could not be made current moves under it into the shared six-space

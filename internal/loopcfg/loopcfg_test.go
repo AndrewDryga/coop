@@ -131,9 +131,8 @@ func TestLoadRejectsMalformedVerifyAgent(t *testing.T) {
 	}
 }
 
-// LoadSnapshot digests the same bytes the Config was parsed from; an absent file gets the
-// explicit built-in-defaults state instead of a digest.
-func TestLoadSnapshotState(t *testing.T) {
+// LoadSnapshot digests the same bytes the Config was parsed from; an absent file has no digest.
+func TestLoadSnapshotDigest(t *testing.T) {
 	body := "signoff:\n  rounds: 7\n"
 	repo := write(t, body)
 	c, snap, err := LoadSnapshot(repo)
@@ -143,11 +142,11 @@ func TestLoadSnapshotState(t *testing.T) {
 	if c.Signoff.Rounds != 7 {
 		t.Errorf("snapshot config = %+v, want the parsed file", c)
 	}
-	if want := File + " (sha256 " + Digest([]byte(body)) + ")"; snap.State() != want {
-		t.Errorf("State() = %q, want %q", snap.State(), want)
+	if want := Digest([]byte(body)); !snap.Configured() || snap.Digest() != want {
+		t.Errorf("snapshot = configured %v digest %q, want true and %q", snap.Configured(), snap.Digest(), want)
 	}
-	if _, absentSnap, err := LoadSnapshot(t.TempDir()); err != nil || absentSnap.State() != File+" absent — built-in defaults" {
-		t.Errorf("absent State() = %q, %v", absentSnap.State(), err)
+	if _, absentSnap, err := LoadSnapshot(t.TempDir()); err != nil || absentSnap.Configured() || absentSnap.Digest() != "" {
+		t.Errorf("absent snapshot = %+v, %v", absentSnap, err)
 	}
 }
 

@@ -1367,7 +1367,7 @@ func TestPromptLine(t *testing.T) {
 	}
 }
 
-func TestSignOnExitAndPromptWarn(t *testing.T) {
+func TestSignOnExit(t *testing.T) {
 	// shouldSignOnExit: only when you sign and not a fork. Dirty checkout state is isolated.
 	cases := []struct{ fork, signs, want bool }{
 		{false, true, true},   // sign an interactive session
@@ -1378,10 +1378,6 @@ func TestSignOnExitAndPromptWarn(t *testing.T) {
 		if got := shouldSignOnExit(c.fork, c.signs); got != c.want {
 			t.Errorf("shouldSignOnExit(fork=%v,signs=%v) = %v, want %v", c.fork, c.signs, got, c.want)
 		}
-	}
-	// promptSignWarn: only when you sign AND HEAD is unsigned.
-	if !promptSignWarn(true, true) || promptSignWarn(true, false) || promptSignWarn(false, true) {
-		t.Error("promptSignWarn should fire only when signs && headUnsigned")
 	}
 }
 
@@ -1478,8 +1474,8 @@ func TestEnsureACPImageBuildsOnlyWhenMissing(t *testing.T) {
 
 // A dead daemon and a missing image both fail `image inspect`, and reporting the wrong one costs
 // real debugging time: a Docker restart once filled an editor log with "run 'coop build'" while
-// the image was present the whole time. resolveImage must name the daemon when the daemon is why.
-func TestResolveImageBlamesTheDaemonNotTheImage(t *testing.T) {
+// the image was present the whole time. requireLaunchImage must name the daemon when it is the cause.
+func TestRequireLaunchImageBlamesTheDaemonNotTheImage(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		infoExit string
@@ -1504,18 +1500,21 @@ func TestResolveImageBlamesTheDaemonNotTheImage(t *testing.T) {
 				rt:    runtime.Runtime{Name: shim},
 				rtSet: true,
 			}
-			_, _, err := a.resolveImage()
+			_, img, err := a.resolveLaunchImage()
 			if err == nil {
-				t.Fatal("resolveImage succeeded with no image; want an error")
+				err = a.requireLaunchImage(img)
+			}
+			if err == nil {
+				t.Fatal("launch image check succeeded with no image; want an error")
 			}
 			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("resolveImage = %q, want it to mention %q", err, tc.want)
+				t.Errorf("launch image check = %q, want it to mention %q", err, tc.want)
 			}
 		})
 	}
 }
 
-func TestResolveImageUsesTheBaseImageForLogin(t *testing.T) {
+func TestResolveLaunchImageUsesTheBaseImageForLogin(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1529,7 +1528,7 @@ func TestResolveImageUsesTheBaseImageForLogin(t *testing.T) {
 		rtSet:         true,
 		loginProvider: "grok",
 	}
-	_, image, err := a.resolveImage()
+	_, image, err := a.resolveLaunchImage()
 	if err != nil {
 		t.Fatal(err)
 	}

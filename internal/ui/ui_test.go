@@ -13,9 +13,6 @@ func TestColorWrappersContainInput(t *testing.T) {
 			t.Errorf("color wrapper dropped its input: %q", fn("hello"))
 		}
 	}
-	if !strings.Contains(Check(), "✓") || !strings.Contains(Cross(), "✗") {
-		t.Errorf("Check/Cross marks missing glyphs: %q %q", Check(), Cross())
-	}
 }
 
 func TestIsTerminalOnRegularFile(t *testing.T) {

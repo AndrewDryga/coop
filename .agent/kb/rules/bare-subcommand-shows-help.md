@@ -4,24 +4,24 @@ description: "a bare group prints help or its default view, never an empty-token
 scope: cli-grammar
 sources: [internal/cli/help.go, internal/cli/fork_cmd.go, internal/tasks/queue.go]
 check: "none"
-updated: 2026-08-28
+updated: 2026-09-27
 ---
 
 # A bare subcommand group shows help, never an "unknown command \"\"" error
 
 `coop <group>` with no subcommand must print that group's help and exit 0 — not
 `coop: unknown <group> command "" — use: …`. An empty token means "tell me the
-options," which is exactly what help is for; `unknownErr` (with its did-you-mean) is
-for a *mistyped* subcommand, not a *missing* one.
+options," which is exactly what help is for. Unknown-subcommand errors are for a
+*mistyped* subcommand, not a *missing* one.
 
 **Why:** `coop tasks` → `unknown tasks command "" — use: ls, lint, add, claim`
 reads as an error for doing nothing wrong, and buries the options in a one-line scold.
 Bare `coop` prints help; a bare group should match that.
 
 **How to apply:**
-- In every group dispatcher, branch on the empty subcommand BEFORE `unknownErr`:
-  `case "": return groupHelp("<group>")` (helper in help.go). Keep `unknownErr` only
-  for a non-empty, unrecognized token.
+- In every group dispatcher, branch on the empty subcommand BEFORE its unknown-token
+  refusal: `case "": return groupHelp("<group>")` (helper in help.go). Refuse only
+  a non-empty, unrecognized token.
 - A group that has a *useful default view* may show that instead of help — the
   invariant is "never the empty-token error," not "always help." Current sweep
   (2026-08-25): `sessions` → group help; `fork` → `forkHelp`; `tasks`,
@@ -30,6 +30,8 @@ Bare `coop` prints help; a bare group should match that.
   reviewed rule; check it whenever you add or touch a subcommand group.
 
 ## Changelog
+- 2026-09-27 — removed references to the obsolete test-only `unknownErr` helper; rechecked
+  current dispatchers and their unknown-subcommand paths.
 - 2026-08-28 — refreshed the illustrative task grammar after copied-queue `split` was retired; the
   empty-token rule and all dispatchers remain unchanged.
 - 2026-08-25 — removed the retired Fleet group from the current dispatcher inventory; every

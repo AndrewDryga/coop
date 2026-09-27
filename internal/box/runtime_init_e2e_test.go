@@ -63,7 +63,8 @@ func TestRuntimeEntrypointDescendantSupervision(t *testing.T) {
 	// A consult that outlives the provider that asked is coop's OWN work and is already worthless —
 	// nothing can read the reply. It must be reaped outright: no drain wait, and no handoff exit
 	// (which un-completes a finished task and re-runs it). The marker, not a deadline, is what
-	// distinguishes it; both the consult timeout and the watchdog are unlimited by default now.
+	// distinguishes it; consult timeout is unlimited by default, while the provider watchdog
+	// separately bounds attempts.
 	t.Run("stranded consult is reaped instead of draining", func(t *testing.T) {
 		start := time.Now()
 		// The provider stamps its own exit, so a slow run can be attributed: the supervision phase

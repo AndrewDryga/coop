@@ -5,10 +5,8 @@ import (
 	"strconv"
 )
 
-// The stateless leaves this package shares with internal/cli, redeclared here rather than exported
-// across the boundary — the same call internal/forkctl/util.go, internal/tasks/util.go and
-// internal/sessionsvc already make, and for the same reason: a `pathExists` or a `truncate` is not
-// an API, and an export would make internal/cli a dependency of everything that formats a line.
+// Keep these stateless helpers local to the loop; exporting generic formatting or path
+// predicates would create a dependency for no shared behavior.
 
 func pathExists(path string) bool {
 	_, err := os.Lstat(path)

@@ -147,7 +147,7 @@ func TestLaunchDefersOrdinaryImageUntilPostureIsKnown(t *testing.T) {
 			cfg := projectBoxConfig(t, true)
 			cfg.Egress = mode
 			a := &app{cfg: cfg, rt: buildShim{daemonUp: true}.build(t), rtSet: true}
-			repo, image, err := a.resolveLaunchImage(true)
+			repo, image, err := a.resolveLaunchImage()
 			if err != nil || repo != cfg.RepoOverride || image != box.ImageForRepo(repo, cfg.BaseImage, "") {
 				t.Fatalf("image-name resolution required the unused ordinary tag: %q %q %v", repo, image, err)
 			}

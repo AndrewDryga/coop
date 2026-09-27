@@ -556,14 +556,6 @@ func (s *Store) checkDirectory(a *Approval, canonical string) *PendingApproval {
 	return nil
 }
 
-func directoryIdentity(info os.FileInfo) (uint64, uint64, bool) {
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || stat.Ino == 0 {
-		return 0, 0, false
-	}
-	return uint64(stat.Dev), stat.Ino, true
-}
-
 type FeatureApproval = egress.FeatureExpansion
 
 func (s *Store) Approval(project string) (*Approval, error) {

@@ -200,27 +200,6 @@ func ReadMarker(rootPath, markerName string) ([]byte, error) {
 	return body, nil
 }
 
-// Remove deletes a validated marker and then its private anchor. Authority
-// records must be retired before calling Remove. A mismatched binding is left
-// untouched for recovery.
-func Remove(binding Binding) error {
-	root, err := Open(binding)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	if err := root.Remove(binding.MarkerName); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if err := syncRoot(root); err != nil {
-		return err
-	}
-	if err := binding.AnchorRoot.Remove(binding.AnchorName); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return syncRoot(binding.AnchorRoot)
-}
-
 // Retire removes host-private anchor state after the caller has already
 // retired the authority record. It also removes the marker when the protected
 // root still carries the exact binding. A missing or replaced root is expected

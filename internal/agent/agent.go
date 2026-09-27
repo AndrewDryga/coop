@@ -877,19 +877,6 @@ func appendBeforeSeparator(cmd []string, values ...string) []string {
 	return append(cmd, values...)
 }
 
-// hasModelFlag reports whether cmd already carries a model flag (--model/-m, split or =-joined).
-func hasModelFlag(cmd []string) bool {
-	for _, a := range cmd {
-		if a == "--" {
-			return false
-		}
-		if a == "--model" || a == "-m" || strings.HasPrefix(a, "--model=") || strings.HasPrefix(a, "-m=") {
-			return true
-		}
-	}
-	return false
-}
-
 // withEffort applies a resolved effort to cmd. Each CLI supplies its own spelling; a matching
 // value baked into COOP_<AGENT>_CMD is replaced so the resolved target/default keeps precedence,
 // while empty effort leaves the command override untouched.

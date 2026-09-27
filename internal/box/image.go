@@ -276,16 +276,16 @@ fi
 # provider that asked the question exits — nothing can read the reply any more. Reap it here, so
 # it costs neither the drain window nor a background handoff (which un-completes a finished task
 # and re-runs it). This replaces the old timing contract "consult timeout < drain < watchdog idle":
-# both outer bounds are now unlimited by default, so ordering can no longer be relied on. Ownership
-# is a fact; a deadline was only ever a guess.
+# the consult timeout is now unlimited by default, while the watchdog remains bounded. Ownership
+# is a fact; timing alone cannot identify whose work remains.
 # The reap itself runs inside the scan loop below, not once here: a double-setsid child can be
 # invisible on the first scan (the same race quiescence_rescan exists for), so a one-shot sweep
 # misses exactly the consult it is meant to catch.
 #
 # The remaining wait is for GENUINE agent background work. It must stay well under the host
-# watchdog's provider idle deadline when one is configured (providerIdleDeadline in
-# internal/cli/watchdog.go; 0/disabled by default). The drain emits no stream events, so both
-# clocks would run from the provider's last activity: at equal values the watchdog wins the race,
+# watchdog's provider idle deadline (providerIdleDeadline in internal/loop/watchdog.go;
+# 30 minutes by default). The drain emits no stream events, so both clocks would run from the
+# provider's last activity: at equal values the watchdog wins the race,
 # the box is reported as a wedged provider instead of a descendant handoff, and the drain's own
 # exit codes become unreachable. Tests and operators may shorten it at the container boundary;
 # invalid values fail closed to the same bounded default.

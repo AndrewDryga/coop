@@ -26,11 +26,6 @@ func stub[T any](p *T, v T) func() {
 }
 
 func TestVersionHelpers(t *testing.T) {
-	for _, v := range []string{"", "dev", "(devel)", "  dev  "} {
-		if !isDevBuild(v) {
-			t.Errorf("isDevBuild(%q) = false, want true", v)
-		}
-	}
 	for name, tc := range map[string]struct {
 		current, latest string
 		want            releaseRelation

@@ -22,7 +22,7 @@ jobs:
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version-file: go.mod # pin the toolchain to the repo, not a floating "stable"
-          cache: false # no Actions cache → no cache-poisoning surface (the build is zero-dep)
+          cache: false # no Actions cache → no cache-poisoning surface
       - name: install Go analyzers at the repo's pins
         # The Makefile owns both versions and the gate rejects any other builds, so CI and a
         # laptop cannot analyze with different rule or vulnerability sets. The other required

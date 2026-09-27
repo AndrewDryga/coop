@@ -105,21 +105,6 @@ func TestGitOutErr(t *testing.T) {
 	}
 }
 
-func TestTruncate(t *testing.T) {
-	if got := truncate("hello", 10); got != "hello" {
-		t.Errorf("truncate(short) = %q, want %q", got, "hello")
-	}
-	if got := truncate("hello world", 5); got != "hell…" {
-		t.Errorf("truncate(long) = %q, want %q", got, "hell…")
-	}
-	// A non-positive width must not panic on the negative slice index — return empty.
-	for _, n := range []int{0, -1, -5} {
-		if got := truncate("hello", n); got != "" {
-			t.Errorf("truncate(%q, %d) = %q, want empty", "hello", n, got)
-		}
-	}
-}
-
 func TestQueueProgress(t *testing.T) {
 	// Two queue dirs; queueProgress sums both and an in_progress task in a later queue still
 	// beats a todo in the first queue.
@@ -142,38 +127,6 @@ func TestQueueProgress(t *testing.T) {
 	// A missing queue contributes nothing and doesn't panic.
 	if c2, a2 := queueProgress([]string{filepath.Join(t.TempDir(), "nope")}); c2.Total() != 0 || a2 != "" {
 		t.Errorf("missing queue = %+v %q, want zero/empty", c2, a2)
-	}
-}
-
-func TestPaintCount(t *testing.T) {
-	paint := func(s string) string { return "<" + s + ">" }
-	if got := paintCount(0, paint); got != "0" {
-		t.Errorf("zero should stay plain, got %q", got)
-	}
-	if got := paintCount(3, paint); got != "<3>" {
-		t.Errorf("nonzero should be painted, got %q", got)
-	}
-}
-
-func TestColWidth(t *testing.T) {
-	// Empty / all-short → clamps up to min (the header width).
-	if got := colWidth(nil, 4, 24); got != 4 {
-		t.Errorf("empty colWidth = %d, want min 4", got)
-	}
-	if got := colWidth([]string{"a", "bb"}, 4, 24); got != 4 {
-		t.Errorf("all-short colWidth = %d, want min 4", got)
-	}
-	// Widest value within [min,max] wins.
-	if got := colWidth([]string{"a", "abcdef"}, 4, 24); got != 6 {
-		t.Errorf("colWidth = %d, want 6", got)
-	}
-	// Over max → clamps down to max.
-	if got := colWidth([]string{strings.Repeat("x", 40)}, 4, 24); got != 24 {
-		t.Errorf("over-max colWidth = %d, want 24", got)
-	}
-	// Width counts runes, not bytes: a 3-rune name with a multibyte glyph is width 3.
-	if got := colWidth([]string{"ab…"}, 1, 24); got != 3 {
-		t.Errorf("multibyte colWidth = %d, want 3 runes", got)
 	}
 }
 

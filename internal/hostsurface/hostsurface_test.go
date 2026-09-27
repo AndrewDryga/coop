@@ -25,6 +25,7 @@ func TestClassifyNamesTheActionThatRunsIt(t *testing.T) {
 		".agent/compose.yml":                 "Starts containers",
 		".agent/Dockerfile":                  "build the box",
 		".agent/project.yaml":                "Coop settings",
+		"sub/.agent/project.yaml":            "Coop settings",
 		".vscode/tasks.json":                 "VS Code",
 		".zed/tasks.json":                    "Zed",
 		".idea/runConfigurations/x.xml":      "run by your IDE",
@@ -34,7 +35,7 @@ func TestClassifyNamesTheActionThatRunsIt(t *testing.T) {
 			t.Errorf("Classify(%q) = %q, want it to mention %q", p, got, want)
 		}
 	}
-	for _, p := range []string{"main.go", "docs/README.md", "scripts/deploy.sh", ".agent/tasks/README.md", ".agent/kb/card.md", "internal/box/run.go", "package.json", "package-lock.json", ".vscode/extensions.json"} {
+	for _, p := range []string{"main.go", "docs/README.md", "scripts/deploy.sh", ".agent/tasks/README.md", ".agent/kb/card.md", ".agentish/project.yaml", ".githooksish/pre-commit", "internal/box/run.go", "package.json", "package-lock.json", ".vscode/extensions.json"} {
 		if got, _ := Classify("M", p); got != "" {
 			t.Errorf("Classify(%q) = %q, want nothing: ordinary files are not surfaces", p, got)
 		}

@@ -47,7 +47,7 @@ func Classify(status, relPath string) (reason string, automatic bool) {
 		return "Changes sources fetched by git submodule update.", true
 	case base == ".pre-commit-config.yaml":
 		return "Runs on Git commits through pre-commit.", true
-	case under(p, ".githooks") || under(p, ".husky") || under(p, ".git-hooks") || hasSegment(p, "githooks"):
+	case hasSegment(p, ".githooks") || hasSegment(p, ".husky") || hasSegment(p, ".git-hooks") || hasSegment(p, "githooks"):
 		return "Runs during Git operations.", true
 	case base == "Makefile" || base == "GNUmakefile" || base == "makefile":
 		return "Runs when you use make.", false
@@ -55,14 +55,14 @@ func Classify(status, relPath string) (reason string, automatic bool) {
 		return "Runs when you use just or task.", false
 	case base == ".mcp.json" || strings.HasSuffix(base, ".mcp.json") || base == "mcp.json":
 		return "Starts MCP server commands in your host agent session.", true
-	case under(p, ".claude"):
+	case hasSegment(p, ".claude"):
 		if base == "settings.json" || base == "settings.local.json" || hasSegment(p, "hooks") {
 			return "Runs Claude Code hooks in your host session.", true
 		}
 		return "Provides commands or skills to your host Claude session.", true
-	case under(p, ".codex") || under(p, ".gemini"):
+	case hasSegment(p, ".codex") || hasSegment(p, ".gemini"):
 		return "Provides agent configuration to your host sessions.", true
-	case under(p, ".agent"):
+	case hasSegment(p, ".agent"):
 		switch {
 		case hasSegment(p, "skills"):
 			return "Runs when your host agent uses the skill.", true
@@ -73,11 +73,11 @@ func Classify(status, relPath string) (reason string, automatic bool) {
 		case base == "project.yaml" || base == "loop.yaml":
 			return "Changes Coop settings used on your machine.", true
 		}
-	case under(p, ".vscode") && (base == "tasks.json" || base == "launch.json" || base == "settings.json"):
+	case hasSegment(p, ".vscode") && (base == "tasks.json" || base == "launch.json" || base == "settings.json"):
 		return "Can run commands in your VS Code session.", true
-	case under(p, ".zed") && (base == "tasks.json" || base == "settings.json"):
+	case hasSegment(p, ".zed") && (base == "tasks.json" || base == "settings.json"):
 		return "Can run commands in your Zed session.", true
-	case under(p, ".idea") && strings.HasSuffix(base, ".xml"):
+	case hasSegment(p, ".idea") && strings.HasSuffix(base, ".xml"):
 		return "Defines commands run by your IDE.", true
 	case dir == ".github/workflows" || strings.HasPrefix(p, ".github/workflows/"):
 		return "Runs on the project's CI runners.", true
@@ -108,10 +108,6 @@ func Findings(nameStatus string) []Finding {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
-}
-
-func under(p, dir string) bool {
-	return strings.HasPrefix(p, dir+"/") || strings.Contains(p, "/"+dir+"/")
 }
 
 func hasSegment(p, seg string) bool {

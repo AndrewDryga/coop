@@ -23,6 +23,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// hasModelFlag reports whether a test command selects a model before its argument separator.
+func hasModelFlag(cmd []string) bool {
+	for _, a := range cmd {
+		if a == "--" {
+			return false
+		}
+		if a == "--model" || a == "-m" || strings.HasPrefix(a, "--model=") || strings.HasPrefix(a, "-m=") {
+			return true
+		}
+	}
+	return false
+}
+
 // cleanCmdEnv unsets the per-agent command and model overrides so the defaults are exercised.
 func cleanCmdEnv(t *testing.T) {
 	t.Helper()

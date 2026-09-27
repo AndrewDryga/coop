@@ -575,13 +575,6 @@ func readNativeConfig(path string) ([]byte, error) {
 	return data, err
 }
 
-// readNativeConfigWith makes the observation/open/read boundary deterministic in tests. The
-// production path opens once, validates that descriptor, and reads that same descriptor.
-func readNativeConfigWith(path string, open func(string) (*os.File, error), read func(io.Reader) ([]byte, error)) ([]byte, error) {
-	data, _, err := readConfigFileWith(path, "native MCP config", open, read)
-	return data, err
-}
-
 // readConfigFile is the one host-file boundary for shared MCP and native adapter configuration.
 // It does not follow the final symlink, never blocks on a special file, and bounds the exact bytes
 // captured from the descriptor it validated. Only a path missing at the initial observation is

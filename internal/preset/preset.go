@@ -77,19 +77,6 @@ func (p *Preset) Lead() agents.Target {
 	return p.LeadTargets[0]
 }
 
-// LeadModel returns the lead's primary model — the first ladder entry's model, or "" when
-// no models are declared (the agent's default resolves). Used by the generated contract and
-// `coop presets`.
-func (p *Preset) LeadModel() string {
-	return p.Lead().Model
-}
-
-// LeadEffort returns the lead's primary reasoning effort — the first ladder entry's effort, or
-// "" when none is declared. Used by the generated contract and applyPreset.
-func (p *Preset) LeadEffort() string {
-	return p.Lead().Effort
-}
-
 // leadTargets parses the lead's agent: node — a TARGET (scalar "claude:opus@work") or a target
 // LADDER (sequence [claude:fable, claude:opus@work]) — into whole targets. expandLadder fans a
 // target's account list out at run time against what's actually signed in. The ladder MAY be

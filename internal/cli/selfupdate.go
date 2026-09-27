@@ -56,16 +56,6 @@ type checkError struct{ err error }
 func (e checkError) Error() string { return e.err.Error() }
 func (e checkError) Unwrap() error { return e.err }
 
-// isDevBuild reports whether v is a non-release build (built from source or via
-// `go run`), which self-update can't meaningfully replace.
-func isDevBuild(v string) bool {
-	switch strings.TrimSpace(v) {
-	case "", "dev", "(devel)":
-		return true
-	}
-	return false
-}
-
 // normalizeVersion drops a leading "v" and surrounding space so the ldflags
 // version ("2.7.2") and a GitHub tag ("v2.7.2") compare equal.
 func normalizeVersion(v string) string {

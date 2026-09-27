@@ -83,6 +83,7 @@ func TestReleaseVersion(t *testing.T) {
 		"2.10.1":                    true,
 		"v3.0.0":                    true,
 		"dev":                       false,
+		"  dev  ":                   false,
 		"(devel)":                   false,
 		"":                          false,
 		"2.10.1-254-g3d300c7-dirty": false, // a source build ahead of the release
