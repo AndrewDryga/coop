@@ -26,7 +26,7 @@ ACCOUNTS, MODELS & PRESETS — choose the accounts and models your agents use
 
 TASKS — each task is a folder in .agent/tasks/
   coop tasks ls                     show tasks grouped by status
-  coop tasks watch [--json]         follow task progress
+  coop tasks watch                  follow task progress
   coop tasks add "<title>"          add a task
   coop tasks decisions              show tasks waiting for your decision
   coop backlog                      save ideas for later

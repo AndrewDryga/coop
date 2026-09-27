@@ -127,7 +127,7 @@ func renderMenu(p ui.Palette, cfg *config.Config, ref bool) string {
 
 	group("TASKS", "each task is a folder in .agent/tasks/")
 	row("coop tasks ls", "show tasks grouped by status")
-	row("coop tasks watch [--json]", "follow task progress")
+	row("coop tasks watch", "follow task progress")
 	row("coop tasks add \"<title>\"", "add a task")
 	row("coop tasks decisions", "show tasks waiting for your decision")
 	row("coop backlog", "save ideas for later")
