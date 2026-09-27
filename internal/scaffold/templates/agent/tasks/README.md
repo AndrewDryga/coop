@@ -39,13 +39,23 @@ archive is a manual, human step: `coop tasks rm --all-done`.
       artifacts/     optional — durable evidence retained with the completed task (git-ignored)
       tmp/           optional — resumable disposable work, removed when the task reaches done
 
-`coop tasks add "<title>"` seeds **task.md + log.md + state.md**, each opening with a short
+`coop tasks add "<title>"` seeds **task.md + log.md + state.md**. This README's indented
+`task.md` block below `**Template:**` is the live source for new tasks in this queue;
+`coop backlog add`, in-box proposals, and fork imports use it too. A subproject's own
+`.agent/tasks/README.md` controls only its queue, and `--tasks <path>` selects that queue's
+README. There is no root-template inheritance. In a fresh queue without a README, Coop uses
+its built-in starter until you add one. A malformed present template fails before creating
+a task folder. Edit literal `- [ ]` lines to add or remove default gates; keep at least one
+checklist item and at most one `<…>` step placeholder. Repeated `--subtask` values replace
+that placeholder and leave literal defaults intact (or append if there is no placeholder).
+
+Each seeded file opens with a short
 HTML-comment header that explains the file (so it's self-documenting, yet renders clean once
 filled). Adding with the content flags (`--context/--acceptance/--approach/--subtask`) fills
 task.md instead, so it gets no header — there is nothing left to replace. `coop tasks block
 <id>` adds **decision.md**. You add `spec.md` yourself (or via `/spec`) only when the design is
-substantial. Every file is plain markdown. The templates below are what those commands write
-(minus the header).
+substantial. Every file is plain markdown. Only the `task.md` Template block is a live
+creation template; the log/state/decision blocks below document their generated shape.
 
 ---
 

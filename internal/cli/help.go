@@ -933,6 +933,9 @@ OPTIONS
   --approach <text>    describe how to tackle the work
   --subtask <text>     add a checklist item; repeat for more items
 
+  The selected queue's README.md task.md Template supplies defaults, including
+  checklist items. A subproject uses its own README.md; --subtask replaces the
+  <…> step placeholder while keeping literal default items.
   Without the text options, Coop creates a template for you to fill in.
   If you use any text option, include --context, --acceptance and --approach.
   Repeat a text option to add another paragraph.

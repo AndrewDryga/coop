@@ -1166,18 +1166,17 @@ func TestTasksFolderAddSeedsSelfDocumentingFiles(t *testing.T) {
 	}
 }
 
-// taskBody with no values reproduces the scaffold body byte-for-byte (the single shape source stays
-// stable), and taskShapeIssues flags a body missing a section but not the all-sections scaffold.
-func TestTaskBodyScaffoldStable(t *testing.T) {
-	want := "**Context:** <the problem, why it matters, and where it happens>\n\n" +
-		"**Acceptance criteria:** <the result and checks that prove the work is finished>\n\n" +
-		"**Approach:** <the steps to take; use spec.md for a longer plan>\n\n" +
-		"## Subtasks\n\n" +
-		"- [ ] <a small step with a way to check it worked>\n"
-	if got := taskBody(nil, nil); got != want {
-		t.Errorf("scaffold body drifted from the single source:\ngot:  %q\nwant: %q", got, want)
+// The README-less fallback remains lint-clean for freshly selected queues.
+func TestTaskTemplateFallbackShape(t *testing.T) {
+	template, err := parseTaskTemplate(fallbackTaskTemplate)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if issues := taskShapeIssues(taskBody(nil, nil)); len(issues) != 0 {
+	body, err := template.render("2026-01-01-task", "Task", "2026-01-01T00:00:00Z", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if issues := taskShapeIssues(body); len(issues) != 0 {
 		t.Errorf("scaffold has all sections present, want no issues, got %v", issues)
 	}
 	if issues := taskShapeIssues("# t\n**Acceptance criteria:** x\n"); len(issues) != 2 { // missing Context + Approach

@@ -63,6 +63,9 @@ func assignmentIndex(t *testing.T, repo string, assignment ForkAssignment) ForkA
 
 func TestImportForkProposalCreatesOneCanonicalTaskIdempotently(t *testing.T) {
 	repo, root, assignment := proposalAssignment(t, "proposal")
+	writeQueueTemplate(t, root, strings.Replace(fallbackTaskTemplate,
+		"- [ ] <a small step with a way to check it worked>",
+		"- [ ] Run the queue gate\n- [ ] <task-specific step>", 1))
 	proposal := testForkProposal(strings.Repeat("a", 32), "Fix retry race")
 	body := writeForkProposal(t, assignment.Owner, proposal)
 
@@ -78,7 +81,7 @@ func TestImportForkProposalCreatesOneCanonicalTaskIdempotently(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Fix retry race", "**Context:** A distinct defect", "**Acceptance criteria:** The defect", "- [ ] add the regression test"} {
+	for _, want := range []string{"Fix retry race", "**Context:** A distinct defect", "**Acceptance criteria:** The defect", "- [ ] Run the queue gate", "- [ ] add the regression test"} {
 		if !strings.Contains(string(content), want) {
 			t.Errorf("imported task.md missing %q:\n%s", want, content)
 		}

@@ -351,14 +351,18 @@ func ownerForProposalIndex(index ForkAssignmentIndex) (ForkTaskOwner, error) {
 	return *record.Fork, nil
 }
 
-func proposalTaskFiles(record ForkProposalRecord) map[string]string {
+func proposalTaskFiles(record ForkProposalRecord) (map[string]string, error) {
 	proposal := *record.Proposal
 	values := map[string]string{
 		"Context":             proposal.Context,
 		"Acceptance criteria": proposal.Acceptance,
 		"Approach":            proposal.Approach,
 	}
-	return newTaskFiles(record.Task.Ref.ID, proposal.Title, record.CreatedAt.Format(time.RFC3339), values, proposal.Subtasks)
+	template, err := loadTaskTemplate(record.CanonicalRoot)
+	if err != nil {
+		return nil, err
+	}
+	return newTaskFiles(template, record.Task.Ref.ID, proposal.Title, record.CreatedAt.Format(time.RFC3339), values, proposal.Subtasks)
 }
 
 func proposalTaskIdentity(record ForkProposalRecord) taskIdentityRecord {
@@ -447,6 +451,10 @@ func materializeForkProposal(record ForkProposalRecord) (ForkProposalRecord, boo
 	if pathExists(filepath.Join(record.CanonicalRoot, StateBacklog, record.Task.Ref.ID)) {
 		return record, false, fmt.Errorf("proposal task id %s collides with a backlog item", record.Task.Ref.ID)
 	}
+	files, err := proposalTaskFiles(record)
+	if err != nil {
+		return record, false, err
+	}
 	if err := ScaffoldStateDirs(record.CanonicalRoot); err != nil {
 		return record, false, err
 	}
@@ -463,7 +471,7 @@ func materializeForkProposal(record ForkProposalRecord) (ForkProposalRecord, boo
 	if err != nil {
 		return record, false, err
 	}
-	for name, content := range proposalTaskFiles(record) {
+	for name, content := range files {
 		if err := AtomicWriteTaskFile(opened, name, []byte(content)); err != nil {
 			opened.Close()
 			return record, false, err

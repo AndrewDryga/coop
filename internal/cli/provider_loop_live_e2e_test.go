@@ -261,7 +261,7 @@ func verifyProviderLoopLiveProposal(layout procharness.Layout) ([]string, error)
 	if _, err := time.Parse(time.RFC3339, fields["updated"]); err != nil {
 		return nil, errors.New("live loop proposal timestamp mismatch")
 	}
-	expected := fmt.Sprintf("# %s\n\n**Context:** %s\n\n**Acceptance criteria:** %s\n\n**Approach:** %s\n\n## Subtasks\n\n- [ ] %s\n",
+	expected := fmt.Sprintf("# %s\n\n**Context:** %s\n**Acceptance criteria:** %s\n**Approach:** %s\n\n## Subtasks\n\n- [ ] %s\n",
 		proposal.Title, proposal.Context, proposal.Acceptance, proposal.Approach, proposal.Subtasks[0])
 	expected = fmt.Sprintf("---\nid: %s\ntitle: %s\nlabels: []\nupdated: %s\n---\n\n", id, proposal.Title, fields["updated"]) + expected
 	if string(data) != expected {

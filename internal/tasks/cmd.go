@@ -250,19 +250,15 @@ func slugify(s string) string {
 	return slug
 }
 
-// taskSection is one **Heading:** block of a task.md body. taskSections is the SINGLE source of the
-// body's shape: the scaffold (newTaskFiles), the structured `coop tasks add` flags, and lint
-// (taskShapeIssues) all derive from it, so they can't drift. Subtasks are the trailing `## Subtasks`
-// checklist — a list, not a section — so they're handled separately.
-type taskSection struct{ heading, flag, placeholder string }
+// taskSection names the required sections shared by structured add flags and lint. Their initial
+// text and checklist come from the selected queue's README template, not this list.
+type taskSection struct{ heading, flag string }
 
 var taskSections = []taskSection{
-	{"Context", "context", "<the problem, why it matters, and where it happens>"},
-	{"Acceptance criteria", "acceptance", "<the result and checks that prove the work is finished>"},
-	{"Approach", "approach", "<the steps to take; use spec.md for a longer plan>"},
+	{"Context", "context"},
+	{"Acceptance criteria", "acceptance"},
+	{"Approach", "approach"},
 }
-
-const defaultSubtask = "<a small step with a way to check it worked>"
 
 // addOptions are the options `coop tasks add` / `coop backlog add` accept, derived from the section
 // flags that ARE the task shape — so a correction can never suggest a flag the parser would refuse.
@@ -277,30 +273,7 @@ var addOptions = func() []string {
 // claimOptionNames are `coop tasks claim`'s options, for the same reason.
 var claimOptionNames = []string{"--as", "--pid", "--force"}
 
-// taskBody renders the task.md body after the `# title` line: each section as `**Heading:** value`
-// (a blank/absent value falls back to the section's `<…>` placeholder — that's the scaffold), then
-// the `## Subtasks` checklist (the default placeholder when none are given).
-func taskBody(values map[string]string, subtasks []string) string {
-	var b strings.Builder
-	for _, s := range taskSections {
-		v := strings.TrimSpace(values[s.heading])
-		if v == "" {
-			v = s.placeholder
-		}
-		fmt.Fprintf(&b, "**%s:** %s\n\n", s.heading, v)
-	}
-	b.WriteString("## Subtasks\n\n")
-	if len(subtasks) == 0 {
-		subtasks = []string{defaultSubtask}
-	}
-	for _, st := range subtasks {
-		fmt.Fprintf(&b, "- [ ] %s\n", st)
-	}
-	return b.String()
-}
-
-// sectionsFilled reports whether every taskSection already carries real content — i.e. taskBody will
-// render no `<…>` section placeholder, so the fill-me header would be an order with nothing left to do.
+// sectionsFilled reports whether every required section came from structured flags.
 func sectionsFilled(values map[string]string) bool {
 	for _, s := range taskSections {
 		if strings.TrimSpace(values[s.heading]) == "" {
@@ -320,9 +293,11 @@ func sectionsFilled(values map[string]string) bool {
 // .agent/tasks/README.md. decision.md is NOT seeded here — `block` writes it, since a pending
 // decision is what moves a task to 50_blocked/ (and a decision.md on a todo task is a lint error).
 // values/subtasks fill the body from structured `add` flags; pass nil/empty for the scaffold.
-func newTaskFiles(id, title, now string, values map[string]string, subtasks []string) map[string]string {
-	taskMD := "---\nid: " + id + "\ntitle: " + title + "\nlabels: []\nupdated: " + now + "\n---\n\n" +
-		"# " + title + "\n\n" + taskBody(values, subtasks)
+func newTaskFiles(template taskTemplate, id, title, now string, values map[string]string, subtasks []string) (map[string]string, error) {
+	taskMD, err := template.render(id, title, now, values, subtasks)
+	if err != nil {
+		return nil, err
+	}
 	if !sectionsFilled(values) {
 		taskMD = "<!-- Describe the work before changing code.\n" +
 			"     Fill in the problem, completion criteria, approach and subtasks.\n" +
@@ -342,7 +317,7 @@ func newTaskFiles(id, title, now string, values map[string]string, subtasks []st
 			"**Done so far:** —\n" +
 			"**Next action:** <the next concrete step>\n" +
 			"**Traps:** <anything the next session needs to watch for, or —>\n",
-	}
+	}, nil
 }
 
 // tasksFolderAdd creates a task folder under root/state (stateTodo for `coop tasks add`, stateBacklog
@@ -464,6 +439,14 @@ func (e taskExistsError) Error() string { return e.msg }
 // every path creates the same files with the same collision rule.
 func createTaskFolder(root, state, slug, title string, values map[string]string, subtasks []string) (string, error) {
 	id := time.Now().Format("2006-01-02") + "-" + slug
+	template, err := loadTaskTemplate(root)
+	if err != nil {
+		return "", err
+	}
+	files, err := newTaskFiles(template, id, title, time.Now().Format(time.RFC3339), values, subtasks)
+	if err != nil {
+		return "", err
+	}
 	// An id is a stable, unique handle, so reject a collision in ANY state — the four lifecycle dirs
 	// AND xx_backlog — else a re-add (or a promote) would make two folders share an id, and
 	// findTask/findBacklogTask would silently shadow one.
@@ -487,7 +470,7 @@ func createTaskFolder(root, state, slug, title string, values map[string]string,
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	for name, content := range newTaskFiles(id, title, time.Now().Format(time.RFC3339), values, subtasks) {
+	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 			return "", err
 		}
