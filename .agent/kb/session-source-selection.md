@@ -45,8 +45,8 @@ owner-private service directories;
 companions remain read-only. The source mirror, control socket, parent directories, symlinked
 roots and another session's files are never sandbox mounts. A host alias above the service state
 (such as `/var` on macOS) is canonicalized; an alias within its job-source tree is not trusted.
-The box itself is the worker's base image, never one named after or built from the job
-repository's Dockerfile ([[box-base-image-tags]]).
+The box image never comes from the job repository: an open or offline job runs the worker's
+base, a filtered one Coop's locked client image ([[box-base-image-tags]]).
 
 Review and changes need a fresh upstream default, not the private staged HEAD. SourceRefresher
 is the trusted-host boundary for that fetch. It must use the saved job and source, import the

@@ -45,13 +45,17 @@ Filtered gates defer to their captured image instead. `coop build --egress open`
 print `Image: coop-box:<definition>` when preparing the shared image. Until the next launch,
 `coop update --check` and `coop doctor` still report the new tag as not built.
 
-A controller job never resolves a project image. A worker stages every job source in a folder
-named `repository`, so `ImageForRepo` there names one `coop-repository` tag for every repository,
-and nothing on a worker may build repository instructions. `box.JobImage` gives the job's turns
-(`resolveLaunchImage` under `COOP_CONTROLLER_JOB`) and its session review gate (`forkctl.JobGate`)
-the worker's base, or the operator's `COOP_IMAGE`. The job's project file is not parsed on that
-path either: `project.Parse` rejects unknown keys, so a file written for a newer Coop would
-otherwise refuse every job on an older worker.
+A controller job's turns never resolve a project image. A worker stages every job source in a
+folder named `repository`, so `ImageForRepo` there names one `coop-repository` tag for every
+repository, and nothing on a worker may build repository instructions. Under
+`COOP_CONTROLLER_JOB`, `resolveLaunchImage` picks `box.JobImage` (the operator's `COOP_IMAGE`,
+else the worker's base) without parsing the job's project file: `project.Parse` rejects unknown
+keys, so a file written for a newer Coop would refuse every job on an older worker. A filtered
+job runs the locked client image (`filteredProjectImage` returns nothing for a job), and a
+readonly or bare one `restrictedImage`, which refuses `COOP_IMAGE`. The session review gate
+resolves `forkctl.JobGate`, but its box is not a `ControllerJob`: it still admits against the
+repository's own network posture, so a filtered-posture gate consults that Dockerfile and
+refuses without an approved build.
 
 Still shared across Coop versions for one user: a project image (`coop-<repo>`, from `.agent/Dockerfile`;
 on native Linux with a non-default UID/GID it has a user suffix) keeps one name per user, so two

@@ -16,6 +16,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/sessionsvc"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
@@ -182,8 +183,35 @@ func TestControllerJobLaunchRunsTheWorkersBase(t *testing.T) {
 		t.Fatalf("job launch = %q %v, want the operator's image", image, err)
 	}
 	t.Setenv(box.ControllerJobEnv, "forged")
-	if _, _, err := a.resolveLaunchImage(); err == nil {
-		t.Fatal("a malformed controller job marker was accepted")
+	if _, _, err := a.resolveLaunchImage(); err == nil || !strings.Contains(err.Error(), "controller job identity is invalid") {
+		t.Fatalf("a malformed controller job marker = %v, want its own refusal", err)
+	}
+}
+
+// The daemon's review gate resolves the job image too. The candidate has no Git history, so the
+// gate stops just after choosing its image: a startup error about the review base proves it got
+// past the job repository's never-built project tag without starting a box.
+func TestSessionReviewGateUsesTheJobImage(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo := filepath.Join(t.TempDir(), "repository")
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "Dockerfile"), []byte("FROM debian\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	shim := filepath.Join(t.TempDir(), "docker") // only the worker's base exists; the daemon answers nothing else
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\ncase \"$1$2$3\" in imageinspectworker-box) exit 0 ;; esac\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Gate: []string{"true"}, BaseImage: "worker-box", BoxHome: t.TempDir()}
+	var result sessionsvc.ReviewGateResult
+	var err error
+	captureTerminal(t, func() {
+		result, err = defaultSessionReviewGate(cfg, runtime.Runtime{Name: shim}).Run(context.Background(), repo, t.TempDir())
+	})
+	if err != nil || !result.Configured || !strings.Contains(result.StartupError, "review base") {
+		t.Fatalf("job review gate = %+v, %v; want it past image selection", result, err)
 	}
 }
 

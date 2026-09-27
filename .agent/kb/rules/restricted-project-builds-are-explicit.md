@@ -25,13 +25,16 @@ refuse with a usable host command. Preserve both image proofs and fail if approv
 Cover direct, fork, loop and editor callers; do not require an unused ordinary image for filtered
 runs. Keep offline image-existence checks so Docker cannot implicitly pull. Embedded Coop image
 preparation is separate from executing project instructions. This does not freeze runtime source
-edits or change service permissions; see [[project-edits-request-access]]. A controller job
-consumes no project image in any mode: a worker never builds a job repository's instructions.
+edits or change service permissions; see [[project-edits-request-access]]. A controller job's
+turns consume no project image in any mode, and a worker never builds a job repository's
+instructions.
 
 ## Changelog
 - 2026-09-28 — swept the listed sources for controller-job paths: `resolveLaunchImage` and the
   session review gate still named the job repository's project tag; both now take
-  `box.JobImage` (the worker's base). Filtered jobs already skipped the project Dockerfile.
+  `box.JobImage` (the worker's base). Filtered jobs already skipped the project Dockerfile; the
+  review gate's filtered posture still consults it (the gate box is not a ControllerJob), and
+  refuses without an approved build.
 - 2026-09-23 — manually changed a project Dockerfile and reran in open mode: the existing image
   ran with a stale-input warning until `coop build --egress open` was invoked. Clarified the
   scope of open automatic preparation without changing the approved restricted boundary.

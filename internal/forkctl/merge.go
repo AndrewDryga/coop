@@ -133,8 +133,8 @@ func (c *Control) MergeGate(repo string) (string, error) {
 	return c.gateImage(repo, box.ImageForRepo(repo, c.cfg.BaseImage, c.cfg.ImageOverride))
 }
 
-// JobGate is MergeGate for a controller job's repository: its gate runs in the image the job's
-// turns run in, never one named after or built from the repository's own Dockerfile.
+// JobGate is MergeGate for a controller job's repository: its ordinary image is box.JobImage, as
+// for the job's open and offline turns, never one named after the repository's own Dockerfile.
 func (c *Control) JobGate(repo string) (string, error) {
 	return c.gateImage(repo, box.JobImage(c.cfg.BaseImage, c.cfg.ImageOverride))
 }

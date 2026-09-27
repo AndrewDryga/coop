@@ -418,8 +418,8 @@ func ImageForRepo(repo, baseImage, override string) string {
 	return baseImage
 }
 
-// JobImage decides which image a controller job runs in: the operator's override, else the
-// worker's base. The job's repository is code, not box settings, so its Dockerfile names nothing:
+// JobImage is a controller job's ordinary (open or offline) image: the operator's override, else
+// the worker's base. The job's repository is code, not box settings, so its Dockerfile names nothing:
 // no worker may build repository instructions, and every job source is staged in a folder named
 // "repository", so ImageForRepo would give every repository on the worker the same tag.
 func JobImage(baseImage, override string) string {
