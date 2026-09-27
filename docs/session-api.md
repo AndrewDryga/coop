@@ -27,6 +27,12 @@ and any local service it started. It does not stop an already-running service it
 Workers need Git, Git LFS and a supported container runtime. The bundled worker image includes
 Git LFS; on a native worker install `git-lfs` with your package manager.
 
+Every job, including its review gate, runs in the worker's base image: `COOP_BASE_IMAGE`, or
+`COOP_IMAGE` when the operator sets one. A repository's own `.agent/Dockerfile` is repository
+code, not worker configuration, so a worker never builds or runs it. Put what jobs need in the
+base image; a normal-mode job still provisions the repository's `.tool-versions` when its box
+starts.
+
 ```bash
 coop sessions doctor
 coop sessions doctor --socket /var/lib/coop-sessions/control.sock --json

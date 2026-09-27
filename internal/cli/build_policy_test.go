@@ -160,6 +160,33 @@ func TestLaunchDefersOrdinaryImageUntilPostureIsKnown(t *testing.T) {
 	}
 }
 
+// A controller job's repository is code, not box settings. A worker stages every job source in a
+// folder named "repository", so the tag of its Dockerfile would be one image, never built, for
+// every repository; the job runs the worker's base (or the operator's image) instead, and a
+// project file this Coop cannot read — one written for a newer Coop — cannot refuse it.
+func TestControllerJobLaunchRunsTheWorkersBase(t *testing.T) {
+	cfg := projectBoxConfig(t, true)
+	a := &app{cfg: cfg, rt: buildShim{daemonUp: true}.build(t), rtSet: true}
+	if err := os.WriteFile(filepath.Join(cfg.RepoOverride, ".agent", "project.yaml"), []byte("from_a_newer_coop: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := a.resolveLaunchImage(); err == nil {
+		t.Fatal("a local launch accepted a project file it cannot read")
+	}
+	t.Setenv(box.ControllerJobEnv, strings.Repeat("a", 64))
+	if repo, image, err := a.resolveLaunchImage(); err != nil || repo != cfg.RepoOverride || image != cfg.BaseImage {
+		t.Fatalf("job launch = %q %q %v, want the worker's base %q", repo, image, err, cfg.BaseImage)
+	}
+	cfg.ImageOverride = "operator:1"
+	if _, image, err := a.resolveLaunchImage(); err != nil || image != "operator:1" {
+		t.Fatalf("job launch = %q %v, want the operator's image", image, err)
+	}
+	t.Setenv(box.ControllerJobEnv, "forged")
+	if _, _, err := a.resolveLaunchImage(); err == nil {
+		t.Fatal("a malformed controller job marker was accepted")
+	}
+}
+
 func TestRestrictedACPDoesNotAutomaticallyBuildProject(t *testing.T) {
 	for _, mode := range []string{"filtered", "none"} {
 		t.Run(mode, func(t *testing.T) {

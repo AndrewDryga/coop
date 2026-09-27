@@ -3,7 +3,7 @@ name: box-base-image-tags
 description: Coop's shared base is tagged by its box definition so two Coop versions on one host keep their own; why there is no :latest alias, how an upgrade is repaired, and what stays shared
 subsystem: box
 sources: [internal/box/reclaim.go, internal/box/derived_image.go, internal/box/filtered.go, internal/box/image.go, internal/box/staleness.go, internal/box/locked_image.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/cli/cli.go, internal/cli/build_cmd.go, internal/cli/session_cmd.go, internal/forkctl/host.go, internal/forkctl/merge.go]
-updated: 2026-09-25
+updated: 2026-09-28
 ---
 
 `COOP_BASE_IMAGE` defaults to the bare repository `coop-box`, which `box.ResolveBaseImage` (run
@@ -34,7 +34,7 @@ with no record still gets "run 'coop build'": a first build stays the operator's
 `box.BuildManagedBase` builds the base alone, reading nothing and writing to the given writer,
 because an ACP child and the session daemon reach it too.
 
-Where it runs: an ordinary interactive launch resolves with `resolveLaunchImage(true)`, which lets
+Where it runs: an ordinary interactive launch resolves with `resolveLaunchImage()`, which lets
 the missing base through, and builds it in `checkCoopBox` after network admission, so a filtered box
 (it runs `coop-clients:<definition>`, whose Dockerfile shares no expensive layer with the base: the
 PATH lines differ inside the big RUN) never pays for it. Fork and ACP launch callers also defer
@@ -44,6 +44,14 @@ prepares the shared base eagerly; it never executes project build instructions. 
 Filtered gates defer to their captured image instead. `coop build --egress open` and `coop update`
 print `Image: coop-box:<definition>` when preparing the shared image. Until the next launch,
 `coop update --check` and `coop doctor` still report the new tag as not built.
+
+A controller job never resolves a project image. A worker stages every job source in a folder
+named `repository`, so `ImageForRepo` there names one `coop-repository` tag for every repository,
+and nothing on a worker may build repository instructions. `box.JobImage` gives the job's turns
+(`resolveLaunchImage` under `COOP_CONTROLLER_JOB`) and its session review gate (`forkctl.JobGate`)
+the worker's base, or the operator's `COOP_IMAGE`. The job's project file is not parsed on that
+path either: `project.Parse` rejects unknown keys, so a file written for a newer Coop would
+otherwise refuse every job on an older worker.
 
 Still shared across Coop versions for one user: a project image (`coop-<repo>`, from `.agent/Dockerfile`;
 on native Linux with a non-default UID/GID it has a user suffix) keeps one name per user, so two
@@ -69,6 +77,9 @@ record, so the 14 days start then), and an image any container still references 
 stopped, whoever owns it — is kept.
 
 ## Changelog
+- 2026-09-28 — Ryker's worker failed every emisar/ryker turn on the never-built
+  `coop-repository` tag: controller jobs now run the worker's base (`box.JobImage`) for turns and
+  the session review gate. Corrected the stale `resolveLaunchImage(true)` reference.
 - 2026-09-25 — rechecked image tagging against UID-aware base and locked-image builds and
   per-identity cache volumes for native Linux users.
 - 2026-09-22 — filtered launches no longer require the unused ordinary project tag; only an

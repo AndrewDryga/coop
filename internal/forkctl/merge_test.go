@@ -1383,6 +1383,39 @@ func TestMergeGateBuildsCoopsBaseAfterAnUpgrade(t *testing.T) {
 	}
 }
 
+// A controller job's review gate runs where its turns run: the worker's base, or the operator's
+// image. The tag MergeGate derives from the job source's folder and Dockerfile is one name for
+// every repository on the worker, and nothing there builds it.
+func TestJobGateRunsInTheJobImage(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo := filepath.Join(t.TempDir(), "repository")
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "Dockerfile"), []byte("ARG COOP_BASE_IMAGE\nFROM ${COOP_BASE_IMAGE}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	shim := filepath.Join(t.TempDir(), "docker")
+	script := "#!/bin/sh\n" +
+		"case \"$1$2$3\" in imageinspectworker-box|imageinspectoperator:1) exit 0 ;; imageinspect*) exit 1 ;; esac\n" +
+		"exit 0\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Gate: []string{"true"}, BaseImage: "worker-box"}
+	c := New(cfg, runtime.Runtime{Name: shim}, Host{})
+	if img, err := c.JobGate(repo); err != nil || img != "worker-box" {
+		t.Fatalf("JobGate = %q, %v; want the worker's base", img, err)
+	}
+	if _, err := c.MergeGate(repo); err == nil || !strings.Contains(err.Error(), "isn't built") {
+		t.Fatalf("MergeGate = %v; want it to keep resolving the repository's own image", err)
+	}
+	cfg.ImageOverride = "operator:1"
+	if img, err := c.JobGate(repo); err != nil || img != "operator:1" {
+		t.Fatalf("JobGate = %q, %v; want the operator's image", img, err)
+	}
+}
+
 func TestFilteredMergeGateDoesNotRequireAnOrdinaryImage(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	repo := initRepo(t)

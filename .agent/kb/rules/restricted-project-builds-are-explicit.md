@@ -4,7 +4,7 @@ description: restricted launches consume explicit host project builds; open mode
 scope: security
 sources: [internal/box/derived_image.go, internal/box/project_build.go, internal/box/image.go, internal/networkstate/project_builds.go, internal/cli/build_cmd.go, internal/cli/acp_cmd.go, internal/cli/commands.go, internal/cli/fork_cmd.go, internal/loop/loop.go, internal/forkctl/merge.go]
 check: "go test ./internal/box -run 'TestFilteredProjectImageRequiresExplicitBuild|TestFilteredProjectImageReusesAnUnchangedBuild|TestAutomaticProjectBuildRequiresOpenNetworking'"
-updated: 2026-09-23
+updated: 2026-09-28
 ---
 
 # Require explicit host builds when project networking is restricted
@@ -25,9 +25,13 @@ refuse with a usable host command. Preserve both image proofs and fail if approv
 Cover direct, fork, loop and editor callers; do not require an unused ordinary image for filtered
 runs. Keep offline image-existence checks so Docker cannot implicitly pull. Embedded Coop image
 preparation is separate from executing project instructions. This does not freeze runtime source
-edits or change service permissions; see [[project-edits-request-access]].
+edits or change service permissions; see [[project-edits-request-access]]. A controller job
+consumes no project image in any mode: a worker never builds a job repository's instructions.
 
 ## Changelog
+- 2026-09-28 — swept the listed sources for controller-job paths: `resolveLaunchImage` and the
+  session review gate still named the job repository's project tag; both now take
+  `box.JobImage` (the worker's base). Filtered jobs already skipped the project Dockerfile.
 - 2026-09-23 — manually changed a project Dockerfile and reran in open mode: the existing image
   ran with a stale-input warning until `coop build --egress open` was invoked. Clarified the
   scope of open automatic preparation without changing the approved restricted boundary.

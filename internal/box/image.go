@@ -418,6 +418,17 @@ func ImageForRepo(repo, baseImage, override string) string {
 	return baseImage
 }
 
+// JobImage decides which image a controller job runs in: the operator's override, else the
+// worker's base. The job's repository is code, not box settings, so its Dockerfile names nothing:
+// no worker may build repository instructions, and every job source is staged in a folder named
+// "repository", so ImageForRepo would give every repository on the worker the same tag.
+func JobImage(baseImage, override string) string {
+	if override != "" {
+		return override
+	}
+	return baseImage
+}
+
 // ManagedBaseRepository is where Coop builds its shared base. The tag is this binary's box
 // definition, so each Coop version on a host keeps a base of its own: one shared tag had two
 // versions rebuilding it back and forth, each running the other's clients in between.

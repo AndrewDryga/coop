@@ -130,6 +130,16 @@ func (c *Control) gateFor(repo string) ([]string, error) {
 // MergeGate resolves the box image when a merge gate is configured (so a merge can be revalidated
 // in the box), or returns "" when none is.
 func (c *Control) MergeGate(repo string) (string, error) {
+	return c.gateImage(repo, box.ImageForRepo(repo, c.cfg.BaseImage, c.cfg.ImageOverride))
+}
+
+// JobGate is MergeGate for a controller job's repository: its gate runs in the image the job's
+// turns run in, never one named after or built from the repository's own Dockerfile.
+func (c *Control) JobGate(repo string) (string, error) {
+	return c.gateImage(repo, box.JobImage(c.cfg.BaseImage, c.cfg.ImageOverride))
+}
+
+func (c *Control) gateImage(repo, img string) (string, error) {
 	gate, err := c.gateFor(repo)
 	if err != nil {
 		return "", err
@@ -140,7 +150,6 @@ func (c *Control) MergeGate(repo string) (string, error) {
 	if err := c.ensureRuntime(); err != nil {
 		return "", err
 	}
-	img := box.ImageForRepo(repo, c.cfg.BaseImage, c.cfg.ImageOverride)
 	access, err := box.ProjectNetworkAccess(context.Background(), c.cfg, repo)
 	if err != nil {
 		return "", err

@@ -323,17 +323,17 @@ func sessionReviewGateHost(cfg *config.Config, rt runtime.Runtime) forkctl.Host 
 	}
 }
 
-// defaultSessionReviewGate runs a review candidate through THIS repo's merge gate — the same image
-// and the same pass/fail rule `coop fork merge` uses, so a session's verdict can't drift from the
-// one a human gets. The config and runtime are the service's, resolved by the time it asks; a
-// runtime it hasn't detected yet is the zero value, which the control plane detects on demand.
+// defaultSessionReviewGate runs a review candidate through THIS repo's merge gate — the same pass/fail
+// rule `coop fork merge` uses, so a session's verdict can't drift from the one a human gets — in the
+// image the job's turns ran in. The config and runtime are the service's, resolved by the time it
+// asks; a runtime it hasn't detected yet is the zero value, which the control plane detects on demand.
 func defaultSessionReviewGate(cfg *config.Config, rt runtime.Runtime) sessionsvc.ReviewGate {
 	return sessionsvc.ReviewGateFunc(func(ctx context.Context, gateRepo, treeDir string) (sessionsvc.ReviewGateResult, error) {
 		if err := ctx.Err(); err != nil {
 			return sessionsvc.ReviewGateResult{}, err
 		}
 		fc := forkctl.New(cfg, rt, sessionReviewGateHost(cfg, rt))
-		image, err := fc.MergeGate(gateRepo)
+		image, err := fc.JobGate(gateRepo)
 		if err != nil {
 			return sessionsvc.ReviewGateResult{Configured: true, StartupError: sessionsvc.SanitizeReviewText(err.Error(), sessionsvc.MaxReviewErrorBytes)}, nil
 		}

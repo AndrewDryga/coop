@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Fleet jobs for a repository with its own `.agent/Dockerfile` no longer fail with "Coop box image
+  is not built". A job's turns and its review gate run in the worker's base image
+  (`COOP_BASE_IMAGE`, or the operator's `COOP_IMAGE`). A worker never builds or runs a job
+  repository's Dockerfile, and the repository's project file can no longer refuse the launch.
+  Before, every such repository resolved the same `coop-repository` tag, which nothing built.
+
 - Compose sidecar approvals now bind external/custom volumes to the selected local Docker daemon
   and inspected plain-local storage object. A missing custom volume is created only after terminal
   approval; changed daemon, backing definition, or repository requires review again. Secret-file

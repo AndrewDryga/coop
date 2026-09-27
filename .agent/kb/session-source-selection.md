@@ -2,8 +2,8 @@
 name: session-source-selection
 description: controller jobs freeze exact source bindings; the worker verifies private staging and refreshes the default separately without changing the admitted checkout
 subsystem: sessions
-sources: [internal/workerproto/job.go, internal/workerconnector/job_sources.go, internal/forkspace/lfs.go, internal/sessionsvc/job.go, internal/sessionsvc/job_tree.go, internal/sessionsvc/empty_source.go, internal/sessionsvc/source.go, internal/sessionsvc/service.go, internal/sessionsvc/workspace.go, internal/box/authority_mounts.go, internal/session/records.go]
-updated: 2026-09-27
+sources: [internal/workerproto/job.go, internal/box/image.go, internal/workerconnector/job_sources.go, internal/forkspace/lfs.go, internal/sessionsvc/job.go, internal/sessionsvc/job_tree.go, internal/sessionsvc/empty_source.go, internal/sessionsvc/source.go, internal/sessionsvc/service.go, internal/sessionsvc/workspace.go, internal/box/authority_mounts.go, internal/session/records.go]
+updated: 2026-09-28
 ---
 
 A create carries one canonical controller job and its digest, not a local policy name or a
@@ -45,6 +45,8 @@ owner-private service directories;
 companions remain read-only. The source mirror, control socket, parent directories, symlinked
 roots and another session's files are never sandbox mounts. A host alias above the service state
 (such as `/var` on macOS) is canonicalized; an alias within its job-source tree is not trusted.
+The box itself is the worker's base image, never one named after or built from the job
+repository's Dockerfile ([[box-base-image-tags]]).
 
 Review and changes need a fresh upstream default, not the private staged HEAD. SourceRefresher
 is the trusted-host boundary for that fetch. It must use the saved job and source, import the
@@ -58,6 +60,8 @@ fetch the selected commit. Neither a branch advance nor an idempotent create ret
 code. The API exposes source metadata through explicit DTO projection, never JobDocument.
 
 ## Changelog
+- 2026-09-28 — a job repository's Dockerfile resolved a shared, never-built `coop-repository`
+  tag on the worker; jobs now run the worker's base image (see [[box-base-image-tags]]).
 - 2026-09-27 — live v2 turn exposed the mount guard rejecting its own staged fork; admitted only
   generation-bound controller-job workspace and session-owned read-only companion snapshots.
 - 2026-09-27 — implemented full Git/recursive source custody, scoped LFS transfer and offline

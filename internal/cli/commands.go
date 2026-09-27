@@ -40,16 +40,28 @@ func loadProject(repoOverride string) (string, *project.Project, error) {
 // A launch defers availability until admission: filtered mode runs a separately approved image,
 // not the ordinary tag selected here. Nonfiltered callers must then requireLaunchImage.
 func (a *app) resolveLaunchImage() (repo, img string, err error) {
-	repo, _, err = loadProject(a.cfg.RepoOverride)
+	job, err := box.ControllerJobFromEnvironment()
+	if err != nil {
+		return "", "", err
+	}
+	if job { // a job's project file configures nothing (box.Run skips it), so it cannot refuse the launch
+		repo, err = box.ResolveRepo(a.cfg.RepoOverride)
+	} else {
+		repo, _, err = loadProject(a.cfg.RepoOverride)
+	}
 	if err != nil {
 		return "", "", err
 	}
 	if err := a.ensureRuntime(); err != nil { // the choke point for box commands not eagerly detected in dispatch (fork)
 		return "", "", err
 	}
-	img = box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
-	if a.loginProvider != "" && a.cfg.ImageOverride == "" {
+	switch {
+	case job:
+		img = box.JobImage(a.cfg.BaseImage, a.cfg.ImageOverride)
+	case a.loginProvider != "" && a.cfg.ImageOverride == "":
 		img = a.cfg.BaseImage // authentication must not depend on the project's toolchain image
+	default:
+		img = box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
 	}
 	return repo, img, nil
 }
