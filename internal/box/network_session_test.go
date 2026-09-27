@@ -145,7 +145,7 @@ func TestCapturedEgressFromEnvironmentIsInertWithoutTheVariable(t *testing.T) {
 }
 
 // The environment names a snapshot; it does not carry one. Only the owner-private store can
-// produce the named policy, so a child handed another project's fingerprint — or a fingerprint
+// produce the saved capture, so a child handed another project's fingerprint — or a fingerprint
 // that was never admitted — cannot launch filtered.
 func TestCapturedEgressFromEnvironmentAuthenticatesAgainstTheOwnerStore(t *testing.T) {
 	cfg, repo, root := admissionFixture(t)

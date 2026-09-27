@@ -13,14 +13,12 @@ import (
 )
 
 // Admission separates presence from defaults and authority from requests. Only
-// ProjectMode and Requests may originate in repository configuration. PolicyMode
-// comes from a selected host-owned API policy, never from a create/turn request.
-// Existing sessions load their captured snapshot instead of calling Admit again.
+// ProjectMode and Requests may originate in repository configuration. Existing
+// sessions load their captured snapshot instead of calling Admit again.
 type Admission struct {
 	InvocationMode *egress.Mode
 	HostPreference *egress.Mode
 	ProjectMode    *egress.Mode
-	PolicyMode     *egress.Mode
 	Requests       []egress.Rule
 	// Services is the reviewed identity of each Compose service Requests name and its startup
 	// dependencies, keyed by name. Only Requests are network grants.
@@ -85,7 +83,7 @@ func (p *PendingApproval) Sentence() string {
 // no rules is inside what coop grants on its own.
 //
 // The mode the file names counts only where it would decide anything: an
-// explicit --egress, COOP_EGRESS or session policy outranks it, so under one the
+// explicit --egress or COOP_EGRESS outranks it, so under one the
 // file's "open" is moot and refusing the run over it would protect nothing.
 func (a Admission) pendingApproval(approval *Approval) (*PendingApproval, error) {
 	rules, err := egress.NormalizeRules(a.Requests)
@@ -94,7 +92,7 @@ func (a Admission) pendingApproval(approval *Approval) (*PendingApproval, error)
 	}
 	const asks = "this project asks for network access that has not been approved"
 	const requests = ".agent/project.yaml requests changes to network access."
-	overridden := a.InvocationMode != nil || a.HostPreference != nil || a.PolicyMode != nil
+	overridden := a.InvocationMode != nil || a.HostPreference != nil
 	if approval == nil {
 		if a.ProjectMode != nil && *a.ProjectMode == egress.Open && !overridden {
 			return &PendingApproval{Reason: "this project asks for unrestricted internet access, which has not been approved",
@@ -240,7 +238,7 @@ func (a Admission) preview(approval *Approval, withdrawn bool) (AdmissionPreview
 		return AdmissionPreview{}, err
 	}
 	if pending == nil {
-		pending = a.withdrawalBarrier(approval, withdrawn, mode)
+		pending = withdrawalBarrier(withdrawn, mode)
 	}
 	return AdmissionPreview{Mode: mode, Pending: pending}, nil
 }
@@ -309,7 +307,7 @@ func (s *Store) authorized(project string, input Admission, pinBundles bool) (st
 	if err != nil {
 		return "", "", nil, err
 	}
-	if barrier := input.withdrawalBarrier(approval, withdrawn, mode); barrier != nil {
+	if barrier := withdrawalBarrier(withdrawn, mode); barrier != nil {
 		return "", "", nil, barrier
 	}
 	if pinBundles {
@@ -334,7 +332,7 @@ func (a Admission) resolveMode(approval *Approval) (egress.Mode, error) {
 	for _, field := range []struct {
 		name  string
 		value *egress.Mode
-	}{{"invocation", a.InvocationMode}, {"host preference", a.HostPreference}, {"project request", a.ProjectMode}, {"named policy", a.PolicyMode}} {
+	}{{"invocation", a.InvocationMode}, {"host preference", a.HostPreference}, {"project request", a.ProjectMode}} {
 		if field.value != nil {
 			if _, err := egress.ParseMode(string(*field.value)); err != nil {
 				return "", fmt.Errorf("network %s: %w", field.name, err)
@@ -349,25 +347,15 @@ func (a Admission) resolveMode(approval *Approval) (egress.Mode, error) {
 		remembered = &approval.Posture
 	}
 	mode := egress.Open
-	if a.PolicyMode != nil {
-		if a.InvocationMode != nil {
-			return "", errors.New("a named API policy decides this session's egress, so --egress cannot override it (network_policy_conflict)")
+	selected := false
+	for _, value := range []*egress.Mode{a.InvocationMode, remembered, a.HostPreference, a.ProjectMode} {
+		if value != nil {
+			mode, selected = *value, true
+			break
 		}
-		mode = *a.PolicyMode
-		if remembered != nil && *remembered != egress.Open && *remembered != mode {
-			return "", errors.New("the named policy and what this project remembered disagree — settle them on the host (network_policy_conflict)")
-		}
-	} else {
-		selected := false
-		for _, value := range []*egress.Mode{a.InvocationMode, remembered, a.HostPreference, a.ProjectMode} {
-			if value != nil {
-				mode, selected = *value, true
-				break
-			}
-		}
-		if !selected && a.hasRules() {
-			mode = egress.Filtered
-		}
+	}
+	if !selected && a.hasRules() {
+		mode = egress.Filtered
 	}
 	if mode != egress.Filtered && a.hasRules() {
 		return "", errors.New("egress rules only apply in filtered mode — run with --egress filtered, or drop the rules (network_policy_conflict)")

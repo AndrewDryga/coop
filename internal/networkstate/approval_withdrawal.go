@@ -77,12 +77,12 @@ func (s *Store) clearWithdrawal(id string) error {
 }
 
 // withdrawalBarrier is the pending review a withdrawal leaves behind. It
-// applies only where access could be REGAINED: a host-owned named policy keeps
-// its own authority, an offline run has nothing to widen, and a project that
-// has been approved again has no barrier left. Everything else — including the
-// built-in open default that made the withdrawal necessary — waits for a human.
-func (a Admission) withdrawalBarrier(approval *Approval, withdrawn bool, mode egress.Mode) *PendingApproval {
-	if !withdrawn || a.PolicyMode != nil || mode == egress.None {
+// applies only where access could be REGAINED: an offline run has nothing to
+// widen, and a project that has been approved again has no barrier left.
+// Everything else — including the built-in open default that made the
+// withdrawal necessary — waits for a human.
+func withdrawalBarrier(withdrawn bool, mode egress.Mode) *PendingApproval {
+	if !withdrawn || mode == egress.None {
 		return nil
 	}
 	return &PendingApproval{

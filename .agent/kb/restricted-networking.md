@@ -3,7 +3,7 @@ name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
 sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go]
-updated: 2026-09-24
+updated: 2026-09-27
 ---
 
 `coop <agent> --egress filtered` runs the box behind a per-run gateway. Five boring layers stand
@@ -19,7 +19,7 @@ between that flag and `docker run`:
    filtered mode only, captures the frozen policy the gateway will enforce. Once the mode resolves
    to filtered, `checkFilteredRuntime` is the first gate: a runtime that cannot serve the gateway is
    refused before `networkstate.Open`, so asking for something this host cannot do leaves no
-   authority state behind. `SetupNetwork` and `AdmitSessionNetwork` ask the same question first.
+   authority state behind. `SetupNetwork` and `AdmitControllerJobNetwork` ask the same question first.
    The shared MCP file is handled in two halves: its SOURCE is proven on every launch (outside
    every mount, parseable — `networkMCPSnapshot`), but its destinations and the gateway's MCP
    qualification rules (literal only, HTTPS on 443, no `headersHelper`/`oauth`) are derived only
@@ -42,7 +42,7 @@ as `AdmissionPreview.Pending` / `*PendingApproval`. `coop init`, bare `coop net`
 same answer, so no two of them can disagree. Without an approval only a widening is pending —
 `open`, or any rule; filtered/offline with no rules is what coop grants on its own, which is why a
 fresh `coop init` project (explicitly `filtered`) launches without a review. The file's mode counts
-only where it would decide anything: under `--egress`, `COOP_EGRESS` or a session policy the file's
+only where it would decide anything: under `--egress` or `COOP_EGRESS` the file's
 `open` is moot and is not pending. `approve` has no `--mode`: to change access you edit the file.
 An approval binds three things beyond the rules: the project directory's private two-link anchor (a
 replacement or copied marker is pending; allocator metadata alone is never trusted), the reviewed Compose
@@ -84,10 +84,10 @@ rather than letting the built-in default reopen it, and only `coop approve` remo
 The precedence ladder, one line: invocation `--egress` → remembered approval posture → explicit
 `COOP_EGRESS` → project `box.egress` → any rule present ⇒ filtered → open
 (`networkstate/admission.go`, `resolveMode`). There is no hard ceiling: nothing ever produced one,
-so the field and its clamp were deleted. A named session policy replaces the whole branch and
-refuses rather than reconcile with a disagreeing remembered posture. The project file spells
-no-network access `offline` — `project.Load` is the one place it becomes the internal `none`, with
-no alias (`internal/project/project.go`).
+so the field and its clamp were deleted. Controller-authored jobs use `CaptureJob` instead of
+this local approval ladder; they do not consult or clear local withdrawal markers, and ordinary
+admission stays barred. The project file spells no-network access `offline` — `project.Load` is
+the one place it becomes the internal `none`, with no alias (`internal/project/project.go`).
 
 Qualification has two halves. The release half is the `networkruntimee2e`-tagged suite —
 enforcement, denial, guard/collector faults, transports, credentialed providers — and it is what the
@@ -268,6 +268,9 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-27 — rechecked `Admission`, `CaptureJob` and the withdrawal marker: removed the
+  retired named-policy branch while preserving the direct-launch ladder and separate job capture;
+  corrected the retired `AdmitSessionNetwork` reference to `AdmitControllerJobNetwork`.
 - 2026-09-24 — proved a real filtered Gemini API-key launch was refused because the
   host-only `BoxHome` was treated as writable; recorded the corrected mount distinction
   and the focused acceptance/denial regression.

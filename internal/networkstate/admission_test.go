@@ -148,30 +148,9 @@ func TestAdmissionDirectPresenceMatrix(t *testing.T) {
 	}
 }
 
-func TestAdmissionNamedPolicyMatrix(t *testing.T) {
-	choices := []*egress.Mode{nil, admissionMode(egress.Open), admissionMode(egress.Filtered), admissionMode(egress.None)}
-	for _, policy := range choices[1:] {
-		for _, remembered := range choices {
-			var approval *Approval
-			if remembered != nil {
-				approval = &Approval{Posture: *remembered}
-			}
-			conflict := remembered != nil && *remembered != egress.Open && *remembered != *policy
-			input := Admission{PolicyMode: policy, HostPreference: admissionMode(egress.None), ProjectMode: admissionMode(egress.Open)}
-			got, err := input.resolveMode(approval)
-			if (err != nil) != conflict || (!conflict && got != *policy) || (conflict && got != "") {
-				t.Fatal("named policy ignored a remembered restriction", input, approval, got, err)
-			}
-		}
-	}
-	if _, err := (Admission{PolicyMode: admissionMode(egress.Open), InvocationMode: admissionMode(egress.None)}).resolveMode(nil); err == nil {
-		t.Fatal("API invocation override accepted")
-	}
-}
-
 func TestAdmissionRejectsInvalidShadowedModesAndRuleConflicts(t *testing.T) {
 	for _, value := range []egress.Mode{"", "OPEN", "Filtered", "unknown"} {
-		for field := 0; field < 4; field++ {
+		for field := 0; field < 3; field++ {
 			input := Admission{InvocationMode: admissionMode(egress.None)}
 			switch field {
 			case 0:
@@ -180,8 +159,6 @@ func TestAdmissionRejectsInvalidShadowedModesAndRuleConflicts(t *testing.T) {
 				input.HostPreference = &value
 			case 2:
 				input.ProjectMode = &value
-			case 3:
-				input.InvocationMode, input.PolicyMode = nil, &value
 			}
 			if got, err := input.resolveMode(nil); err == nil || got != "" {
 				t.Fatal("invalid present mode became absence", input, got, err)
@@ -197,7 +174,7 @@ func TestAdmissionRejectsInvalidShadowedModesAndRuleConflicts(t *testing.T) {
 			t.Fatal("rules did not imply filtered", mode, err)
 		}
 		for _, mode := range []egress.Mode{egress.Open, egress.None} {
-			for _, source := range []string{"invocation", "posture", "preference", "project", "policy"} {
+			for _, source := range []string{"invocation", "posture", "preference", "project"} {
 				value := input
 				var approval *Approval
 				switch source {
@@ -209,8 +186,6 @@ func TestAdmissionRejectsInvalidShadowedModesAndRuleConflicts(t *testing.T) {
 					value.HostPreference = &mode
 				case "project":
 					value.ProjectMode = &mode
-				case "policy":
-					value.PolicyMode = &mode
 				}
 				if got, err := value.resolveMode(approval); err == nil || got != "" {
 					t.Fatal("rules silently changed an explicit/stored mode", source, mode, got, err)
@@ -288,7 +263,7 @@ func TestAdmitUsesOneApprovalForModeAndEnvelope(t *testing.T) {
 }
 
 func TestAdmitFailsClosedWithoutUsableAuthority(t *testing.T) {
-	for _, failure := range []string{"corrupt-approval", "missing-key", "unapproved", "policy"} {
+	for _, failure := range []string{"corrupt-approval", "missing-key", "unapproved"} {
 		t.Run(failure, func(t *testing.T) {
 			s, project := openStore(t), t.TempDir()
 			if err := approve(s, project, egress.Filtered, nil, nil); err != nil {
@@ -310,8 +285,6 @@ func TestAdmitFailsClosedWithoutUsableAuthority(t *testing.T) {
 				}
 			case "unapproved":
 				input.Requests = []egress.Rule{rule("example.com")}
-			case "policy":
-				input.PolicyMode = admissionMode(egress.None)
 			}
 			got, err := s.Admit(project, input)
 			if err == nil || got.Fingerprint != "" || got.Mode != "" || len(got.Grants) != 0 {

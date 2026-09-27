@@ -250,18 +250,3 @@ func TestWithdrawalIsPersistedBeforeTheGrantIsCleared(t *testing.T) {
 		t.Fatal("the completed withdrawal did not fail closed")
 	}
 }
-
-// A named host policy carries its own authority, so a session it governs is not
-// blocked by a project's withdrawal.
-func TestWithdrawalBarrierLeavesANamedPolicyAlone(t *testing.T) {
-	s := openStore(t)
-	project := t.TempDir()
-	if err := approve(s, project, egress.Filtered, []egress.Rule{rule("d.example.com")}, nil); err != nil {
-		t.Fatal(err)
-	}
-	withdraw(t, s, project)
-	policy := egress.Filtered
-	if pending := pendingAfter(t, s, project, Admission{PolicyMode: &policy}); pending != nil {
-		t.Fatalf("a named policy was refused by a project withdrawal: %s", pending.Reason)
-	}
-}

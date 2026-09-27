@@ -32,7 +32,6 @@ func TestPendingApprovalIsTheExactRequest(t *testing.T) {
 		"fresh open":                    {input: Admission{ProjectMode: open}, want: "unrestricted internet access"},
 		"fresh open under --egress":     {input: Admission{ProjectMode: open, InvocationMode: filtered}},
 		"fresh open under COOP_EGRESS":  {input: Admission{ProjectMode: open, HostPreference: none}},
-		"fresh open under a policy":     {input: Admission{ProjectMode: open, PolicyMode: filtered}},
 		"fresh rules":                   {input: Admission{Requests: []egress.Rule{a}}, want: "has not been approved"},
 		"fresh rules under --egress":    {input: Admission{Requests: []egress.Rule{a}, InvocationMode: filtered}, want: "has not been approved"},
 		"approved, same":                {input: Admission{Requests: []egress.Rule{a}}, approval: approvedFiltered},
