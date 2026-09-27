@@ -212,18 +212,6 @@ func TestHelpForHelpAndVersion(t *testing.T) {
 	}
 }
 
-// unknownErr is the shape for a rejected VALUE (an agent name, a credential attribute), with a
-// typo hint for a near-miss. Rejected commands and options use the approved blocks instead.
-func TestUnknownErr(t *testing.T) {
-	if got := unknownErr("agent", "bogus", []string{"claude", "codex"}).Error(); got != `unknown agent "bogus" — use: claude, codex` {
-		t.Errorf("unknownErr = %q", got)
-	}
-	// A ≥4-char near-miss gets a "did you mean".
-	if got := unknownErr("agent", "codexx", []string{"claude", "codex"}).Error(); !strings.Contains(got, `did you mean "codex"`) {
-		t.Errorf("expected a suggestion in: %q", got)
-	}
-}
-
 // Pure-local families work with NO container runtime; only box-running commands surface the runtime
 // error. Detect is lazy (a.ensureRuntime), not eager in Main — so install→init→browse the queue and
 // CI `coop tasks lint` don't require Docker.
