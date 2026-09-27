@@ -55,6 +55,28 @@ func TestParseEvalRunArgs(t *testing.T) {
 	}
 }
 
+func TestRenderEvalPlanSeparatesSections(t *testing.T) {
+	p := &eval.Plan{
+		Suite: &eval.Suite{Version: 1, Name: "demo", Runner: eval.RunnerAgent,
+			Cases: []eval.Case{{ID: "case-one", Timeout: eval.Duration(10 * time.Minute)}}},
+		Configs: []eval.Configuration{{Kind: eval.ConfigTarget, Label: "codex"}},
+		Repeat:  1, Jobs: 1, Timeout: 35 * time.Minute,
+	}
+	frozen := []eval.FrozenConfig{{Kind: eval.ConfigTarget, Label: "codex",
+		Build: eval.BuildIdentity{Version: "test-build"}}}
+	out := captureStdout(t, func() { renderEvalPlan(p, frozen) })
+	for _, boundary := range []string{
+		"[workload " + eval.WorkloadFingerprint(p.Suite).Short() + "]\n\nConfigurations:\n",
+		"build test-build]\n\nMatrix:",
+		"(covers preparation, work, grading and cleanup)\n\nIsolation:",
+		"omitted from trials\n\nCases:\n",
+	} {
+		if !strings.Contains(out, boundary) {
+			t.Errorf("plan lacks section boundary %q:\n%s", boundary, out)
+		}
+	}
+}
+
 func TestEvalRunExitCodeRequiresGradingCoverage(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

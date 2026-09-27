@@ -2,9 +2,9 @@
 name: command-output-tiers
 description: "Unprefixed human output, truthful progress, useful results, and readable consequences"
 scope: cli-output
-sources: [internal/ui/ui.go, internal/ui/usage.go, internal/ui/section.go, internal/box/launch_sections.go, internal/box/run.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/session_cmd.go]
+sources: [internal/ui/ui.go, internal/ui/usage.go, internal/ui/section.go, internal/box/launch_sections.go, internal/box/run.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/session_cmd.go, internal/cli/models.go, internal/cli/eval_cmd.go]
 check: "none"
-updated: 2026-09-13
+updated: 2026-09-27
 ---
 
 # Command output: no prefixes, useful results, truthful progress
@@ -17,6 +17,8 @@ updated: 2026-09-13
 - State what has actually happened. `The Coop box has stopped` follows confirmed stop, never
   the event that merely begins cleanup. While waiting, say `Stopping the Coop box…`.
   Separate process exit, stopped box, and remaining resource cleanup.
+- Announce a catalog fetch before waiting for it. A current cached list is a passive read and
+  needs no progress line; a due or forced refresh is active work, even when it succeeds.
 - Passive inspection shows useful facts and only-present issues, not ten healthy statuses.
   Doctor and active qualification still show the checks the user requested.
 - Avoid routine current-directory headers and default image labels. Show paths when they
@@ -68,6 +70,9 @@ is not proof the live helpers conform; regression tests must exercise all output
 See also [[help-output-style]] and [[no-color-in-width-fields]].
 
 ## Changelog
+- 2026-09-27 — required visible model-catalog refresh and applied the existing grouped-spacing
+  rule to eval plan previews. Swept the model menu and eval plan/result renderers; the menu's due
+  refresh and the plan's section boundaries were the two gaps, while results already group output.
 - 2026-09-13 — user showed adjacent network/hidden-key/start-failure text without separators.
   Swept services.go and launch_sections.go: fixed the hidden-file notice and interactive failed/
   skipped paths; loop service warnings already have their own nested section and stay unchanged.

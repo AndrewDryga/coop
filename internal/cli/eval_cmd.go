@@ -503,16 +503,20 @@ func renderEvalPlan(p *eval.Plan, frozen []eval.FrozenConfig) {
 	if p.Suite.IsLoop() {
 		fmt.Printf("Loop config: %s\n", p.LoopConfig)
 	}
+	fmt.Println()
 	fmt.Println("Configurations:")
 	for i, c := range p.Configs {
 		fmt.Printf("  - %-28s (%s) [config %s, build %s]\n", c.Label, c.Kind,
 			frozen[i].Fingerprint().Short(), frozen[i].Build)
 	}
+	fmt.Println()
 	fmt.Printf("Matrix: %d case(s) x %d configuration(s) x %d repeat(s) = %d trial(s)\n",
 		len(p.Suite.Cases), len(p.Configs), p.Repeat, p.Trials())
 	fmt.Printf("Workers: %d\n", p.Jobs)
 	fmt.Printf("Deadline: %s (covers preparation, work, grading and cleanup)\n", p.Timeout)
+	fmt.Println()
 	fmt.Println("Isolation: operator MCP servers and COOP_RUN_ARGS are omitted from trials")
+	fmt.Println()
 	fmt.Println("Cases:")
 	for _, c := range p.Suite.Cases {
 		fmt.Printf("  - %-24s budget %s\n", c.ID, c.Timeout)

@@ -40,7 +40,7 @@ const modelsUsage = "coop models [<agent>] [--refresh]"
 //
 // Keeping it current is coop's job, not a chore it teaches the user: every invocation refreshes,
 // in parallel, only the catalogs it is about to render that are missing or older than
-// modelsRefreshAfter, and says nothing when that works. `--refresh` forces the same fetch now,
+// modelsRefreshAfter, and announces any fetch before waiting. `--refresh` forces the same fetch now,
 // ignoring both freshness and the failure backoff.
 func (a *app) cmdModels(args []string) (int, error) {
 	refresh := false
@@ -208,6 +208,11 @@ func (a *app) refreshDueCatalogs(names []string, forced bool) map[string]string 
 	if len(due) == 0 {
 		return nil
 	}
+	labels := make([]string, len(due))
+	for i, agent := range due {
+		labels[i] = titleName(agent)
+	}
+	ui.Note("Refreshing model lists for %s…", ui.List(labels, "and"))
 	// Detect the container runtime ONCE, before the fan-out: a.rt is a plain field, so two boxed
 	// probes racing ensureRuntime would be a data race — and a runtime that is down is one cause
 	// for every provider that needs it, not one bounded timeout each.

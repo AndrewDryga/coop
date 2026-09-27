@@ -117,6 +117,42 @@ func TestModelsIsACompactMenu(t *testing.T) {
 	}
 }
 
+func TestModelsAnnouncesCatalogRefreshBeforeFetching(t *testing.T) {
+	a := modelsApp(t)
+	status, err := os.CreateTemp(t.TempDir(), "models-status-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = status.Close() })
+	oldStderr := os.Stderr
+	os.Stderr = status
+	t.Cleanup(func() { os.Stderr = oldStderr })
+	a.acpModels = func(string) ([]agents.Model, error) {
+		data, err := os.ReadFile(status.Name())
+		if err != nil {
+			t.Error(err)
+		} else if got := string(data); got != "Refreshing model lists for Claude…\n" {
+			t.Errorf("status before fetch = %q", got)
+		}
+		return []agents.Model{{ID: "claude-live"}}, nil
+	}
+	menu := captureStdout(t, func() {
+		if code, err := a.cmdModels([]string{"claude"}); code != 0 || err != nil {
+			t.Fatalf("cmdModels = (%d, %v)", code, err)
+		}
+	})
+	if !strings.Contains(menu, "claude-live") || strings.Contains(menu, "Refreshing model lists") {
+		t.Errorf("menu should contain the model, not the progress line:\n%s", menu)
+	}
+	if got := captureStderr(t, func() {
+		if code, err := a.cmdModels([]string{"claude"}); code != 0 || err != nil {
+			t.Fatalf("cached cmdModels = (%d, %v)", code, err)
+		}
+	}); got != "" {
+		t.Errorf("fresh cache produced progress: %q", got)
+	}
+}
+
 // TestModelsShowsStandingDefaultAsAFact: a configured COOP_<AGENT>_MODEL is a human sentence in
 // that agent's block — never a synthetic id in the list, never the env var's name.
 func TestModelsShowsStandingDefaultAsAFact(t *testing.T) {
