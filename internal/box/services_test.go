@@ -16,6 +16,14 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
+func startAutomaticTestServices(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer, exposedRoots ...string) (startedServices, error) {
+	return startServicesFileContext(context.Background(), rt, workspace, file, "", "", stdout, stderr, false, true, nil, nil, exposedRoots...)
+}
+
+func startDefaultTestServices(rt runtime.Runtime, repo string, stdout, stderr io.Writer) (startedServices, error) {
+	return startAutomaticTestServices(rt, repo, ComposeFileAt(repo, filepath.Join(".agent", "compose.yml")), stdout, stderr)
+}
+
 // TestAutoUpServices: box.Run auto-starts sibling services only when enabled (COOP_AUTO_UP),
 // the box is on the services network, it's online, and the runtime has compose — Apple
 // `container` does not.
@@ -146,16 +154,16 @@ func TestStopServicesForOwnerRemovesOnlyThatRunsData(t *testing.T) {
 	}
 }
 
-// EnsureServices validates the compose file before running it: a valid file reaches `compose up`,
+// Automatic service start validates the compose file before running it: a valid file reaches `compose up`,
 // an unsafe one is refused with a naming error and NO compose command is ever run.
-func TestEnsureServicesValidates(t *testing.T) {
+func TestAutomaticServiceStartValidates(t *testing.T) {
 	t.Run("valid file runs compose up", func(t *testing.T) {
 		repo := t.TempDir()
 		os.MkdirAll(filepath.Join(repo, ".agent"), 0o755)
 		os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"),
 			[]byte("services:\n  db:\n    image: postgres:18\n"), 0o644)
 		rec := filepath.Join(t.TempDir(), "rec")
-		if _, err := EnsureServices(recorderRuntime(t, rec), repo, repo, io.Discard, io.Discard); err != nil {
+		if _, err := startDefaultTestServices(recorderRuntime(t, rec), repo, io.Discard, io.Discard); err != nil {
 			t.Fatalf("valid file should run: %v", err)
 		}
 		out, _ := os.ReadFile(rec)
@@ -170,7 +178,7 @@ func TestEnsureServicesValidates(t *testing.T) {
 		os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"),
 			[]byte("services:\n  x:\n    image: a\n    privileged: true\n"), 0o644)
 		rec := filepath.Join(t.TempDir(), "rec")
-		_, err := EnsureServices(recorderRuntime(t, rec), repo, repo, io.Discard, io.Discard)
+		_, err := startDefaultTestServices(recorderRuntime(t, rec), repo, io.Discard, io.Discard)
 		if err == nil {
 			t.Fatal("an unsafe compose file must be refused")
 		}
@@ -187,11 +195,11 @@ func TestEnsureServicesValidates(t *testing.T) {
 	t.Run("no compose file is a no-op", func(t *testing.T) {
 		rec := filepath.Join(t.TempDir(), "rec")
 		dir := t.TempDir()
-		services, err := EnsureServices(recorderRuntime(t, rec), dir, dir, io.Discard, io.Discard)
+		services, err := startDefaultTestServices(recorderRuntime(t, rec), dir, io.Discard, io.Discard)
 		if err != nil {
 			t.Fatalf("no compose file should be a nil no-op: %v", err)
 		}
-		if len(services) != 0 {
+		if len(services.names) != 0 {
 			t.Fatalf("no compose file services = %v, want none", services)
 		}
 		if _, statErr := os.Stat(rec); statErr == nil {
@@ -210,7 +218,7 @@ func TestAutomaticServiceStartRefusesExternalVolumes(t *testing.T) {
 	}
 	recorder := filepath.Join(t.TempDir(), "runtime.log")
 	rt := recorderRuntime(t, recorder)
-	if _, err := EnsureServicesFile(rt, repo, compose, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "coop up") {
+	if _, err := startAutomaticTestServices(rt, repo, compose, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "coop up") {
 		t.Fatalf("automatic external-volume start = %v, want explicit host startup refusal", err)
 	}
 	if data, err := os.ReadFile(recorder); err == nil && strings.Contains(string(data), " up ") {
@@ -218,7 +226,7 @@ func TestAutomaticServiceStartRefusesExternalVolumes(t *testing.T) {
 	} else if err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
-	if _, err := UpServices(rt, repo, compose, io.Discard, io.Discard); err == nil {
+	if _, err := UpServicesReviewed(rt, repo, compose, nil, io.Discard, io.Discard); err == nil {
 		t.Fatal("an unreviewed direct start accepted an external volume")
 	}
 	reviewRT := serviceReviewRuntime(t, recorder)
@@ -236,7 +244,7 @@ func TestAutomaticServiceStartRefusesExternalVolumes(t *testing.T) {
 	if err := os.WriteFile(compose, []byte(local), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := EnsureServicesFile(rt, repo, compose, io.Discard, io.Discard); err != nil {
+	if _, err := startAutomaticTestServices(rt, repo, compose, io.Discard, io.Discard); err != nil {
 		t.Fatalf("automatic startup refused ordinary project-owned storage: %v", err)
 	}
 }
@@ -306,7 +314,7 @@ func TestServiceLaunchRefusesRunningWritableComposeBind(t *testing.T) {
 	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	_, err := EnsureServicesFile(runtime.Runtime{Name: shim}, repo, compose, io.Discard, io.Discard)
+	_, err := startAutomaticTestServices(runtime.Runtime{Name: shim}, repo, compose, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "running Compose service") {
 		t.Fatalf("live writable sidecar = %v, want actionable refusal", err)
 	}
@@ -366,33 +374,21 @@ func TestReviewedServiceStartRefusesChangedComposeBeforeRuntime(t *testing.T) {
 	}
 }
 
-func TestServiceHelpersRejectInvalidProjectBeforeRuntime(t *testing.T) {
-	for name, call := range map[string]func(runtime.Runtime, string) error{
-		"ensure": func(rt runtime.Runtime, repo string) error {
-			_, err := EnsureServices(rt, repo, repo, io.Discard, io.Discard)
-			return err
-		},
-		"down": func(rt runtime.Runtime, repo string) error {
-			return DownServices(rt, repo, repo, false, io.Discard, io.Discard)
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			repo := t.TempDir()
-			if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(repo, project.File), []byte("box:\n  egres: none\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			recorder := filepath.Join(t.TempDir(), "runtime-args")
-			err := call(recorderRuntime(t, recorder), repo)
-			if err == nil || !strings.Contains(err.Error(), project.File) {
-				t.Fatalf("service helper = %v, want policy error", err)
-			}
-			if _, statErr := os.Stat(recorder); !os.IsNotExist(statErr) {
-				t.Fatalf("runtime was invoked before policy validation: %v", statErr)
-			}
-		})
+func TestDownServicesRejectsInvalidProjectBeforeRuntime(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, project.File), []byte("box:\n  egres: none\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	err := DownServices(recorderRuntime(t, recorder), repo, repo, false, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), project.File) {
+		t.Fatalf("service teardown = %v, want policy error", err)
+	}
+	if _, statErr := os.Stat(recorder); !os.IsNotExist(statErr) {
+		t.Fatalf("runtime was invoked before policy validation: %v", statErr)
 	}
 }
 
@@ -459,7 +455,7 @@ func testComposeRepoWithServices(t *testing.T, services ...string) string {
 	return repo
 }
 
-func TestEnsureServicesReturnsResolvedServiceNames(t *testing.T) {
+func TestAutomaticServiceStartReturnsResolvedServiceNames(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		services []string
@@ -472,11 +468,11 @@ func TestEnsureServicesReturnsResolvedServiceNames(t *testing.T) {
 			rec := filepath.Join(t.TempDir(), "rec")
 			rt := composeRuntimeWithServices(t, rec, tc.services, 0)
 
-			got, err := EnsureServices(rt, repo, repo, io.Discard, io.Discard)
+			got, err := startDefaultTestServices(rt, repo, io.Discard, io.Discard)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !slices.Equal(got, tc.services) {
+			if !slices.Equal(got.names, tc.services) {
 				t.Fatalf("services = %v, want Compose order %v", got, tc.services)
 			}
 			data, err := os.ReadFile(rec)
@@ -497,7 +493,7 @@ func TestEnsureServicesReturnsResolvedServiceNames(t *testing.T) {
 	}
 }
 
-func TestEnsureServicesUsesOneGeneratedOverrideForDiscoveryAndStartup(t *testing.T) {
+func TestAutomaticServiceStartUsesOneGeneratedOverrideForDiscoveryAndStartup(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
@@ -507,11 +503,11 @@ func TestEnsureServicesUsesOneGeneratedOverrideForDiscoveryAndStartup(t *testing
 	}
 	rec := filepath.Join(t.TempDir(), "rec")
 
-	services, err := EnsureServices(composeOverrideRuntime(t, rec), repo, repo, io.Discard, io.Discard)
+	services, err := startDefaultTestServices(composeOverrideRuntime(t, rec), repo, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(services, []string{"keycloak"}) {
+	if !slices.Equal(services.names, []string{"keycloak"}) {
 		t.Fatalf("services = %v, want [keycloak]", services)
 	}
 
@@ -542,16 +538,16 @@ func TestEnsureServicesUsesOneGeneratedOverrideForDiscoveryAndStartup(t *testing
 	}
 }
 
-func TestEnsureServicesStopsWhenServiceDiscoveryFails(t *testing.T) {
+func TestAutomaticServiceStartStopsWhenServiceDiscoveryFails(t *testing.T) {
 	repo := testComposeRepoWithServices(t, "db", "keycloak")
 	rec := filepath.Join(t.TempDir(), "rec")
 	rt := composeRuntimeWithServices(t, rec, nil, 23)
 
-	services, err := EnsureServices(rt, repo, repo, io.Discard, io.Discard)
+	services, err := startDefaultTestServices(rt, repo, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "compose config --services exited with status 23") {
 		t.Fatalf("discovery error = %v, want named compose failure", err)
 	}
-	if len(services) != 0 {
+	if len(services.names) != 0 {
 		t.Fatalf("failed discovery returned services %v", services)
 	}
 	data, readErr := os.ReadFile(rec)

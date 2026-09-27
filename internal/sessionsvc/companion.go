@@ -55,13 +55,6 @@ func sessionCompanionWorkspace(stateRoot, sessionID, name string) (string, error
 	return filepath.Join(root, "repositories", sessionID, name), nil
 }
 
-func ensureSessionCompanion(
-	stateRoot, sessionID string,
-	binding session.CompanionRepository,
-) (session.CompanionRepository, error) {
-	return ensureSessionCompanionContext(context.Background(), stateRoot, sessionID, binding)
-}
-
 func ensureSessionCompanionContext(
 	ctx context.Context, stateRoot, sessionID string,
 	binding session.CompanionRepository,
@@ -446,12 +439,6 @@ func realSessionCompanionRepositoryContext(ctx context.Context, path string) (st
 		return "", errors.New("repository path is not the exact Git worktree root")
 	}
 	return realPath, nil
-}
-
-func sessionCompanionStatus(
-	binding session.CompanionRepository,
-) (status []byte, truncated bool, returnErr error) {
-	return sessionCompanionStatusContext(context.Background(), binding)
 }
 
 func sessionCompanionStatusContext(

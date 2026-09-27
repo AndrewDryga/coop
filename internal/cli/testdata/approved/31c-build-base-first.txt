@@ -1,9 +1,0 @@
-Building the project box
-  Dockerfile: .agent/Dockerfile
-  Image:      coop-atlas
-
-The shared Coop image must be built first.
-
-[Build output]
-
-✓ Box image built

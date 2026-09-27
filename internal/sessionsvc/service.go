@@ -527,12 +527,6 @@ func (s *Service) beginWorkspaceRestore(sessionID string) (func(), bool) {
 	}, true
 }
 
-func (s *Service) restoreInProgress(sessionID string) bool {
-	s.runtimeMu.Lock()
-	defer s.runtimeMu.Unlock()
-	return s.restoring[sessionID]
-}
-
 func (s *Service) acquireSessionRuntime(sessionID string, try bool) (func(), bool) {
 	s.runtimeMu.Lock()
 	lock := s.runtimeLocks[sessionID]

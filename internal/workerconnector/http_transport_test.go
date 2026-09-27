@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,19 @@ import (
 	"github.com/AndrewDryga/coop/internal/testutil/workertls"
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
+
+func newHTTPTransport(baseURL string, client *http.Client) (*HTTPTransport, error) {
+	parsed, err := parseControlPlaneURL(baseURL, false)
+	if err != nil {
+		return nil, err
+	}
+	if client == nil {
+		return nil, errors.New("worker HTTP client is required")
+	}
+	return &HTTPTransport{
+		baseURL: parsed, client: client, endpoint: parsed.ResolveReference(&url.URL{Path: "/v1/coop-workers/poll"}).String(),
+	}, nil
+}
 
 func TestHTTPTransportPostsOneBoundedStrictPoll(t *testing.T) {
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)

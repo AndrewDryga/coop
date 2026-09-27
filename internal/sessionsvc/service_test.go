@@ -683,11 +683,8 @@ func TestReplacementWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(
 		if duringErr == nil || !strings.Contains(duringErr.Error(), "restore is in progress") {
 			t.Fatalf("turn submitted mid-restore = %v; want a refusal to retry", duringErr)
 		}
-		if service.restoreInProgress(racer.ID) {
-			t.Fatal("restore mark survives the restore")
-		}
 		service.testDuringRestoreFiles = nil
-		if _, err := service.Store().SubmitTurn(context.Background(), "restore-racer-turn", session.SubmitTurnRequest{
+		if _, err := service.SubmitTurn(context.Background(), "restore-racer-turn", session.SubmitTurnRequest{
 			SessionID: racer.ID, ExpectedRevision: bound.Revision, Prompt: "Start before the files are back.",
 		}); err != nil {
 			t.Fatalf("turn after the restore = %v; want it accepted on the restored workspace", err)

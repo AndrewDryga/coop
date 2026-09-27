@@ -3,9 +3,9 @@ name: services-teardown-needs-the-workspace
 description: sibling-service teardown is driven by the workspace's own compose file, so stopping services after deleting the workspace is a silent no-op
 subsystem: box/services
 sources: [internal/sessionsvc/workspace.go, internal/box/services.go, internal/box/repo.go, internal/forkctl/rm.go, internal/forkspace/create.go]
-updated: 2026-09-05
+updated: 2026-09-27
 ---
-Sibling services are brought up per box (`box.Run` → `EnsureServicesFile`) and are deliberately
+Sibling services are brought up per box (`box.Run` → `startServicesFileContext`) and are deliberately
 **not** brought down when a box exits: the stack is idempotent and reused across iterations, so a
 loop doesn't pay Keycloak's startup on every task. Persistence across boxes is correct.
 
@@ -44,6 +44,8 @@ Two related seams behave correctly already and are worth copying rather than dup
 `runtime.Runtime` is a struct, not an interface: guard with `rt.Name != ""`, never `rt != nil`.
 
 ## Changelog
+- 2026-09-27 — re-verified the start/teardown paths; removed the obsolete test-only
+  EnsureServices wrappers from production, while box.Run still calls startServicesFileContext.
 - 2026-08-25 — removed the retired Fleet prune path from the current destroy-path inventory;
   direct fork removal, merge, merge-all, and create rollback still share the same teardown-first
   choke point.

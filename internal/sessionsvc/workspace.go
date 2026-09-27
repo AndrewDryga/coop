@@ -372,20 +372,6 @@ func sessionWorkspaceBranchContext(ctx context.Context, dir string) (string, err
 	return branch, nil
 }
 
-func createSessionWorkspace(repo, generatedName string) (sessionWorkspace, error) {
-	if repo == "" {
-		return sessionWorkspace{}, errors.New("repository is required")
-	}
-	if !forkspace.ValidName(generatedName) {
-		return sessionWorkspace{}, fmt.Errorf("invalid session workspace name %q", generatedName)
-	}
-	base, err := sessionWorkspaceCommit(repo, "HEAD")
-	if err != nil {
-		return sessionWorkspace{}, fmt.Errorf("capture parent HEAD: %w", err)
-	}
-	return ensureSessionWorkspace(repo, generatedName, base)
-}
-
 // forkAllocationGuard is the atomic pre-allocation pressure check. It only ever sees a workspace
 // that does not exist yet: adopting an existing one is recovery of work this worker already
 // accepted, and refusing that would strand the session instead of protecting the disk.
@@ -393,13 +379,9 @@ type forkAllocationGuard interface {
 	admitNewFork(repo, name string) (func(), error)
 }
 
-// ensureSessionWorkspace creates or adopts only the deterministic workspace bound to an
+// ensureSessionWorkspaceContext creates or adopts only the deterministic workspace bound to an
 // already-persisted base. An existing path is read-only inspected: a crash-recovery retry must
 // never reset, clean, or replace an ambiguous workspace it did not create.
-func ensureSessionWorkspace(repo, generatedName, base string) (sessionWorkspace, error) {
-	return ensureSessionWorkspaceContext(context.Background(), nil, repo, generatedName, base)
-}
-
 func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuard, repo, generatedName, base string, reservationIDs ...string) (sessionWorkspace, error) {
 	if repo == "" || !filepath.IsAbs(repo) || !forkspace.ValidName(generatedName) || !validSessionWorkspaceCommit(base) {
 		return sessionWorkspace{}, errors.New("invalid session workspace binding")
@@ -762,28 +744,6 @@ func sessionWorkspaceCount(dir string, args ...string) (int, error) {
 		return 0, fmt.Errorf("malformed Git count %q", string(out))
 	}
 	return count, nil
-}
-
-func inspectSessionChanges(repo, workspace, base string, maxPatchBytes int) (WorkspaceChanges, error) {
-	parentHead, err := sessionWorkspaceCommit(repo, "HEAD")
-	if err != nil {
-		return WorkspaceChanges{}, fmt.Errorf("resolve current parent HEAD: %w", err)
-	}
-	return inspectSessionChangesPageAtParent(repo, workspace, base, parentHead, 0, maxPatchBytes)
-}
-
-func inspectSessionChangesPage(
-	repo string,
-	workspace string,
-	base string,
-	patchOffset int64,
-	patchLimit int,
-) (WorkspaceChanges, error) {
-	parentHead, err := sessionWorkspaceCommit(repo, "HEAD")
-	if err != nil {
-		return WorkspaceChanges{}, fmt.Errorf("resolve current parent HEAD: %w", err)
-	}
-	return inspectSessionChangesPageAtParent(repo, workspace, base, parentHead, patchOffset, patchLimit)
 }
 
 func inspectSessionChangesPageAtParent(

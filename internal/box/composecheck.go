@@ -21,7 +21,7 @@ import (
 
 // ValidateComposeFile reports whether the sibling-services compose file at path declares ONLY
 // directives that are safe to auto-run on the HOST daemon — nil when safe, else an error naming
-// the first offending key/path/value. coop runs this before every `compose up` (EnsureServices),
+// the first offending key/path/value. Coop runs this before every service `compose up`,
 // so the compose path no longer has to be shadowed read-only in the box: an in-box agent MAY
 // author the file, but the host refuses to run anything that reaches outside a repo-scoped,
 // loopback-only container. repoRoot bounds bind mounts; path's own dir anchors relative binds.

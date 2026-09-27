@@ -1,6 +1,0 @@
-
-✗ Could not read .coopsecretsignore
-
-      Permission denied.
-
-  Fix the file permissions, then run coop check-secrets again.

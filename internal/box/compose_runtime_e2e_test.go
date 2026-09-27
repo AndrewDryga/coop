@@ -146,16 +146,16 @@ volumes:
 		_ = StopServicesForOwner(t.Context(), rt, repo, repo, "", true)
 	})
 
-	dev, err := UpServicesForOwner(rt, repo, source, "", io.Discard, io.Discard)
+	dev, err := startServicesFileContext(t.Context(), rt, repo, source, "", "", io.Discard, io.Discard, false, false, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	loop, err := UpServicesForOwner(rt, repo, source, loopOwner, io.Discard, io.Discard)
+	loop, err := startServicesFileContext(t.Context(), rt, repo, source, loopOwner, "", io.Discard, io.Discard, false, false, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(dev.Ports) != 1 || len(loop.Ports) != 1 || dev.Ports[0].HostPort == loop.Ports[0].HostPort {
-		t.Fatalf("dev/loop ports are not distinct: dev=%+v loop=%+v", dev.Ports, loop.Ports)
+	if len(dev.ports) != 1 || len(loop.ports) != 1 || dev.ports[0].HostPort == loop.ports[0].HostPort {
+		t.Fatalf("dev/loop ports are not distinct: dev=%+v loop=%+v", dev.ports, loop.ports)
 	}
 
 	composeExec(t, rt, repo, source, "", "echo dev > /data/owner")

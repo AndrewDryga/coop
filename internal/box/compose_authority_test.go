@@ -165,7 +165,7 @@ func TestComposeLaunchKeepsValidatedBytes(t *testing.T) {
 	if err := os.WriteFile(shim, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := EnsureServicesFile(runtime.Runtime{Name: shim}, repo, source, io.Discard, io.Discard); err != nil {
+	if _, err := startAutomaticTestServices(runtime.Runtime{Name: shim}, repo, source, io.Discard, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(captured)

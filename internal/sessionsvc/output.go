@@ -74,13 +74,6 @@ type sessionOutputDirectory struct {
 	info   os.FileInfo
 }
 
-func prepareSessionOutputDir(workspace, turnID string) (*sessionOutputDirectory, string, error) {
-	if !filepath.IsAbs(workspace) || !validSessionHTTPPathID(turnID) {
-		return nil, "", errors.New("invalid turn output identity")
-	}
-	return prepareSessionOutputDirAtRoot(filepath.Join(workspace, sessionOutputRoot), turnID)
-}
-
 func prepareSessionOutputDirAtRoot(root, turnID string) (*sessionOutputDirectory, string, error) {
 	if !filepath.IsAbs(root) || !validSessionHTTPPathID(turnID) {
 		return nil, "", errors.New("invalid turn output identity")

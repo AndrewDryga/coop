@@ -1,7 +1,0 @@
-✗ 1 possible secret found
-
-  config/client.go:12
-    OpenAI API key
-
-Remove real secrets from files you intend to commit.
-For false-positive entries: coop help check-secrets

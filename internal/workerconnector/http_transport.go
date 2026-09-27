@@ -99,19 +99,6 @@ func (t *HTTPTransport) Identity(ctx context.Context) (WorkerIdentity, error) {
 	return WorkerIdentity{ID: t.identity.workerID, WorkspaceRef: t.identity.workspaceRef}, nil
 }
 
-func newHTTPTransport(baseURL string, client *http.Client) (*HTTPTransport, error) {
-	parsed, err := parseControlPlaneURL(baseURL, false)
-	if err != nil {
-		return nil, err
-	}
-	if client == nil {
-		return nil, errors.New("worker HTTP client is required")
-	}
-	return &HTTPTransport{
-		baseURL: parsed, client: client, endpoint: parsed.ResolveReference(&url.URL{Path: "/v1/coop-workers/poll"}).String(),
-	}, nil
-}
-
 func (t *HTTPTransport) Poll(ctx context.Context, poll workerproto.Poll) (workerproto.Response, error) {
 	if err := poll.Validate(); err != nil {
 		return workerproto.Response{}, err

@@ -6,9 +6,9 @@ design decisions from the CLI content review (task
 `2026-09-10-make-network-inspection-destination-first-and-ex`, `approved-output/`), and this copy
 is the version the gate compares against.
 
-`TestApprovedOutput` in `approved_output_test.go` renders each invocation with color off and
-compares byte-for-byte. Two values are legitimately substituted before the comparison, because
-they are properties of the build and the project, not of the copy:
+The `TestApproved*` families use `assertApprovedOutput` in `approved_output_test.go` to compare
+rendered output byte-for-byte with color off. Two values are legitimately substituted before the
+comparison, because they are properties of the build and the project, not of the copy:
 
 - the recorded version `v9.0.0-187-g1176bf4-dirty` becomes this build's version;
 - the service-variant menus are rendered against a temporary project that really declares

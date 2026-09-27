@@ -747,7 +747,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		ui.Note("shadowed %d secret path(s)", n)
 	}
 	// The sibling-services compose file is NOT shadowed: an in-box agent may author it, but coop
-	// validates it host-side before auto-running it (box.ValidateComposeFile in EnsureServices), so
+	// validates it host-side before auto-running it (ValidateComposeFile), so
 	// it can only ever declare a repo-scoped, loopback-only container — never host root. That
 	// removes the read-only decoy that used to strand an empty .agent/compose.yml in the repo.
 	if !sections.on {
@@ -1362,7 +1362,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			}
 			// Discard compose's own progress UI — it repaints with carriage returns and would overprint
 			// the loop's live bar. coop's status line says what happened; `coop up` shows the live
-			// output (and the real error) when you need to diagnose a failure. EnsureServices validates
+			// output (and the real error) when you need to diagnose a failure. Service start validates
 			// the file first, so a refusal (an unsafe compose an agent wrote) surfaces here without
 			// running anything host-dangerous. Loop launches stop; direct launches keep their existing
 			// continue-without-services behavior.

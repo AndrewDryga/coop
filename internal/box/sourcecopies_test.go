@@ -448,7 +448,7 @@ func TestPrivateCopiesAndComposeRejectExposedRoots(t *testing.T) {
 	_, _, err = writeServiceOverride([]ServicePort{{Service: "db", ContainerPort: 5432, HostPort: 25432}}, repo, exposed)
 	assertDenied(err)
 	rt := recorderRuntime(t, filepath.Join(t.TempDir(), "runtime.log"))
-	_, err = EnsureServicesFile(rt, repo, source, io.Discard, io.Discard, exposed)
+	_, err = startAutomaticTestServices(rt, repo, source, io.Discard, io.Discard, exposed)
 	assertDenied(err)
 	assertDenied(DownServicesFile(rt, repo, source, false, io.Discard, io.Discard, exposed))
 	entries, err := os.ReadDir(exposed)

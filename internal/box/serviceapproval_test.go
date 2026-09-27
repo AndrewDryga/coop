@@ -142,7 +142,7 @@ func TestMissingApprovedServiceImageRefusesBeforeCompose(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("COOP_TEST_MISSING_IMAGE", "sha256:"+strings.Repeat("a", 64))
-	if _, err := EnsureServicesFile(rt, repo, compose, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "approved image") {
+	if _, err := startAutomaticTestServices(rt, repo, compose, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "approved image") {
 		t.Fatalf("missing image start = %v; want refusal before Compose", err)
 	}
 	if calls, err := os.ReadFile(recorder); err != nil || strings.Contains(string(calls), " up ") || strings.Contains(string(calls), " pull ") {
@@ -733,7 +733,7 @@ func TestHiddenServiceFileNoticeGoesToTheUserNotTheComposeWriter(t *testing.T) {
 	var composeWriter bytes.Buffer
 	sections := newLaunchSections(RunSpec{Agent: "gemini"})
 	sections.internet(&config.Config{Egress: "open"}, RunSpec{Agent: "gemini"}, nil)
-	_, runErr := startServicesFile(runtime.Runtime{Name: shim}, repo, compose, io.Discard, &composeWriter, false, true)
+	_, runErr := startAutomaticTestServices(runtime.Runtime{Name: shim}, repo, compose, io.Discard, &composeWriter)
 	sections.servicesFailed("Container project-db Running\nContainer project-keycloak Waiting")
 	os.Stderr = old
 	w.Close()

@@ -1,6 +1,0 @@
-
-✗ Could not read .coopsecretsignore
-
-      Line 4 needs a finding ID followed by # and your reason.
-
-  Fix the entry, then run coop check-secrets again.
