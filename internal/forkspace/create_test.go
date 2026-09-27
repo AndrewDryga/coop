@@ -86,7 +86,7 @@ func TestSetupRefusesNameWhilePriorSessionWorkspaceIsStaged(t *testing.T) {
 	}
 	record := WorkspaceReservation{
 		Version: workspaceReservationVersion, Fork: identity,
-		Kind: WorkspaceReservationRemoteSession, OwnerID: "remote_staged", CreatedAt: time.Now().UTC(),
+		Kind: WorkspaceReservationRemoteSession, OwnerStoreID: testReservationStoreID, OwnerID: "remote_staged", CreatedAt: time.Now().UTC(),
 	}
 	if err := ReserveWorkspaceLocked(repo, record); err != nil {
 		unlock()

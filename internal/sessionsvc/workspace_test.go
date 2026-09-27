@@ -2,7 +2,9 @@ package sessionsvc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +14,8 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
+
+const testSessionStoreID = "store_test"
 
 func sessionWorkspaceGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
@@ -93,7 +97,7 @@ func TestSessionWorkspacePreservesPublishedGenerationAfterAmbiguousCreateError(t
 	}
 	t.Cleanup(func() { ensureSessionGenerationLocked = previous })
 
-	_, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "ambiguous", base)
+	_, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "ambiguous", base, testSessionStoreID, "ambiguous")
 	if !errors.Is(err, failure) {
 		t.Fatalf("create error = %v, want %v", err, failure)
 	}
@@ -110,7 +114,7 @@ func TestSessionWorkspacePreservesPublishedGenerationAfterAmbiguousCreateError(t
 	}
 
 	ensureSessionGenerationLocked = previous
-	recovered, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "ambiguous", base)
+	recovered, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "ambiguous", base, testSessionStoreID, "ambiguous")
 	if err != nil || recovered.Fork != published {
 		t.Fatalf("retry = %+v, %v; want published generation %+v", recovered, err, published)
 	}
@@ -133,7 +137,7 @@ func TestSessionWorkspacePreservesGenerationWhenReservationPublicationFails(t *t
 		removeSessionGenerationIfMatches = previousRemove
 	})
 
-	_, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "reserve-rollback", base, "remote_owner")
+	_, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "reserve-rollback", base, testSessionStoreID, "remote_owner")
 	if !errors.Is(err, reserveFailure) {
 		t.Fatalf("create error = %v, want reservation failure", err)
 	}
@@ -153,7 +157,7 @@ func TestSessionWorkspacePreservesGenerationWhenReservationPublicationFails(t *t
 	}
 
 	reserveSessionWorkspaceLocked, removeSessionGenerationIfMatches = previousReserve, previousRemove
-	recovered, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "reserve-rollback", base, "remote_owner")
+	recovered, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "reserve-rollback", base, testSessionStoreID, "remote_owner")
 	if err != nil || recovered.Fork != published {
 		t.Fatalf("retry = %+v, %v; want preserved generation %+v", recovered, err, published)
 	}
@@ -173,7 +177,7 @@ func TestSessionWorkspacePreservesPublishedReservationAfterAmbiguousCreate(t *te
 	}
 	t.Cleanup(func() { reserveSessionWorkspaceLocked = previous })
 
-	_, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "reservation-ambiguous", base, "remote_owner")
+	_, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "reservation-ambiguous", base, testSessionStoreID, "remote_owner")
 	if !errors.Is(err, failure) {
 		t.Fatalf("create error = %v, want %v", err, failure)
 	}
@@ -190,7 +194,7 @@ func TestSessionWorkspacePreservesPublishedReservationAfterAmbiguousCreate(t *te
 	}
 
 	reserveSessionWorkspaceLocked = previous
-	recovered, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "reservation-ambiguous", base, "remote_owner")
+	recovered, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "reservation-ambiguous", base, testSessionStoreID, "remote_owner")
 	if err != nil || recovered.Fork != identity {
 		t.Fatalf("retry = %+v, %v; want reserved generation %+v", recovered, err, identity)
 	}
@@ -201,7 +205,7 @@ func TestSessionWorkspaceCreateRemovesItsOwnersStaleReservationAfterRollbackCras
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	base := gitOut(repo, "rev-parse", "HEAD")
 	owner := "remote_55555555555555555555555555555555"
-	created, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "rollback-replay", base, owner)
+	created, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "rollback-replay", base, testSessionStoreID, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +228,7 @@ func TestSessionWorkspaceCreateRemovesItsOwnersStaleReservationAfterRollbackCras
 		t.Fatalf("crash fixture reservation: reserved=%v err=%v", reserved, err)
 	}
 
-	recovered, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, created.Name, base, owner)
+	recovered, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, created.Name, base, testSessionStoreID, owner)
 	if err != nil {
 		t.Fatalf("create replay: %v", err)
 	}
@@ -260,6 +264,7 @@ func TestSessionWorkspaceCreateConfirmsMissingReservationBeforeSetup(t *testing.
 
 	_, err := ensureSessionWorkspaceContext(
 		context.Background(), nil, repo, "reservation-sync", base,
+		testSessionStoreID,
 		"remote_66666666666666666666666666666666",
 	)
 	if !errors.Is(err, failure) {
@@ -267,6 +272,59 @@ func TestSessionWorkspaceCreateConfirmsMissingReservationBeforeSetup(t *testing.
 	}
 	if _, statErr := os.Lstat(forkspace.Workspace(repo, "reservation-sync")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("reservation durability failure still created a workspace: %v", statErr)
+	}
+}
+
+func TestSessionWorkspaceRetryChecksOwnerBeforeHydration(t *testing.T) {
+	for _, version := range []int{1, forkspace.WorkspaceReservationVersion} {
+		t.Run(fmt.Sprintf("reservation-v%d", version), func(t *testing.T) {
+			repo, git := gitrepo.New(t)
+			git("commit", "-q", "--allow-empty", "-m", "base")
+			base := gitOut(repo, "rev-parse", "HEAD")
+			owner := "remote_retry"
+			created, err := ensureSessionWorkspaceContext(t.Context(), nil, repo, "retry-owner", base, testSessionStoreID, owner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(created.Path, "keep.txt")
+			sessionWorkspaceWrite(t, marker, "keep\n")
+			unlock, err := forkspace.LockState(repo, created.Name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			current, reserved, err := forkspace.ReadWorkspaceReservation(repo, created.Fork)
+			if err == nil && reserved {
+				err = forkspace.RemoveWorkspaceReservationIfMatchesLocked(repo, current)
+			}
+			if err == nil {
+				current.Version = version
+				current.OwnerStoreID = "store_other"
+				if version == 1 {
+					current.OwnerStoreID = ""
+					var body []byte
+					body, err = json.Marshal(current)
+					if err == nil {
+						err = os.WriteFile(filepath.Join(forkspace.StateDir(repo), "reservations", created.Name+"."+string(created.Fork.Generation)+".json"), body, 0o600)
+					}
+				} else {
+					err = forkspace.ReserveWorkspaceLocked(repo, current)
+				}
+			}
+			unlock()
+			if err != nil || !reserved {
+				t.Fatalf("prepare foreign reservation: reserved=%t err=%v", reserved, err)
+			}
+			// If hydration runs first, this broken source HEAD produces a Git error
+			// instead of the ownership refusal.
+			git("symbolic-ref", "HEAD", "refs/heads/missing")
+			if _, err := ensureSessionWorkspaceContext(t.Context(), nil, repo, created.Name, base, testSessionStoreID, owner); err == nil ||
+				!strings.Contains(err.Error(), "another or unproven owner") {
+				t.Fatalf("foreign reservation was checked after hydration: %v", err)
+			}
+			if body, err := os.ReadFile(marker); err != nil || string(body) != "keep\n" {
+				t.Fatalf("foreign workspace changed: %q, %v", body, err)
+			}
+		})
 	}
 }
 
@@ -440,6 +498,7 @@ func TestSessionWorkspaceDiscardKeepsAuthorityWhenStageDurabilityIsUncertain(t *
 	base := gitOut(repo, "rev-parse", "HEAD")
 	created, err := ensureSessionWorkspaceContext(
 		context.Background(), nil, repo, "discard-stage-sync", base,
+		testSessionStoreID,
 		"remote_44444444444444444444444444444444",
 	)
 	if err != nil {
@@ -491,6 +550,7 @@ func TestSessionWorkspaceDiscardReplaysEachAuthorityCleanupPrefix(t *testing.T) 
 			base := gitOut(repo, "rev-parse", "HEAD")
 			created, err := ensureSessionWorkspaceContext(
 				context.Background(), nil, repo, "discard-prefix", base,
+				testSessionStoreID,
 				"remote_11111111111111111111111111111111",
 			)
 			if err != nil {
@@ -539,6 +599,7 @@ func TestSessionWorkspaceDiscardRetryRepeatsMissingGenerationDurabilityBeforeRes
 	base := gitOut(repo, "rev-parse", "HEAD")
 	created, err := ensureSessionWorkspaceContext(
 		context.Background(), nil, repo, "discard-sync-retry", base,
+		testSessionStoreID,
 		"remote_22222222222222222222222222222222",
 	)
 	if err != nil {
@@ -595,6 +656,7 @@ func TestSessionWorkspaceDiscardRetryRepeatsMissingReservationDurability(t *test
 	base := gitOut(repo, "rev-parse", "HEAD")
 	created, err := ensureSessionWorkspaceContext(
 		context.Background(), nil, repo, "discard-reservation-sync", base,
+		testSessionStoreID,
 		"remote_33333333333333333333333333333333",
 	)
 	if err != nil {

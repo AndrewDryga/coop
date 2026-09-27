@@ -1,12 +1,16 @@
 package forkspace
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+const testReservationStoreID = "store_test"
 
 func TestWorkspaceReservationPublicationRetryRepeatsDirectorySync(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "repo")
@@ -14,7 +18,7 @@ func TestWorkspaceReservationPublicationRetryRepeatsDirectorySync(t *testing.T) 
 	identity := ensureTestGeneration(t, repo, "publish-retry")
 	record := WorkspaceReservation{
 		Version: workspaceReservationVersion, Fork: identity,
-		Kind: WorkspaceReservationRemoteSession, OwnerID: "remote_publish", CreatedAt: time.Now().UTC(),
+		Kind: WorkspaceReservationRemoteSession, OwnerStoreID: testReservationStoreID, OwnerID: "remote_publish", CreatedAt: time.Now().UTC(),
 	}
 	previous := syncReservationDirectory
 	t.Cleanup(func() { syncReservationDirectory = previous })
@@ -92,7 +96,7 @@ func TestWorkspaceReservationRemovalRetryRepeatsDirectorySync(t *testing.T) {
 	identity := ensureTestGeneration(t, repo, "remove-retry")
 	record := WorkspaceReservation{
 		Version: workspaceReservationVersion, Fork: identity,
-		Kind: WorkspaceReservationRemoteSession, OwnerID: "remote_remove", CreatedAt: time.Now().UTC(),
+		Kind: WorkspaceReservationRemoteSession, OwnerStoreID: testReservationStoreID, OwnerID: "remote_remove", CreatedAt: time.Now().UTC(),
 	}
 	unlock, err := LockState(repo, identity.Name)
 	if err != nil {
@@ -143,7 +147,7 @@ func TestWorkspaceReservationIsExactIdempotentAndBlocksLifecycle(t *testing.T) {
 	identity := ensureTestGeneration(t, repo, "remote")
 	record := WorkspaceReservation{
 		Version: workspaceReservationVersion, Fork: identity,
-		Kind: WorkspaceReservationRemoteSession, OwnerID: "remote_session", CreatedAt: time.Now().UTC(),
+		Kind: WorkspaceReservationRemoteSession, OwnerStoreID: testReservationStoreID, OwnerID: "remote_session", CreatedAt: time.Now().UTC(),
 	}
 	unlock, err := LockState(repo, identity.Name)
 	if err != nil {
@@ -170,6 +174,20 @@ func TestWorkspaceReservationIsExactIdempotentAndBlocksLifecycle(t *testing.T) {
 		unlock()
 		t.Fatal("another session replaced reservation")
 	}
+	other = record
+	other.OwnerStoreID = "store_other"
+	if err := ReserveWorkspaceLocked(repo, other); err == nil {
+		unlock()
+		t.Fatal("another store replayed the reservation")
+	}
+	if err := RemoveWorkspaceReservationIfMatchesLocked(repo, other); err == nil {
+		unlock()
+		t.Fatal("another store removed the reservation")
+	}
+	if _, present, err := ReadWorkspaceReservation(repo, identity); err != nil || !present {
+		unlock()
+		t.Fatalf("wrong-store removal changed reservation: present=%t err=%v", present, err)
+	}
 	if err := RemoveWorkspaceReservationIfMatchesLocked(repo, record); err != nil {
 		unlock()
 		t.Fatal(err)
@@ -177,6 +195,41 @@ func TestWorkspaceReservationIsExactIdempotentAndBlocksLifecycle(t *testing.T) {
 	unlock()
 	if _, ok, err := ReadWorkspaceReservation(repo, identity); err != nil || ok {
 		t.Fatalf("reservation after cleanup: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestLegacyWorkspaceReservationIsVisibleButHasNoNewAuthority(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	makeGenerationWorkspace(t, repo, "old")
+	identity := ensureTestGeneration(t, repo, "old")
+	legacy := WorkspaceReservation{
+		Version: 1, Fork: identity, Kind: WorkspaceReservationRemoteSession,
+		OwnerID: "remote_old", CreatedAt: time.Now().UTC(),
+	}
+	if err := os.MkdirAll(reservationDir(repo), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(reservationDir(repo), reservationName(identity)), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if current, present, err := ReadWorkspaceReservation(repo, identity); err != nil || !present || current != legacy {
+		t.Fatalf("legacy reservation not readable: %+v present=%t err=%v", current, present, err)
+	}
+	if err := RequireNoWorkspaceReservationLocked(repo, identity); err == nil || !strings.Contains(err.Error(), "recover it offline") {
+		t.Fatalf("legacy reservation did not give an actionable refusal: %v", err)
+	}
+	if err := RemoveWorkspaceReservationIfMatchesLocked(repo, legacy); err == nil {
+		t.Fatal("legacy reservation gained automatic deletion authority")
+	}
+	if err := ReserveWorkspaceLocked(repo, WorkspaceReservation{
+		Version: WorkspaceReservationVersion, Fork: identity, Kind: WorkspaceReservationRemoteSession,
+		OwnerStoreID: testReservationStoreID, OwnerID: legacy.OwnerID, CreatedAt: time.Now().UTC(),
+	}); err == nil {
+		t.Fatal("v1 reservation was silently relabeled as v2")
 	}
 }
 
@@ -197,7 +250,7 @@ func TestWorkspaceReservationDoesNotFollowRegistrySymlink(t *testing.T) {
 	defer unlock()
 	err = ReserveWorkspaceLocked(repo, WorkspaceReservation{
 		Version: workspaceReservationVersion, Fork: identity,
-		Kind: WorkspaceReservationRemoteSession, OwnerID: "session", CreatedAt: time.Now().UTC(),
+		Kind: WorkspaceReservationRemoteSession, OwnerStoreID: testReservationStoreID, OwnerID: "session", CreatedAt: time.Now().UTC(),
 	})
 	if err == nil {
 		t.Fatal("symlinked reservation registry was accepted")

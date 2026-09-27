@@ -251,7 +251,7 @@ func (s *Service) executeReview(ctx context.Context, op session.Operation, req R
 	if err != nil {
 		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, err)
 	}
-	if err := validateSessionForkAuthority(ctx, bound); err != nil {
+	if err := s.validateSessionForkAuthority(ctx, bound); err != nil {
 		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID,
 			&session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()})
 	}
@@ -297,7 +297,7 @@ func (s *Service) captureReviewIntent(ctx context.Context, operationID string, r
 	if err != nil {
 		return sessionReviewIntent{}, err
 	}
-	if err := validateSessionForkAuthority(ctx, sess); err != nil {
+	if err := s.validateSessionForkAuthority(ctx, sess); err != nil {
 		return sessionReviewIntent{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
 	}
 	if sess.Revision != req.ExpectedRevision {
@@ -331,7 +331,7 @@ func (s *Service) captureReviewIntent(ctx context.Context, operationID string, r
 		reservation, reserved, readErr := forkspace.ReadWorkspaceReservation(sess.Repository, identity)
 		if readErr != nil {
 			authorityErr = readErr
-		} else if !reserved || reservation.Kind != forkspace.WorkspaceReservationRemoteSession || reservation.OwnerID != sess.ID {
+		} else if !reserved || !reservation.MatchesSessionOwner(s.store.ID(), sess.ID) {
 			authorityErr = errors.New("session workspace reservation changed")
 		}
 	}
@@ -556,7 +556,7 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 		bound.ForkGeneration != intent.ForkGeneration {
 		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "review workspace authority changed")
 	}
-	if err := validateSessionForkAuthority(ctx, bound); err != nil {
+	if err := s.validateSessionForkAuthority(ctx, bound); err != nil {
 		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "review workspace authority changed")
 	}
 	if _, err := s.sessionExecution(ctx, bound); err != nil {

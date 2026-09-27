@@ -382,11 +382,11 @@ type forkAllocationGuard interface {
 // ensureSessionWorkspaceContext creates or adopts only the deterministic workspace bound to an
 // already-persisted base. An existing path is read-only inspected: a crash-recovery retry must
 // never reset, clean, or replace an ambiguous workspace it did not create.
-func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuard, repo, generatedName, base string, reservationIDs ...string) (sessionWorkspace, error) {
+func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuard, repo, generatedName, base, storeID, sessionID string) (sessionWorkspace, error) {
 	if repo == "" || !filepath.IsAbs(repo) || !forkspace.ValidName(generatedName) || !validSessionWorkspaceCommit(base) {
 		return sessionWorkspace{}, errors.New("invalid session workspace binding")
 	}
-	if len(reservationIDs) > 1 || len(reservationIDs) == 1 && reservationIDs[0] == "" {
+	if storeID == "" || sessionID == "" {
 		return sessionWorkspace{}, errors.New("invalid session workspace reservation")
 	}
 	ws := forkspace.Workspace(repo, generatedName)
@@ -401,6 +401,13 @@ func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuar
 	if statErr != nil && !created {
 		return sessionWorkspace{}, fmt.Errorf("inspect session workspace %q: %w", generatedName, statErr)
 	}
+	if !created {
+		// A retry may hydrate submodules in an existing worktree. Prove no other
+		// reservation owns this name before that first write, not after hydration.
+		if err := preflightExistingSessionReservationLocked(repo, generatedName, storeID, sessionID); err != nil {
+			return sessionWorkspace{}, err
+		}
+	}
 	if created {
 		// A previous create rollback may have removed this name but lost the parent-directory
 		// sync. Confirm that visible absence before allocating a new generation under it.
@@ -408,12 +415,12 @@ func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuar
 			return sessionWorkspace{}, fmt.Errorf("confirm absent session workspace before create: %w", err)
 		}
 	}
-	if created && len(reservationIDs) == 1 {
+	if created {
 		// Create rollback retires generation authority before its reservation. A crash between
 		// those durable steps leaves an exact old reservation but no workspace or generation for
 		// name-based planning to discover. Remove only this session owner's now-unbound records
 		// before minting a replacement generation, or every retry leaks another phantom owner.
-		if err := removeStaleSessionWorkspaceReservationsLocked(repo, generatedName, reservationIDs[0]); err != nil {
+		if err := removeStaleSessionWorkspaceReservationsLocked(repo, generatedName, storeID, sessionID); err != nil {
 			return sessionWorkspace{}, fmt.Errorf("clean stale session workspace reservation: %w", err)
 		}
 	}
@@ -483,36 +490,57 @@ func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuar
 			// sync reported failure. Preserve that anchored workspace for the persisted
 			// create intent to retry; deleting it would strand the visible authority record.
 			if _, present, inspectErr := forkspace.ReadGeneration(repo, generatedName); present || inspectErr != nil {
-				return sessionWorkspace{}, errors.Join(cause, inspectErr)
+				return sessionWorkspace{}, fmt.Errorf("%w: %w", errSessionWorkspacePublicationPending, errors.Join(cause, inspectErr))
 			}
 			return sessionWorkspace{}, removeCreatedSessionWorkspace(repo, ws, cause)
 		}
-		return sessionWorkspace{}, fmt.Errorf("bind session workspace generation: %w", err)
+		return sessionWorkspace{}, fmt.Errorf("%w: bind session workspace generation: %w", errSessionWorkspacePublicationPending, err)
 	}
 	workspace.Fork = identity
-	if len(reservationIDs) == 1 {
-		reservation := forkspace.WorkspaceReservation{
-			Version: forkspace.WorkspaceReservationVersion, Fork: identity, Kind: forkspace.WorkspaceReservationRemoteSession,
-			OwnerID: reservationIDs[0], CreatedAt: time.Now().UTC(),
+	reservation := forkspace.WorkspaceReservation{
+		Version: forkspace.WorkspaceReservationVersion, Fork: identity, Kind: forkspace.WorkspaceReservationRemoteSession,
+		OwnerStoreID: storeID, OwnerID: sessionID, CreatedAt: time.Now().UTC(),
+	}
+	if err := reserveSessionWorkspaceLocked(repo, reservation); err != nil {
+		if created {
+			cause := fmt.Errorf("reserve new session workspace: %w", err)
+			// Keep the valid anchored generation and workspace whether publication is
+			// definitely absent, visible-but-unsynced, or uninspectable. Beginning a second
+			// authority teardown here has a fatal crash prefix: generation retirement can
+			// unlink the public marker before its directory sync fails, leaving the retained
+			// record unable to validate on retry. The persisted create intent can instead
+			// retry reservation publication idempotently against this complete workspace.
+			return sessionWorkspace{}, fmt.Errorf("%w: %w", errSessionWorkspacePublicationPending, cause)
 		}
-		if err := reserveSessionWorkspaceLocked(repo, reservation); err != nil {
-			if created {
-				cause := fmt.Errorf("reserve new session workspace: %w", err)
-				// Keep the valid anchored generation and workspace whether publication is
-				// definitely absent, visible-but-unsynced, or uninspectable. Beginning a second
-				// authority teardown here has a fatal crash prefix: generation retirement can
-				// unlink the public marker before its directory sync fails, leaving the retained
-				// record unable to validate on retry. The persisted create intent can instead
-				// retry reservation publication idempotently against this complete workspace.
-				return sessionWorkspace{}, cause
-			}
-			return sessionWorkspace{}, fmt.Errorf("reserve session workspace: %w", err)
-		}
+		return sessionWorkspace{}, fmt.Errorf("%w: reserve session workspace: %w", errSessionWorkspacePublicationPending, err)
 	}
 	return workspace, nil
 }
 
-func removeStaleSessionWorkspaceReservationsLocked(repo, name, owner string) error {
+var errSessionWorkspacePublicationPending = errors.New("session workspace authority publication needs replay")
+
+func preflightExistingSessionReservationLocked(repo, name, storeID, sessionID string) error {
+	if err := forkspace.ConfirmWorkspaceReservationState(repo); err != nil {
+		return err
+	}
+	identity, hasGeneration, err := forkspace.ReadGeneration(repo, name)
+	if err != nil {
+		return err
+	}
+	records, problems := forkspace.WorkspaceReservations(repo)
+	if len(problems) != 0 {
+		return errors.Join(problems...)
+	}
+	for _, record := range records {
+		if record.Fork.Name == name && (!hasGeneration || record.Fork != identity ||
+			!record.MatchesSessionOwner(storeID, sessionID)) {
+			return errors.New("existing session workspace reservation has another or unproven owner")
+		}
+	}
+	return nil
+}
+
+func removeStaleSessionWorkspaceReservationsLocked(repo, name, storeID, sessionID string) error {
 	// A prior unlink may be visible even though its reservation-directory sync failed. There is no
 	// record left to rediscover in that crash prefix, so confirm the visible registry snapshot
 	// before using it to authorize a new generation.
@@ -535,7 +563,7 @@ func removeStaleSessionWorkspaceReservationsLocked(repo, name, owner string) err
 		return errors.Join(problems...)
 	}
 	for _, record := range records {
-		if record.Fork.Name != name || record.OwnerID != owner || present && record.Fork == current {
+		if record.Fork.Name != name || !record.MatchesSessionOwner(storeID, sessionID) || present && record.Fork == current {
 			continue
 		}
 		if err := removeSessionReservationIfMatches(repo, record); err != nil {

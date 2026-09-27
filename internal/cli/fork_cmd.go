@@ -1003,10 +1003,13 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	}
 	activityKind := forkspace.ExecutionForkACP
 	reservationOwner := ""
+	sessionStoreID := ""
 	if sessionsvc.RunIDFromEnv() != "" {
 		activityKind = forkspace.ExecutionRemoteSession
+		sessionStoreID = os.Getenv("COOP_SESSION_STORE_ID")
 		reservation, reserved, reservationErr := forkspace.ReadWorkspaceReservation(repo, identity)
-		if reservationErr != nil || !reserved || reservation.Kind != forkspace.WorkspaceReservationRemoteSession {
+		if reservationErr != nil || !reserved ||
+			!reservation.MatchesSessionOwner(sessionStoreID, filepath.Base(a.cfg.ConfigDir)) {
 			return 1, errors.Join(reservationErr, errors.New("bound session workspace reservation is absent or invalid"))
 		}
 		reservationOwner = reservation.OwnerID
@@ -1021,6 +1024,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		ActivityRepo:   repo, ActivityKind: activityKind,
 		ActivityRole:             forkspace.ExecutionRole(os.Getenv("COOP_ACP_ACTIVITY_ROLE")),
 		ActivityReservationOwner: reservationOwner,
+		SessionStoreID:           sessionStoreID,
 		ActivitySource: func() string {
 			if runID := sessionsvc.RunIDFromEnv(); runID != "" {
 				return runID

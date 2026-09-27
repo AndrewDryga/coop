@@ -17,13 +17,12 @@ import (
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
-// Why a fork's storage is being kept. Only "disposable", "owned_orphan" and "staged_discard" are
-// bytes anybody may take back; every other category is a refusal with a reason attached.
+// Why a fork's storage is being kept. Only "disposable" and "staged_discard" are
+// bytes that can be reclaimed through their respective owner-controlled cleanup paths.
 const (
 	StorageCategoryActive        = "active"
 	StorageCategoryGrace         = "grace"
 	StorageCategoryDisposable    = "disposable"
-	StorageCategoryOwnedOrphan   = "owned_orphan"
 	StorageCategoryProtected     = "protected"
 	StorageCategoryStagedDiscard = "staged_discard"
 	StorageCategoryControl       = "control"
@@ -158,7 +157,6 @@ type StorageTotals struct {
 	ActiveBytes         int64 `json:"active_bytes"`
 	GraceBytes          int64 `json:"grace_bytes"`
 	DisposableBytes     int64 `json:"disposable_bytes"`
-	OwnedOrphanBytes    int64 `json:"owned_orphan_bytes"`
 	ProtectedBytes      int64 `json:"protected_bytes"`
 	StagedDiscardBytes  int64 `json:"staged_discard_bytes"`
 	ControlBytes        int64 `json:"control_bytes"`
@@ -170,10 +168,9 @@ type StorageTotals struct {
 	Unknown             bool  `json:"unknown"`
 }
 
-// reclaimable is everything a discard — the control plane's or the worker's own orphan scan —
-// could still return to the volume.
+// reclaimable is everything an authorized discard or staged-cleanup retry could return.
 func (t StorageTotals) reclaimable() int64 {
-	return t.DisposableBytes + t.OwnedOrphanBytes + t.StagedDiscardBytes
+	return t.DisposableBytes + t.StagedDiscardBytes
 }
 
 // retained is everything this worker is holding on purpose. The shared baseline belongs here: the
@@ -217,22 +214,10 @@ type StorageReport struct {
 	Problems []string            `json:"problems"`
 }
 
-// StorageRetained is a reclamation candidate that was left alone, and why.
-type StorageRetained struct {
-	Repository string `json:"repository"`
-	Name       string `json:"name"`
-	Generation string `json:"generation,omitempty"`
-	Reason     string `json:"reason"`
-}
-
 // StorageReclaim is one bounded reclamation pass.
 type StorageReclaim struct {
-	Reclaimed      []string          `json:"reclaimed"`
-	ReclaimedBytes int64             `json:"reclaimed_bytes"`
-	StagedPurged   int               `json:"staged_purged"`
-	Examined       int               `json:"examined"`
-	Retained       []StorageRetained `json:"retained"`
-	Problems       []string          `json:"problems"`
+	StagedPurged int      `json:"staged_purged"`
+	Problems     []string `json:"problems"`
 }
 
 // StoragePressureError refuses one NEW fork and names the limit that refused it, so a controller
@@ -316,7 +301,6 @@ type storageAccountant struct {
 	measuredAt    time.Time
 	inflight      int
 	meanForkBytes int64
-	reclaimCursor int
 }
 
 // setStorageLimits replaces the policy and drops the cached measurement, so the next report is
@@ -696,8 +680,6 @@ func (s *Service) measureForkEntry(
 		report.Totals.GraceBytes += fork.ExclusiveBytes
 	case StorageCategoryDisposable:
 		report.Totals.DisposableBytes += fork.ExclusiveBytes
-	case StorageCategoryOwnedOrphan:
-		report.Totals.OwnedOrphanBytes += fork.ExclusiveBytes
 	default:
 		report.Totals.ProtectedBytes += fork.ExclusiveBytes
 	}
@@ -741,22 +723,7 @@ func (s *Service) classifyFork(
 		}
 		return StorageCategoryDisposable, "its session is finished and its workspace is clean"
 	}
-	if _, reserved, err := forkspace.ReadWorkspaceReservation(repo, identity); err != nil || reserved {
-		return StorageCategoryProtected, "a workspace reservation still names an owner"
-	}
-	created, err := forkspace.GenerationCreatedAt(repo, identity)
-	if err != nil {
-		return StorageCategoryProtected, "its generation record cannot be read"
-	}
-	if now.Sub(created) < limits.GraceWindow {
-		// A generation only seconds old is far more likely to be a create still in flight than
-		// garbage, and the session row it belongs to is written after the workspace.
-		return StorageCategoryProtected, "an unbound generation younger than the reclaim age"
-	}
-	if dirty, reason := s.forkIsDirty(repo, identity.Name); dirty {
-		return StorageCategoryProtected, reason
-	}
-	return StorageCategoryOwnedOrphan, "no session names this generation"
+	return StorageCategoryProtected, "no session in this store proves ownership; inspect manually"
 }
 
 // forkIsDirty reports uncommitted work. An unreadable status counts as dirty: a workspace coop
@@ -841,12 +808,10 @@ func (s *Service) admitNewFork(repo, _ string) (func(), error) {
 	}, nil
 }
 
-// ReclaimOwnedOrphans finishes interrupted removals and reclaims fork storage this worker can
-// prove is garbage: coop's own generation record, no session naming it, no reservation, no live
-// worker or sandbox activity, past the reclaim age, and a clean tree fully contained by its
-// parent. Every other candidate is REPORTED, never deleted. The pass is bounded and single-flight,
-// so cleanup can never crowd out the runtime work it exists to protect.
-func (s *Service) ReclaimOwnedOrphans(ctx context.Context) (StorageReclaim, error) {
+// ReclaimStorage finishes removals already staged by an authorized discard. An unbound fork
+// generation is not proof of an orphan: its owner may live in another session store, or its create
+// operation may have stopped before publishing a reservation. Such workspaces require manual review.
+func (s *Service) ReclaimStorage(ctx context.Context) (StorageReclaim, error) {
 	if !s.storage.reclaimMu.TryLock() {
 		return StorageReclaim{}, nil
 	}
@@ -854,11 +819,6 @@ func (s *Service) ReclaimOwnedOrphans(ctx context.Context) (StorageReclaim, erro
 	sessions, err := s.store.ListSessionsForRecovery(ctx)
 	if err != nil {
 		return StorageReclaim{}, err
-	}
-	byFork := make(map[string]session.Session, len(sessions))
-	for _, sess := range sessions {
-		byFork[storageForkKey(sess.Repository, sess.ForkName, sess.ForkGeneration)] = sess
-		byFork[storageForkKey(sess.Repository, sess.ForkName, "")] = sess
 	}
 	limits := s.storageLimitsSnapshot()
 	result := StorageReclaim{}
@@ -876,7 +836,6 @@ func (s *Service) ReclaimOwnedOrphans(ctx context.Context) (StorageReclaim, erro
 		if err != nil {
 			result.Problems = append(result.Problems, err.Error())
 		}
-		s.reclaimRepositoryOrphans(ctx, repo, byFork, limits, &result)
 	}
 	return result, nil
 }
@@ -884,7 +843,7 @@ func (s *Service) ReclaimOwnedOrphans(ctx context.Context) (StorageReclaim, erro
 // reclaimStorageOnce is the maintenance loop's bounded reclamation pass. It shares the existing
 // cleanup tick rather than adding a second cleanup daemon, and it logs only when it did something.
 func (s *Service) reclaimStorageOnce(ctx context.Context) {
-	result, err := s.ReclaimOwnedOrphans(ctx)
+	result, err := s.ReclaimStorage(ctx)
 	if err != nil && ctx.Err() == nil {
 		s.log.Error("worker storage reclamation failed", "error", err)
 		return
@@ -892,91 +851,7 @@ func (s *Service) reclaimStorageOnce(ctx context.Context) {
 	for _, problem := range result.Problems {
 		s.log.Warn("worker storage reclamation problem", "problem", problem)
 	}
-	if len(result.Reclaimed) > 0 || result.StagedPurged > 0 {
-		s.log.Info("reclaimed owned fork storage",
-			"forks", len(result.Reclaimed), "bytes", result.ReclaimedBytes, "staged_purged", result.StagedPurged)
+	if result.StagedPurged > 0 {
+		s.log.Info("finished staged fork discards", "staged_purged", result.StagedPurged)
 	}
-}
-
-func (s *Service) reclaimRepositoryOrphans(
-	ctx context.Context,
-	repo string,
-	byFork map[string]session.Session,
-	limits StorageLimits,
-	result *StorageReclaim,
-) {
-	identities, problems := forkspace.GenerationIdentities(repo)
-	for _, problem := range problems {
-		result.Problems = append(result.Problems, problem.Error())
-	}
-	if len(identities) == 0 {
-		return
-	}
-	// A rotating start keeps one permanently protected candidate from consuming every pass and
-	// starving the reclaimable ones behind it.
-	s.storage.mu.Lock()
-	start := s.storage.reclaimCursor % len(identities)
-	s.storage.mu.Unlock()
-	examined := 0
-	for offset := range identities {
-		if examined >= limits.MaxReclaimPerPass || ctx.Err() != nil {
-			break
-		}
-		identity := identities[(start+offset)%len(identities)]
-		if _, owned := byFork[storageForkKey(repo, identity.Name, string(identity.Generation))]; owned {
-			continue
-		}
-		if _, owned := byFork[storageForkKey(repo, identity.Name, "")]; owned {
-			continue
-		}
-		examined++
-		result.Examined++
-		reclaimed, reason := s.reclaimOrphan(repo, identity, limits)
-		if reason != "" {
-			result.Retained = append(result.Retained, StorageRetained{
-				Repository: repo, Name: identity.Name, Generation: string(identity.Generation), Reason: reason,
-			})
-			continue
-		}
-		result.Reclaimed = append(result.Reclaimed, identity.Name+"."+string(identity.Generation))
-		result.ReclaimedBytes += reclaimed
-	}
-	s.storage.mu.Lock()
-	s.storage.reclaimCursor += examined
-	s.storage.mu.Unlock()
-}
-
-// reclaimOrphan removes one proven orphan and reports the bytes it returned, or leaves it where it
-// is and reports why. The bytes are measured before the removal; measuring afterwards would always
-// report zero.
-func (s *Service) reclaimOrphan(repo string, identity forkspace.Identity, limits StorageLimits) (int64, string) {
-	created, err := forkspace.GenerationCreatedAt(repo, identity)
-	if err != nil {
-		return 0, "its generation record cannot be read: " + err.Error()
-	}
-	if time.Since(created) < limits.GraceWindow {
-		return 0, "it is younger than the reclaim age"
-	}
-	if _, reserved, err := forkspace.ReadWorkspaceReservation(repo, identity); err != nil || reserved {
-		return 0, "a workspace reservation still names an owner"
-	}
-	workspace := forkspace.Workspace(repo, identity.Name)
-	reclaimed := int64(0)
-	if usage, err := forkspace.MeasureUsage(workspace); err == nil {
-		reclaimed = usage.ExclusiveBytes()
-	}
-	plan, err := planSessionWorkspaceDiscard(repo, workspace, false, false)
-	if err != nil {
-		return 0, "it cannot be planned for discard: " + err.Error()
-	}
-	// The scan chose this generation. A plan that resolved a different one — a fork recreated
-	// under the same name between the scan and now — must never be executed under its authority.
-	if plan.Fork == nil || *plan.Fork != identity {
-		return 0, fmt.Sprintf("its generation changed between the scan and the plan: planned %v, intended %s",
-			plan.Fork, identity.Generation)
-	}
-	if err := discardSessionWorkspace(plan); err != nil {
-		return 0, "its discard was refused: " + err.Error()
-	}
-	return reclaimed, ""
 }

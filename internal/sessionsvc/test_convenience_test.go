@@ -38,7 +38,7 @@ func createSessionWorkspace(repo, generatedName string) (sessionWorkspace, error
 }
 
 func ensureSessionWorkspace(repo, generatedName, base string) (sessionWorkspace, error) {
-	return ensureSessionWorkspaceContext(context.Background(), nil, repo, generatedName, base)
+	return ensureSessionWorkspaceContext(context.Background(), nil, repo, generatedName, base, testSessionStoreID, generatedName)
 }
 
 func inspectSessionChanges(repo, workspace, base string, maxPatchBytes int) (WorkspaceChanges, error) {

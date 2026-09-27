@@ -81,8 +81,11 @@ func TestSessionServiceCreateReplayUsesPersistedIntentAndWorkspaceBase(t *testin
 		t.Fatalf("session generation authority = %+v, ok=%v err=%v", identity, ok, err)
 	}
 	reservation, reserved, err := forkspace.ReadWorkspaceReservation(sess.Repository, identity)
-	if err != nil || !reserved || reservation.OwnerID != sess.ID || reservation.Kind != forkspace.WorkspaceReservationRemoteSession {
+	if err != nil || !reserved || !reservation.MatchesSessionOwner(service.Store().ID(), sess.ID) {
 		t.Fatalf("session workspace reservation = %+v, reserved=%v err=%v", reservation, reserved, err)
+	}
+	if owned, err := service.Store().OwnsSessionFork(context.Background(), sess.ID); err != nil || !owned {
+		t.Fatalf("session store binding: owned=%t err=%v", owned, err)
 	}
 	replayed, err := service.CreateRemoteSession(context.Background(), "create-1", request)
 	if err != nil || replayed.ID != sess.ID || replayed.Workspace != sess.Workspace {
@@ -90,6 +93,205 @@ func TestSessionServiceCreateReplayUsesPersistedIntentAndWorkspaceBase(t *testin
 	}
 	if _, err := service.Store().GetOperation(context.Background(), "create-session-"+op.ID); !errors.Is(err, session.ErrOperationNotFound) {
 		t.Fatalf("remote create persisted a synthetic inner operation: %v", err)
+	}
+}
+
+func TestSessionCreateReplaysAmbiguousReservationPublication(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, nil)
+	defer service.Stop()
+	request := service.request(t, "reservation-replay")
+	previous := reserveSessionWorkspaceLocked
+	publicationErr := errors.New("reservation directory sync was uncertain")
+	failedOnce := false
+	reserveSessionWorkspaceLocked = func(repo string, reservation forkspace.WorkspaceReservation) error {
+		if err := previous(repo, reservation); err != nil {
+			return err
+		}
+		if !failedOnce {
+			failedOnce = true
+			return publicationErr
+		}
+		return nil
+	}
+	t.Cleanup(func() { reserveSessionWorkspaceLocked = previous })
+	if _, err := service.CreateRemoteSession(t.Context(), "reservation-replay", request); !errors.Is(err, publicationErr) {
+		t.Fatalf("ambiguous publication = %v", err)
+	}
+	op, err := service.Store().GetOperation(t.Context(), "reservation-replay")
+	if err != nil || op.State != session.OperationRunning {
+		t.Fatalf("create intent was not replayable: op=%+v err=%v", op, err)
+	}
+	intent := sessionCreateIntent{}
+	if err := json.Unmarshal(op.Result, &intent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Store().GetSession(t.Context(), intent.SessionID); !errors.Is(err, session.ErrSessionNotFound) {
+		t.Fatalf("session row published before create completion: %v", err)
+	}
+	replayed, err := service.CreateRemoteSession(t.Context(), "reservation-replay", request)
+	if err != nil {
+		t.Fatalf("same-owner create replay: %v", err)
+	}
+	if owned, err := service.Store().OwnsSessionFork(t.Context(), replayed.ID); err != nil || !owned {
+		t.Fatalf("replayed session store binding: owned=%t err=%v", owned, err)
+	}
+}
+
+func TestSessionCreateReplaysAmbiguousGenerationPublication(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, nil)
+	defer service.Stop()
+	request := service.request(t, "generation-replay")
+	previous := ensureSessionGenerationLocked
+	publicationErr := errors.New("generation directory sync was uncertain")
+	failedOnce := false
+	ensureSessionGenerationLocked = func(repo, name string) (forkspace.Identity, error) {
+		identity, err := previous(repo, name)
+		if err == nil && !failedOnce {
+			failedOnce = true
+			return forkspace.Identity{}, publicationErr
+		}
+		return identity, err
+	}
+	t.Cleanup(func() { ensureSessionGenerationLocked = previous })
+	if _, err := service.CreateRemoteSession(t.Context(), "generation-replay", request); !errors.Is(err, publicationErr) {
+		t.Fatalf("ambiguous generation publication = %v", err)
+	}
+	op, err := service.Store().GetOperation(t.Context(), "generation-replay")
+	if err != nil || op.State != session.OperationRunning {
+		t.Fatalf("create intent was not replayable: op=%+v err=%v", op, err)
+	}
+	replayed, err := service.CreateRemoteSession(t.Context(), "generation-replay", request)
+	if err != nil || replayed.ForkGeneration == "" {
+		t.Fatalf("same-owner generation replay: session=%+v err=%v", replayed, err)
+	}
+}
+
+func TestStartupRestoresOnlyItsOwnNewSessionReservation(t *testing.T) {
+	for _, wrongOwner := range []bool{false, true} {
+		t.Run(fmt.Sprintf("wrong-owner-%t", wrongOwner), func(t *testing.T) {
+			repo, git := gitrepo.New(t)
+			git("commit", "-q", "--allow-empty", "-m", "base")
+			stateRoot := filepath.Join(t.TempDir(), "state")
+			before := newTestSessionService(t, stateRoot, repo, nil)
+			sess, err := before.CreateRemoteSession(t.Context(), "create-owner", before.request(t, "owner"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			storeID := before.Store().ID()
+			repo = sess.Repository
+			identity := forkspace.Identity{Name: sess.ForkName, Generation: forkspace.Generation(sess.ForkGeneration)}
+			if err := before.Stop(); err != nil {
+				t.Fatal(err)
+			}
+			unlock, err := forkspace.LockState(repo, identity.Name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reservation, present, err := forkspace.ReadWorkspaceReservation(repo, identity)
+			if err == nil && present {
+				err = forkspace.RemoveWorkspaceReservationIfMatchesLocked(repo, reservation)
+			}
+			if err == nil && wrongOwner {
+				reservation.OwnerStoreID = "store_other"
+				err = forkspace.ReserveWorkspaceLocked(repo, reservation)
+			}
+			unlock()
+			if err != nil || !present {
+				t.Fatalf("prepare reservation: present=%t err=%v", present, err)
+			}
+			after := newTestSessionService(t, stateRoot, repo, nil)
+			defer after.Stop()
+			if err := after.Start(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			current, present, err := forkspace.ReadWorkspaceReservation(repo, identity)
+			if err != nil || !present {
+				t.Fatalf("reservation after startup: present=%t err=%v", present, err)
+			}
+			if wrongOwner {
+				if !after.sessionQuarantined(sess.ID) || current.OwnerStoreID != "store_other" {
+					t.Fatalf("wrong store acquired session: quarantined=%t reservation=%+v", after.sessionQuarantined(sess.ID), current)
+				}
+			} else if after.sessionQuarantined(sess.ID) || !current.MatchesSessionOwner(storeID, sess.ID) {
+				t.Fatalf("own missing reservation was not recovered: quarantined=%t reservation=%+v", after.sessionQuarantined(sess.ID), current)
+			}
+		})
+	}
+}
+
+func TestInterruptedOldCreateCannotRelabelItsPublishedReservation(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	var err error
+	repo, err = filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, nil)
+	defer service.Stop()
+	request := service.request(t, "old-create")
+	op, replay, err := service.Store().ReserveOperation(t.Context(), "CreateRemoteSession", "old-create", request)
+	if err != nil || replay {
+		t.Fatalf("reserve old create: replay=%t err=%v", replay, err)
+	}
+	intent, err := service.captureCreateIntent(t.Context(), op, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := forkspace.Setup(repo, intent.ForkName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(repo, intent.ForkName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := forkspace.EnsureGenerationLocked(repo, intent.ForkName)
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reservationDir := filepath.Join(forkspace.StateDir(repo), "reservations")
+	if err := os.MkdirAll(reservationDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := json.Marshal(forkspace.WorkspaceReservation{
+		Version: 1, Fork: identity, Kind: forkspace.WorkspaceReservationRemoteSession,
+		OwnerID: intent.SessionID, CreatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(reservationDir, identity.Name+"."+string(identity.Generation)+".json"), legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	intent.OwnerStoreID = "" // A pre-upgrade durable intent has no store provenance.
+	data, err := json.Marshal(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Store().MarkOperationRunning(t.Context(), op.ID, data); err != nil {
+		t.Fatal(err)
+	}
+	op, err = service.Store().GetOperationByID(t.Context(), op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.replayCreateOperation(t.Context(), op); session.CodeOf(err) != session.CodeOperationUncertain {
+		t.Fatalf("old create replay = %v, want uncertain", err)
+	}
+	if current, present, err := forkspace.ReadWorkspaceReservation(repo, identity); err != nil || !present || current.Version != 1 {
+		t.Fatalf("old reservation changed: %+v present=%t err=%v", current, present, err)
+	}
+	if _, err := os.Stat(workspace); err != nil {
+		t.Fatalf("old workspace was changed: %v", err)
+	}
+	if _, err := service.Store().GetSession(t.Context(), intent.SessionID); !errors.Is(err, session.ErrSessionNotFound) {
+		t.Fatalf("old create gained a session row: %v", err)
 	}
 }
 
@@ -777,11 +979,19 @@ func createLegacyBoundSession(
 	}
 	identity, err := forkspace.EnsureGenerationLocked(repo, forkName)
 	if err == nil && reservationOwner != "" {
-		err = forkspace.ReserveWorkspaceLocked(repo, forkspace.WorkspaceReservation{
-			Version: forkspace.WorkspaceReservationVersion,
+		body, marshalErr := json.Marshal(forkspace.WorkspaceReservation{
+			Version: 1,
 			Fork:    identity, Kind: forkspace.WorkspaceReservationRemoteSession,
 			OwnerID: reservationOwner, CreatedAt: time.Now().UTC(),
 		})
+		if marshalErr != nil {
+			err = marshalErr
+		} else {
+			reservationDir := filepath.Join(forkspace.StateDir(repo), "reservations")
+			if err = os.MkdirAll(reservationDir, 0o700); err == nil {
+				err = os.WriteFile(filepath.Join(reservationDir, forkName+"."+string(identity.Generation)+".json"), body, 0o600)
+			}
+		}
 	}
 	unlock()
 	if err != nil {
@@ -834,30 +1044,27 @@ func TestLegacySessionForkAuthorityRejectsSameNameReplacement(t *testing.T) {
 	}
 }
 
-func TestLegacySessionForkAuthorityAdoptsExactReservation(t *testing.T) {
+func TestLegacySessionForkAuthorityDoesNotRelabelExactReservation(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, nil)
 	defer service.Stop()
 	sess, identity := createLegacyBoundSession(t, service, repo, "legacy-exact", "legacy-session", "legacy-session")
 
-	bound, err := service.ensureSessionForkAuthority(context.Background(), sess)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bound.ForkGeneration != string(identity.Generation) {
-		t.Fatalf("adopted generation = %q, want %q", bound.ForkGeneration, identity.Generation)
+	if _, err := service.ensureSessionForkAuthority(context.Background(), sess); !errors.Is(err, errLegacySessionForkUnproven) {
+		t.Fatalf("legacy authority error = %v", err)
 	}
 	persisted, err := service.Store().GetSession(context.Background(), sess.ID)
-	if err != nil || persisted.ForkGeneration != string(identity.Generation) {
-		t.Fatalf("persisted generation = %+v, err=%v", persisted, err)
+	if err != nil || persisted.ForkGeneration != "" {
+		t.Fatalf("legacy session was relabeled: %+v, err=%v", persisted, err)
 	}
-	if err := validateSessionForkAuthority(context.Background(), persisted); err != nil {
-		t.Fatalf("adopted authority does not validate: %v", err)
+	reservation, present, err := forkspace.ReadWorkspaceReservation(repo, identity)
+	if err != nil || !present || reservation.Version != 1 || reservation.OwnerStoreID != "" {
+		t.Fatalf("legacy reservation changed: %+v, present=%t, err=%v", reservation, present, err)
 	}
 }
 
-func TestStartupMigratesExactlyReservedLegacySessionGenerations(t *testing.T) {
+func TestStartupQuarantinesExactlyReservedLegacySessionGenerations(t *testing.T) {
 	for _, version := range []int{1, 2} {
 		for _, boundGeneration := range []bool{false, true} {
 			t.Run(fmt.Sprintf("v%d-bound-%t", version, boundGeneration), func(t *testing.T) {
@@ -867,25 +1074,21 @@ func TestStartupMigratesExactlyReservedLegacySessionGenerations(t *testing.T) {
 				defer service.Stop()
 				sess, identity := createLegacyBoundSession(t, service, repo, "legacy-upgrade", "legacy-session", "legacy-session")
 				if boundGeneration {
-					var err error
-					sess, err = service.Store().AdoptSessionForkGeneration(t.Context(), sess.ID, string(identity.Generation))
-					if err != nil {
-						t.Fatal(err)
-					}
+					sess = setSyntheticSessionGeneration(t, service.Store(), sess.ID, string(identity.Generation))
 				}
 				downgradeSessionGeneration(t, repo, identity, version)
 				if err := service.Start(t.Context()); err != nil {
 					t.Fatalf("start with exact legacy reservation: %v", err)
 				}
-				if service.sessionQuarantined(sess.ID) {
-					t.Fatal("exactly reserved legacy session was quarantined")
+				if !service.sessionQuarantined(sess.ID) {
+					t.Fatal("legacy session gained a new owner-store identity")
 				}
 				persisted := mustSession(t, service, sess.ID)
-				if persisted.ForkGeneration != string(identity.Generation) {
-					t.Fatalf("generation after migration = %q", persisted.ForkGeneration)
+				if persisted.ForkGeneration != sess.ForkGeneration {
+					t.Fatalf("legacy generation changed: %q", persisted.ForkGeneration)
 				}
-				if err := validateSessionForkAuthority(t.Context(), persisted); err != nil {
-					t.Fatalf("migrated session authority: %v", err)
+				if err := service.validateSessionForkAuthority(t.Context(), persisted); err == nil {
+					t.Fatal("legacy session gained executable workspace authority")
 				}
 			})
 		}

@@ -78,7 +78,7 @@ func TestForkGenerationRefusesNameWhilePriorSessionWorkspaceIsStaged(t *testing.
 	identity := ensureTestGeneration(t, repo, "remote")
 	record := WorkspaceReservation{
 		Version: workspaceReservationVersion, Fork: identity,
-		Kind: WorkspaceReservationRemoteSession, OwnerID: "remote_staged", CreatedAt: time.Now().UTC(),
+		Kind: WorkspaceReservationRemoteSession, OwnerStoreID: testReservationStoreID, OwnerID: "remote_staged", CreatedAt: time.Now().UTC(),
 	}
 	handle, info, err := Pin(Workspace(repo, "remote"))
 	if err != nil {

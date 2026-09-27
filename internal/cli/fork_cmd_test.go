@@ -29,6 +29,8 @@ import (
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
 )
 
+const testForkSessionStoreID = "store_test"
+
 // A mistyped fork subcommand must be a usage error with a suggestion — never silently turned into
 // a new fork (clone + branch + agent). An explicit agent (a real create) bypasses the guard.
 func TestForkTypoSuggestsSubcommand(t *testing.T) {
@@ -433,7 +435,7 @@ func TestOrdinaryForkLaunchCannotEnterRemoteSessionWorkspace(t *testing.T) {
 	if err == nil {
 		err = forkspace.ReserveWorkspaceLocked(repo, forkspace.WorkspaceReservation{
 			Version: forkspace.WorkspaceReservationVersion, Fork: identity,
-			Kind: forkspace.WorkspaceReservationRemoteSession, OwnerID: "session-owner", CreatedAt: time.Now().UTC(),
+			Kind: forkspace.WorkspaceReservationRemoteSession, OwnerStoreID: testForkSessionStoreID, OwnerID: "session-owner", CreatedAt: time.Now().UTC(),
 		})
 	}
 	unlock()
@@ -788,6 +790,7 @@ func TestForkACPPhysicallyMountsAReadOnlySessionRepositoryReadOnly(t *testing.T)
 	}
 	t.Setenv("COOP_SESSION_REPOSITORY_READ_ONLY", "1")
 	t.Setenv("COOP_SESSION_RUN_ID", runID)
+	t.Setenv("COOP_SESSION_STORE_ID", testForkSessionStoreID)
 	t.Setenv(sessionsvc.SessionOutputRootEnv, hostOutputRoot)
 	unlock, err := forkspace.LockState(repo, "readonly")
 	if err != nil {
@@ -797,7 +800,7 @@ func TestForkACPPhysicallyMountsAReadOnlySessionRepositoryReadOnly(t *testing.T)
 	if err == nil {
 		err = forkspace.ReserveWorkspaceLocked(repo, forkspace.WorkspaceReservation{
 			Version: forkspace.WorkspaceReservationVersion, Fork: identity,
-			Kind: forkspace.WorkspaceReservationRemoteSession, OwnerID: "remote_1", CreatedAt: time.Now().UTC(),
+			Kind: forkspace.WorkspaceReservationRemoteSession, OwnerStoreID: testForkSessionStoreID, OwnerID: "remote_1", CreatedAt: time.Now().UTC(),
 		})
 	}
 	unlock()
@@ -851,7 +854,7 @@ func TestRemoteForksKeepPrivateHostSourcesWithOneBoxWorkdir(t *testing.T) {
 		if err == nil {
 			err = forkspace.ReserveWorkspaceLocked(repo, forkspace.WorkspaceReservation{
 				Version: forkspace.WorkspaceReservationVersion, Fork: identity,
-				Kind: forkspace.WorkspaceReservationRemoteSession, OwnerID: name, CreatedAt: time.Now().UTC(),
+				Kind: forkspace.WorkspaceReservationRemoteSession, OwnerStoreID: testForkSessionStoreID, OwnerID: name, CreatedAt: time.Now().UTC(),
 			})
 		}
 		unlock()
@@ -859,8 +862,9 @@ func TestRemoteForksKeepPrivateHostSourcesWithOneBoxWorkdir(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Setenv("COOP_SESSION_RUN_ID", "session-"+strings.Repeat(string(rune('a'+i)), 24))
+		t.Setenv("COOP_SESSION_STORE_ID", testForkSessionStoreID)
 		recorder := filepath.Join(root, name+"-runtime-args")
-		configDir := filepath.Join(root, name+"-config")
+		configDir := filepath.Join(t.TempDir(), "acp", name)
 		if err := os.MkdirAll(configDir, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -941,7 +945,8 @@ func TestForkACPReadOnlyFrontsTheForkUnderTheRestrictedProfile(t *testing.T) {
 	}
 	runID := "session-" + strings.Repeat("cd", 12)
 	t.Setenv("COOP_SESSION_RUN_ID", runID)
-	privateRoot := filepath.Join(root, "config")
+	t.Setenv("COOP_SESSION_STORE_ID", testForkSessionStoreID)
+	privateRoot := filepath.Join(t.TempDir(), "acp", "remote_1")
 	if err := os.MkdirAll(privateRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -964,7 +969,7 @@ func TestForkACPReadOnlyFrontsTheForkUnderTheRestrictedProfile(t *testing.T) {
 	if err == nil {
 		err = forkspace.ReserveWorkspaceLocked(repo, forkspace.WorkspaceReservation{
 			Version: forkspace.WorkspaceReservationVersion, Fork: identity,
-			Kind: forkspace.WorkspaceReservationRemoteSession, OwnerID: "remote_1", CreatedAt: time.Now().UTC(),
+			Kind: forkspace.WorkspaceReservationRemoteSession, OwnerStoreID: testForkSessionStoreID, OwnerID: "remote_1", CreatedAt: time.Now().UTC(),
 		})
 	}
 	unlock()

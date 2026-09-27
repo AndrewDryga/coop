@@ -378,7 +378,7 @@ func EnsureGenerationLocked(repo, name string) (Identity, error) {
 			}
 			return identity, nil
 		}
-		if err := migrateLegacyGenerationLocked(repo, record, ""); err != nil {
+		if err := migrateLegacyGenerationLocked(repo, record); err != nil {
 			return Identity{}, err
 		}
 		return identity, nil
@@ -458,33 +458,7 @@ func EnsureGenerationLocked(repo, name string) (Identity, error) {
 	return Identity{Name: name, Generation: generation}, nil
 }
 
-// EnsureReservedGenerationLocked upgrades an older generation for one exact remote-session
-// owner. The caller holds LockState. A v3 generation needs no migration and may still have its
-// reservation restored by its session; a legacy generation may migrate only with its existing
-// exact reservation, never by guessing from a matching path or session id alone.
-func EnsureReservedGenerationLocked(repo string, identity Identity, owner string) error {
-	if owner == "" || identity.Name == "" || !ValidGeneration(identity.Generation) {
-		return errors.New("invalid reserved generation migration")
-	}
-	record, err := readGenerationRecord(repo, identity.Name)
-	if err != nil {
-		return err
-	}
-	if record.Generation != identity.Generation {
-		return errors.New("reserved workspace generation changed")
-	}
-	if record.Version != forkGenerationVersion {
-		if err := migrateLegacyGenerationLocked(repo, record, owner); err != nil {
-			return err
-		}
-	}
-	if err := ValidateGenerationWorkspace(repo, identity); err != nil {
-		return err
-	}
-	return syncGenerationStateDir(repo)
-}
-
-func migrateLegacyGenerationLocked(repo string, record generationRecord, reservationOwner string) error {
+func migrateLegacyGenerationLocked(repo string, record generationRecord) error {
 	identity := Identity{Name: record.Name, Generation: record.Generation}
 	if NeedsStop(repo, record.Name) {
 		return fmt.Errorf("fork %s uses an older workspace identity — stop it and retry so Coop can verify and anchor it", record.Name)
@@ -492,18 +466,8 @@ func migrateLegacyGenerationLocked(repo string, record generationRecord, reserva
 	if err := RequireNoForkExecutionsLocked(repo, identity); err != nil {
 		return err
 	}
-	if reservationOwner == "" {
-		if err := RequireNoWorkspaceReservationLocked(repo, identity); err != nil {
-			return err
-		}
-	} else {
-		reservation, exists, err := ReadWorkspaceReservation(repo, identity)
-		if err != nil {
-			return err
-		}
-		if !exists || reservation.Kind != WorkspaceReservationRemoteSession || reservation.OwnerID != reservationOwner {
-			return errors.New("legacy workspace has no exact remote-session reservation")
-		}
+	if err := RequireNoWorkspaceReservationLocked(repo, identity); err != nil {
+		return err
 	}
 	if _, err := os.Lstat(LandIntentPath(repo, identity)); err == nil {
 		return fmt.Errorf("fork %s has an interrupted land journal — finish or recover the merge before anchoring it", record.Name)

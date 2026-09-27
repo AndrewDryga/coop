@@ -2838,17 +2838,17 @@ func newSessionACPFixtureOn(t *testing.T, scenario, sessionTarget string, mode a
 		if err == nil {
 			err = forkspace.ReserveWorkspaceLocked(repo, forkspace.WorkspaceReservation{
 				Version: forkspace.WorkspaceReservationVersion, Fork: identity,
-				Kind: forkspace.WorkspaceReservationRemoteSession, OwnerID: sess.ID, CreatedAt: time.Now().UTC(),
+				Kind: forkspace.WorkspaceReservationRemoteSession, OwnerStoreID: store.ID(), OwnerID: sess.ID, CreatedAt: time.Now().UTC(),
 			})
 		}
 		unlockGeneration()
 		if err != nil {
 			t.Fatal(err)
 		}
-		sess, err = store.AdoptSessionForkGeneration(context.Background(), sess.ID, string(identity.Generation))
-		if err != nil {
-			t.Fatal(err)
-		}
+		sess = setSyntheticSessionGeneration(t, store, sess.ID, string(identity.Generation))
+		// Runner-only fixtures bypass CompleteCreateSessionOperation, which normally
+		// records this owner binding atomically with the session row.
+		bindSyntheticSessionOwner(t, store, sess.ID)
 	}
 	resolvedStateRoot, err := filepath.EvalSymlinks(stateRoot)
 	if err != nil {

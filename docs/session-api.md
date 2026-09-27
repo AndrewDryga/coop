@@ -45,6 +45,15 @@ Retries must carry the same configuration; restart uses the saved configuration.
 instructions and model output cannot widen it. Old session history remains readable, but an
 old row without verifiable execution authority must not resume model work.
 
+Coop gives each session store one stable ID inside `session.sqlite`. A new fork reservation binds
+that store ID, the session ID, and the fork's exact generation. The store ID moves with the
+database, so relocating `--state` does not change ownership. Only the owning session service may
+discard the fork after checking its journal, session binding and workspace safety conditions;
+`coop fork rm --force` is not an override. Old reservations without a store ID stay visible and
+protected from generic fork removal, but Coop cannot infer their owner from a matching session
+ID in some current store. Such sessions remain readable and require explicit offline recovery,
+not automatic relabeling or age-based deletion.
+
 The trusted worker fetches repository data directly from GitHub using a short-lived,
 repository-scoped grant supplied by the controller. The model receives the full working tree,
 including verified LFS payloads and every explicitly authorized recursive submodule. Tokens never
@@ -86,12 +95,11 @@ one reserve, and reopening only once two reserves are free — the hysteresis is
 from flapping after every reclaimed workspace. A worker that cannot measure its volume, or whose
 daemon predates this endpoint, simply omits the object and keeps polling.
 
-The worker also reclaims fork storage it can prove is garbage: its own generation record, no session
-naming it, no reservation, no live worker or sandbox activity, older than the reclaim age, and a
-clean tree fully contained by its parent. Everything else — a dirty workspace, an unmerged branch, a
-directory with no coop generation record — is reported in `/v1/storage` and left alone. An
-interrupted removal is resumable: the workspace is renamed into an owner-private staging directory
-before any deletion, and no discard reports success until those bytes are physically gone.
+An unbound generation or clean workspace is not proof of abandonment: another session store or an
+unfinished create may own it. Coop reports it as protected in `/v1/storage` and leaves it for manual
+inspection. Automatic maintenance only finishes removals already staged by an authorized discard.
+An interrupted removal is resumable: the workspace is renamed into an owner-private staging
+directory before any deletion, and no discard reports success until those bytes are gone.
 
 ### Restart and recovery
 
@@ -342,7 +350,7 @@ not zero. A full tree walk is too expensive for every caller, so the answer is r
 once per `budget.measure_seconds` and `storage.measured_at` carries its age.
 
 `forks[]` names each directory under a fork root, its category, and the evidence for it. Only
-`disposable`, `owned_orphan` and `staged_discard` are storage anything may reclaim; `active`,
+`disposable` and `staged_discard` have an authorized reclamation path; `active`,
 `grace`, `protected` (a running worker, registered sandbox activity, an interrupted land, canonical
 task authority, a quarantined session, or uncommitted work), `control` and `unattributed` are all
 refusals with a reason. A directory with no coop generation record is `unattributed`: it is
@@ -877,9 +885,9 @@ Discard first proves that the plan belongs to the path session. It then compares
 refuses a stale/replaced/running workspace, deletes the fork workspace and private ACP state, and
 leaves a durable discarded session tombstone. A failed comparison does not delete anything.
 
-A session the daemon quarantined at start — a record from before fork generations were persisted,
-or one whose generation record or workspace is gone — can be neither planned nor discarded this
-way, because Coop cannot prove it owns the workspace. Retire the record instead:
+A session the daemon quarantined at start — a historical row without an owner-store binding, a v1
+reservation, or one whose generation record or workspace is gone — can be neither planned nor
+discarded this way, because Coop cannot prove it owns the workspace. Retire the record instead:
 
 ```bash
 curl --unix-socket "$SOCKET" \
@@ -890,8 +898,8 @@ curl --unix-socket "$SOCKET" \
 ```
 
 This tombstones the session row only: queued turns are exhausted, a turn that was active when the
-daemon lost authority stays in history as it was, and the workspace, sidecar services, and private
-ACP state stay on disk for the operator to inspect and remove. A session that is not quarantined
+daemon lost authority stays in history as it was, and the workspace, reservation, sidecar services,
+and private ACP state stay on disk for the operator to inspect and remove. A session that is not quarantined
 is refused with `invalid_session_state`.
 
 Record-only retirement does not restore runtime capacity, including after restart: it provides no

@@ -42,7 +42,7 @@ func RecoverOrphanedGenerationLocked(repo, name string, force bool) (bool, error
 	if err := forkspace.RequireNoForkExecutionsLocked(repo, identity); err != nil {
 		return false, err
 	}
-	if err := forkspace.RequireNoWorkspaceReservationLocked(repo, identity); err != nil {
+	if err := forkspace.RequireForkNameAvailable(repo, name); err != nil {
 		return false, err
 	}
 	if active, err := tasks.ForkTaskState(repo, identity); err != nil {
@@ -269,6 +269,11 @@ func (c *Control) ForkRm(args []string) (int, error) {
 		return -1, fmt.Errorf("open fork %s before removal: %w", name, err)
 	}
 	defer handle.Close()
+	// This early check avoids offering a destructive prompt for a known session-owned fork.
+	// It is advisory only: the final check under LockState is the deletion authority.
+	if err := forkspace.RequireForkNameAvailable(repo, name); err != nil {
+		return 1, err
+	}
 	// A running loop has the worktree bind-mounted RW; deleting it would orphan the worker +
 	// container and strand the pidfile. Refuse (like merge/prune do) — or with --force, stop the
 	// loop first so its container is reaped before the worktree goes.
@@ -329,6 +334,9 @@ func (c *Control) ForkRm(args []string) (int, error) {
 	if err := ForkRmSafe(currentUnmerged, currentDirty, force); err != nil {
 		return 1, fmt.Errorf("fork %q changed while awaiting confirmation: %w", name, err)
 	}
+	if err := forkspace.RequireForkNameAvailable(repo, name); err != nil {
+		return 1, err
+	}
 	identity, hasGenerationNow, err := forkspace.ReadGeneration(repo, name)
 	if err != nil {
 		return 1, err
@@ -344,9 +352,6 @@ func (c *Control) ForkRm(args []string) (int, error) {
 		}
 		if err := forkspace.RequireNoForkExecutionsLocked(repo, identity); err != nil {
 			return 1, fmt.Errorf("fork %q has sandbox activity: %w", name, err)
-		}
-		if err := forkspace.RequireNoWorkspaceReservationLocked(repo, identity); err != nil {
-			return 1, err
 		}
 		currentTaskState, err := tasks.ReadForkTaskStateSummary(repo, identity)
 		if err != nil {

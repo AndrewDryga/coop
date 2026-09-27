@@ -30,7 +30,7 @@ func TestProjectSnapshotIncludesExternalCanonicalQueueAndExactSandbox(t *testing
 	}
 	reservation := forkspace.WorkspaceReservation{
 		Version: forkspace.WorkspaceReservationVersion, Fork: identity,
-		Kind: forkspace.WorkspaceReservationRemoteSession, OwnerID: "session_snapshot", CreatedAt: testLeaseOwner().Now(),
+		Kind: forkspace.WorkspaceReservationRemoteSession, OwnerStoreID: "store_snapshot", OwnerID: "session_snapshot", CreatedAt: testLeaseOwner().Now(),
 	}
 	unlock, err := forkspace.LockState(repo, identity.Name)
 	if err != nil {
@@ -43,7 +43,7 @@ func TestProjectSnapshotIncludesExternalCanonicalQueueAndExactSandbox(t *testing
 	}
 	record, err := forkspace.BeginExecution(repo, forkspace.ExecutionSpec{
 		Kind: forkspace.ExecutionRemoteSession, Role: forkspace.ExecutionRoleController,
-		Workspace: workspace, Fork: &identity, SourceID: "snapshot-run", ReservationOwner: "session_snapshot",
+		Workspace: workspace, Fork: &identity, SourceID: "snapshot-run", ReservationOwner: "session_snapshot", ReservationStoreID: "store_snapshot",
 		Task: &forkspace.ExecutionTaskRef{
 			QueueID: ownerRecord.Task.Ref.QueueID, TaskID: ownerRecord.Task.Ref.TaskID,
 			ID: assignment.Task.Item.ID, Assignment: assignment.Owner.AssignmentID,

@@ -144,6 +144,7 @@ type RunSpec struct {
 	ActivityTask             *forkspace.ExecutionTaskRef
 	ActivitySource           string
 	ActivityReservationOwner string
+	SessionStoreID           string // authenticated session daemon's stable owner namespace
 	activityID               string
 	RunID                    string // the loop run's id; when set, injected as COOP_RUN_ID so a consult peer can append its usage to .agent/runs/<id>.peers.jsonl
 	Batch                    bool   // loop/doctor: no tty, stdin from /dev/null
@@ -1288,7 +1289,8 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		activity := forkspace.ExecutionSpec{
 			Kind: spec.ActivityKind, Role: spec.ActivityRole, Workspace: spec.Repo,
 			Task: spec.ActivityTask, SourceID: spec.ActivitySource,
-			ReservationOwner: spec.ActivityReservationOwner,
+			ReservationOwner:   spec.ActivityReservationOwner,
+			ReservationStoreID: spec.SessionStoreID,
 		}
 		if spec.ForkName != "" {
 			activity.Fork = &forkspace.Identity{Name: spec.ForkName, Generation: forkspace.Generation(spec.ForkGeneration)}

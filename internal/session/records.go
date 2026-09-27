@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	SchemaVersion = 24
+	SchemaVersion = 25
 
 	MaxIDBytes             = 256
 	MaxMethodBytes         = 128

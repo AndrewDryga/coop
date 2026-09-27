@@ -41,7 +41,7 @@ const (
 // check) instead of refusing to start for everyone else; its durable history stays untouched.
 var errSessionForkUnproven = errors.New("remote session workspace authority is unproven")
 
-var errLegacySessionForkUnproven = fmt.Errorf("%w: legacy remote session has no immutable fork ownership proof", errSessionForkUnproven)
+var errLegacySessionForkUnproven = fmt.Errorf("%w: legacy remote session has no store-bound fork ownership proof", errSessionForkUnproven)
 
 const (
 	sessionPolicyMaxWarmIdleTimeout = time.Hour
@@ -167,7 +167,7 @@ func (s *Service) executeEnsureWorkspaceTask(
 	if err := requireSessionWorkspace(sess); err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
 	}
-	if err := validateSessionForkAuthority(ctx, sess); err != nil {
+	if err := s.validateSessionForkAuthority(ctx, sess); err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
 			Code: session.CodeInvalidSessionState, Detail: err.Error(),
 		})
@@ -773,6 +773,16 @@ func (s *Service) ensureSessionForkAuthority(ctx context.Context, bound session.
 	if !validSessionForkBinding(bound) {
 		return session.Session{}, errors.New("session workspace binding is invalid")
 	}
+	if bound.ForkGeneration == "" {
+		return session.Session{}, errLegacySessionForkUnproven
+	}
+	owned, err := s.store.OwnsSessionFork(ctx, bound.ID)
+	if err != nil {
+		return session.Session{}, err
+	}
+	if !owned {
+		return session.Session{}, fmt.Errorf("%w: session has no owner-store binding", errSessionForkUnproven)
+	}
 	unlock, err := forkspace.LockStateContext(ctx, bound.Repository, bound.ForkName)
 	if err != nil {
 		return session.Session{}, err
@@ -781,29 +791,6 @@ func (s *Service) ensureSessionForkAuthority(ctx context.Context, bound session.
 	identity, ok, err := forkspace.ReadGeneration(bound.Repository, bound.ForkName)
 	if err != nil {
 		return session.Session{}, err
-	}
-	if bound.ForkGeneration == "" {
-		if !ok {
-			return session.Session{}, fmt.Errorf("%w: no generation record exists", errLegacySessionForkUnproven)
-		}
-		reservation, reserved, reserveErr := forkspace.ReadWorkspaceReservation(bound.Repository, identity)
-		if reserveErr != nil {
-			return session.Session{}, reserveErr
-		}
-		if !reserved || reservation.Kind != forkspace.WorkspaceReservationRemoteSession || reservation.OwnerID != bound.ID {
-			return session.Session{}, fmt.Errorf("%w: exact session reservation is absent", errLegacySessionForkUnproven)
-		}
-		if err := forkspace.EnsureReservedGenerationLocked(bound.Repository, identity, bound.ID); err != nil {
-			return session.Session{}, fmt.Errorf("%w: %v", errLegacySessionForkUnproven, err)
-		}
-		if err := forkspace.ValidateGenerationWorkspace(bound.Repository, identity); err != nil {
-			return session.Session{}, err
-		}
-		bound, err = s.store.AdoptSessionForkGeneration(ctx, bound.ID, string(identity.Generation))
-		if err != nil {
-			return session.Session{}, err
-		}
-		return bound, nil
 	}
 	// A missing record, a recreated fork, or a vanished workspace is state that is gone, not a
 	// corrupt binding: quarantine this session (its live authority check keeps refusing every
@@ -814,12 +801,31 @@ func (s *Service) ensureSessionForkAuthority(ctx context.Context, bound session.
 	if forkspace.Generation(bound.ForkGeneration) != identity.Generation {
 		return session.Session{}, fmt.Errorf("%w: workspace generation changed", errSessionForkUnproven)
 	}
-	if err := forkspace.EnsureReservedGenerationLocked(bound.Repository, identity, bound.ID); err != nil {
+	if err := forkspace.ValidateGenerationWorkspace(bound.Repository, identity); err != nil {
 		return session.Session{}, fmt.Errorf("%w: %v", errSessionForkUnproven, err)
+	}
+	current, reserved, err := forkspace.ReadWorkspaceReservation(bound.Repository, identity)
+	if err != nil {
+		return session.Session{}, err
+	}
+	if reserved && !current.MatchesSessionOwner(s.store.ID(), bound.ID) {
+		return session.Session{}, fmt.Errorf("%w: workspace reservation has another or unproven owner", errSessionForkUnproven)
+	}
+	if !reserved {
+		if err := forkspace.RequireForkNameAvailable(bound.Repository, bound.ForkName); err != nil {
+			return session.Session{}, fmt.Errorf("%w: %v", errSessionForkUnproven, err)
+		}
+		if forkspace.NeedsStop(bound.Repository, bound.ForkName) {
+			return session.Session{}, fmt.Errorf("%w: workspace runtime still needs cleanup", errSessionForkUnproven)
+		}
+		if err := forkspace.RequireNoForkExecutionsLocked(bound.Repository, identity); err != nil {
+			return session.Session{}, fmt.Errorf("%w: %v", errSessionForkUnproven, err)
+		}
 	}
 	reservation := forkspace.WorkspaceReservation{
 		Version: forkspace.WorkspaceReservationVersion, Fork: identity,
-		Kind: forkspace.WorkspaceReservationRemoteSession, OwnerID: bound.ID, CreatedAt: time.Now().UTC(),
+		Kind: forkspace.WorkspaceReservationRemoteSession, OwnerStoreID: s.store.ID(),
+		OwnerID: bound.ID, CreatedAt: time.Now().UTC(),
 	}
 	if err := forkspace.ReserveWorkspaceLocked(bound.Repository, reservation); err != nil {
 		return session.Session{}, err
@@ -843,20 +849,27 @@ func validSessionForkBinding(bound session.Session) bool {
 // validateSessionForkAuthority is the operation-time half of startup recovery. It never creates
 // or adopts authority: a caller about to read or mutate a workspace must prove that the DB binding,
 // host anchored generation record, workspace path, and durable remote-session reservation agree.
-func validateSessionForkAuthority(ctx context.Context, bound session.Session) error {
-	return validateSessionForkAuthorityState(ctx, bound, false)
+func (s *Service) validateSessionForkAuthority(ctx context.Context, bound session.Session) error {
+	return s.validateSessionForkAuthorityState(ctx, bound, false)
 }
 
-func validateSessionForkAuthorityForDiscardPlan(ctx context.Context, bound session.Session) error {
-	return validateSessionForkAuthorityState(ctx, bound, true)
+func (s *Service) validateSessionForkAuthorityForDiscardPlan(ctx context.Context, bound session.Session) error {
+	return s.validateSessionForkAuthorityState(ctx, bound, true)
 }
 
-func validateSessionForkAuthorityState(ctx context.Context, bound session.Session, allowMissingWorkspace bool) error {
+func (s *Service) validateSessionForkAuthorityState(ctx context.Context, bound session.Session, allowMissingWorkspace bool) error {
 	if bound.Repository == "" && bound.Workspace == "" && bound.ForkName == "" && bound.ForkGeneration == "" {
 		return nil
 	}
 	if err := requireSessionForkAuthority(bound); err != nil {
 		return err
+	}
+	owned, err := s.store.OwnsSessionFork(ctx, bound.ID)
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return errors.New("session has no owner-store binding")
 	}
 	if !validSessionForkBinding(bound) {
 		return errors.New("session workspace binding is invalid")
@@ -881,7 +894,7 @@ func validateSessionForkAuthorityState(ctx context.Context, bound session.Sessio
 	if err != nil {
 		return err
 	}
-	if !reserved || reservation.Kind != forkspace.WorkspaceReservationRemoteSession || reservation.OwnerID != bound.ID {
+	if !reserved || !reservation.MatchesSessionOwner(s.store.ID(), bound.ID) {
 		return errors.New("session workspace reservation changed")
 	}
 	return nil
@@ -981,7 +994,7 @@ func (s *Service) cleanupIdleSessionRuntimes(ctx context.Context) {
 		if candidate.State == session.SessionDiscarded {
 			continue
 		}
-		if err := validateSessionForkAuthority(ctx, candidate); err != nil {
+		if err := s.validateSessionForkAuthority(ctx, candidate); err != nil {
 			continue
 		}
 		var turn *session.Turn
@@ -1094,7 +1107,7 @@ func (s *Service) pruneRuntimeCleanupDone(eligible map[string]struct{}) {
 }
 
 func (s *Service) runBoundSessionTurn(ctx context.Context, bound session.Session, leased session.Turn) (session.Turn, error) {
-	if err := validateSessionForkAuthority(ctx, bound); err != nil {
+	if err := s.validateSessionForkAuthority(ctx, bound); err != nil {
 		return leased, err
 	}
 	turnCtx, err := s.sessionTurnContext(ctx, bound)
@@ -1302,7 +1315,7 @@ func (s *Service) drainSession(ctx context.Context, sessionID string) {
 				bound.Activity != session.ActivityParked || bound.ActiveTurnID != "" || bound.QueuedTurnCount == 0 {
 				return &session.Error{Code: session.CodeTurnNotRunnable, Detail: "session has no runnable queued turn"}
 			}
-			return validateSessionForkAuthority(ctx, bound)
+			return s.validateSessionForkAuthority(ctx, bound)
 		})
 		if err != nil {
 			return
@@ -1318,7 +1331,7 @@ func (s *Service) drainSession(ctx context.Context, sessionID string) {
 			unlock()
 			return
 		}
-		if err := validateSessionForkAuthority(ctx, bound); err != nil {
+		if err := s.validateSessionForkAuthority(ctx, bound); err != nil {
 			s.finishRuntimeSlot(bound, nil)
 			unlock()
 			return
@@ -1561,6 +1574,7 @@ func (s *Service) replayCreateOperation(ctx context.Context, op session.Operatio
 
 type sessionCreateIntent struct {
 	OperationID     string                   `json:"operation_id"`
+	OwnerStoreID    string                   `json:"owner_store_id"`
 	JobDocument     json.RawMessage          `json:"job_document"`
 	JobDigest       string                   `json:"job_digest"`
 	Task            string                   `json:"task"`
@@ -1587,7 +1601,7 @@ func (s *Service) captureCreateIntent(ctx context.Context, op session.Operation,
 		}
 	}
 	return sessionCreateIntent{
-		OperationID: op.ID, Task: req.Task,
+		OperationID: op.ID, OwnerStoreID: s.store.ID(), Task: req.Task,
 		JobDocument: append(json.RawMessage(nil), req.Job...), JobDigest: req.ExpectedJobDigest,
 		SessionID: deterministicSessionID(op.ID), ForkName: deterministicForkName(op.ID),
 		ControllerTools: cloneControllerTools(req.ControllerTools),
@@ -1620,6 +1634,9 @@ func deterministicForkName(operationID string) string {
 }
 
 func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation, intent sessionCreateIntent) (session.Session, error) {
+	if intent.OwnerStoreID != s.store.ID() {
+		return session.Session{}, s.makeOperationUncertain(ctx, op, "create operation store owner is unproven")
+	}
 	if intent.OperationID != op.ID || intent.SessionID != deterministicSessionID(op.ID) ||
 		intent.ForkName != deterministicForkName(op.ID) {
 		return s.rejectCreateIntent(ctx, op.ID, "create operation intent is invalid")
@@ -1680,8 +1697,13 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 			selected, base = job.Source.Binding.SelectedCommit, job.Source.Binding.BaseCommit
 			createReq.Source = session.CloneSourceBinding(&job.Source.Binding)
 		}
-		workspace, err = ensureSessionWorkspaceContext(ctx, s, execution.Repository, intent.ForkName, selected, intent.SessionID)
+		workspace, err = ensureSessionWorkspaceContext(ctx, s, execution.Repository, intent.ForkName, selected, intent.OwnerStoreID, intent.SessionID)
 		if err != nil {
+			if errors.Is(err, errSessionWorkspacePublicationPending) {
+				// The generation or reservation may already be visible. Keep the
+				// intent runnable to repeat the exact owner's durability barrier.
+				return session.Session{}, wrapServiceOperationError(op.ID, err)
+			}
 			return failCreate(fmt.Errorf("ensure session workspace: %w", err))
 		}
 		for index, companion := range execution.Companions {
@@ -1965,7 +1987,7 @@ func (s *Service) PrepareSession(ctx context.Context, id string, expectedRevisio
 }
 
 func (s *Service) prepareSessionExecution(ctx context.Context, bound session.Session, expectedRevision int64) (executionConfig, error) {
-	if err := validateSessionForkAuthority(ctx, bound); err != nil {
+	if err := s.validateSessionForkAuthority(ctx, bound); err != nil {
 		return executionConfig{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
 	}
 	policy, err := s.sessionExecution(ctx, bound)
@@ -2042,7 +2064,7 @@ func (s *Service) validateTurnEscalation(ctx context.Context, req session.Submit
 		// canonical errors and records the operation a retry reads back.
 		return nil
 	}
-	if err := validateSessionForkAuthority(ctx, bound); err != nil {
+	if err := s.validateSessionForkAuthority(ctx, bound); err != nil {
 		return &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
 	}
 	if bound.NetworkMode == string(egress.None) && req.ControllerTools != nil {
@@ -2188,7 +2210,7 @@ func (s *Service) lockAndReapAwaitingCandidateRuntime(
 	if err != nil {
 		return fail(err)
 	}
-	if err := validateSessionForkAuthority(ctx, bound); err != nil {
+	if err := s.validateSessionForkAuthority(ctx, bound); err != nil {
 		return fail(&session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()})
 	}
 	turn, err := s.store.GetTurn(ctx, sessionID, turnID)
@@ -2252,7 +2274,7 @@ func (s *Service) Close(ctx context.Context, key string, req session.CloseSessio
 	if err != nil {
 		return session.Session{}, err
 	}
-	if err := validateSessionForkAuthority(ctx, current); err != nil {
+	if err := s.validateSessionForkAuthority(ctx, current); err != nil {
 		return session.Session{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
 	}
 	if current.State == session.SessionClosed {
@@ -2291,7 +2313,7 @@ func (s *Service) GetChanges(ctx context.Context, sessionID string) (WorkspaceCh
 	if err := requireSessionWorkspace(sess); err != nil {
 		return WorkspaceChanges{}, err
 	}
-	if err := validateSessionForkAuthority(ctx, sess); err != nil {
+	if err := s.validateSessionForkAuthority(ctx, sess); err != nil {
 		return WorkspaceChanges{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
 	}
 	parentHead, err := s.pinCurrentSessionParent(ctx, sess)
@@ -2325,7 +2347,7 @@ func (s *Service) GetChangesPage(
 	if err := requireSessionWorkspace(sess); err != nil {
 		return WorkspaceChanges{}, err
 	}
-	if err := validateSessionForkAuthority(ctx, sess); err != nil {
+	if err := s.validateSessionForkAuthority(ctx, sess); err != nil {
 		return WorkspaceChanges{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
 	}
 	if patchLimit < 1 || patchLimit > sess.MaxPatchBytes {
@@ -2415,7 +2437,7 @@ func (s *Service) executePlanDiscard(ctx context.Context, op session.Operation, 
 	if err != nil {
 		return PlanDiscardResult{}, s.failServiceOperation(ctx, op.ID, err)
 	}
-	if err := validateSessionForkAuthorityForDiscardPlan(ctx, sess); err != nil {
+	if err := s.validateSessionForkAuthorityForDiscardPlan(ctx, sess); err != nil {
 		return PlanDiscardResult{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()})
 	}
 	if sess.Revision != req.ExpectedRevision || sess.State != session.SessionClosed || sess.ActiveTurnID != "" || sess.QueuedTurnCount != 0 {
@@ -2610,7 +2632,16 @@ func (s *Service) executeDiscard(ctx context.Context, op session.Operation, plan
 	if err := requireSessionForkAuthority(sess); err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()})
 	}
-	if err := validateDiscardSessionBinding(sess, planned.Plan); err != nil {
+	if sess.Workspace != "" {
+		owned, ownerErr := s.store.OwnsSessionFork(ctx, sess.ID)
+		if ownerErr != nil {
+			return session.Session{}, s.failServiceOperation(ctx, op.ID, ownerErr)
+		}
+		if !owned {
+			return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeDiscardPlanStale, Detail: "session has no owner-store binding"})
+		}
+	}
+	if err := validateDiscardSessionBinding(sess, planned.Plan, s.store.ID()); err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeDiscardPlanStale, Detail: boundedSessionServiceError(err)})
 	}
 	if op.State == session.OperationReserved {
@@ -2705,7 +2736,7 @@ func (s *Service) retireWorkspacelessSession(ctx context.Context, op session.Ope
 	return completed, nil
 }
 
-func validateDiscardSessionBinding(sess session.Session, plan DiscardPlan) error {
+func validateDiscardSessionBinding(sess session.Session, plan DiscardPlan, storeID string) error {
 	if plan.SessionID != sess.ID || plan.Revision != sess.Revision {
 		return errors.New("discard plan does not belong to this session revision")
 	}
@@ -2727,9 +2758,8 @@ func validateDiscardSessionBinding(sess session.Session, plan DiscardPlan) error
 	if workspace.Fork == nil || *workspace.Fork != expected {
 		return errors.New("discard plan fork generation does not match the session binding")
 	}
-	if workspace.Reservation == nil || workspace.Reservation.Version != forkspace.WorkspaceReservationVersion ||
-		workspace.Reservation.Fork != expected || workspace.Reservation.Kind != forkspace.WorkspaceReservationRemoteSession ||
-		workspace.Reservation.OwnerID != sess.ID {
+	if workspace.Reservation == nil || workspace.Reservation.Fork != expected ||
+		!workspace.Reservation.MatchesSessionOwner(storeID, sess.ID) {
 		return errors.New("discard plan reservation does not belong to this session")
 	}
 	if len(plan.Companions) != len(sess.Companions) {
@@ -2874,7 +2904,7 @@ func (s *Service) CancelTurn(ctx context.Context, key string, req session.Cancel
 	if err != nil {
 		return session.Turn{}, s.failCancelOperation(ctx, op, err)
 	}
-	if err := validateSessionForkAuthority(ctx, bound); err != nil {
+	if err := s.validateSessionForkAuthority(ctx, bound); err != nil {
 		return session.Turn{}, s.failCancelOperation(ctx, op,
 			&session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()})
 	}

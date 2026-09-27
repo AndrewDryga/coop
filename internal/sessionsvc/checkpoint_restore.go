@@ -49,7 +49,7 @@ func (s *Service) restoreStreamedCheckpoint(ctx context.Context, op session.Oper
 	if err != nil {
 		return fail(err)
 	}
-	if err := validateRestoreWorkspaceSession(ctx, sess, req, op.State != session.OperationReserved); err != nil {
+	if err := s.validateRestoreWorkspaceSession(ctx, sess, req, op.State != session.OperationReserved); err != nil {
 		return fail(err)
 	}
 	ctx, stopDiskWatch, err := s.checkpointDiskContext(ctx, sess.Workspace, req.Checkpoint.Bundle.ByteSize)
@@ -146,7 +146,7 @@ func (s *Service) restoreStreamedCheckpoint(ctx context.Context, op session.Oper
 	if err := materializeCheckpoint(ctx, sess.Repository, repository, sess.Workspace, req.Checkpoint, manifest, members); err != nil {
 		return fail(err)
 	}
-	if err := validateSessionForkAuthority(ctx, sess); err != nil {
+	if err := s.validateSessionForkAuthority(ctx, sess); err != nil {
 		return fail(err)
 	}
 	if _, err := verifyStreamedCheckpoint(ctx, sess, req.Checkpoint, manifest); err != nil {

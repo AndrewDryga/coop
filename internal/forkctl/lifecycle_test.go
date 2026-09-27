@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
@@ -160,6 +161,50 @@ func TestForkRmUnknownDoesNotPromptForOrphanCleanup(t *testing.T) {
 	code, err := control.ForkRm([]string{"missing"})
 	if code != -1 || err == nil || !strings.Contains(err.Error(), "no such fork") || strings.Contains(err.Error(), "--yes") {
 		t.Fatalf("unknown fork rm = (%d, %v), want immediate no-such-fork", code, err)
+	}
+}
+
+func TestForkRmDoesNotRetireMissingWorkspaceWithAnotherGenerationReserved(t *testing.T) {
+	repo := initRepo(t)
+	if _, err := forkspace.Setup(repo, "missing-owned"); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(repo, "missing-owned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := forkspace.EnsureGenerationLocked(repo, "missing-owned")
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := forkspace.Destroy(repo, "missing-owned"); err != nil {
+		t.Fatal(err)
+	}
+	older := forkspace.Identity{Name: "missing-owned", Generation: forkspace.Generation(strings.Repeat("a", 32))}
+	reservation := forkspace.WorkspaceReservation{
+		Version: forkspace.WorkspaceReservationVersion, Fork: older,
+		Kind: forkspace.WorkspaceReservationRemoteSession, OwnerStoreID: "store_test",
+		OwnerID: "remote_other", CreatedAt: time.Now().UTC(),
+	}
+	body, err := json.Marshal(reservation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(forkspace.StateDir(repo), "reservations")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, older.Name+"."+string(older.Generation)+".json"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	control := &Control{cfg: &config.Config{RepoOverride: repo}}
+	if code, err := control.ForkRm([]string{"missing-owned", "--force", "--yes"}); code != 1 || err == nil ||
+		!strings.Contains(err.Error(), "remote-session") {
+		t.Fatalf("forced orphan cleanup ignored another generation's owner: (%d, %v)", code, err)
+	}
+	if after, present, err := forkspace.ReadGeneration(repo, current.Name); err != nil || !present || after != current {
+		t.Fatalf("reserved fork name lost its current generation: %+v present=%t err=%v", after, present, err)
 	}
 }
 

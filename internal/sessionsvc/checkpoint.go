@@ -114,7 +114,7 @@ func (s *Service) executeRestoreWorkspaceCheckpoint(ctx context.Context, op sess
 	return s.restoreStreamedCheckpoint(ctx, op, req)
 }
 
-func validateRestoreWorkspaceSession(
+func (s *Service) validateRestoreWorkspaceSession(
 	ctx context.Context,
 	sess session.Session,
 	req RestoreWorkspaceCheckpointRequest,
@@ -123,7 +123,7 @@ func validateRestoreWorkspaceSession(
 	if err := requireSessionWorkspace(sess); err != nil {
 		return err
 	}
-	if err := validateSessionForkAuthority(ctx, sess); err != nil {
+	if err := s.validateSessionForkAuthority(ctx, sess); err != nil {
 		return &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
 	}
 	if sess.State != session.SessionOpen || sess.RepositoryReadOnly ||
@@ -227,7 +227,7 @@ func (s *Service) executeCheckpointWorkspace(
 	if err != nil {
 		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
 	}
-	if err := validateCheckpointSession(ctx, sess, req.ExpectedRevision); err != nil {
+	if err := s.validateCheckpointSession(ctx, sess, req.ExpectedRevision); err != nil {
 		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
 	}
 	release, ok := s.beginWorkspaceRestore(req.SessionID)
@@ -251,7 +251,7 @@ func (s *Service) executeCheckpointWorkspace(
 	if err != nil {
 		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
 	}
-	if err := validateCheckpointSession(ctx, sess, req.ExpectedRevision); err != nil {
+	if err := s.validateCheckpointSession(ctx, sess, req.ExpectedRevision); err != nil {
 		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
 	}
 	if evicter, ok := s.runner.(sessionRunnerWarmEvicter); ok {
@@ -302,11 +302,11 @@ func (s *Service) executeCheckpointWorkspace(
 	return s.completeWorkspaceCheckpoint(ctx, op, req.SessionID, artifact)
 }
 
-func validateCheckpointSession(ctx context.Context, sess session.Session, expectedRevision int64) error {
+func (s *Service) validateCheckpointSession(ctx context.Context, sess session.Session, expectedRevision int64) error {
 	if err := requireSessionWorkspace(sess); err != nil {
 		return err
 	}
-	if err := validateSessionForkAuthority(ctx, sess); err != nil {
+	if err := s.validateSessionForkAuthority(ctx, sess); err != nil {
 		return &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
 	}
 	if sess.Revision != expectedRevision || sess.RepositoryReadOnly || sess.WorkspaceTask == nil ||

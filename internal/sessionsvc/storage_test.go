@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -33,14 +32,6 @@ func writeStorageBytes(t *testing.T, path string, size int) {
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func storageRetainedNames(result StorageReclaim) []string {
-	names := make([]string, 0, len(result.Retained))
-	for _, retained := range result.Retained {
-		names = append(names, retained.Name)
-	}
-	return names
 }
 
 // storageTestRepo is a checkout every fork clones, carrying one committed payload so a fork's
@@ -373,7 +364,7 @@ func TestForkAllocationRefusesNewForksUnderPressureButStillAdoptsExistingWork(t 
 	repo := storageTestRepo(t)
 	service := storageTestService(t, repo)
 	base := gitOut(repo, "rev-parse", "HEAD")
-	existing, err := ensureSessionWorkspaceContext(context.Background(), service, repo, "fork-existing", base)
+	existing, err := ensureSessionWorkspaceContext(context.Background(), service, repo, "fork-existing", base, testSessionStoreID, "fork-existing")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +373,7 @@ func TestForkAllocationRefusesNewForksUnderPressureButStillAdoptsExistingWork(t 
 	limits.ReserveBytes = 1<<63 - 1 // every real filesystem is safely below the floor
 	mustSetStorageLimits(t, service, limits)
 
-	_, err = ensureSessionWorkspaceContext(context.Background(), service, repo, "fork-new", base)
+	_, err = ensureSessionWorkspaceContext(context.Background(), service, repo, "fork-new", base, testSessionStoreID, "fork-new")
 	if session.CodeOf(err) != session.CodeStorageUnavailable {
 		t.Fatalf("a new fork under reserve pressure = %v, want storage_unavailable", err)
 	}
@@ -393,7 +384,7 @@ func TestForkAllocationRefusesNewForksUnderPressureButStillAdoptsExistingWork(t 
 	if pathExists(forkspace.Workspace(repo, "fork-new")) {
 		t.Fatal("a refused allocation still created a workspace")
 	}
-	adopted, err := ensureSessionWorkspaceContext(context.Background(), service, repo, "fork-existing", base)
+	adopted, err := ensureSessionWorkspaceContext(context.Background(), service, repo, "fork-existing", base, testSessionStoreID, "fork-existing")
 	if err != nil {
 		t.Fatalf("recovery of existing work was refused under pressure: %v", err)
 	}
@@ -403,7 +394,7 @@ func TestForkAllocationRefusesNewForksUnderPressureButStillAdoptsExistingWork(t 
 
 	limits.ReserveBytes = 1 << 20
 	mustSetStorageLimits(t, service, limits)
-	if _, err := ensureSessionWorkspaceContext(context.Background(), service, repo, "fork-new", base); err != nil {
+	if _, err := ensureSessionWorkspaceContext(context.Background(), service, repo, "fork-new", base, testSessionStoreID, "fork-new"); err != nil {
 		t.Fatalf("allocation stayed closed after the pressure cleared: %v", err)
 	}
 }
@@ -431,14 +422,16 @@ func TestStoragePressureErrorReachesTheAPIAsARetryableTypedRefusal(t *testing.T)
 	}
 }
 
-// Ownership is proven, never assumed. Anything coop cannot prove it created is reported for a
-// human to look at and left exactly where it is.
-func TestReclaimOwnedOrphansRemovesProvenGarbageAndReportsEverythingElse(t *testing.T) {
+// A clean generation proves neither which session store owns a fork nor that its create intent
+// has finished. No age threshold turns absent local rows into deletion authority.
+func TestReclaimStorageKeepsUnboundForksForManualRecovery(t *testing.T) {
 	repo := storageTestRepo(t)
 	service := storageTestService(t, repo)
-	mustSetStorageLimits(t, service, storageTestLimits(t))
+	limits := storageTestLimits(t)
+	limits.GraceWindow = 0
+	mustSetStorageLimits(t, service, limits)
 
-	orphan := storageTestFork(t, service, repo, "fork-orphan", "")
+	storageTestFork(t, service, repo, "fork-orphan", "")
 	storageTestFork(t, service, repo, "fork-dirty-orphan", "")
 	writeStorageBytes(t, filepath.Join(forkspace.Workspace(repo, "fork-dirty-orphan"), "unsaved.bin"), 64<<10)
 	storageTestFork(t, service, repo, "fork-owned", "session-owned")
@@ -449,7 +442,7 @@ func TestReclaimOwnedOrphansRemovesProvenGarbageAndReportsEverythingElse(t *test
 	}
 	err = forkspace.ReserveWorkspaceLocked(repo, forkspace.WorkspaceReservation{
 		Version: forkspace.WorkspaceReservationVersion, Fork: reserved,
-		Kind: forkspace.WorkspaceReservationRemoteSession, OwnerID: "session-pending", CreatedAt: time.Now().UTC(),
+		Kind: forkspace.WorkspaceReservationRemoteSession, OwnerStoreID: testSessionStoreID, OwnerID: "session-pending", CreatedAt: time.Now().UTC(),
 	})
 	unlock()
 	if err != nil {
@@ -458,57 +451,27 @@ func TestReclaimOwnedOrphansRemovesProvenGarbageAndReportsEverythingElse(t *test
 	foreign := filepath.Join(forkspace.Home(repo), "operator-copy")
 	writeStorageBytes(t, filepath.Join(foreign, "notes.bin"), 32<<10)
 
-	result, err := service.ReclaimOwnedOrphans(context.Background())
+	result, err := service.ReclaimStorage(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Reclaimed) != 1 || !strings.Contains(result.Reclaimed[0], "fork-orphan") {
-		t.Fatalf("reclaimed = %v, want only the proven orphan", result.Reclaimed)
+	if result.StagedPurged != 0 {
+		t.Fatalf("reclaim touched unbound forks: %+v", result)
 	}
-	if result.ReclaimedBytes < storageTestPayload {
-		t.Fatalf("reclaimed bytes = %d, want at least the orphan's working tree", result.ReclaimedBytes)
-	}
-	t.Logf("reclaimed %v (%d bytes); retained %+v", result.Reclaimed, result.ReclaimedBytes, result.Retained)
-	if pathExists(forkspace.Workspace(repo, "fork-orphan")) {
-		t.Fatal("the reclaimed orphan is still on disk")
-	}
-	if _, ok, _ := forkspace.ReadGeneration(repo, "fork-orphan"); ok {
-		t.Fatal("the reclaimed orphan kept its generation record")
-	}
-	for _, kept := range []string{"fork-dirty-orphan", "fork-owned", "fork-reserved", "operator-copy"} {
+	for _, kept := range []string{"fork-orphan", "fork-dirty-orphan", "fork-owned", "fork-reserved", "operator-copy"} {
 		if !pathExists(filepath.Join(forkspace.Home(repo), kept)) {
 			t.Fatalf("%s was deleted without proof", kept)
 		}
 	}
-	retained := storageRetainedNames(result)
-	if !slices.Contains(retained, "fork-dirty-orphan") || !slices.Contains(retained, "fork-reserved") {
-		t.Fatalf("retained candidates were not reported for inspection: %+v", result.Retained)
-	}
-	if orphan.Generation == "" {
-		t.Fatal("fixture produced no generation")
-	}
-}
-
-// An unreferenced generation that is only seconds old is far more likely to be a create still in
-// flight than garbage. Age is read off coop's own durable generation record, never a mtime.
-func TestReclaimOwnedOrphansWaitsOutTheGraceWindowBeforeTouchingAnything(t *testing.T) {
-	repo := storageTestRepo(t)
-	service := storageTestService(t, repo)
-	repo = storageTestStagedRepository(t, service, repo)
-	limits := storageTestLimits(t)
-	limits.GraceWindow = time.Hour
-	mustSetStorageLimits(t, service, limits)
-	storageTestFork(t, service, repo, "fork-young", "")
-
-	result, err := service.ReclaimOwnedOrphans(context.Background())
+	report, err := service.StorageReport(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Reclaimed) != 0 {
-		t.Fatalf("reclaimed %v inside the grace window", result.Reclaimed)
-	}
-	if !pathExists(forkspace.Workspace(repo, "fork-young")) {
-		t.Fatal("a young unreferenced generation was deleted")
+	for _, fork := range report.Forks {
+		if fork.Name == "fork-orphan" && (fork.Category != StorageCategoryProtected ||
+			!strings.Contains(fork.Reason, "no session in this store proves ownership")) {
+			t.Fatalf("unbound fork was reported as disposable: %+v", fork)
+		}
 	}
 }
 
@@ -560,7 +523,7 @@ func TestDiscardStagesItsWorkspaceAndRefusesAReceiptUntilTheBytesAreGone(t *test
 	if err := os.Chmod(filepath.Join(staged[0], "locked"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	result, err := service.ReclaimOwnedOrphans(context.Background())
+	result, err := service.ReclaimStorage(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -571,7 +534,7 @@ func TestDiscardStagesItsWorkspaceAndRefusesAReceiptUntilTheBytesAreGone(t *test
 
 // The crash case: the rename that begins a removal survived, the removal itself did not. The next
 // pass has to finish it without re-deriving anything the crash destroyed.
-func TestReclaimOwnedOrphansFinishesAnInterruptedDelete(t *testing.T) {
+func TestReclaimStoragePurgesInterruptedDeleteButRetainsUnboundGeneration(t *testing.T) {
 	repo := storageTestRepo(t)
 	service := storageTestService(t, repo)
 	repo = storageTestStagedRepository(t, service, repo)
@@ -601,7 +564,7 @@ func TestReclaimOwnedOrphansFinishesAnInterruptedDelete(t *testing.T) {
 		t.Fatalf("staged discard bytes = %d, want the interrupted tree counted", report.Totals.StagedDiscardBytes)
 	}
 
-	result, err := service.ReclaimOwnedOrphans(context.Background())
+	result, err := service.ReclaimStorage(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -611,8 +574,8 @@ func TestReclaimOwnedOrphansFinishesAnInterruptedDelete(t *testing.T) {
 	if pathExists(staged) {
 		t.Fatal("the interrupted delete was reported finished while its bytes remain")
 	}
-	if _, ok, _ := forkspace.ReadGeneration(repo, "fork-interrupted"); ok {
-		t.Fatal("the finished delete left its generation record behind")
+	if _, ok, _ := forkspace.ReadGeneration(repo, "fork-interrupted"); !ok {
+		t.Fatal("staged cleanup inferred authority to retire an unbound generation")
 	}
 }
 
@@ -627,7 +590,7 @@ func TestStorageInventoryRefusesLinkedJobSources(t *testing.T) {
 	if _, err := service.StorageReport(context.Background()); err == nil {
 		t.Fatal("linked source produced an authoritative storage report")
 	}
-	if _, err := service.ReclaimOwnedOrphans(context.Background()); err == nil {
+	if _, err := service.ReclaimStorage(context.Background()); err == nil {
 		t.Fatal("reclamation followed an unproven source inventory")
 	}
 	if _, err := os.Stat(foreign); err != nil {

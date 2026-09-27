@@ -110,7 +110,7 @@ func allowControllerJobSources(cfg *config.Config, spec RunSpec, stateRoot strin
 	if err != nil {
 		return err
 	}
-	if !reserved || reservation.Kind != forkspace.WorkspaceReservationRemoteSession || reservation.OwnerID != sessionID {
+	if !reserved || !reservation.MatchesSessionOwner(spec.SessionStoreID, sessionID) {
 		return nil
 	}
 	// The service may have staged the primary under a state-root alias (for example macOS

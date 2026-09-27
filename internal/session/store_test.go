@@ -22,6 +22,59 @@ var testJobDocument = json.RawMessage(`{"job_ref":"job:test","version":1}`)
 
 const testJobDigest = "23b2f09de62f9a1b0e915c955ae2a29cf30b386d55491b9b3451b70bf954d960"
 
+func TestSessionStoreIdentitySurvivesReopenAndRelocation(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "old-state")
+	store := openTestStore(t, root)
+	identity := store.ID()
+	if !validStoreID(identity) {
+		t.Fatalf("invalid new store identity %q", identity)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened := openTestStore(t, root)
+	if reopened.ID() != identity {
+		t.Fatalf("reopen changed store identity: %q != %q", reopened.ID(), identity)
+	}
+	if err := reopened.Close(); err != nil {
+		t.Fatal(err)
+	}
+	moved := filepath.Join(parent, "moved-state")
+	if err := os.Rename(root, moved); err != nil {
+		t.Fatal(err)
+	}
+	relocated := openTestStore(t, moved)
+	defer relocated.Close()
+	if relocated.ID() != identity {
+		t.Fatalf("relocation changed store identity: %q != %q", relocated.ID(), identity)
+	}
+}
+
+func TestSessionStoreIdentityIsNeverRegeneratedWhenMissingOrCorrupt(t *testing.T) {
+	for _, test := range []struct {
+		name, query string
+	}{
+		{"missing", `DELETE FROM store_identity`},
+		{"corrupt", `UPDATE store_identity SET id = 'not-a-store-id'`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "state")
+			store := openTestStore(t, root)
+			if _, err := store.db.Exec(test.query); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if reopened, err := Open(root); err == nil {
+				_ = reopened.Close()
+				t.Fatal("Open regenerated an established store identity")
+			}
+		})
+	}
+}
+
 func TestOpenProtectsRootDatabaseAndRejectsUnsafeRoots(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
 	store := openTestStore(t, root)

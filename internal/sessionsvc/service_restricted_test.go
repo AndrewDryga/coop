@@ -177,7 +177,7 @@ func TestABareSessionRefusesRepositoryOperationsAndStillClosesAndDiscards(t *tes
 		t.Fatalf("review: status = %d body=%s", response.Code, response.Body.String())
 	}
 	// A restore is refused on the session before any workspace could be rewritten.
-	if err := validateRestoreWorkspaceSession(context.Background(), created.Session.toRecord(t, service.Service), RestoreWorkspaceCheckpointRequest{}, false); err == nil ||
+	if err := service.Service.validateRestoreWorkspaceSession(context.Background(), created.Session.toRecord(t, service.Service), RestoreWorkspaceCheckpointRequest{}, false); err == nil ||
 		!strings.Contains(err.Error(), refusal) {
 		t.Fatalf("restore: %v", err)
 	}

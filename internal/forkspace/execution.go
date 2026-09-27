@@ -74,7 +74,8 @@ type ExecutionSpec struct {
 	// ReservationOwner is required only for a remote-session sandbox. Every other fork launch
 	// must observe an unreserved workspace, closing the race between session ownership and box
 	// publication under the same lifecycle lock.
-	ReservationOwner string
+	ReservationOwner   string
+	ReservationStoreID string
 }
 
 // ExecutionRecord is host-owned liveness evidence for one box-supervising Coop process. It lives
@@ -356,13 +357,12 @@ func BeginExecution(repo string, spec ExecutionSpec) (ExecutionRecord, error) {
 			return ExecutionRecord{}, err
 		}
 		if spec.Kind == ExecutionRemoteSession {
-			if !reserved || reservation.Kind != WorkspaceReservationRemoteSession ||
-				reservation.OwnerID != spec.ReservationOwner {
+			if !reserved || !reservation.MatchesSessionOwner(spec.ReservationStoreID, spec.ReservationOwner) {
 				return ExecutionRecord{}, errors.New("remote-session workspace reservation is absent or belongs to another owner")
 			}
 		} else if reserved {
 			return ExecutionRecord{}, fmt.Errorf("fork workspace is reserved by %s %s", reservation.Kind, reservation.OwnerID)
-		} else if spec.ReservationOwner != "" {
+		} else if spec.ReservationOwner != "" || spec.ReservationStoreID != "" {
 			return ExecutionRecord{}, errors.New("ordinary fork activity cannot claim a session reservation owner")
 		}
 		// One controller owns a fork loop from projection preparation through acceptance. Per-box

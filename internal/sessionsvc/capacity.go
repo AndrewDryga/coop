@@ -127,7 +127,7 @@ func (s *Service) lockRuntimeCapacity(ctx context.Context, id string, check func
 		if s.historicalRuntimeNeedsCleanup(id) {
 			bound, err := s.store.GetSession(ctx, id)
 			if err == nil {
-				err = validateSessionForkAuthority(ctx, bound)
+				err = s.validateSessionForkAuthority(ctx, bound)
 			}
 			if err == nil {
 				if cleaner, ok := s.runner.(sessionRunnerRuntimeCleaner); ok {

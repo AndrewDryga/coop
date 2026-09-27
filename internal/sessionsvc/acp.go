@@ -1091,8 +1091,7 @@ func (r *sessionTurnRunner) removeInterruptedTurnBoxes(bound session.Session, ru
 		return errors.Join(acpFailure(sessionACPCleanupError, "session runtime generation changed"), err)
 	}
 	reservation, reserved, err := forkspace.ReadWorkspaceReservation(bound.Repository, identity)
-	if err != nil || !reserved || reservation.Kind != forkspace.WorkspaceReservationRemoteSession ||
-		reservation.OwnerID != bound.ID {
+	if err != nil || !reserved || r.store == nil || !reservation.MatchesSessionOwner(r.store.ID(), bound.ID) {
 		return errors.Join(acpFailure(sessionACPCleanupError, "session runtime reservation changed"), err)
 	}
 	observations, problems := forkspace.Executions(bound.Repository)
@@ -2159,7 +2158,7 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 			return nil, acpFailure(sessionACPProcessError, "bound fork workspace was replaced")
 		}
 		if reservation, reserved, reserveErr := forkspace.ReadWorkspaceReservation(bound.Repository, identity); reserveErr != nil ||
-			!reserved || reservation.Kind != forkspace.WorkspaceReservationRemoteSession || reservation.OwnerID != bound.ID {
+			!reserved || r.store == nil || !reservation.MatchesSessionOwner(r.store.ID(), bound.ID) {
 			return nil, acpFailure(sessionACPProcessError, "bound session workspace reservation is invalid")
 		}
 	}
@@ -2205,6 +2204,10 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		bound.Repository, bound.Companions, legacyReadOnly, privateRoot, runID,
 		r.sourceCfg, r.rt.Name,
 	), network...)
+	if r.store == nil || r.store.ID() == "" {
+		return nil, acpFailure(sessionACPProcessError, "session store ownership is unavailable")
+	}
+	env = append(env, "COOP_SESSION_STORE_ID="+r.store.ID())
 	if outputRoot != "" {
 		env = append(env, SessionOutputRootEnv+"="+outputRoot)
 	}

@@ -41,6 +41,37 @@ func clearHistoricalJob(t *testing.T, store *session.Store, id string) session.S
 	return value
 }
 
+func bindSyntheticSessionOwner(t *testing.T, store *session.Store, id string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(store.Root(), "session.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("INSERT INTO session_owner_bindings (session_id, store_id) VALUES (?, ?)", id, store.ID()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Historical and runner-only fixtures seed stored authority without exposing
+// the retired generation-adoption writer to production code.
+func setSyntheticSessionGeneration(t *testing.T, store *session.Store, id, generation string) session.Session {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(store.Root(), "session.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("UPDATE sessions SET fork_generation = ? WHERE id = ?", generation, id); err != nil {
+		t.Fatal(err)
+	}
+	value, err := store.GetSession(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
 // Ordinary fixtures need room for small temporary workspaces, not the production worker's
 // share of the developer's disk. Storage-policy tests still set their own explicit limits.
 func newSessionServiceWithTestStorage(t *testing.T, cfg Config) (*Service, error) {

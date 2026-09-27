@@ -103,11 +103,12 @@ func TestRecoveredReviewCannotExecuteAJoblessHistoricalSession(t *testing.T) {
 	git("commit", "--allow-empty", "-qm", "base")
 	fixture := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, nil)
 	defer fixture.Stop()
-	legacy, _ := createLegacyBoundSession(t, fixture, repo, "legacy-review", "legacy-review-session", "legacy-review-session")
-	bound, err := fixture.ensureSessionForkAuthority(ctx, legacy)
+	bound, err := fixture.CreateRemoteSession(ctx, "legacy-review-create", fixture.request(t, "legacy-review"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	jobDigest := bound.JobDigest
+	bound = clearHistoricalJob(t, fixture.Store(), bound.ID)
 	request := RunReviewRequest{SessionID: bound.ID, ExpectedRevision: bound.Revision}
 	op, _, err := fixture.Store().ReserveOperation(ctx, "RunReview", "legacy-review-operation", request)
 	if err != nil {
@@ -116,6 +117,7 @@ func TestRecoveredReviewCannotExecuteAJoblessHistoricalSession(t *testing.T) {
 	tree := gitOut(bound.Workspace, "rev-parse", "HEAD^{tree}")
 	intent := sessionReviewIntent{
 		OperationID: op.ID, SessionID: bound.ID, SessionRevision: bound.Revision,
+		JobDigest:  jobDigest,
 		Repository: bound.Repository, Workspace: bound.Workspace, SourceBranch: bound.ForkName,
 		ForkGeneration: bound.ForkGeneration, CreationBase: bound.BaseCommit,
 		SourceHead: bound.BaseCommit, SourceTree: tree, ParentHead: bound.BaseCommit, ParentTree: tree,

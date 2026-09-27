@@ -33,11 +33,12 @@ const (
 )
 
 type Store struct {
-	db    *sql.DB
-	lock  *os.File
-	root  string
-	clock func() time.Time
-	id    func(string) string
+	db       *sql.DB
+	lock     *os.File
+	root     string
+	identity string
+	clock    func() time.Time
+	id       func(string) string
 
 	closeOnce sync.Once
 	closeErr  error
@@ -95,7 +96,13 @@ func openStore(root string, settings options, prepareCurrentSchema bool) (*Store
 			return closeOnError(err)
 		}
 	}
-	return &Store{db: db, lock: lock, root: root, clock: settings.clock, id: settings.id}, nil
+	store := &Store{db: db, lock: lock, root: root, clock: settings.clock, id: settings.id}
+	if prepareCurrentSchema {
+		if err := store.loadIdentity(); err != nil {
+			return closeOnError(err)
+		}
+	}
+	return store, nil
 }
 
 // verifyWALMode switches the connection into WAL mode and confirms the switch actually took.
@@ -137,6 +144,45 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) Root() string { return s.root }
+
+func (s *Store) ID() string { return s.identity }
+
+// OwnsSessionFork proves that a session row was created with this store's current
+// workspace-owner format. A migrated historical row has no binding and cannot acquire
+// ownership merely because it happens to live in this database now.
+func (s *Store) OwnsSessionFork(ctx context.Context, sessionID string) (bool, error) {
+	var owner string
+	err := s.db.QueryRowContext(ctx, `SELECT store_id FROM session_owner_bindings WHERE session_id = ?`, sessionID).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read session fork owner binding: %w", err)
+	}
+	return owner == s.identity, nil
+}
+
+func (s *Store) loadIdentity() error {
+	if err := s.db.QueryRow(`SELECT id FROM store_identity WHERE slot = 1`).Scan(&s.identity); err != nil {
+		return fmt.Errorf("read session store identity: %w", err)
+	}
+	if !validStoreID(s.identity) {
+		return errors.New("invalid session store identity")
+	}
+	return nil
+}
+
+func validStoreID(value string) bool {
+	if !strings.HasPrefix(value, "store_") || len(value) != len("store_")+32 {
+		return false
+	}
+	for _, r := range value[len("store_"):] {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
 
 func ensureStateRoot(root string) error {
 	info, err := os.Lstat(root)
@@ -809,6 +855,9 @@ func (s *Store) CompleteCreateSessionOperation(
 		if err := s.insertInitialSessionTx(ctx, tx, &sess); err != nil {
 			return Session{}, err
 		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO session_owner_bindings (session_id, store_id) VALUES (?, ?)`, sess.ID, s.identity); err != nil {
+			return Session{}, fmt.Errorf("bind remote session to store identity: %w", err)
+		}
 	case err != nil:
 		return Session{}, fmt.Errorf("read existing remote session: %w", err)
 	default:
@@ -1211,43 +1260,6 @@ func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
 	}
 	if err != nil {
 		return Session{}, fmt.Errorf("get session: %w", err)
-	}
-	return sess, nil
-}
-
-// AdoptSessionForkGeneration is a one-time migration for sessions created before immutable fork
-// generations were persisted. It does not change the public revision: the workspace identity was
-// already immutable session authority, and this only records the host proof for that same path.
-func (s *Store) AdoptSessionForkGeneration(ctx context.Context, id, generation string) (Session, error) {
-	if !validBoundedText(id, MaxIDBytes) || len(generation) != 32 || strings.ToLower(generation) != generation {
-		return Session{}, &Error{Code: CodeInvalidRequest, Detail: "session fork generation is invalid"}
-	}
-	if _, err := hex.DecodeString(generation); err != nil {
-		return Session{}, &Error{Code: CodeInvalidRequest, Detail: "session fork generation is invalid"}
-	}
-	tx, err := s.begin(ctx)
-	if err != nil {
-		return Session{}, err
-	}
-	defer tx.Rollback()
-	sess, err := scanSession(tx.QueryRowContext(ctx, sessionSelect+" WHERE id = ?", id))
-	if errors.Is(err, sql.ErrNoRows) {
-		return Session{}, ErrSessionNotFound
-	}
-	if err != nil {
-		return Session{}, err
-	}
-	if sess.ForkGeneration != "" && sess.ForkGeneration != generation {
-		return Session{}, &Error{Code: CodeInvalidSessionState, Detail: "session fork generation already differs"}
-	}
-	if sess.ForkGeneration == "" {
-		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET fork_generation = ? WHERE id = ? AND fork_generation = ''`, generation, id); err != nil {
-			return Session{}, err
-		}
-		sess.ForkGeneration = generation
-	}
-	if err := tx.Commit(); err != nil {
-		return Session{}, err
 	}
 	return sess, nil
 }

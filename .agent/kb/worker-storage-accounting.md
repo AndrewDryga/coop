@@ -45,13 +45,14 @@ while retaining its exact body and execution fence; cleanup remains possible ins
 
 **Unknown is never zero.** An unreadable subtree, an unattributable directory, or a scan past its
 bounds sets `Usage.Unknown`, which becomes `totals.unknown` and publishes
-`storage.unattributed_bytes` as `null`. The orphan scan reclaims only what it can prove — coop's own
-generation record, no session naming it, no reservation, no live worker or sandbox activity, older
-than the reclaim age, and a plan that passes the ordinary clean/merged discard fences. A generation
-only seconds old is treated as a create still in flight, because
-`ensureSessionWorkspaceContext` writes the workspace before the session row exists.
+`storage.unattributed_bytes` as `null`. An unbound generation is protected even when old and clean:
+the session row may be in another store, or `ensureSessionWorkspaceContext` may have written the
+workspace before its create transaction. Maintenance only purges workspaces already staged by an
+authorized discard; it does not infer ownership from absence in this store.
 
 ## Changelog
+- 2026-09-27 — removed age-based orphan deletion after checking the create-before-row window;
+  unbound generations remain protected for manual recovery.
 - 2026-09-27 — distinguished checkpoint allocation/recovery pressure protection from ordinary
   admission monitoring; verified against checkpoint_storage.go and the interrupted-restore tests.
 - 2026-09-23 — corrected link-count accounting: directories commonly have `Nlink > 1` because of

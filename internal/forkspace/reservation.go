@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	workspaceReservationVersion = 1
+	workspaceReservationVersion = 2
 	workspaceReservationLimit   = 16 << 10
 	workspaceReservationCount   = 4096
 )
@@ -35,11 +35,24 @@ const WorkspaceReservationRemoteSession WorkspaceReservationKind = "remote-sessi
 // projected into the project control plane so fork lifecycle commands never need the global
 // session database (and never race its separate lock).
 type WorkspaceReservation struct {
-	Version   int                      `json:"version"`
-	Fork      Identity                 `json:"fork"`
-	Kind      WorkspaceReservationKind `json:"kind"`
-	OwnerID   string                   `json:"owner_id"`
-	CreatedAt time.Time                `json:"created_at"`
+	Version      int                      `json:"version"`
+	Fork         Identity                 `json:"fork"`
+	Kind         WorkspaceReservationKind `json:"kind"`
+	OwnerStoreID string                   `json:"owner_store_id,omitempty"`
+	OwnerID      string                   `json:"owner_id"`
+	CreatedAt    time.Time                `json:"created_at"`
+}
+
+// MatchesSessionOwner is the only authorization comparison for a session reservation. A v1
+// record remains visible to fork guards but cannot gain a store owner by inference.
+func (r WorkspaceReservation) MatchesSessionOwner(storeID, sessionID string) bool {
+	return r.Version == workspaceReservationVersion && r.Kind == WorkspaceReservationRemoteSession &&
+		storeID != "" && r.OwnerStoreID == storeID && r.OwnerID == sessionID
+}
+
+func sameWorkspaceReservationOwner(a, b WorkspaceReservation) bool {
+	return a.Version == b.Version && a.Fork == b.Fork && a.Kind == b.Kind &&
+		a.OwnerStoreID == b.OwnerStoreID && a.OwnerID == b.OwnerID
 }
 
 func reservationDir(repo string) string { return filepath.Join(StateDir(repo), "reservations") }
@@ -61,10 +74,14 @@ func validReservationOwner(value string) bool {
 }
 
 func validateWorkspaceReservation(record WorkspaceReservation) error {
-	if record.Version != workspaceReservationVersion || !ValidExistingName(record.Fork.Name) ||
+	if (record.Version != 1 && record.Version != workspaceReservationVersion) || !ValidExistingName(record.Fork.Name) ||
 		!ValidGeneration(record.Fork.Generation) || record.Kind != WorkspaceReservationRemoteSession ||
 		!validReservationOwner(record.OwnerID) || record.CreatedAt.IsZero() {
 		return errors.New("invalid fork workspace reservation")
+	}
+	if record.Version == 1 && record.OwnerStoreID != "" ||
+		record.Version == workspaceReservationVersion && !validReservationOwner(record.OwnerStoreID) {
+		return errors.New("invalid fork workspace reservation owner store")
 	}
 	return nil
 }
@@ -130,6 +147,9 @@ func ReserveWorkspaceLocked(repo string, record WorkspaceReservation) error {
 	if err := validateWorkspaceReservation(record); err != nil {
 		return err
 	}
+	if record.Version != workspaceReservationVersion {
+		return errors.New("cannot publish an old-format workspace reservation")
+	}
 	if err := ValidateGenerationWorkspace(repo, record.Fork); err != nil {
 		return err
 	}
@@ -143,7 +163,7 @@ func ReserveWorkspaceLocked(repo string, record WorkspaceReservation) error {
 	defer root.Close()
 	name := reservationName(record.Fork)
 	if current, err := readWorkspaceReservationFile(root, name); err == nil {
-		if reflect.DeepEqual(current, record) || current.Fork == record.Fork && current.Kind == record.Kind && current.OwnerID == record.OwnerID {
+		if reflect.DeepEqual(current, record) || sameWorkspaceReservationOwner(current, record) {
 			// A prior create may have become visible before its directory sync failed.
 			// Repeat the durability barrier before acknowledging the idempotent retry.
 			return syncWorkspaceReservationRoot(root)
@@ -215,8 +235,7 @@ func RequireNoWorkspaceReservationLocked(repo string, identity Identity) error {
 		return err
 	}
 	if ok {
-		return fmt.Errorf("fork %s is owned by %s %s — discard that session before changing its workspace",
-			identity.Name, reservation.Kind, reservation.OwnerID)
+		return reservationConflictError(identity.Name, reservation)
 	}
 	return nil
 }
@@ -269,14 +288,27 @@ func RequireForkNameAvailable(repo, name string) error {
 	}
 	for _, record := range records {
 		if record.Fork.Name == name {
-			return fmt.Errorf("fork %s is owned by %s %s — discard that session before reusing the name",
-				name, record.Kind, record.OwnerID)
+			return reservationConflictError(name, record)
 		}
 	}
 	return nil
 }
 
+func reservationConflictError(name string, record WorkspaceReservation) error {
+	if record.Version == 1 {
+		return fmt.Errorf("fork %s has an old session reservation without a proven store owner — inspect and recover it offline", name)
+	}
+	return fmt.Errorf("fork %s is owned by %s %s — ask the owning session service to discard it",
+		name, record.Kind, record.OwnerID)
+}
+
 func RemoveWorkspaceReservationIfMatchesLocked(repo string, expected WorkspaceReservation) error {
+	if err := validateWorkspaceReservation(expected); err != nil {
+		return err
+	}
+	if expected.Version != workspaceReservationVersion {
+		return errors.New("cannot remove an old-format workspace reservation")
+	}
 	root, err := os.OpenRoot(reservationDir(repo))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -295,7 +327,7 @@ func RemoveWorkspaceReservationIfMatchesLocked(repo string, expected WorkspaceRe
 	if err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(current, expected) && (current.Fork != expected.Fork || current.Kind != expected.Kind || current.OwnerID != expected.OwnerID) {
+	if !reflect.DeepEqual(current, expected) && !sameWorkspaceReservationOwner(current, expected) {
 		return errors.New("workspace reservation changed before removal")
 	}
 	if err := root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {

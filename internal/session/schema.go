@@ -271,6 +271,17 @@ ALTER TABLE sessions ADD COLUMN job_document TEXT NOT NULL DEFAULT '';
 ALTER TABLE sessions ADD COLUMN job_digest TEXT NOT NULL DEFAULT '';
 `
 
+const schemaV25 = `
+CREATE TABLE store_identity (
+    slot INTEGER PRIMARY KEY CHECK (slot = 1),
+    id TEXT NOT NULL
+);
+CREATE TABLE session_owner_bindings (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    store_id TEXT NOT NULL
+);
+`
+
 // backfillSourceBindings derives the generic binding for pull-request sessions whose durable
 // values prove it, and leaves every other historical row exactly as it is. Nothing here guesses:
 // a row without receipts, or whose receipts disagree with its own columns, keeps no binding and
@@ -526,6 +537,15 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("migrate schema v24: %w", err)
 		}
 		version = 24
+	}
+	if version < 25 {
+		if _, err := tx.Exec(schemaV25); err != nil {
+			return fmt.Errorf("migrate schema v25: %w", err)
+		}
+		if _, err := tx.Exec(`INSERT INTO store_identity (slot, id) VALUES (1, ?)`, randomID("store")); err != nil {
+			return fmt.Errorf("initialize session store identity: %w", err)
+		}
+		version = 25
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		return fmt.Errorf("set schema version: %w", err)

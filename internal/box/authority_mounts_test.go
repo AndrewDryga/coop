@@ -527,6 +527,7 @@ func TestAuthorityMountGuardAllowsOnlyBoundControllerJobSources(t *testing.T) {
 	stateRoot := filepath.Join(root, "sessions")
 	t.Setenv(ServiceStateRootEnv, stateRoot)
 	sessionID := "remote_123"
+	storeID := "store_test"
 	repo := filepath.Join(stateRoot, "job-sources", strings.Repeat("a", 64), "repository")
 	workspace := forkspace.Workspace(repo, "remote-fork")
 	companion := filepath.Join(stateRoot, "repositories", sessionID, "docs")
@@ -543,7 +544,7 @@ func TestAuthorityMountGuardAllowsOnlyBoundControllerJobSources(t *testing.T) {
 	if err == nil {
 		err = forkspace.ReserveWorkspaceLocked(repo, forkspace.WorkspaceReservation{
 			Version: forkspace.WorkspaceReservationVersion, Fork: identity,
-			Kind: forkspace.WorkspaceReservationRemoteSession, OwnerID: sessionID,
+			Kind: forkspace.WorkspaceReservationRemoteSession, OwnerStoreID: storeID, OwnerID: sessionID,
 			CreatedAt: time.Now().UTC(),
 		})
 	}
@@ -561,6 +562,7 @@ func TestAuthorityMountGuardAllowsOnlyBoundControllerJobSources(t *testing.T) {
 		Repo: workspace, ActivityRepo: repo, ForkName: identity.Name,
 		ForkGeneration: string(identity.Generation), RunID: "session-" + strings.Repeat("ab", 12),
 		ActivityKind: forkspace.ExecutionRemoteSession, ActivityReservationOwner: sessionID,
+		SessionStoreID:        storeID,
 		ControllerJob:         true,
 		CompanionRepositories: []CompanionRepository{{Name: "docs", HostPath: companion}},
 	}
@@ -625,6 +627,7 @@ func TestAuthorityMountGuardAllowsOnlyBoundControllerJobSources(t *testing.T) {
 		{"not a controller job", func(s *RunSpec) { s.ControllerJob = false }},
 		{"not a remote session", func(s *RunSpec) { s.RunID = "" }},
 		{"wrong session owner", func(s *RunSpec) { s.ActivityReservationOwner = "remote_other" }},
+		{"wrong session store", func(s *RunSpec) { s.SessionStoreID = "store_other" }},
 		{"companion outside owner tree", func(s *RunSpec) { s.CompanionRepositories[0].HostPath = filepath.Join(stateRoot, "acp", sessionID) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -202,7 +202,7 @@ func TestRemoteSessionReservationBlocksMergeAndRemovalEvenWithForce(t *testing.T
 	if err == nil {
 		err = forkspace.ReserveWorkspaceLocked(repo, forkspace.WorkspaceReservation{
 			Version: forkspace.WorkspaceReservationVersion, Fork: identity,
-			Kind: forkspace.WorkspaceReservationRemoteSession, OwnerID: "remote_session_test", CreatedAt: time.Now().UTC(),
+			Kind: forkspace.WorkspaceReservationRemoteSession, OwnerStoreID: "store_test", OwnerID: "remote_session_test", CreatedAt: time.Now().UTC(),
 		})
 	}
 	unlock()
@@ -221,6 +221,24 @@ func TestRemoteSessionReservationBlocksMergeAndRemovalEvenWithForce(t *testing.T
 	}
 	if !pathExists(ws) {
 		t.Fatal("forced rm deleted a remote-session-owned workspace")
+	}
+	unlock, err = forkspace.LockState(repo, "session-owned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = forkspace.RemoveGenerationIfMatchesLocked(repo, identity)
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, err := c.ForkRm([]string{"session-owned", "--force", "--yes"}); code != 1 || err == nil || !strings.Contains(err.Error(), "remote-session") {
+		t.Fatalf("forced rm with missing generation and retained reservation = (%d, %v)", code, err)
+	}
+	if !pathExists(ws) {
+		t.Fatal("forced rm deleted a reserved workspace with missing generation")
+	}
+	if _, reserved, err := forkspace.ReadWorkspaceReservation(repo, identity); err != nil || !reserved {
+		t.Fatalf("forced rm changed stale reservation: reserved=%t err=%v", reserved, err)
 	}
 }
 

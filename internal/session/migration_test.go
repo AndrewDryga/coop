@@ -90,6 +90,9 @@ func buildLegacyDatabase(t *testing.T, path string, version int) {
 	if version >= 23 {
 		ddl += schemaV23
 	}
+	if version >= 24 {
+		ddl += schemaV24
+	}
 	if _, err := db.Exec(ddl); err != nil {
 		t.Fatalf("build v%d schema: %v", version, err)
 	}
@@ -145,6 +148,9 @@ func TestMigrationFromEachHistoricalVersionReachesCurrentSchema(t *testing.T) {
 
 			store := openTestStore(t, root)
 			defer store.Close()
+			if owned, err := store.OwnsSessionFork(ctx, "legacy-session"); err != nil || owned {
+				t.Fatalf("migrated session gained a new store owner: owned=%t err=%v", owned, err)
+			}
 
 			var gotVersion int
 			if err := store.db.QueryRow("PRAGMA user_version").Scan(&gotVersion); err != nil {
