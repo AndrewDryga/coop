@@ -179,11 +179,14 @@ func TreeSignature(dir string, ignore ...string) (string, error) {
 			if err != nil {
 				return err
 			}
-			defer file.Close()
 			h := sha256.New()
 			n, err := io.Copy(h, io.LimitReader(file, SnapshotLimit-read+1))
+			closeErr := file.Close()
 			if err != nil {
 				return err
+			}
+			if closeErr != nil {
+				return closeErr
 			}
 			read += n
 			if read > SnapshotLimit {

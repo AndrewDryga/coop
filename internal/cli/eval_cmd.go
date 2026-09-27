@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -176,6 +177,30 @@ func (a *app) evalRun(args []string) (int, error) {
 		}
 		frozen = append(frozen, f)
 	}
+	root, err := evalStateRoot()
+	if err != nil {
+		return 1, err
+	}
+	staged, err := eval.StageSuite(root, suite)
+	if err != nil {
+		return 1, fmt.Errorf("freeze suite inputs: %w", err)
+	}
+	stagedDir := staged.Dir
+	defer eval.RemoveStagedSuite(stagedDir) // a real run moves these exact bytes under its own record
+	plan.Suite = staged
+	if staged.IsLoop() {
+		// All configurations in one run must use the same recipe. The bytes already frozen
+		// for their configuration identities are also the bytes every trial executes.
+		for _, f := range frozen[1:] {
+			if !bytes.Equal(f.LoopConfig, frozen[0].LoopConfig) {
+				return 1, fmt.Errorf("loop config changed while configurations were frozen; retry with a stable recipe")
+			}
+		}
+		if err := os.WriteFile(filepath.Join(staged.Dir, "loop.yaml"), frozen[0].LoopConfig, 0o600); err != nil {
+			return 1, fmt.Errorf("freeze loop config: %w", err)
+		}
+		plan.LoopConfig = staged.LoopConfig
+	}
 	renderEvalPlan(plan, frozen)
 	fmt.Println()
 	if opts.DryRun {
@@ -202,6 +227,12 @@ func (a *app) executeEvalRun(plan *eval.Plan, frozen []eval.FrozenConfig) (int, 
 	if err != nil {
 		return 1, err
 	}
+	inputs := filepath.Join(store.Dir(), "inputs")
+	if err := os.Rename(plan.Suite.Dir, inputs); err != nil {
+		return 1, fmt.Errorf("retain frozen suite under run %s: %w", store.ID(), err)
+	}
+	plan.Suite.Dir = inputs
+	plan.Suite.Path = filepath.Join(inputs, "suite.yaml")
 	// Trial working directories live UNDER the run, not in a temp dir that vanishes: a trial that
 	// did not pass leaves its graded workspace behind for the user to look at, and it is removed
 	// with the run's own record rather than on the way out of this function.

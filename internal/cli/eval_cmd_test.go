@@ -207,6 +207,45 @@ func TestEvalPreflightRefusesPresetBeforeRecordingAnAgentRun(t *testing.T) {
 	}
 }
 
+func TestEvalDryRunShowsContentFrozenWorkloadWithoutLeavingARun(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	suite := trialSuite(t)
+	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
+	staged, err := eval.StageSuite(t.TempDir(), suite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := eval.WorkloadFingerprint(staged).Short()
+	out := captureStdout(t, func() {
+		code, err := a.evalRun([]string{suite.Path, "codex", "--timeout", "10m", "--dry-run"})
+		if code != 0 || err != nil {
+			t.Fatalf("dry run: %d, %v", code, err)
+		}
+	})
+	if !strings.Contains(out, "[workload "+want+"]") {
+		t.Fatalf("dry run did not show the staged content hash %s:\n%s", want, out)
+	}
+	root, err := evalStateRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := os.ReadDir(root); err != nil || len(entries) != 0 {
+		t.Fatalf("dry run left staged inputs or a run: %v, %v", entries, err)
+	}
+	if err := os.WriteFile(filepath.Join(suite.Dir, "verifiers/hello/expected.txt"), []byte("new expectation"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second := captureStdout(t, func() {
+		code, err := a.evalRun([]string{suite.Path, "codex", "--timeout", "10m", "--dry-run"})
+		if code != 0 || err != nil {
+			t.Fatalf("second dry run: %d, %v", code, err)
+		}
+	})
+	if strings.Contains(second, "[workload "+want+"]") {
+		t.Fatal("an edited verifier kept the old dry-run workload identity")
+	}
+}
+
 // A bad target or a missing preset is refused during resolution, before any plan or provider work.
 func TestResolveEvalConfigurationsRefusesBadPositionals(t *testing.T) {
 	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}

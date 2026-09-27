@@ -2,8 +2,8 @@
 name: eval-trial-isolation
 description: What isolates one coop eval trial from the next and from the grader — and why the obvious credential fix would break authentication
 subsystem: eval
-sources: [internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_loop.go, internal/cli/eval_results.go, internal/loop/loop.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/eval/store.go, internal/eval/catalog.go, internal/eval/private_root.go, internal/box/run.go, internal/box/mounts.go, internal/box/authority_mounts.go, internal/agent/codex.go]
-updated: 2026-09-25
+sources: [internal/cli/eval_cmd.go, internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_loop.go, internal/cli/eval_results.go, internal/loop/loop.go, internal/eval/fixtures.go, internal/eval/stage.go, internal/eval/stage_copy.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/eval/store.go, internal/eval/catalog.go, internal/eval/private_root.go, internal/box/run.go, internal/box/mounts.go, internal/box/authority_mounts.go, internal/agent/codex.go]
+updated: 2026-09-28
 ---
 
 `coop eval` measures configurations against each other, so its whole value rests on two trials
@@ -12,17 +12,26 @@ the map, and the reasoning behind the one place the obvious fix is wrong.
 
 ## What is isolated, and by what
 
-- **Workspace** — `eval.PrepareWorkspace` copies the suite's fixture into a private tree with a
+- **Frozen workload** — `eval.StageSuite` first copies only named candidate inputs and hidden
+  verifiers into owner-private run inputs through confined directory handles. It checks physical
+  input/verifier separation, binds the source root to the loaded manifest, bounds aggregate staged
+  bytes and entries, and fingerprints the copied trees.
+  Every trial uses those retained bytes, not a live suite source (`internal/eval/stage.go`,
+  `internal/eval/stage_copy.go`, `internal/cli/eval_cmd.go`).
+- **Workspace** — `eval.PrepareWorkspace` copies a frozen case input into a private tree with a
   synthetic initial commit and no `.git` from the source, so no author history travels
-  (`internal/eval/workspace.go`).
+  (`internal/eval/workspace.go`). An agent case without `files` starts empty, never from the suite
+  directory (`internal/cli/eval_trial.go`).
 - **Host mount boundary** — those generated workspaces live under Coop's private state. Box admits
   only the exact owner-private trial workspace for a candidate, and only its snapshot and selected
-  read-only starter verifier for a credential-free grader. Sibling records, other trials and
+  read-only retained verifier for a credential-free grader. Sibling records, other trials and
   credentials remain fenced (`internal/box/authority_mounts.go`). Starter extraction and run
   creation both tighten the eval root to 0700; older roots created as 0755 are migrated before use.
-- **Hidden material** — the verifier never appears in any candidate mount. The suite loader refuses a
-  manifest whose verifier overlaps `files`/`fixture`/`tasks` (`internal/eval/suite.go`), and grading
-  mounts it at `/coop-verifier`, outside the workspace (`internal/cli/eval_grade.go`).
+- **Hidden material** — the verifier never appears in any candidate mount. The suite loader refuses
+  lexical overlap across all cases, and staging checks physical aliases before copying. Grading
+  alone receives the exact retained verifier at `/coop-verifier` through a read-only private-state
+  mount; a candidate still cannot mount it (`internal/eval/suite.go`, `internal/eval/stage.go`,
+  `internal/box/authority_mounts.go`, `internal/cli/eval_grade.go`).
 - **Grader** — a fresh container from the trusted image, `Homes:false` (no model credentials), a
   config CLONE with `SetEgress("none")`, and `PolicyRepo` pointed at an EMPTY directory. That last
   one matters: a box reads `.agent/project.yaml` from the repo it mounts, so without it a candidate
@@ -111,6 +120,10 @@ already fully correct. The shipped verifier runs each subcommand on inputs no ta
 also why it cannot be satisfied by a loop that moves folders without finishing anything.
 
 ## Changelog
+- 2026-09-28 — traced content-identity drift and two hidden-material exposures: no-files cases
+  copied the whole suite, and another case's verifier could sit inside an input (including a
+  case-folded alias). Frozen run inputs now use confined handles, physical separation and a bounded
+  copy; the grader-only mount allowance follows the new retained verifier path.
 - 2026-09-25 — a real starter run reached Box but inherited the operator's private MCP bind from
   `COOP_RUN_ARGS` and returned three prelaunch errors. Traced candidate, grader and loop inheritance;
   Eval now omits ambient runtime args on all three paths while ordinary Coop runs retain them.

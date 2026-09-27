@@ -2,31 +2,67 @@ package eval
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // manifestLimit bounds a suite manifest: it is a small hand-written file, and an unbounded read is
 // a way to make a loader spend memory before it validates anything.
 const manifestLimit = 1 << 20
 
-// readManifest reads a suite manifest as a plain regular file — never following a symlink at the
-// manifest itself — and bounds its size. A missing or non-regular manifest is refused by name.
-func readManifest(path string) ([]byte, error) {
-	info, err := os.Lstat(path)
+// readManifest anchors the directory and the manifest to the same opened root. A later staging
+// pass can reject a replaced suite root instead of freezing bytes from a path swapped to the
+// operator's private files.
+func readManifest(path string) ([]byte, os.FileInfo, os.FileInfo, error) {
+	root, err := os.OpenRoot(filepath.Dir(path))
 	if err != nil {
-		return nil, fmt.Errorf("suite %q: %w", path, err)
+		return nil, nil, nil, fmt.Errorf("suite %q: %w", path, err)
+	}
+	defer root.Close()
+	dirInfo, err := root.Stat(".")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	data, fileInfo, err := readManifestFromRoot(root, filepath.Base(path))
+	return data, dirInfo, fileInfo, err
+}
+
+func readManifestFromRoot(root *os.Root, name string) ([]byte, os.FileInfo, error) {
+	info, err := root.Lstat(name)
+	if err != nil {
+		return nil, nil, fmt.Errorf("suite %q: %w", name, err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("suite %q is a symbolic link; name the file itself", path)
+		return nil, nil, fmt.Errorf("suite %q is a symbolic link; name the file itself", name)
 	}
 	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("suite %q is not a regular file", path)
+		return nil, nil, fmt.Errorf("suite %q is not a regular file", name)
 	}
 	if info.Size() > manifestLimit {
-		return nil, fmt.Errorf("suite %q is larger than %d bytes", path, manifestLimit)
+		return nil, nil, fmt.Errorf("suite %q is larger than %d bytes", name, manifestLimit)
 	}
-	return os.ReadFile(path)
+	file, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, nil, fmt.Errorf("suite %q changed while opening", name)
+	}
+	data, err := io.ReadAll(io.LimitReader(file, manifestLimit+1))
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(data) > manifestLimit {
+		return nil, nil, fmt.Errorf("suite %q is larger than %d bytes", name, manifestLimit)
+	}
+	return data, opened, nil
 }
 
 // refuseSymlink rejects a path — or ANY directory component between the suite root and it — that is

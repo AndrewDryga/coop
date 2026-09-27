@@ -60,12 +60,19 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 	// An agent case starts from its `files`; a loop scenario starts from its `fixture` repository.
 	// Either way PrepareWorkspace gives the trial a private tree with a synthetic initial commit and
 	// none of the author's history.
-	source := t.Case.Files
+	source := filepath.Join(r.suite.Dir, t.Case.Files)
 	if r.suite.IsLoop() {
-		source = t.Case.Fixture
+		source = filepath.Join(r.suite.Dir, t.Case.Fixture)
+	} else if t.Case.Files == "" {
+		// A case without files starts empty. Joining an empty path to the suite directory would
+		// copy the entire suite, including hidden verifiers, into the candidate's workspace.
+		source = filepath.Join(dir, "empty-input")
+		if err := os.Mkdir(source, 0o700); err != nil {
+			return fail(ctx, "could not prepare an empty case input: "+err.Error())
+		}
 	}
 	workspace := filepath.Join(dir, "workspace")
-	if _, err := eval.PrepareWorkspace(ctx, filepath.Join(r.suite.Dir, source), workspace); err != nil {
+	if _, err := eval.PrepareWorkspace(ctx, source, workspace); err != nil {
 		return fail(ctx, "could not prepare the workspace: "+err.Error())
 	}
 

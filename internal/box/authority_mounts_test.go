@@ -377,15 +377,17 @@ func TestEvalMountAllowsOnlyItsGeneratedWorkspace(t *testing.T) {
 	workspace := filepath.Join(trial, "workspace")
 	snapshot := filepath.Join(trial, "snapshot")
 	verifier := filepath.Join(evalRoot, "starters", "core", "verifiers", "fix-the-cause")
+	stagedVerifier := filepath.Join(evalRoot, "run-1", "inputs", "cases", "fix-the-cause", "verifier")
 	sibling := filepath.Join(evalRoot, "run-1", "work", "case-c0-r1", "workspace")
 	credential := filepath.Join(stateHome, "coop", "credentials")
-	for _, path := range []string{workspace, snapshot, verifier, sibling, credential} {
+	for _, path := range []string{workspace, snapshot, verifier, stagedVerifier, sibling, credential} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
 	candidate := RunSpec{Repo: workspace}
 	grader := RunSpec{Repo: snapshot, GradeSnapshot: true, EvalVerifier: verifier}
+	stagedGrader := RunSpec{Repo: snapshot, GradeSnapshot: true, EvalVerifier: stagedVerifier}
 	for _, tc := range []struct {
 		name    string
 		spec    RunSpec
@@ -394,12 +396,15 @@ func TestEvalMountAllowsOnlyItsGeneratedWorkspace(t *testing.T) {
 	}{
 		{"candidate workspace", candidate, []string{"-v", workspace + ":/workspace"}, true},
 		{"candidate cannot mount verifier", candidate, []string{"-v", workspace + ":/workspace", "-v", verifier + ":/verifier:ro"}, false},
+		{"candidate cannot mount staged verifier", candidate, []string{"-v", workspace + ":/workspace", "-v", stagedVerifier + ":/verifier:ro"}, false},
 		{"candidate cannot claim grader verifier", RunSpec{Repo: workspace, EvalVerifier: verifier}, []string{"-v", verifier + ":/verifier:ro"}, false},
 		{"candidate cannot mount another trial", candidate, []string{"-v", sibling + ":/other"}, false},
 		{"candidate cannot mount run record", candidate, []string{"-v", filepath.Join(evalRoot, "run-1") + ":/run:ro"}, false},
 		{"candidate cannot mount eval root", candidate, []string{"-v", evalRoot + ":/eval:ro"}, false},
 		{"candidate cannot mount credential sibling", candidate, []string{"-v", credential + ":/credentials:ro"}, false},
 		{"grader snapshot and read-only verifier", grader, []string{"-v", snapshot + ":/workspace", "-v", verifier + ":/verifier:ro"}, true},
+		{"grader snapshot and read-only staged verifier", stagedGrader, []string{"-v", snapshot + ":/workspace", "-v", stagedVerifier + ":/verifier:ro"}, true},
+		{"grader cannot write staged verifier", stagedGrader, []string{"-v", stagedVerifier + ":/verifier"}, false},
 		{"grader cannot write verifier", grader, []string{"-v", verifier + ":/verifier"}, false},
 		{"grader cannot mount candidate workspace", grader, []string{"-v", workspace + ":/other"}, false},
 	} {
@@ -439,7 +444,7 @@ func TestEvalMountDecisionReachesRunAssembly(t *testing.T) {
 	trial := filepath.Join(evalRoot, "run-1", "work", "case-c0-r0")
 	workspace := filepath.Join(trial, "workspace")
 	snapshot := filepath.Join(trial, "snapshot")
-	verifier := filepath.Join(evalRoot, "starters", "core", "verifiers", "fix-the-cause")
+	verifier := filepath.Join(evalRoot, "run-1", "inputs", "cases", "fix-the-cause", "verifier")
 	for _, path := range []string{workspace, snapshot, verifier} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			t.Fatal(err)

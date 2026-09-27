@@ -2,9 +2,9 @@
 name: eval-oracles-outside-agent-authority
 description: hidden eval material stays outside every candidate access path, including mounts and Git history
 scope: security
-sources: [internal/box/run.go, internal/box/network_exposure.go, internal/box/derived_image.go, internal/box/taskchannel.go, internal/mcp/mcp.go]
+sources: [internal/box/run.go, internal/box/authority_mounts.go, internal/box/network_exposure.go, internal/box/derived_image.go, internal/box/taskchannel.go, internal/mcp/mcp.go, internal/eval/fixtures.go, internal/eval/suite.go, internal/eval/stage.go, internal/eval/stage_copy.go, internal/cli/eval_trial.go]
 check: none
-updated: 2026-09-13
+updated: 2026-09-28
 ---
 
 # Keep hidden evaluation material outside candidate authority
@@ -27,6 +27,10 @@ also deny direct and provider-mediated answer retrieval; prompts and domain filt
 proof. This is a preventive eval contract, not a claim about existing generic box guarantees.
 
 ## Changelog
+- 2026-09-28 — swept native eval staging and grader mount sources after the new retained-input
+  path exposed a missing grader-only allowance. The loader and staging now reject cross-case and
+  physical input/verifier overlap, and the candidate's no-files path stays empty; the exact retained
+  verifier is admitted only read-only to a credential-free grader.
 - 2026-09-13 — user correction recorded; swept the five source surfaces above and existing eval
   design. No eval runner exists yet. Generic mount exposure, image preparation and MCP projection
   are reuse seams, not eval isolation proofs; expanded the native-evals backlog task with explicit

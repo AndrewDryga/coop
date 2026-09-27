@@ -159,6 +159,54 @@ func TestTrialRunnerNeverGivesTheCandidateTheVerifier(t *testing.T) {
 	}
 }
 
+func TestTrialRunnerWithNoFilesStartsEmptyNotFromTheSuiteDirectory(t *testing.T) {
+	suite := trialSuite(t)
+	suite.Cases[0].Files = ""
+	attempted := false
+	r := newTrialRunner(t, suite, func(spec box.RunSpec) (int, error) {
+		if spec.Agent == "" {
+			return 0, nil
+		}
+		attempted = true
+		for _, forbidden := range []string{"verifiers", "files", "suite.yaml"} {
+			if _, err := os.Lstat(filepath.Join(spec.Repo, forbidden)); !os.IsNotExist(err) {
+				t.Errorf("case without files exposed suite entry %q: %v", forbidden, err)
+			}
+		}
+		return 0, os.WriteFile(filepath.Join(spec.Repo, "answer.txt"), []byte("hello\n"), 0o644)
+	})
+	if res := r.run(context.Background(), trialFor(suite)); res.Status != eval.TrialPassed {
+		t.Fatalf("status = %q, detail %q", res.Status, res.Detail)
+	}
+	if !attempted {
+		t.Fatal("the candidate attempt never ran")
+	}
+}
+
+func TestTrialRunnerUsesTheFrozenInputAfterTheSourceChanges(t *testing.T) {
+	source := trialSuite(t)
+	staged, err := eval.StageSuite(t.TempDir(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source.Dir, "files/README.md"), []byte("edited after freeze\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := newTrialRunner(t, staged, func(spec box.RunSpec) (int, error) {
+		if spec.Agent == "" {
+			return 0, nil
+		}
+		body, err := os.ReadFile(filepath.Join(spec.Repo, "README.md"))
+		if err != nil || string(body) != "# start here\n" {
+			t.Errorf("candidate got live source instead of frozen input: %q, %v", body, err)
+		}
+		return 0, os.WriteFile(filepath.Join(spec.Repo, "answer.txt"), []byte("hello\n"), 0o644)
+	})
+	if res := r.run(context.Background(), trialFor(staged)); res.Status != eval.TrialPassed {
+		t.Fatalf("status = %q, detail %q", res.Status, res.Detail)
+	}
+}
+
 // A trial that did not pass keeps its graded workspace for the user to inspect; one that passed
 // does not leave megabytes of "it worked" behind.
 func TestTrialRunnerKeepsEvidenceOnlyWhenSomethingWentWrong(t *testing.T) {

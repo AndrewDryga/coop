@@ -372,9 +372,18 @@ func allowEvalMountSources(spec RunSpec, root string, allow *authorityMountAllow
 		}
 		allow.sources[spec.Repo] = true
 	}
-	if parts, ok := evalSourceParts(root, spec.EvalVerifier); ok && len(parts) == 4 &&
-		parts[0] == "starters" && parts[2] == "verifiers" && spec.GradeSnapshot && !spec.Homes {
-		if err := validateEvalSource(root, parts, 0); err != nil {
+	if parts, ok := evalSourceParts(root, spec.EvalVerifier); ok && spec.GradeSnapshot && !spec.Homes {
+		privateThrough := -1
+		switch {
+		case len(parts) == 4 && parts[0] == "starters" && parts[2] == "verifiers":
+			privateThrough = 0
+		case len(parts) == 5 && parts[1] == "inputs" && parts[2] == "cases" && parts[4] == "verifier":
+			privateThrough = 4
+		}
+		if privateThrough < 0 {
+			return nil
+		}
+		if err := validateEvalSource(root, parts, privateThrough); err != nil {
 			return err
 		}
 		if allow.readonlySources == nil {

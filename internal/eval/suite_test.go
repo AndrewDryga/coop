@@ -67,6 +67,29 @@ func TestLoadAcceptsBothRunnerKinds(t *testing.T) {
 	}
 }
 
+func TestLoadRefusesAnotherCasesVerifierInsideACandidateInput(t *testing.T) {
+	manifest := `version: 1
+name: cross-case-leak
+runner: agent
+cases:
+  - id: broad
+    instruction: inspect the files
+    files: ./files
+    verifier: ./verifiers/broad
+    timeout: 5m
+  - id: narrow
+    instruction: inspect other files
+    files: ./other
+    verifier: ./files/hidden-grader
+    timeout: 5m
+`
+	path := writeSuite(t, manifest, "files/visible", "files/hidden-grader/answers", "other/readme", "verifiers/broad/verify.sh")
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), `case "broad" files`) || !strings.Contains(err.Error(), `case "narrow" verifier`) {
+		t.Fatalf("cross-case verifier leak was not refused: %v", err)
+	}
+}
+
 func TestLoadRefusesEveryMalformedManifestByName(t *testing.T) {
 	cases := []struct {
 		name     string

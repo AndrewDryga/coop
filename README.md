@@ -1106,6 +1106,9 @@ servers and `COOP_RUN_ARGS` are omitted from trials: ambient runtime mounts or f
 change the workload without appearing in its fingerprint. Use Coop-managed logins for provider
 credentials. These checks are evidence about the tested workload, not a promise of general
 provider parity or a public benchmark ranking.
+Before trials, Coop freezes the suite's named inputs and hidden verifiers under private run state;
+later source edits cannot change that run's work or comparison identity. The whole frozen suite
+must fit within 2 GiB and 200,000 entries, or the run is refused before provider work.
 
 For all options: `coop help eval run`. For result meanings: `coop help eval inspect`.
 

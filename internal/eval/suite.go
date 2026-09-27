@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -48,6 +49,14 @@ type Suite struct {
 	// Path and Dir are set by Load, never by YAML — the manifest cannot name its own location.
 	Path string `yaml:"-"`
 	Dir  string `yaml:"-"`
+	// ContentDigest identifies the staged candidate inputs and hidden verifiers. It is absent
+	// on a merely loaded suite; only StageSuite may make a comparison-ready workload.
+	ContentDigest Fingerprint `yaml:"-"`
+	// Load binds later staging to the exact directory and manifest it read. Neither value is
+	// author-controlled YAML or serialized into a retained staged manifest.
+	dirIdentity      os.FileInfo
+	manifestIdentity os.FileInfo
+	manifestHash     Fingerprint
 }
 
 // Case is one workload. An agent case is an instruction plus its initial files and an independent
@@ -91,12 +100,18 @@ func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 
 func (d Duration) String() string { return time.Duration(d).String() }
 
+func (d Duration) MarshalYAML() (any, error) { return d.String(), nil }
+
 // Load reads and strictly validates a suite manifest. It never launches anything and never reads a
 // candidate's files — only the manifest and the shape of the paths it names. A malformed manifest,
 // a duplicate id, an empty suite, a path that escapes the manifest's directory or a field that
 // belongs to the other runner is refused BY NAME here, before any planning or provider work.
 func Load(path string) (*Suite, error) {
-	data, err := readManifest(path)
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	data, dirIdentity, manifestIdentity, err := readManifest(abs)
 	if err != nil {
 		return nil, err
 	}
@@ -106,12 +121,11 @@ func Load(path string) (*Suite, error) {
 	if err := dec.Decode(&suite); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return nil, fmt.Errorf("resolve suite path: %w", err)
-	}
 	suite.Path = abs
 	suite.Dir = filepath.Dir(abs)
+	suite.dirIdentity = dirIdentity
+	suite.manifestIdentity = manifestIdentity
+	suite.manifestHash = newHasher().bytes("manifest", data).sum()
 	if err := suite.validate(); err != nil {
 		return nil, err
 	}
@@ -157,6 +171,20 @@ func (s *Suite) validate() error {
 			return fmt.Errorf("duplicate case id %q", c.ID)
 		}
 		seen[c.ID] = true
+	}
+	// A verifier hidden from its own case must also be hidden from every other case. A shared
+	// fixture directory that contains another case's verifier would expose its answers to the
+	// candidate despite each case passing the per-case overlap check above.
+	for _, candidate := range s.Cases {
+		for _, hidden := range s.Cases {
+			for _, input := range []struct{ name, path string }{
+				{"files", candidate.Files}, {"fixture", candidate.Fixture}, {"tasks", candidate.Tasks},
+			} {
+				if input.path != "" && overlaps(hidden.Verifier, input.path) {
+					return fmt.Errorf("case %q %s %q overlaps case %q verifier %q; every grader must stay outside every candidate input", candidate.ID, input.name, input.path, hidden.ID, hidden.Verifier)
+				}
+			}
+		}
 	}
 	return nil
 }

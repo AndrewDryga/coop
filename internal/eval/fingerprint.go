@@ -51,13 +51,14 @@ func (w *hasher) sum() Fingerprint { return Fingerprint(hex.EncodeToString(w.h.S
 // runner, version and each case's identity, budget, verifier and inputs. loop_config is deliberately
 // NOT here — it is part of the evaluated configuration (comparing two loop recipes is comparing two
 // configurations, not two workloads), and it folds into the configuration fingerprint at its
-// milestone. Fixture/verifier TREE contents fold in at preparation; this is the manifest-level
-// identity available at load, already enough to refuse a merged score across an edited workload.
+// milestone. StageSuite supplies ContentDigest from the exact copied fixture and verifier trees;
+// a later source edit cannot change a trial while keeping the comparison key.
 func WorkloadFingerprint(s *Suite) Fingerprint {
 	w := newHasher()
-	w.text("schema", "eval.workload.v1")
+	w.text("schema", "eval.workload.v2")
 	w.text("version", strconv.Itoa(s.Version))
 	w.text("runner", string(s.Runner))
+	w.text("content", string(s.ContentDigest))
 	for _, c := range s.Cases {
 		w.text("case.id", c.ID)
 		w.text("case.timeout", c.Timeout.String())
