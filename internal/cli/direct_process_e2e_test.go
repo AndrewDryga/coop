@@ -390,8 +390,6 @@ func processScenario(provider string, output *string, exitCode int, behavior str
 
 func directDefaultEffort(contract directProviderContract) string { return contract.efforts[0] }
 
-func directTargetEffort(contract directProviderContract) string { return contract.efforts[1] }
-
 // directLabelEffort is the effort a suite can pin on a made-up model label: the contract's target
 // level, except for a provider that checks the level against the models it knows — there the label
 // would be refused before the suite's own subject ran.

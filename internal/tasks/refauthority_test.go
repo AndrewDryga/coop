@@ -20,12 +20,8 @@ import (
 // audit-reopen completion path all share: acquire the lock, then re-read HEAD as the FIRST action
 // inside it and compare against the value validation is about to trust.
 //
-// internal/cli/refauthority_test.go keeps four sibling tests (TestCmdTasksDoneTakesRefAuthority,
-// TestFastForwardParentTakesRefAuthority, TestSignUnpushedTakesRefAuthority,
-// TestReconcileQueueAfterMergeTakesRefAuthority) — those prove cli's own staying ref-touching
-// mutators (fork_merge.go's fastForwardParent, sign.go's signUnpushed) take this same lock, so they
-// stay where those mutators live. These twelve tests were one file before the extraction; this
-// split follows Risk 5 of this task's spec.md exactly.
+// CLI task completion and signing tests, plus forkctl's landing tests, prove the production
+// mutators take this same lock. Keep their integration assertions beside those callers.
 
 func TestEnterRefAuthorityWindowMatchesLiveHead(t *testing.T) {
 	repo, run := gitRepo(t)

@@ -503,8 +503,9 @@ func destroyLandedFork(rt runtime.Runtime, repo, name string, approval *landedFo
 // gate is configured — revalidates the merged result, rolling back on failure.
 // "green" thus means green against the tree as it stands now, not the stale base the
 // fork was cut from. Reports whether the merge landed: landed=false with an error is a merge that
-// did NOT happen, while landed=true WITH an error means the commits are in the parent but the queue
-// reconciliation below couldn't be done — the caller reports it and stops, never rolls the land back.
+// did NOT happen, while landed=true WITH an error means the commits are in the parent but exact
+// candidate bookkeeping or final validation failed — the caller reports it and stops, never rolls
+// the land back. Task landing resumes from its durable intent; trailers alone never complete tasks.
 func (c *Control) mergeOne(repo, img, name string, force bool) (outcome mergeOutcome, retErr error) {
 	return c.mergeOneMode(repo, img, name, force, false)
 }

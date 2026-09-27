@@ -1,7 +1,6 @@
 package scaffold
 
 import (
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -10,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/project"
-	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // toolSystemDeps maps a tool a repo can pin in .tool-versions to the Debian packages its asdf
@@ -259,52 +257,4 @@ func DetectDockerSetup(repo string) *DockerSetup {
 		setup.Compose = f.composes[0]
 	}
 	return setup
-}
-
-// dockerfileSuggestion is the "base the box on your environment" template: inherit Coop's box, so
-// the project keeps the clients Coop qualifies and adds only its toolchain.
-const dockerfileSuggestion = `
-  Box image — base the agent box on your project's environment. Save as .agent/Dockerfile,
-  then 'coop build'. Inherit coop's box (the agent CLIs and editor adapters Coop qualifies,
-  browser libraries, security setup) and add just your toolchain:
-
-    ARG COOP_BASE_IMAGE=coop-box                # coop build overrides this with the resolved base
-    FROM ${COOP_BASE_IMAGE}
-    USER root
-    RUN apt-get update && apt-get install -y --no-install-recommends <your-system-deps>
-    USER node
-`
-
-// SuggestDocker prints (docs only, never writes) how to build the agent box on the repo's
-// existing Docker. It runs only when the box isn't set up yet — a Dockerized repo with no
-// .agent/Dockerfile is the gap it fills; it never nags an already-configured one. The caller
-// (cmdInit) runs it after the summary anchor so it reads as box-setup guidance before the steps.
-func SuggestDocker(repo string) {
-	if _, err := os.Stat(filepath.Join(repo, filepath.FromSlash(project.DockerfilePath(repo)))); err == nil {
-		return
-	}
-	f := detectDocker(repo)
-	if !f.any() {
-		return
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "\n%s\n", ui.Bold("this repo already has Docker — you can build the agent box on it:"))
-	if len(f.dockerfiles) > 0 {
-		fmt.Fprintf(&b, "  Dockerfiles:  %s\n", strings.Join(f.dockerfiles, ", "))
-	}
-	if len(f.composes) > 0 {
-		line := strings.Join(f.composes, ", ")
-		if len(f.services) > 0 {
-			line += "  (services: " + strings.Join(f.services, ", ") + ")"
-		}
-		fmt.Fprintf(&b, "  compose:      %s\n", line)
-	}
-	if len(f.dockerfiles) > 0 {
-		b.WriteString(dockerfileSuggestion)
-	}
-	if len(f.composes) > 0 {
-		fmt.Fprintf(&b, "\n  Sibling services — coop starts deps for the box from .agent/compose.yml (reached\n"+
-			"  by name). Copy the services your code needs from %s into it, then 'coop up'.\n", f.composes[0])
-	}
-	fmt.Fprint(os.Stderr, b.String())
 }

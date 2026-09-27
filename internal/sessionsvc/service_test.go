@@ -4934,12 +4934,17 @@ func TestSessionServiceUsesItsFrozenLadderAcrossRestarts(t *testing.T) {
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	var mu sync.Mutex
-	var ladders []int
+	var ladders [][]string
+	targets := []string{"codex:gpt-5.6-sol/medium@work", "codex:gpt-5.6-terra/high@work", "claude:claude-opus-4-6/high@backup"}
 	factory := func(store *session.Store) Runner {
 		return RunnerFunc(func(ctx context.Context, bound session.Session, turn session.Turn) (session.Turn, error) {
 			ladder, _ := ctx.Value(sessionTargetLadderContextKey{}).([]agents.Target)
+			var rendered []string
+			for _, target := range ladder {
+				rendered = append(rendered, target.String())
+			}
 			mu.Lock()
-			ladders = append(ladders, len(ladder))
+			ladders = append(ladders, rendered)
 			mu.Unlock()
 			if _, err := store.MarkTurnSendIntent(ctx, bound.ID, turn.ID); err != nil {
 				return turn, err
@@ -4954,7 +4959,7 @@ func TestSessionServiceUsesItsFrozenLadderAcrossRestarts(t *testing.T) {
 	for iteration := range 3 {
 		service := newTestSessionService(t, stateRoot, repo, factory)
 		if iteration == 0 {
-			service.Job.Targets = []string{"codex@work", "codex:fallback-model@work"}
+			service.Job.Targets = targets
 			created, err := service.CreateRemoteSession(context.Background(), "frozen-ladder", service.request(t, "test:frozen-ladder"))
 			if err != nil {
 				t.Fatal(err)
@@ -4987,7 +4992,7 @@ func TestSessionServiceUsesItsFrozenLadderAcrossRestarts(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if !reflect.DeepEqual(ladders, []int{2, 2, 2}) {
+	if !reflect.DeepEqual(ladders, [][]string{targets, targets, targets}) {
 		t.Fatalf("frozen target ladders = %v", ladders)
 	}
 }

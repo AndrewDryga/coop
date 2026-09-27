@@ -20,11 +20,10 @@ var errRefAuthorityIdentity = errors.New("ref authority lock changed identity wh
 // moment a completion's HEAD is trusted through the moment task authority is actually consumed for
 // it (a receipt, an audit-reopen generation), nothing else may move that ref. An interactive `coop
 // run`, a host-side signing rewrite (signUnpushed), a fork land (fastForwardParent), a host-driven
-// completion of audit-reopened work (completeTrustedTask, reached via `coop tasks done` / fork-merge
-// reconciliation), or a human commit can all move HEAD — every one of coop's own mutators takes THIS
-// SAME lock for its own ref-touching moment, so coop can never trigger its own refusal. Keyed
-// identically to lockLoopCheckout — the resolved worktree path, never the repo name — so a fork
-// parallel forks stay independent (isolate the state, don't serialize the workers).
+// completion of audit-reopened work (completeTrustedTask via `coop tasks done`), or a human commit
+// can move HEAD. Coop's own mutators take this same lock for their ref-touching moments, so Coop
+// cannot trigger its own refusal. It is keyed like lockLoopCheckout by resolved worktree path,
+// letting parallel forks remain independent (isolate the state, don't serialize the workers).
 //
 // Unlike lockLoopCheckout's bare flock, this is proved after the fact, the same way
 // lockLeaseAuthorityWith proves task-lease authority (lease.go): flock binds a process to an

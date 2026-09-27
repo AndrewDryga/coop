@@ -4,7 +4,7 @@ description: validation matches the changed surface; unrelated slow suites run o
 scope: agent-workflow
 sources: [AGENTS.md, .agent/skills/work/SKILL.md, .agent/skills/sweep/SKILL.md, Makefile]
 check: none
-updated: 2026-09-15
+updated: 2026-09-27
 ---
 
 # Match validation to the changed surface and honor focused verification requests
@@ -43,11 +43,22 @@ On 2026-09-15 a KB-only rule edit unnecessarily started the complete provider, l
 package matrices because its generated task text named `make check`. The user corrected this
 directly: do not run lengthy tests when the edited files cannot affect them.
 
+On 2026-09-27 a cleanup repeatedly reran both repositories' full gates after narrow deletions and
+comment/test-fixture corrections. The user corrected the same mistake directly: "you do not need
+to run long running tests for things your changes could not affect allowing us to move faster."
+For cleanup batches, list the changed boundaries first, run their owning tests and structural
+checks, and add a slow suite only when those files can affect the behavior it proves.
+
 Follow [[static-bounded-supervision]] for logs and [[requested-outcome-controls-stopping]]
 for the final stop condition. Batching never supplies missing access, review or destructive
 operation approval. Do not change CI or runtime acceptance checks to speed agent supervision.
 
 ## Changelog
+- 2026-09-27 — recorded the cleanup-specific correction above. Swept the active cleanup plan and
+  four queued cleanup tasks: their copied blanket canonical-gate requirements are being replaced
+  by impact-scoped verification; the final ledger retains the already-run relevant provider and
+  repository evidence without scheduling unrelated slow suites again. `check: none` remains honest
+  because deciding which suites a diff can affect requires review.
 - 2026-09-15 — required validation to match the changed surface and made KB/rule-only, task-only,
   docs-only, and executable-source examples explicit. Swept AGENTS.md plus the work and sweep skill
   references: their full-gate language remains correct for executable implementation work, but none

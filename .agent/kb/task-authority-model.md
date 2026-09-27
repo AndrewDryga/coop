@@ -2,8 +2,8 @@
 name: task-authority-model
 description: four separate authorities decide who may act on a task/checkout — durable owner, iteration lease, checkout lock, and ref window — never merge them
 subsystem: tasks
-sources: [internal/tasks/lease_cmd.go, internal/tasks/claimactor.go, internal/tasks/lease.go, internal/tasks/refauthority.go, internal/tasks/audit.go, internal/tasks/cmd.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/loop/lock.go]
-updated: 2026-09-11
+sources: [internal/tasks/lease_cmd.go, internal/tasks/claimactor.go, internal/tasks/lease.go, internal/tasks/refauthority.go, internal/tasks/audit.go, internal/tasks/cmd.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/candidate.go, internal/tasks/queue.go, internal/forkctl/land.go, internal/loop/lock.go, internal/loop/loop.go]
+updated: 2026-09-27
 ---
 Coop has FOUR separate authorities over a task and its checkout. Each answers a different question,
 each is held a different length of time, and each fails differently — conflating any two of them is
@@ -69,8 +69,8 @@ human claiming a todo task and the loop scanning the same instant: `tasksFolderM
 (`internal/tasks/cmd.go:481`) writes the owner record BEFORE it moves the folder, and rolls the record
 back if the move then loses the race — so the record is visible to any concurrent scan from the
 instant a claim begins, not from whenever its folder move happens to land. The record is cleared by
-`done` (`CompleteTrustedTask`, `internal/tasks/audit.go:281`, so every caller — the interactive verb,
-fork-merge reconciliation — gets it for free), `block` (`tasksFolderBlock`), `unblock`
+`done` (`CompleteTrustedTask` for interactive completion; `FinalizeForkCandidateTask` for an exact
+reviewed fork candidate), `block` (`tasksFolderBlock`), `unblock`
 (`moveBlockedAuditUnblock`), and the explicit `coop tasks release <id>` (`ReleaseTrustedTask`) —
 nothing else. Release is not a bare record deletion: it takes the SAME authority flock + owner lock
 `BlockTrustedTask` takes, re-resolves the exact instance, refuses a fork-owned task / a foreign live
@@ -92,23 +92,19 @@ keyed per resolved WORKTREE path, never the repo name, exactly for this reason �
 [[isolate-state-dont-serialize]]) or hold a lock for an entire box run when only a few filesystem
 operations actually need it exclusive.
 
-## Lock ordering when more than one authority is held at once: ref before lease, always
+## Lock nesting follows the owning workflow
 
-The only place two of these authorities nest today is `ReconcileQueueAfterMerge`
-(`internal/tasks/audit.go`, the fork-merge reconciliation path): it takes the **ref** authority
-(`LockRefAuthority`) for the whole reconciliation, then calls `CompleteTrustedTask` for each landed
-task, which takes the **lease** authority (`lockLeaseAuthority`) internally. So **ref authority is
-acquired before lease authority, never the reverse.** Authority 3 (checkout) never nests with either —
-it is held for a whole `coop loop` run, one level up, before any task-level authority is ever
-considered, so it is never acquired simultaneously with a decision that also needs claim/lease/ref.
+- Host `tasks done` takes ref authority before attempting short task-completion authority;
+  that task acquisition is nonblocking (`queue.go`, `CompleteTrustedTask`).
+- A loop holds checkout and iteration lease before entering its short ref validation/consume
+  window (`loop.go`). It does not acquire a second iteration lease inside that window.
+- Fork landing holds its lifecycle lock and takes ref authority for the parent fast-forward and
+  durable landed-journal write. It releases ref authority before finalizing each exact assigned
+  task under task authority (`advanceTaskLand`, `FinalizeForkCandidateTask`).
 
-This ordering is implicit in the code today (which function calls which), not enforced — a future
-edit that acquired lease authority first and then tried to take ref authority inside it would compile
-fine and might never deadlock in a single-controller test, only under real contention. No `check:` is
-mechanized for it yet: doing so properly needs a call-graph scan in the shape of
-`internal/importdag_test.go` (which function reachable from a lease-held region calls
-`LockRefAuthority`), which is a genuinely separate piece of tooling, not a same-commit addition to
-this move. Tracked instead as a queued follow-up (`coop tasks add`) rather than guessed at here.
+There is no universal ref-before-lease order. Review blocking acquisitions and release boundaries
+against the owning caller; do not merge locks with different lifetimes or resurrect trailer-only
+queue reconciliation in place of the durable candidate-land journal.
 
 ## Where the durable ones live
 
@@ -124,6 +120,9 @@ these authorities sit beside but never replace — the folder is still the only 
 lifecycle STATE; these four decide who may act on it.
 
 ## Changelog
+- 2026-09-27 — deleted the uncalled trailer-based reconciliation path. Rechecked host completion,
+  loop iteration and journaled fork landing; replaced the obsolete universal lock-order claim with
+  their actual acquisition and release boundaries. Runtime locking is unchanged.
 - 2026-09-11 — `coop tasks release` became a guarded todo transition (`ReleaseTrustedTask`), not a
   record deletion: same locks as `block`, refuses fork-owned / foreign-lease / foreign-live-claim,
   moves before it unclaims so a retry finishes an interrupted one. The list's "unleased" marker is

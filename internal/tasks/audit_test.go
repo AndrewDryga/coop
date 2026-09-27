@@ -12,27 +12,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
-
-	"github.com/AndrewDryga/coop/internal/config"
 )
-
-func TestFinishedTasksAndReconcileDecision(t *testing.T) {
-	// reconcileMerged: a landed todo/in_progress task moves; a landed blocked task is flagged (no
-	// move); an unlanded task is ignored entirely.
-	states := map[string]string{"todo1": StateTodo, "wip1": StateInProgress, "blk1": StateBlocked, "safe": StateTodo}
-	landed := map[string]bool{"todo1": true, "wip1": true, "blk1": true} // "safe" did NOT land
-	acts := reconcileMerged(states, landed)
-	got := map[string]bool{}
-	for _, a := range acts {
-		got[a.ID] = a.Move
-	}
-	if len(acts) != 3 || !got["todo1"] || !got["wip1"] || got["blk1"] {
-		t.Errorf("reconcileMerged = %+v; want todo1/wip1 move, blk1 flagged, safe absent", acts)
-	}
-	if _, present := got["safe"]; present {
-		t.Error("an unlanded task must not be reconciled")
-	}
-}
 
 func TestAggregateDuplicateTaskIDs(t *testing.T) {
 	first, second := filepath.Join(t.TempDir(), "first"), filepath.Join(t.TempDir(), "second")
@@ -3085,15 +3065,6 @@ func TestCommitsForTaskAndUnbindableTasks(t *testing.T) {
 	if m, _ := unbindableTasks(repo, duplicateHead, twoBindingsHead, []string{"task-42"}, nil); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("multiple matching commits must fail closed, got %v", m)
 	}
-	// landedTasks sees the trailer in the explicitly requested history.
-	landed, landedErr := landedTasks(repo, "HEAD")
-	if landedErr != nil || !landed["task-42"] {
-		t.Errorf("landedTasks = (%v, %v), want task-42 present", landed, landedErr)
-	}
-	git("commit", "-q", "--allow-empty", "-m", "ambiguous landed\n\nCoop-Task: duplicate-landed\nCoop-Task: duplicate-landed")
-	if landed, landedErr = landedTasks(repo, "HEAD"); landedErr != nil || landed["duplicate-landed"] {
-		t.Errorf("landedTasks = (%v, %v), want a commit with duplicate Coop-Task trailers ignored", landed, landedErr)
-	}
 
 	// Rewriting the existing binding makes the old commit unreachable and creates exactly one
 	// range-local and reachable binding, which is the required reopened-task recovery shape.
@@ -5490,142 +5461,6 @@ func TestProtectedGateFiles(t *testing.T) {
 	want := []string{".agent/project.yaml", ".agent/skills/sweep/SKILL.md", ".claude/settings.json", "Makefile", "run", "tools/internal/devtool/gates.go"}
 	if !slices.Equal(got, want) {
 		t.Errorf("protectedGateFiles = %v, want %v", got, want)
-	}
-}
-
-// TestReconcileQueueAfterMerge: a queued task whose Coop-Task trailer just landed moves to done;
-// a blocked task with a landed trailer is NOT moved (flagged for a human); an unlanded task stays.
-func TestReconcileQueueAfterMerge(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-	repo := t.TempDir()
-	env := append(os.Environ(),
-		"GIT_CONFIG_GLOBAL="+filepath.Join(t.TempDir(), "g"),
-		"GIT_CONFIG_SYSTEM="+filepath.Join(t.TempDir(), "s"))
-	git := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir, cmd.Env = repo, env
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	q := filepath.Join(repo, TasksRoot)
-	q2Rel := filepath.Join(".agent", "other-tasks")
-	q2 := filepath.Join(repo, q2Rel)
-	writeTaskFile(t, filepath.Join(q, StateTodo, "todo1", "task.md"), "# todo1\n- [x] required checks passed\n")
-	writeTaskFile(t, filepath.Join(q, StateTodo, "todo1", "tmp", "scratch"), "remove\n")
-	writeTaskFile(t, filepath.Join(q, StateInProgress, "wip1", "task.md"), "# wip1\n- [x] required checks passed\n")
-	writeTaskFile(t, filepath.Join(q, StateInProgress, "wip1", "tmp", "scratch"), "remove\n")
-	writeTaskFile(t, filepath.Join(q, StateBlocked, "blk1", "task.md"), "# blk1\n")
-	writeTaskFile(t, filepath.Join(q, StateBlocked, "blk1", "decision.md"), "# blocked\n")
-	writeTaskFile(t, filepath.Join(q, StateBlocked, "blk1", "tmp", "scratch"), "retain\n")
-	writeTaskFile(t, filepath.Join(q, StateTodo, "safe", "task.md"), "# safe\n")
-	writeTaskFile(t, filepath.Join(q, StateTodo, "same-id", "task.md"), "# same root\n")
-	writeTaskFile(t, filepath.Join(q2, StateTodo, "same-id", "task.md"), "# same second queue\n")
-	git("init", "-q")
-	git("config", "user.email", "t@t")
-	git("config", "user.name", "T")
-	// A landed commit for todo1, wip1, and blk1 (as a merged fork would carry); "safe" did not land.
-	if err := os.WriteFile(filepath.Join(repo, "code.txt"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	git("add", "-A")
-	git("commit", "-q", "-m", "seed queue")
-	beforeLand := gitOut(repo, "rev-parse", "HEAD")
-	git("commit", "-q", "--allow-empty", "-m", "todo1 work\n\nCoop-Task: todo1")
-	git("commit", "-q", "--allow-empty", "-m", "wip1 work\n\nCoop-Task: wip1")
-	git("commit", "-q", "--allow-empty", "-m", "blk1 work\n\nCoop-Task: blk1")
-	git("commit", "-q", "--allow-empty", "-m", "ambiguous work\n\nCoop-Task: same-id")
-
-	cfg := &config.Config{TasksFiles: []string{TasksRoot, q2Rel}}
-	if err := ReconcileQueueAfterMerge(cfg, repo, "fork1", beforeLand+"..HEAD"); err != nil {
-		t.Fatalf("reconcileQueueAfterMerge = %v, want nil on a readable range", err)
-	}
-
-	if !pathExists(filepath.Join(q, StateDone, "todo1")) || pathExists(filepath.Join(q, StateTodo, "todo1")) {
-		t.Error("a landed todo task should have moved to done")
-	}
-	if !pathExists(filepath.Join(q, StateDone, "wip1")) {
-		t.Error("a landed in_progress task should have moved to done")
-	}
-	if !pathExists(filepath.Join(q, StateBlocked, "blk1")) || pathExists(filepath.Join(q, StateDone, "blk1")) {
-		t.Error("a blocked task must be flagged, never auto-moved")
-	}
-	if !pathExists(filepath.Join(q, StateTodo, "safe")) {
-		t.Error("an unlanded task must stay put")
-	}
-	if !pathExists(filepath.Join(q, StateTodo, "same-id")) || !pathExists(filepath.Join(q2, StateTodo, "same-id")) {
-		t.Error("an ambiguous landed id must be skipped in every queue")
-	}
-	if pathExists(filepath.Join(q, StateDone, "todo1", "tmp")) || pathExists(filepath.Join(q, StateDone, "wip1", "tmp")) {
-		t.Error("fork reconciliation must clean completed task tmp")
-	}
-	for _, id := range []string{"todo1", "wip1"} {
-		doneDir := filepath.Join(q, StateDone, id)
-		state := readFileString(filepath.Join(doneDir, "state.md"))
-		if !strings.Contains(state, "**Status:** complete") || !strings.Contains(state, "**Next action:** none") {
-			t.Errorf("fork reconciliation did not finalize %s state:\n%s", id, state)
-		}
-		if !taskCompletionRecorded(q, Item{ID: id, Dir: doneDir, State: StateDone}) {
-			t.Errorf("fork reconciliation did not record completion evidence for %s", id)
-		}
-	}
-	if !fileExists(filepath.Join(q, StateBlocked, "blk1", "tmp", "scratch")) {
-		t.Error("fork reconciliation must retain blocked task tmp")
-	}
-	// The reconciled task got a note in its log.md.
-	if data, _ := os.ReadFile(filepath.Join(q, StateDone, "todo1", "log.md")); !strings.Contains(string(data), "reconciled: landed by fork fork1") {
-		t.Errorf("reconcile note missing from todo1 log.md: %q", data)
-	}
-
-	// Reusing an old task ID must not let an unrelated later fork merge complete the new task.
-	git("commit", "-q", "--allow-empty", "-m", "historical work\n\nCoop-Task: reused")
-	unrelatedBase := gitOut(repo, "rev-parse", "HEAD")
-	writeTaskFile(t, filepath.Join(q, StateTodo, "reused", "task.md"), "# reused\n")
-	git("commit", "-q", "--allow-empty", "-m", "unrelated fork work")
-	if err := ReconcileQueueAfterMerge(cfg, repo, "unrelated", unrelatedBase+"..HEAD"); err != nil {
-		t.Fatalf("reconcileQueueAfterMerge = %v, want nil on a readable range", err)
-	}
-	if !pathExists(filepath.Join(q, StateTodo, "reused")) || pathExists(filepath.Join(q, StateDone, "reused")) {
-		t.Error("an old historical trailer completed a reused task during an unrelated merge")
-	}
-
-	// An UNREADABLE range must not read as "this fork landed nothing": it reconciles nothing, so it
-	// has to come back as an error that names the fork, the range, and the manual recovery — the
-	// silent version is what lets the next loop iteration redo work the fork already landed.
-	badRange := "no-such-ref..HEAD"
-	err := ReconcileQueueAfterMerge(cfg, repo, "fork1", badRange)
-	if err == nil {
-		t.Fatal("reconcileQueueAfterMerge on an unreadable range = nil, want a loud error")
-	}
-	for _, want := range []string{"fork1", badRange, "coop tasks done"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("reconcile failure %q does not name %q", err, want)
-		}
-	}
-	if !pathExists(filepath.Join(q, StateTodo, "reused")) {
-		t.Error("a failed reconcile must leave the queue exactly as it found it")
-	}
-}
-
-// TestLandedTasksSeparatesFailureFromEmpty: "no task landed" and "the history read failed" produce
-// the same empty answer if you only look at the set — so landedTasks reports the second as an error.
-func TestLandedTasksSeparatesFailureFromEmpty(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-	repo := initRepo(t) // one trailerless commit: a genuinely empty landed set
-	landed, err := landedTasks(repo, "HEAD")
-	if err != nil || len(landed) != 0 {
-		t.Fatalf("landedTasks on trailerless history = (%v, %v), want an empty set and no error", landed, err)
-	}
-	landed, err = landedTasks(filepath.Join(t.TempDir(), "not-a-repo"), "HEAD")
-	if err == nil {
-		t.Fatalf("landedTasks outside a repo = (%v, nil), want an error", landed)
-	}
-	if landed != nil {
-		t.Errorf("landedTasks returned the set %v alongside an error — a caller could reconcile against it", landed)
 	}
 }
 

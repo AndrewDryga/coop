@@ -17,13 +17,8 @@ import (
 // correctness, never as an automatic over-engineering penalty — a smaller incorrect solution is not
 // better, and tests, docs and clear code legitimately add lines.
 //
-// Two measurements, from cloc's machine-readable output (the tool is pinned; ambient config is
-// refused so the counts are reproducible):
-//   - per-language code/comment/blank totals of a snapshot (`cloc --json`), from which NET code
-//     growth is after-minus-before code — derived from the totals, NOT from cloc's "modified" line,
-//     which the spec is explicit is not the same quantity;
-//   - added/removed/modified lines between two snapshots (`cloc --diff --json`), which give physical
-//     churn (a write-then-revert has zero net growth but nonzero churn).
+// Measure per-language code/comment/blank totals with `cloc --json`, then derive net growth from
+// the before/after totals. The tool is pinned and ambient config is refused for reproducible counts.
 //
 // A missing cloc, an unparseable output or an unknown language is an explicit measurement error or
 // unknown-coverage note, never a silent zero.
@@ -71,34 +66,9 @@ func (m SizeMetrics) sum(pick func(LangCount) int) int {
 	return total
 }
 
-// SizeDiff is the physical churn between two snapshots, per language, as cloc reports it. Net code
-// growth is NOT taken from here — it is after.TotalCode() - before.TotalCode() (see NetCodeGrowth).
-type SizeDiff struct {
-	ClocVersion string               `json:"cloc_version"`
-	Added       map[string]LangCount `json:"added"`
-	Removed     map[string]LangCount `json:"removed"`
-	Modified    map[string]LangCount `json:"modified"`
-}
-
-// AddedCode / RemovedCode are the churn totals; PhysicalChurn is added+removed code, the "how much
-// was touched" figure distinct from net growth.
-func (d SizeDiff) AddedCode() int { return sumLang(d.Added, func(c LangCount) int { return c.Code }) }
-func (d SizeDiff) RemovedCode() int {
-	return sumLang(d.Removed, func(c LangCount) int { return c.Code })
-}
-func (d SizeDiff) PhysicalChurn() int { return d.AddedCode() + d.RemovedCode() }
-
 // NetCodeGrowth is after-minus-before code, derived from the two snapshots' totals — the honest net,
 // which cloc's "modified" count cannot give.
 func NetCodeGrowth(before, after SizeMetrics) int { return after.TotalCode() - before.TotalCode() }
-
-func sumLang(m map[string]LangCount, pick func(LangCount) int) int {
-	total := 0
-	for _, c := range m {
-		total += pick(c)
-	}
-	return total
-}
 
 // parseClocJSON parses `cloc --json` output into per-language counts, dropping cloc's own "header"
 // and "SUM" pseudo-entries (SUM is re-derivable, and mixing it into the language map would double
@@ -132,29 +102,6 @@ func parseClocJSON(data []byte) (SizeMetrics, error) {
 	return out, nil
 }
 
-// parseClocDiff parses `cloc --diff --json` output — top-level added/same/modified/removed, each a
-// language map — into the churn buckets we keep (added, removed, modified; "same" is dropped, it is
-// unchanged lines).
-func parseClocDiff(data []byte) (SizeDiff, error) {
-	var raw struct {
-		Header struct {
-			ClocVersion string `json:"cloc_version"`
-		} `json:"header"`
-		Added    map[string]clocLang `json:"added"`
-		Removed  map[string]clocLang `json:"removed"`
-		Modified map[string]clocLang `json:"modified"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return SizeDiff{}, fmt.Errorf("parse cloc diff json: %w", err)
-	}
-	return SizeDiff{
-		ClocVersion: raw.Header.ClocVersion,
-		Added:       convertLangs(raw.Added),
-		Removed:     convertLangs(raw.Removed),
-		Modified:    convertLangs(raw.Modified),
-	}, nil
-}
-
 // clocLang mirrors cloc's per-language object (nFiles, not files).
 type clocLang struct {
 	NFiles  int `json:"nFiles"`
@@ -165,14 +112,6 @@ type clocLang struct {
 
 func (c clocLang) count() LangCount {
 	return LangCount{Files: c.NFiles, Blank: c.Blank, Comment: c.Comment, Code: c.Code}
-}
-
-func convertLangs(in map[string]clocLang) map[string]LangCount {
-	out := make(map[string]LangCount, len(in))
-	for lang, c := range in {
-		out[lang] = c.count()
-	}
-	return out
 }
 
 // clocTimeout bounds a cloc run over a trial's workspace.
@@ -206,26 +145,6 @@ func MeasureSize(ctx context.Context, dir string, ignore ...string) (SizeMetrics
 	m.Skipped = skipped
 	m.Ignored = readIgnored(ignored.Name())
 	return m, nil
-}
-
-// MeasureDiff measures the churn between two directories, each projected to regular files only first
-// (same reason as MeasureSize).
-func MeasureDiff(ctx context.Context, before, after string) (SizeDiff, error) {
-	beforeProj, _, err := projectRegularFiles(before)
-	if err != nil {
-		return SizeDiff{}, err
-	}
-	defer os.RemoveAll(beforeProj)
-	afterProj, _, err := projectRegularFiles(after)
-	if err != nil {
-		return SizeDiff{}, err
-	}
-	defer os.RemoveAll(afterProj)
-	out, err := runCloc(ctx, append(append([]string{"--diff"}, clocFlags...), beforeProj, afterProj)...)
-	if err != nil {
-		return SizeDiff{}, err
-	}
-	return parseClocDiff(out)
 }
 
 // projectRegularFiles copies every regular file under src into a fresh temp directory, preserving

@@ -70,7 +70,7 @@ var allowedEdges = map[string][]string{
 	"project":               {"egress"},
 	"runtime":               {"liveprocess"},
 	"safefile":              nil,
-	"scaffold":              {"agent", "project", "taskstate", "ui"},
+	"scaffold":              {"agent", "project", "taskstate"},
 	"session":               nil,
 	"sessionsvc":            {"agent", "box", "config", "egress", "forkspace", "hostsurface", "ladder", "mcp", "networkstate", "networkview", "runtime", "secretscan", "session", "tasks", "workerproto"},
 	"secretscan":            {},
@@ -91,8 +91,8 @@ var allowedEdges = map[string][]string{
 
 // uiPresentationOwners are the only packages allowed to import internal/ui. Terminal rendering
 // belongs at the edges: everything else returns data and lets its caller print it. cli owns the
-// terminal outright; box narrates image builds and runs (ui.Info, ui.IsTerminal) and scaffold
-// narrates what it generated (ui.Bold, ui.Detail). tasks and forkctl are whole CLI verb families
+// terminal outright; box narrates image builds and runs (ui.Info, ui.IsTerminal).
+// tasks and forkctl are whole CLI verb families
 // extracted OUT of cli — they print their own tables and prompts, and tasks owns its live board,
 // so the terminal came with them. loop is the strongest case of all: its output IS a multi-hour streaming
 // interface — a sticky live bar (ui.Region/ui.SetLiveSink) with the agent's own stdout scrolling
@@ -105,7 +105,7 @@ var allowedEdges = map[string][]string{
 // Deliberately a SECOND list, not derived from allowedEdges: granting a package the ui edge has to
 // cost two edits, so "just add it to the table" can't quietly move presentation back into a
 // library.
-var uiPresentationOwners = []string{"box", "cli", "forkctl", "loop", "networkreport", "scaffold", "tasks"}
+var uiPresentationOwners = []string{"box", "cli", "forkctl", "loop", "networkreport", "tasks"}
 
 // TestInternalImportDAG diffs the real tree against the frozen table in both directions: an
 // unexpected edge fails, and so does an edge the table still expects but the code has dropped, so

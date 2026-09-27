@@ -12,12 +12,9 @@ import (
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
-// These four tests stay in cli (the other eight moved to internal/tasks/refauthority_test.go, per
-// Risk 5 of this task's spec.md): each proves one of cli's OWN staying ref-touching mutators
-// (`coop tasks done`, fork-merge's fastForwardParent, sign's signUnpushed, fork-merge's
-// reconcileQueueAfterMerge — half of these four now call straight into internal/tasks) takes the
-// SAME lock a running loop's validate→consume window holds, so none of them can ever land mid-window
-// and none can make that window refuse. tasks.LockRefAuthority is the shared mechanism under test.
+// These three tests prove the CLI's ref-touching mutators (`coop tasks done`, fork landing's
+// fastForwardParent, and signUnpushed) take the same lock as a running loop's
+// validate→consume window. tasks.LockRefAuthority is the shared mechanism under test.
 
 // TestCmdTasksDoneTakesRefAuthority proves the wrap in cmdTasks (tasks.CmdTasks) is real, not
 // decorative: completeTrustedTask's audit-reopen branch shares the loop's validate-then-consume
@@ -126,44 +123,6 @@ func TestSignUnpushedTakesRefAuthority(t *testing.T) {
 
 	if _, err := a.signUnpushed(repo, base); err == nil || !strings.Contains(err.Error(), "ref authority") {
 		t.Fatalf("signUnpushed while ref authority is held = %v, want a ref-authority refusal", err)
-	}
-}
-
-// TestReconcileQueueAfterMergeTakesRefAuthority proves the fork-merge reconciliation path shares the
-// lock: completeTrustedTask's audit-reopen branch has the same validate-then-consume shape as the
-// work loop's own completion, so closing a landed task here must be exclusive with a running loop's
-// window on the same parent checkout too.
-func TestReconcileQueueAfterMergeTakesRefAuthority(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-	repo, run := gitrepo.New(t)
-	writeTaskFile(t, filepath.Join(repo, tasksRoot, tasks.StateTodo, "landed", "task.md"), "# landed\n")
-	if err := os.WriteFile(filepath.Join(repo, "code.txt"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	run("add", "-A")
-	run("commit", "-q", "-m", "seed queue")
-	beforeLand := gitOut(repo, "rev-parse", "HEAD")
-	run("commit", "-q", "--allow-empty", "-m", "landed work\n\n"+tasks.CoopTaskTrailer+": landed")
-
-	cfg := &config.Config{ConfigDir: t.TempDir(), TasksFiles: []string{tasksRoot}}
-	resolved, err := filepath.Abs(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	release, err := tasks.LockRefAuthority(cfg, resolved)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer release()
-
-	if err := tasks.ReconcileQueueAfterMerge(cfg, repo, "fork1", beforeLand+"..HEAD"); err == nil || !strings.Contains(err.Error(), "ref authority") {
-		t.Fatalf("reconcileQueueAfterMerge while ref authority is held = %v, want a ref-authority refusal", err)
-	}
-	current, ok := findTaskForTest(t, filepath.Join(repo, tasksRoot), "landed")
-	if !ok || current.State != tasks.StateTodo {
-		t.Fatalf("landed task state after the refused reconcile = %+v, %v; want it untouched", current, ok)
 	}
 }
 

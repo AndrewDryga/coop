@@ -76,13 +76,11 @@ type Config struct {
 	activeProfiles  map[string]string // per-run selected credential profile; AgentDir resolves to it
 	defaultProfiles map[string]string // per-agent default profile (from DefaultsFile), used when none is selected
 
-	activeModels   map[string]string // per-run explicit one-off model — the top tier
-	targetModels   map[string]string // the active rotation target's model, below explicit
-	fallbackModels map[string]string // optional standing fallback below a target
+	activeModels map[string]string // per-run explicit one-off model — the top tier
+	targetModels map[string]string // the active rotation target's model, below explicit
 
-	activeEfforts   map[string]string // per-run EXPLICIT reasoning effort (target /effort) — the top tier
-	targetEfforts   map[string]string // the active rotation target's effort, below explicit
-	fallbackEfforts map[string]string // optional standing fallback below a target
+	activeEfforts map[string]string // per-run EXPLICIT reasoning effort (target /effort) — the top tier
+	targetEfforts map[string]string // the active rotation target's effort, below explicit
 }
 
 // Explicit reports whether the user explicitly set key (env var or conf file) — false when the
@@ -512,25 +510,13 @@ func (c *Config) ActiveModel(agent string) string { return c.activeModels[agent]
 // SetTargetModel selects the active rotation target's model — a loop applies it at start and
 // on every rotation, so an `opus@work` target runs opus until the rotation moves on. It
 // ranks below an explicit one-off target and above every static default. Empty clears it (a bare
-// credential target), so resolution falls through to the fallback/env tiers.
+// credential target), so resolution falls through to the agent-wide default.
 func (c *Config) SetTargetModel(agent, model string) {
 	if c.targetModels == nil {
 		c.targetModels = map[string]string{}
 	}
 	c.targetModels[agent] = model
 }
-
-// SetFallbackModel sets an optional standing default below explicit and rotation targets, but
-// above COOP_<AGENT>_MODEL.
-func (c *Config) SetFallbackModel(agent, model string) {
-	if c.fallbackModels == nil {
-		c.fallbackModels = map[string]string{}
-	}
-	c.fallbackModels[agent] = model
-}
-
-// FallbackModel returns the run's standing default model for agent ("" when none set).
-func (c *Config) FallbackModel(agent string) string { return c.fallbackModels[agent] }
 
 // splitModelEffort splits a model spec "model[/effort]" — the shared shape of the COOP_*_MODEL
 // env knobs and the target grammar's model+effort slot — into its parts; either may be empty.
@@ -561,8 +547,7 @@ func (c *Config) AgentModelDefault(agent string) string {
 // ModelFor resolves the model a run of agent should use, most specific first:
 //  1. the explicit per-run choice,
 //  2. the active rotation target's model (a loop's `opus@work` — re-set on each rotation),
-//  3. an optional standing fallback,
-//  4. the agent-wide COOP_<AGENT>_MODEL.
+//  3. the agent-wide COOP_<AGENT>_MODEL.
 //
 // The model is its own axis — never a property of a credential (a credential is just an
 // account). "" means no coop-level choice — the agent CLI's own default runs (including a
@@ -572,9 +557,6 @@ func (c *Config) ModelFor(agent string) string {
 		return m
 	}
 	if m := c.targetModels[agent]; m != "" {
-		return m
-	}
-	if m := c.fallbackModels[agent]; m != "" {
 		return m
 	}
 	return c.AgentModelDefault(agent)
@@ -604,18 +586,6 @@ func (c *Config) SetTargetEffort(agent, effort string) {
 	c.targetEfforts[agent] = effort
 }
 
-// SetFallbackEffort sets an optional standing default below a target's effort but above
-// COOP_<AGENT>_MODEL's.
-func (c *Config) SetFallbackEffort(agent, effort string) {
-	if c.fallbackEfforts == nil {
-		c.fallbackEfforts = map[string]string{}
-	}
-	c.fallbackEfforts[agent] = effort
-}
-
-// FallbackEffort returns the run's standing default effort for agent ("" when none set).
-func (c *Config) FallbackEffort(agent string) string { return c.fallbackEfforts[agent] }
-
 // AgentEffortDefault is the agent-wide default reasoning effort — the effort part of
 // COOP_<AGENT>_MODEL (its shape is model[/effort], e.g. "opus/high"), or "". One var carries
 // both axes, so there is no separate COOP_<AGENT>_EFFORT.
@@ -627,8 +597,7 @@ func (c *Config) AgentEffortDefault(agent string) string {
 // EffortFor resolves the reasoning effort a run of agent should use, most specific first:
 //  1. the explicit per-run choice (target /effort),
 //  2. the active rotation target's effort,
-//  3. an optional standing fallback,
-//  4. the agent-wide COOP_<AGENT>_MODEL's /effort.
+//  3. the agent-wide COOP_<AGENT>_MODEL's /effort.
 //
 // Like the model, effort is its own axis — never a property of a credential. "" means no
 // coop-level choice, so the agent CLI's own default applies (see agent.withEffort).
@@ -637,9 +606,6 @@ func (c *Config) EffortFor(agent string) string {
 		return e
 	}
 	if e := c.targetEfforts[agent]; e != "" {
-		return e
-	}
-	if e := c.fallbackEfforts[agent]; e != "" {
 		return e
 	}
 	return c.AgentEffortDefault(agent)
@@ -1147,9 +1113,7 @@ func (c *Config) Clone() *Config {
 	out.defaultProfiles = maps.Clone(c.defaultProfiles)
 	out.activeModels = maps.Clone(c.activeModels)
 	out.targetModels = maps.Clone(c.targetModels)
-	out.fallbackModels = maps.Clone(c.fallbackModels)
 	out.activeEfforts = maps.Clone(c.activeEfforts)
 	out.targetEfforts = maps.Clone(c.targetEfforts)
-	out.fallbackEfforts = maps.Clone(c.fallbackEfforts)
 	return &out
 }

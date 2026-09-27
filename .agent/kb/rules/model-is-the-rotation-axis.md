@@ -45,16 +45,18 @@ stages, and nonexistent flag tombstones, putting current fallback and provider p
 - Preserve bare-target account fan-out when constructing a rotation, default-account selection for
   non-rotating launches, and first-seen ladder order.
 - Resolve model/effort from most specific to least: explicit one-off target, selected ladder target
-  (including a preset lead), the optional internal standing fallback, `COOP_<AGENT>_MODEL`, then the
-  provider default. The standing fallback's setters have no production callers; only tests exercise
-  this dormant tier. It is not preset behavior or public grammar, and new selection policy must not
-  depend on it.
+  (including a preset lead), `COOP_<AGENT>_MODEL`, then the provider default. Removing unused default
+  configuration must preserve ordered model/provider/account fallbacks, including controller jobs.
+  Prove this through target-ladder and rotation tests, not just default-precedence tests.
 - Keep provider credentials in the host vault. Repository configuration may name an account but
   never contain its login material.
 
 Related: [[loop-failover-profiles]] and [[credentials-not-profiles]].
 
 ## Changelog
+- 2026-09-27 — the user explicitly required Ryker model/provider fallback during cleanup. Swept
+  config setters, Ryker job projection and remote-session admission/rotation: the deleted standing
+  default maps had only test writers; immutable job target ladders own real remote failover.
 - 2026-09-27 — swept job admission and the wire contract; replaced the retired local-policy YAML exception with the controller-owned target ladder. No alternate target parser or model axis found.
 - 2026-09-03 — `verify.agent` now goes through `loopcfg`'s shared load-time `Rungs` validation,
   matching the work, between, and signoff ladders before task recovery or box work begins.

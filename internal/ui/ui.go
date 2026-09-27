@@ -44,20 +44,19 @@ const (
 // progress and diagnostic lines go to stderr. A stdout view (e.g. `coop tasks ls`) colors
 // through a Palette gated on stdout instead.
 var (
-	cGreen   string
-	cRed     string
-	cYellow  string
-	cCyan    string
-	cMagenta string
-	cDim     string
-	cBold    string
-	cReset   string
+	cGreen  string
+	cRed    string
+	cYellow string
+	cCyan   string
+	cDim    string
+	cBold   string
+	cReset  string
 )
 
 func init() {
 	if colorEnabled(os.Stderr) {
 		cGreen, cRed, cYellow, cCyan = codeGreen, codeRed, codeYellow, codeCyan
-		cMagenta, cDim, cBold, cReset = codeMagenta, codeDim, codeBold, codeReset
+		cDim, cBold, cReset = codeDim, codeBold, codeReset
 	}
 }
 
@@ -260,13 +259,12 @@ func Actions(header string, actions ...string) {
 func Steps(steps ...string) { Actions("next steps:", steps...) }
 
 // Color wrappers, used to compose richer output (e.g. the doctor report).
-func Bold(s string) string    { return cBold + s + cReset }
-func Dim(s string) string     { return cDim + s + cReset }
-func Green(s string) string   { return cGreen + s + cReset }
-func Red(s string) string     { return cRed + s + cReset }
-func Yellow(s string) string  { return cYellow + s + cReset }
-func Cyan(s string) string    { return cCyan + s + cReset }
-func Magenta(s string) string { return cMagenta + s + cReset }
+func Bold(s string) string   { return cBold + s + cReset }
+func Dim(s string) string    { return cDim + s + cReset }
+func Green(s string) string  { return cGreen + s + cReset }
+func Red(s string) string    { return cRed + s + cReset }
+func Yellow(s string) string { return cYellow + s + cReset }
+func Cyan(s string) string   { return cCyan + s + cReset }
 
 // Check and Cross are the doctor pass/fail marks.
 func Check() string { return cGreen + "✓" + cReset }

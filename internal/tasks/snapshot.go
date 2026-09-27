@@ -392,17 +392,6 @@ func compactSnapshotProblems(problems []string) []string {
 	return out
 }
 
-func (snapshot ProjectSnapshot) Counts() TaskCounts {
-	var counts TaskCounts
-	for _, queue := range snapshot.Queues {
-		counts.Todo += queue.Counts.Todo
-		counts.Doing += queue.Counts.Doing
-		counts.Blocked += queue.Counts.Blocked
-		counts.Done += queue.Counts.Done
-	}
-	return counts
-}
-
 func (snapshot ProjectSnapshot) ActiveExecutions() int {
 	n := 0
 	for _, execution := range snapshot.Executions {
@@ -412,7 +401,3 @@ func (snapshot ProjectSnapshot) ActiveExecutions() int {
 	}
 	return n
 }
-
-// RunningExecutions remains the compatibility name for the first snapshot shape. Warm and probe
-// sandboxes are visible but deliberately do not keep a watcher live.
-func (snapshot ProjectSnapshot) RunningExecutions() int { return snapshot.ActiveExecutions() }

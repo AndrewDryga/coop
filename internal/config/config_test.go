@@ -744,8 +744,8 @@ func TestModelResolution(t *testing.T) {
 }
 
 // TestEffortResolution: EffortFor's precedence mirrors ModelFor — an explicit target /effort
-// beats the rotation target, which beats an optional standing fallback, which beats the
-// agent-wide COOP_<AGENT>_MODEL's /effort; clearing falls through.
+// beats the rotation target, which beats the agent-wide COOP_<AGENT>_MODEL's /effort;
+// clearing falls through.
 func TestEffortResolution(t *testing.T) {
 	clearAgentEnv(t)
 	c := &Config{ConfigDir: t.TempDir()}
@@ -761,10 +761,6 @@ func TestEffortResolution(t *testing.T) {
 	if got := c.ModelFor("claude"); got != "sonnet" {
 		t.Errorf("same var seeds the model: ModelFor = %q, want sonnet", got)
 	}
-	c.SetFallbackEffort("claude", "medium")
-	if got := c.EffortFor("claude"); got != "medium" {
-		t.Errorf("EffortFor with fallback = %q, want medium", got)
-	}
 	c.SetTargetEffort("claude", "high")
 	if got := c.EffortFor("claude"); got != "high" {
 		t.Errorf("EffortFor with target = %q, want high", got)
@@ -776,6 +772,10 @@ func TestEffortResolution(t *testing.T) {
 	c.SetActiveEffort("claude", "") // clearing the top tier falls back to the rotation target
 	if got := c.EffortFor("claude"); got != "high" {
 		t.Errorf("EffortFor after clearing selection = %q, want high", got)
+	}
+	c.SetTargetEffort("claude", "")
+	if got := c.EffortFor("claude"); got != "low" {
+		t.Errorf("EffortFor after clearing target = %q, want low", got)
 	}
 }
 
@@ -829,8 +829,8 @@ func TestLoadRejectsInvalidEgress(t *testing.T) {
 	}
 }
 
-// ModelFor resolves through four tiers, most specific first: an explicit per-run choice, the
-// rotation target's model, an optional standing fallback, then COOP_<AGENT>_MODEL. The model is
+// ModelFor resolves through three tiers, most specific first: an explicit per-run choice, the
+// rotation target's model, then COOP_<AGENT>_MODEL. The model is
 // its own axis — never a credential property.
 func TestModelForTiers(t *testing.T) {
 	clearAgentEnv(t)
@@ -841,13 +841,9 @@ func TestModelForTiers(t *testing.T) {
 	if got := c.ModelFor("claude"); got != "env-model" {
 		t.Errorf("env is the floor: got %q", got)
 	}
-	c.SetFallbackModel("claude", "fallback")
-	if got := c.ModelFor("claude"); got != "fallback" {
-		t.Errorf("fallback beats env: got %q", got)
-	}
 	c.SetTargetModel("claude", "target")
 	if got := c.ModelFor("claude"); got != "target" {
-		t.Errorf("target beats fallback: got %q", got)
+		t.Errorf("target beats env: got %q", got)
 	}
 	c.SetActiveModel("claude", "explicit")
 	if got := c.ModelFor("claude"); got != "explicit" {
@@ -855,13 +851,12 @@ func TestModelForTiers(t *testing.T) {
 	}
 	// Clearing each tier falls through to the next.
 	c.SetActiveModel("claude", "")
-	c.SetTargetModel("claude", "")
-	if got := c.ModelFor("claude"); got != "fallback" {
-		t.Errorf("cleared target falls to fallback: got %q", got)
+	if got := c.ModelFor("claude"); got != "target" {
+		t.Errorf("cleared selection falls to target: got %q", got)
 	}
-	c.SetFallbackModel("claude", "")
+	c.SetTargetModel("claude", "")
 	if got := c.ModelFor("claude"); got != "env-model" {
-		t.Errorf("cleared fallback falls to env: got %q", got)
+		t.Errorf("cleared target falls to env: got %q", got)
 	}
 }
 

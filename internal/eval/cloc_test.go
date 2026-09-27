@@ -14,15 +14,6 @@ const clocJSON = `{"header":{"cloc_version":"2.10","n_files":2},
 "Markdown":{"nFiles":1,"blank":0,"comment":0,"code":5},
 "SUM":{"blank":2,"comment":3,"code":15,"nFiles":2}}`
 
-// Real cloc --diff --json: added/same/modified/removed language maps plus a top-level SUM whose
-// shape (per-bucket) differs from a plain language object — the parser must not read it as one.
-const clocDiffJSON = `{"header":{"cloc_version":"2.10","n_files":5},
-"added":{"Go":{"nFiles":0,"blank":0,"code":7,"comment":1}},
-"same":{"Go":{"nFiles":0,"blank":0,"code":2,"comment":1}},
-"modified":{"Go":{"nFiles":1,"blank":0,"code":0,"comment":0}},
-"removed":{"Go":{"nFiles":0,"blank":1,"code":3,"comment":0}},
-"SUM":{"added":{"code":7},"same":{"code":2},"modified":{"code":0},"removed":{"code":3}}}`
-
 func TestParseClocJSONDropsSumAndHeader(t *testing.T) {
 	m, err := parseClocJSON([]byte(clocJSON))
 	if err != nil {
@@ -42,14 +33,7 @@ func TestParseClocJSONDropsSumAndHeader(t *testing.T) {
 	}
 }
 
-func TestParseClocDiffAndChurnVsNetGrowth(t *testing.T) {
-	d, err := parseClocDiff([]byte(clocDiffJSON))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if d.AddedCode() != 7 || d.RemovedCode() != 3 || d.PhysicalChurn() != 10 {
-		t.Errorf("churn: added=%d removed=%d churn=%d", d.AddedCode(), d.RemovedCode(), d.PhysicalChurn())
-	}
+func TestNetCodeGrowth(t *testing.T) {
 	// Net growth is after-minus-before totals, NOT the diff's numbers: a write-then-revert has
 	// churn but zero net growth.
 	before := SizeMetrics{Languages: map[string]LangCount{"Go": {Code: 100}}}
@@ -76,7 +60,7 @@ func TestParseClocJSONEmptyAndBad(t *testing.T) {
 }
 
 // End to end against the real pinned tool, when present.
-func TestMeasureSizeAndDiffWithRealCloc(t *testing.T) {
+func TestMeasureSizeWithRealCloc(t *testing.T) {
 	if _, err := exec.LookPath("cloc"); err != nil {
 		t.Skip("cloc not installed")
 	}
@@ -95,12 +79,12 @@ func TestMeasureSizeAndDiffWithRealCloc(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(b, "x.go"), []byte("package x\n// c\nfunc F() {}\nfunc G() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	d, err := MeasureDiff(context.Background(), a, b)
+	after, err := MeasureSize(context.Background(), b)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.AddedCode() < 1 {
-		t.Errorf("real cloc diff added = %d, want ≥1", d.AddedCode())
+	if growth := NetCodeGrowth(m, after); growth != 1 {
+		t.Errorf("real cloc net growth = %d, want 1", growth)
 	}
 }
 

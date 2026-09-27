@@ -12,14 +12,6 @@ import (
 	"time"
 )
 
-// DefaultMountType is a dialect property, not a networking capability claim.
-func (r Runtime) DefaultMountType() string {
-	if r.kind() == runtimeAppleContainer {
-		return "bind"
-	}
-	return "volume"
-}
-
 type volumeDefinition struct {
 	Name, Driver, Scope, Mountpoint, CreatedAt string
 	Options                                    map[string]string
@@ -56,28 +48,6 @@ func (d *Docker) ExistingNamedVolumeExposure(ctx context.Context, names []string
 		return VolumeExposure{}, err
 	}
 	if err := d.Verify(ctx); err != nil {
-		return VolumeExposure{}, err
-	}
-	return exposure, nil
-}
-
-// PrepareOrdinaryDockerVolumes performs the ordinary run's default-local volume
-// creation on one previously inspected daemon. This explicit provisioning call
-// grants no container launch authority and never replaces an existing volume.
-func PrepareOrdinaryDockerVolumes(ctx context.Context, rt Runtime, endpoint, daemonID string, names []string) (VolumeExposure, error) {
-	if endpoint == "" || daemonID == "" {
-		return VolumeExposure{}, errors.New("ordinary volume preparation requires an inspected Docker identity")
-	}
-	docker, err := BindDocker(ctx, rt, endpoint, daemonID)
-	if err != nil {
-		return VolumeExposure{}, err
-	}
-	defer docker.Close()
-	exposure, err := (volumeReader{runtimeDocker, docker.output}).named(ctx, names, true)
-	if err != nil {
-		return VolumeExposure{}, err
-	}
-	if err := docker.Verify(ctx); err != nil {
 		return VolumeExposure{}, err
 	}
 	return exposure, nil

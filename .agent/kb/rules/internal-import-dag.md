@@ -20,7 +20,7 @@ Two invariants sit ABOVE the table and hold no matter how it is edited:
   and the terminal. An edge back into it inverts the architecture and makes every engine below
   depend on the CLI's shape.
 - **`internal/ui` is imported only by the granted presentation owners** (`uiPresentationOwners`:
-  box, cli, forkctl, loop, scaffold, tasks). Everything else returns data and lets its caller print it.
+  box, cli, forkctl, loop, networkreport, tasks). Everything else returns data and lets its caller print it.
 
 **Why:** the graph was already a clean DAG and nothing enforced it, so the next convenient import
 would silently have become architecture — the way `internal/agent` had grown a `ui` dependency for
@@ -46,6 +46,9 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-09-27 — removed `scaffold -> ui` and its presentation-owner grant after deleting
+  the uncalled Docker suggestion printer. Current scaffolding returns data to its CLI;
+  the bidirectional graph test caught the stale grant. Swept all production imports.
 - 2026-09-27 — added `sessionsvc -> hostsurface`: remote review owns its mandatory
   parent-to-candidate scan, sharing the path classifier instead of an optional CLI
   callback that compared the candidate to itself. Content scans stream large Git/LFS

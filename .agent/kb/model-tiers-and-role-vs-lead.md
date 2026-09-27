@@ -1,15 +1,16 @@
 ---
 name: model-tiers-and-role-vs-lead
-description: ModelFor picks active>target>fallback>env per PROVIDER, so nothing but the lead's rotation may write a provider's active/target tier; a role's model rides its wrapper target
+description: ModelFor picks active>target>env per PROVIDER, so nothing but the lead's rotation may write a provider's active/target tier; a role's model rides its wrapper target
 subsystem: config
 sources: [internal/config/config.go, internal/cli/presetflag.go, internal/loop/rotation.go, internal/box/run.go, internal/preset/preset.go]
-updated: 2026-09-03
+updated: 2026-09-27
 ---
 
-`Config.ModelFor(agent)` resolves ONE model per PROVIDER through four tiers, most specific
-first (config.go): active (`SetActiveModel` — an explicit `--model`) → target
-(`SetTargetModel` — the rotation's active rung, re-set every `applyTarget`) → fallback
-(`SetFallbackModel` — a standing default) → `COOP_<AGENT>_MODEL` env. `EffortFor` mirrors it.
+`Config.ModelFor(agent)` resolves ONE model per PROVIDER through three tiers, most specific
+first (config.go): active (`SetActiveModel` — an explicit one-off target) → target
+(`SetTargetModel` — the rotation's active rung, re-set every `applyTarget`) →
+`COOP_<AGENT>_MODEL` env or conf. `EffortFor` mirrors it. Ordered target ladders, including
+controller-owned remote jobs, provide model/provider/account failover; these defaults do not.
 The key consequence: **anything written to a provider's active tier shadows that provider's
 rotation target.** So during a `coop loop`, only the lead's rotation may own a provider's
 active/target tier — `applyTarget` (`internal/loop/rotation.go`) is the single choke point that sets it on every
@@ -33,6 +34,8 @@ Corollary: `spec.Peers` is populated only from `--peer`, never preset roles, so 
 explicit model never depends on it.
 
 ## Changelog
+- 2026-09-27 — removed the never-populated standing-default maps after checking all callers.
+  Preserved active/target ownership and the separate ordered target ladders used for real failover.
 - 2026-09-03 — re-verified the four model tiers and role isolation while presets were normalized to
   one target-list representation. Role wrapper rendering now reads `Role.Targets` directly; the
   active-target ownership rule is unchanged.

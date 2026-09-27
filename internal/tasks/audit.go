@@ -2,12 +2,11 @@
 // lifecycle state IS the directory it sits in), the durable claim + kernel-flock lease + ref
 // authorities that decide who may act on a task and its checkout right now, and the trusted
 // completion audit that a host applies to a box's finished work before trusting it. Command-line
-// wiring (argv parsing, the terminal) and the loop engine's own box-spawn/provider-rotation
-// machinery stay in internal/cli, which is this package's only production caller.
+// wiring, loop orchestration and fork landing remain in their owning packages.
 //
-// The full four-authority map — claim, lease, checkout (stays in internal/cli), ref — with their
-// mechanisms, hold times, and the lock-ordering invariant (ref authority is acquired before lease
-// authority, never the reverse) lives in .agent/kb/task-authority-model.md; read that first, this
+// The full four-authority map — claim, lease, checkout (owned by internal/loop), ref — with their
+// mechanisms, hold times, and workflow-specific lock nesting lives in
+// .agent/kb/task-authority-model.md; read that first, this
 // comment does not repeat it.
 package tasks
 
@@ -31,15 +30,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // The Coop-Task trailer binds a commit to the task it completes. The agent writes it (loopWorkPrompt
 // instructs it); the HOST controller reads it to verify attempts, resume informed after a crash, and
-// reconcile the parent queue after a fork merge — the LLM still moves folders, the controller only
-// supplies evidence and repairs drift. Before this, nothing linked a commit to a task
+// bind reviewed fork candidates to exact assigned tasks. A trailer alone never authorizes queue
+// completion. Before this, nothing linked a commit to a task
 // (git log --grep <id> was 0 repo-wide), so "one task = one commit" was unobservable and a crash
 // between commit and folder-move was ambiguous.
 const (
@@ -309,7 +307,7 @@ func CompleteTrustedTask(root string, task Item) (retErr error) {
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, unlockLeaseFile(authority)) }()
-	// A projected completion is only candidate-ready. Ordinary completion/reconciliation must
+	// A projected completion is only candidate-ready. Ordinary host completion must
 	// refuse it before moving or normalizing the canonical folder; exact fork landing owns that
 	// transition through its generation-bound journal.
 	if err := refuseForkTaskOwner(root, task.ID, "complete"); err != nil {
@@ -389,8 +387,8 @@ func CompleteTrustedTask(root string, task Item) (retErr error) {
 	}
 	// done ends a human claim same as block/unblock/release — a task in 99_done/ is never a loop
 	// candidate again, so a leftover record would only ever be silent dead weight, but clearing it
-	// here (not just in tasksFolderMove) covers every caller: the interactive verb, fork-merge
-	// reconciliation, and a re-run of `done` on an already-done task all funnel through this one place.
+	// here (not just in tasksFolderMove) covers the interactive verb and a re-run of `done` on
+	// an already-done task. Fork landing finalizes its exact candidate through its durable journal.
 	if err := removeTaskOwnerRecord(root, task.ID); err != nil {
 		return err
 	}
@@ -931,23 +929,6 @@ func unlockLeaseFile(file *os.File) error {
 
 func crashCompletionCandidate(root string, task Item) bool {
 	return leaseAuthorityMetadataExists(root, task.ID) || auditReopenRecordExists(root, task.ID)
-}
-
-// blockedTaskIDs returns the ids currently parked in 50_blocked/ across the hosts — what needs a
-// human decision, for the closing digest. Sorted.
-func BlockedTaskIDs(hosts []string) ([]string, error) {
-	var ids []string
-	snapshot, err := QueueSnapshot(hosts)
-	if err != nil {
-		return nil, err
-	}
-	for id, st := range snapshot {
-		if st == StateBlocked {
-			ids = append(ids, id)
-		}
-	}
-	slices.Sort(ids)
-	return ids, nil
 }
 
 // alreadyCommittedInProgress reports the in_progress tasks whose implementation commit is ALREADY
@@ -3234,128 +3215,6 @@ func AssignLoopTaskOnly(hosts []string, owner TaskLeaseOwner, onlyID string) (Ta
 		return TaskAssignment{Counts: counts, Outcome: AssignmentUnavailable, Busy: busy}, nil
 	}
 	return TaskAssignment{}, fmt.Errorf("task queue kept changing while leasing — retry the loop")
-}
-
-// reconcileAction is what post-merge reconciliation should do with one parent-queue task after a
-// fork landed: move a trailer-landed todo/in_progress task to done, or FLAG (never auto-move) a
-// blocked one.
-type reconcileAction struct {
-	ID   string
-	Move bool // true → move to done/; false → flag for a human (blocked/ tasks)
-}
-
-// reconcileMerged decides, for each parent-queue task whose Coop-Task trailer now appears in
-// parent history (landed by the merge), what to do: a todo/ or in_progress/ task is reconciled to
-// done/ (redoing landed work is the worse failure — it already passed the fork's own review and the
-// merge gate); a blocked/ task is only flagged, never moved, since a human parked it. Pure: it maps
-// (task states, the set of landed ids) to actions.
-func reconcileMerged(states map[string]string, landed map[string]bool) []reconcileAction {
-	var acts []reconcileAction
-	for id, st := range states {
-		if !landed[id] {
-			continue
-		}
-		switch st {
-		case StateTodo, StateInProgress:
-			acts = append(acts, reconcileAction{ID: id, Move: true})
-		case StateBlocked:
-			acts = append(acts, reconcileAction{ID: id, Move: false})
-		}
-	}
-	slices.SortFunc(acts, func(a, b reconcileAction) int { return strings.Compare(a.ID, b.ID) })
-	return acts
-}
-
-// landedTasks is the set of task ids whose Coop-Task trailer appears in the exact landed range. A
-// failed history read is an ERROR, never an empty set: reconciling nothing is indistinguishable from
-// "this fork landed no tasks", and that silence is what makes the loop redo landed work.
-func landedTasks(repo, revRange string) (map[string]bool, error) {
-	commits, err := TaskTrailerCommits(repo, revRange, false)
-	if err != nil {
-		return nil, err
-	}
-	set := map[string]bool{}
-	for _, commit := range commits {
-		if !commit.Malformed && len(commit.Values) == 1 && commit.Values[0] != "" {
-			set[commit.Values[0]] = true
-		}
-	}
-	return set, nil
-}
-
-// unreconciledQueueRecovery is the recovery a land leaves behind when coop could not work out what
-// it landed: the exact commands to list the ids and close them, so the human — not the next loop
-// iteration — decides what happens to work that already sits in parent history.
-func unreconciledQueueRecovery(repo, revRange string) string {
-	return fmt.Sprintf("the parent queue was NOT reconciled, so `coop loop` may redo work this fork already landed; list what landed with `git -C %s log --format=%%b %s | grep %s`, then close each id with `coop tasks done <id>`", repo, revRange, CoopTaskTrailer)
-}
-
-// ReconcileQueueAfterMerge moves any parent-queue task whose Coop-Task trailer now sits in parent
-// history (landed by the just-merged fork) from todo/ or in_progress/ to done/, with a reconcile
-// note; a blocked task with a landed trailer is flagged for a human, never moved. Prevents the parent
-// loop from redoing work a fork already landed.
-//
-// A per-task obstruction stays best-effort (warn and skip) — the merge already succeeded, so one
-// stuck folder must not fail it. Failing to work out WHAT landed is different: an unreadable queue
-// set or landed range reconciles nothing while looking exactly like a fork that landed no tasks, so
-// it comes back as an error for the caller to surface. The merge is never rolled back for it — it
-// already stuck; only the bookkeeping is missing.
-func ReconcileQueueAfterMerge(cfg *config.Config, repo, forkName, revRange string) error {
-	queues, err := TaskQueues(cfg, repo, nil)
-	if err != nil {
-		return fmt.Errorf("fork %s landed, but its parent task queues could not be resolved: %w — %s", forkName, err, unreconciledQueueRecovery(repo, revRange))
-	}
-	landed, err := landedTasks(repo, revRange)
-	if err != nil {
-		return fmt.Errorf("fork %s landed, but reading the task ids it landed in %s failed: %w — %s", forkName, revRange, err, unreconciledQueueRecovery(repo, revRange))
-	}
-	hosts := make([]string, len(queues))
-	for i, queue := range queues {
-		hosts[i] = filepath.Join(repo, queue)
-	}
-	duplicates, err := aggregateDuplicateTaskIDs(hosts)
-	if err != nil {
-		return fmt.Errorf("fork %s landed, but reading parent task queues failed: %w — %s", forkName, err, unreconciledQueueRecovery(repo, revRange))
-	}
-	for _, id := range duplicates {
-		delete(landed, id)
-		ui.Warn("reconcile: task id %s exists in multiple queues; skipped automatic fork reconciliation", id)
-	}
-	// completeTrustedTask's audit-reopen branch reads HEAD, validates it, and consumes authority
-	// several operations later — the same validate-then-consume shape the work loop closes for its
-	// own completion path. The ref-authority lock covers that window here too, so a concurrent
-	// process (a loop, a signing rewrite, another land) can never move HEAD in the gap.
-	release, lockErr := LockRefAuthority(cfg, repo)
-	if lockErr != nil {
-		return fmt.Errorf("fork %s landed, but reconciling the parent queue could not acquire ref authority: %w — %s", forkName, lockErr, unreconciledQueueRecovery(repo, revRange))
-	}
-	defer release()
-	for _, q := range queues {
-		host := filepath.Join(repo, q)
-		states := map[string]string{}
-		items := map[string]Item{}
-		queueItems, err := ReadTaskTree(host)
-		if err != nil {
-			return fmt.Errorf("fork %s landed, but reading parent task queue %s failed: %w — %s", forkName, host, err, unreconciledQueueRecovery(repo, revRange))
-		}
-		for _, t := range queueItems {
-			states[t.ID] = t.State
-			items[t.ID] = t
-		}
-		for _, act := range reconcileMerged(states, landed) {
-			if !act.Move {
-				ui.Warn("task %s is blocked but its work landed via fork %s — a human should reconcile it", act.ID, forkName)
-				continue
-			}
-			doneDir := filepath.Join(host, StateDone, act.ID)
-			if err := CompleteTrustedTask(host, items[act.ID]); err != nil {
-				ui.Warn("reconcile: %v — fix the obstruction, then retry: coop tasks done %s", err, act.ID)
-				continue
-			}
-			appendTaskLog(doneDir, "reconciled: landed by fork "+forkName)
-		}
-	}
-	return nil
 }
 
 // unblockResolved is the loop's built-in preflight, run host-side (no box, no model): every

@@ -1680,15 +1680,32 @@ func TestTurnStateToolsSurviveEveryTargetRotation(t *testing.T) {
 		name, scenario, initial, wantTarget string
 		floor                               int
 		rewind                              bool
+		targets                             []string
+		wantLoads                           int
 	}{
 		{name: "quota failover", scenario: "rate-limited-once", initial: "codex@work", wantTarget: "codex@backup"},
+		{name: "quota model failover", scenario: "rate-limited-once", initial: "codex:gpt-5.6-sol/medium@work", wantTarget: "codex:gpt-5.6-terra/high@work",
+			targets: []string{"codex:gpt-5.6-sol/medium@work", "codex:gpt-5.6-terra/high@work"}, wantLoads: 1},
+		{name: "quota provider failover", scenario: "rate-limited-once", initial: "codex:gpt-5.6-sol/medium@work", wantTarget: "claude:claude-opus-4-6/high@backup",
+			targets: []string{"codex:gpt-5.6-sol/medium@work", "claude:claude-opus-4-6/high@backup"}},
 		{name: "escalation floor", scenario: "normal", initial: "codex@work", wantTarget: "codex@backup", floor: 1},
 		{name: "explicit failback", scenario: "normal", initial: "codex@backup", wantTarget: "codex@work", rewind: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newSessionACPFixture(t, test.scenario, test.initial)
-			fixture.signIn(t, "codex", "work")
-			fixture.signIn(t, "codex", "backup")
+			targets := test.targets
+			if len(targets) == 0 {
+				targets = []string{"codex@work", "codex@backup"}
+			}
+			for _, target := range targets {
+				writeSessionTestCredential(t, fixture.source, target)
+			}
+			var commands []string
+			command := fixture.runner.command
+			fixture.runner.command = func(executable string, args ...string) *exec.Cmd {
+				commands = append(commands, strings.Join(args, " "))
+				return command(executable, args...)
+			}
 			t.Setenv("COOP_TEST_SESSION_LIMIT_MARKER", filepath.Join(t.TempDir(), "limited"))
 			binding := &session.ControllerTools{
 				Endpoint: "https://responder.example/v1/state-tools/mcp",
@@ -1698,7 +1715,7 @@ func TestTurnStateToolsSurviveEveryTargetRotation(t *testing.T) {
 				Prompt: "read available automations", ControllerTools: binding,
 				MinTargetIndex: test.floor, RewindTarget: test.rewind,
 			})
-			ctx := ladderContext(t, contextWithTurnDeadline(t), "codex@work", "codex@backup")
+			ctx := ladderContext(t, contextWithTurnDeadline(t), targets...)
 			ctx = context.WithValue(ctx, sessionWarmIdleTimeoutContextKey{}, time.Minute)
 			t.Cleanup(func() { _ = fixture.runner.CloseWarmSessions() })
 			result, err := fixture.runner.Run(ctx, fixture.session, turn)
@@ -1719,6 +1736,16 @@ func TestTurnStateToolsSurviveEveryTargetRotation(t *testing.T) {
 			}
 			if stored.ControllerTools != nil {
 				t.Fatal("turn-scoped capability was widened into a persisted session binding")
+			}
+			if test.scenario == "rate-limited-once" {
+				want := []string{"fork fork acp " + test.initial, "fork fork acp " + test.wantTarget}
+				if fmt.Sprint(commands) != fmt.Sprint(want) {
+					t.Fatalf("fallback child commands = %v, want %v", commands, want)
+				}
+				methods := readSessionACPLog(t, fixture.childLog)
+				if loads, news := countStrings(methods, "session/load"), countStrings(methods, "session/new"); loads != test.wantLoads || news != 2-test.wantLoads {
+					t.Fatalf("fallback session loads=%d new=%d, want %d/%d; methods=%v", loads, news, test.wantLoads, 2-test.wantLoads, methods)
+				}
 			}
 		})
 	}
