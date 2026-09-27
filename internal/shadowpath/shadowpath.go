@@ -132,7 +132,7 @@ func (s *Snapshot) ReadRegular(tree *os.File, treeRel, rel string, limit int64) 
 	if err != nil {
 		return nil, err
 	}
-	defer current.Close()
+	defer func() { _ = current.Close() }()
 	policy := s
 	currentRel := filepath.ToSlash(filepath.Clean(filepath.FromSlash(treeRel)))
 	if currentRel == "." {
