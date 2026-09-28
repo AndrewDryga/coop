@@ -109,7 +109,7 @@ key/access-token variables are also refused rather than entering a box.
 
 Direct Claude `--readonly --egress filtered` runs can also broker `ANTHROPIC_API_KEY`; this does
 not qualify other providers' restricted modes. API-key runs using open/offline networking, login
-or bare mode stop before launch. Remote-session policies using restricted modes still reject
+or bare mode stop before launch. Controller jobs using restricted modes still reject
 filtered networking. Configured custom provider base URLs stop as well, and so does a key only a
 client's own credential file holds. Ordinary provider-native OAuth/access-token files
 keep their existing handling and are not broker-protected; restricted and session projections
@@ -139,7 +139,8 @@ URL path and the methods the MCP protocol uses (POST, GET, DELETE), and waits as
 call takes. The operator's own variable in Coop's env file never reaches a filtered box, whether or
 not that box loads MCP, and a session's ACP adapter is handed the stand-in. Each bearer server's
 host is withheld from the agent's own policy. A missing token, or one set through `-e`, stops the
-launch, naming the server. A remote session's Responder state tools ride this same exact-path route.
+launch, naming the server. A remote session's controller-provided tools ride this same exact-path
+route.
 
 A server on the legacy SSE transport gets a wider route, because it cannot take a narrow one: it
 names its own message endpoint at runtime, on a path only that connection knows. Its route admits
@@ -174,8 +175,8 @@ every un-networked container on the host shares, so what protects the credential
 stand-in itself — 256 bits, minted per run and accepted only on its own listener, for its own
 server's route — not the network. Coop owns the box's hosts entry for that name and refuses
 a run whose own `--add-host` would rebind it. A remote open session's child hands its
-adapter list over the same way, so the Responder's state tools are brokered too. The helper's image
-is built on first use, like a first filtered run's.
+adapter list over the same way, so the controller-provided tools are brokered too. The helper's
+image is built on first use, like a first filtered run's.
 
 An open run's helper carries MCP routes only — a provider API key still needs `--egress filtered`,
 where the gateway holds the agent to its route. It uses exact routes for streamable HTTP and the
