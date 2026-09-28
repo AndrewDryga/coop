@@ -12,8 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
@@ -284,5 +286,69 @@ func TestInvalidPrepareDoesNotWaitBehindOccupiedRuntimeSlots(t *testing.T) {
 	_, err := service.PrepareSession(ctx, "missing-session", 1)
 	if !errors.Is(err, session.ErrSessionNotFound) {
 		t.Fatalf("missing session waited for capacity: %v", err)
+	}
+}
+
+// Every session that outlives a daemon starts with an unproven runtime, and capacity stays at zero
+// until each one is proven. Ryker's worker restarted with 17 parked sessions and sat unplaceable for
+// minutes while the janitor proved two a minute; a restart now proves its backlog straight away. A
+// runtime that cannot be proven still keeps capacity closed, and the drain does not spin on it.
+func TestRestartProvesItsSessionBacklogWithoutWaitingForTheTicker(t *testing.T) {
+	for _, failing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cleanup fails=%v", failing), func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "state")
+			runner := &periodicCleanupRunner{fail: failing}
+			open := func() *Service {
+				t.Helper()
+				service, err := NewService(Config{
+					StateRoot: root, SourceConfig: &config.Config{ConfigDir: t.TempDir()},
+					Runner: runner, CleanupInterval: time.Hour, // the ticker never fires in this test
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return service
+			}
+			job := bareWorkerJob()
+			document, err := json.Marshal(job)
+			if err != nil {
+				t.Fatal(err)
+			}
+			digest, err := job.Digest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			const parked = 5
+			service := open()
+			for i := range parked {
+				req := CreateRemoteSessionRequest{Task: fmt.Sprintf("workspace:ready-%d", i), Job: document, ExpectedJobDigest: digest}
+				if _, err := service.CreateRemoteSession(context.Background(), fmt.Sprintf("create-%d", i), req); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := service.Stop(); err != nil {
+				t.Fatal(err)
+			}
+			runner.calls.Store(0)
+			service = open()
+			defer service.Stop()
+			drained := make(chan struct{})
+			service.testAfterStartupDrain = func() { close(drained) }
+			if err := service.Start(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-drained:
+			case <-time.After(wait.Deadline):
+				t.Fatal("the restart never finished proving its backlog")
+			}
+			free, proofs := service.RuntimeCapacity().SessionSlotsFree, runner.calls.Load()
+			if !failing && (free != sessionRuntimeSlots || proofs != parked) {
+				t.Fatalf("after a restart: %d free slots from %d proofs; want %d from %d", free, proofs, sessionRuntimeSlots, parked)
+			}
+			if failing && (free != 0 || proofs != runtimeCleanupBatchSize) {
+				t.Fatalf("unprovable runtimes: %d free slots from %d proofs; want 0 from one bounded batch of %d", free, proofs, runtimeCleanupBatchSize)
+			}
+		})
 	}
 }

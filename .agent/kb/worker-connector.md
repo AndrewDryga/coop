@@ -2,8 +2,8 @@
 name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, streams large API bodies under the same command identity, and never falls back to local execution
 subsystem: worker
-sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerproto/protocol.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go]
-updated: 2026-09-27
+sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerproto/protocol.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go]
+updated: 2026-09-28
 ---
 
 `coop sessions connect --controller <https-url> --token-file <path>` connects this machine to a fleet controller. Its
@@ -19,6 +19,11 @@ The traps the code does not make obvious:
   turn or starting its timeout. Warm expiry holds the session lock through teardown, and failed
   process/box cleanup retains its slot. Unknown startup or quarantined runtime custody advertises
   busy, including record-only retirement; deleting a session record is not cleanup proof.
+  Every session that survives a restart starts unproven and capacity stays zero until the last one
+  is proven, so `Start` drains that backlog at once (`drainHistoricalRuntimes`: the janitor's
+  bounded batches back-to-back until a pass proves nothing); the one-minute ticker only retries
+  what failed. Two proofs a minute had left a restarted worker with 17 parked sessions busy for
+  about nine minutes.
 - **Jobs are not worker advertisements.** Protocol v2 rejects the retired policy digests and
   repository catalog. Capabilities describe daemon features; each immutable job authorizes its
   own settings and exact source. Source selection has no separate advertised capability.
@@ -101,6 +106,9 @@ The traps the code does not make obvious:
   start event. The reconnect/ACK regression proves this metadata survives durable delivery.
 
 ## Changelog
+- 2026-09-28 — Ryker's worker restarted with 17 parked sessions advertised busy for 5+ minutes
+  (janitor: 2 proofs per 1-minute tick; capacity zero while any is pending). Start now drains the
+  backlog immediately with the same per-session proofs; a pass that proves nothing stops it.
 - 2026-09-27 — replaced patch-only checkpoint execution with streamed v2 Git/LFS custody,
   verified quarantine restore, durable admission fence, cancellation and exact-owned cleanup.
 - 2026-09-27 — replaced hard-coded free capacity with daemon accounting. Focused admission,

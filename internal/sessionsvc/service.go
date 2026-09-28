@@ -361,6 +361,7 @@ type Service struct {
 	runtimeCleanupStampMu   sync.Mutex
 	runtimeCleanupDone      map[string]runtimeCleanupStamp
 	testBeforeCleanupStamp  func()
+	testAfterStartupDrain   func()
 	historicalMu            sync.Mutex
 	historicalPending       map[string]struct{}
 	// storage is this worker's own account of the disk it executes on: the configured limits, the
@@ -759,8 +760,35 @@ func (s *Service) Start(parent context.Context) error {
 	for _, worker := range s.workers {
 		s.triggerWorker(worker)
 	}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.drainHistoricalRuntimes(ctx)
+		if s.testAfterStartupDrain != nil {
+			s.testAfterStartupDrain()
+		}
+	}()
 	s.mu.Unlock()
 	return nil
+}
+
+// drainHistoricalRuntimes proves a restart's backlog without waiting for the ticker. Every session
+// that outlived the previous daemon starts unproven, and capacity stays at zero until the last one
+// is proven, so two proofs a minute kept a worker with a few dozen parked sessions unplaceable for
+// tens of minutes. Batches stay bounded; a pass that proves nothing ends the drain and leaves what
+// failed to the ticker, still unproven.
+func (s *Service) drainHistoricalRuntimes(ctx context.Context) {
+	for ctx.Err() == nil && s.historicalRuntimePending() {
+		if s.cleanupIdleSessionRuntimes(ctx) == 0 {
+			return
+		}
+	}
+}
+
+func (s *Service) historicalRuntimePending() bool {
+	s.historicalMu.Lock()
+	defer s.historicalMu.Unlock()
+	return len(s.historicalPending) != 0
 }
 
 func (s *Service) ensureSessionForkAuthority(ctx context.Context, bound session.Session) (session.Session, error) {
@@ -955,7 +983,9 @@ func (s *Service) runSessionMaintenance(ctx context.Context) {
 	}
 }
 
-func (s *Service) cleanupIdleSessionRuntimes(ctx context.Context) {
+// cleanupIdleSessionRuntimes proves at most runtimeCleanupBatchSize idle runtimes and reports how
+// many it proved clean.
+func (s *Service) cleanupIdleSessionRuntimes(ctx context.Context) (proven int) {
 	s.runtimeCleanupMu.Lock()
 	defer s.runtimeCleanupMu.Unlock()
 
@@ -1059,6 +1089,7 @@ func (s *Service) cleanupIdleSessionRuntimes(ctx context.Context) {
 			}
 			s.markRuntimeCleanupDone(current.ID, runtimeCleanupStampFor(current, turn))
 			s.markHistoricalRuntimeClean(current.ID)
+			proven++
 		}
 		unlock()
 		if getErr != nil && ctx.Err() == nil {
@@ -1066,6 +1097,7 @@ func (s *Service) cleanupIdleSessionRuntimes(ctx context.Context) {
 		}
 	}
 	s.runtimeCleanupCursor = (start + scanned) % len(candidates)
+	return proven
 }
 
 func runtimeCleanupStampFor(sess session.Session, turn *session.Turn) runtimeCleanupStamp {

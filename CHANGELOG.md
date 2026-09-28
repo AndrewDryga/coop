@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A restarted fleet worker no longer advertises busy for minutes: it proves every surviving
+  session's runtime right after startup instead of two a minute, so capacity returns within
+  seconds. A runtime it cannot prove still keeps the worker busy.
+
 - Discarding a fleet session no longer fails when its job repository declares services and the
   worker's Docker is not a local socket (such as a dind `tcp://` daemon). A controller job's boxes
   never start the repository's services, so its discard runs no Compose teardown and no longer
