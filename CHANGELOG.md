@@ -122,12 +122,11 @@
   correct, so a loop that moves folders into 99_done without finishing anything scores nothing, and a
   loop that ran out of budget still gets an honest partial count.
 
-- A run that finished cleanly is no longer occasionally reported as failed. When your workload's
-  process exits, Coop asks the runtime for the container's final state — and on a busy machine that
-  answer can lag a moment behind the process, or a single query can time out. Coop now waits that
-  moment out (retrying for a few seconds) instead of failing on the first slow or unsettled reply,
-  and when it genuinely cannot confirm the exit it now says which container state it saw. A run that
-  truly cannot be confirmed still fails closed with cleanup required.
+- A filtered run that finished cleanly is no longer occasionally reported as failed. When your
+  workload exits, Coop asks the runtime for the container's final state. On a busy machine that
+  answer can lag behind the process, or a single query can time out. Coop now retries for a few
+  seconds instead of failing on the first slow or unsettled reply. If it still cannot confirm the
+  exit, it names the container state it saw and fails closed with cleanup required.
 
 - A filtered run now keeps a `--label` you set in `COOP_RUN_ARGS`, the way it already keeps a bind
   mount or a `-e KEY=VALUE`. A label is metadata on the box — it changes neither what the box knows

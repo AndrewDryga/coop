@@ -4,7 +4,7 @@ description: audit realistic agent access and practical impact; avoid speculativ
 scope: agent-workflow
 sources: [AGENTS.md]
 check: none
-updated: 2026-09-15
+updated: 2026-09-28
 ---
 
 # Require a realistic actor, reachable path, and meaningful impact for audit work
@@ -37,6 +37,12 @@ Broader proposals still need approval; pruning a task is not permission to weake
 Compatibility is practical impact too: before recommending an internal-only service topology,
 check common runtime dependencies such as SaaS APIs, OIDC keys, object storage, email and webhooks.
 
+When delegating a review, name every lens the human requested in the reviewer brief, including
+clean code, realistic simplicity, redundant tests, formatting, product behavior and docs/site when
+those are requested. Track file inspection separately from completion of those lenses; a read file
+or a correctness-only report does not make the requested review complete. Ask what can be deleted
+as well as what must be added.
+
 When the human scopes a batch to fixing existing behavior, treat that as a maintenance boundary:
 repair current integrations and measured performance without adding new runtimes, products or
 configuration frameworks. Reuse existing queue tasks instead of duplicating them. Record explicit
@@ -45,6 +51,12 @@ unrelated prior authorizations. Task authoring is not implementation, and a spee
 matched before/after evidence without skipped features, safety checks or incomplete cleanup.
 
 ## Changelog
+
+- 2026-09-28 — the user corrected a Fable campaign that reported 94/111 Coop commits inspected
+  without asking Fable to assess all six requested review lenses. Swept the earlier review prompts
+  and coverage ledger: those reports are source evidence, not six-lens acceptance. Added one fixed
+  brief and a separate per-lens ledger; the first explicit review reported all six lenses and found
+  redundant tests to delete. This judgment remains review-only (`check: none`).
 
 - 2026-09-15 — applied the maintenance-only correction while sweeping the current 15 todo tasks
   and two backlog items. Reused nine provider tasks and the existing Podman-removal task, parked
