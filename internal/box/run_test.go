@@ -373,7 +373,7 @@ func TestRunRepoWritableWithReadOnlyDescendant(t *testing.T) {
 	}
 }
 
-func TestReviewTaskQueueSnapshotOmitsDisposableAndArchivedBulk(t *testing.T) {
+func TestReviewTaskQueueSnapshotPreservesSubjectEvidenceWithoutArchivedBulk(t *testing.T) {
 	repo := t.TempDir()
 	queue := filepath.Join(repo, ".agent", "tasks")
 	for _, rel := range []string{
@@ -384,6 +384,9 @@ func TestReviewTaskQueueSnapshotOmitsDisposableAndArchivedBulk(t *testing.T) {
 		"99_done/old/task.md",
 		"99_done/old/artifacts/large.bin",
 		"99_done/old/screenshots/page.png",
+		"99_done/review-subject/task.md",
+		"99_done/review-subject/artifacts/evidence.txt",
+		"99_done/review-subject/screenshots/page.png",
 	} {
 		path := filepath.Join(queue, rel)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -393,12 +396,12 @@ func TestReviewTaskQueueSnapshotOmitsDisposableAndArchivedBulk(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	mounts, snapshots, err := repoReadOnlyPathMounts(repo, "/workspace", []string{queue}, t.TempDir())
+	mounts, snapshots, err := repoReadOnlyPathMounts(repo, "/workspace", []string{queue}, t.TempDir(), []string{"review-subject"})
 	if err != nil || len(mounts) != 1 || len(snapshots) != 1 {
 		t.Fatalf("task queue snapshot = %v, %v, %v", mounts, snapshots, err)
 	}
 	defer os.RemoveAll(snapshots[0])
-	for _, rel := range []string{"README.md", "10_in_progress/current/task.md", "10_in_progress/current/artifacts/evidence.txt", "99_done/old/task.md"} {
+	for _, rel := range []string{"README.md", "10_in_progress/current/task.md", "10_in_progress/current/artifacts/evidence.txt", "99_done/old/task.md", "99_done/review-subject/artifacts/evidence.txt", "99_done/review-subject/screenshots/page.png"} {
 		if _, err := os.Stat(filepath.Join(mounts[0].Source, rel)); err != nil {
 			t.Fatalf("review lost %s: %v", rel, err)
 		}
@@ -422,7 +425,7 @@ func TestRepoReadOnlyPathMountsRejectEscapeAndSymlink(t *testing.T) {
 	}
 	artifacts := t.TempDir()
 	for _, path := range []string{outside, queue, repo} {
-		if mounts, _, err := repoReadOnlyPathMounts(repo, "/workspace", []string{path}, artifacts); err == nil || len(mounts) != 0 {
+		if mounts, _, err := repoReadOnlyPathMounts(repo, "/workspace", []string{path}, artifacts, nil); err == nil || len(mounts) != 0 {
 			t.Errorf("repoReadOnlyPathMounts(%q) = %#v, %v; want rejection", path, mounts, err)
 		}
 	}
@@ -434,7 +437,7 @@ func TestRepoReadOnlyPathMountsRejectAbsentDescendantWithoutCreatingIt(t *testin
 		t.Fatal(err)
 	}
 	queue := filepath.Join(repo, ".agent", "tasks")
-	mounts, _, err := repoReadOnlyPathMounts(repo, "/workspace", []string{queue}, t.TempDir())
+	mounts, _, err := repoReadOnlyPathMounts(repo, "/workspace", []string{queue}, t.TempDir(), nil)
 	if err == nil || !strings.Contains(err.Error(), "create the configured task queue") {
 		t.Fatalf("absent queue mounts = %#v, %v; want actionable rejection", mounts, err)
 	}

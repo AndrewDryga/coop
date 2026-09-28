@@ -264,6 +264,7 @@ func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, fo
 		SuperviseDescendants: true,
 		RepoReadOnly:         repoReadOnly,
 		RepoReadOnlyPaths:    reviewReadOnlyPaths(windowMode, repoReadOnly, hosts),
+		ReviewSubjects:       reviewSubjects,
 		Homes:                c.cfg.Homes, Network: c.cfg.Network, Cache: c.cfg.Cache,
 		Stdout:          stdoutW,
 		Stderr:          stderrW,

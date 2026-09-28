@@ -92,6 +92,9 @@ type RunSpec struct {
 	// RepoReadOnlyPaths remounts real descendant directories read-only after a writable Repo bind.
 	// Review stages use it for task queues so source-fixing access never grants lifecycle access.
 	RepoReadOnlyPaths []string
+	// ReviewSubjects are the exact completed task IDs whose durable evidence a review needs.
+	// The host sets them; a remote run cannot expand what the private queue snapshot includes.
+	ReviewSubjects []string `json:"-"`
 	// Review selects the trusted review-only compose file and literal environment. The disposable
 	// candidate remains writable for ignored build output; callers verify source identity afterward.
 	Review bool
@@ -851,7 +854,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	tmpFiles = append(tmpFiles, policySnapshots...)
 	if !spec.Login && !spec.RepoReadOnly && len(spec.RepoReadOnlyPaths) > 0 {
-		protected, snapshots, err := repoReadOnlyPathMounts(spec.Repo, workdir, spec.RepoReadOnlyPaths, artifacts.parent)
+		protected, snapshots, err := repoReadOnlyPathMounts(spec.Repo, workdir, spec.RepoReadOnlyPaths, artifacts.parent, spec.ReviewSubjects)
 		if err != nil {
 			return -1, err
 		}
@@ -1888,7 +1891,7 @@ func validCommitIdentity(commit string) bool {
 	return true
 }
 
-func repoReadOnlyPathMounts(repo, workdir string, paths []string, artifactParent string) ([]Mount, []string, error) {
+func repoReadOnlyPathMounts(repo, workdir string, paths []string, artifactParent string, subjectIDs []string) ([]Mount, []string, error) {
 	if artifactParent == "" {
 		return nil, nil, errors.New("read-only repository paths require a private artifact directory")
 	}
@@ -1905,6 +1908,10 @@ func repoReadOnlyPathMounts(repo, workdir string, paths []string, artifactParent
 		return nil, nil, fmt.Errorf("open repository for read-only paths: %w", err)
 	}
 	defer sources.Close()
+	subjects := make(map[string]bool, len(subjectIDs))
+	for _, id := range subjectIDs {
+		subjects[id] = true
+	}
 	seen := map[string]bool{}
 	var mounts []Mount
 	var snapshots []string
@@ -1965,7 +1972,9 @@ func repoReadOnlyPathMounts(repo, workdir string, paths []string, artifactParent
 		}
 		snapshots = append(snapshots, snapshotParent)
 		snapshot := filepath.Join(snapshotParent, "tree")
-		copyErr := copySourceTree(snapshot, source, policy, skipReviewTaskBulk)
+		copyErr := copySourceTree(snapshot, source, policy, func(rel string) bool {
+			return skipReviewTaskBulk(rel, subjects)
+		})
 		copyErr = errors.Join(copyErr, source.Close())
 		if copyErr != nil {
 			return fail(fmt.Errorf("snapshot read-only repository path %q: %w", path, copyErr))
@@ -1977,10 +1986,9 @@ func repoReadOnlyPathMounts(repo, workdir string, paths []string, artifactParent
 	return mounts, snapshots, nil
 }
 
-// A review needs task notes and current evidence, not disposable worktrees or
-// binary evidence archived with old tasks. Those can exceed the bounded copy
-// budget before the reviewer ever starts.
-func skipReviewTaskBulk(rel string) bool {
+// A review needs its exact subjects' durable evidence, not disposable worktrees
+// or unrelated archive bulk that can exhaust the bounded copy budget.
+func skipReviewTaskBulk(rel string, subjects map[string]bool) bool {
 	parts := strings.Split(rel, "/")
 	if len(parts) != 3 {
 		return false
@@ -1993,7 +2001,7 @@ func skipReviewTaskBulk(rel string) bool {
 	if parts[2] == "tmp" {
 		return true
 	}
-	return parts[0] == "99_done" && (parts[2] == "artifacts" || parts[2] == "screenshots")
+	return parts[0] == "99_done" && !subjects[parts[1]] && (parts[2] == "artifacts" || parts[2] == "screenshots")
 }
 
 func projectPolicyRepo(spec RunSpec) string {

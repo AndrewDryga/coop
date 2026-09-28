@@ -1459,12 +1459,12 @@ roles:
                             <td>
                                 Install Docker or Apple
                                 <code>container</code>, then
-                                <code>coop build &amp;&amp; coop doctor</code>.
+                                <code>coop build --egress open &amp;&amp; coop doctor</code>.
                             </td>
                         </tr>
                         <tr>
                             <td>"image isn't built"</td>
-                            <td>Run <code>coop build</code> once.</td>
+                            <td>Run <code>coop build --egress open</code> once from a directory without a project Dockerfile.</td>
                         </tr>
                         <tr>
                             <td>Login hangs / "usage limit reached"</td>
