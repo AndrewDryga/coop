@@ -905,8 +905,8 @@ curl --unix-socket "$SOCKET" \
 
 This tombstones the session row only: queued turns are exhausted, a turn that was active when the
 daemon lost authority stays in history as it was, and the workspace, reservation, sidecar services,
-and private ACP state stay on disk for the operator to inspect and remove. A session that is not quarantined
-is refused with `invalid_session_state`.
+and private ACP state stay on disk for the operator to inspect and remove. A session that is not
+quarantined is refused with `invalid_session_state`.
 
 Record-only retirement does not restore runtime capacity, including after restart: it provides no
 proof that those processes stopped. Inspect and stop the old runtime before bringing up a worker
