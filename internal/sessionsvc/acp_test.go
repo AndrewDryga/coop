@@ -15,7 +15,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	goruntime "runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2030,9 +2029,6 @@ func TestSessionTurnRunnerReportsSafeChildLaunchDiagnostic(t *testing.T) {
 }
 
 func TestSessionACPChildClosedFailureWaitsForExitStderr(t *testing.T) {
-	// On one P the writer runs only after the caller blocks on waitDone.
-	previous := goruntime.GOMAXPROCS(1)
-	defer goruntime.GOMAXPROCS(previous)
 	process := &sessionACPProcess{stderr: &sessionACPStderr{}, waitDone: make(chan struct{})}
 	go func() {
 		_, _ = process.stderr.Write([]byte("image \"coop-box\" not built - run 'coop build'\n"))
