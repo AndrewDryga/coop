@@ -555,7 +555,7 @@ func TestHostNetworkStateTravelsWithFilteredIntoEveryProcessKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(env, "\n")
-	if !strings.Contains(joined, "COOP_EGRESS=filtered") || !strings.Contains(joined, "COOP_RUN_ARGS=--label "+SupervisorLabelKey+"=acp-live-123") {
+	if !slices.Contains(env, "COOP_EGRESS=filtered") || !slices.Contains(env, "COOP_RUN_ARGS=--label "+SupervisorLabelKey+"=acp-live-123") {
 		t.Fatalf("filtered ACP process lost its posture or its reaping label: %s", joined)
 	}
 	// The live process registry owns the state root, so an ACP supervisor keeps the disposable
