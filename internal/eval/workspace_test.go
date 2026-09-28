@@ -39,17 +39,12 @@ func TestPrepareWorkspaceCopiesTheTreeWithNoSourceHistory(t *testing.T) {
 	if info, err := os.Stat(filepath.Join(dest, "sub", "note.txt")); err != nil || info.Mode().Perm() != 0o600 {
 		t.Errorf("mode not preserved: %v %v", info, err)
 	}
-	// Exactly one commit, no alternates/packed-refs, no unreachable objects, and a fresh (empty) hooks.
+	// Exactly one commit, no unreachable objects, and fresh (empty) hooks.
 	if c := strings.TrimSpace(git(t, dest, "rev-list", "--all", "--count")); c != "1" {
 		t.Errorf("trial has %s commits, want exactly the synthetic one", c)
 	}
 	if strings.TrimSpace(git(t, dest, "rev-parse", "HEAD")) != commit {
 		t.Error("returned commit is not the trial HEAD")
-	}
-	for _, forbidden := range []string{".git/objects/info/alternates", ".git/packed-refs"} {
-		if _, err := os.Stat(filepath.Join(dest, forbidden)); !os.IsNotExist(err) {
-			t.Errorf("%s exists in the trial repo", forbidden)
-		}
 	}
 	if fsck := git(t, dest, "fsck", "--no-progress", "--unreachable"); strings.TrimSpace(fsck) != "" {
 		t.Errorf("trial object store has unreachable objects:\n%s", fsck)
@@ -147,19 +142,25 @@ func TestPrepareWorkspaceRefusesEscapingAndAbsoluteSymlinks(t *testing.T) {
 	})
 }
 
-// A fixture cannot steer git through a shipped ~/.config/git/ignore: the synthetic commit is made
-// with a hermetic HOME, so an ignore file the fixture carries does not drop authored files.
-func TestPrepareWorkspaceIgnoresAFixtureSuppliedGitHome(t *testing.T) {
+// A host-global ignore must not change the synthetic commit's files across machines.
+func TestPrepareWorkspaceIgnoresTheHostGitHome(t *testing.T) {
 	gitAvailable(t)
+	hostHome := t.TempDir()
+	write(t, hostHome, ".config/git/ignore", "*.go\n")
+	t.Setenv("HOME", hostHome)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(hostHome, ".config"))
+	git(t, hostHome, "init", "--quiet")
+	if ignored := strings.TrimSpace(git(t, hostHome, "check-ignore", "main.go")); ignored != "main.go" {
+		t.Fatalf("host ignore setup did not affect git: %q", ignored)
+	}
 	fixture := t.TempDir()
 	write(t, fixture, "main.go", "package main\n")
-	write(t, fixture, ".config/git/ignore", "*.go\n")
 	dest := filepath.Join(t.TempDir(), "trial")
 	if _, err := PrepareWorkspace(context.Background(), fixture, dest); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 	if out := git(t, dest, "ls-files"); !strings.Contains(out, "main.go") {
-		t.Errorf("a fixture-supplied git ignore dropped main.go from the commit: %q", out)
+		t.Errorf("the host's global git ignore dropped main.go from the commit: %q", out)
 	}
 }
 

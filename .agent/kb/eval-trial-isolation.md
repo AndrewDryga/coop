@@ -21,7 +21,8 @@ the map, and the reasoning behind the one place the obvious fix is wrong.
   `internal/eval/stage_copy.go`, `internal/cli/eval_cmd.go`).
 - **Workspace** — `eval.PrepareWorkspace` copies a frozen case input into a private tree with a
   synthetic initial commit and no `.git` from the source, so no author history travels
-  (`internal/eval/workspace.go`). An agent case without `files` starts empty, never from the suite
+  (`internal/eval/workspace.go`). Git uses a fresh HOME/XDG, so the operator's global ignore file
+  cannot change that commit. An agent case without `files` starts empty, never from the suite
   directory (`internal/cli/eval_trial.go`).
 - **Host mount boundary** — those generated workspaces live under Coop's private state. Box admits
   only the exact owner-private trial workspace for a candidate, and only its snapshot and selected
@@ -121,6 +122,10 @@ already fully correct. The shipped verifier runs each subcommand on inputs no ta
 also why it cannot be satisfied by a loop that moves folders without finishing anything.
 
 ## Changelog
+- 2026-09-28 — rechecked workspace preparation and its staged caller. Replaced a vacuous
+  fixture-local ignore test with a poisoned host HOME/XDG test that first proves the ignore is
+  active; removed two fresh-init-only assertions. Kept the deliberate nested `.git` omission so
+  submodule working files survive, while a top-level live checkout remains refused.
 - 2026-09-28 — rechecked the current staging and mount paths while removing an obsolete starter
   verifier grant. Staging now drops special mode bits consistently from its digest and copy, skips
   nested Git metadata like workspace preparation, and keeps a selected tree's top-level `.git`

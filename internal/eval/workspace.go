@@ -14,14 +14,13 @@ import (
 // A trial runs in its OWN private workspace, never the developer's checkout. This file materializes
 // one: it copies a fixture — an explicit local file tree — into a fresh directory and gives it a
 // clean git repository with a single synthetic commit, so the candidate sees a normal repository
-// with NO history, refs, reflogs or objects from wherever the fixture came from. v1 supports a
-// plain-tree fixture only; a git-source fixture that must carry specific historical commit objects
-// is outside the v1 profile (spec), so there is no history to leak in the first place. A fixture's
+// with NO history, refs, reflogs or objects from wherever the fixture came from. A fixture with
+// historical Git objects is not supported, so there is no history to leak. A fixture's
 // own `.git` is never copied — the trial gets a repository Coop created, not one it inherited.
 //
 // This is the isolation floor for the candidate's WORKSPACE. The verifier is kept out of it at load
-// (the suite's overlap/symlink checks); preparation (a later step) adds the credential, network and
-// mount projections. Materialization writes only under dest and reads only the fixture and dest.
+// (the suite's overlap/symlink checks); the trial launcher adds the credential, network and mount
+// projections. Materialization writes only under dest and reads only the fixture and dest.
 
 // materializeIdentity is the fixed, synthetic author of a trial's initial commit — never the host's
 // git identity, so nothing about the developer travels into the trial.
@@ -169,8 +168,8 @@ func initSyntheticRepo(ctx context.Context, dest string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, materializeTimeout)
 	defer cancel()
-	// A hermetic HOME/XDG for every git call, removed after: so the FIXTURE cannot steer git through
-	// a shipped `.config/git/ignore` or `attributes` (which GIT_CONFIG_GLOBAL does not suppress).
+	// A hermetic HOME/XDG for every git call, removed after: the host's global ignore or attributes
+	// files cannot change which fixture files enter the synthetic commit.
 	home, err := os.MkdirTemp("", "coop-eval-git-home-")
 	if err != nil {
 		return "", err
