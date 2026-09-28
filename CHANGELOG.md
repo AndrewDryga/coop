@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A box's project `.tool-versions` pins now apply everywhere in the box: a command started outside
+  the checkout, such as a test's temp directory, finds the same Erlang, Elixir or Go versions instead
+  of asdf's "No version is set". An image that ships its own home-level pins keeps them. The shared
+  base image changes, so it is rebuilt once.
+
 - A restarted fleet worker no longer advertises busy for minutes: it proves every surviving
   session's runtime right after startup instead of two a minute, so capacity returns within
   seconds. A runtime it cannot prove still keeps the worker busy.

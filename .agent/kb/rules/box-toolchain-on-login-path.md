@@ -3,8 +3,8 @@ name: box-toolchain-on-login-path
 description: "a box toolchain goes on the login PATH too, not just the `ENV` PATH"
 scope: box
 sources: [internal/box/image.go, internal/scaffold/templates/dockerfile/asdf]
-check: "go test ./internal/box -run TestBaseDockerfileInstallsTheQualifiedClients"
-updated: 2026-09-19
+check: "go test ./internal/box -run 'TestBaseDockerfileInstallsTheQualifiedClients|TestProvisioningMakesTheProjectPinsTheBoxDefault'"
+updated: 2026-09-28
 ---
 
 # A box toolchain must be on the login PATH, not just the ENV PATH
@@ -32,8 +32,18 @@ with its own drop-in (`TestAsdfDockerfileKeepsToolchainsOnLoginPath`).
 `ENV` (non-login) AND an `/etc/profile.d/*.sh` drop-in (login). Never depend on
 `ENV PATH` alone for something an agent might invoke via a login shell.
 
+The same trap has a second axis: versions. asdf resolves a tool's version from the nearest
+`.tool-versions` above the current directory, then `$HOME`, so a process started outside the checkout
+(a test's temp dir) got "No version is set for command mix" in the base image while the project's own
+image, which copies its pins to `$HOME`, worked. The entry script now makes the project's pins the
+home default when none exists (`TestProvisioningMakesTheProjectPinsTheBoxDefault`).
+
 ## Changelog
 - 2026-06-20 — created
 - 2026-08-06 — card metadata added (format v1); body unchanged
 - 2026-09-19 — the qualified client launchers lead both PATHs; check renamed with its test. Swept
   the images and the asdf scaffold: each sets the order in ENV and a profile.d drop-in.
+- 2026-09-28 — emisar's trusted review gate on Ryker's worker failed with "No version is set for
+  command mix" in the base image; the entry script copies the project's `.tool-versions` to `$HOME`
+  when absent. Swept the base and asdf scaffold: the scaffolded asdf Dockerfile already installs the
+  project's pins at `$HOME`, like emisar's.

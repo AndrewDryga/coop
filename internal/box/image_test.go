@@ -525,3 +525,52 @@ func TestBuildWithRejectsInvalidProjectBeforeRuntime(t *testing.T) {
 		t.Fatalf("runtime was invoked before policy validation: %v", statErr)
 	}
 }
+
+// A box serves one project, so its pins must hold outside the checkout too: emisar's trusted gate
+// failed in the base image when a test's subprocess in a temp dir got "No version is set for
+// command mix". The entry script makes the project's .tool-versions the home default, keeps a
+// home-level file an image already ships, and writes nothing without project pins.
+func TestProvisioningMakesTheProjectPinsTheBoxDefault(t *testing.T) {
+	bin := t.TempDir()
+	for name, body := range map[string]string{
+		"asdf": "#!/bin/sh\nexit 0\n",       // every provisioning step succeeds and does nothing
+		"node": "#!/bin/sh\necho v24.0.0\n", // a working node, so the nodejs repair stays out of it
+	} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct{ name, project, home, want string }{
+		{"project pins become the default", "erlang 29.0.6\nelixir 1.20.4-otp-29\n", "", "erlang 29.0.6\nelixir 1.20.4-otp-29\n"},
+		{"an image's own home pins stay", "elixir 1.20.4-otp-29\n", "elixir 1.19.5-otp-28\n", "elixir 1.19.5-otp-28\n"},
+		{"no project pins writes nothing", "", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, project := t.TempDir(), t.TempDir()
+			for path, content := range map[string]string{filepath.Join(project, ".tool-versions"): tc.project, filepath.Join(home, ".tool-versions"): tc.home} {
+				if content == "" {
+					continue
+				}
+				if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cmd := exec.Command("sh", "-c", baseProvisioningScript)
+			cmd.Dir = project
+			cmd.Env = []string{"PATH=" + bin + ":/usr/bin:/bin", "HOME=" + home, "COOP_QUIET=1"}
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("provisioning script: %v\n%s", err, out)
+			}
+			got, err := os.ReadFile(filepath.Join(home, ".tool-versions"))
+			if tc.want == "" {
+				if !os.IsNotExist(err) {
+					t.Fatalf("home pins without project pins: %q, %v", got, err)
+				}
+				return
+			}
+			if err != nil || string(got) != tc.want {
+				t.Fatalf("home pins = %q, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+}

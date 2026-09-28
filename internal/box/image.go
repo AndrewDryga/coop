@@ -389,6 +389,10 @@ const baseProvisioningScript = `if command -v asdf >/dev/null 2>&1; then
         asdf install >"$log" 2>&1 || true
       fi
       asdf reshim >/dev/null 2>&1 || true
+      # A box serves this one project, so its pins are the box's default too: a process started
+      # outside the checkout (a test's temp dir) otherwise gets "No version is set for command".
+      # An image that ships its own home-level pins keeps them.
+      [ -e "$HOME/.tool-versions" ] || cp "$f" "$HOME/.tool-versions" 2>/dev/null || true
     fi
   fi
   # A bare node must always resolve: MCP servers and the repo's own scripts run it (the
