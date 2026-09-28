@@ -2675,7 +2675,10 @@ func (s *Service) executeDiscard(ctx context.Context, op session.Operation, plan
 		unlockWorkspace()
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeDiscardPlanStale, Detail: boundedSessionServiceError(err)})
 	}
-	if s.rt.Name != "" {
+	// A controller job's boxes never start its repository's services (box.RunSpec.ControllerJob), so
+	// only a historical session can own a Compose project to remove. The job's project file is
+	// repository code: it must not decide, or fail, a worker's cleanup.
+	if s.rt.Name != "" && sess.JobDigest == "" {
 		if err := box.DownServices(
 			s.rt,
 			workspacePlan.Workspace,

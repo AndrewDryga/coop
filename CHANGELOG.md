@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Discarding a fleet session no longer fails when its job repository declares services and the
+  worker's Docker is not a local socket (such as a dind `tcp://` daemon). A controller job's boxes
+  never start the repository's services, so its discard runs no Compose teardown and no longer
+  reads the repository's project file; historical sessions still tear theirs down.
+
 - Fleet jobs for a repository with its own `.agent/Dockerfile` no longer fail with "Coop box image
   is not built". A worker never builds or runs a job repository's Dockerfile: open and offline
   jobs, and ordinary review gates, run in the worker's base image (`COOP_BASE_IMAGE`), and the

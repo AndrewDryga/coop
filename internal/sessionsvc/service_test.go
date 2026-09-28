@@ -4872,6 +4872,63 @@ func TestSessionDiscardRejectsChangedWorkspaceBeforeServiceTeardown(t *testing.T
 	}
 }
 
+// A controller job's boxes never start its repository's services, so discarding its session runs no
+// Compose teardown: Ryker's dind worker (a tcp:// Docker, which Compose refuses) could not discard
+// such a session at all, and a project file written for a newer Coop must not fail cleanup either.
+// A historical session may have started services, so it still tears them down.
+func TestSessionDiscardTearsDownComposeOnlyForHistoricalSessions(t *testing.T) {
+	for _, historical := range []bool{false, true} {
+		t.Run(fmt.Sprintf("historical=%v", historical), func(t *testing.T) {
+			repo, git := gitrepo.New(t)
+			if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			git("add", ".agent/compose.yml")
+			git("commit", "-q", "-m", "services")
+			service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, nil)
+			defer service.Stop()
+			sess, err := service.CreateRemoteSession(context.Background(), "create-services", service.request(t, "discard"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if historical {
+				sess = clearHistoricalJob(t, service.Store(), sess.ID)
+			}
+			closed, err := service.Close(context.Background(), "close-services", session.CloseSessionRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
+			if err != nil {
+				t.Fatal(err)
+			}
+			planned, err := service.PlanDiscard(context.Background(), "plan-services", PlanDiscardRequest{SessionID: sess.ID, ExpectedRevision: closed.Revision})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !historical {
+				if err := os.WriteFile(filepath.Join(planned.Plan.Workspace.Repo, ".agent", "project.yaml"), []byte("from_a_newer_coop: true\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			runtimeLog := filepath.Join(t.TempDir(), "runtime.log")
+			runtimePath := filepath.Join(t.TempDir(), "runtime")
+			if err := os.WriteFile(runtimePath, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$COOP_TEST_DISCARD_RUNTIME_LOG\"\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("COOP_TEST_DISCARD_RUNTIME_LOG", runtimeLog)
+			service.rt = runtime.Runtime{Name: runtimePath}
+			discarded, err := service.Discard(context.Background(), "discard-services", DiscardRequest{PlanOperationID: planned.OperationID})
+			if err != nil || discarded.State != session.SessionDiscarded {
+				t.Fatalf("discard = %+v, %v", discarded, err)
+			}
+			calls, _ := os.ReadFile(runtimeLog)
+			if tornDown := strings.Contains(string(calls), " down "); tornDown != historical {
+				t.Fatalf("compose teardown ran = %v, want %v; runtime calls:\n%s", tornDown, historical, calls)
+			}
+		})
+	}
+}
+
 func TestSessionServiceDiscardReplayAfterWorkspaceRemovalBeforeTombstone(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
