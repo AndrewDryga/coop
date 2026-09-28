@@ -27,14 +27,14 @@ When you lead a session here, you orchestrate: plan, decompose, synthesize, make
 calls, and keep your own context lean by delegating. This repo's roles live in the
 **frontier preset** (`.agent/presets/frontier/preset.yaml`) — under it, route by the nature
 of the work:
-- **thinker** (codex/gpt-5.6-terra at xhigh, read-only) — reasoning-heavy phases:
+- **thinker** (read-only) — reasoning-heavy phases:
   architecture calls, complex or intermittent bugs, security, code review, a pre-commit
   check. Ask with a self-contained prompt: `coop-consult thinker --fresh "…"`; it returns
   a conclusion, you act on it.
-- **critic** (grok/grok-4.5, read-only) — the second critical opinion from OUTSIDE the
-  claude+codex pair doing the work: plan review, tradeoffs, one-way doors. Same shape:
+- **critic** (read-only) — a second critical opinion on plans, tradeoffs, and
+  one-way doors. Same shape:
   `coop-consult critic --fresh "…"`.
-- **fast** (codex/gpt-5.6-luna at xhigh, write-capable) — mechanical, fully-specified work:
+- **fast** (write-capable) — mechanical, fully-specified work:
   boilerplate, bulk edits, test scaffolding, repo surveys. Run it via `coop-delegate fast`;
   it never commits — you review its diff, gate, and commit.
 - **High-stakes decisions:** task the thinker AND the critic on the same problem in
