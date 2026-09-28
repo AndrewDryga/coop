@@ -146,6 +146,10 @@ this one has it.
   certificate fixtures. Test-only callers add no production edges; no presentation grant.
   Swept the full import graph with `TestInternalImportDAG` (including three race runs):
   0 violations; no production import edges were added.
+- 2026-09-06 — **+1 edge: `tasks -> processidentity`.** A claim made by an agent binds to the claiming
+  process (pid + start token) and `coop tasks lease` holds the iteration lock on behalf of a bound
+  process; the queue reads the same kernel identity primitive the fork lifecycle already trusts
+  instead of growing a second notion of liveness.
 - 2026-08-29 — **+1 edge: `sessionsvc -> workerproto`.** The private session service captures and
   restores the exact portable workspace-checkpoint descriptor and bundle that the outbound worker
   transports. Reusing the leaf wire contract keeps digest, bound, and task identity validation
@@ -343,7 +347,3 @@ this one has it.
   asserted: a table edge the code lacks, a production import of `ui` from `config`, one of `cli`
   from `project`, and a brand-new package — each failed with the offending edge and both files to
   update.
-- 2026-09-06 — **+1 edge: `tasks -> processidentity`.** A claim made by an agent binds to the claiming
-  process (pid + start token) and `coop tasks lease` holds the iteration lock on behalf of a bound
-  process; the queue reads the same kernel identity primitive the fork lifecycle already trusts
-  instead of growing a second notion of liveness.
