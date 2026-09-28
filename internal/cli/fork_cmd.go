@@ -1037,8 +1037,9 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if a.mode.Restricted() {
 		// The restricted profile registers no activity record (it starts no service and joins no
 		// project); the daemon's receipt reaps it by the run label. The reservation check above
-		// still proved this fork is the session's own. The run owns a host seed directory holding
-		// the credential projection, so the signal the daemon ends a turn with has to arrive as a
+		// still proved this fork is the session's own. Keep SessionStoreID for companion mount
+		// admission even though the activity fields are cleared. The run owns a host seed directory
+		// holding the credential projection. The daemon's end-of-turn signal must arrive as a
 		// cancellation this run can clean up after — exactly as a filtered child's does.
 		spec.Mode, spec.RepoReadOnly = a.mode, true
 		spec.ActivityRepo, spec.ActivityKind, spec.ActivityRole, spec.ActivityReservationOwner, spec.ActivitySource = "", "", "", "", ""
