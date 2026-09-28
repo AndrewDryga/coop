@@ -1311,13 +1311,15 @@ roles:
                         and network modes.
                     </p>
                     <p>
-                        A remote worker makes outbound mTLS connections to a
-                        compatible controller. The worker still needs its own
-                        repository, account, and session policy configured
-                        locally; the controller does not provision those over
-                        the connection today. See the
+                        A remote worker connects outbound over TLS to a
+                        compatible controller. The controller supplies each
+                        job's repository source, model targets, network access,
+                        and limits; Coop fetches the working tree and runs the
+                        model. The worker keeps private state and model
+                        credentials locally, and needs Git, Git LFS, and a
+                        supported container runtime. See the
                         <a
-                            href="https://github.com/AndrewDryga/coop/blob/main/docs/session-api.md#connect-this-machine-to-a-remote-controller"
+                            href="https://github.com/AndrewDryga/coop/blob/main/docs/session-api.md#connect"
                             target="_blank"
                             rel="noopener"
                             >worker connector guide</a
