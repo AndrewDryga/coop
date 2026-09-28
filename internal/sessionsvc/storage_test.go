@@ -467,11 +467,10 @@ func TestReclaimStorageKeepsUnboundForksForManualRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, fork := range report.Forks {
-		if fork.Name == "fork-orphan" && (fork.Category != StorageCategoryProtected ||
-			!strings.Contains(fork.Reason, "no session in this store proves ownership")) {
-			t.Fatalf("unbound fork was reported as disposable: %+v", fork)
-		}
+	fork := storageForkEntry(t, report, "fork-orphan")
+	if fork.Category != StorageCategoryProtected ||
+		!strings.Contains(fork.Reason, "no session in this store proves ownership") {
+		t.Fatalf("unbound fork was reported as disposable: %+v", fork)
 	}
 }
 
