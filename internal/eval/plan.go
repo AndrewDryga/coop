@@ -57,8 +57,8 @@ type Plan struct {
 
 // BuildPlan validates the request and returns the matrix. It launches nothing. It refuses an empty
 // configuration set, a non-positive repeat/jobs, a loop-config override on an agent suite, and a
-// total timeout too small to give every trial its own case budget once (a plan that cannot fit its
-// own work is a mistake worth naming before paid work, not a silent under-run).
+// whole-run timeout shorter than the longest case budget. Passing this check does not promise the
+// entire matrix can finish within the deadline; the worker count and trial outcomes determine that.
 func BuildPlan(s *Suite, configs []Configuration, opts Options) (*Plan, error) {
 	if s == nil {
 		return nil, errors.New("no suite")
