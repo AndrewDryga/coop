@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/eval"
 )
 
 func evalTestRepo(t *testing.T) string {
@@ -51,41 +50,6 @@ func TestFreezePresetContentTracksManifestAndPromptEdits(t *testing.T) {
 	}
 	if string(afterPrompt) == string(afterManifest) {
 		t.Error("editing preset.yaml did not change the frozen content")
-	}
-}
-
-// A loop suite freezes the loop.yaml it runs under: the suite's own loop_config resolves under the
-// suite dir; a --loop-config override resolves against the current directory.
-func TestFreezeConfigurationCapturesTheLoopRecipe(t *testing.T) {
-	repo := evalTestRepo(t)
-	a := &app{cfg: &config.Config{RepoOverride: repo}}
-	dir := t.TempDir()
-	must := func(rel, body string) {
-		full := filepath.Join(dir, rel)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	must("loop.yaml", "work:\n  round_limit: 3\n")
-	must("fixtures/app/.keep", "")
-	must("queues/repo/.keep", "")
-	must("verifiers/repo/.keep", "")
-	must("suite.yaml", "version: 1\nname: loops\nrunner: loop\nloop_config: ./loop.yaml\ncases:\n  - id: repo\n    fixture: ./fixtures/app\n    tasks: ./queues/repo\n    verifier: ./verifiers/repo\n    timeout: 50m\n")
-
-	suite, err := eval.Load(filepath.Join(dir, "suite.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	loopPath := filepath.Join(suite.Dir, "loop.yaml")
-	frozen, err := a.freezeConfiguration(eval.Configuration{Kind: eval.ConfigTarget, Label: "codex"}, suite, loopPath, a.evalBuildIdentity())
-	if err != nil {
-		t.Fatalf("freeze: %v", err)
-	}
-	if string(frozen.LoopConfig) != "work:\n  round_limit: 3\n" {
-		t.Errorf("loop recipe not frozen: %q", frozen.LoopConfig)
 	}
 }
 

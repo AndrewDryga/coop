@@ -270,12 +270,19 @@ func TestEvalDryRunShowsContentFrozenWorkloadWithoutLeavingARun(t *testing.T) {
 
 // A bad target or a missing preset is refused during resolution, before any plan or provider work.
 func TestResolveEvalConfigurationsRefusesBadPositionals(t *testing.T) {
-	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
+	cfg := &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir()}
+	a := &app{cfg: cfg}
 	if _, err := a.resolveEvalConfigurations([]string{"codex:bad:model:extra"}); err == nil {
 		t.Error("a malformed target was accepted")
 	}
 	if _, err := a.resolveEvalConfigurations([]string{"no-such-preset-xyz"}); err == nil {
 		t.Error("a missing preset was accepted")
+	}
+	if err := os.MkdirAll(cfg.AgentProfileDir("codex", "work"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.resolveEvalConfigurations([]string{"codex@work,missing"}); err == nil || !strings.Contains(err.Error(), `account "missing"`) {
+		t.Errorf("a missing second account was not named: %v", err)
 	}
 	// A well-formed bare target resolves to a target configuration.
 	configs, err := a.resolveEvalConfigurations([]string{"codex"})

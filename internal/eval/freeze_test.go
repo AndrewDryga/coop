@@ -32,6 +32,12 @@ func TestFrozenConfigFingerprintSeparatesEveryChange(t *testing.T) {
 	}
 }
 
+func TestBuildIdentityStringDoesNotRepeatDirty(t *testing.T) {
+	if got := (BuildIdentity{Version: "v1-dirty", Dirty: true}).String(); got != "v1-dirty" {
+		t.Errorf("dirty build label = %q", got)
+	}
+}
+
 func withContent(c FrozenConfig, b []byte) FrozenConfig { c.Content = b; return c }
 func withLoop(c FrozenConfig, b []byte) FrozenConfig    { c.LoopConfig = b; return c }
 func withDigest(c FrozenConfig, d string) FrozenConfig  { c.Build.Digest = d; return c }

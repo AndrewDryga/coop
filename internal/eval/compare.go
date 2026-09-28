@@ -129,7 +129,7 @@ func loadSealed(root, id string) (sealedRun, error) {
 func outcomeOf(r sealedRun) ConfigOutcome {
 	o := ConfigOutcome{Requested: r.summary.Requested}
 	for _, c := range r.run.Configs {
-		o.Configs = append(o.Configs, c.Label)
+		o.Configs = append(o.Configs, c.Description())
 	}
 	for _, tr := range r.trials {
 		// Only a graded trial's size means anything: an errored or never-started trial's workspace

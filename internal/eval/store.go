@@ -61,13 +61,17 @@ type RunRecord struct {
 	Configs   []RunConfig `json:"configs"`
 }
 
-// RunConfig is one evaluated configuration as recorded on the run: its label and the fingerprints a
-// before/after comparison keys on.
+// RunConfig is one evaluated configuration as recorded on the run: its label, fingerprint and build.
 type RunConfig struct {
 	Kind        ConfigKind `json:"kind"`
 	Label       string     `json:"label"`
 	Fingerprint string     `json:"config_fingerprint"`
 	Build       string     `json:"build"`
+}
+
+// Description distinguishes same-named presets or recipes, and identifies the Coop version used.
+func (c RunConfig) Description() string {
+	return fmt.Sprintf("%s [config %s, build %s]", c.Label, Fingerprint(c.Fingerprint).Short(), c.Build)
 }
 
 // TrialRecord is one (case x configuration x repetition). Written as pending/running before launch,
@@ -343,7 +347,7 @@ func NewRunRecord(plan *Plan, frozen []FrozenConfig, now time.Time) RunRecord {
 	for _, f := range frozen {
 		rec.Configs = append(rec.Configs, RunConfig{
 			Kind: f.Kind, Label: f.Label,
-			Fingerprint: string(f.Fingerprint()), Build: f.Build.Version,
+			Fingerprint: string(f.Fingerprint()), Build: f.Build.String(),
 		})
 	}
 	rec.ID = NewRunID(now, Fingerprint(rec.Workload))

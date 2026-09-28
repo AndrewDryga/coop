@@ -16,24 +16,17 @@ import (
 
 // freezeConfiguration captures the exact system a configuration evaluates, so a run recorded now can
 // be compared with one recorded after the preset, loop recipe or Coop build changes. It reads the
-// content (preset.yaml plus every prompt, the loop.yaml) and the running executable's identity here,
-// in the CLI, and hands eval the bytes — eval stays a leaf. It reads nothing a candidate could have
-// written and launches nothing.
-func (a *app) freezeConfiguration(c eval.Configuration, suite *eval.Suite, loopConfigPath string, build eval.BuildIdentity) (eval.FrozenConfig, error) {
-	frozen := eval.FrozenConfig{Kind: c.Kind, Label: c.Label, Build: build}
+// content (preset.yaml plus every prompt, the already-read loop.yaml) and the running executable's
+// identity here, in the CLI, and hands eval the bytes — eval stays a leaf. It reads nothing a
+// candidate could have written and launches nothing.
+func (a *app) freezeConfiguration(c eval.Configuration, loopConfig []byte, build eval.BuildIdentity) (eval.FrozenConfig, error) {
+	frozen := eval.FrozenConfig{Kind: c.Kind, Label: c.Label, LoopConfig: loopConfig, Build: build}
 	if c.Kind == eval.ConfigPreset {
 		content, err := a.freezePresetContent(c.Label)
 		if err != nil {
 			return eval.FrozenConfig{}, err
 		}
 		frozen.Content = content
-	}
-	if suite.IsLoop() {
-		bytes, err := os.ReadFile(loopConfigPath)
-		if err != nil {
-			return eval.FrozenConfig{}, fmt.Errorf("freeze loop config %s: %w", loopConfigPath, err)
-		}
-		frozen.LoopConfig = bytes
 	}
 	return frozen, nil
 }

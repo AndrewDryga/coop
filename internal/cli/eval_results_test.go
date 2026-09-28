@@ -21,7 +21,7 @@ func seedEvalResults(t *testing.T, id string, sealed bool, trials ...eval.TrialR
 		ID: id, Suite: "coop-core", Runner: eval.RunnerAgent, Workload: "same-workload",
 		CreatedAt: time.Date(2026, 9, 21, 5, 50, 49, 0, time.UTC), Repeat: 1,
 		Cases:   []string{"fix-the-cause", "keep-the-contract", "no-collateral-damage"},
-		Configs: []eval.RunConfig{{Kind: eval.ConfigTarget, Label: "claude", Build: "v-test"}},
+		Configs: []eval.RunConfig{{Kind: eval.ConfigTarget, Label: "claude", Fingerprint: "abcdef1234567890", Build: "v-test"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestEvalResultsJourney(t *testing.T) {
 	}
 	for _, args := range [][]string{{"inspect"}, {"inspect", "20260921-errors"}} {
 		out := run(args...)
-		for _, want := range []string{"coop-core", "claude", "0/3 passed", "0/3 graded", "no trial reached grading", "fix-the-cause", "sign-in required", "trial budget exhausted", "not a model", dir} {
+		for _, want := range []string{"coop-core", "claude [config abcdef123456, build v-test]", "0/3 passed", "0/3 graded", "no trial reached grading", "fix-the-cause", "sign-in required", "trial budget exhausted", "not a model", dir} {
 			if !strings.Contains(out, want) {
 				t.Errorf("inspection missing %q:\n%s", want, out)
 			}
@@ -81,7 +81,7 @@ func TestEvalResultsJourney(t *testing.T) {
 		}
 	}
 	comparison := run("compare", "20260921-errors", "20260921-errors")
-	for _, want := range []string{"no definitive winner", "coop eval inspect 20260921-errors", "timed out 1", "pending 1"} {
+	for _, want := range []string{"claude [config abcdef123456, build v-test]", "no definitive winner", "coop eval inspect 20260921-errors", "timed out 1", "pending 1"} {
 		if !strings.Contains(comparison, want) {
 			t.Errorf("comparison missing %q:\n%s", want, comparison)
 		}

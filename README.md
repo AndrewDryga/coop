@@ -1065,7 +1065,9 @@ the same before and after your change, then compare the recorded results.
 
 3. Change one thing, run the same suite again, and use `coop eval runs` to find the two IDs.
    Compare them with `coop eval compare <before-id> <after-id>`. Argument order determines
-   before and after; Coop does not infer it from timestamps.
+   before and after; Coop does not infer it from timestamps. Inspect and compare show each
+   configuration's short fingerprint and Coop build, so a same-named edited preset or recipe
+   is visible.
 
 ### Choose what to evaluate
 

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -168,10 +167,17 @@ func (a *app) evalRun(args []string) (int, error) {
 			loopConfigPath = filepath.Join(suite.Dir, filepath.Clean(suite.LoopConfig))
 		}
 	}
+	var loopConfig []byte
+	if loopConfigPath != "" {
+		loopConfig, err = os.ReadFile(loopConfigPath)
+		if err != nil {
+			return 1, fmt.Errorf("freeze loop config %s: %w", loopConfigPath, err)
+		}
+	}
 	build := a.evalBuildIdentity() // one digest of the binary, shared by every configuration
 	frozen := make([]eval.FrozenConfig, 0, len(configs))
 	for _, c := range configs {
-		f, ferr := a.freezeConfiguration(c, suite, loopConfigPath, build)
+		f, ferr := a.freezeConfiguration(c, loopConfig, build)
 		if ferr != nil {
 			return 1, ferr
 		}
@@ -189,14 +195,8 @@ func (a *app) evalRun(args []string) (int, error) {
 	defer eval.RemoveStagedSuite(stagedDir) // a real run moves these exact bytes under its own record
 	plan.Suite = staged
 	if staged.IsLoop() {
-		// All configurations in one run must use the same recipe. The bytes already frozen
-		// for their configuration identities are also the bytes every trial executes.
-		for _, f := range frozen[1:] {
-			if !bytes.Equal(f.LoopConfig, frozen[0].LoopConfig) {
-				return 1, fmt.Errorf("loop config changed while configurations were frozen; retry with a stable recipe")
-			}
-		}
-		if err := os.WriteFile(filepath.Join(staged.Dir, "loop.yaml"), frozen[0].LoopConfig, 0o600); err != nil {
+		// Every configuration hashes the same captured recipe, which is also what trials run.
+		if err := os.WriteFile(filepath.Join(staged.Dir, "loop.yaml"), loopConfig, 0o600); err != nil {
 			return 1, fmt.Errorf("freeze loop config: %w", err)
 		}
 	}
@@ -329,8 +329,11 @@ func (a *app) resolveEvalConfigurations(positionals []string) ([]eval.Configurat
 			}
 			// A pinned @account must exist, refused by name before any work — the same promise every
 			// other launch makes. A bare target (no account) is left to the provider's own defaults.
-			if acct := t.Account(); acct != "" && !slices.Contains(box.EffectiveProfiles(a.cfg, t.Provider), acct) {
-				return nil, fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", t.Provider, acct, t.Provider, acct)
+			profiles := box.EffectiveProfiles(a.cfg, t.Provider)
+			for _, acct := range t.Accounts {
+				if !slices.Contains(profiles, acct) {
+					return nil, fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", t.Provider, acct, t.Provider, acct)
+				}
 			}
 			configs = append(configs, eval.Configuration{Kind: eval.ConfigTarget, Label: t.String()})
 			continue

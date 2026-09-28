@@ -1,6 +1,9 @@
 package eval
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+)
 
 // The evaluated-configuration dimension of a comparison: the system under test, frozen so that two
 // runs of the same suite can be told apart by what actually changed. "Frozen" means the exact
@@ -36,7 +39,7 @@ func (b BuildIdentity) String() string {
 	if s == "" {
 		s = "unknown"
 	}
-	if b.Dirty {
+	if b.Dirty && !strings.Contains(s, "dirty") {
 		s += " (dirty)"
 	}
 	return s
@@ -45,8 +48,8 @@ func (b BuildIdentity) String() string {
 // FrozenConfig is one evaluated configuration with its content and build captured. Content is the
 // preset's frozen bytes (preset.yaml plus every prompt it loads) — nil for a bare target, whose
 // label is its whole identity. LoopConfig is the loop.yaml bytes for a loop suite (the recipe under
-// test), nil otherwise. Two runs whose FrozenConfig fingerprints differ are the point of comparing;
-// two whose fingerprints match are the same system, so their scores pool.
+// test), nil otherwise. A comparison shows these fingerprints so edited configurations remain
+// distinguishable even when their labels match.
 type FrozenConfig struct {
 	Kind       ConfigKind
 	Label      string
@@ -56,8 +59,7 @@ type FrozenConfig struct {
 }
 
 // Fingerprint identifies this configuration: its kind and label, the exact frozen content and loop
-// recipe, and the Coop build. It uses the same length-prefixed hashing as the workload fingerprint,
-// so no two distinct configurations collide.
+// recipe, and the Coop build. It uses the same length-prefixed hashing as the workload fingerprint.
 func (c FrozenConfig) Fingerprint() Fingerprint {
 	w := newHasher()
 	w.text("schema", "eval.config.v1")

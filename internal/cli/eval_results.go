@@ -65,9 +65,9 @@ func (a *app) evalInspect(args []string) (int, error) {
 	}
 	fmt.Printf("Eval %s\n", evalDisplayText(id))
 	printEvalText("Suite: ", run.Suite)
-	printEvalText("Configurations: ", strings.Join(evalConfigLabels(run), ", "))
-	if len(run.Configs) > 0 && run.Configs[0].Build != "" {
-		printEvalText("Coop build: ", run.Configs[0].Build)
+	fmt.Println("Configurations:")
+	for _, c := range run.Configs {
+		printEvalText("  - ", c.Description())
 	}
 	fmt.Printf("Started: %s\n", run.CreatedAt.Local().Format("2006-01-02 15:04 MST"))
 	printEvalText("Result: ", evalResultLine(*sum))
