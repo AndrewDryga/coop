@@ -116,6 +116,7 @@ func TestLoadRefusesEveryMalformedManifestByName(t *testing.T) {
 		{"loop_config on agent suite", strings.Replace(agentSuite, "runner: agent\n", "runner: agent\nloop_config: ./loop.yaml\n", 1), []string{"verifiers/hello"}, "belongs to a loop suite"},
 		{"loop suite without loop_config", strings.Replace(loopSuite, "loop_config: ./loop.yaml\n", "", 1), nil, "needs loop_config"},
 		{"loop case with agent field", strings.Replace(loopSuite, "    fixture: ./fixtures/app\n", "    instruction: do it\n", 1), nil, "agent fields"},
+		{"loop case without fixture or tasks", strings.Replace(strings.Replace(loopSuite, "    fixture: ./fixtures/app\n", "", 1), "    tasks: ./queues/repo-evolution\n", "", 1), nil, "no fixture"},
 		{"loop case without tasks", strings.Replace(loopSuite, "    tasks: ./queues/repo-evolution\n", "", 1), nil, "no tasks"},
 		{"verifier is the suite dir", strings.Replace(agentSuite, "./verifiers/hello", ".", 1), nil, "suite directory itself"},
 		{"verifier inside files", strings.Replace(agentSuite, "    verifier: ./verifiers/hello\n", "    files: ./work\n    verifier: ./work/grader\n", 1), nil, "overlaps case"},

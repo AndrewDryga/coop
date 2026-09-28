@@ -350,8 +350,16 @@ func (a *app) resolveEvalConfigurations(positionals []string) ([]eval.Configurat
 // coverage, pass counts, per-case wins and regressions. It refuses to merge two runs of different
 // workloads into one score, and refuses an interrupted (unsealed) run.
 func (a *app) evalCompare(args []string) (int, error) {
-	if len(args) != 2 {
-		return 2, ui.MissingArgument("<run-id> <run-id>", "coop eval compare", "coop eval compare <run-id> <run-id>")
+	const usage = "coop eval compare <before-id> <after-id>"
+	if len(args) < 2 {
+		name := "before run ID"
+		if len(args) == 1 {
+			name = "after run ID"
+		}
+		return 2, ui.MissingArgument(name, "coop eval compare", usage)
+	}
+	if len(args) > 2 {
+		return 2, ui.UnexpectedArgument(args[2], "coop eval compare", usage)
 	}
 	root, err := evalStateRoot()
 	if err != nil {

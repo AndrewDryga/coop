@@ -1689,8 +1689,8 @@ Author your own: coop eval init ./evals/my-suite
 Usage: coop eval init <dir>
 
 Creates a working single-agent example, a commented loop example in suite.yaml,
-and verifiers/greeting/README.md. Use a new directory; existing files are never
-overwritten.
+and verifiers/greeting/README.md plus verifiers/greeting/verify.sh. Use a new
+directory; existing files are never overwritten.
 Edit suite.yaml, the visible files and the separate hidden verifier. Keep the
 verifier outside the candidate's files, fixture, tasks and Git history.
 

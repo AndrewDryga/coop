@@ -21,28 +21,31 @@ func TestParseEvalRunArgs(t *testing.T) {
 		wantRepeat  int
 		wantTimeout time.Duration
 		wantLoop    string
-		wantErr     bool
+		wantErr     string
 	}{
-		{"suite and two configs", []string{"./s.yaml", "codex", "frontier", "--timeout", "60m"}, "./s.yaml", []string{"codex", "frontier"}, 1, 1, time.Hour, "", false},
-		{"flags interleaved", []string{"./s.yaml", "--jobs", "4", "codex", "--repeat", "3", "--timeout", "30m"}, "./s.yaml", []string{"codex"}, 4, 3, 30 * time.Minute, "", false},
-		{"loop config override", []string{"./s.yaml", "frontier", "--timeout", "60m", "--loop-config", ".agent/loop.yaml"}, "./s.yaml", []string{"frontier"}, 1, 1, time.Hour, ".agent/loop.yaml", false},
+		{"suite and two configs", []string{"./s.yaml", "codex", "frontier", "--timeout", "60m"}, "./s.yaml", []string{"codex", "frontier"}, 1, 1, time.Hour, "", ""},
+		{"flags interleaved", []string{"./s.yaml", "--jobs", "4", "codex", "--repeat", "3", "--timeout", "30m"}, "./s.yaml", []string{"codex"}, 4, 3, 30 * time.Minute, "", ""},
+		{"loop config override", []string{"./s.yaml", "frontier", "--timeout", "60m", "--loop-config", ".agent/loop.yaml"}, "./s.yaml", []string{"frontier"}, 1, 1, time.Hour, ".agent/loop.yaml", ""},
 		// A run needs an explicit --timeout: it covers preparation, work, grading and cleanup.
-		{"no timeout", []string{"./s.yaml", "codex"}, "", nil, 0, 0, 0, "", true},
-		{"dry run still needs timeout", []string{"./s.yaml", "codex", "--dry-run"}, "", nil, 0, 0, 0, "", true},
-		{"missing flag value", []string{"./s.yaml", "codex", "--jobs"}, "", nil, 0, 0, 0, "", true},
-		{"repeated flag", []string{"./s.yaml", "codex", "--jobs", "2", "--jobs", "3", "--timeout", "10m"}, "", nil, 0, 0, 0, "", true},
-		{"zero jobs", []string{"./s.yaml", "codex", "--jobs", "0", "--timeout", "10m"}, "", nil, 0, 0, 0, "", true},
-		{"non-number repeat", []string{"./s.yaml", "codex", "--repeat", "lots", "--timeout", "10m"}, "", nil, 0, 0, 0, "", true},
-		{"bad timeout", []string{"./s.yaml", "codex", "--timeout", "soon"}, "", nil, 0, 0, 0, "", true},
-		{"unknown flag", []string{"./s.yaml", "codex", "--turbo", "--timeout", "10m"}, "", nil, 0, 0, 0, "", true},
+		{"no timeout", []string{"./s.yaml", "codex"}, "", nil, 0, 0, 0, "", "Missing --timeout"},
+		{"dry run still needs timeout", []string{"./s.yaml", "codex", "--dry-run"}, "", nil, 0, 0, 0, "", "Missing --timeout"},
+		{"missing flag value", []string{"./s.yaml", "codex", "--jobs"}, "", nil, 0, 0, 0, "", `Missing value for "--jobs"`},
+		{"repeated flag", []string{"./s.yaml", "codex", "--jobs", "2", "--jobs", "3", "--timeout", "10m"}, "", nil, 0, 0, 0, "", `Option "--jobs" can only be used once`},
+		{"zero jobs", []string{"./s.yaml", "codex", "--jobs", "0", "--timeout", "10m"}, "", nil, 0, 0, 0, "", `Invalid value "0" for "--jobs"`},
+		{"non-number repeat", []string{"./s.yaml", "codex", "--repeat", "lots", "--timeout", "10m"}, "", nil, 0, 0, 0, "", `Invalid value "lots" for "--repeat"`},
+		{"bad timeout", []string{"./s.yaml", "codex", "--timeout", "soon"}, "", nil, 0, 0, 0, "", `Invalid value "soon" for "--timeout"`},
+		{"unknown flag", []string{"./s.yaml", "codex", "--turbo", "--timeout", "10m"}, "", nil, 0, 0, 0, "", `Unknown option "--turbo"`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			suite, configs, opts, err := parseEvalRunArgs(c.args)
-			if (err != nil) != c.wantErr {
-				t.Fatalf("err = %v, wantErr %v", err, c.wantErr)
+			if (err != nil) != (c.wantErr != "") {
+				t.Fatalf("err = %v, wantErr %q", err, c.wantErr)
 			}
-			if c.wantErr {
+			if c.wantErr != "" {
+				if !strings.Contains(err.Error(), c.wantErr) {
+					t.Fatalf("err = %q, want %q", err, c.wantErr)
+				}
 				return
 			}
 			if suite != c.wantSuite || strings.Join(configs, ",") != strings.Join(c.wantConfigs, ",") ||
@@ -50,6 +53,25 @@ func TestParseEvalRunArgs(t *testing.T) {
 				opts.LoopConfigOverride != c.wantLoop {
 				t.Errorf("parse(%v) = suite %q configs %v jobs %d repeat %d timeout %s loop %q",
 					c.args, suite, configs, opts.Jobs, opts.Repeat, opts.Timeout, opts.LoopConfigOverride)
+			}
+		})
+	}
+}
+
+func TestEvalCompareNamesTheMissingOrExtraRunID(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"missing before", nil, "Missing before run ID"},
+		{"missing after", []string{"before"}, "Missing after run ID"},
+		{"extra", []string{"before", "after", "third"}, `Unexpected argument "third"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, err := (&app{}).evalCompare(tc.args)
+			if code != 2 || err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "coop eval compare <before-id> <after-id>") {
+				t.Errorf("evalCompare(%q) = (%d, %v), want input refusal naming %q and the usage", tc.args, code, err, tc.want)
 			}
 		})
 	}

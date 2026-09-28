@@ -220,11 +220,11 @@ func (s *Suite) validateCase(c *Case) error {
 		if c.Instruction != "" || c.Files != "" {
 			return fmt.Errorf("case %q uses agent fields (instruction/files) in a loop suite", c.ID)
 		}
-		for name, p := range map[string]string{"fixture": c.Fixture, "tasks": c.Tasks} {
-			if strings.TrimSpace(p) == "" {
-				return fmt.Errorf("loop case %q has no %s", c.ID, name)
+		for _, field := range []struct{ name, path string }{{"fixture", c.Fixture}, {"tasks", c.Tasks}} {
+			if strings.TrimSpace(field.path) == "" {
+				return fmt.Errorf("loop case %q has no %s", c.ID, field.name)
 			}
-			if err := s.relPath("case "+c.ID+" "+name, p); err != nil {
+			if err := s.relPath("case "+c.ID+" "+field.name, field.path); err != nil {
 				return err
 			}
 		}
