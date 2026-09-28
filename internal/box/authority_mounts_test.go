@@ -402,10 +402,9 @@ func TestEvalMountAllowsOnlyItsGeneratedWorkspace(t *testing.T) {
 		{"candidate cannot mount run record", candidate, []string{"-v", filepath.Join(evalRoot, "run-1") + ":/run:ro"}, false},
 		{"candidate cannot mount eval root", candidate, []string{"-v", evalRoot + ":/eval:ro"}, false},
 		{"candidate cannot mount credential sibling", candidate, []string{"-v", credential + ":/credentials:ro"}, false},
-		{"grader snapshot and read-only verifier", grader, []string{"-v", snapshot + ":/workspace", "-v", verifier + ":/verifier:ro"}, true},
+		{"grader refuses old verifier source", grader, []string{"-v", snapshot + ":/workspace", "-v", verifier + ":/verifier:ro"}, false},
 		{"grader snapshot and read-only staged verifier", stagedGrader, []string{"-v", snapshot + ":/workspace", "-v", stagedVerifier + ":/verifier:ro"}, true},
 		{"grader cannot write staged verifier", stagedGrader, []string{"-v", stagedVerifier + ":/verifier"}, false},
-		{"grader cannot write verifier", grader, []string{"-v", verifier + ":/verifier"}, false},
 		{"grader cannot mount candidate workspace", grader, []string{"-v", workspace + ":/other"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

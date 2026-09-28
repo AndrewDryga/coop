@@ -1553,13 +1553,13 @@ TRY IT
 
 RUN AND COMPARE
   coop eval run <suite> <target|preset>...  run a suite; --timeout is required
-  coop eval runs                          find runs, configurations and outcomes
-  coop eval inspect [<run-id>]             read results and causes; latest by default
+  coop eval runs                            find runs, configurations and outcomes
+  coop eval inspect [<run-id>]              read results and causes; latest by default
   coop eval compare <before-id> <after-id>  compare two recorded runs without spending
 
 CHOOSE A SUITE
-  coop eval ls                            list the shipped starter suites
-  coop eval init <dir>                     create an editable custom suite
+  coop eval ls                              list the shipped starter suites
+  coop eval init <dir>                      create an editable custom suite
 
   core   Three single-agent tasks. Use provider targets, not presets.
   queue  A real loop over ten tasks. Use targets or presets; allow hours, not minutes.
@@ -1584,7 +1584,7 @@ OPTIONS
   --timeout <duration>  required total budget, including preparation and grading
   --dry-run             print the plan without launching containers or providers
   --repeat <n>          trials per case and configuration (default: 1)
-  --jobs <n>            concurrent trials (default: 1; loop suites run serially)
+  --jobs <n>            concurrent trials (default: 1)
   --loop-config <path>  use this loop recipe instead of the loop suite's recipe
 
 BEFORE A REAL RUN
@@ -1929,7 +1929,6 @@ The option selects the runtime image; it does not filter build traffic.
 Run after changing the box Dockerfile or .tool-versions.
 Builds use the configured versions and available cache.
 Use coop update --box-only to refresh the ordinary image's components.
-Filtered project images require coop build --egress filtered instead.
 
 New runs use the rebuilt image. Supervised editor sessions restart and
 reconnect. Other running boxes use the old image until their next start.

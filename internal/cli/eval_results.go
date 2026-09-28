@@ -166,11 +166,8 @@ func evalResultLine(s eval.RunSummary) string {
 	}{{eval.TrialFailed, "failed"}, {eval.TrialError, "errors"}, {eval.TrialTimedOut, "timed out"}, {eval.TrialPending, "pending"}, {eval.TrialRunning, "running"}} {
 		if n := s.Counts[st.status]; n > 0 {
 			label := st.label
-			if st.status == eval.TrialError {
-				label = "errors"
-				if n == 1 {
-					label = "error"
-				}
+			if st.status == eval.TrialError && n == 1 {
+				label = "error"
 			}
 			parts = append(parts, fmt.Sprintf("%d %s", n, label))
 		}

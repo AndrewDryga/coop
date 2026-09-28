@@ -273,7 +273,7 @@ func TestRepositoryCopiesKeepPinnedPolicyAuthorityAfterRepositoryReplacement(t *
 	}
 	writeCopyFixture(t, filepath.Join(repo, "source", "private.txt"), "replacement private")
 	dst := filepath.Join(t.TempDir(), "copy")
-	if err := copySourceTree(dst, tree, policy); err != nil {
+	if err := copySourceTree(dst, tree, policy, nil); err != nil {
 		t.Fatal(err)
 	}
 	if data, err := os.ReadFile(filepath.Join(dst, "public.txt")); err != nil || string(data) != "public" {
@@ -305,7 +305,7 @@ func TestRepositoryCopiesKeepPinnedSourceAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	dst := t.TempDir()
-	if err := copySourceTree(dst, tree, policy); err != nil {
+	if err := copySourceTree(dst, tree, policy, nil); err != nil {
 		t.Fatal(err)
 	}
 	if data, err := os.ReadFile(filepath.Join(dst, "SKILL.md")); err != nil || string(data) != "inside" {

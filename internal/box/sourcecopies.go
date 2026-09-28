@@ -284,7 +284,7 @@ type sourceCopyBudget struct {
 // raw no-follow semantics, so a repo writer cannot swap a listed file or directory into a link or
 // FIFO. The same shadow predicate as the primary repository mount is applied before any byte is
 // read, preventing a real `.env` or .coopignore-hidden file from reappearing in a synthesized home.
-func copySourceTree(dst string, source *os.File, policy *sourceVisibility) error {
+func copySourceTree(dst string, source *os.File, policy *sourceVisibility, skip func(string) bool) error {
 	sourceRel := filepath.FromSlash(policy.realRel)
 	if policy.Shadowed(filepath.ToSlash(sourceRel)) {
 		return fmt.Errorf("repository source %s is hidden by Coop's secret policy", filepath.ToSlash(sourceRel))
@@ -309,7 +309,7 @@ func copySourceTree(dst string, source *os.File, policy *sourceVisibility) error
 	if budget.policyBytes > shadowpath.MaxSnapshotPolicyBytes {
 		return fmt.Errorf("repository copy policy exceeds %d bytes", shadowpath.MaxSnapshotPolicyBytes)
 	}
-	if err := copySourceDirectory(dst, copySource, rootInfo, sourceRel, ".", 0, budget, policy); err != nil {
+	if err := copySourceDirectory(dst, copySource, rootInfo, sourceRel, ".", 0, budget, policy, skip); err != nil {
 		return err
 	}
 	copyRoot, err := os.OpenRoot(dst)
@@ -358,7 +358,7 @@ func prepareCopyDestination(dst string) error {
 }
 
 func copySourceDirectory(dst string, source *os.File, sourceRoot os.FileInfo, sourceRel, treeRel string,
-	depth int, budget *sourceCopyBudget, policy *sourceVisibility,
+	depth int, budget *sourceCopyBudget, policy *sourceVisibility, skip func(string) bool,
 ) error {
 	if depth > maxSourceCopyDepth {
 		return fmt.Errorf("repository copy exceeds %d directory levels", maxSourceCopyDepth)
@@ -366,12 +366,15 @@ func copySourceDirectory(dst string, source *os.File, sourceRoot os.FileInfo, so
 	for {
 		entries, readErr := source.ReadDir(128)
 		for _, entry := range entries {
+			name := entry.Name()
+			childTreeRel := filepath.Join(treeRel, name)
+			if skip != nil && skip(filepath.ToSlash(childTreeRel)) {
+				continue
+			}
 			budget.entries++
 			if budget.entries > maxSourceCopyEntries {
 				return fmt.Errorf("repository copy exceeds %d entries", maxSourceCopyEntries)
 			}
-			name := entry.Name()
-			childTreeRel := filepath.Join(treeRel, name)
 			repoRel := filepath.ToSlash(filepath.Join(sourceRel, childTreeRel))
 			if policy.Shadowed(repoRel) {
 				continue
@@ -423,7 +426,7 @@ func copySourceDirectory(dst string, source *os.File, sourceRoot os.FileInfo, so
 					return fmt.Errorf("repository copy policy exceeds %d bytes", shadowpath.MaxSnapshotPolicyBytes)
 				}
 				err = copySourceDirectory(destination, child, sourceRoot, sourceRel, childTreeRel,
-					depth+1, budget, childPolicy)
+					depth+1, budget, childPolicy, skip)
 				err = errors.Join(err, child.Close())
 				if err != nil {
 					return err

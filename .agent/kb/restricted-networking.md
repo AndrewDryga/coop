@@ -3,7 +3,7 @@ name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
 sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go]
-updated: 2026-09-27
+updated: 2026-09-28
 ---
 
 `coop <agent> --egress filtered` runs the box behind a per-run gateway. Five boring layers stand
@@ -156,8 +156,9 @@ Traps:
   the filtered image; plain `coop build` follows the effective project posture. The build itself
   still has ordinary Docker networking, so review the Dockerfile and copied files first.
   `filteredProjectImage` consumes only a version-2 host approval, never building on a miss. Legacy
-  version-1 automatic-build memos are not authority. Open automatic builds remain available;
-  `BuildWith` refuses automatic project builds for filtered/offline modes.
+  version-1 automatic-build memos are not authority. An open editor connection may build a
+  missing project image; ordinary launches do not rebuild changed project inputs. `BuildWith`
+  refuses automatic project builds for filtered/offline modes.
 - Approval binds the exact sanitized context (kind, path, mode/link target, bytes), daemon, locked
   image, client closure, tags, Dockerfile path and build environment. Only an explicit build writes
   it, after both image proofs, for the digest produced WHILE staging and the ID from `--iidfile`.
@@ -268,6 +269,8 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-28 — narrowed the open automatic-build note to the missing-image editor path after
+  checking `ensureACPImage`, `BuildWith` and ordinary launch behavior.
 - 2026-09-27 — rechecked `Admission`, `CaptureJob` and the withdrawal marker: removed the
   retired named-policy branch while preserving the direct-launch ladder and separate job capture;
   corrected the retired `AdmitSessionNetwork` reference to `AdmitControllerJobNetwork`.

@@ -509,7 +509,7 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 			// before the error is acted on — the same shape Run uses.
 			defer func() {
 				var teardownErr error
-				result, teardownErr = filtered.teardown(spec, sections, forkspace.ExecutionRecord{}, exitCode, result, filteredStopped, restrictedInterrupt)
+				result, teardownErr = filtered.teardown(spec, sections, forkspace.ExecutionRecord{}, exitCode, result, filteredStopped)
 				if teardownErr == nil {
 					result = sections.explained(result, restrictedInterrupt)
 				}
@@ -911,19 +911,11 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	return code, runErr
 }
 
-// launchRestrictedFiltered is everything after the gateway is prepared: the two refusals that keep a
-// composed box from being wider than a restricted one, and the launch itself. Split from the
-// preparation so it can be driven by the filtered suite's fake daemon — the preparation is
-// filtered-alone's code and is tested there, while THIS is where the composition's own decisions are.
+// launchRestrictedFiltered launches the composed box after preparation has admitted the shared
+// base image. Split from preparation so the filtered suite's fake daemon can exercise the launch.
 func launchRestrictedFiltered(filtered *filteredExecution, spec RunSpec, sections *launchSections,
 	options, cmd []string, stdin io.Reader, stdout, stderr io.Writer,
 	started *bool, interrupt *hostInterrupt, stopped *string) (int, error) {
-	// The gateway's own image substitution must not reach a restricted box: prepareFilteredExecution
-	// skips a project's derived image for these modes (filtered.go), and this proves it did, because
-	// the image is what the filesystem profile is a contract ABOUT.
-	if filtered.record.ProjectImage != "" {
-		return -1, fmt.Errorf("a restricted run cannot use this project's own box image (%s)", filtered.record.ProjectImage)
-	}
 	spec.Image = filtered.image // the qualified client image, by digest, never a repo image
 	spec.Cmd = cmd
 	sections.starting()

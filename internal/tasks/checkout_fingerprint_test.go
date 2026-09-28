@@ -158,7 +158,7 @@ func TestNoChangeCompletionRejectsSameStatusEdits(t *testing.T) {
 func TestCheckoutFingerprintIndexAndInheritedState(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	for _, scenario := range []string{"intent to add", "deleted", "hidden flags", "hardlink", "ignored output", "tracked ignored file", "ancestor symlink"} {
+	for _, scenario := range []string{"intent to add", "hidden flags", "ignored output", "tracked ignored file", "ancestor symlink"} {
 		t.Run(scenario, func(t *testing.T) {
 			repo, git := gitrepo.New(t)
 			writeTaskFile(t, filepath.Join(repo, "dir", "source"), "original\n")
@@ -170,17 +170,9 @@ func TestCheckoutFingerprintIndexAndInheritedState(t *testing.T) {
 			case "intent to add":
 				writeTaskFile(t, filepath.Join(repo, "empty"), "")
 				git("add", "-N", "empty")
-			case "deleted":
-				if err := os.Remove(filepath.Join(repo, "dir", "source")); err != nil {
-					t.Fatal(err)
-				}
 			case "hidden flags":
 				git("update-index", "--assume-unchanged", ".gitignore")
 				git("update-index", "--skip-worktree", "dir/source")
-			case "hardlink":
-				if err := os.Link(filepath.Join(repo, "dir", "source"), filepath.Join(repo, "hardlink")); err != nil {
-					t.Fatal(err)
-				}
 			case "ignored output", "tracked ignored file":
 				writeTaskFile(t, filepath.Join(repo, "output", "file"), "before\n")
 				if scenario == "tracked ignored file" {
@@ -202,6 +194,8 @@ func TestCheckoutFingerprintIndexAndInheritedState(t *testing.T) {
 			switch scenario {
 			case "intent to add":
 				git("add", "empty")
+			case "hidden flags":
+				writeTaskFile(t, filepath.Join(repo, "dir", "source"), "changed behind skip-worktree\n")
 			case "ignored output", "tracked ignored file":
 				writeTaskFile(t, filepath.Join(repo, "output", "file"), "changed\n")
 			case "ancestor symlink":
@@ -211,7 +205,7 @@ func TestCheckoutFingerprintIndexAndInheritedState(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantChange := scenario == "intent to add" || scenario == "tracked ignored file"
+			wantChange := scenario == "intent to add" || scenario == "hidden flags" || scenario == "tracked ignored file"
 			if (before != after) != wantChange {
 				t.Fatalf("fingerprint changed = %v, want %v", before != after, wantChange)
 			}

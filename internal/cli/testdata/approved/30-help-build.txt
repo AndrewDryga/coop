@@ -25,7 +25,6 @@ The option selects the runtime image; it does not filter build traffic.
 Run after changing the box Dockerfile or .tool-versions.
 Builds use the configured versions and available cache.
 Use coop update --box-only to refresh the ordinary image's components.
-Filtered project images require coop build --egress filtered instead.
 
 New runs use the rebuilt image. Supervised editor sessions restart and
 reconnect. Other running boxes use the old image until their next start.

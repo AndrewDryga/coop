@@ -8,7 +8,10 @@ import (
 	"github.com/AndrewDryga/coop/internal/egress"
 )
 
+// QualificationSchema is the committed locked-client evidence format.
 const QualificationSchema = 2
+
+// QualificationNotConfigured marks a provider without a second account for recovery testing.
 const QualificationNotConfigured = "not_configured"
 
 // Qualification is the operator-run evidence beside locked-clients/package-lock.json. A matching
@@ -22,6 +25,7 @@ type Qualification struct {
 	Suites      map[string]map[string]string `json:"suites"`
 }
 
+// QualificationEvidence names what each required suite must prove.
 type QualificationEvidence int
 
 const (
@@ -30,6 +34,7 @@ const (
 	QualificationAccounts
 )
 
+// QualificationSuite is one required provider scope and its evidence kind.
 type QualificationSuite struct {
 	Name      string
 	Providers []string

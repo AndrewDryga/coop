@@ -61,7 +61,7 @@ clone. If a container runtime is present, the installer also builds the sandbox 
 and runs `coop doctor`; otherwise do that once yourself:
 
 ```bash
-coop build && coop doctor
+coop build --egress open && coop doctor
 ```
 
 **Requirements:** the installer needs `curl`, `tar`, and either `sha256sum` or
@@ -125,7 +125,7 @@ curl -fsSL https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh | 
 cd ~/code/your-repo        # 1. any git repo
 coop init                  # 2. scaffold AGENTS.md, the .agent/ queue, and the hooks
 coop login claude          # 3. authenticate once (paste-code, no browser; token persists)
-coop doctor                # 4. prove isolation holds (run 'coop build' first if needed)
+coop doctor                # 4. prove isolation holds (run 'coop build --egress open' first if needed)
 
 # 5. queue a few tasks (a folder each under .agent/tasks/00_todo/)…
 coop tasks add "Add a /health endpoint"
@@ -159,7 +159,7 @@ Anything after the agent name is passed through to it, on top of those flags —
 exception: its `-p` is `--profile`, not a prompt, so run a one-shot prompt with
 `coop codex exec "…"` and use `-p` only to pick a profile.)
 
-If `coop doctor` says the image isn't built, run `coop build` once. Stuck on any step?
+If `coop doctor` says the image isn't built, run `coop build --egress open` once. Stuck on any step?
 See [Troubleshooting](#troubleshooting). New to forks and reviewing agent work like a
 PR? Jump to [Forks](#forks-hand-off-work-like-a-pr).
 
@@ -272,13 +272,12 @@ spelled out here (there's room to render them).
 | `coop completion <shell>` | shell tab-completion (bash, zsh) |
 | `coop help` · `version` | print help · print the version |
 
-For Zsh, generate with `coop completion zsh > "${fpath[1]}/_coop"`, then source that
-file after `compinit` in `.zshrc`: `source "${fpath[1]}/_coop"`. Existing file-only
-installs need the source line too — autoloading alone registers completion but never
-runs the file's `alias coop='nocorrect coop'`, so `CORRECT_ALL` still offers to correct
-`coop codex` to your `.codex/` directory. Sourcing keeps Zsh spelling correction on
-globally while marking only `coop` arguments `nocorrect`. Neither coop nor its installer
-edits your shell startup files; the source line is yours to add.
+For Zsh, save `coop completion zsh > ~/.config/coop/completion.zsh` (create that
+directory first), then add `source ~/.config/coop/completion.zsh` after `compinit`
+in `.zshrc`. Sourcing runs the script's `alias coop='nocorrect coop'`; merely
+autoloading completion leaves `CORRECT_ALL` offering to correct `coop codex` to
+your `.codex/` directory. Neither coop nor its installer edits your shell startup
+files; the source line is yours to add.
 
 ## The sandbox
 
@@ -1073,7 +1072,8 @@ the same before and after your change, then compare the recorded results.
 - `core`: three small single-agent coding tasks with independent checks and deliberate near
   misses. Use provider targets, such as `codex:gpt-5.6/xhigh`, not presets.
 - `queue`: ten tasks worked by the real `coop loop`, including review and signoff. Use it to
-  compare presets or loop recipes; it runs serially and can take hours. For example,
+  compare presets or loop recipes; each trial works its tasks in sequence and can take hours.
+  For example,
   `coop eval run queue frontier --timeout 2h` uses your existing `frontier` preset.
   Add `--loop-config .agent/loop.yaml` to evaluate your project's recipe.
 - Your own suite: `coop eval init ./evals/my-suite` creates a working greeting example.
@@ -1623,6 +1623,7 @@ system package, add it to the `RUN` line and `coop build` again — the dependen
 *graduates into the image* instead of being installed each run. If you change
 `.agent/Dockerfile` or `.tool-versions` but forget to rebuild, `coop` notices on the next
 run and reminds you to `coop build` (it records the image's inputs at build time).
+The selected Dockerfile must be a regular in-repo file, not a symlink.
 
 Prefer to keep the box definition elsewhere — reuse a stage of your app's existing
 `Dockerfile`, or point sidecars at your own `docker-compose.yml` instead of maintaining a
@@ -1794,8 +1795,10 @@ Docker image ID shown at review and starts that ID with pulling disabled. An unc
 cannot silently follow a moved image tag. `coop up` at a terminal can review a locally updated tag;
 declining that renewal leaves the previous approval in place and stops this start. If the pinned
 image was removed, startup stops before creating a container; pull the tag and run `coop up` to
-review it again. A first approval may pull an uncached image through Docker's existing registry
-authentication. Services without these elevated grants keep normal image updates.
+review it again. Reviewing a first approval may pull an uncached image through Docker's existing
+registry authentication before you confirm; declining does not start the service or grant it
+access, but the image remains in Docker's cache. Services without these elevated grants keep
+normal image updates.
 The approval is also tied to this checkout's private identity: copying the Compose file or its
 marker to a second checkout does not transfer it. The first `coop up` after upgrading older
 content-only approvals asks again; automatic starts use decoys until then.
@@ -2065,8 +2068,8 @@ when a tool needs current joined state.
 
 | Symptom | Fix |
 |---|---|
-| **"no container runtime found"** | Install Docker or Apple [`container`](https://github.com/apple/container) (macOS 26+), then `coop build && coop doctor`. Force one with `COOP_RUNTIME=docker`. |
-| **"image … isn't built — run 'coop build'"** | `coop build` (shared base), or `coop build` in a repo with a `.agent/Dockerfile` (its own image). |
+| **"no container runtime found"** | Install Docker or Apple [`container`](https://github.com/apple/container) (macOS 26+), then `coop build --egress open && coop doctor`. Force one with `COOP_RUNTIME=docker`. |
+| **"image … isn't built"** | Run `coop build --egress open` to prepare the ordinary image; use a directory without a project Dockerfile for the shared base. |
 | **Login hangs or "usage limit reached"** | `coop login <agent>` re-runs the sign-in (paste-code, no browser). Hit a subscription limit? It resets on a schedule — wait, or `coop login` into another account. The unattended loop waits out the reset on its own; a [Zed session](#drive-it-from-zed-acp) rotates to your next signed-in account and re-sends by itself. |
 | **Gemini says its Google sign-in client is no longer supported** | Google retired Gemini CLI access for individual Google accounts. Run `coop login gemini[@<name>]` and paste a Gemini API key from the displayed AI Studio link; Coop does not launch that retired Google flow. Enterprise Gemini CLI and Vertex credentials remain separate provider-supported options and are not supported with `--egress filtered`. Coop refuses Vertex `GOOGLE_API_KEY` in every network mode. |
 | **Agent seems stuck / a detached loop won't quit** | `coop fork logs <name> -f` to watch it; `coop fork stop <name>` to stop a detached loop. A foreground run is just Ctrl-C. |

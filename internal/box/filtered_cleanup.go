@@ -6,10 +6,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/AndrewDryga/coop/internal/forkspace"
 	"io"
 	"sync"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/networkgateway"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -332,7 +332,7 @@ func (f *filteredExecution) removeResource(evidence *networkstate.Evidence, role
 // It takes the caller's final exit code, error and stop reason, and returns the error to report plus
 // the teardown error the caller records; everything else it needs it already owns.
 func (f *filteredExecution) teardown(spec RunSpec, sections *launchSections, execution forkspace.ExecutionRecord,
-	exitCode int, result error, stopped string, interrupt *hostInterrupt) (reported error, teardownErr error) {
+	exitCode int, result error, stopped string) (reported error, teardownErr error) {
 	workload := f.workloadOutcome(exitCode, result, spec.Ctx.Err() != nil)
 	// This process owns the box, its gateway, its volumes and its receipt: none of it
 	// is --rm, so the stop is only real once cleanup says so. A teardown slow enough

@@ -321,8 +321,14 @@ func TestEvalTrialConfigDropsMCPAndDoesNotTouchTheCallers(t *testing.T) {
 	if _, err := applyEvalConfiguration(cfg, eval.FrozenConfig{Kind: eval.ConfigTarget, Label: "codex@work"}); err != nil {
 		t.Fatal(err)
 	}
+	if dir := cfg.AgentDir("codex"); !strings.Contains(dir, "work") {
+		t.Errorf("the pinned account was dropped from the trial credential home: %q", dir)
+	}
 	if dir := base.AgentDir("codex"); strings.Contains(dir, "work") {
 		t.Errorf("the trial's account selection leaked into the caller's config: %q", dir)
+	}
+	if _, err := applyEvalConfiguration(cfg, eval.FrozenConfig{Kind: eval.ConfigTarget, Label: "codex@work,personal"}); err == nil || !strings.Contains(err.Error(), "exactly one") {
+		t.Errorf("a two-account ladder should be refused, got %v", err)
 	}
 }
 
@@ -397,7 +403,7 @@ func TestTrialAttemptCannotRewriteTheNextTrialsInstructions(t *testing.T) {
 		}
 	}
 	if attempt == "" {
-		t.Skip("no credential-carrying attempt in this environment")
+		t.Fatalf("no credential-carrying attempt was recorded:\n%s", data)
 	}
 	// Every mount that lands on an agent instruction file or its config must be read-only.
 	for _, field := range strings.Fields(attempt) {

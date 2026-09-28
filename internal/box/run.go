@@ -814,7 +814,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			// One implementation, called from every path that starts a filtered launch — see
 			// filteredExecution.teardown for why it must not be copied into a second launcher.
 			defer func() {
-				result, teardownErr = filtered.teardown(spec, sections, execution, exitCode, result, stopped, interrupt)
+				result, teardownErr = filtered.teardown(spec, sections, execution, exitCode, result, stopped)
 			}()
 		}
 		if err != nil {
@@ -1965,7 +1965,7 @@ func repoReadOnlyPathMounts(repo, workdir string, paths []string, artifactParent
 		}
 		snapshots = append(snapshots, snapshotParent)
 		snapshot := filepath.Join(snapshotParent, "tree")
-		copyErr := copySourceTree(snapshot, source, policy)
+		copyErr := copySourceTree(snapshot, source, policy, skipReviewTaskBulk)
 		copyErr = errors.Join(copyErr, source.Close())
 		if copyErr != nil {
 			return fail(fmt.Errorf("snapshot read-only repository path %q: %w", path, copyErr))
@@ -1975,6 +1975,25 @@ func repoReadOnlyPathMounts(repo, workdir string, paths []string, artifactParent
 		})
 	}
 	return mounts, snapshots, nil
+}
+
+// A review needs task notes and current evidence, not disposable worktrees or
+// binary evidence archived with old tasks. Those can exceed the bounded copy
+// budget before the reviewer ever starts.
+func skipReviewTaskBulk(rel string) bool {
+	parts := strings.Split(rel, "/")
+	if len(parts) != 3 {
+		return false
+	}
+	switch parts[0] {
+	case "00_todo", "10_in_progress", "50_blocked", "99_done", "xx_backlog":
+	default:
+		return false
+	}
+	if parts[2] == "tmp" {
+		return true
+	}
+	return parts[0] == "99_done" && (parts[2] == "artifacts" || parts[2] == "screenshots")
 }
 
 func projectPolicyRepo(spec RunSpec) string {
@@ -2370,7 +2389,7 @@ func synthSkillsMounts(repo, homeInBox, artifactParent string, agentNames []stri
 		if err != nil {
 			return nil, nil, fmt.Errorf("prepare skills for %s: %w", ag, err)
 		}
-		if err := copySourceTree(dst, source, policy); err != nil {
+		if err := copySourceTree(dst, source, policy, nil); err != nil {
 			_ = os.RemoveAll(dst)
 			return nil, nil, fmt.Errorf("copy skills for %s from %s: %w", ag, src, err)
 		}
@@ -2433,7 +2452,7 @@ func synthHomeFallbackMounts(repo, homeInBox, artifactParent string, agentNames 
 				var policy *sourceVisibility
 				tree, policy, err = sources.openTree(source)
 				if err == nil {
-					err = copySourceTree(dst, tree, policy)
+					err = copySourceTree(dst, tree, policy, nil)
 					_ = tree.Close()
 				}
 			} else {

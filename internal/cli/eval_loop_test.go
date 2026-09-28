@@ -10,6 +10,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/eval"
+	"github.com/AndrewDryga/coop/internal/loop"
 )
 
 const loopSuiteYAML = `version: 1
@@ -49,6 +50,25 @@ func loopSuite(t *testing.T) *eval.Suite {
 		t.Fatal(err)
 	}
 	return suite
+}
+
+func TestEvalLoopDryRunShowsSelectedRecipe(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	suite := loopSuite(t)
+	override := filepath.Join(t.TempDir(), "override.yaml")
+	if err := os.WriteFile(override, []byte("signoff:\n  rounds: 3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
+	out := captureStdout(t, func() {
+		code, err := a.evalRun([]string{suite.Path, "codex", "--timeout", "10m", "--loop-config", override, "--dry-run"})
+		if code != 0 || err != nil {
+			t.Fatalf("dry run: %d, %v", code, err)
+		}
+	})
+	if !strings.Contains(out, "Loop config: "+override+"\n") {
+		t.Fatalf("dry run did not show the selected recipe %s:\n%s", override, out)
+	}
 }
 
 func loopRunner(t *testing.T, suite *eval.Suite, presets map[string]string) *trialRunner {
@@ -342,7 +362,7 @@ func TestLoopOutcomeDecidesWhatIsGradable(t *testing.T) {
 		{"queue drained", loopExitDrained, nil, true},
 		{"work remained", loopExitWorkRemains, nil, true},
 		{"blocked on a human decision", loopExitBlocked, nil, true},
-		{"interrupted", loopExitInterrupted, nil, false},
+		{"interrupted", loop.LoopInterruptedExitCode, nil, false},
 		{"refused to start", 2, nil, false},
 		{"killed by a signal", -1, nil, false},
 		{"deadline wins over any exit code", loopExitDrained, context.DeadlineExceeded, false},
@@ -353,5 +373,8 @@ func TestLoopOutcomeDecidesWhatIsGradable(t *testing.T) {
 				t.Errorf("gradable = %v, want %v (err %v)", gradable, tc.wantGrade, err)
 			}
 		})
+	}
+	if err := loopOutcome(-1, nil); err == nil || !strings.Contains(err.Error(), "killed") {
+		t.Errorf("a signalled loop was reported as a start refusal: %v", err)
 	}
 }

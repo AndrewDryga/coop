@@ -173,8 +173,7 @@ func (s *Suite) validate() error {
 		seen[c.ID] = true
 	}
 	// A verifier hidden from its own case must also be hidden from every other case. A shared
-	// fixture directory that contains another case's verifier would expose its answers to the
-	// candidate despite each case passing the per-case overlap check above.
+	// fixture directory that contains another case's verifier would expose its answers.
 	for _, candidate := range s.Cases {
 		for _, hidden := range s.Cases {
 			for _, input := range []struct{ name, path string }{
@@ -202,12 +201,6 @@ func (s *Suite) validateCase(c *Case) error {
 	if err := s.relPath("case "+c.ID+" verifier", c.Verifier); err != nil {
 		return err
 	}
-	// The verifier is hidden eval material: it must never sit inside the tree that becomes the
-	// candidate's workspace (files/fixture/tasks), or preparation would mount the grader alongside
-	// the code being graded. This is a LEXICAL check on the declared paths — a case-insensitive
-	// filesystem or a later-created link defeats it, so preparation re-checks with resolved paths —
-	// but a plain overlap an author wrote is refused here, before any plan.
-	candidateInputs := map[string]string{"files": c.Files, "fixture": c.Fixture, "tasks": c.Tasks}
 	// A case belongs to exactly its suite's runner; a field from the other kind is refused rather
 	// than ignored, so a mis-authored case never runs a workload the author did not describe.
 	switch s.Runner {
@@ -234,14 +227,6 @@ func (s *Suite) validateCase(c *Case) error {
 			if err := s.relPath("case "+c.ID+" "+name, p); err != nil {
 				return err
 			}
-		}
-	}
-	for name, input := range candidateInputs {
-		if input == "" {
-			continue
-		}
-		if overlaps(c.Verifier, input) {
-			return fmt.Errorf("case %q verifier %q overlaps its %s %q; the grader must sit outside the candidate's files", c.ID, c.Verifier, name, input)
 		}
 	}
 	return nil

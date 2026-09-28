@@ -43,7 +43,7 @@ if [ "$before" != "ABC" ]; then
 	exit 1
 fi
 # And the shipped test must still be a real test.
-grep -q '"upper" "ABC" upper "abc"' test.sh || { echo "test.sh no longer tests the original behaviour"; exit 1; }
+grep -Eq 'expect[[:space:]]+"upper"[[:space:]]+"ABC"[[:space:]]+upper[[:space:]]+"abc"' test.sh || { echo "test.sh no longer tests the original behaviour"; exit 1; }
 if ! out=$(sh ./test.sh 2>&1); then
 	echo "test.sh fails: $out"
 	exit 1

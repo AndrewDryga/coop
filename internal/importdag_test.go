@@ -68,7 +68,7 @@ var allowedEdges = map[string][]string{
 	"preset":                {"agent", "safefile", "shadowpath"},
 	"processidentity":       nil,
 	"project":               {"egress"},
-	"runtime":               {"liveprocess"},
+	"runtime":               {"config", "liveprocess"},
 	"safefile":              nil,
 	"scaffold":              {"agent", "project", "taskstate"},
 	"session":               nil,

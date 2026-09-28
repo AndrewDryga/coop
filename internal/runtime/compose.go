@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/config"
 )
 
 // FreezeCompose records the local daemon selected for one service operation.
@@ -138,7 +140,15 @@ func composeAuthEnvironment() (string, error) {
 }
 
 func privateComposeClientConfig() (string, func(), error) {
-	root, err := os.MkdirTemp("", "coop-compose-client-")
+	coopHome := config.RootDir()
+	if err := config.EnsurePrivateDir(coopHome); err != nil {
+		return "", nil, err
+	}
+	parent := filepath.Join(coopHome, "runfiles")
+	if err := config.EnsurePrivateDir(parent); err != nil {
+		return "", nil, err
+	}
+	root, err := os.MkdirTemp(parent, "coop-compose-client-")
 	if err != nil {
 		return "", nil, err
 	}

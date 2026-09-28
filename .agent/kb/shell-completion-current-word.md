@@ -3,7 +3,7 @@ name: shell-completion-current-word
 description: Shell completion replaces the current word, and Bash 3.2 needs IFS kept away from the COMP_WORDS slice
 subsystem: cli
 sources: [internal/cli/completion.go, internal/cli/completion_test.go, internal/cli/approved_runtime_output_test.go, internal/cli/testdata/approved/75-completion-bash.txt]
-updated: 2026-09-22
+updated: 2026-09-28
 ---
 
 `coop __complete` receives every word after `coop` through the word being edited, including an
@@ -31,12 +31,14 @@ The complete emitted script is also pinned by `TestApprovedCompletionScripts`, i
 executable body, in `testdata/approved/75-completion-bash.txt`. A reviewed behavior change must
 update that transcript as well; a behavioral test pass alone does not prove the CLI gate passes.
 Review the full mismatch, not only its reported first differing line, and retain the byte-exact
-assertion. Preserve the fixture's editorial approval or explicit delegated-decision boundary.
+assertion. Update the approved transcript in the same commit as a script-output change.
 
 ## Changelog
-- 2026-09-22 — repaired the omitted approved transcript under the campaign's delegated routine
-  editorial authority. The before-failing exact-output check expected the old executable body,
-  not just an older header; no production behavior or output assertion was relaxed.
+- 2026-09-28 — replaced process jargon with the actionable transcript-update rule; rechecked the
+  script and approved fixture paths. The earlier fix changed the expected executable body, not only
+  its header, and did not relax an output assertion.
+- 2026-09-22 — repaired the omitted approved transcript; its exact-output check expected the old
+  executable body, not just an older header.
 - 2026-09-21 — reproduced empty and partial completion failures on Bash 3.2 and removed backend
   exact-command auto-advancement. The same script is also exercised on Linux Bash during audit.
   Actual typed model completion exposed both colon shapes on Bash 3.2 and 5.2; covered local

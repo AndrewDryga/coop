@@ -859,8 +859,8 @@ roles:
                     </ul>
                     <p>Each target after the suite is a separate configuration, not a fallback.
                         <code>--repeat 3</code> repeats every case three times;
-                        <code>--jobs 2</code> allows two agent trials at once. Loop suites
-                        run serially. See <code>coop help eval run</code> for all options.</p>
+                        <code>--jobs 2</code> allows two agent trials at once. Each loop trial
+                        works its tasks in sequence. See <code>coop help eval run</code> for all options.</p>
                     <h3>Understand failures before spending again</h3>
                     <p><code>coop eval inspect</code> reads the latest run; add a run ID to read
                         an older one. It shows non-passing trials, their recorded causes, and

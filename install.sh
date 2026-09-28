@@ -176,11 +176,11 @@ esac
 
 # Build the sandbox image + verify, when a container runtime is available.
 if [ "${COOP_NO_BUILD:-0}" = 1 ]; then
-  echo "coop: skipped image build (COOP_NO_BUILD=1) — next: coop build && coop doctor"
+  echo "coop: skipped image build (COOP_NO_BUILD=1) — next: coop build --egress open && coop doctor"
 elif command -v container >/dev/null 2>&1 || command -v docker >/dev/null 2>&1; then
-  if ! "$bindir/coop" build; then
+  if ! "$bindir/coop" build --egress open; then
     echo "Image build failed. The Coop binary is installed, but setup is incomplete." >&2
-    echo "Retry: coop build && coop doctor" >&2
+    echo "Retry: coop build --egress open && coop doctor" >&2
     exit 1
   fi
   if ! "$bindir/coop" doctor; then
@@ -190,7 +190,7 @@ elif command -v container >/dev/null 2>&1 || command -v docker >/dev/null 2>&1; 
   fi
 else
   echo "coop: no container runtime found — install Docker or Apple 'container',"
-  echo "      then run: coop build && coop doctor"
+  echo "      then run: coop build --egress open && coop doctor"
 fi
 
 echo

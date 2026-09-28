@@ -199,7 +199,6 @@ func (a *app) evalRun(args []string) (int, error) {
 		if err := os.WriteFile(filepath.Join(staged.Dir, "loop.yaml"), frozen[0].LoopConfig, 0o600); err != nil {
 			return 1, fmt.Errorf("freeze loop config: %w", err)
 		}
-		plan.LoopConfig = staged.LoopConfig
 	}
 	renderEvalPlan(plan, frozen)
 	fmt.Println()

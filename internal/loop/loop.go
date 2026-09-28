@@ -1219,15 +1219,19 @@ reviewAgain:
 				releaseErr := errors.Join(lease.Release(), windowErr)
 				refRelease()
 				if canRepair && restoreErr == nil && releaseErr == nil {
-					completionRepairs[assigned.Item.ID]++
 					outcome := "completion_rejected"
 					if parked {
+						// A later explicit unblock is a new human decision, not an automatic retry
+						// of the old claim. Do not carry its checkout or repair count across it.
+						delete(noChangeBaselines, baselineKey)
+						delete(completionRepairs, assigned.Item.ID)
 						outcome = "completion_blocked"
 						ui.Alert("“"+cleanDiagnosticLine(active)+"” still cannot be completed",
 							"The repair attempt did not produce an accepted completion.\nThe task is blocked for your decision.\nAnswer it: coop tasks decisions -i")
 						ui.Note("")
 						ui.Note("Continuing the task queue.")
 					} else {
+						completionRepairs[assigned.Item.ID]++
 						ui.Alert("Completion was not accepted for “"+cleanDiagnosticLine(active)+"”",
 							"No task-bound commit was found, starting one repair attempt.")
 					}

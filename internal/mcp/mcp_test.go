@@ -1088,6 +1088,13 @@ func TestControllerToolsBindingMergesWithoutExposingItsToken(t *testing.T) {
 		!strings.Contains(got, `"name":"shared"`) {
 		t.Fatalf("ACP servers = %s", got)
 	}
+	codex, _, err := GenerateCodex(writeTmp(t, "bound-codex.json", string(snapshot)), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(codex, "[mcp_servers.controller-tools]\nurl = \"https://responder.example/v1/state-tools/mcp\"\ntool_timeout_sec = 90\n") {
+		t.Fatalf("Codex controller tools need enough time for a 75-second controller call:\n%s", codex)
+	}
 }
 
 func TestControllerToolsBindingCannotBeShadowedBySharedConfiguration(t *testing.T) {

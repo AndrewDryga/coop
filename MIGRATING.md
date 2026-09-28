@@ -167,6 +167,9 @@ wholesale. Set `COOP_MCP_FILE` to a canonical path without `..`. V9 leaves an un
 and refuses the affected launch; after correcting the file or source path, retry the original
 command.
 
+Project Dockerfiles selected by `.agent/Dockerfile` or `box.dockerfile` must now be regular
+in-repository files. Replace a symlink with a regular copy before `coop build`.
+
 Fleet was a declarative wrapper over the fork and loop commands. v9 removes its command family,
 live board, and `.agent/fleet.yaml` parser while keeping the direct primitives:
 

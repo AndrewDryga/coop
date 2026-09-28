@@ -118,8 +118,8 @@ func TestLoadRefusesEveryMalformedManifestByName(t *testing.T) {
 		{"loop case with agent field", strings.Replace(loopSuite, "    fixture: ./fixtures/app\n", "    instruction: do it\n", 1), nil, "agent fields"},
 		{"loop case without tasks", strings.Replace(loopSuite, "    tasks: ./queues/repo-evolution\n", "", 1), nil, "no tasks"},
 		{"verifier is the suite dir", strings.Replace(agentSuite, "./verifiers/hello", ".", 1), nil, "suite directory itself"},
-		{"verifier inside files", strings.Replace(agentSuite, "    verifier: ./verifiers/hello\n", "    files: ./work\n    verifier: ./work/grader\n", 1), nil, "overlaps its files"},
-		{"files inside verifier", strings.Replace(agentSuite, "    verifier: ./verifiers/hello\n", "    files: ./v/sub\n    verifier: ./v\n", 1), nil, "overlaps its files"},
+		{"verifier inside files", strings.Replace(agentSuite, "    verifier: ./verifiers/hello\n", "    files: ./work\n    verifier: ./work/grader\n", 1), nil, "overlaps case"},
+		{"files inside verifier", strings.Replace(agentSuite, "    verifier: ./verifiers/hello\n", "    files: ./v/sub\n    verifier: ./v\n", 1), nil, "overlaps case"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

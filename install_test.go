@@ -26,9 +26,9 @@ func TestInstallSetupOutcome(t *testing.T) {
 		name, build, doctor, calls string
 		ok                         bool
 	}{
-		{"build fails", "23", "0", "build\n", false},
-		{"doctor fails", "0", "24", "build\ndoctor\n", false},
-		{"ready", "0", "0", "build\ndoctor\n", true},
+		{"build fails", "23", "0", "build --egress open\n", false},
+		{"doctor fails", "0", "24", "build --egress open\ndoctor\n", false},
+		{"ready", "0", "0", "build --egress open\ndoctor\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -64,7 +64,7 @@ func TestInstallSetupOutcome(t *testing.T) {
 			stub := `#!/bin/sh
 case "$1" in
   version) echo fixture ;;
-  build) printf 'build\n' >> "$TEST_CALLS"; exit "$TEST_BUILD_EXIT" ;;
+  build) printf 'build %s %s\n' "$2" "$3" >> "$TEST_CALLS"; exit "$TEST_BUILD_EXIT" ;;
   doctor) printf 'doctor\n' >> "$TEST_CALLS"; exit "$TEST_DOCTOR_EXIT" ;;
   *) exit 97 ;;
 esac
@@ -115,7 +115,7 @@ esac
 			if !tc.ok && (!strings.Contains(string(out), "setup is incomplete") || !strings.Contains(string(out), "coop doctor")) {
 				t.Errorf("failed setup needs an accurate recovery action:\n%s", out)
 			}
-			if tc.build != "0" && !strings.Contains(string(out), "Retry: coop build && coop doctor") {
+			if tc.build != "0" && !strings.Contains(string(out), "Retry: coop build --egress open && coop doctor") {
 				t.Errorf("failed image build needs its retry action:\n%s", out)
 			}
 			if got, err := os.ReadFile(installed); err != nil || string(got) != stub {

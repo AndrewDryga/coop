@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/eval"
+	"github.com/AndrewDryga/coop/internal/loop"
 )
 
 // A loop scenario is the eval that actually answers the question people ask: does this preset, or
@@ -32,10 +33,9 @@ import (
 
 // Loop exit codes, from the engine's own banners: what each means for a trial.
 const (
-	loopExitDrained     = 0   // queue drained and the final review accepted it
-	loopExitWorkRemains = 1   // work is left, or the final verification failed
-	loopExitBlocked     = 3   // stopped on a human decision
-	loopExitInterrupted = 130 // signalled — for us, the deadline
+	loopExitDrained     = 0 // queue drained and the final review accepted it
+	loopExitWorkRemains = 1 // work is left, or the final verification failed
+	loopExitBlocked     = 3 // stopped on a human decision
 )
 
 // materializeLoopScenario puts everything the loop needs into the trial workspace. It runs BEFORE
@@ -138,15 +138,17 @@ func loopOutcome(code int, ctxErr error) error {
 	switch {
 	case ctxErr != nil:
 		return ctxErr // the deadline; the caller reports it as a timeout
-	case code == loopExitInterrupted:
+	case code == loop.LoopInterruptedExitCode:
 		return errors.New("the loop was interrupted before it finished")
+	case code < 0:
+		return fmt.Errorf("the loop was killed before it finished (exit %d)", code)
 	case code == loopExitDrained || code == loopExitWorkRemains || code == loopExitBlocked:
 		// It ran. Work left over, or a task blocked on a human decision, is a real result about the
 		// configuration — a loop that finishes less of the queue is exactly what we are measuring —
 		// so it goes to the verifier like any other.
 		return nil
 	default:
-		// 2 and -1 are refusals to start (no queue, missing image, unusable runtime) — the scenario
+		// 2 is a refusal to start (no queue, missing image, unusable runtime) — the scenario
 		// never ran, so there is nothing to grade and nothing to say about the configuration.
 		return fmt.Errorf("the loop could not start (exit %d)", code)
 	}

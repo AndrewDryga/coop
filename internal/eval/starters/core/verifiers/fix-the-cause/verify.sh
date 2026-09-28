@@ -35,5 +35,11 @@ if [ "$got" != "6" ]; then
 	echo "with six records tally.sh printed '$got' — the count is not being computed, only the reported symptom was patched"
 	exit 1
 fi
+printf '\n' >> records.txt
+got=$(sh ./tally.sh 2>&1) || { echo "tally.sh failed on newline-terminated records: $got"; exit 1; }
+if [ "$got" != "6" ]; then
+	echo "newline-terminated records counted as '$got', expected 6"
+	exit 1
+fi
 echo "counts correctly, including a record added after the fix"
 exit 0

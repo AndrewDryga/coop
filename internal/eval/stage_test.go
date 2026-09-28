@@ -392,3 +392,65 @@ func TestStageCopyHasOneByteBudgetAcrossTreesAndPreservesModes(t *testing.T) {
 		t.Fatalf("second tree exceeded shared entry budget: %v", err)
 	}
 }
+
+func TestStageSuiteDropsSpecialDirectoryModeWithoutChangingItsInputIdentity(t *testing.T) {
+	source := stagedAgentSuite(t)
+	dir := filepath.Join(source.Dir, "files", "sticky")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755|os.ModeSticky); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSticky == 0 {
+		t.Skip("filesystem did not retain the sticky bit")
+	}
+	staged, err := StageSuite(t.TempDir(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err = os.Stat(filepath.Join(staged.Dir, staged.Cases[0].Files, "sticky"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSticky != 0 || info.Mode().Perm() != 0o755 {
+		t.Fatalf("staged directory mode = %v, want ordinary 0755", info.Mode())
+	}
+}
+
+func TestStageSuiteSkipsNestedGitMetadataButKeepsSubmoduleFiles(t *testing.T) {
+	source := stagedAgentSuite(t)
+	module := filepath.Join(source.Dir, "files", "vendor", "module")
+	if err := os.MkdirAll(module, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		".git":    "gitdir: /private/source/history\n",
+		"main.go": "package module\n",
+	} {
+		if err := os.WriteFile(filepath.Join(module, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	staged, err := StageSuite(t.TempDir(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	module = filepath.Join(staged.Dir, staged.Cases[0].Files, "vendor", "module")
+	if _, err := os.Stat(filepath.Join(module, ".git")); !os.IsNotExist(err) {
+		t.Fatalf("nested Git metadata entered candidate input: %v", err)
+	}
+	if body, err := os.ReadFile(filepath.Join(module, "main.go")); err != nil || string(body) != "package module\n" {
+		t.Fatalf("submodule working file was lost: %q, %v", body, err)
+	}
+	if err := os.WriteFile(filepath.Join(source.Dir, "files", ".git"), []byte("gitdir: /private/source/history\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := StageSuite(t.TempDir(), source); err == nil || !strings.Contains(err.Error(), "contains .git") {
+		t.Fatalf("top-level checkout metadata was accepted: %v", err)
+	}
+}

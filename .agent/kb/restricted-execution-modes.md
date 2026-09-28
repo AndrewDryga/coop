@@ -2,8 +2,8 @@
 name: restricted-execution-modes
 description: readonly and bare share one tmpfs-only filesystem profile; the provider is seeded through a read-only bind OUTSIDE the tmpfs home, because a bind under it would be root-owned; over ACP the provider's switches ride session/new, not the adapter's argv
 subsystem: box
-sources: [internal/box/restricted.go, internal/box/restricted_filtered_composition_test.go, internal/box/filtered.go, internal/box/filtered_cleanup.go, internal/box/run.go, internal/agent/agent.go, internal/agent/claude.go, internal/cli/help.go, internal/cli/commands.go, internal/cli/exposure_flags.go, internal/cli/acp_cmd.go, internal/cli/fork_cmd.go, internal/runtime/runtime.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/network.go, internal/session/records.go]
-updated: 2026-09-26
+sources: [internal/box/restricted.go, internal/box/restricted_filtered_composition_test.go, internal/box/filtered.go, internal/box/filtered_cleanup.go, internal/box/run.go, internal/agent/agent.go, internal/agent/claude.go, internal/cli/help.go, internal/cli/commands.go, internal/cli/exposure_flags.go, internal/cli/acp_cmd.go, internal/cli/fork_cmd.go, internal/runtime/runtime.go, internal/sessionsvc/service.go, internal/sessionsvc/job.go, internal/sessionsvc/acp.go, internal/sessionsvc/network.go, internal/session/records.go, internal/workerproto/job.go]
+updated: 2026-09-28
 ---
 
 `RunSpec.Mode` (`agents.ExecutionMode`: normal, readonly, bare; empty is normal) is fixed at
@@ -70,21 +70,17 @@ renewed in the host profile BEFORE projection ([[renew-before-access-only-projec
 
 ## The session API half
 
-A policy's `mode:` (`Policy.Mode`, parsed with `agents.ParseExecutionMode`; absent is normal) is
-bound into both digests only when restricted (`digestedSessionMode`), so every existing normal
-policy's digests are byte-identical — `TestExecutionModeIsBoundIntoPolicyDigestsOnlyWhenRestricted`
-pins the known cold digest. The mode is persisted on the session row (schema v22, `mode TEXT
-DEFAULT ''`; `normalizedMode` reads '' as normal, legacy rows are never rewritten) and projected
-as `"mode"` in `SessionDTO`, so a restarted daemon relaunches a session under the mode it was
-created with even after the policy was edited. `validateRestrictedSessionPolicy` is the list of
-refusals by name; `validateRestrictedTurn` refuses semantic validation on either mode and a
-Responder binding on bare at submit; `captureCreateIntent` refuses a pull request or Responder
-binding on a bare create.
+The controller supplies `mode` in `workerproto.JobSpec`. It is persisted on the session row
+(`normalizedSessionMode` reads an old blank value as normal) and projected as `"mode"` in
+`SessionDTO`, so a restarted daemon relaunches the selected mode. `workerproto.JobSpec.Validate` refuses source,
+companions and project authority on bare jobs, and filtered networking or warm execution on
+either restricted mode. `validateRestrictedTurn` refuses semantic validation on either mode
+and controller tools on bare at submit; `captureCreateIntent` also refuses controller tools
+on a bare create.
 
-A bare create is the workspace-less branch of `executeCreateIntent`: no pin, no fork, no
-companions, no admission (its posture is the policy's own `egress` block, open by default —
-`admitSessionNetwork`/`ResolvePolicyNetwork` return early, since there is no project to admit
-against), and a `CreateSessionRequest` whose four repository bindings are empty; the store
+A bare create is the workspace-less branch of `executeCreateIntent`: no source pin, fork or
+companions, and the network mode comes from the controller's job rather than a project approval.
+Its `CreateSessionRequest` has empty repository bindings; the store
 accepts that shape only for `Mode: "bare"` and demands no freshness receipt for it. Every
 repository-specific operation goes through `requireSessionWorkspace` first (changes, checkpoint,
 restore, workspace task; review refuses on its own bound-fork check) and answers
@@ -106,7 +102,7 @@ request (read out of adapter 0.76.0 / SDK 0.3.257 and proved against a recording
 executable — task artifacts `acp-spike-3-argv-{bare,readonly}.log`). The daemon hands a bare
 session no MCP servers at all. `checkRestrictedSpec` admits the ACP launch through
 `NetworkClient == egress.ClientACP`, and `runRestricted` still asks the adapter for the meta, so
-an unqualified provider refuses in the box as well as at policy load.
+an unqualified provider refuses in the box as well as at job admission.
 
 The older `repository_read_only: true` normal-mode session still supports generated image output.
 Its child sees the usual `<workspace>/.coop-output` destination, but the writable bind source is a
@@ -134,6 +130,8 @@ a tool call. What the API half still does not do: register activity for a restri
 gemini or grok — each refuses by name until a live run proves its adapter's switch.
 
 ## Changelog
+- 2026-09-28 — replaced references to the deleted session-policy validator with current job
+  validation and controller-tool admission; checked the restricted job and session sources.
 - 2026-09-26 — reverified remote fork mounts and ACP cwd after stable per-box `/workspace` mapping; old native histories and local editor history remain host-path keyed.
 - 2026-09-25 — rechecked restricted tmpfs ownership against the host-selected managed image user.
 - 2026-09-23 — mapped implicit readonly checkouts under Linux `/tmp` to `/workspace` and kept
@@ -164,7 +162,7 @@ and its shared `filteredExecution.teardown`. Direct readonly admission still rea
 network requests; it does not load project environment, start services, or use a project image.
 A filtered policy with service grants is refused because this path supplies no Compose file.
 Bare is refused both by the CLI and `checkRestrictedSpec`; restricted remote-session policies are
-separately refused by `validateRestrictedSessionPolicy` and the session admission path.
+separately refused by `workerproto.JobSpec.Validate` and session admission.
 
 The first composition attempt exposed five traps, now handled by the implementation:
 

@@ -106,8 +106,9 @@ func (t *openedSuiteTree) stillNamed(base *os.Root) error {
 
 const stageMaxEntries = 200_000
 
-// walkOpenedSuiteTree never resolves a source pathname outside an os.Root. It rejects .git and
-// special files rather than silently omitting bytes from the frozen workload identity.
+// walkOpenedSuiteTree never resolves a source pathname outside an os.Root. A selected tree must
+// be an export, but nested submodule metadata is omitted just as workspace preparation omits it.
+// Special files are rejected rather than silently omitted from the frozen workload identity.
 func walkOpenedSuiteTree(root *os.Root, visit func(rel string, parent *os.Root, name string, info os.FileInfo) error) error {
 	seen := 0
 	var walk func(*os.Root, string) error
@@ -132,7 +133,10 @@ func walkOpenedSuiteTree(root *os.Root, visit func(rel string, parent *os.Root, 
 			}
 			name := entry.Name()
 			if strings.EqualFold(name, ".git") {
-				return fmt.Errorf("suite tree contains .git; export a clean tree before freezing")
+				if prefix == "" {
+					return fmt.Errorf("suite tree contains .git; export a clean tree before freezing")
+				}
+				continue
 			}
 			info, err := parent.Lstat(name)
 			if err != nil {
@@ -166,7 +170,9 @@ func openedTreeDigest(root *os.Root) (Fingerprint, error) {
 	w := newHasher()
 	var read int64
 	err := walkOpenedSuiteTree(root, func(rel string, parent *os.Root, name string, info os.FileInfo) error {
-		w.text("path", filepath.ToSlash(rel)).text("mode", info.Mode().String())
+		// The copy preserves type and permissions, not sticky/setid bits.
+		stagedMode := info.Mode().Type() | info.Mode().Perm()
+		w.text("path", filepath.ToSlash(rel)).text("mode", stagedMode.String())
 		switch {
 		case info.Mode().IsRegular():
 			if info.Size() > SnapshotLimit-read {

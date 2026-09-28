@@ -141,7 +141,7 @@ func run(logs string) error {
 	if err != nil {
 		return err
 	}
-	if err := config.WriteFileAtomic(record, append(data, '\n')); err != nil {
+	if err := config.WriteFileAtomicMode(record, append(data, '\n'), 0o644); err != nil {
 		return err
 	}
 	printQualification(os.Stdout, q)
@@ -212,9 +212,7 @@ func summaryResults(lines []string, prefix string, pinned map[string]string, sco
 			return nil, err
 		}
 		summary.Schema, summary.Strict, summary.Totals = consult.Schema, consult.Strict, consult.Totals
-		for _, edge := range consult.Results {
-			summary.Results = append(summary.Results, edge.Peer)
-		}
+		summary.Results = consult.PeerResults()
 	} else if err := decodeSummary(raw, &summary); err != nil {
 		return nil, err
 	}

@@ -70,7 +70,8 @@
   `coop build --egress filtered` to prepare an image for filtered runs (plain `coop build` follows
   the project's effective mode). Launches reuse its host-approved immutable image only while all
   staged inputs and the client base match; old automatic-build records require one explicit build.
-  Open-network automatic builds remain available. Offline launches refuse automatic project builds.
+  An open editor connection may still build a missing project image; ordinary launches do not
+  automatically rebuild changed project inputs. Offline launches refuse automatic project builds.
   Explicit builds still use ordinary networking, and do not grant project network permissions.
 
 - New `coop eval` command (native evals): measure whether a change to a preset, a loop config or

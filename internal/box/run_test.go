@@ -373,6 +373,43 @@ func TestRunRepoWritableWithReadOnlyDescendant(t *testing.T) {
 	}
 }
 
+func TestReviewTaskQueueSnapshotOmitsDisposableAndArchivedBulk(t *testing.T) {
+	repo := t.TempDir()
+	queue := filepath.Join(repo, ".agent", "tasks")
+	for _, rel := range []string{
+		"README.md",
+		"10_in_progress/current/task.md",
+		"10_in_progress/current/artifacts/evidence.txt",
+		"10_in_progress/current/tmp/worktree/source.go",
+		"99_done/old/task.md",
+		"99_done/old/artifacts/large.bin",
+		"99_done/old/screenshots/page.png",
+	} {
+		path := filepath.Join(queue, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("fixture\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mounts, snapshots, err := repoReadOnlyPathMounts(repo, "/workspace", []string{queue}, t.TempDir())
+	if err != nil || len(mounts) != 1 || len(snapshots) != 1 {
+		t.Fatalf("task queue snapshot = %v, %v, %v", mounts, snapshots, err)
+	}
+	defer os.RemoveAll(snapshots[0])
+	for _, rel := range []string{"README.md", "10_in_progress/current/task.md", "10_in_progress/current/artifacts/evidence.txt", "99_done/old/task.md"} {
+		if _, err := os.Stat(filepath.Join(mounts[0].Source, rel)); err != nil {
+			t.Fatalf("review lost %s: %v", rel, err)
+		}
+	}
+	for _, rel := range []string{"10_in_progress/current/tmp", "99_done/old/artifacts", "99_done/old/screenshots"} {
+		if _, err := os.Lstat(filepath.Join(mounts[0].Source, rel)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("review copied bulk %s: %v", rel, err)
+		}
+	}
+}
+
 func TestRepoReadOnlyPathMountsRejectEscapeAndSymlink(t *testing.T) {
 	repo := t.TempDir()
 	queue := filepath.Join(repo, ".agent", "tasks")

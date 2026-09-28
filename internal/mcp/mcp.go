@@ -356,6 +356,10 @@ func writeTOMLServer(b *strings.Builder, name string, s server, dialect headerDi
 	switch {
 	case s.URL != "": // remote server
 		fmt.Fprintf(b, "url = %s\n", tomlString(s.URL))
+		if dialect == codexHeaders && name == ControllerToolsServer {
+			// Controller calls can wait 75s for downstream recovery; Codex defaults to 60s.
+			b.WriteString("tool_timeout_sec = 90\n")
+		}
 		if dialect == grokHeaders && s.Type == "sse" {
 			// Grok speaks SSE for real: `grok mcp add <url> -t sse` writes this exact key. Dropping
 			// it would quietly downgrade the server to streamable HTTP.

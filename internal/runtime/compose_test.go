@@ -7,7 +7,24 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	coopconfig "github.com/AndrewDryga/coop/internal/config"
 )
+
+func TestComposeRegistryConfigStaysUnderProtectedCoopHome(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("TMPDIR", t.TempDir())
+	t.Setenv("DOCKER_CONFIG", t.TempDir())
+	root, cleanup, err := privateComposeClientConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	protected := filepath.Join(coopconfig.RootDir(), "runfiles")
+	if relative, err := filepath.Rel(protected, root); err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		t.Fatalf("Compose registry config escaped protected Coop home: %s (%v)", root, err)
+	}
+}
 
 func TestComposeUsesProxyFreeConfigAndFrozenDaemon(t *testing.T) {
 	config := t.TempDir()

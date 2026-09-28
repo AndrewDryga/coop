@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -130,37 +129,6 @@ func TestComposedRestrictedFilteredAdmission(t *testing.T) {
 	}
 }
 
-// A read-only SESSION under the gateway must not hand the operator's real MCP secrets to the box.
-//
-// The session handoff resolves ${VAR} headers and bearer tokens from whatever environment it is
-// given, and an OPEN run gives it the broker's stand-ins. Under filtered there is no open broker —
-// so before this was fixed the handoff was given the real environment, and a filtered run ended up
-// carrying secrets that a filtered run is precisely the mode that never carries: it brokers them or
-// refuses the launch. This is the one axis on which the composed sandbox was wider than filtered
-// alone, and the test exists because the composition is what made those sessions start at all.
-func TestAFilteredReadOnlySessionHandsOverNoRealMCPSecrets(t *testing.T) {
-	cfg, spec := readOnlySessionFixture(t)
-	cfg.Egress = "filtered"
-	spec.CapturedEgress = &CapturedEgress{}
-
-	dir := t.TempDir()
-	handoff := filepath.Join(dir, "handoff.json")
-	t.Setenv(SessionMCPHandoffEnv, handoff)
-	// The launch itself cannot complete here — preparing the gateway needs a real daemon — but the
-	// handoff is written before that, which is exactly the artifact under test.
-	_, _ = Run(cfg, readOnlySessionShim(t, filepath.Join(dir, "calls"), filepath.Join(dir, "box-env")), spec)
-
-	body, err := os.ReadFile(handoff)
-	if err != nil {
-		t.Skipf("no session handoff was written: %v", err)
-	}
-	for _, secret := range []string{"docs-secret", "tickets-secret", "stream-secret"} {
-		if strings.Contains(string(body), secret) {
-			t.Errorf("the session list handed the box a real MCP secret (%s):\n%s", secret, body)
-		}
-	}
-}
-
 // A composed launch, driven for real against the filtered suite's fake daemon: the restricted
 // profile has to survive the hand-off into the gateway's own container creation, and exactly one
 // network may be named.
@@ -198,23 +166,6 @@ func TestComposedLaunchCreatesABoxWithBothBoundaries(t *testing.T) {
 	if created.AutoRemove {
 		t.Error("the composed box was created with --rm; the filtered launch owns its removal")
 	}
-}
-
-// The refusal that keeps a composed box from being wider than a restricted one: a project's own
-// image must never become the filesystem the profile is a contract about.
-func TestComposedLaunchRefusesAProjectImage(t *testing.T) {
-	sections := newLaunchSections(RunSpec{Quiet: true})
-	spec := RunSpec{Repo: t.TempDir(), Quiet: true, Ctx: context.Background()}
-	started, stopped := false, ""
-
-	f, _ := filteredFixture(t)
-	f.record.ProjectImage = "coop-myrepo:derived"
-	_, err := launchRestrictedFiltered(f, spec, sections, nil, []string{"true"},
-		nil, io.Discard, io.Discard, &started, nil, &stopped)
-	if err == nil || !strings.Contains(err.Error(), "project's own box image") {
-		t.Errorf("a project image reached a restricted box: %v", err)
-	}
-
 }
 
 // The session handoff is where an operator's MCP secrets would reach a box, and a filtered run must

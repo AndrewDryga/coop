@@ -444,15 +444,15 @@ func (a *app) ensureACPImage() error {
 	return nil
 }
 
-// cmdACPSupervise serves the editor on stdio and runs the real `coop acp <rest>` as a
-// child (COOP_ACP_INNER set so the child runs the box, not another supervisor). When
-// the child's container dies, acpproxy starts a new child and replays the ACP
-// handshake, so the editor never sees a disconnect (see internal/acpproxy).
 // leadAnswerGrace is how long the warm fan-out waits for the editor's initialize to be answered
 // before starting anyway. It is a backstop for a lead that never answers, not a delay anyone should
 // feel: a provider switch is a human decision, many seconds away, and the fills take about a second.
 const leadAnswerGrace = 3 * time.Second
 
+// cmdACPSupervise serves the editor on stdio and runs the real `coop acp <rest>` as a
+// child (COOP_ACP_INNER set so the child runs the box, not another supervisor). When
+// the child's container dies, acpproxy starts a new child and replays the ACP
+// handshake, so the editor never sees a disconnect (see internal/acpproxy).
 func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) {
 	self, err := os.Executable()
 	if err != nil {

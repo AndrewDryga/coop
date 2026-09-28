@@ -15,7 +15,8 @@ the map, and the reasoning behind the one place the obvious fix is wrong.
 - **Frozen workload** — `eval.StageSuite` first copies only named candidate inputs and hidden
   verifiers into owner-private run inputs through confined directory handles. It checks physical
   input/verifier separation, binds the source root to the loaded manifest, bounds aggregate staged
-  bytes and entries, and fingerprints the copied trees.
+  bytes and entries, and fingerprints the copied trees. Nested submodule `.git` metadata is
+  omitted while its working files remain; a selected tree rooted in `.git` is refused.
   Every trial uses those retained bytes, not a live suite source (`internal/eval/stage.go`,
   `internal/eval/stage_copy.go`, `internal/cli/eval_cmd.go`).
 - **Workspace** — `eval.PrepareWorkspace` copies a frozen case input into a private tree with a
@@ -120,6 +121,10 @@ already fully correct. The shipped verifier runs each subcommand on inputs no ta
 also why it cannot be satisfied by a loop that moves folders without finishing anything.
 
 ## Changelog
+- 2026-09-28 — rechecked the current staging and mount paths while removing an obsolete starter
+  verifier grant. Staging now drops special mode bits consistently from its digest and copy, skips
+  nested Git metadata like workspace preparation, and keeps a selected tree's top-level `.git`
+  refusal. Focused staging and mount tests cover the boundaries.
 - 2026-09-28 — traced content-identity drift and two hidden-material exposures: no-files cases
   copied the whole suite, and another case's verifier could sit inside an input (including a
   case-folded alias). Frozen run inputs now use confined handles, physical separation and a bounded
@@ -144,6 +149,6 @@ also why it cannot be satisfied by a loop that moves folders without finishing a
 - 2026-09-21 — replaced path/size-only no-work detection with bounded content and metadata
   comparison. Regression proves a same-length edit after exit 1 reaches the grader; unchanged
   attempts still take the no-work route, and unreadable inputs never produce a usable signature.
-- 2026-09-20 — created while landing `coop eval` execution, grading and loop scenarios.
 - 2026-09-21 — added loop-scenario sizing (43 min for ten tasks) and the signoff-reopening trap,
   from the full-length qualification run of the `queue` starter.
+- 2026-09-20 — created while landing `coop eval` execution, grading and loop scenarios.

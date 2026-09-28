@@ -645,12 +645,13 @@ func runConsultLiveEdge(
 		if err := liveprovider.VerifyDelegateRepository(repositoryLayout, before, "delegate-"+peer.Provider+".txt", edgeMarker+"\n"); err != nil {
 			return liveprovider.FinalizeResult(result, liveprovider.VerificationFailures{RepositoryChanged: true, AttemptedObserved: true})
 		}
-	}
-	after, snapshotErr := liveprovider.VerifyRepository(repositoryLayout, before)
-	if snapshotErr != nil || !before.Equal(after) {
-		return liveprovider.FinalizeResult(result, liveprovider.VerificationFailures{
-			RepositoryChanged: true, AttemptedObserved: true,
-		})
+	} else {
+		after, snapshotErr := liveprovider.VerifyRepository(repositoryLayout, before)
+		if snapshotErr != nil || !before.Equal(after) {
+			return liveprovider.FinalizeResult(result, liveprovider.VerificationFailures{
+				RepositoryChanged: true, AttemptedObserved: true,
+			})
+		}
 	}
 	result.Passed = true
 	result.Status = liveprovider.StatusPassed
