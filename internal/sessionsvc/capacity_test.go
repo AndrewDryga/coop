@@ -300,7 +300,7 @@ func TestRestartProvesItsSessionBacklogWithoutWaitingForTheTicker(t *testing.T) 
 			runner := &periodicCleanupRunner{fail: failing}
 			open := func() *Service {
 				t.Helper()
-				service, err := NewService(Config{
+				service, err := newSessionServiceWithTestStorage(t, Config{
 					StateRoot: root, SourceConfig: &config.Config{ConfigDir: t.TempDir()},
 					Runner: runner, CleanupInterval: time.Hour, // the ticker never fires in this test
 				})

@@ -45,7 +45,7 @@ func TestControllerJobUsesAnExactPrivateSourceWithoutSharedRepositoryPaths(t *te
 		Submodules: []workerproto.JobSubmodule{},
 	}
 	stateRoot := filepath.Join(t.TempDir(), "worker-state")
-	service, err := NewService(Config{
+	service, err := newSessionServiceWithTestStorage(t, Config{
 		StateRoot:    stateRoot,
 		SourceConfig: &config.Config{ConfigDir: t.TempDir()},
 		Runner: RunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
@@ -176,7 +176,7 @@ func TestControllerJobCreatesWithoutLocalPolicyAndReplaysAfterRestart(t *testing
 	root := filepath.Join(t.TempDir(), "state")
 	open := func() *Service {
 		t.Helper()
-		service, err := NewService(Config{
+		service, err := newSessionServiceWithTestStorage(t, Config{
 			StateRoot:    root,
 			SourceConfig: &config.Config{ConfigDir: t.TempDir()},
 			Runner: RunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
@@ -267,7 +267,7 @@ func TestControllerJobCreatesWithoutLocalPolicyAndReplaysAfterRestart(t *testing
 }
 
 func TestControllerJobRejectsMissingAndMismatchedAuthorityBeforeJournal(t *testing.T) {
-	service, err := NewService(Config{
+	service, err := newSessionServiceWithTestStorage(t, Config{
 		StateRoot:    filepath.Join(t.TempDir(), "state"),
 		SourceConfig: &config.Config{ConfigDir: t.TempDir()},
 		Runner: RunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
@@ -336,7 +336,7 @@ func TestControllerJobRejectsMissingAndMismatchedAuthorityBeforeJournal(t *testi
 }
 
 func TestControllerJobHTTPCreateCarriesAuthorityAndRedactsDocument(t *testing.T) {
-	service, err := NewService(Config{
+	service, err := newSessionServiceWithTestStorage(t, Config{
 		StateRoot:    filepath.Join(t.TempDir(), "state"),
 		SourceConfig: &config.Config{ConfigDir: t.TempDir()},
 		Runner: RunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {

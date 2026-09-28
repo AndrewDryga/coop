@@ -1924,7 +1924,7 @@ func TestSessionServiceStartupCompletesInterruptedCancelReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := &startupCleaningRunner{}
-	after, err := NewService(Config{StateRoot: stateRoot, Runner: runner})
+	after, err := newSessionServiceWithTestStorage(t, Config{StateRoot: stateRoot, Runner: runner})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -31,7 +31,7 @@ func TestEmptySourceJobOwnsPrivateWorkspaceAndSurvivesRestart(t *testing.T) {
 	root := filepath.Join(parent, "state")
 	open := func() *Service {
 		t.Helper()
-		s, err := NewService(Config{StateRoot: root, SourceConfig: &config.Config{ConfigDir: t.TempDir()},
+		s, err := newSessionServiceWithTestStorage(t, Config{StateRoot: root, SourceConfig: &config.Config{ConfigDir: t.TempDir()},
 			Runner: RunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
 				return turn, nil
 			})})
