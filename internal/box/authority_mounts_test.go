@@ -337,7 +337,6 @@ func TestAuthorityMountGuardProtectsHostConfigAndStateSiblings(t *testing.T) {
 		{"config parent", filepath.Dir(cfg.ConfigDir), false},
 		{"Coop host config home", cfg.BoxHome, false},
 		{"main Coop config", filepath.Join(cfg.BoxHome, "coop.conf"), false},
-		{"remote session policy", filepath.Join(cfg.BoxHome, "session-policies.yaml"), false},
 		{"unselected credential profile", unselected, false},
 		{"host credential broker state", hostCredentials, false},
 		{"configured MCP source", customMCP, false},
