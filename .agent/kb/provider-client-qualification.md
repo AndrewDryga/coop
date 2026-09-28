@@ -2,8 +2,8 @@
 name: provider-client-qualification
 description: locked clients, strict schema2 qualification requirements and Linux/amd64 live evidence
 subsystem: agent
-sources: [internal/agent/locked_clients.go, internal/agent/qualification.go, internal/agent/qualification_gate_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go]
-updated: 2026-09-26
+sources: [internal/agent/locked_clients.go, internal/agent/qualification.go, internal/agent/qualification_gate_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/credentials.go]
+updated: 2026-09-28
 ---
 
 **One manifest.** `locked-clients/package.json` + `package-lock.json` (embedded) and each adapter's
@@ -228,6 +228,8 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-09-28 — narrowed the first brokered-live changelog claim to its actually proven prompt
+  and singleton ACP paths; added the live-provider helpers to this card's source map.
 - 2026-09-26 — recorded strict Linux/amd64 qualification from complete green suite logs;
   documented the ACP test-only replay and unverified second-account recovery
 - 2026-09-26 — corrected the consult/delegate filtered-launch boundary after the clean Ubuntu
@@ -282,8 +284,9 @@ reflog and index checks.
   exposes its skill catalog only to the model (`skills.list`), but its app-server answers the same
   `skills/list` over stdio JSON-RPC, and claude's validator reports ONLY what it objects to — a valid
   skill leaves `contents: []`, identical to an empty directory, so a canary is the only usable signal.
-- 2026-09-20 — every live suite auto-routes a brokered API-key target through the filtered gateway
-  (BrokersKey/AnyBrokersKey); Gemini proven live on provider-live-e2e and ACP conformance. Recorded
+- 2026-09-20 — prompt and singleton ACP live harnesses routed brokered API-key targets through the
+  filtered gateway (BrokersKey/AnyBrokersKey); Gemini proven live on provider-live-e2e and ACP
+  conformance. Recorded
   the filtered-singleton toolbar (no Preset when no in-scope preset), the --label admission and the
   Buildx plugin link an isolated ACP home needs.
 - 2026-09-19 — pinned how each client sends a header secret; grok's `mcp doctor` is not a capture.
