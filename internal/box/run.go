@@ -797,7 +797,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}()
 	if spec.CapturedEgress != nil {
 		// COOP_RUN_ARGS and this run's own extra arguments are reduced to bind
-		// mounts and environment assignments, checked by the same filtered
+		// mounts, environment assignments and labels, checked by the same filtered
 		// exposure rules as every other bind. Everything else is refused: an
 		// unqualified runtime argument can undo the boundary the capture was
 		// frozen for.
@@ -2964,8 +2964,6 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 		// reaps descendants orphaned by killed provider processes.
 		args = append(args, "--init")
 	}
-	args = append(args, "--label", LabelKey+"="+LabelBox)
-	args = append(args, ownerLabels(spec)...)
 	switch mode {
 	case ttyInteractive:
 		// -e TERM propagates the host terminal type so the agents' TUIs render in
@@ -3058,10 +3056,14 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 	}
 	if spec.CapturedEgress == nil {
 		// A filtered launch already folded COOP_RUN_ARGS into spec.ExtraArgs,
-		// as bind mounts and environment assignments only (filteredExtraArgs).
+		// as bind mounts, environment assignments and labels (filteredExtraArgs).
 		args = append(args, cfg.ExtraRunArgs...)
 	}
 	args = append(args, spec.ExtraArgs...)
+	// Docker keeps the last value for a repeated label key. Coop's tracking labels must win over
+	// operator extras so cleanup and ownership queries still find this box.
+	args = append(args, "--label", LabelKey+"="+LabelBox)
+	args = append(args, ownerLabels(spec)...)
 	args = append(args, "-e", "COOP_BOX=1")
 	if spec.SuperviseDescendants {
 		// The provider cannot spoof these entrypoint-owned exits: coop-entry remaps a raw use

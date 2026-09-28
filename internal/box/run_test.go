@@ -1013,9 +1013,7 @@ func TestAssembleArgsMinimal(t *testing.T) {
 	// A plain `coop claude` mounts only its own credential home — never the Codex/Gemini ones.
 	got := assembleArgs(cfg, true, spec, mounts, "/tmp/decoy", "/tmp/decoydir", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
 	want := []string{
-		"run", "--rm", "--init", "--label", "coop=box",
-		// Every box records the host process supervising it (see TestAssembleArgsSupervisorLabel).
-		"--label", "coop.host=" + supervisorLabelValue(workspaceScope("/repo"), os.Getpid()),
+		"run", "--rm", "--init",
 		"-e", "TZ=America/Merida",
 		"-v", "/repo:/workspace",
 		"-v", cfg.AgentDir("claude") + ":/home/node/.claude", // active-profile dir (profiles/default)
@@ -1028,6 +1026,9 @@ func TestAssembleArgsMinimal(t *testing.T) {
 		"-e", "GEMINI_TELEMETRY_ENABLED=false",
 		"-e", "GROK_TELEMETRY_ENABLED=false",
 		"-e", "GROK_DISABLE_AUTOUPDATER=1",
+		"--label", "coop=box",
+		// Every box records the host process supervising it (see TestAssembleArgsSupervisorLabel).
+		"--label", "coop.host=" + supervisorLabelValue(workspaceScope("/repo"), os.Getpid()),
 		"-e", "COOP_BOX=1",
 		"-w", "/workspace", "coop-box", "claude",
 	}

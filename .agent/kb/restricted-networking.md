@@ -177,10 +177,11 @@ Traps:
 - Extra runtime arguments (`COOP_RUN_ARGS`, `coop … -- …`) are reduced to bind mounts, `-e KEY=VALUE`
   and `--label KEY=VALUE` (metadata: fleet accounting, a live test's reaping key — it changes neither
   what the box knows nor what it reaches, and `validateMounts` already admits it); anything else is
-  refused by name (`box/filtered_mounts.go:25`). The gateway, not
-  the environment, is the boundary — and a bind that IS or CONTAINS the runtime's control surface
+  refused by name (`box/filtered_mounts.go:25`). Coop's ownership labels take precedence if an
+  operator uses the same key. The gateway, not the environment, is the boundary — and a bind that
+  IS or CONTAINS the runtime's control surface
   (`/var/run`, `/run`, `/proc`, `/sys`, `/dev`, `/`, the bound endpoint's socket) is refused too
-  (`box/filtered_mounts.go:429`): one curl over a daemon socket starts a container no gateway sees.
+  (`box/filtered_mounts.go:482`): one curl over a daemon socket starts a container no gateway sees.
 - Mount validation distinguishes host authority from agent-writable roots. `BoxHome` is
   protected against exposure but is not mounted wholesale, so a normal selected profile
   beneath its default `agents/` tree is an independent bind. The selected profile itself
@@ -269,6 +270,8 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-28 — checked both open run and filtered create option assembly: Coop ownership labels
+  now come after operator labels, so sweep and reap still see the box when keys collide.
 - 2026-09-28 — narrowed the open automatic-build note to the missing-image editor path after
   checking `ensureACPImage`, `BuildWith` and ordinary launch behavior.
 - 2026-09-27 — rechecked `Admission`, `CaptureJob` and the withdrawal marker: removed the

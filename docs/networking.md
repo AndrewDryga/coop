@@ -59,6 +59,10 @@ nothing about the checks after it, and ends with `✗ this host is not ready for
 | `to: {service: "db"}` · `protocol: tcp` · `ports: [5432]` | one Compose sidecar belonging to this project | the container's exact address, read from the runtime at launch |
 | `serve: {ports: [3000]}` in `.agent/project.yaml` | the host browser reaches the box's dev server | the port is published on the gateway container, which owns the box's network namespace |
 
+In a filtered run, `COOP_RUN_ARGS` and extra runtime arguments accept bind mounts,
+`-e KEY=VALUE` and `--label KEY=VALUE` only. Other flags are refused by name; Coop's own
+tracking labels take precedence over labels with the same key.
+
 **Provider access is what the client needs to work, and nothing it merely chats to.** A filtered
 `coop claude` reaches `api.anthropic.com`, `platform.claude.com` (the OAuth refresh) and
 `mcp-proxy.anthropic.com` (the claude.ai connectors a login has on by default); a filtered

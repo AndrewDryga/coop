@@ -1991,7 +1991,7 @@ controls and cannot be set inside `coop.conf`.
 | `COOP_REPO` | (git toplevel) | the repo to operate on, overriding cwd detection |
 | `COOP_WORKDIR` | (real path) | where the repo mounts in the box |
 | `COOP_HOME_IN_BOX` | `/home/node` | where auth + instructions mount in the box |
-| `COOP_RUN_ARGS` | — | extra args passed straight to the container runtime |
+| `COOP_RUN_ARGS` | — | extra container runtime args; filtered runs accept only bind mounts, `-e KEY=VALUE` and `--label KEY=VALUE` |
 | `COOP_BOX` | `1` in every box | stable in-box identity marker; independent of serving and networking |
 | `COOP_PIDS` | `4096` | box pids-limit (fork-bomb cap); `0`/`unlimited`/empty turns it off |
 | `COOP_MEMORY` · `COOP_CPUS` | — | box memory / CPU caps (e.g. `4g`, `2`); unset by default |

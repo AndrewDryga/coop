@@ -132,7 +132,8 @@
   mount or a `-e KEY=VALUE`. A label is metadata on the box — it changes neither what the box knows
   nor what it can reach — so refusing it only forced tools that tag their boxes (fleet accounting, a
   test's own reaping key) to choose between a label and `--egress filtered`. Anything that is not a
-  mount, an environment assignment or a label is still refused by name.
+  mount, an environment assignment or a label is still refused by name. In both open and filtered
+  runs, Coop's own tracking labels take precedence if you use the same key.
 
 - When Coop's gateway refuses something a program in the box sent straight to it, Coop now says
   which port inside the box it came from — in `coop net inspect`, `coop net watch`, `--json`, and

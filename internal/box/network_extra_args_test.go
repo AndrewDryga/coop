@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 )
@@ -38,6 +39,23 @@ func TestFilteredExtraArgsAcceptEveryBindSpelling(t *testing.T) {
 				t.Errorf("filteredExtraArgs(%q) = %q, want %q", tc.given, got, tc.want)
 			}
 		})
+	}
+}
+
+// Docker keeps the last value for a duplicate key; operator extras must not hide Coop's box.
+func TestOperatorLabelsCannotReplaceCoopTrackingLabels(t *testing.T) {
+	cfg := &config.Config{ExtraRunArgs: []string{"--label", LabelKey + "=operator"}}
+	spec := RunSpec{Repo: t.TempDir(), RunID: "real-run", ExtraArgs: []string{"--label", LabelRun + "=operator"}}
+	options := assembleOptions(cfg, false, spec, nil, "", "", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
+	labels := map[string]string{}
+	for i := 0; i+1 < len(options); i++ {
+		if options[i] == "--label" {
+			key, value, _ := strings.Cut(options[i+1], "=")
+			labels[key] = value
+		}
+	}
+	if labels[LabelKey] != LabelBox || labels[LabelRun] != spec.RunID {
+		t.Errorf("Coop tracking labels were replaced by operator extras: %v", labels)
 	}
 }
 

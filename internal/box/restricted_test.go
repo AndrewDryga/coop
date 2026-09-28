@@ -108,7 +108,7 @@ func TestRunBareMountsOnlyScratchAndTheSeed(t *testing.T) {
 	got := recordedRun(t, recorder)
 	seed := seedFrom(t, got)
 	want := []string{
-		"run", "--rm", "--init", "--label", "coop=box",
+		"run", "--rm", "--init",
 		// No workspace, so no host scope: an unlabeled box is reported by a sweep, never reaped.
 		"-e", "TZ=America/Merida",
 		"--cap-drop", "ALL",
@@ -116,6 +116,7 @@ func TestRunBareMountsOnlyScratchAndTheSeed(t *testing.T) {
 		"--tmpfs", "/home/node:" + ownedScratch + ",mode=0700",
 		"--tmpfs", "/tmp:" + ownedScratch + ",mode=1777",
 		"--tmpfs", "/workspace:" + ownedScratch + ",mode=0700",
+		"--label", "coop=box",
 		"-e", "COOP_BOX=1",
 		"-w", "/workspace",
 		"-v", seed + ":/coop/seed:ro",
@@ -169,8 +170,7 @@ func TestRunReadOnlyMountsRepoReadOnlyAndNothingWritable(t *testing.T) {
 		}
 	}
 	want := []string{
-		"run", "--rm", "--init", "--label", "coop=box",
-		"--label", "coop.host=" + supervisorLabelValue(workspaceScope(repo), os.Getpid()),
+		"run", "--rm", "--init",
 		"-e", "TZ=America/Merida",
 		"--cap-drop", "ALL",
 		"--read-only",
@@ -178,6 +178,8 @@ func TestRunReadOnlyMountsRepoReadOnlyAndNothingWritable(t *testing.T) {
 		"--tmpfs", "/tmp:" + ownedScratch + ",mode=1777",
 		"-v", repo + ":/workspace:ro",
 		"-v", decoy + ":/workspace/.env:ro",
+		"--label", "coop=box",
+		"--label", "coop.host=" + supervisorLabelValue(workspaceScope(repo), os.Getpid()),
 		"-e", "COOP_BOX=1",
 		"--network", "none",
 		"-w", "/workspace",
@@ -287,8 +289,7 @@ func TestRunBareACPKeepsTheAdapterCommandAndRunLabel(t *testing.T) {
 	got := recordedRun(t, recorder)
 	seed := seedFrom(t, got)
 	want := []string{
-		"run", "--rm", "--init", "--label", "coop=box",
-		"--label", "coop.run=" + spec.RunID,
+		"run", "--rm", "--init",
 		"-i",
 		"-e", "TZ=America/Merida",
 		"--cap-drop", "ALL",
@@ -296,6 +297,8 @@ func TestRunBareACPKeepsTheAdapterCommandAndRunLabel(t *testing.T) {
 		"--tmpfs", "/home/node:" + ownedScratch + ",mode=0700",
 		"--tmpfs", "/tmp:" + ownedScratch + ",mode=1777",
 		"--tmpfs", "/workspace:" + ownedScratch + ",mode=0700",
+		"--label", "coop=box",
+		"--label", "coop.run=" + spec.RunID,
 		"-e", "COOP_BOX=1",
 		"-w", "/workspace",
 		"-v", seed + ":/coop/seed:ro",
@@ -616,9 +619,7 @@ func TestAssembleArgsNormalModeGolden(t *testing.T) {
 			[]extraMount{{"/tmp/s", "/home/node/.claude/skills"}}, "coop-repo_default", filepath.Join(dir, "env"), "--cap-drop", "ALL")
 	}
 	want := []string{
-		"run", "--rm", "--init", "--label", "coop=box",
-		"--label", "coop.host=" + supervisorLabelValue(workspaceScope("/repo"), os.Getpid()),
-		"--label", "coop.run=run-1",
+		"run", "--rm", "--init",
 		"-it", "-e", "TERM",
 		"-e", "TZ=America/Merida",
 		"--cap-drop", "ALL",
@@ -643,6 +644,9 @@ func TestAssembleArgsNormalModeGolden(t *testing.T) {
 		"-v", "/tmp/g:/home/node/.gemini/settings.json:ro",
 		"--env-file", filepath.Join(dir, "env"),
 		"-e", "X=1",
+		"--label", "coop=box",
+		"--label", "coop.host=" + supervisorLabelValue(workspaceScope("/repo"), os.Getpid()),
+		"--label", "coop.run=run-1",
 		"-e", "COOP_BOX=1",
 		"-e", "COOP_SUPERVISE_DESCENDANTS=1",
 		"--network", "coop-repo_default",
