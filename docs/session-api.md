@@ -542,7 +542,12 @@ Persist the last processed sequence and request `after=<sequence>` after a disco
 
 Owner-private events contain identity, sequence, turn ID, type, version, timestamp, and the event's
 own payload. Bounded raw tool evidence can include filesystem paths, arguments, results, and diffs.
-The separate outbound worker projection strips those raw fields; its structured `path_context`
+The separate outbound worker projection carries what the model did to its controller — a tool's
+title, input and result, and the model's thoughts, progress and plan — each field bounded (1 KiB
+titles, 8 KiB text, 16 KiB tool fields, which cross as a `preview` marked `truncated` past that; 64
+KiB an event), with the session's checkout root removed. A field that scans as carrying a likely
+secret is withheld whole, and the event's `withheld` object names the field and why (`likely GitHub
+token`); a withheld tool input still names its MCP server and tool. Its structured `path_context`
 contains only project-relative paths and scope warnings, never the host checkout root.
 Each payload is capped at 256 KiB and a page is bounded by total
 bytes as well as by `limit`, so a caller reading a chatty turn gets a short page rather than a

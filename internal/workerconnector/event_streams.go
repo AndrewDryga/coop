@@ -344,7 +344,7 @@ func (e *Executor) collectActivity(ctx context.Context, maximumBytes int) ([]wor
 
 func operatorActivityEvent(kind string) bool {
 	switch kind {
-	case "tool.started", "tool.completed", "model.plan", "model.thought", "permission.decided", "activity.elided", "provider.backoff", "provider.alive", "network":
+	case "tool.started", "tool.completed", "model.plan", "model.thought", "model.progress", "permission.decided", "activity.elided", "provider.backoff", "provider.alive", "network":
 		return true
 	default:
 		return false
@@ -355,10 +355,12 @@ func terminalSessionEvent(kind string) bool {
 	return kind == "workspace.discarded"
 }
 
-// publicActivityPayload is the privacy boundary between a local Coop session
-// transcript and Responder's durable operator trace. Free-form thought, plan,
-// title, reason, command, and tool argument bytes never cross it. Structured
-// path context is independently validated and never carries the checkout root.
+// publicActivityPayload is the boundary between a local Coop session transcript
+// and its controller's durable operator trace. What the model did crosses it —
+// a tool's title, input and result, the model's thoughts, progress and plan —
+// each field bounded, without the checkout root, and withheld whole when it
+// scans as carrying a likely secret (activity_narration.go). Structured path
+// context is independently validated and never carries the checkout root.
 func publicActivityPayload(kind string, raw json.RawMessage) (json.RawMessage, bool) {
 	var value map[string]any
 	if len(raw) > 0 && json.Unmarshal(raw, &value) != nil {
@@ -368,43 +370,34 @@ func publicActivityPayload(kind string, raw json.RawMessage) (json.RawMessage, b
 		value = map[string]any{}
 	}
 	public := map[string]any{}
+	narrated := newNarration(public, value)
 	if kind == "tool.started" || kind == "tool.completed" {
 		copyEnum(public, "kind", value["kind"], "read", "edit", "search", "delete", "move", "execute", "fetch", "think", "other")
 		copyToolPathContext(public, value["path_context"])
+		narrated.text("title", value["title"], maximumNarrationTitleBytes)
+		copyToolInput(public, narrated, value["input"])
 	}
 	switch kind {
 	case "tool.started":
 		copyPublicText(public, "tool_call_id", value["tool_call_id"], 1024)
-		if input, ok := value["input"].(map[string]any); ok {
-			visible := map[string]any{}
-			copyPublicText(visible, "server", input["server"], 128)
-			copyPublicText(visible, "tool", input["tool"], 128)
-			if arguments, ok := input["arguments"].(map[string]any); ok {
-				copyPublicText(visible, "operation", arguments["action_id"], 128)
-			}
-			if _, ok := visible["operation"]; !ok {
-				copyPublicText(visible, "operation", input["action_id"], 128)
-			}
-			if _, ok := visible["operation"]; !ok {
-				copyPublicText(visible, "operation", input["operation"], 128)
-			}
-			if len(visible) > 0 {
-				public["input"] = visible
-			}
-		}
 	case "tool.completed":
 		copyPublicText(public, "tool_call_id", value["tool_call_id"], 1024)
 		copyEnum(public, "status", value["status"], "completed", "failed", "cancelled")
+		narrated.evidence("output", value["output"])
+		narrated.evidence("content", value["content"])
+		narrated.evidence("locations", value["locations"])
 	case "model.plan":
 		if entries, ok := value["entries"].([]any); ok {
 			public["step_count"] = min(len(entries), maximumPlanSteps)
+			public["entries"] = planEntries(entries, narrated)
 		}
-	case "model.thought":
-		// Presence and time are useful; free-form private reasoning is not.
+	case "model.thought", "model.progress":
+		narrated.text("text", value["text"], maximumNarrationTextBytes)
 	case "permission.decided":
 		copyPublicText(public, "tool_call_id", value["tool_call_id"], 1024)
 		copyEnum(public, "outcome", value["outcome"], "selected", "allowed", "denied", "cancelled")
 		copyPublicText(public, "option_kind", value["option_kind"], 32)
+		narrated.text("title", value["title"], maximumNarrationTitleBytes)
 	case "activity.elided":
 		copyPublicInteger(public, "dropped", value["dropped"])
 	case "provider.backoff":
@@ -438,8 +431,67 @@ func publicActivityPayload(kind string, raw json.RawMessage) (json.RawMessage, b
 	default:
 		return nil, false
 	}
+	narrated.finish()
 	encoded, err := json.Marshal(public)
 	return encoded, err == nil
+}
+
+// copyToolInput keeps what names a tool — its MCP server, tool and operation —
+// whatever else happens to the input, then the input itself as narrated
+// evidence: the command a shell step ran, the arguments a tool was given.
+func copyToolInput(public map[string]any, narrated *narration, raw any) {
+	input, ok := raw.(map[string]any)
+	if !ok {
+		return
+	}
+	names := map[string]any{}
+	copyPublicText(names, "server", input["server"], 128)
+	copyPublicText(names, "tool", input["tool"], 128)
+	if arguments, ok := input["arguments"].(map[string]any); ok {
+		copyPublicText(names, "operation", arguments["action_id"], 128)
+	}
+	if _, ok := names["operation"]; !ok {
+		copyPublicText(names, "operation", input["action_id"], 128)
+	}
+	if _, ok := names["operation"]; !ok {
+		copyPublicText(names, "operation", input["operation"], 128)
+	}
+	narrated.evidence("input", input)
+	if evidence, ok := public["input"].(map[string]any); ok {
+		for key, value := range names {
+			evidence[key] = value
+		}
+	} else if len(names) > 0 {
+		// A withheld input still says which tool it was.
+		public["input"] = names
+	}
+}
+
+// planEntries keeps each plan step's words, state and priority; a step whose
+// words scan as carrying a likely secret keeps its state and says it was
+// withheld.
+func planEntries(entries []any, narrated *narration) []map[string]any {
+	steps := make([]map[string]any, 0, min(len(entries), maximumPlanSteps))
+	for _, raw := range entries[:min(len(entries), maximumPlanSteps)] {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		step := map[string]any{}
+		copyPublicText(step, "status", entry["status"], 32)
+		copyPublicText(step, "priority", entry["priority"], 32)
+		content, _ := entry["content"].(string)
+		content = narrated.withoutRoot(strings.ToValidUTF8(content, "�"))
+		switch {
+		case strings.TrimSpace(content) == "" || strings.ContainsRune(content, 0):
+		case secretReason(content) != "":
+			step["withheld"] = secretReason(content)
+		default:
+			step["content"] = utf8Prefix(content, maximumNarrationTitleBytes)
+		}
+		steps = append(steps, step)
+	}
+	return steps
 }
 
 const (

@@ -8,9 +8,10 @@ import (
 
 // HTTP traces kept the action while outbound traces dropped every path fact,
 // leaving Responder unable to distinguish project edits from outside access.
+// The title and input cross now (activity_narration.go), without the root.
 func TestPublicActivityKeepsBoundedPathFactsWithoutRawHostContext(t *testing.T) {
 	for _, kind := range []string{"tool.started", "tool.completed"} {
-		raw := json.RawMessage(`{"kind":"read","status":"completed","title":"secret title","input":{"path":"/host/checkout/lib/a.go"},"path_context":{"basis":"lexical","root":"/host/checkout","paths":[{"source":"/locations/0/path","scope":"project","path":"lib/a.go","secret":"do not export"},{"source":"/input/path","scope":"outside","path":"/host/secret"}]}}`)
+		raw := json.RawMessage(`{"kind":"read","status":"completed","title":"Read /host/checkout/lib/a.go","input":{"path":"/host/checkout/lib/a.go"},"path_context":{"basis":"lexical","root":"/host/checkout","paths":[{"source":"/locations/0/path","scope":"project","path":"lib/a.go","secret":"do not export"},{"source":"/input/path","scope":"outside","path":"/host/secret"}]}}`)
 		payload, ok := publicActivityPayload(kind, raw)
 		if !ok {
 			t.Fatal("rejected a valid tool event")
@@ -24,6 +25,9 @@ func TestPublicActivityKeepsBoundedPathFactsWithoutRawHostContext(t *testing.T) 
 		}
 		if strings.Contains(string(payload), "/host") || strings.Contains(string(payload), "secret") {
 			t.Fatalf("exported forbidden host context: %s", payload)
+		}
+		if value["title"] != "Read lib/a.go" || !strings.Contains(string(payload), `"input":{"path":"lib/a.go"}`) {
+			t.Fatalf("lost the narrated title or input: %s", payload)
 		}
 	}
 }
