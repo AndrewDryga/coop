@@ -45,8 +45,8 @@ var suites = map[string]struct {
 	"provider-network-live-e2e-all":  {summary: liveprovider.NetworkSummaryPrefix},
 	"provider-accounts-live-e2e-all": {summary: liveprovider.AccountsSummaryPrefix},
 	"acp-e2e":                        {test: "TestLiveProviderConformance"},
-	"native-roles-e2e":               {test: "TestRuntimeNativeRolesAreDiscoveredByEveryPinnedClient"},
-	"skills-e2e":                     {test: "TestRuntimeSharedSkillsAreDiscoveredByEveryPinnedClient"},
+	"native-roles-e2e":               {test: "TestRuntimeNativeRolesAreCheckedByPinnedClients"},
+	"skills-e2e":                     {test: "TestRuntimeSharedSkillsAreCheckedByPinnedClients"},
 	// Claude is out of scope here, and the omission is the record's: Coop hands claude its MCP
 	// servers with --mcp-config on the main invocation, which no offline command exercises, so its
 	// connection is not proven by this suite. See internal/box/mcp_runtime_e2e_test.go.

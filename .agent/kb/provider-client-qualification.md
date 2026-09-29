@@ -3,7 +3,7 @@ name: provider-client-qualification
 description: locked clients, strict schema2 qualification requirements and Linux/amd64 live evidence
 subsystem: agent
 sources: [internal/agent/locked_clients.go, internal/agent/qualification.go, internal/agent/qualification_gate_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/credentials.go]
-updated: 2026-09-28
+updated: 2026-09-29
 ---
 
 **One manifest.** `locked-clients/package.json` + `package-lock.json` (embedded) and each adapter's
@@ -164,12 +164,13 @@ read-only and the client unprivileged. A Mac pass at umask 022 does not prove Li
   **Open: no captured loop-path sample for grok's credits exhaustion — its 402 is pinned only on the
   ACP path, and its 429 reads as "Rate limited", which the broad keyword case covers. No live proof:
   a real limit cannot be triggered on demand.**
-- helper discovery — D consult/delegate/preset/native-role matrices; R `native-roles-e2e` (each
-  pinned client reads back the role Coop rendered, probed from a working directory outside the home
-  so project scope cannot answer for the user-level root — control: plant the role only under
-  `<cwd>/.<agent>/agents` and claude, codex and gemini all fail, while grok passes because it
-  discovers project scope as well; no PAID call — gemini's row does attempt one with
-  a dummy key and reads the debug line printed before it fails); L `provider-consult-live-e2e-all`
+- helper discovery — D consult/delegate/preset/native-role matrices; R `native-roles-e2e`
+  (Codex checks its user-level role directory through rejected parser canaries, Gemini counts one
+  additional loaded role, and Grok reports the role by name. These probes run outside the home so
+  project scope cannot answer for it. Claude's `plugin validate` is handed its role directory
+  explicitly: it proves syntax, not automatic user-level discovery.
+  No paid call; Gemini's row uses a dummy key and reads the debug line before failure);
+  L `provider-consult-live-e2e-all`
   (wrapper called directly), plus `provider-delegate-live-e2e-all`: the same four-edge ring in
   delegate mode, exactly one requested file, no extra/ignored/staged/committed mutations.
 - account switching — D DirectMatrix account selection, ACP rotation, AND
@@ -228,6 +229,10 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-09-29 — rechecked native-role and skill/MCP offline probes against their actual commands.
+  Claude's explicit role-file validation is not automatic discovery; its skill validator proves
+  layout/parsing only, and its shared MCP route remains live-only. Updated test/Make labels without
+  changing the probe behavior or claiming new live proof.
 - 2026-09-28 — narrowed the first brokered-live changelog claim to its actually proven prompt
   and singleton ACP paths; added the live-provider helpers to this card's source map.
 - 2026-09-26 — recorded strict Linux/amd64 qualification from complete green suite logs;

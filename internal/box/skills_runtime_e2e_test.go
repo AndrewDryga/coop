@@ -14,11 +14,9 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
-// Every skills-capable client finds a skill at the path Coop's shared `.agent/skills` projection
-// mounts for it — proven by that client's OWN report of what it loaded, inside the locked client
-// image with networking off. The mount plan is already pinned elsewhere; this is the other half,
-// that the client actually reads the directory the plan targets. A client that quietly moved its
-// skills root would keep passing the mount test and silently load nothing.
+// Codex, Gemini and Grok report a skill at Coop's shared projection path inside the locked image.
+// Claude's offline validator confirms that its tooling finds/parses the layout; runtime loading
+// still needs a live prompt. The mount plan is pinned separately.
 //
 // Two guards keep a row from passing for the wrong reason. The probe runs from a working directory
 // that is NOT the home: every one of these clients ALSO discovers <cwd>/.<agent>/skills as a project
@@ -27,7 +25,7 @@ import (
 // a decoy skill sits at ~/.<agent>/notskills, a path Coop does not mount, which no client may report.
 //
 // Needs the locked client image, which `coop net setup` builds; run it with `make skills-e2e`.
-func TestRuntimeSharedSkillsAreDiscoveredByEveryPinnedClient(t *testing.T) {
+func TestRuntimeSharedSkillsAreCheckedByPinnedClients(t *testing.T) {
 	rt, err := runtime.Detect(os.Getenv("COOP_RUNTIME"))
 	if err != nil {
 		t.Fatal(err)

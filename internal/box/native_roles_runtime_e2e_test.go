@@ -16,12 +16,11 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
-// Each pinned client finds the native role Coop renders for it: the definition lands where that
-// client loads agents from, and the client's own offline check, inside the locked client image with
-// networking off, reads it back. A strict parser drops a definition without a word, so this is the
-// proof a lead that delegates to coop-<role> will find it. Needs the locked client image, which
-// `coop net setup` builds; run it with `make native-roles-e2e`.
-func TestRuntimeNativeRolesAreDiscoveredByEveryPinnedClient(t *testing.T) {
+// Codex checks the rendered user-level role directory through rejected parser canaries; Gemini
+// counts the loaded role, and Grok reports it by name. Claude's offline validator is given its
+// role directory explicitly: it proves the file parses, not automatic discovery by a lead.
+// Needs the locked client image from `coop net setup`.
+func TestRuntimeNativeRolesAreCheckedByPinnedClients(t *testing.T) {
 	rt, err := runtime.Detect(os.Getenv("COOP_RUNTIME"))
 	if err != nil {
 		t.Fatal(err)

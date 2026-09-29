@@ -229,13 +229,13 @@ review-writes-e2e: ## Review mount-isolation e2e (needs Docker; pulls a small te
 	@docker image inspect alpine:3.21 >/dev/null 2>&1 || docker pull alpine:3.21
 	@go test -tags reviewwritee2e -run '^TestReviewWritesDockerRuntime$$' -count=1 -v ./internal/box/
 
-native-roles-e2e: ## Each pinned client loads the native roles coop renders (needs the locked client image: coop net setup)
-	@go test -tags boxruntimee2e -run '^TestRuntimeNativeRolesAreDiscoveredByEveryPinnedClient$$' -count=1 -v ./internal/box/
+native-roles-e2e: ## Offline role discovery for Codex/Gemini/Grok; Claude validates explicit role files (needs locked image)
+	@go test -tags boxruntimee2e -run '^TestRuntimeNativeRolesAreCheckedByPinnedClients$$' -count=1 -v ./internal/box/
 
-skills-e2e: ## Each pinned client discovers the shared skills coop projects (needs the locked client image: coop net setup)
-	@go test -tags boxruntimee2e -run '^TestRuntimeSharedSkillsAreDiscoveredByEveryPinnedClient$$' -count=1 -v ./internal/box/
+skills-e2e: ## Offline skill discovery for Codex/Gemini/Grok; Claude validates skill layout (needs locked image)
+	@go test -tags boxruntimee2e -run '^TestRuntimeSharedSkillsAreCheckedByPinnedClients$$' -count=1 -v ./internal/box/
 
-mcp-e2e: ## Every pinned client reaches an operator's shared MCP server (needs the locked client image: coop net setup)
+mcp-e2e: ## Offline shared MCP handshake for Codex/Gemini/Grok; Claude is live-only (needs locked image)
 	@go test -tags boxruntimee2e -run '^TestRuntimeSharedMCPServersAreReachedByEveryProbeableClient$$' -count=1 -v ./internal/box/
 
 box-runtime-e2e: ## Init/reaping, signal, and entrypoint descendant-supervision contracts (set COOP_RUNTIME=docker)
