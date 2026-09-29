@@ -30,6 +30,7 @@ func TestParseEvalRunArgs(t *testing.T) {
 		{"no timeout", []string{"./s.yaml", "codex"}, "", nil, 0, 0, 0, "", "Missing --timeout"},
 		{"dry run still needs timeout", []string{"./s.yaml", "codex", "--dry-run"}, "", nil, 0, 0, 0, "", "Missing --timeout"},
 		{"missing flag value", []string{"./s.yaml", "codex", "--jobs"}, "", nil, 0, 0, 0, "", `Missing value for "--jobs"`},
+		{"flag is not loop config path", []string{"./s.yaml", "codex", "--loop-config", "--dry-run", "--timeout", "10m"}, "", nil, 0, 0, 0, "", `Missing value for "--loop-config"`},
 		{"repeated flag", []string{"./s.yaml", "codex", "--jobs", "2", "--jobs", "3", "--timeout", "10m"}, "", nil, 0, 0, 0, "", `Option "--jobs" can only be used once`},
 		{"zero jobs", []string{"./s.yaml", "codex", "--jobs", "0", "--timeout", "10m"}, "", nil, 0, 0, 0, "", `Invalid value "0" for "--jobs"`},
 		{"non-number repeat", []string{"./s.yaml", "codex", "--repeat", "lots", "--timeout", "10m"}, "", nil, 0, 0, 0, "", `Invalid value "lots" for "--repeat"`},

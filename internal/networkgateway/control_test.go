@@ -305,10 +305,10 @@ func TestReadinessPollingDoesNotKeepDeadGuardAlive(t *testing.T) {
 			if elapsed := time.Since(started); elapsed < HeartbeatTimeout-100*time.Millisecond {
 				t.Fatalf("liveness cutoff came early: %s into a %s window", elapsed, HeartbeatTimeout)
 			}
-			// Readiness going terminal is a different claim, and it settles just AFTER the control
-			// loop returns. Sampling it once here read a race as a liveness violation and failed a
-			// full gate run under load; wait for it instead, which still fails if it never turns.
-			wait.For(t, "readiness to go terminal", func() bool { return !c.Ready() })
+			// serveControl closes admission before returning to the done sender.
+			if c.Ready() {
+				t.Fatal("controller remained ready after control loop exited")
+			}
 			return
 		case <-ticker.C:
 			_ = client.Ready(ctx)

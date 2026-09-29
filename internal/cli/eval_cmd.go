@@ -467,7 +467,7 @@ func parseEvalRunArgs(args []string) (suite string, positionals []string, opts e
 			return "", ui.RepeatedOption(flag, cmd)
 		}
 		seen[flag] = true
-		if *i+1 >= len(args) {
+		if *i+1 >= len(args) || strings.HasPrefix(args[*i+1], "--") {
 			return "", ui.MissingOptionValue(flag, cmd, "coop eval run <suite> <target|preset>... --timeout 60m")
 		}
 		*i++
