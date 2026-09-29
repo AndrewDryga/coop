@@ -747,6 +747,21 @@ func TestACPControlRejectedNativeTargetDoesNotPoisonRecreate(t *testing.T) {
 	}
 }
 
+func TestACPControlAdapterRequestCannotAcknowledgeNativeChoice(t *testing.T) {
+	c := newTestControl(t)
+	set := []byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"s1","configId":"model","value":"not-a-model"}}` + "\n")
+	c.fromEditor(set)
+	request := []byte(`{"jsonrpc":"2.0","id":9,"method":"fs/read_text_file","params":{"path":"example"}}` + "\n")
+	if out := toEd(c, request); !bytes.Equal(out, request) {
+		t.Fatalf("adapter request changed: %s", out)
+	}
+	toEd(c, []byte(`{"jsonrpc":"2.0","id":9,"error":{"code":-32602,"message":"unsupported model"}}`+"\n"))
+	if replay := string(bytes.Join(c.sessionReady("s1"), nil)); strings.Contains(replay, "not-a-model") ||
+		!strings.Contains(replay, `"value":"opus[1m]"`) {
+		t.Fatalf("adapter request falsely acknowledged rejected choice: %s", replay)
+	}
+}
+
 func TestACPControlOlderAcceptedTargetWinsAfterNewerRejectsFirst(t *testing.T) {
 	c := newTestControl(t)
 	first := []byte(`{"jsonrpc":"2.0","id":1,"method":"session/set_config_option","params":{"sessionId":"s1","configId":"model","value":"sonnet"}}` + "\n")

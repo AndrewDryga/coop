@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -93,7 +96,7 @@ func TestForkACPFixedHooksForceModeAndHandlePermissions(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	ctrl := newForkACPControl(cfg, agents.Target{Provider: "claude", Model: "opus", Effort: "high"}, t.TempDir())
 	hooks := fixedForkACPHooks(ctrl, t.TempDir(), t.TempDir())
-	if hooks.ToEditor != nil || hooks.SelectProvider != nil {
+	if hooks.SelectProvider != nil {
 		t.Fatal("pinned fork ACP exposed the plain editor's provider toolbar")
 	}
 	settings := hooks.SessionReady("s1")
@@ -123,5 +126,94 @@ func TestForkACPFixedHooksForceModeAndHandlePermissions(t *testing.T) {
 	reply, forward := hooks.AutoReply([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/request_permission","params":{"options":[{"optionId":"allow_once","kind":"allow_once"}]}}`))
 	if forward || !strings.Contains(string(reply), `"optionId":"allow_once"`) {
 		t.Fatalf("permission request was not handled by Coop: forward=%v reply=%s", forward, reply)
+	}
+}
+
+func TestForkACPFixedHooksRetainAcceptedNativeChoices(t *testing.T) {
+	root := t.TempDir()
+	repo, workspace := filepath.Join(root, "repo"), filepath.Join(root, "fork")
+	for _, path := range []string{repo, workspace} {
+		if err := os.Mkdir(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	hooks := fixedForkACPHooks(newForkACPControl(cfg,
+		agents.Target{Provider: "claude", Model: "opus", Effort: "high"}, workspace), repo, workspace)
+	if hooks.SelectProvider != nil {
+		t.Fatal("fixed fork gained provider selection")
+	}
+	if hooks.ToEditor == nil {
+		t.Fatal("fixed fork does not observe native choice responses")
+	}
+	newSession := []byte(`{"jsonrpc":"2.0","id":1,"result":{"sessionId":"s1","configOptions":[{"id":"model"}]}}` + "\n")
+	if forwarded, restart := hooks.ToEditor(newSession); restart || !bytes.Equal(forwarded, newSession) ||
+		bytes.Contains(forwarded, []byte("coop_provider")) || bytes.Contains(forwarded, []byte("coop_account")) ||
+		bytes.Contains(forwarded, []byte("coop_preset")) {
+		t.Fatalf("fixed fork changed the native toolbar: %s, restart=%t", forwarded, restart)
+	}
+	newRequest := []byte(`{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":` + strconv.Quote(repo) + `}}` + "\n")
+	if handled, response, rewritten, restart := hooks.FromEditor(newRequest); handled || len(response) != 0 || restart ||
+		!bytes.Contains(rewritten, []byte(strconv.Quote(workspace))) {
+		t.Fatalf("fixed fork lost cwd rewriting: handled=%t response=%s rewritten=%s restart=%t", handled, response, rewritten, restart)
+	}
+	for _, choice := range []struct {
+		id     int
+		field  string
+		value  string
+		result string
+	}{
+		{3, "model", "sonnet", `{"result":{"configOptions":[]}}`},
+		{4, "effort", "max", `{"result":{"configOptions":[]}}`},
+		{5, "model", "not-a-model", `{"error":{"code":-32602,"message":"unsupported"}}`},
+	} {
+		request := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"session/set_config_option","params":{"sessionId":"s1","configId":%q,"value":%q}}`+"\n", choice.id, choice.field, choice.value))
+		if handled, response, rewritten, restart := hooks.FromEditor(request); handled || len(response) != 0 || len(rewritten) != 0 || restart {
+			t.Fatalf("native choice was intercepted: handled=%t response=%s rewritten=%s restart=%t", handled, response, rewritten, restart)
+		}
+		result := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,`, choice.id) + choice.result[1:] + "\n")
+		if forwarded, restart := hooks.ToEditor(result); restart || !bytes.Equal(forwarded, result) {
+			t.Fatalf("native choice response changed: %s, restart=%t", forwarded, restart)
+		}
+	}
+	if hooks.ChildReset != nil {
+		hooks.ChildReset()
+	}
+	settings := string(bytes.Join(hooks.SessionReady("s1"), nil))
+	if !strings.Contains(settings, `"configId":"model","sessionId":"s1","value":"sonnet"`) ||
+		!strings.Contains(settings, `"configId":"effort","sessionId":"s1","value":"max"`) ||
+		strings.Contains(settings, "not-a-model") {
+		t.Fatalf("restarted fork lost or poisoned native target: %s", settings)
+	}
+}
+
+func TestForkACPFixedHooksRetainGeminiNativeModel(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	hooks := fixedForkACPHooks(newForkACPControl(cfg,
+		agents.Target{Provider: "gemini", Model: "initial-model"}, t.TempDir()), t.TempDir(), t.TempDir())
+	for _, choice := range []struct {
+		id    int
+		model string
+		ok    bool
+	}{
+		{1, "chosen-model", true},
+		{2, "rejected-model", false},
+	} {
+		request := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"session/set_model","params":{"sessionId":"s1","modelId":%q}}`+"\n", choice.id, choice.model))
+		if handled, _, _, restart := hooks.FromEditor(request); handled || restart {
+			t.Fatalf("native Gemini model set was intercepted: %s", request)
+		}
+		response := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"result":{}}`+"\n", choice.id))
+		if !choice.ok {
+			response = []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"error":{"code":-32602}}`+"\n", choice.id))
+		}
+		if forwarded, restart := hooks.ToEditor(response); restart || !bytes.Equal(forwarded, response) {
+			t.Fatalf("native Gemini response changed: %s, restart=%t", forwarded, restart)
+		}
+	}
+	settings := string(bytes.Join(hooks.SessionReady("s1"), nil))
+	if !strings.Contains(settings, `"method":"session/set_model"`) ||
+		!strings.Contains(settings, `"modelId":"chosen-model"`) || strings.Contains(settings, "rejected-model") {
+		t.Fatalf("restarted Gemini fork lost or poisoned native model: %s", settings)
 	}
 }

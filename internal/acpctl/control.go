@@ -760,12 +760,60 @@ func (c *Control) registerNativeTarget(id, field, value, session string, transla
 	c.nativeLatest[nativeTargetKey(change.provider, change.field)] = change.sequence
 }
 
+// ObserveNativeTargetRequest records only adapter-owned model and effort sets for a fixed fork.
+// The fork supervisor leaves the request and the native toolbar untouched.
+func (c *Control) ObserveNativeTargetRequest(line []byte) {
+	var request struct {
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+		Params struct {
+			SessionID string `json:"sessionId"`
+			ConfigID  string `json:"configId"`
+			Value     string `json:"value"`
+			ModelID   string `json:"modelId"`
+		} `json:"params"`
+	}
+	if json.Unmarshal(line, &request) != nil {
+		return
+	}
+	switch request.Method {
+	case "session/set_config_option":
+		c.trackNativeOption(request.ID, request.Params.ConfigID, request.Params.Value, request.Params.SessionID)
+	case "session/set_model":
+		if len(request.ID) > 0 {
+			c.registerNativeTarget(string(request.ID), "model", request.Params.ModelID, request.Params.SessionID, false)
+		}
+	}
+}
+
+// ObserveNativeTargetResponse commits a choice only after the adapter accepts it.
+func (c *Control) ObserveNativeTargetResponse(line []byte) { c.commitNativeTarget(line) }
+
+func (c *Control) trackNativeOption(id json.RawMessage, configID, value, session string) {
+	if len(id) == 0 {
+		return
+	}
+	field := ""
+	switch configID {
+	case "model":
+		field = "model"
+	case "effort", "reasoning_effort":
+		field = "effort"
+	}
+	if field != "" {
+		c.registerNativeTarget(string(id), field, value, session, false)
+	}
+}
+
 func (c *Control) commitNativeTarget(line []byte) nativeTargetResult {
 	var response struct {
-		ID    json.RawMessage `json:"id"`
-		Error json.RawMessage `json:"error"`
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+		Result json.RawMessage `json:"result"`
+		Error  json.RawMessage `json:"error"`
 	}
-	if json.Unmarshal(line, &response) != nil || len(response.ID) == 0 {
+	if json.Unmarshal(line, &response) != nil || len(response.ID) == 0 || response.Method != "" ||
+		(len(response.Result) == 0 && (len(response.Error) == 0 || string(response.Error) == "null")) {
 		return nativeTargetResult{}
 	}
 	c.mu.Lock()
@@ -2802,16 +2850,7 @@ func (c *Control) fromEditor(line []byte) (handled bool, resp []byte, toAdapter 
 				return c.setModelFromEditor(h.ID, h.Params.SessionID, h.Params.Value)
 			}
 		}
-		field := ""
-		switch h.Params.ConfigID {
-		case "model":
-			field = "model"
-		case "effort", "reasoning_effort":
-			field = "effort"
-		}
-		if field != "" && len(h.ID) > 0 {
-			c.registerNativeTarget(string(h.ID), field, h.Params.Value, h.Params.SessionID, false)
-		}
+		c.trackNativeOption(h.ID, h.Params.ConfigID, h.Params.Value, h.Params.SessionID)
 	}
 	next, recognized := c.SelectorSelection(h.Params.ConfigID, h.Params.Value)
 	if !recognized {

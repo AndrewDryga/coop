@@ -86,8 +86,17 @@ func fixedForkACPHooks(ctrl *acpctl.Control, repo, workspace string) *acpproxy.H
 		SessionReady:     base.SessionReady,
 		InjectedResponse: base.InjectedResponse,
 		AutoReply:        base.AutoReply,
+		ChildReset:       base.ChildReset,
+		ToEditor: func(line []byte) ([]byte, bool) {
+			ctrl.ObserveNativeTargetResponse(line)
+			return line, false
+		},
 		FromEditor: func(line []byte) (bool, []byte, []byte, bool) {
-			return forkACPFromEditor(line, repo, workspace)
+			handled, response, rewritten, restart := forkACPFromEditor(line, repo, workspace)
+			if !handled {
+				ctrl.ObserveNativeTargetRequest(line)
+			}
+			return handled, response, rewritten, restart
 		},
 	}
 }
