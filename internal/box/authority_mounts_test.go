@@ -108,6 +108,7 @@ func TestAuthorityMountGuardPermitsOnlySafeProjectRelations(t *testing.T) {
 		{"writable project parent", []string{"-v", filepath.Dir(project) + ":/host"}, false},
 		{"writable project parent compact", []string{"-v" + filepath.Dir(project) + ":/host"}, false},
 		{"writable project parent bundled short flags", []string{"-iv" + filepath.Dir(project) + ":/host"}, false},
+		{"joined environment value with v", []string{"-eAPP_ENV=development"}, true},
 		{"writable project parent alias", []string{"-v", alias + ":/host"}, false},
 		{"readonly project parent exposes prospective private state", []string{"-v", filepath.Dir(project) + ":/host:ro"}, false},
 		{"private state", []string{"-v", state + ":/state:ro"}, false},

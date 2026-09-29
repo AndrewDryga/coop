@@ -707,10 +707,11 @@ func parseAuthorityMountPlan(options []string) (authorityMountPlan, error) {
 	var plan authorityMountPlan
 	for i := 0; i < len(options); i++ {
 		arg := options[i]
-		// Docker's pflag parser also accepts a value-taking -v after bundled boolean short flags
-		// (for example -iv/host:/box). Refuse that ambiguous spelling rather than letting an
-		// uninspected bind through; separating -i and -v is equivalent and unambiguous.
-		if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && !strings.HasPrefix(arg, "-v") && strings.Contains(arg[1:], "v") {
+		// Docker accepts -v after bundled boolean short flags (for example -iv/host:/box),
+		// but -e consumes the rest of its token as an environment value. Inspect real -v
+		// mounts and refuse ambiguous bundles without mistaking -eAPP_ENV=development for one.
+		if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") &&
+			!strings.HasPrefix(arg, "-v") && !strings.HasPrefix(arg, "-e") && strings.Contains(arg[1:], "v") {
 			return plan, fmt.Errorf("runtime option %q bundles -v with another short flag; write -v and its mount as separate arguments", arg)
 		}
 		// Docker's pflag parser accepts the short value joined to -v (for
