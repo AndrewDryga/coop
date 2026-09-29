@@ -24,8 +24,9 @@ import (
 //  2. measure its size BEFORE the candidate touches it;
 //  3. run the candidate's attempt in a box with its own credentials, bounded by the trial deadline;
 //  4. snapshot the finished workspace — the candidate's box has exited, so nothing is still writing;
-//  5. grade the SNAPSHOT in a fresh, credential-free, network-free sandbox;
-//  6. measure the snapshot and attach net growth beside the verdict, never folded into it.
+//  5. measure the finished snapshot before the verifier can write into it;
+//  6. grade the SNAPSHOT in a fresh, credential-free, network-free sandbox, then attach the
+//     pre-grading net growth beside the verdict, never folded into it.
 //
 // Step 3 is the only step that spends money, and every step after it is deliberately independent of
 // what the candidate did to its own container: a candidate that breaks its shell, its interpreter or
@@ -136,14 +137,15 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 		return fail(ctx, "could not snapshot the workspace for grading: "+err.Error())
 	}
 
-	// 6. Grade the snapshot in the sandbox.
+	// 6. Measure candidate work before the verifier can build, install or write into the snapshot.
+	// Size never changes a verdict: a smaller wrong answer is not better than a larger right one.
+	after, afterErr := measureSize(ctx, snap.Dir, ignore...)
+
+	// 7. Grade the snapshot in the sandbox.
 	res := r.app.gradeSnapshot(ctx, gradeRequest{
 		Image: r.image, Workspace: snap.Dir, Verifier: filepath.Join(r.suite.Dir, t.Case.Verifier), CaseID: t.Case.ID,
 	}, r.runBox)
 
-	// 7. Size after, reported BESIDE the verdict. Size never changes a verdict: a smaller wrong
-	// answer is not better than a larger right one.
-	after, afterErr := measureSize(ctx, snap.Dir, ignore...)
 	if beforeErr == nil && afterErr == nil {
 		// Recorded structurally as well as in prose, so a comparison can add it up.
 		res.Size = &eval.TrialSize{CodeBefore: before.TotalCode(), CodeAfter: after.TotalCode()}
@@ -151,19 +153,16 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 	res.Detail = joinDetail(res.Detail, sizeNote(before, beforeErr, after, afterErr, snap.Skipped))
 
 	// A trial that PASSED needs no evidence kept — its workspace is megabytes of "it worked". One
-	// that did not is exactly what a user needs to look at, so its snapshot stays under the run and
-	// the detail says where. (The live workspace goes either way: the snapshot is what was graded.)
+	// that did not keeps the candidate's original work for inspection. The grading snapshot is
+	// disposable: a verifier may have written into it, so it is never retained as model work.
 	if res.Status == eval.TrialPassed {
 		os.RemoveAll(dir)
 	} else {
-		// Keep what a reader needs to understand a non-pass: the graded tree, and what the MODEL
-		// said. Without the attempt's own output, a trial where the model did nothing at all is
-		// indistinguishable from one where it tried and was refused.
-		os.RemoveAll(workspace) // the pre-grading copy is redundant once the snapshot exists
+		os.RemoveAll(snap.Dir)
 		if att.detail != "" {
 			res.Detail = joinDetail(res.Detail, "the model's last words: "+att.detail)
 		}
-		res.Detail = joinDetail(res.Detail, "graded workspace kept at "+snap.Dir)
+		res.Detail = joinDetail(res.Detail, "candidate workspace kept at "+workspace)
 	}
 	return res
 }

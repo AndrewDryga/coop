@@ -138,9 +138,10 @@ build tool with its own exit codes: ` + "`make test`" + ` exits 2 on a missing t
 
 ## What the grader sees
 
-The workspace is an immutable SNAPSHOT taken after the candidate exited, including
+The workspace is a separate SNAPSHOT taken after the candidate exited, including
 its ` + "`.git`" + ` — so you can check whether it committed, and what. Writing into
-/workspace is fine: it is a copy, and nothing the verifier does changes what was
-recorded. Files the candidate left as symlinks pointing outside the workspace are
-not carried into the snapshot.
+/workspace is fine: Coop measures the snapshot before grading and discards the
+writable grading copy afterwards. Non-passing trials retain the candidate's original
+workspace, not verifier build artifacts. Files the candidate left as symlinks pointing
+outside the workspace are not carried into the grading snapshot.
 `

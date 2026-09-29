@@ -207,7 +207,7 @@ func TestTrialRunnerUsesTheFrozenInputAfterTheSourceChanges(t *testing.T) {
 	}
 }
 
-// A trial that did not pass keeps its graded workspace for the user to inspect; one that passed
+// A trial that did not pass keeps its candidate workspace for the user to inspect; one that passed
 // does not leave megabytes of "it worked" behind.
 func TestTrialRunnerKeepsEvidenceOnlyWhenSomethingWentWrong(t *testing.T) {
 	suite := trialSuite(t)
@@ -217,7 +217,7 @@ func TestTrialRunnerKeepsEvidenceOnlyWhenSomethingWentWrong(t *testing.T) {
 		wantKept  bool
 	}{
 		{"a pass leaves nothing behind", 0, false},
-		{"a failure keeps the graded workspace", 1, true},
+		{"a failure keeps the candidate workspace", 1, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newTrialRunner(t, suite, func(spec box.RunSpec) (int, error) {
@@ -241,7 +241,8 @@ func TestTrialRunnerKeepsEvidenceOnlyWhenSomethingWentWrong(t *testing.T) {
 	}
 }
 
-// Grading happens on a SNAPSHOT: a verifier that writes cannot change what the candidate produced.
+// Grading happens on a disposable snapshot: verifier writes must not become measured or retained
+// candidate work, even when the trial does not pass.
 func TestTrialRunnerGradesASnapshotNotTheLiveWorkspace(t *testing.T) {
 	suite := trialSuite(t)
 	var candidateRepo, gradedDir string
@@ -252,15 +253,34 @@ func TestTrialRunnerGradesASnapshotNotTheLiveWorkspace(t *testing.T) {
 		}
 		gradedDir = spec.Repo
 		// The verifier mutates its own copy, as a build or test run would.
-		return 0, os.WriteFile(filepath.Join(spec.Repo, "verifier-artifact"), []byte("x"), 0o644)
+		return 1, os.WriteFile(filepath.Join(spec.Repo, "verifier-artifact"), []byte("x"), 0o644)
 	})
-	r.run(context.Background(), trialFor(suite))
+	r.measureSize = func(_ context.Context, dir string, _ ...string) (eval.SizeMetrics, error) {
+		code := 1
+		if _, err := os.Stat(filepath.Join(dir, "answer.txt")); err == nil {
+			code++
+		}
+		if _, err := os.Stat(filepath.Join(dir, "verifier-artifact")); err == nil {
+			code += 100
+		}
+		return eval.SizeMetrics{Languages: map[string]eval.LangCount{"Go": {Code: code}}}, nil
+	}
+	res := r.run(context.Background(), trialFor(suite))
 
 	if gradedDir == "" || gradedDir == candidateRepo {
 		t.Fatalf("grading ran against the live workspace (%q vs %q)", gradedDir, candidateRepo)
 	}
+	if res.Status != eval.TrialFailed || res.Size == nil || res.Size.CodeAfter != 2 {
+		t.Fatalf("nonpass measured verifier work instead of candidate work: %+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(candidateRepo, "answer.txt")); err != nil {
+		t.Fatalf("candidate work was not retained: %v", err)
+	}
 	if _, err := os.Stat(filepath.Join(candidateRepo, "verifier-artifact")); !os.IsNotExist(err) {
-		t.Error("the verifier's write reached the candidate's recorded workspace")
+		t.Errorf("verifier write reached retained candidate work: %v", err)
+	}
+	if _, err := os.Stat(gradedDir); !os.IsNotExist(err) {
+		t.Errorf("writable grading snapshot was retained: %v", err)
 	}
 }
 

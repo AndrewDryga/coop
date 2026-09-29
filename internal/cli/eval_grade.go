@@ -14,7 +14,7 @@ import (
 // Grading is the one part of an eval the candidate must never touch, so it is deliberately built as
 // the candidate's opposite:
 //
-//   - it runs AFTER the candidate's processes are gone, against an immutable SNAPSHOT of the
+//   - it runs AFTER the candidate's processes are gone, against a separate SNAPSHOT of the
 //     workspace, so nothing the candidate is still doing can change the verdict;
 //   - it runs in a FRESH container from the trusted Coop image — never the candidate's image, shell
 //     configuration or interpreter — with NO model credentials and NO network, so the grader cannot
@@ -57,7 +57,7 @@ var verifierEntries = []struct {
 // is launched so the verdict mapping is unit-testable without a runtime.
 type gradeRequest struct {
 	Image     string // the TRUSTED image, resolved by the caller — never anything the candidate built
-	Workspace string // host path of the immutable snapshot
+	Workspace string // host path of the writable grading snapshot
 	Verifier  string // host path of the verifier directory (hidden material)
 	CaseID    string
 }

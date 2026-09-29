@@ -11,8 +11,8 @@ import (
 
 // Grading happens on a SNAPSHOT, never on the live workspace: the candidate's processes are stopped,
 // the workspace is copied once, and the grader runs against that copy. So a verifier that builds,
-// installs or rewrites files cannot alter what was recorded, and a second grading of the same trial
-// sees exactly what the first did.
+// installs or rewrites files cannot alter the retained candidate workspace. A fresh snapshot from
+// that workspace gives a later grading the same starting tree.
 //
 // The snapshot is deliberately different from fixture materialization in one way: it KEEPS `.git`.
 // A fixture's history is the author's and must never travel, but a finished trial's history is the

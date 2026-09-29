@@ -1095,6 +1095,10 @@ that never started also leave grading incomplete; an incomplete comparison has n
 winner. A sealed run with complete grading exits 0 even with graded failures; incomplete grading
 exits 1 and keeps the run record for inspection. A dry run exits 0 after previewing without trials.
 Code-size changes are a review signal, not a quality score.
+Coop measures the finished snapshot before the verifier runs. For a non-passing trial, it keeps
+the candidate's original workspace for inspection and removes the writable grading copy; verifier
+build artifacts are not counted or presented as model work. The grader still sees only a sanitized
+snapshot, so skipped external links or special files are noted in the trial detail.
 
 For a provider sign-in or quota refusal, check `coop credentials <agent>` before another paid
 run. For timeouts, check both the case timeout in `suite.yaml` and the run's `--timeout`.

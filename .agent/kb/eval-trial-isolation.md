@@ -3,7 +3,7 @@ name: eval-trial-isolation
 description: What isolates one coop eval trial from the next and from the grader — and why the obvious credential fix would break authentication
 subsystem: eval
 sources: [internal/cli/eval_cmd.go, internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_loop.go, internal/cli/eval_results.go, internal/loop/loop.go, internal/eval/fixtures.go, internal/eval/stage.go, internal/eval/stage_copy.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/eval/store.go, internal/eval/catalog.go, internal/eval/private_root.go, internal/box/run.go, internal/box/mounts.go, internal/box/authority_mounts.go, internal/agent/codex.go]
-updated: 2026-09-28
+updated: 2026-09-29
 ---
 
 `coop eval` measures configurations against each other, so its whole value rests on two trials
@@ -100,6 +100,12 @@ errors retain their existing ungraded outcome. Source changes still reach gradin
 
 ## Reading retained results
 
+The candidate's finished workspace is copied into a bounded, sanitized grading snapshot. Size
+is measured before the verifier can write into that copy. For a non-pass, the original candidate
+workspace is retained and the writable grading copy removed; it may include links or special
+files omitted from the grader's snapshot, which the trial detail records. Never mount the raw
+retained workspace for grading or present verifier build artifacts as candidate work.
+
 The private eval state root contains both runs and a `starters/` cache. A run has a `run.json`
 manifest; directory existence alone is not a run identity. Missing summaries mean running OR
 interrupted, not proof that the process stopped. `coop eval inspect [<run-id>]` reads the newest
@@ -122,6 +128,8 @@ already fully correct. The shipped verifier runs each subcommand on inputs no ta
 also why it cannot be satisfied by a loop that moves folders without finishing anything.
 
 ## Changelog
+- 2026-09-29 — rechecked trial copy, measurement and non-pass cleanup; the size and retained
+  workspace now describe candidate work before the verifier's writable sandbox changes it.
 - 2026-09-28 — rechecked workspace preparation and its staged caller. Replaced a vacuous
   fixture-local ignore test with a poisoned host HOME/XDG test that first proves the ignore is
   active; removed two fresh-init-only assertions. Kept the deliberate nested `.git` omission so
