@@ -4,6 +4,19 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A Codex turn's usage counts every model call in it. codex-acp reports only a turn's last call, so
+  a 23-call turn was recorded as 93k input and 737 output tokens where it used 1.79M and 4,889. The
+  worker now reads the turn's totals from Codex's own session record, once that record holds the
+  call codex-acp reported, and keeps codex-acp's figure otherwise.
+
+- A fleet worker reports a finished command on its next poll at once instead of waiting out the
+  rest of the poll interval, so each controller read or write returns up to an interval sooner.
+
+- The note that tells an agent where to save a turn's generated files now follows the caller's
+  prompt instead of preceding it. It names the turn's own folder, so ahead of the prompt it ended
+  the provider's prompt cache before the caller's instructions, which were billed in full on every
+  turn.
+
 - A session review keeps everything its gate printed, stdout and stderr as they came, on a green
   gate as on a red one, and the controller reads it page by page from
   `GET /v1/sessions/{id}/reviews/{operation}/gate-output`. The review's `gate_output` names the
