@@ -300,6 +300,46 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 	}
 }
 
+func TestSessionHTTPPublishRequiresMutationHeadersAndNoQuery(t *testing.T) {
+	service, _ := newHTTPTestSessionService(t)
+	defer service.Stop()
+	handler := NewHTTPHandler(service.Service)
+	path := "/v1/sessions/missing/reviews/missing/publish"
+	requestBody, err := json.Marshal(workerproto.PublishRequest{
+		AuthorizationRef: "approved", CandidateHead: strings.Repeat("a", 40), CandidateTree: strings.Repeat("b", 40),
+		Branch: "coop/fix", BaseBranch: "main", Title: "Fix", Body: "Reviewed work",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, path, contentType string
+	}{
+		{"unexpected query", path + "?unexpected=1", "application/json"},
+		{"wrong media type", path, "text/plain"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := sessionHTTPTestRequest(t, handler, http.MethodPost, tc.path, string(requestBody), "publish", tc.contentType)
+			if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_request"`) {
+				t.Fatalf("publication preflight = %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+	request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(requestBody))
+	request.Header.Add("Idempotency-Key", "first")
+	request.Header.Add("Idempotency-Key", "second")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_request"`) {
+		t.Fatalf("duplicate publication key = %d %s", response.Code, response.Body.String())
+	}
+	valid := sessionHTTPTestRequest(t, handler, http.MethodPost, path, string(requestBody), "publish-valid", "application/json")
+	if valid.Code == http.StatusBadRequest {
+		t.Fatalf("valid publication headers were rejected before session lookup: %d %s", valid.Code, valid.Body.String())
+	}
+}
+
 // Responder records remote mutation intent before the socket send. If Stop
 // wins in that gap, the owner-only fence must occupy the exact Coop operation
 // key without creating the session or model turn it is trying to stop.

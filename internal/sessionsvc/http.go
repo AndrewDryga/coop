@@ -1219,6 +1219,9 @@ func (h *sessionHTTPHandler) review(w http.ResponseWriter, r *http.Request, sess
 }
 
 func (h *sessionHTTPHandler) publishReview(w http.ResponseWriter, r *http.Request, sessionID, reviewID string) {
+	if !h.requirePost(w, r) {
+		return
+	}
 	var body workerproto.PublishRequest
 	if !decodeSessionJSON(w, r, &body) {
 		return
