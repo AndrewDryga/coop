@@ -174,37 +174,51 @@ func (c *Control) ensureGateImage(img string) error {
 	return nil
 }
 
+// ReviewGateRun is what a controller job's review gate ran and how it ended. ExitCode is set
+// only when the gate's command ran to an exit status.
+type ReviewGateRun struct {
+	Configured bool
+	Command    []string
+	ExitCode   *int
+}
+
+// Passed is a gate that ran and exited 0.
+func (r ReviewGateRun) Passed() bool { return r.Configured && r.ExitCode != nil && *r.ExitCode == 0 }
+
 // ReviewControllerJob runs the worker-owned checker against a disposable controller-job candidate.
 // The ordinary local merge path keeps its project settings; only this path ignores repository box
-// policy and the daemon's ambient run args, environment, MCP, and networking defaults.
-func (c *Control) ReviewControllerJob(ctx context.Context, request sessionsvc.ReviewGateRequest) (configured, passed bool, err error) {
+// policy and the daemon's ambient run args, environment, MCP, and networking defaults. Everything
+// the gate prints, and what Coop prints while starting it, goes to the request's Output.
+func (c *Control) ReviewControllerJob(ctx context.Context, request sessionsvc.ReviewGateRequest) (ReviewGateRun, error) {
 	var gate []string
 	if c.cfg.Explicit("COOP_GATE") {
 		gate = c.cfg.Gate
 	} else {
+		var err error
 		gate, err = c.gateFor(request.Repository)
 		if err != nil {
-			return true, false, err
+			return ReviewGateRun{Configured: true}, err
 		}
 	}
 	if len(gate) == 0 {
-		return false, false, nil
+		return ReviewGateRun{}, nil
 	}
+	run := ReviewGateRun{Configured: true, Command: append([]string(nil), gate...)}
 	if request.NetworkMode != "open" && request.NetworkMode != "none" && request.NetworkMode != "filtered" {
-		return true, false, errors.New("controller review has an invalid saved network mode")
+		return run, errors.New("controller review has an invalid saved network mode")
 	}
 	if err := c.ensureRuntime(); err != nil {
-		return true, false, err
+		return run, err
 	}
 	image := box.JobImage(c.cfg.BaseImage, c.cfg.ImageOverride)
 	if request.NetworkMode != "filtered" {
 		if err := c.ensureGateImage(image); err != nil {
-			return true, false, err
+			return run, err
 		}
 	}
 	base := strings.TrimSpace(gitOut(request.Candidate, "rev-parse", "--verify", "refs/coop/session-parent^{commit}"))
 	if base == "" {
-		return true, false, errors.New("resolve trusted review base commit")
+		return run, errors.New("resolve trusted review base commit")
 	}
 	launchCfg := c.cfg.Clone()
 	launchCfg.SetEgress(request.NetworkMode)
@@ -216,6 +230,7 @@ func (c *Control) ReviewControllerJob(ctx context.Context, request sessionsvc.Re
 		ControllerReviewRoot: request.StateRoot, ControllerReviewID: request.OperationID,
 		ActivityRepo: request.Repository, ActivityKind: forkspace.ExecutionReview,
 		ExtraArgs: []string{"-e", "COOP_REVIEW_BASE=" + base},
+		Stdout:    request.Output, Stderr: request.Output,
 	}
 	if request.NetworkMode == "filtered" {
 		capture, err := box.CapturedEgressFromReference(launchCfg, spec, box.SessionNetworkCapture{
@@ -224,14 +239,18 @@ func (c *Control) ReviewControllerJob(ctx context.Context, request sessionsvc.Re
 			AttemptID: request.OperationID, JobDigest: request.JobDigest,
 		})
 		if err != nil {
-			return true, false, err
+			return run, err
 		}
 		defer capture.Close()
 		spec.CapturedEgress = capture
 		c.host.settleFilteredRuns(c.rt)
 	}
 	code, err := box.Run(launchCfg, c.rt, spec)
-	return true, code == 0, err
+	if err != nil {
+		return run, err
+	}
+	run.ExitCode = &code
+	return run, nil
 }
 
 // runGateMode runs the merge gate in the box against treeDir. The gate POLICY is resolved from

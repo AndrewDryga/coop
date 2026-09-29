@@ -783,7 +783,10 @@ against current parent `HEAD`, runs the worker-owned gate on that candidate, and
 
 - creation base, source, parent, and candidate commit/tree identities;
 - the immutable pull-request number/ref/head binding when the session came from an existing PR;
-- rebase status and gate status;
+- rebase status and gate status, with the start failure's own words in `gate_error`;
+- `gate_output`: the gate's command, its `exit_code` when it ran to one, how many bytes of its
+  output Coop kept, and whether that is all of it (`complete`, else `incomplete` says why, or `lost`
+  when nothing could be kept);
 - bounded policy findings;
 - a bounded inline patch preview from parent tree to candidate tree;
 - `patch_truncated`, `candidate_retained`, `publishable`, and stable not-publishable reason codes.
@@ -810,6 +813,23 @@ then retrieve a succeeded review with
 `operation` and `review` envelope without starting or resuming a gate. Another
 session, a non-review operation, and an unfinished review are refused. Both
 `policy_findings` and `not_publishable_reasons` are arrays, including when empty.
+
+Everything the gate printed, stdout and stderr as they came (and what Coop printed while starting
+it), is kept beside the review, on a green gate as on a red one, so the controller can fix what
+failed without asking a person to relay it. Read it page by page with
+`GET /v1/sessions/{session_id}/reviews/{operation_id}/gate-output?cursor={cursor}`, starting
+without a cursor:
+
+```json
+{"output":"1 test, 1 failure\n…","next_cursor":"1048576","bytes":1843200,"complete":true}
+```
+
+A page holds at most 1 MiB of output and ends on a character boundary; bytes that are not UTF-8
+read as U+FFFD. `next_cursor` is `null` on the last page. `bytes` counts everything kept, and
+`complete: false` comes with `incomplete`, which says why: Coop keeps the first 64 MiB, so a gate
+that prints without end cannot fill the worker's disk. When nothing was kept (no gate ran, the
+output could not be written, or the session was discarded) the answer is `{"lost":"<why>"}`. Only
+the review's own session reads its output, and discarding the session removes it.
 
 `publishable` is evidence about this exact candidate, not permission to push or merge. It is false
 for conflict, no/failed gate, startup failure, policy findings, parent or source movement, active

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -221,11 +222,27 @@ type SessionReviewDTO struct {
 	Rebase                ReviewRebaseStatus     `json:"rebase"`
 	Gate                  ReviewGateStatus       `json:"gate"`
 	GateError             string                 `json:"gate_error,omitempty"`
+	GateOutput            *ReviewGateOutput      `json:"gate_output,omitempty"`
 	PolicyFindings        []string               `json:"policy_findings"`
 	Patch                 []byte                 `json:"patch,omitempty"`
 	PatchTruncated        bool                   `json:"patch_truncated"`
 	Publishable           bool                   `json:"publishable"`
 	NotPublishableReasons []string               `json:"not_publishable_reasons"`
+}
+
+// SessionReviewGateOutputDTO is one page of a review gate's output. A page is
+// the output from its cursor; next_cursor is null on the last page. When Coop
+// kept nothing, only lost is set, saying why.
+type SessionReviewGateOutputDTO struct {
+	Output     string  `json:"output"`
+	NextCursor *string `json:"next_cursor"`
+	Bytes      int64   `json:"bytes"`
+	Complete   bool    `json:"complete"`
+	Incomplete string  `json:"incomplete,omitempty"`
+}
+
+type sessionReviewGateOutputLostDTO struct {
+	Lost string `json:"lost"`
 }
 
 type SessionDiscardWorkspaceDTO struct {
@@ -557,6 +574,10 @@ func (h *sessionHTTPHandler) serveSessionPath(w http.ResponseWriter, r *http.Req
 	case len(parts) == 3 && parts[1] == "reviews" && validSessionHTTPPathID(parts[2]):
 		if sessionHTTPMethod(w, r, http.MethodGet) && sessionQueryOnly(w, r) {
 			h.getReview(w, r, sessionID, parts[2])
+		}
+	case len(parts) == 4 && parts[1] == "reviews" && validSessionHTTPPathID(parts[2]) && parts[3] == "gate-output":
+		if sessionHTTPMethod(w, r, http.MethodGet) && sessionQueryOnly(w, r, "cursor") {
+			h.getReviewGateOutput(w, r, sessionID, parts[2])
 		}
 	case len(parts) == 4 && parts[1] == "reviews" && validSessionHTTPPathID(parts[2]) && parts[3] == "publish":
 		if sessionHTTPMethod(w, r, http.MethodPost) {
@@ -1196,6 +1217,25 @@ func (h *sessionHTTPHandler) getReview(w http.ResponseWriter, r *http.Request, s
 	writeSessionJSON(w, http.StatusOK, sessionMutationReviewResponse{Operation: publicOperation(op), Review: publicReview(dossier)})
 }
 
+func (h *sessionHTTPHandler) getReviewGateOutput(w http.ResponseWriter, r *http.Request, sessionID, operationID string) {
+	page, err := h.service.ReadReviewGateOutput(r.Context(), sessionID, operationID, r.URL.Query().Get("cursor"))
+	if err != nil {
+		writeSessionServiceError(w, err)
+		return
+	}
+	if page.Lost != "" {
+		writeSessionJSON(w, http.StatusOK, sessionReviewGateOutputLostDTO{Lost: page.Lost})
+		return
+	}
+	result := SessionReviewGateOutputDTO{
+		Output: page.Output, Bytes: page.Bytes, Complete: page.Complete, Incomplete: page.Incomplete,
+	}
+	if page.NextCursor != "" {
+		result.NextCursor = &page.NextCursor
+	}
+	writeSessionJSON(w, http.StatusOK, result)
+}
+
 func (h *sessionHTTPHandler) review(w http.ResponseWriter, r *http.Request, sessionID string) {
 	if !h.requirePost(w, r) {
 		return
@@ -1669,10 +1709,23 @@ func publicReview(value ReviewDossier) SessionReviewDTO {
 		CandidateRetained: value.CandidateRetained, Publishable: value.Publishable,
 		NotPublishableReasons: append([]string{}, value.NotPublishableReasons...),
 	}
-	if value.GateError != "" {
-		result.GateError = "review gate could not start"
+	// The controller reads what went wrong, as it reads what the gate printed;
+	// the worker's own filesystem paths stay on the worker.
+	result.GateError = publicReviewGateError(value.GateError)
+	if value.GateOutput != nil {
+		output := *value.GateOutput
+		output.Command = append([]string(nil), output.Command...)
+		result.GateOutput = &output
 	}
 	return result
+}
+
+var reviewGateErrorPath = regexp.MustCompile(`(^|[\s"'(=:])/[^\s"'(),:;]+`)
+
+// publicReviewGateError keeps a gate start failure's words ("docker: command not found") and
+// replaces each absolute path in it, which names the worker's own filesystem, with <path>.
+func publicReviewGateError(detail string) string {
+	return reviewGateErrorPath.ReplaceAllString(detail, "${1}<path>")
 }
 
 func publicSessionErrorDetail(code session.ErrorCode, detail string) string {

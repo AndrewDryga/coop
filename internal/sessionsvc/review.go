@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -69,6 +70,7 @@ type ReviewDossier struct {
 	Rebase                ReviewRebaseStatus     `json:"rebase"`
 	Gate                  ReviewGateStatus       `json:"gate"`
 	GateError             string                 `json:"gate_error,omitempty"`
+	GateOutput            *ReviewGateOutput      `json:"gate_output,omitempty"`
 	PolicyFindings        []string               `json:"policy_findings,omitempty"`
 	Patch                 []byte                 `json:"patch,omitempty"`
 	PatchTruncated        bool                   `json:"patch_truncated"`
@@ -78,18 +80,23 @@ type ReviewDossier struct {
 
 // ReviewGateResult is the complete outcome of the trusted parent gate.
 // StartupError is a successful review outcome, not a failed operation.
+// Command and ExitCode say what ran and how it ended, when the gate knows.
 type ReviewGateResult struct {
 	Configured   bool
 	Passed       bool
 	StartupError string
+	Command      []string
+	ExitCode     *int
 }
 
 // ReviewGateRequest carries the saved job authority to the host-owned checker. The candidate is
 // disposable; the repository and network binding come from the authenticated session, not it.
+// Output receives everything the gate prints, stdout and stderr alike, for the review to keep.
 type ReviewGateRequest struct {
 	Repository, Candidate, StateRoot, OperationID         string
 	SessionID, JobDigest                                  string
 	NetworkMode, NetworkFingerprint, NetworkQualification string
+	Output                                                io.Writer
 }
 
 // ReviewGate is the narrow gate seam used by RunReview. Implementations must not mutate
@@ -607,11 +614,19 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 	}
 	var gateResult ReviewGateResult
 	if s.reviewGate != nil {
+		gateLog, openErr := s.openReviewGateOutput(op.ID)
 		gateResult, err = s.reviewGate.Run(ctx, ReviewGateRequest{
 			Repository: intent.Repository, Candidate: candidate.dir, StateRoot: s.stateRoot, OperationID: op.ID,
 			SessionID: bound.ID, JobDigest: bound.JobDigest, NetworkMode: string(policy.Egress.Mode),
 			NetworkFingerprint: bound.NetworkFingerprint, NetworkQualification: bound.NetworkQualification,
+			Output: gateLog,
 		})
+		output := gateLog.finish(gateResult, openErr)
+		if err == nil && (gateResult.Configured || gateResult.StartupError != "" || output.Bytes > 0) {
+			dossier.GateOutput = output
+		} else if path, pathErr := s.reviewGateOutputPath(op.ID); pathErr == nil {
+			_ = os.Remove(path) // no gate ran: there is nothing to keep
+		}
 	}
 	if err != nil {
 		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("run review gate: %w", err))

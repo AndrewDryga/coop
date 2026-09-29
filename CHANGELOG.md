@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A session review keeps everything its gate printed, stdout and stderr as they came, on a green
+  gate as on a red one, and the controller reads it page by page from
+  `GET /v1/sessions/{id}/reviews/{operation}/gate-output`. The review's `gate_output` names the
+  command, its exit code and how much was kept; Coop keeps the first 64 MiB and says when it cut
+  the rest. A red review used to say only "gate failed", so a controller's fixing agent had to run
+  the gate again to learn why. A gate that could not start now says why in `gate_error`, with the
+  worker's own paths left out, instead of a fixed phrase.
+
 - A box's project `.tool-versions` pins now apply everywhere in the box: a command started outside
   the checkout, such as a test's temp directory, finds the same Erlang, Elixir or Go versions instead
   of asdf's "No version is set". An image that ships its own home-level pins keeps them. The shared

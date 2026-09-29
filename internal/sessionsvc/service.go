@@ -2839,6 +2839,13 @@ func (s *Service) removeSessionArtifacts(
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove review patch artifact: %w", err)
 		}
+		gateOutput, err := s.reviewGateOutputPath(operationID)
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(gateOutput); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove review gate output: %w", err)
+		}
 		candidate, err := s.reviewCandidatePath(operationID)
 		if err != nil {
 			return err

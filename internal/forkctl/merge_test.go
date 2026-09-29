@@ -1,6 +1,7 @@
 package forkctl
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -1404,15 +1405,15 @@ func TestJobReviewGateRunsInTheJobImage(t *testing.T) {
 	cfg := &config.Config{Gate: []string{"true"}, BaseImage: "worker-box"}
 	c := New(cfg, runtime.Runtime{Name: shim}, Host{})
 	request := sessionsvc.ReviewGateRequest{Repository: repo, Candidate: t.TempDir(), NetworkMode: "none"}
-	if configured, _, err := c.ReviewControllerJob(context.Background(), request); !configured || err == nil || !strings.Contains(err.Error(), "review base") {
-		t.Fatalf("job review = configured %v, error %v; want past image selection", configured, err)
+	if run, err := c.ReviewControllerJob(context.Background(), request); !run.Configured || err == nil || !strings.Contains(err.Error(), "review base") {
+		t.Fatalf("job review = configured %v, error %v; want past image selection", run.Configured, err)
 	}
 	if _, err := c.MergeGate(repo); err == nil || !strings.Contains(err.Error(), "isn't built") {
 		t.Fatalf("MergeGate = %v; want it to keep resolving the repository's own image", err)
 	}
 	cfg.ImageOverride = "operator:1"
-	if configured, _, err := c.ReviewControllerJob(context.Background(), request); !configured || err == nil || !strings.Contains(err.Error(), "review base") {
-		t.Fatalf("operator job review = configured %v, error %v; want past image selection", configured, err)
+	if run, err := c.ReviewControllerJob(context.Background(), request); !run.Configured || err == nil || !strings.Contains(err.Error(), "review base") {
+		t.Fatalf("operator job review = configured %v, error %v; want past image selection", run.Configured, err)
 	}
 }
 
@@ -1460,11 +1461,11 @@ func TestControllerJobReviewIgnoresProjectAndAmbientLaunchSettings(t *testing.T)
 	}
 	cfg.BaseImage = "worker-box"
 	fc := New(cfg, runtime.Runtime{Name: runtimePath}, Host{})
-	configured, passed, err := fc.ReviewControllerJob(context.Background(), sessionsvc.ReviewGateRequest{
+	run, err := fc.ReviewControllerJob(context.Background(), sessionsvc.ReviewGateRequest{
 		Repository: repo, Candidate: candidate, StateRoot: state, OperationID: "review-one", NetworkMode: "none",
 	})
-	if err != nil || !configured || !passed {
-		t.Fatalf("controller job review = configured %v passed %v error %v", configured, passed, err)
+	if err != nil || !run.Configured || !run.Passed() {
+		t.Fatalf("controller job review = %+v error %v", run, err)
 	}
 	args, err := os.ReadFile(argsPath)
 	if err != nil {
@@ -1474,6 +1475,47 @@ func TestControllerJobReviewIgnoresProjectAndAmbientLaunchSettings(t *testing.T)
 		strings.Contains(string(args), "LEAK_FROM_DAEMON") || strings.Contains(string(args), "HOST_ENV_CANARY") ||
 		strings.Contains(string(args), "--env-file") || strings.Contains(string(args), "newer settings") {
 		t.Fatalf("job review inherited host/project settings:\n%s", args)
+	}
+}
+
+// A red review said only "gate failed" while what the checks printed went to the worker's own log
+// (emisar, 2026-09-28). The controller job's gate prints into the review's output instead, both
+// streams, and says which command ran and how it exited.
+func TestControllerJobReviewPrintsIntoTheReviewAndReportsItsExit(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("COOP_GATE", "./run gate")
+	repo := initRepo(t)
+	state := filepath.Join(t.TempDir(), "sessions")
+	staging := filepath.Join(state, "review-candidates", ".staging")
+	if err := os.MkdirAll(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	candidate := filepath.Join(staging, "review-red-123456")
+	git(t, repo, "clone", "-q", "--", repo, candidate)
+	git(t, candidate, "update-ref", "refs/coop/session-parent", "HEAD")
+	runtimePath := filepath.Join(t.TempDir(), "docker")
+	script := "#!/bin/sh\ncase \"$1\" in\nrun) echo '1 test, 1 failure'; echo 'warning: unused' >&2; exit 3 ;;\nesac\nexit 0\n"
+	if err := os.WriteFile(runtimePath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.BaseImage = "worker-box"
+	var output bytes.Buffer
+	fc := New(cfg, runtime.Runtime{Name: runtimePath}, Host{})
+	run, err := fc.ReviewControllerJob(context.Background(), sessionsvc.ReviewGateRequest{
+		Repository: repo, Candidate: candidate, StateRoot: state, OperationID: "review-red", NetworkMode: "none",
+		Output: &output,
+	})
+	if err != nil || !run.Configured || run.Passed() || run.ExitCode == nil || *run.ExitCode != 3 ||
+		strings.Join(run.Command, " ") != "./run gate" {
+		t.Fatalf("red controller job review = %+v, error %v", run, err)
+	}
+	if !strings.Contains(output.String(), "1 test, 1 failure\n") || !strings.Contains(output.String(), "warning: unused\n") {
+		t.Fatalf("the review kept %q of the gate's output", output.String())
 	}
 }
 

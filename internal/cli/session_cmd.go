@@ -332,14 +332,17 @@ func defaultSessionReviewGate(cfg *config.Config, rt runtime.Runtime) sessionsvc
 			return sessionsvc.ReviewGateResult{}, err
 		}
 		fc := forkctl.New(cfg, rt, sessionReviewGateHost(cfg, rt))
-		configured, passed, err := fc.ReviewControllerJob(ctx, request)
+		run, err := fc.ReviewControllerJob(ctx, request)
 		if err != nil {
-			return sessionsvc.ReviewGateResult{Configured: true, StartupError: sessionsvc.SanitizeReviewText(err.Error(), sessionsvc.MaxReviewErrorBytes)}, nil
+			return sessionsvc.ReviewGateResult{
+				Configured: true, Command: run.Command,
+				StartupError: sessionsvc.SanitizeReviewText(err.Error(), sessionsvc.MaxReviewErrorBytes),
+			}, nil
 		}
-		if !configured {
+		if !run.Configured {
 			return sessionsvc.ReviewGateResult{}, nil
 		}
-		return sessionsvc.ReviewGateResult{Configured: true, Passed: passed}, nil
+		return sessionsvc.ReviewGateResult{Configured: true, Passed: run.Passed(), Command: run.Command, ExitCode: run.ExitCode}, nil
 	})
 }
 
