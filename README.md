@@ -1182,7 +1182,7 @@ scoped to the agent you launched, so peers it spawns never recurse.
 Run one outbound worker, on the controller's VM or a separate VM:
 
 ```bash
-coop sessions connect --controller https://controller.example/coop --token-file /run/secrets/coop-token
+coop sessions connect --controller https://controller.example --token-file /run/secrets/coop-token
 ```
 
 The controller supplies immutable jobs: exact repositories and context, model targets, network

@@ -17,10 +17,10 @@ func TestServiceSecretApprovalFailureGuidance(t *testing.T) {
 		name string
 		err  error
 		want []string
-		omit string
+		omit []string
 	}{
-		{"cross-device", &os.LinkError{Op: "link", Old: "/project", New: "/state", Err: syscall.EXDEV}, []string{"different filesystems", "Put the project and Coop's service state on the same filesystem"}, "Fix the permissions"},
-		{"permission", &os.PathError{Op: "open", Path: "/state", Err: os.ErrPermission}, []string{"Fix the permissions, then run coop up again"}, "different filesystems"},
+		{"cross-device", &os.LinkError{Op: "link", Old: "/project", New: "/state", Err: syscall.EXDEV}, []string{"different filesystems", "Put the project and Coop's service state on the same filesystem"}, []string{"Fix the permissions", "COOP_SERVICE_STATE_ROOT"}},
+		{"permission", &os.PathError{Op: "open", Path: "/state", Err: os.ErrPermission}, []string{"Fix the permissions, then run coop up again"}, []string{"different filesystems"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := captureTerminal(t, func() {
@@ -33,7 +33,12 @@ func TestServiceSecretApprovalFailureGuidance(t *testing.T) {
 					t.Fatalf("missing recovery advice %q: %s", want, out)
 				}
 			}
-			if strings.Contains(out, tc.omit) || !strings.Contains(out, "Services were not started") {
+			for _, unwanted := range tc.omit {
+				if strings.Contains(out, unwanted) {
+					t.Fatalf("wrong recovery advice %q: %s", unwanted, out)
+				}
+			}
+			if !strings.Contains(out, "Services were not started") {
 				t.Fatalf("wrong recovery advice: %s", out)
 			}
 		})

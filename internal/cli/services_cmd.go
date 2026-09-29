@@ -254,7 +254,7 @@ func reportServiceSecretApprovalFailure(err error) error {
 	if errors.Is(err, syscall.EXDEV) {
 		return reported("Could not save secret-file approval",
 			"The project and Coop's host state are on different filesystems.",
-			"Put the project and Coop's service state on the same filesystem (set COOP_SERVICE_STATE_ROOT or move the project), then run coop up again.",
+			"Put the project and Coop's service state on the same filesystem by moving the project, then run coop up again.",
 			"Services were not started.")
 	}
 	return reported("Could not save secret-file approval",
