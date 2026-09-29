@@ -112,6 +112,9 @@ func TestSessionWorkspacePreservesPublishedGenerationAfterAmbiguousCreateError(t
 	if err := forkspace.ValidateGenerationWorkspace(repo, published); err != nil {
 		t.Fatalf("published generation no longer validates: %v", err)
 	}
+	if _, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "ambiguous", base, testSessionStoreID, "ambiguous"); !errors.Is(err, errSessionWorkspacePublicationPending) {
+		t.Fatalf("valid but unsynced existing generation lost retryability: %v", err)
+	}
 
 	ensureSessionGenerationLocked = previous
 	recovered, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "ambiguous", base, testSessionStoreID, "ambiguous")
@@ -192,11 +195,61 @@ func TestSessionWorkspacePreservesPublishedReservationAfterAmbiguousCreate(t *te
 	if reservation, reserved, err := forkspace.ReadWorkspaceReservation(repo, identity); err != nil || !reserved || reservation.OwnerID != "remote_owner" {
 		t.Fatalf("published reservation = %+v, reserved=%v err=%v", reservation, reserved, err)
 	}
+	if _, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "reservation-ambiguous", base, testSessionStoreID, "remote_owner"); !errors.Is(err, errSessionWorkspacePublicationPending) {
+		t.Fatalf("valid but unsynced existing reservation lost retryability: %v", err)
+	}
 
 	reserveSessionWorkspaceLocked = previous
 	recovered, err := ensureSessionWorkspaceContext(context.Background(), nil, repo, "reservation-ambiguous", base, testSessionStoreID, "remote_owner")
 	if err != nil || recovered.Fork != identity {
 		t.Fatalf("retry = %+v, %v; want reserved generation %+v", recovered, err, identity)
+	}
+}
+
+func TestExistingSessionWorkspacePermanentAuthorityErrorsAreNotPublicationPending(t *testing.T) {
+	for _, cause := range []string{"broken generation anchor", "missing reservation after refusal"} {
+		t.Run(cause, func(t *testing.T) {
+			repo, git := gitrepo.New(t)
+			git("commit", "-q", "--allow-empty", "-m", "base")
+			base := gitOut(repo, "rev-parse", "HEAD")
+			name, owner := "permanent-refusal", "remote_owner"
+			created, err := ensureSessionWorkspaceContext(t.Context(), nil, repo, name, base, testSessionStoreID, owner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch cause {
+			case "broken generation anchor":
+				anchor := filepath.Join(forkspace.StateDir(repo), "generation-"+string(created.Fork.Generation)+".anchor")
+				if err := os.Remove(anchor); err != nil {
+					t.Fatal(err)
+				}
+			case "missing reservation after refusal":
+				unlock, err := forkspace.LockState(repo, name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				reservation, reserved, readErr := forkspace.ReadWorkspaceReservation(repo, created.Fork)
+				if readErr == nil && reserved {
+					readErr = forkspace.RemoveWorkspaceReservationIfMatchesLocked(repo, reservation)
+				}
+				unlock()
+				if readErr != nil || !reserved {
+					t.Fatalf("remove fixture reservation: reserved=%t err=%v", reserved, readErr)
+				}
+				previous := reserveSessionWorkspaceLocked
+				reserveSessionWorkspaceLocked = func(string, forkspace.WorkspaceReservation) error {
+					return errors.New("reservation refused")
+				}
+				t.Cleanup(func() { reserveSessionWorkspaceLocked = previous })
+			}
+			_, err = ensureSessionWorkspaceContext(t.Context(), nil, repo, name, base, testSessionStoreID, owner)
+			if err == nil || errors.Is(err, errSessionWorkspacePublicationPending) {
+				t.Fatalf("permanent existing-workspace refusal = %v, want terminal error", err)
+			}
+			if info, statErr := os.Lstat(created.Path); statErr != nil || !info.IsDir() {
+				t.Fatalf("existing workspace changed or removed: %+v, %v", info, statErr)
+			}
+		})
 	}
 }
 

@@ -3,7 +3,7 @@ name: session-operation-intents-cross-versions
 description: persisted operation intents survive upgrades; replay requires proven frozen job authority and never reconstructs it from retired local policies
 subsystem: session-api
 sources: [internal/sessionsvc/service.go, internal/sessionsvc/review.go, internal/session/store.go]
-updated: 2026-09-27
+updated: 2026-09-29
 ---
 
 operations.result doubles as the write-ahead intent for a running cross-process operation.
@@ -22,6 +22,10 @@ intent without a store ID may have published a v1 fork reservation before its se
 replay marks it uncertain and leaves its workspace untouched rather than inventing v2 ownership.
 An ambiguous generation or reservation publication keeps the new intent running so the same owner
 can repeat the durability barrier; failing the operation there would strand a reserved fork.
+For an already-existing workspace, that retry classification requires visible, valid generation
+binding or a reservation for the exact session/store owner. A broken physical anchor or a refused
+reservation with no matching record fails the create operation while leaving the workspace intact
+for explicit recovery; it must not leave a Running operation that can never succeed.
 
 Historical policy-only create intents cannot execute after the cutover. Existing sessions and
 evidence are preserved, but replay never turns an old policy name into a new controller grant.
@@ -33,6 +37,8 @@ Startup and the watchdog reconcile other stale operations rather than guessing e
 a stranded reserved row can fail as interrupted admission because no effect was attempted.
 
 ## Changelog
+- 2026-09-29 — rechecked existing-workspace adoption against generation anchors and reservation
+  records; only visibly valid owner authority remains replayable after an adoption error.
 - 2026-09-27 — checked create replay and store transaction sources; added the stable owner-store
   intent and atomic row binding, with fail-closed handling for historical in-flight creates.
 - 2026-09-26 — removed obsolete policy/target normalization and two-phase pinning notes;

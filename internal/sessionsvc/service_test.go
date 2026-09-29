@@ -1609,6 +1609,59 @@ func TestControllerToolsBindingSurvivesAsyncCreationButStaysPrivate(t *testing.T
 	}
 }
 
+func TestAsyncCreateTerminatesOnBrokenExistingWorkspaceAnchor(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, nil)
+	request := service.request(t, "broken-anchor")
+	job, err := workerproto.DecodeJobSpec(request.Job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := make(chan struct{})
+	var op session.Operation
+	service.testBeforeCreatePin = func() error {
+		<-ready
+		policy, err := service.resolveJobExecution(context.Background(), job)
+		if err != nil {
+			return err
+		}
+		created, err := ensureSessionWorkspaceContext(context.Background(), nil, policy.Repository,
+			deterministicForkName(op.ID), job.Source.Binding.SelectedCommit,
+			service.Store().ID(), deterministicSessionID(op.ID))
+		if err != nil {
+			return err
+		}
+		anchor := filepath.Join(forkspace.StateDir(policy.Repository), "generation-"+string(created.Fork.Generation)+".anchor")
+		return os.Remove(anchor)
+	}
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	op, err = service.CreateRemoteSessionAsync(context.Background(), "broken-anchor", request)
+	if err != nil || op.State != session.OperationRunning {
+		t.Fatalf("async create = %+v, err=%v", op, err)
+	}
+	close(ready)
+	var current session.Operation
+	deadline := time.After(5 * time.Second)
+	for {
+		current, err = service.Store().GetOperationByID(context.Background(), op.ID)
+		if err == nil && sessionOperationReached(t, current, session.OperationFailed) {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("broken-anchor create stayed %s instead of failing: %v", current.State, err)
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	if _, err := service.Store().GetSession(context.Background(), deterministicSessionID(op.ID)); !errors.Is(err, session.ErrSessionNotFound) {
+		t.Fatalf("broken-anchor create published a session: %v", err)
+	}
+}
+
 func TestSessionServiceAsyncCreateReturnsBeforeSlowPinAndCompletes(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))

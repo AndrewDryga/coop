@@ -494,7 +494,14 @@ func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuar
 			}
 			return sessionWorkspace{}, removeCreatedSessionWorkspace(repo, ws, cause)
 		}
-		return sessionWorkspace{}, fmt.Errorf("%w: bind session workspace generation: %w", errSessionWorkspacePublicationPending, err)
+		published, present, inspectErr := forkspace.ReadGeneration(repo, generatedName)
+		if inspectErr == nil && present {
+			inspectErr = forkspace.ValidateGenerationWorkspace(repo, published)
+		}
+		if inspectErr == nil && present {
+			return sessionWorkspace{}, fmt.Errorf("%w: bind session workspace generation: %w", errSessionWorkspacePublicationPending, err)
+		}
+		return sessionWorkspace{}, fmt.Errorf("bind existing session workspace generation: %w", errors.Join(err, inspectErr))
 	}
 	workspace.Fork = identity
 	reservation := forkspace.WorkspaceReservation{
@@ -512,7 +519,11 @@ func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuar
 			// retry reservation publication idempotently against this complete workspace.
 			return sessionWorkspace{}, fmt.Errorf("%w: %w", errSessionWorkspacePublicationPending, cause)
 		}
-		return sessionWorkspace{}, fmt.Errorf("%w: reserve session workspace: %w", errSessionWorkspacePublicationPending, err)
+		published, present, inspectErr := forkspace.ReadWorkspaceReservation(repo, identity)
+		if inspectErr == nil && present && published.MatchesSessionOwner(storeID, sessionID) {
+			return sessionWorkspace{}, fmt.Errorf("%w: reserve session workspace: %w", errSessionWorkspacePublicationPending, err)
+		}
+		return sessionWorkspace{}, fmt.Errorf("reserve existing session workspace: %w", errors.Join(err, inspectErr))
 	}
 	return workspace, nil
 }
