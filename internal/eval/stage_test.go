@@ -1,11 +1,46 @@
 package eval
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestStageSuiteCanceledBeforePublication(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	root := t.TempDir()
+	if _, err := StageSuite(ctx, root, stagedAgentSuite(t)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled staging = %v", err)
+	}
+	if entries, err := os.ReadDir(root); err != nil || len(entries) != 0 {
+		t.Fatalf("canceled staging left published inputs: %v, %v", entries, err)
+	}
+}
+
+type cancelAfterWrite struct {
+	cancel context.CancelFunc
+	wrote  int
+}
+
+func (w *cancelAfterWrite) Write(p []byte) (int, error) {
+	w.wrote += len(p)
+	w.cancel()
+	return len(p), nil
+}
+
+func TestContextCopyStopsBetweenLargeFileChunks(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	w := &cancelAfterWrite{cancel: cancel}
+	const size = 1 << 20
+	_, err := copyWithContext(ctx, w, strings.NewReader(strings.Repeat("x", size)))
+	if !errors.Is(err, context.Canceled) || w.wrote == 0 || w.wrote >= size {
+		t.Fatalf("copy = %v after %d/%d bytes, want mid-file cancellation", err, w.wrote, size)
+	}
+}
 
 func stagedAgentSuite(t *testing.T) *Suite {
 	t.Helper()
@@ -27,7 +62,7 @@ func stagedAgentSuite(t *testing.T) *Suite {
 
 func TestStageSuiteFreezesInputAndVerifierBytes(t *testing.T) {
 	source := stagedAgentSuite(t)
-	first, err := StageSuite(t.TempDir(), source)
+	first, err := StageSuite(context.Background(), t.TempDir(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +82,7 @@ func TestStageSuiteFreezesInputAndVerifierBytes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source.Dir, "files/input.txt"), []byte("changed input"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	second, err := StageSuite(t.TempDir(), source)
+	second, err := StageSuite(context.Background(), t.TempDir(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +95,7 @@ func TestStageSuiteFreezesInputAndVerifierBytes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source.Dir, "verifiers/hello/expected.txt"), []byte("changed answer"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	third, err := StageSuite(t.TempDir(), source)
+	third, err := StageSuite(context.Background(), t.TempDir(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +105,7 @@ func TestStageSuiteFreezesInputAndVerifierBytes(t *testing.T) {
 	if body, err := os.ReadFile(verifier); err != nil || string(body) != "x\n" {
 		t.Fatalf("the old staged verifier changed with its source: %q, %v", body, err)
 	}
-	identical, err := StageSuite(t.TempDir(), source)
+	identical, err := StageSuite(context.Background(), t.TempDir(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +115,7 @@ func TestStageSuiteFreezesInputAndVerifierBytes(t *testing.T) {
 	if err := os.Chmod(filepath.Join(source.Dir, "files/input.txt"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	modeChanged, err := StageSuite(t.TempDir(), source)
+	modeChanged, err := StageSuite(context.Background(), t.TempDir(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +125,7 @@ func TestStageSuiteFreezesInputAndVerifierBytes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source.Dir, "files/added.txt"), []byte("new path"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	namesChanged, err := StageSuite(t.TempDir(), source)
+	namesChanged, err := StageSuite(context.Background(), t.TempDir(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +140,7 @@ func TestStageSuiteAgentWithoutFilesGetsAnEmptyInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	staged, err := StageSuite(t.TempDir(), source)
+	staged, err := StageSuite(context.Background(), t.TempDir(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,14 +156,14 @@ func TestStageSuiteLoopQueueChangesWorkloadButRecipeDoesNot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := StageSuite(t.TempDir(), source)
+	first, err := StageSuite(context.Background(), t.TempDir(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(source.Dir, "loop.yaml"), []byte("changed recipe"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	same, err := StageSuite(t.TempDir(), source)
+	same, err := StageSuite(context.Background(), t.TempDir(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +173,7 @@ func TestStageSuiteLoopQueueChangesWorkloadButRecipeDoesNot(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source.Dir, "queues/repo-evolution/00_todo/first/task.md"), []byte("changed task"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	changed, err := StageSuite(t.TempDir(), source)
+	changed, err := StageSuite(context.Background(), t.TempDir(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +216,7 @@ func TestStageSuiteRefusesMissingLinkedAndOversizedInputs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			source := stagedAgentSuite(t)
 			tc.edit(t, source)
-			_, err := StageSuite(t.TempDir(), source)
+			_, err := StageSuite(context.Background(), t.TempDir(), source)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("stage error = %v; want %q", err, tc.want)
 			}
@@ -197,7 +232,7 @@ func TestStageSuitePreservesInternalRelativeLinks(t *testing.T) {
 	if err := os.Symlink("../input.txt", filepath.Join(source.Dir, "files", "sub", "link")); err != nil {
 		t.Fatal(err)
 	}
-	staged, err := StageSuite(t.TempDir(), source)
+	staged, err := StageSuite(context.Background(), t.TempDir(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +287,7 @@ cases:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := StageSuite(t.TempDir(), source); err == nil || !strings.Contains(err.Error(), "physically overlaps") {
+	if _, err := StageSuite(context.Background(), t.TempDir(), source); err == nil || !strings.Contains(err.Error(), "physically overlaps") {
 		t.Fatalf("case-folded hidden grader was staged as candidate input: %v", err)
 	}
 }
@@ -289,7 +324,7 @@ func TestOpenedSuiteTreeStaysConfinedAfterSourcePathSwap(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "frozen")
 	remaining := int64(SnapshotLimit)
 	entries := stageMaxEntries
-	if _, err := stageOpenedTree(opened.root, dest, &remaining, &entries); err != nil {
+	if _, err := stageOpenedTree(context.Background(), opened.root, dest, &remaining, &entries); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dest, "private.txt")); !os.IsNotExist(err) {
@@ -319,7 +354,7 @@ func TestStageSuiteRejectsSuiteRootAndManifestReplacement(t *testing.T) {
 		if err := os.Symlink(outside, source.Dir); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := StageSuite(t.TempDir(), source); err == nil || !strings.Contains(err.Error(), "directory changed since load") {
+		if _, err := StageSuite(context.Background(), t.TempDir(), source); err == nil || !strings.Contains(err.Error(), "directory changed since load") {
 			t.Fatalf("replaced suite root was trusted: %v", err)
 		}
 	})
@@ -328,7 +363,7 @@ func TestStageSuiteRejectsSuiteRootAndManifestReplacement(t *testing.T) {
 		if err := os.WriteFile(source.Path, []byte(strings.Replace(agentSuite, "print hello", "read secrets", 1)), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := StageSuite(t.TempDir(), source); err == nil || !strings.Contains(err.Error(), "manifest changed since load") {
+		if _, err := StageSuite(context.Background(), t.TempDir(), source); err == nil || !strings.Contains(err.Error(), "manifest changed since load") {
 			t.Fatalf("edited manifest was trusted: %v", err)
 		}
 	})
@@ -346,7 +381,7 @@ func TestStageCopyHasOneByteBudgetAcrossTreesAndPreservesModes(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(filepath.Join(source.Dir, "files", "readonly"), 0o700) })
-	staged, err := StageSuite(t.TempDir(), source)
+	staged, err := StageSuite(context.Background(), t.TempDir(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,21 +409,21 @@ func TestStageCopyHasOneByteBudgetAcrossTreesAndPreservesModes(t *testing.T) {
 	remaining := int64(10)
 	entries := stageMaxEntries
 	first := filepath.Join(t.TempDir(), "first")
-	if _, err := stageOpenedTree(tree.root, first, &remaining, &entries); err != nil {
+	if _, err := stageOpenedTree(context.Background(), tree.root, first, &remaining, &entries); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(filepath.Join(first, "readonly"), 0o700) })
-	if _, err := stageOpenedTree(tree.root, filepath.Join(t.TempDir(), "second"), &remaining, &entries); err == nil || !strings.Contains(err.Error(), "staging limit") {
+	if _, err := stageOpenedTree(context.Background(), tree.root, filepath.Join(t.TempDir(), "second"), &remaining, &entries); err == nil || !strings.Contains(err.Error(), "staging limit") {
 		t.Fatalf("second tree exceeded shared byte budget: %v", err)
 	}
 	remaining = int64(100)
 	entries = 3 // exactly this tree's two files and one directory fit
 	entryFirst := filepath.Join(t.TempDir(), "entries-first")
-	if _, err := stageOpenedTree(tree.root, entryFirst, &remaining, &entries); err != nil {
+	if _, err := stageOpenedTree(context.Background(), tree.root, entryFirst, &remaining, &entries); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(filepath.Join(entryFirst, "readonly"), 0o700) })
-	if _, err := stageOpenedTree(tree.root, filepath.Join(t.TempDir(), "entries-second"), &remaining, &entries); err == nil || !strings.Contains(err.Error(), "entry staging limit") {
+	if _, err := stageOpenedTree(context.Background(), tree.root, filepath.Join(t.TempDir(), "entries-second"), &remaining, &entries); err == nil || !strings.Contains(err.Error(), "entry staging limit") {
 		t.Fatalf("second tree exceeded shared entry budget: %v", err)
 	}
 }
@@ -409,7 +444,7 @@ func TestStageSuiteDropsSpecialDirectoryModeWithoutChangingItsInputIdentity(t *t
 	if info.Mode()&os.ModeSticky == 0 {
 		t.Skip("filesystem did not retain the sticky bit")
 	}
-	staged, err := StageSuite(t.TempDir(), source)
+	staged, err := StageSuite(context.Background(), t.TempDir(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -436,7 +471,7 @@ func TestStageSuiteSkipsNestedGitMetadataButKeepsSubmoduleFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	staged, err := StageSuite(t.TempDir(), source)
+	staged, err := StageSuite(context.Background(), t.TempDir(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -450,7 +485,7 @@ func TestStageSuiteSkipsNestedGitMetadataButKeepsSubmoduleFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source.Dir, "files", ".git"), []byte("gitdir: /private/source/history\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := StageSuite(t.TempDir(), source); err == nil || !strings.Contains(err.Error(), "contains .git") {
+	if _, err := StageSuite(context.Background(), t.TempDir(), source); err == nil || !strings.Contains(err.Error(), "contains .git") {
 		t.Fatalf("top-level checkout metadata was accepted: %v", err)
 	}
 }

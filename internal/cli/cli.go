@@ -6,6 +6,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -71,11 +72,21 @@ type app struct {
 // help) never call it, so they work with no runtime installed — Main no longer detects eagerly. The
 // error is the same actionable "runtime not found" Main used to surface.
 func (a *app) ensureRuntime() error {
+	return a.ensureRuntimeContext(context.Background())
+}
+
+func (a *app) ensureRuntimeContext(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if a.rtSet {
 		return nil
 	}
-	rt, err := runtime.Detect(a.cfg.RuntimeName)
+	rt, err := runtime.DetectContext(ctx, a.cfg.RuntimeName)
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	// Automatic selection prefers Docker, so landing anywhere else while Docker is installed means

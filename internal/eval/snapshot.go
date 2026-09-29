@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -43,7 +44,10 @@ type Snapshot struct {
 // SnapshotWorkspace copies src into dst (which must not exist) for grading. It returns the snapshot
 // with any skipped entries. An unreadable source is an error — grading something that cannot be read
 // is a harness failure, not a candidate failure.
-func SnapshotWorkspace(src, dst string) (Snapshot, error) {
+func SnapshotWorkspace(ctx context.Context, src, dst string) (Snapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return Snapshot{}, err
+	}
 	info, err := os.Stat(src)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("snapshot workspace %q: %w", src, err)
@@ -61,6 +65,9 @@ func SnapshotWorkspace(src, dst string) (Snapshot, error) {
 	snap := Snapshot{Dir: dst}
 	var copied int64
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			// An entry we cannot even read (a directory the candidate chmod'd to 000) is recorded as
 			// unsnapshotted, not turned into a failed trial — the rest of the work is still gradable.
@@ -97,7 +104,10 @@ func SnapshotWorkspace(src, dst string) (Snapshot, error) {
 			if copied += info.Size(); copied > SnapshotLimit {
 				return fmt.Errorf("workspace exceeds the %d GiB snapshot limit at %q; grading a tree this large is refused", SnapshotLimit>>30, rel)
 			}
-			if err := copyFile(path, target, info.Mode().Perm()); err != nil {
+			if err := copyFile(ctx, path, target, info.Mode().Perm()); err != nil {
+				if canceled := ctx.Err(); canceled != nil {
+					return canceled
+				}
 				// Unreadable content is a gap in the snapshot, not a verdict.
 				snap.Skipped = append(snap.Skipped, rel)
 			}
@@ -108,6 +118,11 @@ func SnapshotWorkspace(src, dst string) (Snapshot, error) {
 		}
 	})
 	if err != nil {
+		_ = os.RemoveAll(dst)
+		return Snapshot{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		_ = os.RemoveAll(dst)
 		return Snapshot{}, err
 	}
 	return snap, nil
@@ -142,10 +157,13 @@ func snapshotSymlink(root, path, target string) error {
 // A nonzero candidate exit with an unchanged workspace is treated as a harness error instead
 // of graded work. Incomplete reads therefore return an error, never an unchanged signature.
 // Hashing is bounded by the same byte limit as the snapshot that will be graded.
-func TreeSignature(dir string, ignore ...string) (string, error) {
+func TreeSignature(ctx context.Context, dir string, ignore ...string) (string, error) {
 	w := newHasher()
 	var read int64
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
@@ -180,7 +198,7 @@ func TreeSignature(dir string, ignore ...string) (string, error) {
 				return err
 			}
 			h := sha256.New()
-			n, err := io.Copy(h, io.LimitReader(file, SnapshotLimit-read+1))
+			n, err := copyWithContext(ctx, h, io.LimitReader(file, SnapshotLimit-read+1))
 			closeErr := file.Close()
 			if err != nil {
 				return err
@@ -203,6 +221,9 @@ func TreeSignature(dir string, ignore ...string) (string, error) {
 		return nil
 	})
 	if err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 	return string(w.sum()), nil

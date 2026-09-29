@@ -81,7 +81,7 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 	// or the harness's own files would read as candidate work — inflating the change size and
 	// defeating the untouched-workspace check below.
 	if r.suite.IsLoop() {
-		if err := r.materializeLoopScenario(t, workspace); err != nil {
+		if err := r.materializeLoopScenario(ctx, t, workspace); err != nil {
 			return fail(ctx, "could not materialize the scenario: "+err.Error())
 		}
 	}
@@ -95,7 +95,13 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 		measureSize = eval.MeasureSize
 	}
 	before, beforeErr := measureSize(ctx, workspace, ignore...)
-	beforeSig, _ := eval.TreeSignature(workspace, ignore...)
+	if err := ctx.Err(); err != nil {
+		return fail(ctx, "could not measure the initial workspace: "+err.Error())
+	}
+	beforeSig, _ := eval.TreeSignature(ctx, workspace, ignore...)
+	if err := ctx.Err(); err != nil {
+		return fail(ctx, "could not fingerprint the initial workspace: "+err.Error())
+	}
 
 	// 4. The attempt. This is the only paid step: one headless agent call, or — for a loop scenario
 	// — a whole bounded `coop loop` working the case's queue.
@@ -122,24 +128,31 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 	// which the signature deliberately ignores. The verifier still decides whether that result passes.
 	blockedLoop := r.suite.IsLoop() && att.code == loopExitBlocked && loopQueueBlocked(workspace)
 	if att.code != 0 && !blockedLoop {
-		if sig, sigErr := eval.TreeSignature(workspace, ignore...); sigErr == nil && beforeSig != "" && sig == beforeSig {
+		if sig, sigErr := eval.TreeSignature(ctx, workspace, ignore...); sigErr == nil && beforeSig != "" && sig == beforeSig {
 			return fail(ctx, joinDetail(
 				fmt.Sprintf("the agent exited %d having changed nothing in the workspace, so there is no work to grade — recorded as a harness error, not a model failure", att.code),
 				att.detail))
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return fail(ctx, "the attempt used the trial budget: "+err.Error())
+	}
 
 	// 5. The candidate's box has exited, so the workspace is quiet: snapshot it. A non-zero agent
 	// exit is NOT decided here — the verifier decides whether the work is good, because an agent
 	// that exits non-zero may still have done the job (and one that exits 0 may not have).
-	snap, err := eval.SnapshotWorkspace(workspace, filepath.Join(dir, "snapshot"))
+	snap, err := eval.SnapshotWorkspace(ctx, workspace, filepath.Join(dir, "snapshot"))
 	if err != nil {
 		return fail(ctx, "could not snapshot the workspace for grading: "+err.Error())
 	}
+	defer os.RemoveAll(snap.Dir)
 
 	// 6. Measure candidate work before the verifier can build, install or write into the snapshot.
 	// Size never changes a verdict: a smaller wrong answer is not better than a larger right one.
 	after, afterErr := measureSize(ctx, snap.Dir, ignore...)
+	if err := ctx.Err(); err != nil {
+		return fail(ctx, "could not measure the finished workspace: "+err.Error())
+	}
 
 	// 7. Grade the snapshot in the sandbox.
 	res := r.app.gradeSnapshot(ctx, gradeRequest{
@@ -158,7 +171,6 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 	if res.Status == eval.TrialPassed {
 		os.RemoveAll(dir)
 	} else {
-		os.RemoveAll(snap.Dir)
 		if att.detail != "" {
 			res.Detail = joinDetail(res.Detail, "the model's last words: "+att.detail)
 		}

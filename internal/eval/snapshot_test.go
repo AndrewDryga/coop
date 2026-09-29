@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,7 +18,7 @@ func TestSnapshotWorkspaceKeepsGitAndLeavesTheOriginal(t *testing.T) {
 	mustWrite(t, filepath.Join(src, ".git", "HEAD"), "ref: refs/heads/main\n")
 	mustWrite(t, filepath.Join(src, "sub", "deep.txt"), "deep\n")
 
-	snap, err := SnapshotWorkspace(src, filepath.Join(t.TempDir(), "snap"))
+	snap, err := SnapshotWorkspace(context.Background(), src, filepath.Join(t.TempDir(), "snap"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +58,7 @@ func TestSnapshotWorkspaceSkipsEscapingSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	snap, err := SnapshotWorkspace(src, filepath.Join(t.TempDir(), "snap"))
+	snap, err := SnapshotWorkspace(context.Background(), src, filepath.Join(t.TempDir(), "snap"))
 	if err != nil {
 		t.Fatalf("an escaping symlink must not fail the snapshot: %v", err)
 	}
@@ -82,8 +83,23 @@ func TestSnapshotWorkspaceSkipsEscapingSymlinks(t *testing.T) {
 // An unreadable workspace is a harness error — grading something that cannot be read is never a
 // candidate failure.
 func TestSnapshotWorkspaceRefusesAMissingSource(t *testing.T) {
-	if _, err := SnapshotWorkspace(filepath.Join(t.TempDir(), "gone"), filepath.Join(t.TempDir(), "snap")); err == nil {
+	if _, err := SnapshotWorkspace(context.Background(), filepath.Join(t.TempDir(), "gone"), filepath.Join(t.TempDir(), "snap")); err == nil {
 		t.Error("snapshotting a missing workspace returned no error")
+	}
+}
+
+func TestSnapshotCancellationIsNotASkippedEntry(t *testing.T) {
+	src := t.TempDir()
+	mustWrite(t, filepath.Join(src, "work.go"), "package work\n")
+	dst := filepath.Join(t.TempDir(), "snap")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	snap, err := SnapshotWorkspace(ctx, src, dst)
+	if err != context.Canceled || snap.Dir != "" || len(snap.Skipped) != 0 {
+		t.Fatalf("canceled snapshot became a partial result: %+v, %v", snap, err)
+	}
+	if _, err := os.Stat(dst); !os.IsNotExist(err) {
+		t.Fatalf("canceled snapshot left a grading tree: %v", err)
 	}
 }
 
@@ -116,27 +132,27 @@ func TestTreeSignatureDetectsWorkAndIgnoresGit(t *testing.T) {
 	}
 	mustWrite(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
 
-	base, err := TreeSignature(dir)
+	base, err := TreeSignature(context.Background(), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again, _ := TreeSignature(dir); again != base {
+	if again, _ := TreeSignature(context.Background(), dir); again != base {
 		t.Error("the signature is not stable for an unchanged tree")
 	}
 	// Coop's own git activity is not the candidate's work.
 	mustWrite(t, filepath.Join(dir, ".git", "COMMIT_EDITMSG"), "anything\n")
-	if changed, _ := TreeSignature(dir); changed != base {
+	if changed, _ := TreeSignature(context.Background(), dir); changed != base {
 		t.Error("a change inside .git counted as candidate work")
 	}
 	// A new file is work.
 	mustWrite(t, filepath.Join(dir, "answer.txt"), "hello\n")
-	if changed, _ := TreeSignature(dir); changed == base {
+	if changed, _ := TreeSignature(context.Background(), dir); changed == base {
 		t.Error("creating a file did not change the signature")
 	}
 	// So is editing one to a different size.
-	base2, _ := TreeSignature(dir)
+	base2, _ := TreeSignature(context.Background(), dir)
 	mustWrite(t, filepath.Join(dir, "a.txt"), "one much longer line\n")
-	if changed, _ := TreeSignature(dir); changed == base2 {
+	if changed, _ := TreeSignature(context.Background(), dir); changed == base2 {
 		t.Error("editing a file did not change the signature")
 	}
 }

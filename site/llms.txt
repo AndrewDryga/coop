@@ -1010,6 +1010,8 @@ BEFORE A REAL RUN
   work when it is unavailable, and the result labels the missing measurement.
 
   --timeout is required even for a preview. It is a time limit, not a money cap.
+  It starts at command entry and stops preparation, trials and grading; final
+  cleanup and record sealing are best effort after the deadline.
   More configurations or repetitions mean more paid work. Each case also has its
   own timeout in suite.yaml; raising the total budget does not raise that limit.
 

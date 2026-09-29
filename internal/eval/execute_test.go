@@ -136,6 +136,50 @@ func TestExecuteLeavesUnadmittedTrialsPending(t *testing.T) {
 	}
 }
 
+func TestExecuteUsesCallerDeadlineForAdmissionAndTrialBudget(t *testing.T) {
+	plan, frozen := agentPlan(t, 1, 1, 1, time.Hour)
+	store, err := CreateRun(t.TempDir(), RunRecord{ID: "earlier-deadline", Suite: "s", Runner: RunnerAgent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	var ran int
+	_, err = Execute(ctx, plan, frozen, store, func(_ context.Context, tr Trial) TrialResult {
+		ran++
+		if want := deadline.Add(-cleanupReserve); !tr.Deadline.Equal(want) {
+			t.Errorf("trial deadline = %s, want caller deadline less reserve %s", tr.Deadline, want)
+		}
+		return TrialResult{Status: TrialPassed}
+	}, nil)
+	if err != nil || ran != 2 {
+		t.Fatalf("execute = %v, ran %d trials; want both", err, ran)
+	}
+}
+
+func TestExecuteSealsPendingWhenPreparationUsedAdmissionBudget(t *testing.T) {
+	plan, frozen := agentPlan(t, 1, 1, 1, time.Hour)
+	root := t.TempDir()
+	store, err := CreateRun(root, RunRecord{ID: "preparation-expired", Suite: "s", Runner: RunnerAgent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(cleanupReserve/2))
+	defer cancel()
+	var ran int
+	summary, err := Execute(ctx, plan, frozen, store, func(context.Context, Trial) TrialResult {
+		ran++
+		return TrialResult{Status: TrialPassed}
+	}, nil)
+	if err != nil || ran != 0 || summary.Requested != 2 || summary.Counts[TrialPending] != 2 {
+		t.Fatalf("execute = summary %+v, err %v, ran %d; want two sealed pending trials and no launch", summary, err, ran)
+	}
+	if _, sealed, err := LoadSummary(root, store.ID()); err != nil || !sealed {
+		t.Fatalf("expired preparation was not sealed: sealed=%v err=%v", sealed, err)
+	}
+}
+
 // Once the admission deadline passes, a worker does not start the next trial — it stays pending,
 // and the reserve is honored. Driven by an injected clock the first trial advances past admitUntil.
 func TestExecuteStopsAdmittingPastTheReserve(t *testing.T) {

@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -109,10 +110,13 @@ const stageMaxEntries = 200_000
 // walkOpenedSuiteTree never resolves a source pathname outside an os.Root. A selected tree must
 // be an export, but nested submodule metadata is omitted just as workspace preparation omits it.
 // Special files are rejected rather than silently omitted from the frozen workload identity.
-func walkOpenedSuiteTree(root *os.Root, visit func(rel string, parent *os.Root, name string, info os.FileInfo) error) error {
+func walkOpenedSuiteTree(ctx context.Context, root *os.Root, visit func(rel string, parent *os.Root, name string, info os.FileInfo) error) error {
 	seen := 0
 	var walk func(*os.Root, string) error
 	walk = func(parent *os.Root, prefix string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		dir, err := parent.Open(".")
 		if err != nil {
 			return err
@@ -127,6 +131,9 @@ func walkOpenedSuiteTree(root *os.Root, visit func(rel string, parent *os.Root, 
 		}
 		sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 		for _, entry := range entries {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			seen++
 			if seen > stageMaxEntries {
 				return fmt.Errorf("suite tree exceeds the %d-entry staging limit", stageMaxEntries)
@@ -166,10 +173,10 @@ func walkOpenedSuiteTree(root *os.Root, visit func(rel string, parent *os.Root, 
 	return walk(root, "")
 }
 
-func openedTreeDigest(root *os.Root) (Fingerprint, error) {
+func openedTreeDigest(ctx context.Context, root *os.Root) (Fingerprint, error) {
 	w := newHasher()
 	var read int64
-	err := walkOpenedSuiteTree(root, func(rel string, parent *os.Root, name string, info os.FileInfo) error {
+	err := walkOpenedSuiteTree(ctx, root, func(rel string, parent *os.Root, name string, info os.FileInfo) error {
 		// The copy preserves type and permissions, not sticky/setid bits.
 		stagedMode := info.Mode().Type() | info.Mode().Perm()
 		w.text("path", filepath.ToSlash(rel)).text("mode", stagedMode.String())
@@ -183,11 +190,14 @@ func openedTreeDigest(root *os.Root) (Fingerprint, error) {
 				return err
 			}
 			h := sha256.New()
-			_, copyErr := io.CopyN(h, file, info.Size())
+			_, copyErr := io.CopyN(h, contextReader{ctx: ctx, reader: file}, info.Size())
 			var extra [1]byte
-			n, extraErr := file.Read(extra[:])
+			n, extraErr := (contextReader{ctx: ctx, reader: file}).Read(extra[:])
 			closeErr := file.Close()
 			if err := errors.Join(copyErr, closeErr); err != nil {
+				return err
+			}
+			if err := ctx.Err(); err != nil {
 				return err
 			}
 			if n != 0 || !errors.Is(extraErr, io.EOF) {
@@ -234,7 +244,10 @@ func openStableSuiteFile(parent *os.Root, name string, before os.FileInfo) (*os.
 	return file, nil
 }
 
-func copyOpenedSuiteTree(root *os.Root, dest string, remainingBytes *int64, remainingEntries *int) error {
+func copyOpenedSuiteTree(ctx context.Context, root *os.Root, dest string, remainingBytes *int64, remainingEntries *int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := os.Mkdir(dest, 0o700); err != nil {
 		return err
 	}
@@ -242,7 +255,7 @@ func copyOpenedSuiteTree(root *os.Root, dest string, remainingBytes *int64, rema
 		path string
 		mode os.FileMode
 	}
-	err := walkOpenedSuiteTree(root, func(rel string, parent *os.Root, name string, info os.FileInfo) error {
+	err := walkOpenedSuiteTree(ctx, root, func(rel string, parent *os.Root, name string, info os.FileInfo) error {
 		if *remainingEntries == 0 {
 			return fmt.Errorf("suite exceeds the %d-entry staging limit", stageMaxEntries)
 		}
@@ -271,11 +284,14 @@ func copyOpenedSuiteTree(root *os.Root, dest string, remainingBytes *int64, rema
 				_ = file.Close()
 				return err
 			}
-			_, copyErr := io.CopyN(out, file, info.Size())
+			_, copyErr := io.CopyN(out, contextReader{ctx: ctx, reader: file}, info.Size())
 			var extra [1]byte
-			n, extraErr := file.Read(extra[:])
+			n, extraErr := (contextReader{ctx: ctx, reader: file}).Read(extra[:])
 			closeErr := errors.Join(out.Close(), file.Close())
 			if err := errors.Join(copyErr, closeErr); err != nil {
+				return err
+			}
+			if err := ctx.Err(); err != nil {
 				return err
 			}
 			if n != 0 || !errors.Is(extraErr, io.EOF) {
@@ -304,6 +320,9 @@ func copyOpenedSuiteTree(root *os.Root, dest string, remainingBytes *int64, rema
 	}
 	// Create directories writable, then restore source modes from leaves upward.
 	for i := len(dirs) - 1; i >= 0; i-- {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := os.Chmod(dirs[i].path, dirs[i].mode); err != nil {
 			return err
 		}

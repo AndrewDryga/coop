@@ -41,10 +41,10 @@ const (
 // materializeLoopScenario puts everything the loop needs into the trial workspace. It runs BEFORE
 // the trial's size and "did anything happen" baselines are taken, so the harness's own files — the
 // queue, the preset, the recipe — are never mistaken for the candidate's work.
-func (r *trialRunner) materializeLoopScenario(t eval.Trial, workspace string) error {
+func (r *trialRunner) materializeLoopScenario(ctx context.Context, t eval.Trial, workspace string) error {
 	// The queue the loop will work: an ordinary Coop queue, materialized into the trial's own
 	// repository. It is the case's template, never the developer's live queue.
-	if err := eval.MaterializeQueue(filepath.Join(r.suite.Dir, t.Case.Tasks), workspace); err != nil {
+	if err := eval.MaterializeQueue(ctx, filepath.Join(r.suite.Dir, t.Case.Tasks), workspace); err != nil {
 		return err
 	}
 	// A preset is resolved from the repository the loop works (or a global directory), and a trial
@@ -56,13 +56,16 @@ func (r *trialRunner) materializeLoopScenario(t eval.Trial, workspace string) er
 		if !ok {
 			return fmt.Errorf("preset %q was not staged for this run", t.Config.Label)
 		}
-		if err := eval.MaterializePreset(staged, workspace, t.Config.Label); err != nil {
+		if err := eval.MaterializePreset(ctx, staged, workspace, t.Config.Label); err != nil {
 			return err
 		}
 	}
 	// The loop recipe under test. The engine reads .agent/loop.yaml from the repo it works and
 	// nowhere else, so the FROZEN bytes — what this run is actually comparing — are written there.
 	if len(t.Config.LoopConfig) > 0 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		dest := filepath.Join(workspace, ".agent", "loop.yaml")
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return err
@@ -71,7 +74,7 @@ func (r *trialRunner) materializeLoopScenario(t eval.Trial, workspace string) er
 			return err
 		}
 	}
-	return nil
+	return ctx.Err()
 }
 
 // loopExecutable is which coop a loop trial runs — this build, the one whose identity the run

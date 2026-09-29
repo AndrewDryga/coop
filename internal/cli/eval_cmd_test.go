@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,7 +28,7 @@ func TestParseEvalRunArgs(t *testing.T) {
 		{"suite and two configs", []string{"./s.yaml", "codex", "frontier", "--timeout", "60m"}, "./s.yaml", []string{"codex", "frontier"}, 1, 1, time.Hour, "", ""},
 		{"flags interleaved", []string{"./s.yaml", "--jobs", "4", "codex", "--repeat", "3", "--timeout", "30m"}, "./s.yaml", []string{"codex"}, 4, 3, 30 * time.Minute, "", ""},
 		{"loop config override", []string{"./s.yaml", "frontier", "--timeout", "60m", "--loop-config", ".agent/loop.yaml"}, "./s.yaml", []string{"frontier"}, 1, 1, time.Hour, ".agent/loop.yaml", ""},
-		// A run needs an explicit --timeout: it covers preparation, work, grading and cleanup.
+		// A run needs an explicit --timeout covering preparation, trials and grading.
 		{"no timeout", []string{"./s.yaml", "codex"}, "", nil, 0, 0, 0, "", "Missing --timeout"},
 		{"dry run still needs timeout", []string{"./s.yaml", "codex", "--dry-run"}, "", nil, 0, 0, 0, "", "Missing --timeout"},
 		{"missing flag value", []string{"./s.yaml", "codex", "--jobs"}, "", nil, 0, 0, 0, "", `Missing value for "--jobs"`},
@@ -91,7 +93,7 @@ func TestRenderEvalPlanSeparatesSections(t *testing.T) {
 	for _, boundary := range []string{
 		"[workload " + eval.WorkloadFingerprint(p.Suite).Short() + "]\n\nConfigurations:\n",
 		"build test-build]\n\nMatrix:",
-		"(covers preparation, work, grading and cleanup)\n\nIsolation:",
+		"from command start (stops preparation, trials and grading)\n\nIsolation:",
 		"omitted from trials\n\nCases:\n",
 	} {
 		if !strings.Contains(out, boundary) {
@@ -234,7 +236,7 @@ func TestEvalDryRunShowsContentFrozenWorkloadWithoutLeavingARun(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	suite := trialSuite(t)
 	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
-	staged, err := eval.StageSuite(t.TempDir(), suite)
+	staged, err := eval.StageSuite(context.Background(), t.TempDir(), suite)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,6 +268,23 @@ func TestEvalDryRunShowsContentFrozenWorkloadWithoutLeavingARun(t *testing.T) {
 	})
 	if strings.Contains(second, "[workload "+want+"]") {
 		t.Fatal("an edited verifier kept the old dry-run workload identity")
+	}
+}
+
+func TestEvalExpiredPreparationLeavesNoRunOrStagedInputs(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	suite := trialSuite(t)
+	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
+	code, err := a.evalRun([]string{suite.Path, "codex", "--timeout", "1ns"})
+	if code != 1 || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expired preparation = code %d, err %v", code, err)
+	}
+	root, err := evalStateRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := os.ReadDir(root); err != nil && !os.IsNotExist(err) || len(entries) != 0 {
+		t.Fatalf("expired preparation left state: %v, %v", entries, err)
 	}
 }
 

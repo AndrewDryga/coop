@@ -1057,9 +1057,11 @@ the same before and after your change, then compare the recorded results.
    ```
 
    This uses your provider account and may spend credits. A dry run validates the plan, not
-   credential, runtime or image readiness. `--timeout` is a total time limit, not a money cap;
-   each case also has its own timeout. `--repeat 3` runs each case three times, and `--jobs 2`
-   allows two agent trials at once. More configurations or repeats mean more paid work.
+   credential, runtime or image readiness. `--timeout` starts at command entry and stops
+   preparation, trials and grading; cleanup and record sealing may finish afterward. It is a
+   time limit, not a money cap. Each case also has its own timeout. `--repeat 3` runs each case
+   three times, and `--jobs 2` allows two agent trials at once. More configurations or repeats
+   mean more paid work.
    `cloc` is optional: install it for change-size figures. Grading and verdicts still work
    without it, and Coop labels the missing measurement instead of reporting a false zero.
 

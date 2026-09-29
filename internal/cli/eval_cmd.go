@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -122,6 +123,7 @@ func (a *app) evalRuns(args []string) (int, error) {
 // is printed, so a bad suite, target, preset or flag is refused before any provider work; `--dry-run`
 // stops after the plan, which is the last point before money is spent.
 func (a *app) evalRun(args []string) (int, error) {
+	started := time.Now()
 	suitePath, positionals, opts, err := parseEvalRunArgs(args)
 	if err != nil {
 		return 2, err
@@ -132,12 +134,20 @@ func (a *app) evalRun(args []string) (int, error) {
 	if len(positionals) == 0 {
 		return 2, ui.MissingArgument("<target|preset>", "coop eval run", "coop eval run "+suitePath+" <target|preset>... --timeout 60m")
 	}
+	ctx, cancel := context.WithDeadline(context.Background(), started.Add(opts.Timeout))
+	defer cancel()
 	suite, err := a.resolveEvalSuite(suitePath)
 	if err != nil {
 		return 1, err
 	}
+	if err := ctx.Err(); err != nil {
+		return 1, err
+	}
 	configs, err := a.resolveEvalConfigurations(positionals)
 	if err != nil {
+		return 1, err
+	}
+	if err := ctx.Err(); err != nil {
 		return 1, err
 	}
 	if !suite.IsLoop() {
@@ -174,9 +184,15 @@ func (a *app) evalRun(args []string) (int, error) {
 			return 1, fmt.Errorf("freeze loop config %s: %w", loopConfigPath, err)
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return 1, err
+	}
 	build := a.evalBuildIdentity() // one digest of the binary, shared by every configuration
 	frozen := make([]eval.FrozenConfig, 0, len(configs))
 	for _, c := range configs {
+		if err := ctx.Err(); err != nil {
+			return 1, err
+		}
 		f, ferr := a.freezeConfiguration(c, loopConfig, build)
 		if ferr != nil {
 			return 1, ferr
@@ -187,7 +203,7 @@ func (a *app) evalRun(args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	staged, err := eval.StageSuite(root, suite)
+	staged, err := eval.StageSuite(ctx, root, suite)
 	if err != nil {
 		return 1, fmt.Errorf("freeze suite inputs: %w", err)
 	}
@@ -200,26 +216,72 @@ func (a *app) evalRun(args []string) (int, error) {
 			return 1, fmt.Errorf("freeze loop config: %w", err)
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return 1, err
+	}
 	renderEvalPlan(plan, frozen)
 	fmt.Println()
+	if err := ctx.Err(); err != nil {
+		return 1, err
+	}
 	if opts.DryRun {
 		fmt.Println("Dry run: nothing was launched.")
 		return 0, nil
 	}
-	return a.executeEvalRun(plan, frozen)
+	return a.executeEvalRun(ctx, plan, frozen)
 }
 
 // executeEvalRun creates the run record, works the whole matrix and prints the sealed summary. Every
 // trial's workspace lives under one scratch root that is removed when the run ends — the durable
 // record is the store's, not a pile of temp directories.
-func (a *app) executeEvalRun(plan *eval.Plan, frozen []eval.FrozenConfig) (int, error) {
+func (a *app) executeEvalRun(ctx context.Context, plan *eval.Plan, frozen []eval.FrozenConfig) (int, error) {
 	// Every trial runs in a box, so the runtime has to be detected before the first launch — and
 	// refused HERE, by name, rather than surfacing later as an unhelpful per-trial error.
-	if err := a.ensureRuntime(); err != nil {
+	if err := a.ensureRuntimeContext(ctx); err != nil {
+		return 1, err
+	}
+	if err := ctx.Err(); err != nil {
 		return 1, err
 	}
 	root, err := evalStateRoot()
 	if err != nil {
+		return 1, err
+	}
+	// Resolve the managed base image to its definition-pinned tag, the same way every other box
+	// command does — an unresolved "coop-box" is not a tag that exists.
+	box.ResolveBaseImage(a.cfg)
+	image := box.ImageForRepo("", a.cfg.BaseImage, a.cfg.ImageOverride)
+	code, inspectErr := a.rt.RunInterruptible(ctx, nil, io.Discard, io.Discard, "image", "inspect", image)
+	if err := ctx.Err(); err != nil {
+		return 1, err
+	}
+	if inspectErr != nil {
+		return 1, fmt.Errorf("inspect the box image %s: %w", image, inspectErr)
+	}
+	if code != 0 {
+		return 1, fmt.Errorf("the box image %s is not built yet — run 'coop build --egress open' in a directory without a project Dockerfile", image)
+	}
+	if err := ctx.Err(); err != nil {
+		return 1, err
+	}
+	// Stage every preset configuration once, so each trial materializes identical bytes into its own
+	// workspace (a fixture repository has no .agent/presets of its own).
+	for _, c := range plan.Configs {
+		if err := ctx.Err(); err != nil {
+			return 1, err
+		}
+		if c.Kind != eval.ConfigPreset {
+			continue
+		}
+		loaded, perr := a.loadRunPreset(c.Label)
+		if perr != nil {
+			return 1, perr
+		}
+		if _, err := eval.StagePreset(ctx, loaded.Dir, filepath.Join(plan.Suite.Dir, "presets"), c.Label); err != nil {
+			return 1, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
 		return 1, err
 	}
 	store, err := eval.CreateRun(root, eval.NewRunRecord(plan, frozen, time.Now()))
@@ -232,42 +294,21 @@ func (a *app) executeEvalRun(plan *eval.Plan, frozen []eval.FrozenConfig) (int, 
 	}
 	plan.Suite.Dir = inputs
 	plan.Suite.Path = filepath.Join(inputs, "suite.yaml")
-	// Trial working directories live UNDER the run, not in a temp dir that vanishes: a trial that
-	// did not pass leaves its graded workspace behind for the user to look at, and it is removed
-	// with the run's own record rather than on the way out of this function.
+	// Failed trials retain their own workspaces under the durable run record.
 	workRoot := filepath.Join(store.Dir(), "work")
 	if err := os.MkdirAll(workRoot, 0o700); err != nil {
 		return 1, err
 	}
 	defer os.Remove(workRoot) // succeeds only when every trial passed and removed its own directory
-
-	// Resolve the managed base image to its definition-pinned tag, the same way every other box
-	// command does — an unresolved "coop-box" is not a tag that exists.
-	box.ResolveBaseImage(a.cfg)
-	image := box.ImageForRepo("", a.cfg.BaseImage, a.cfg.ImageOverride)
-	if !box.ImageExists(a.rt, image) {
-		return 1, fmt.Errorf("the box image %s is not built yet — run 'coop build --egress open' in a directory without a project Dockerfile", image)
-	}
-	// Stage every preset configuration once, so each trial materializes identical bytes into its own
-	// workspace (a fixture repository has no .agent/presets of its own).
 	presets := map[string]string{}
 	for _, c := range plan.Configs {
-		if c.Kind != eval.ConfigPreset {
-			continue
+		if c.Kind == eval.ConfigPreset {
+			presets[c.Label] = filepath.Join(inputs, "presets", c.Label)
 		}
-		loaded, perr := a.loadRunPreset(c.Label)
-		if perr != nil {
-			return 1, perr
-		}
-		staged, serr := eval.StagePreset(loaded.Dir, filepath.Join(workRoot, "presets"), c.Label)
-		if serr != nil {
-			return 1, serr
-		}
-		presets[c.Label] = staged
 	}
 	runner := &trialRunner{app: a, suite: plan.Suite, workRoot: workRoot, image: image, presets: presets}
 	fmt.Printf("Running %s (%d trials)…\n", store.ID(), len(plan.Suite.Cases)*len(plan.Configs)*plan.Repeat)
-	summary, err := eval.Execute(context.Background(), plan, frozen, store, runner.run, time.Now)
+	summary, err := eval.Execute(ctx, plan, frozen, store, runner.run, time.Now)
 	if err != nil {
 		return 1, err
 	}
@@ -561,7 +602,7 @@ func renderEvalPlan(p *eval.Plan, frozen []eval.FrozenConfig) {
 	fmt.Printf("Matrix: %d case(s) x %d configuration(s) x %d repeat(s) = %d trial(s)\n",
 		len(p.Suite.Cases), len(p.Configs), p.Repeat, p.Trials())
 	fmt.Printf("Workers: %d\n", p.Jobs)
-	fmt.Printf("Deadline: %s (covers preparation, work, grading and cleanup)\n", p.Timeout)
+	fmt.Printf("Deadline: %s from command start (stops preparation, trials and grading)\n", p.Timeout)
 	fmt.Println()
 	fmt.Println("Isolation: operator MCP servers and COOP_RUN_ARGS are omitted from trials")
 	fmt.Println()

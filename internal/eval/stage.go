@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,7 +20,10 @@ type suitePart struct {
 // points into an owner-private directory; its candidate inputs and hidden verifiers occupy separate
 // case directories, and the caller owns removing or retaining the staged directory. A source that
 // changes while it is copied is refused instead of mixing two versions into one run.
-func StageSuite(root string, source *Suite) (_ *Suite, err error) {
+func StageSuite(ctx context.Context, root string, source *Suite) (_ *Suite, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if source == nil {
 		return nil, fmt.Errorf("freeze suite: no suite")
 	}
@@ -62,6 +66,9 @@ func StageSuite(root string, source *Suite) (_ *Suite, err error) {
 		}
 	}()
 	for i, c := range source.Cases {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		for _, part := range []struct{ name, rel string }{
 			{"verifier", c.Verifier}, {"files", c.Files}, {"fixture", c.Fixture}, {"tasks", c.Tasks},
 		} {
@@ -115,6 +122,9 @@ func StageSuite(root string, source *Suite) (_ *Suite, err error) {
 	remainingEntries := stageMaxEntries
 	lastCase := -1
 	for _, part := range parts {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		c := &staged.Cases[part.caseIndex]
 		if part.caseIndex != lastCase {
 			content.text("case", c.ID)
@@ -135,10 +145,10 @@ func StageSuite(root string, source *Suite) (_ *Suite, err error) {
 			if openErr != nil {
 				return nil, openErr
 			}
-			digest, err = openedTreeDigest(opened)
+			digest, err = openedTreeDigest(ctx, opened)
 			_ = opened.Close()
 		} else {
-			digest, err = stageOpenedTree(part.source.root, dest, &remaining, &remainingEntries)
+			digest, err = stageOpenedTree(ctx, part.source.root, dest, &remaining, &remainingEntries)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("case %q %s: %w", c.ID, part.name, err)
@@ -156,6 +166,9 @@ func StageSuite(root string, source *Suite) (_ *Suite, err error) {
 		content.text(part.name, string(digest))
 	}
 	for _, part := range parts {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if part.source != nil {
 			if err := part.source.stillNamed(base); err != nil {
 				return nil, err
@@ -172,6 +185,9 @@ func StageSuite(root string, source *Suite) (_ *Suite, err error) {
 	}
 	if err := os.WriteFile(staged.Path, manifest, 0o600); err != nil {
 		return nil, fmt.Errorf("write frozen suite: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return &staged, nil
 }
@@ -207,15 +223,15 @@ func RemoveStagedSuite(dir string) error {
 	return os.RemoveAll(dir)
 }
 
-func stageOpenedTree(source *os.Root, dest string, remainingBytes *int64, remainingEntries *int) (Fingerprint, error) {
-	before, err := openedTreeDigest(source)
+func stageOpenedTree(ctx context.Context, source *os.Root, dest string, remainingBytes *int64, remainingEntries *int) (Fingerprint, error) {
+	before, err := openedTreeDigest(ctx, source)
 	if err != nil {
 		return "", err
 	}
-	if err := copyOpenedSuiteTree(source, dest, remainingBytes, remainingEntries); err != nil {
+	if err := copyOpenedSuiteTree(ctx, source, dest, remainingBytes, remainingEntries); err != nil {
 		return "", err
 	}
-	after, err := openedTreeDigest(source)
+	after, err := openedTreeDigest(ctx, source)
 	if err != nil {
 		return "", err
 	}
@@ -223,7 +239,7 @@ func stageOpenedTree(source *os.Root, dest string, remainingBytes *int64, remain
 	if err != nil {
 		return "", err
 	}
-	copied, err := openedTreeDigest(staged)
+	copied, err := openedTreeDigest(ctx, staged)
 	_ = staged.Close()
 	if err != nil {
 		return "", err

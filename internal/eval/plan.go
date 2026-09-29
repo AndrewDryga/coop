@@ -31,7 +31,7 @@ func (c Configuration) String() string { return c.Label }
 type Options struct {
 	Jobs    int           // requested concurrent workers
 	Repeat  int           // repetitions per case x configuration
-	Timeout time.Duration // whole-invocation deadline, including preparation, grading and cleanup
+	Timeout time.Duration // one budget from command entry through grading; cleanup is best effort
 	// LoopConfigOverride replaces a loop suite's loop_config for this run, so two loop recipes can be
 	// compared through separate runs. Empty means use the suite's own loop_config. Agent suites refuse it.
 	LoopConfigOverride string
@@ -87,7 +87,7 @@ func BuildPlan(s *Suite, configs []Configuration, opts Options) (*Plan, error) {
 		jobs = trials // never reserve more workers than there is work
 	}
 	if opts.Timeout <= 0 {
-		return nil, errors.New("a run needs a positive --timeout covering preparation, work, grading and cleanup")
+		return nil, errors.New("a run needs a positive --timeout covering preparation, trials and grading")
 	}
 	if longest := s.longestCaseTimeout(); opts.Timeout < longest {
 		return nil, fmt.Errorf("--timeout %s is smaller than the longest case budget %s; no trial could finish",

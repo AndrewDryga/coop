@@ -74,10 +74,13 @@ func Execute(ctx context.Context, plan *Plan, frozen []FrozenConfig, store *Stor
 		}
 	}
 
-	// The whole run is bounded: no trial runs past the overall deadline, and admission stops a
-	// reserve earlier so there is always time to seal and clean up. runCtx also honors an earlier
-	// deadline the caller may have put on ctx.
+	// The caller may have spent part of this budget preparing the run. Use the earlier absolute
+	// deadline for both cancellation and admission; an earlier context must not gain a fresh trial
+	// admission window here.
 	deadline := now().Add(plan.Timeout)
+	if callerDeadline, ok := ctx.Deadline(); ok && callerDeadline.Before(deadline) {
+		deadline = callerDeadline
+	}
 	admitUntil := deadline.Add(-cleanupReserve)
 	runCtx, cancelRun := context.WithDeadline(ctx, deadline)
 	defer cancelRun()
@@ -135,6 +138,12 @@ func Execute(ctx context.Context, plan *Plan, frozen []FrozenConfig, store *Stor
 				// killed from one that never left the queue.
 				if err := store.WriteTrial(runningRecord(store.ID(), t, started)); err != nil {
 					noteErr(err)
+					continue
+				}
+				if runCtx.Err() != nil || !now().Before(admitUntil) {
+					// A slow durable write can use the remaining admission budget. No provider was
+					// launched, so restore pending rather than leave a false running attempt.
+					noteErr(store.WriteTrial(pendingRecord(store.ID(), t)))
 					continue
 				}
 				trialCtx, cancel := context.WithDeadline(runCtx, t.Deadline)

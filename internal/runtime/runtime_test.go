@@ -59,6 +59,33 @@ func TestDetectOverride(t *testing.T) {
 	}
 }
 
+func TestDetectContextStopsRuntimeProbeAtCallerDeadline(t *testing.T) {
+	wrapper := filepath.Join(t.TempDir(), "runtime-wrapper")
+	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nexec sleep 10\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err := DetectContext(ctx, wrapper)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("DetectContext = %v, want caller deadline", err)
+	}
+}
+
+func TestEnsureDaemonContextReturnsCallerDeadline(t *testing.T) {
+	dir := t.TempDir()
+	docker := filepath.Join(dir, "docker")
+	if err := os.WriteFile(docker, []byte("#!/bin/sh\nexec sleep 10\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err := (Runtime{Name: docker}).EnsureDaemonContext(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("EnsureDaemonContext = %v, want caller deadline", err)
+	}
+}
+
 // Podman was a supported runtime and is installed on plenty of machines, so its removal has to be
 // refused by NAME. Falling through to the unknown-executable path would accept it — `podman
 // --version` succeeds — and coop would then drive it with Docker's flags.

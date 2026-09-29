@@ -96,7 +96,7 @@ func TestLoopScenarioMaterializesQueueAndFrozenRecipe(t *testing.T) {
 	r := loopRunner(t, suite, nil)
 	ws := loopWorkspace(t, suite)
 
-	err := r.materializeLoopScenario(eval.Trial{
+	err := r.materializeLoopScenario(context.Background(), eval.Trial{
 		Case:   suite.Cases[0],
 		Config: eval.FrozenConfig{Kind: eval.ConfigTarget, Label: "codex", LoopConfig: []byte("signoff:\n  rounds: 9\n")},
 	}, ws)
@@ -139,14 +139,14 @@ func TestLoopScenarioCarriesThePresetIntoTheWorkspace(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	staged, err := eval.StagePreset(presetDir, filepath.Join(t.TempDir(), "stage"), "frontier")
+	staged, err := eval.StagePreset(context.Background(), presetDir, filepath.Join(t.TempDir(), "stage"), "frontier")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	r := loopRunner(t, suite, map[string]string{"frontier": staged})
 	ws := loopWorkspace(t, suite)
-	if err := r.materializeLoopScenario(eval.Trial{
+	if err := r.materializeLoopScenario(context.Background(), eval.Trial{
 		Case:   suite.Cases[0],
 		Config: eval.FrozenConfig{Kind: eval.ConfigPreset, Label: "frontier"},
 	}, ws); err != nil {
@@ -260,7 +260,7 @@ func TestLoopTrialStopsAtTheDeadline(t *testing.T) {
 // actionable", exit cleanly, and be graded as a real result.
 func TestMaterializeQueueRequiresWorkWaiting(t *testing.T) {
 	// No 00_todo at all.
-	if err := eval.MaterializeQueue(t.TempDir(), t.TempDir()); err == nil {
+	if err := eval.MaterializeQueue(context.Background(), t.TempDir(), t.TempDir()); err == nil {
 		t.Error("a queue template with no 00_todo was accepted")
 	}
 	// 00_todo present but empty, with work only in 99_done.
@@ -273,11 +273,11 @@ func TestMaterializeQueueRequiresWorkWaiting(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmpl, "99_done", "already-done", "task.md"), []byte("# done\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := eval.MaterializeQueue(tmpl, t.TempDir()); err == nil ||
+	if err := eval.MaterializeQueue(context.Background(), tmpl, t.TempDir()); err == nil ||
 		!strings.Contains(err.Error(), "measures nothing") {
 		t.Errorf("a queue with no work waiting was accepted: %v", err)
 	}
-	if err := eval.MaterializeQueue(filepath.Join(t.TempDir(), "gone"), t.TempDir()); err == nil {
+	if err := eval.MaterializeQueue(context.Background(), filepath.Join(t.TempDir(), "gone"), t.TempDir()); err == nil {
 		t.Error("a missing queue template was accepted")
 	}
 }
@@ -296,7 +296,7 @@ func TestMaterializeRefusesToCollideWithTheFixture(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dest, eval.TasksRoot, "00_todo"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := eval.MaterializeQueue(tmpl, dest); err == nil || !strings.Contains(err.Error(), "only one") {
+	if err := eval.MaterializeQueue(context.Background(), tmpl, dest); err == nil || !strings.Contains(err.Error(), "only one") {
 		t.Errorf("a fixture's own queue was merged with the scenario's: %v", err)
 	}
 
@@ -308,7 +308,7 @@ func TestMaterializeRefusesToCollideWithTheFixture(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dest2, eval.PresetsRoot, "frontier"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := eval.MaterializePreset(staged, dest2, "frontier"); err == nil ||
+	if err := eval.MaterializePreset(context.Background(), staged, dest2, "frontier"); err == nil ||
 		!strings.Contains(err.Error(), "shadow") {
 		t.Errorf("a fixture preset shadowed the one being evaluated: %v", err)
 	}
@@ -326,14 +326,14 @@ func TestStagePresetIsCapturedOncePerRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	stage := filepath.Join(t.TempDir(), "stage")
-	staged, err := eval.StagePreset(src, stage, "frontier")
+	staged, err := eval.StagePreset(context.Background(), src, stage, "frontier")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(manifest, []byte("lead: edited mid-run\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	again, err := eval.StagePreset(src, stage, "frontier")
+	again, err := eval.StagePreset(context.Background(), src, stage, "frontier")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,6 +346,22 @@ func TestStagePresetIsCapturedOncePerRun(t *testing.T) {
 	}
 	if strings.Contains(string(body), "edited mid-run") {
 		t.Error("a mid-run edit reached a later trial; the two sides would measure different presets")
+	}
+}
+
+func TestStagePresetCanceledBeforeCopyLeavesNoReusableTree(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "preset.yaml"), []byte("lead: original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := eval.StagePreset(ctx, src, root, "frontier"); err != context.Canceled {
+		t.Fatalf("canceled preset staging = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "frontier")); !os.IsNotExist(err) {
+		t.Fatalf("canceled preset staging left a reusable tree: %v", err)
 	}
 }
 

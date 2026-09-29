@@ -65,6 +65,14 @@ const daemonProbeTimeout = 10 * time.Second
 // Docker alone, a stopped daemon must still select Docker so the person is told to start it
 // instead of being told they have no runtime.
 func Detect(override string) (Runtime, error) {
+	return DetectContext(context.Background(), override)
+}
+
+// DetectContext applies a caller's deadline to runtime probes during a bounded operation.
+func DetectContext(ctx context.Context, override string) (Runtime, error) {
+	if err := ctx.Err(); err != nil {
+		return Runtime{}, err
+	}
 	if override != "" {
 		// A retired runtime is refused by name, before PATH: it is installed on plenty of
 		// machines, and being on PATH is exactly how it used to be selected.
@@ -79,7 +87,10 @@ func Detect(override string) (Runtime, error) {
 			return Runtime{}, fmt.Errorf("runtime %q not found (from COOP_RUNTIME) — install it, or unset COOP_RUNTIME to auto-detect", override)
 		}
 		if !isKnownRuntime(override) {
-			if err := exec.Command(override, "--version").Run(); err != nil {
+			if err := contextCommand(ctx, override, "--version").Run(); err != nil {
+				if ctx.Err() != nil {
+					return Runtime{}, ctx.Err()
+				}
 				return Runtime{}, fmt.Errorf("COOP_RUNTIME=%q isn't a usable container runtime (it didn't answer --version) — set docker or container", override)
 			}
 		}
@@ -88,10 +99,16 @@ func Detect(override string) (Runtime, error) {
 	_, dockerErr := exec.LookPath("docker")
 	_, appleErr := exec.LookPath("container")
 	switch {
-	case dockerErr == nil && (appleErr != nil || (Runtime{Name: "docker"}).EnsureDaemon() == nil):
+	case dockerErr == nil && (appleErr != nil || (Runtime{Name: "docker"}).EnsureDaemonContext(ctx) == nil):
 		return Runtime{Name: "docker"}, nil
 	case appleErr == nil:
+		if err := ctx.Err(); err != nil {
+			return Runtime{}, err
+		}
 		return Runtime{Name: "container"}, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return Runtime{}, err
 	}
 	return Runtime{}, errors.New("no container runtime found — install Docker or Apple 'container' (macOS 26)")
 }
@@ -124,15 +141,26 @@ var ErrDaemonUnavailable = errors.New("Docker is unavailable")
 // EnsureDaemon verifies the daemon is reachable. Only Docker exposes a daemon we
 // probe up front; Apple's container is checked lazily by its commands.
 func (r Runtime) EnsureDaemon() error {
+	return r.EnsureDaemonContext(context.Background())
+}
+
+// EnsureDaemonContext bounds the daemon probe by both its own limit and the caller's deadline.
+func (r Runtime) EnsureDaemonContext(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if r.kind() != runtimeDocker {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), daemonProbeTimeout)
+	probeCtx, cancel := context.WithTimeout(ctx, daemonProbeTimeout)
 	defer cancel()
-	if err := contextCommand(ctx, r.Name, "info").Run(); err != nil {
+	if err := contextCommand(probeCtx, r.Name, "info").Run(); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("%w — start it (Docker Desktop, or `systemctl start docker` on Linux) and retry", ErrDaemonUnavailable)
 	}
-	return nil
+	return ctx.Err()
 }
 
 // SupportsFilteredNetwork reports whether `--egress filtered` can run on this runtime. The gateway,

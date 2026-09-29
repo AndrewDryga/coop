@@ -2,6 +2,7 @@ package eval
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -42,6 +43,9 @@ const (
 // stays on disk but out of the initial commit, exactly as it would in a real checkout. Returns the
 // initial commit id.
 func PrepareWorkspace(ctx context.Context, fixture, dest string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	info, err := os.Stat(fixture)
 	if err != nil {
 		return "", fmt.Errorf("fixture %q: %w", fixture, err)
@@ -65,7 +69,7 @@ func PrepareWorkspace(ctx context.Context, fixture, dest string) (string, error)
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
-	if err := copyTree(root, dest); err != nil {
+	if err := copyTree(ctx, root, dest); err != nil {
 		return "", err
 	}
 	return initSyntheticRepo(ctx, dest)
@@ -78,8 +82,11 @@ func PrepareWorkspace(ctx context.Context, fixture, dest string) (string, error)
 // real mode — a fixture may legitimately ship one).
 // root MUST be the symlink-resolved absolute fixture path, so every walked path and every rel is
 // computed against what the kernel would resolve.
-func copyTree(root, dst string) error {
-	return filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+func copyTree(ctx context.Context, root, dst string) error {
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
@@ -111,11 +118,15 @@ func copyTree(root, dst string) error {
 		case d.IsDir():
 			return os.MkdirAll(target, info.Mode().Perm()|0o700)
 		case info.Mode().IsRegular():
-			return copyFile(path, target, info.Mode().Perm())
+			return copyFile(ctx, path, target, info.Mode().Perm())
 		default:
 			return fmt.Errorf("fixture entry %q is neither a regular file, directory nor symlink", rel)
 		}
 	})
+	if err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 // copySymlink reproduces a symlink only if it is RELATIVE and physically resolves (through every
@@ -142,7 +153,7 @@ func copySymlink(root, path, target string) error {
 	return os.Symlink(dest, target)
 }
 
-func copyFile(src, dst string, perm os.FileMode) error {
+func copyFile(ctx context.Context, src, dst string, perm os.FileMode) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -152,11 +163,33 @@ func copyFile(src, dst string, perm os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	if _, err := copyWithContext(ctx, out, in); err != nil {
 		out.Close()
 		return err
 	}
 	return out.Close()
+}
+
+// copyWithContext checks between bounded reads, including on large regular files. A canceled
+// partial destination belongs to its caller's cleanup path and is never published as complete.
+func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader) (int64, error) {
+	return io.Copy(dst, contextReader{ctx: ctx, reader: src})
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := r.reader.Read(p)
+	if canceled := r.ctx.Err(); canceled != nil {
+		return n, canceled
+	}
+	return n, err
 }
 
 // initSyntheticRepo makes dest a git repository with one commit of its whole tree, under a fixed
@@ -233,7 +266,7 @@ const TasksRoot = ".agent/tasks"
 // It is copied with the same rules as a fixture: no `.git` travels, and a symlink that escapes the
 // template is refused rather than followed. An empty template is refused too — a loop scenario with
 // no tasks measures nothing, and would look like a clean sweep when it finished immediately.
-func MaterializeQueue(template, dest string) error {
+func MaterializeQueue(ctx context.Context, template, dest string) error {
 	info, err := os.Stat(template)
 	if err != nil {
 		return fmt.Errorf("queue template %q: %w", template, err)
@@ -263,7 +296,7 @@ func MaterializeQueue(template, dest string) error {
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return err
 	}
-	return copyTree(root, target)
+	return copyTree(ctx, root, target)
 }
 
 func hasNoEntries(dir string) (bool, error) {
@@ -282,7 +315,10 @@ const PresetsRoot = ".agent/presets"
 // then materializes from the staged copy, so all trials in a run — and both sides of a comparison —
 // use byte-identical preset bytes even if the operator edits the real preset while the run is going.
 // It is the execution counterpart of freezing the preset's fingerprint.
-func StagePreset(presetDir, stageRoot, name string) (string, error) {
+func StagePreset(ctx context.Context, presetDir, stageRoot, name string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	dest := filepath.Join(stageRoot, name)
 	if _, err := os.Stat(dest); err == nil {
 		return dest, nil // already staged for this run
@@ -294,8 +330,8 @@ func StagePreset(presetDir, stageRoot, name string) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
 		return "", err
 	}
-	if err := copyTree(root, dest); err != nil {
-		return "", fmt.Errorf("stage preset %q: %w", name, err)
+	if err := copyTree(ctx, root, dest); err != nil {
+		return "", errors.Join(fmt.Errorf("stage preset %q: %w", name, err), os.RemoveAll(dest))
 	}
 	return dest, nil
 }
@@ -304,7 +340,7 @@ func StagePreset(presetDir, stageRoot, name string) (string, error) {
 // it. A preset normally lives in the operator's repository or their global directory; a trial's
 // workspace is a fresh fixture that has neither, so without this the loop could not resolve the very
 // thing the scenario exists to compare.
-func MaterializePreset(staged, dest, name string) error {
+func MaterializePreset(ctx context.Context, staged, dest, name string) error {
 	target := filepath.Join(dest, PresetsRoot, name)
 	// A fixture shipping a preset of the same name would shadow the one under evaluation.
 	if _, err := os.Stat(target); err == nil {
@@ -313,5 +349,5 @@ func MaterializePreset(staged, dest, name string) error {
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return err
 	}
-	return copyTree(staged, target)
+	return copyTree(ctx, staged, target)
 }

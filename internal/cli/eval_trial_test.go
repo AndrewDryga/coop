@@ -194,7 +194,7 @@ func TestTrialRunnerWithNoFilesStartsEmptyNotFromTheSuiteDirectory(t *testing.T)
 
 func TestTrialRunnerUsesTheFrozenInputAfterTheSourceChanges(t *testing.T) {
 	source := trialSuite(t)
-	staged, err := eval.StageSuite(t.TempDir(), source)
+	staged, err := eval.StageSuite(context.Background(), t.TempDir(), source)
 	if err != nil {
 		t.Fatal(err)
 	}

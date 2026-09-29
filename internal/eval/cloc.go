@@ -123,7 +123,7 @@ const clocTimeout = 2 * time.Minute
 // cloc read outside the workspace nor steer the count, and a missing/empty tree is an explicit
 // result, not a silent zero. Best-effort at the call site: a run error is a measurement gap.
 func MeasureSize(ctx context.Context, dir string, ignore ...string) (SizeMetrics, error) {
-	proj, skipped, err := projectRegularFiles(dir, ignore...)
+	proj, skipped, err := projectRegularFiles(ctx, dir, ignore...)
 	if err != nil {
 		return SizeMetrics{}, err
 	}
@@ -151,7 +151,10 @@ func MeasureSize(ctx context.Context, dir string, ignore ...string) (SizeMetrics
 // relative paths, and returns the temp dir plus the relative paths it SKIPPED (symlinks, devices,
 // sockets — anything not a regular file or directory). A missing or non-directory src is an error,
 // so an unmeasurable input is never mistaken for an empty one.
-func projectRegularFiles(src string, ignore ...string) (string, []string, error) {
+func projectRegularFiles(ctx context.Context, src string, ignore ...string) (string, []string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", nil, err
+	}
 	info, err := os.Stat(src)
 	if err != nil {
 		return "", nil, fmt.Errorf("measure %q: %w", src, err)
@@ -165,6 +168,9 @@ func projectRegularFiles(src string, ignore ...string) (string, []string, error)
 	}
 	var skipped []string
 	err = filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
@@ -195,12 +201,15 @@ func projectRegularFiles(src string, ignore ...string) (string, []string, error)
 		case d.IsDir():
 			return os.MkdirAll(filepath.Join(dst, rel), 0o700)
 		case fi.Mode().IsRegular():
-			return copyFile(path, filepath.Join(dst, rel), fi.Mode().Perm())
+			return copyFile(ctx, path, filepath.Join(dst, rel), fi.Mode().Perm())
 		default:
 			skipped = append(skipped, rel) // device, socket, fifo — not measurable
 			return nil
 		}
 	})
+	if err == nil {
+		err = ctx.Err()
+	}
 	if err != nil {
 		os.RemoveAll(dst)
 		return "", nil, err

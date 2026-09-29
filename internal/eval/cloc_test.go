@@ -33,6 +33,14 @@ func TestParseClocJSONDropsSumAndHeader(t *testing.T) {
 	}
 }
 
+func TestMeasureSizeHonorsCancellationBeforeProjection(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := MeasureSize(ctx, t.TempDir()); err != context.Canceled {
+		t.Fatalf("canceled size projection = %v", err)
+	}
+}
+
 func TestNetCodeGrowth(t *testing.T) {
 	// Net growth is after-minus-before totals, NOT the diff's numbers: a write-then-revert has
 	// churn but zero net growth.

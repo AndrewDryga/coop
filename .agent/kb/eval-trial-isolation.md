@@ -2,8 +2,8 @@
 name: eval-trial-isolation
 description: What isolates one coop eval trial from the next and from the grader — and why the obvious credential fix would break authentication
 subsystem: eval
-sources: [internal/cli/eval_cmd.go, internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_loop.go, internal/cli/eval_results.go, internal/loop/loop.go, internal/eval/fixtures.go, internal/eval/stage.go, internal/eval/stage_copy.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/eval/store.go, internal/eval/catalog.go, internal/eval/private_root.go, internal/box/run.go, internal/box/mounts.go, internal/box/authority_mounts.go, internal/agent/codex.go]
-updated: 2026-09-29
+sources: [internal/cli/eval_cmd.go, internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_loop.go, internal/cli/eval_results.go, internal/loop/loop.go, internal/eval/execute.go, internal/eval/fixtures.go, internal/eval/stage.go, internal/eval/stage_copy.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/eval/store.go, internal/eval/catalog.go, internal/eval/private_root.go, internal/runtime/runtime.go, internal/box/run.go, internal/box/mounts.go, internal/box/authority_mounts.go, internal/agent/codex.go]
+updated: 2026-09-30
 ---
 
 `coop eval` measures configurations against each other, so its whole value rests on two trials
@@ -113,6 +113,12 @@ or named record and keeps absent trials in the requested denominator. Provider/v
 untrusted recorded evidence: bound and escape it for terminal display, never treat it as authority
 or automatically retry a paid run. Errors before grading are not model-quality failures.
 
+`coop eval run --timeout` has one deadline from command entry through preparation, trials and
+grading. Staging and runtime probes honor it; the executor does not grant a new full budget after
+preparation. A timeout before run creation leaves no run record. Once a run exists, unstarted
+trials remain pending in the full requested denominator and the summary is sealed as incomplete;
+cleanup and sealing are best effort after the deadline.
+
 ## Sizing a loop scenario, and one trap
 
 Measured on the shipped `queue` starter with `codex`: ten small tasks drained in **43 minutes**
@@ -128,6 +134,8 @@ already fully correct. The shipped verifier runs each subcommand on inputs no ta
 also why it cannot be satisfied by a loop that moves folders without finishing anything.
 
 ## Changelog
+- 2026-09-30 — rechecked staging, runtime preflight, trial and record paths; documented the
+  single command deadline and its pending-record/cleanup boundary.
 - 2026-09-29 — rechecked trial copy, measurement and non-pass cleanup; the size and retained
   workspace now describe candidate work before the verifier's writable sandbox changes it.
 - 2026-09-28 — rechecked workspace preparation and its staged caller. Replaced a vacuous
