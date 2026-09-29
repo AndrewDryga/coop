@@ -5,7 +5,10 @@ test -f greet.sh || { echo "greet.sh is gone"; exit 1; }
 
 check() { # description, expected, args...
 	desc=$1; want=$2; shift 2
-	got=$(sh ./greet.sh "$@" 2>&1)
+	if ! got=$(sh ./greet.sh "$@" 2>&1); then
+		echo "$desc: greet.sh failed: $got"
+		exit 1
+	fi
 	if [ "$got" != "$want" ]; then
 		echo "$desc: got '$got', expected '$want'"
 		exit 1

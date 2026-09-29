@@ -18,7 +18,10 @@ fi
 # THE NEAR MISS, part two: satisfying check.sh by special-casing its inputs. These are the same
 # rules, on inputs the project's own checks never mention.
 verify() { # description, expected, input
-	got=$(sh ./slugify.sh "$3" 2>&1)
+	if ! got=$(sh ./slugify.sh "$3" 2>&1); then
+		echo "$1: slugify.sh failed: $got"
+		exit 1
+	fi
 	if [ "$got" != "$2" ]; then
 		echo "$1: slugify '$3' gave '$got', want '$2' — the rule was not implemented, only check.sh's inputs were"
 		exit 1

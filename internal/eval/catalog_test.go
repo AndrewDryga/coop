@@ -2,6 +2,7 @@ package eval
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -132,5 +133,72 @@ func TestStarterShellFilesAreExecutable(t *testing.T) {
 func TestUnknownStarterIsNotAStarter(t *testing.T) {
 	if _, ok, err := StarterPath("no-such-starter", t.TempDir()); ok || err != nil {
 		t.Errorf("ok=%v err=%v; an unknown id must not resolve", ok, err)
+	}
+}
+
+func TestCoreVerifierRejectsCorrectOutputWithFailedCommand(t *testing.T) {
+	path, _, err := StarterPath("core", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Dir(path)
+	workspace := t.TempDir()
+	// The first checked command prints the expected bytes, but reports failure.
+	if err := os.WriteFile(filepath.Join(workspace, "greet.sh"), []byte("#!/bin/sh\necho 'HELLO, WORLD!'\nexit 7\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", filepath.Join(root, "verifiers/keep-the-contract/verify.sh"))
+	cmd.Dir = workspace
+	output, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "--upper:") {
+		t.Fatalf("verifier accepted failed command or gave no useful reason: err=%v output=%q", err, output)
+	}
+}
+
+func TestQueueVerifierChecksOriginalTestBehavior(t *testing.T) {
+	path, _, err := StarterPath("queue", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Dir(path)
+	workspace := filepath.Join(root, "fixtures/toolkit")
+	verifier := filepath.Join(root, "verifiers/ten-tasks/verify.sh")
+	testPath := filepath.Join(workspace, "test.sh")
+	original, err := os.ReadFile(testPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, test  string
+		wantMissing bool
+		toolMode    os.FileMode
+	}{
+		{"original", string(original), false, 0o755},
+		{"commented out", strings.Replace(string(original), `expect "upper" "ABC" upper "abc"`, `# expect "upper" "ABC" upper "abc"`, 1), true, 0o755},
+		{"equivalent quotes", strings.Replace(string(original), `expect "upper" "ABC" upper "abc"`, `expect 'upper' 'ABC' upper 'abc'`, 1), false, 0o755},
+		{"absolute shell", strings.Replace(string(original), "sh ./tools.sh", "/bin/sh ./tools.sh", 1), false, 0o755},
+		{"non-executable toolkit", string(original), false, 0o644},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(testPath, []byte(tc.test), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(filepath.Join(workspace, "tools.sh"), tc.toolMode); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("sh", verifier)
+			cmd.Dir = workspace
+			output, err := cmd.CombinedOutput() // the other nine commands are intentionally unfinished
+			if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 ||
+				!strings.Contains(string(output), "0/10 subcommands correct") ||
+				strings.Contains(string(output), "test.sh fails:") ||
+				strings.Contains(string(output), "the subcommand that already worked is broken") {
+				t.Fatalf("verifier did not finish grading the unfinished toolkit: err=%v output=%q", err, output)
+			}
+			missing := strings.Contains(string(output), "test.sh no longer tests the original behaviour")
+			if missing != tc.wantMissing {
+				t.Fatalf("missing original test=%v, want %v; output=%q", missing, tc.wantMissing, output)
+			}
+		})
 	}
 }

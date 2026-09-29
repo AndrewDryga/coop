@@ -12,8 +12,7 @@ test -f test.sh  || { echo "test.sh was deleted rather than kept passing"; exit 
 ok=0
 missing=""
 try() { # subcommand, expected, input
-	got=$(sh ./tools.sh "$1" "$3" 2>&1)
-	if [ "$got" = "$2" ]; then
+	if got=$(sh ./tools.sh "$1" "$3" 2>&1) && [ "$got" = "$2" ]; then
 		ok=$((ok + 1))
 	else
 		missing="$missing $1"
@@ -37,15 +36,47 @@ echo "$ok/10 subcommands correct on inputs the tasks did not mention"
 [ -n "$missing" ] && echo "not working:$missing"
 
 # A regression in what already worked is a failure however many tasks were finished.
-before=$(sh ./tools.sh upper "abc" 2>&1)
-if [ "$before" != "ABC" ]; then
+if ! before=$(sh ./tools.sh upper "abc" 2>&1) || [ "$before" != "ABC" ]; then
 	echo "the subcommand that already worked is broken: upper 'abc' gave '$before'"
 	exit 1
 fi
-# And the shipped test must still be a real test.
-grep -Eq 'expect[[:space:]]+"upper"[[:space:]]+"ABC"[[:space:]]+upper[[:space:]]+"abc"' test.sh || { echo "test.sh no longer tests the original behaviour"; exit 1; }
+# And the shipped test must still catch a broken upper command, regardless of quote style.
 if ! out=$(sh ./test.sh 2>&1); then
 	echo "test.sh fails: $out"
+	exit 1
+fi
+probe=$(mktemp -d .coop-upper-probe.XXXXXX) || { echo "could not prepare the original-test probe"; exit 2; }
+trap 'mv -f "$probe/original" tools.sh; rmdir "$probe"' 0
+mv tools.sh "$probe/original" || { echo "could not prepare the original-test probe"; exit 2; }
+printf '#!/bin/sh\nexec /bin/sh "./%s/original" "$@"\n' "$probe" > tools.sh || { echo "could not prepare the original-test probe"; exit 2; }
+chmod +x tools.sh || { echo "could not prepare the original-test probe"; exit 2; }
+if ! out=$(sh ./test.sh 2>&1); then
+	echo "could not validate the original-test probe: $out"
+	exit 2
+fi
+if ! cat > tools.sh <<SH
+#!/bin/sh
+if [ "\$1" = "upper" ]; then
+	printf 'BROKEN'
+	exit 0
+fi
+exec /bin/sh "./$probe/original" "\$@"
+SH
+then
+	echo "could not prepare the original-test probe"
+	exit 2
+fi
+chmod +x tools.sh || { echo "could not prepare the original-test probe"; exit 2; }
+if sh ./test.sh >/dev/null 2>&1; then
+	catches=no
+else
+	catches=yes
+fi
+mv -f "$probe/original" tools.sh || { echo "could not restore tools.sh after the original-test probe"; exit 2; }
+rmdir "$probe" || { echo "could not clean up the original-test probe"; exit 2; }
+trap - 0
+if [ "$catches" = no ]; then
+	echo "test.sh no longer tests the original behaviour"
 	exit 1
 fi
 
