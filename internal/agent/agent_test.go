@@ -2269,3 +2269,28 @@ func TestACPSessionSettingsAndBoxEnv(t *testing.T) {
 		}
 	}
 }
+
+// A controller job's Codex box starts every session from the same prompt: its config turns off
+// the plugin features Codex would otherwise sync at start, while an ordinary box keeps them.
+func TestCodexControllerJobConfigTurnsOffPluginSync(t *testing.T) {
+	cleanCmdEnv(t)
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node"}
+	a, _ := Get("codex")
+	controller, ok := a.(ControllerJobConfig)
+	if !ok {
+		t.Fatal("codex has no controller job config")
+	}
+	job, err := controller.ControllerJobMCP(cfg, "/workspace")
+	if err != nil || len(job.Mounts) != 1 || job.Mounts[0].BoxPath != "/home/node/.codex/config.toml" {
+		t.Fatalf("controller job config = %+v, %v", job, err)
+	}
+	for _, off := range []string{"features.plugins = false", "features.remote_plugin = false", "features.apps = false"} {
+		if !strings.Contains(job.Mounts[0].Content, off) {
+			t.Errorf("controller job config lacks %q:\n%s", off, job.Mounts[0].Content)
+		}
+	}
+	ordinary, err := a.MCP(cfg, "/workspace")
+	if err != nil || len(ordinary.Mounts) != 1 || strings.Contains(ordinary.Mounts[0].Content, "features.") {
+		t.Fatalf("an ordinary box's config = %+v, %v", ordinary, err)
+	}
+}

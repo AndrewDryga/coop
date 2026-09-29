@@ -1178,3 +1178,41 @@ func TestTaskToolsBindingCannotBeShadowedAndNeedsASocket(t *testing.T) {
 		t.Fatalf("binding onto an empty snapshot = %s, %v", snapshot, err)
 	}
 }
+
+// Codex synced the curated plugin store at every start, and a session's first prompt listed
+// whichever plugins had arrived by then, so no two of a controller's sessions shared a prompt
+// prefix: every routing call cached Codex's own 12,160 tokens and none of the caller's
+// (Ryker, 2026-09-29, two sessions a minute apart listing different plugin roots).
+func TestGenerateCodexControllerJobTurnsOffWhatCodexSyncsAtStart(t *testing.T) {
+	existingBody := "model = \"o3\"\n\n[features]\nplugins = true\nweb_search = true\n\n[projects.\"/repo\"]\ntrust_level = \"trusted\"\n"
+	existing := writeTmp(t, "config.toml", existingBody)
+	got, _, err := GenerateCodexControllerJob("", existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codexManagedValues(t, got)
+	var values map[string]any
+	if err := toml.Unmarshal([]byte(got), &values); err != nil {
+		t.Fatalf("a controller job's config is not TOML: %v\n%s", err, got)
+	}
+	features, _ := values["features"].(map[string]any)
+	for _, feature := range []string{"plugins", "remote_plugin", "recommended_plugins", "apps", "tool_suggest"} {
+		if features[feature] != false {
+			t.Errorf("features.%s = %v, want false:\n%s", feature, features[feature], got)
+		}
+	}
+	for _, kept := range []string{"model = \"o3\"\n", "[projects.\"/repo\"]\ntrust_level = \"trusted\"\n"} {
+		if !strings.Contains(got, kept) {
+			t.Errorf("unrelated setting %q lost:\n%s", kept, got)
+		}
+	}
+	if after, err := os.ReadFile(existing); err != nil || string(after) != existingBody {
+		t.Fatalf("host config changed = (%q, %v)", after, err)
+	}
+
+	// An ordinary box keeps the host's own features.
+	ordinary, _, err := GenerateCodex("", existing)
+	if err != nil || !strings.Contains(ordinary, "[features]\nplugins = true\nweb_search = true\n") {
+		t.Fatalf("an ordinary box lost the host's features = (%q, %v)", ordinary, err)
+	}
+}

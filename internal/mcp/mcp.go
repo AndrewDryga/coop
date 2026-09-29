@@ -165,6 +165,29 @@ func GenerateCodex(mcpFile, existing string) (string, []string, error) {
 	return generateTOML(mcpFile, existing, codexManaged, codexHeaders)
 }
 
+// A controller job's Codex syncs nothing at start that its first prompt would list. The curated
+// plugin store (plugins, remote plugins, apps and their suggestions) is synced when Codex starts,
+// and a session's first prompt listed whichever plugins had arrived by then, so no two of a
+// controller's sessions shared a prompt prefix the provider could cache: every routing call cached
+// Codex's own instructions and none of the caller's. A headless job has no use for them anyway.
+const codexControllerJobFeatures = `features.plugins = false
+features.remote_plugin = false
+features.recommended_plugins = false
+features.apps = false
+features.tool_suggest = false
+`
+
+var codexControllerJobManaged = managedTOML{
+	block: CodexManagedDefaults + codexControllerJobFeatures,
+	keys:  append(append([]string{}, codexManaged.keys...), "features"),
+}
+
+// GenerateCodexControllerJob is GenerateCodex for a controller job's box: the same config with
+// the plugin features off. The host's own [features] give way, as TOML allows one definition.
+func GenerateCodexControllerJob(mcpFile, existing string) (string, []string, error) {
+	return generateTOML(mcpFile, existing, codexControllerJobManaged, codexHeaders)
+}
+
 // GenerateGrok emits the shared servers in Grok's [mcp_servers.*] shape. Grok reads HTTP headers
 // directly and expands ${VAR} references in them, so bearer_token_env_var becomes an Authorization
 // header while its value stays in the captured runtime environment. No managed block: Grok's

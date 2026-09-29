@@ -1017,9 +1017,13 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		ag, _ := agents.Get(name)
 		var wiring agents.MCPConfig
 		var genErr error
-		if spec.Login {
+		controllerJob, isControllerJobConfig := ag.(agents.ControllerJobConfig)
+		switch {
+		case spec.Login:
 			wiring, genErr = ag.LoginConfig(configForAgent)
-		} else {
+		case spec.ControllerJob && isControllerJobConfig:
+			wiring, genErr = controllerJob.ControllerJobMCP(configForAgent, workdir)
+		default:
 			wiring, genErr = ag.MCP(configForAgent, workdir)
 		}
 		if genErr != nil {

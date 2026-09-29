@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- A controller job's Codex no longer syncs the curated plugin store when it starts. Each session's
+  first prompt listed whichever plugins had arrived by then, so no two of a controller's sessions
+  began with the same prompt, and the provider cached only Codex's own instructions: every routing
+  call a controller made paid full price for its instructions. Plugins, remote plugins, apps and
+  their suggestions are off in a controller job's box; interactive boxes keep them.
+
 - A Codex turn's usage counts every model call in it. codex-acp reports only a turn's last call, so
   a 23-call turn was recorded as 93k input and 737 output tokens where it used 1.79M and 4,889. The
   worker now reads the turn's totals from Codex's own session record, once that record holds the

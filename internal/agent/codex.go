@@ -706,6 +706,21 @@ func (codexAgent) MCP(cfg *config.Config, workdir string) (MCPConfig, error) {
 	}, nil
 }
 
+// ControllerJobMCP is MCP for a controller job's box: the same config with Codex's plugin
+// features off (mcp.GenerateCodexControllerJob), so each of the job's sessions starts from the
+// same prompt instead of one listing whichever curated plugins had synced by then.
+func (codexAgent) ControllerJobMCP(cfg *config.Config, workdir string) (MCPConfig, error) {
+	cx, requiredEnv, err := mcp.GenerateCodexControllerJob(cfg.MCPFile, filepath.Join(cfg.AgentDir("codex"), "config.toml"))
+	if err != nil {
+		return MCPConfig{}, err
+	}
+	cx, _ = ensureCodexTrust(cx, workdir)
+	return MCPConfig{
+		Mounts:      []MCPMount{{Content: cx, BoxPath: cfg.HomeInBox + "/.codex/config.toml"}},
+		RequiredEnv: requiredEnv,
+	}, nil
+}
+
 // ACPMCPServers declares the same shared servers to codex-acp. Codex still reads
 // their authority from the generated config.toml mount, while codex-acp 1.7 uses
 // session/new.mcpServers as the session inventory and startup contract. The
