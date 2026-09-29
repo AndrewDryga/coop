@@ -332,6 +332,10 @@ func sizeNote(before eval.SizeMetrics, beforeErr error, after eval.SizeMetrics, 
 		parts = append(parts, "change size not measured (optional cloc unavailable or failed; verdict unaffected)")
 	} else {
 		parts = append(parts, fmt.Sprintf("net code %+d (%d→%d lines)", eval.NetCodeGrowth(before, after), before.TotalCode(), after.TotalCode()))
+		beforeOmitted, afterOmitted := len(before.Skipped)+len(before.Ignored), len(after.Skipped)+len(after.Ignored)
+		if beforeOmitted > 0 || afterOmitted > 0 {
+			parts = append(parts, fmt.Sprintf("%d before and %d after entries unmeasured by cloc", beforeOmitted, afterOmitted))
+		}
 	}
 	if n := len(skipped); n > 0 {
 		named := skipped

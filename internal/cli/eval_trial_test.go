@@ -122,6 +122,15 @@ func TestTrialRunnerPassesWhenOptionalClocIsUnavailable(t *testing.T) {
 	}
 }
 
+func TestSizeNoteNamesIncompleteClocCounts(t *testing.T) {
+	before := eval.SizeMetrics{Ignored: []string{"generated.bin"}}
+	after := eval.SizeMetrics{Skipped: []string{"shortcut"}, Ignored: []string{"large.go"}}
+	note := sizeNote(before, nil, after, nil, nil)
+	if !strings.Contains(note, "net code +0") || !strings.Contains(note, "1 before and 2 after entries unmeasured") {
+		t.Fatalf("partial cloc counts appeared complete: %q", note)
+	}
+}
+
 // The isolation property the whole eval rests on: the verifier — and anything beside it — is never
 // inside what the candidate is given.
 func TestTrialRunnerNeverGivesTheCandidateTheVerifier(t *testing.T) {
