@@ -2,14 +2,14 @@ package eval
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
-
-func atomicLoad(p *int64) int64     { return atomic.LoadInt64(p) }
-func atomicStore(p *int64, v int64) { atomic.StoreInt64(p, v) }
-func atomicAdd(p *int32, v int32)   { atomic.AddInt32(p, v) }
 
 func agentPlan(t *testing.T, cases int, repeat, jobs int, timeout time.Duration) (*Plan, []FrozenConfig) {
 	t.Helper()
@@ -150,15 +150,15 @@ func TestExecuteStopsAdmittingPastTheReserve(t *testing.T) {
 	base := time.Now() // real, so the run context (real clock) is a genuine future deadline
 	var advanced int64
 	clock := func() time.Time {
-		if atomicLoad(&advanced) == 1 {
+		if atomic.LoadInt64(&advanced) == 1 {
 			return base.Add(45 * time.Minute) // past admitUntil (30m)
 		}
 		return base
 	}
 	var ran int32
 	run := func(ctx context.Context, tr Trial) TrialResult {
-		atomicAdd(&ran, 1)
-		atomicStore(&advanced, 1) // after the first trial, the clock is past the reserve
+		atomic.AddInt32(&ran, 1)
+		atomic.StoreInt64(&advanced, 1) // after the first trial, the clock is past the reserve
 		return TrialResult{Status: TrialPassed}
 	}
 	sum, err := Execute(context.Background(), plan, frozen, store, run, clock)
@@ -170,5 +170,77 @@ func TestExecuteStopsAdmittingPastTheReserve(t *testing.T) {
 	}
 	if sum.Counts[TrialPassed] != 1 || sum.Counts[TrialPending] != 1 || sum.Requested != 2 {
 		t.Errorf("summary = %+v, want 1 passed + 1 pending of 2", sum)
+	}
+}
+
+func TestExecuteDoesNotLaunchWhenRunningRecordCannotBeWritten(t *testing.T) {
+	plan, frozen := agentPlan(t, 1, 1, 1, time.Hour)
+	root := t.TempDir()
+	store, err := CreateRun(root, RunRecord{ID: "record-failure", Suite: "s", Runner: RunnerAgent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var once sync.Once
+	var sabotageErr error
+	now := func() time.Time {
+		// Execute asks for its clock only after every pending record is durable.
+		once.Do(func() {
+			dir := filepath.Join(store.Dir(), trialsDir)
+			if sabotageErr = os.Rename(dir, dir+"-saved"); sabotageErr == nil {
+				sabotageErr = os.WriteFile(dir, []byte("not a directory"), 0o600)
+			}
+		})
+		return time.Now()
+	}
+	var launched atomic.Int32
+	_, err = Execute(context.Background(), plan, frozen, store, func(context.Context, Trial) TrialResult {
+		launched.Add(1)
+		return TrialResult{Status: TrialPassed}
+	}, now)
+	if sabotageErr != nil {
+		t.Fatal(sabotageErr)
+	}
+	if err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("failed record write returned %v", err)
+	}
+	if got := launched.Load(); got != 0 {
+		t.Fatalf("launched %d paid trials without a running record", got)
+	}
+	if _, sealed, err := LoadSummary(root, store.ID()); err != nil || sealed {
+		t.Fatalf("record failure sealed a run: sealed=%v err=%v", sealed, err)
+	}
+}
+
+func TestExecuteStopsNewTrialsAfterFinalRecordWriteFails(t *testing.T) {
+	plan, frozen := agentPlan(t, 1, 1, 1, time.Hour) // two scheduled trials, one worker
+	root := t.TempDir()
+	store, err := CreateRun(root, RunRecord{ID: "final-record-failure", Suite: "s", Runner: RunnerAgent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var launched atomic.Int32
+	var sabotageErr error
+	_, err = Execute(context.Background(), plan, frozen, store, func(_ context.Context, tr Trial) TrialResult {
+		if launched.Add(1) == 1 {
+			// Running is durable. Make only this trial's final replace fail; the next trial's
+			// record path remains writable, so cancellation is what must prevent its launch.
+			path := filepath.Join(store.Dir(), trialsDir, TrialKey(tr.Case.ID, tr.ConfigIndex, tr.Repetition)+".json")
+			if sabotageErr = os.Remove(path); sabotageErr == nil {
+				sabotageErr = os.Mkdir(path, 0o700)
+			}
+		}
+		return TrialResult{Status: TrialPassed}
+	}, nil)
+	if sabotageErr != nil {
+		t.Fatal(sabotageErr)
+	}
+	if err == nil {
+		t.Fatal("final record write failure returned success")
+	}
+	if got := launched.Load(); got != 1 {
+		t.Fatalf("launched %d trials after a failed final record write; want only the first", got)
+	}
+	if _, sealed, err := LoadSummary(root, store.ID()); err != nil || sealed {
+		t.Fatalf("record failure sealed a run: sealed=%v err=%v", sealed, err)
 	}
 }

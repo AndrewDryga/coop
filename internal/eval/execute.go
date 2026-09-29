@@ -109,6 +109,7 @@ func Execute(ctx context.Context, plan *Plan, frozen []FrozenConfig, store *Stor
 		recordMu.Lock()
 		if recordErr == nil {
 			recordErr = err
+			cancelRun()
 		}
 		recordMu.Unlock()
 	}
@@ -132,7 +133,10 @@ func Execute(ctx context.Context, plan *Plan, frozen []FrozenConfig, store *Stor
 				}
 				// Write-before-launch: an interrupted run can then tell a trial that STARTED and was
 				// killed from one that never left the queue.
-				noteErr(store.WriteTrial(runningRecord(store.ID(), t, started)))
+				if err := store.WriteTrial(runningRecord(store.ID(), t, started)); err != nil {
+					noteErr(err)
+					continue
+				}
 				trialCtx, cancel := context.WithDeadline(runCtx, t.Deadline)
 				res := run(trialCtx, t)
 				cancel()
