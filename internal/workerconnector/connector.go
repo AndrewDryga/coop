@@ -207,6 +207,13 @@ func (c *Connector) Run(ctx context.Context, interval time.Duration, onError fun
 				onError(fmt.Errorf("command %s: %w", done.job.command.CommandID, done.err))
 			}
 			startNext()
+			// The controller waits on this result, so it goes out on the next
+			// poll now rather than after the rest of the interval: every
+			// short command waited up to a second to report (get_session and
+			// get_turn averaged ~1.8 s end to end, 2026-09-28). Completions
+			// that land together share that one poll, and polling returns to
+			// its interval after it.
+			timer.Reset(0)
 		case <-timer.C:
 			if err := c.pollOnce(ctx, dispatch); err != nil {
 				if ctx.Err() != nil {

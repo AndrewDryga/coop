@@ -96,6 +96,46 @@ func TestConnectorPollsAndRenewsWhileOneLargeCommandIsPreparing(t *testing.T) {
 	}
 }
 
+// A finished command reports on the next poll at once, not after the rest of
+// the interval: the controller waits on its result. Every short command waited
+// up to the one-second interval to report (get_session and get_turn averaged
+// about 1.8 s end to end, 1,315 and 1,265 of them in one day, 2026-09-28).
+func TestConnectorReportsACompletedCommandWithoutWaitingOutTheInterval(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	executor := tunnelFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}), nil)
+	command := createCommand(time.Now().Add(time.Hour))
+	var polls atomic.Int32
+	reported := make(chan time.Time, 1)
+	transport := pollTransportFunc(func(_ context.Context, poll workerproto.Poll) (workerproto.Response, error) {
+		response := workerproto.Response{Version: workerproto.Version, PollRef: poll.PollRef, ServerTime: time.Now()}
+		if polls.Add(1) == 1 {
+			response.Commands = []workerproto.Command{command}
+		}
+		if len(poll.CommandResults) > 0 {
+			response.AcknowledgedResultCommandIDs = []string{command.CommandID}
+			reported <- time.Now()
+			cancel()
+		}
+		return response, nil
+	})
+	connector, err := NewConnector(ConnectorConfig{Executor: executor, Hello: func(_ context.Context, clock time.Time) workerproto.WorkerHello { return hello(clock) }, Now: time.Now, Transport: transport})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	// A minute's interval: a result that waited for it would miss the deadline.
+	if err := connector.Run(ctx, time.Minute, func(err error) { t.Errorf("connector: %v", err) }); !errors.Is(err, context.Canceled) {
+		t.Fatalf("the result was not reported before the interval ran out: %v", err)
+	}
+	if at := <-reported; at.Sub(started) >= 5*time.Second || polls.Load() != 2 {
+		t.Fatalf("reported after %v in %d polls", at.Sub(started), polls.Load())
+	}
+}
+
 func TestCommandLeaseCancellationStopsPreparationAndCanRenew(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var expiry atomic.Int64
