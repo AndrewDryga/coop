@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-09-28
+updated: 2026-09-29
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -46,6 +46,10 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-09-29 — restored `workerconnector -> secretscan` for the controller-bound activity
+  narration projection. It scans likely secrets before free-form tool output and model thoughts
+  cross the transport boundary. Swept production imports and ran `TestInternalImportDAG`; this
+  was the only undeclared edge, and the scanner remains a leaf with no cycle.
 - 2026-09-28 — added `runtime -> config`: Docker Compose stages a filtered copy of registry
   credentials under Coop's protected configuration root. Reuse `config.RootDir` and
   `config.EnsurePrivateDir` rather than duplicate the XDG path and private-directory checks in
