@@ -1,14 +1,11 @@
-package sessionsvc
+package agent
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/AndrewDryga/coop/internal/session"
 )
 
 // The fixture is the live worker's rollout of 2026-09-28 06:31 (native session
@@ -35,7 +32,7 @@ func TestCodexRolloutCountsEveryCallOfTheLastTask(t *testing.T) {
 	if !ok {
 		t.Fatal("no turn in the rollout")
 	}
-	if want := (codexTokenUsage{Input: 1_020_300, Cached: 1_005_440, Output: 1_900, Reasoning: 99}); whole != want {
+	if want := (TurnTokens{Input: 1_020_300, Cached: 1_005_440, Output: 1_900, Reasoning: 99}); whole != want {
 		t.Fatalf("the warm task counted %+v, want %+v", whole, want)
 	}
 	if last.Input != 106_085 || last.Output != 358 {
@@ -54,7 +51,7 @@ func TestCodexRolloutCountsEveryCallOfTheLastTask(t *testing.T) {
 	if !ok {
 		t.Fatal("no first task")
 	}
-	if want := (codexTokenUsage{Input: 1_790_611, Cached: 1_705_600, Output: 4_889, Reasoning: 69}); whole != want {
+	if want := (TurnTokens{Input: 1_790_611, Cached: 1_705_600, Output: 4_889, Reasoning: 69}); whole != want {
 		t.Fatalf("the fresh task counted %+v, want %+v", whole, want)
 	}
 	if last.Input != 92_975 || last.Output != 737 {
@@ -78,39 +75,35 @@ func TestCodexRolloutSkipsALongLine(t *testing.T) {
 	}
 }
 
-func TestCodexWholeTurnUsageTrustsARolloutOnlyOnceItHoldsTheReportedCall(t *testing.T) {
-	profile := t.TempDir()
+// Codex keeps a session's rollout in the child's private profile for its account; the adapter
+// finds it there by the native session id, and nowhere else.
+func TestCodexFindsASessionsRolloutInItsPrivateProfile(t *testing.T) {
+	root := t.TempDir()
 	native := "01a0e6b5-bd79-73d0-a1a5-2ccb9618e573"
-	dir := filepath.Join(profile, "sessions", "2026", "09", "28")
+	dir := filepath.Join(root, "codex", "profiles", "default", "sessions", "2026", "09", "28")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "rollout-2026-09-28T06-31-05-"+native+".jsonl"), codexFixture(t), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// What codex-acp reported for the turn: its last call, input net of cache.
-	reported := session.Usage{InputTokens: 106_085 - 104_704, CachedInputTokens: 104_704, OutputTokens: 358}
-
-	got := codexWholeTurnUsage(context.Background(), profile, native, reported)
-	want := session.Usage{InputTokens: 1_020_300 - 1_005_440, CachedInputTokens: 1_005_440, OutputTokens: 1_900, ReasoningTokens: 99}
-	if got != want {
-		t.Fatalf("whole turn %+v, want %+v", got, want)
+	record, ok := Agent(codexAgent{}).(TurnRecord)
+	if !ok {
+		t.Fatal("codex keeps no turn record")
 	}
-
-	// A rollout that does not yet hold the reported call is behind the
-	// adapter: what the adapter reported stands.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	later := session.Usage{InputTokens: 900, CachedInputTokens: 107_000, OutputTokens: 42}
-	if got := codexWholeTurnUsage(ctx, profile, native, later); got != later {
-		t.Fatalf("an unconfirmed rollout replaced the report: %+v", got)
+	whole, last, ok := record.LastTurnTokens(root, "default", native)
+	if !ok || whole.Input != 1_020_300 || last.Input != 106_085 {
+		t.Fatalf("read %+v %+v %v", whole, last, ok)
 	}
-
-	// No rollout for the session, or no profile: the report stands.
-	if got := codexWholeTurnUsage(context.Background(), profile, "01a0e6b5-0000-0000-0000-000000000000", reported); got != reported {
-		t.Fatalf("a missing rollout changed the report: %+v", got)
-	}
-	if got := codexWholeTurnUsage(context.Background(), "", native, reported); got != reported {
-		t.Fatalf("no profile changed the report: %+v", got)
+	for _, missing := range [][3]string{
+		{root, "other", native},
+		{root, "default", "01a0e6b5-0000-0000-0000-000000000000"},
+		{"", "default", native},
+		{root, "..", native},
+		{root, "default", "*"},
+	} {
+		if _, _, ok := record.LastTurnTokens(missing[0], missing[1], missing[2]); ok {
+			t.Errorf("read a record for %q", missing)
+		}
 	}
 }

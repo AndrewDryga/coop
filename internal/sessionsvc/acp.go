@@ -3132,14 +3132,15 @@ func (r *sessionTurnRunner) runACP(
 	if !usage.Recorded() && promptResult.Meta != nil {
 		usage = promptResult.Meta.Usage.session()
 	}
-	// codex-acp reports only the turn's last model call; Codex's rollout holds
-	// every call of it. A restricted child keeps no rollout on the host.
-	if limitProvider == codexRolloutProvider && !process.restricted {
+	// codex-acp reports only the turn's last model call; its adapter reads the
+	// client's own record of every call. A restricted child keeps no record on
+	// the host.
+	if record, ok := turnRecordOf(limitProvider); ok && process != nil && !process.restricted {
 		account := limitTarget.Account()
 		if account == "" && r.sourceCfg != nil {
 			account = r.sourceCfg.DefaultProfileOf(limitProvider)
 		}
-		usage = codexWholeTurnUsage(ctx, codexProfile(process, account), nativeID, usage)
+		usage = wholeTurnUsage(ctx, record, process.privateRoot, account, nativeID, usage)
 	}
 	usage.CostUSD, usage.CostRecorded = cumulativeCostUSD, costRecorded
 	return string(assistant), outputArtifacts, usage, nil
