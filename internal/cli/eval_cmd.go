@@ -321,7 +321,9 @@ func (a *app) resolveEvalSuite(ref string) (*eval.Suite, error) {
 // is refused here, by name, before any plan is shown.
 func (a *app) resolveEvalConfigurations(positionals []string) ([]eval.Configuration, error) {
 	configs := make([]eval.Configuration, 0, len(positionals))
+	seen := make(map[eval.Configuration]bool, len(positionals))
 	for _, who := range positionals {
+		var c eval.Configuration
 		if isTargetHead(who) {
 			t, err := agents.ParseTarget(who)
 			if err != nil {
@@ -335,16 +337,21 @@ func (a *app) resolveEvalConfigurations(positionals []string) ([]eval.Configurat
 					return nil, fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", t.Provider, acct, t.Provider, acct)
 				}
 			}
-			configs = append(configs, eval.Configuration{Kind: eval.ConfigTarget, Label: t.String()})
-			continue
+			c = eval.Configuration{Kind: eval.ConfigTarget, Label: t.String()}
+		} else {
+			if !preset.ValidName(who) {
+				return nil, fmt.Errorf("%q is neither a target (provider[:model][/effort][@account]) nor a preset name", who)
+			}
+			if _, err := a.loadRunPreset(who); err != nil {
+				return nil, err
+			}
+			c = eval.Configuration{Kind: eval.ConfigPreset, Label: who}
 		}
-		if !preset.ValidName(who) {
-			return nil, fmt.Errorf("%q is neither a target (provider[:model][/effort][@account]) nor a preset name", who)
+		if seen[c] {
+			return nil, fmt.Errorf("configuration %q is repeated; use --repeat for deliberate repeated trials", c.Label)
 		}
-		if _, err := a.loadRunPreset(who); err != nil {
-			return nil, err
-		}
-		configs = append(configs, eval.Configuration{Kind: eval.ConfigPreset, Label: who})
+		seen[c] = true
+		configs = append(configs, c)
 	}
 	return configs, nil
 }

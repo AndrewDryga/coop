@@ -292,4 +292,7 @@ func TestResolveEvalConfigurationsRefusesBadPositionals(t *testing.T) {
 	if len(configs) != 1 || configs[0].Kind != "target" || configs[0].Label != "codex" {
 		t.Errorf("codex resolved to %+v", configs)
 	}
+	if _, err := a.resolveEvalConfigurations([]string{"codex", "codex"}); err == nil || !strings.Contains(err.Error(), "--repeat") {
+		t.Errorf("duplicate paid configuration was not refused with repetition guidance: %v", err)
+	}
 }

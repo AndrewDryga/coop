@@ -17,13 +17,11 @@ const (
 	ConfigPreset ConfigKind = "preset"
 )
 
-// Configuration is one system under test: the CLI resolves a positional into it (parsing the target
-// or loading the preset) and hands it here. Milestone 1 carries its identity and label; the frozen
-// content, Coop build identity and configuration fingerprint that let an edited-but-same-named
-// preset compare old vs new are added when configuration freezing lands (milestone 2).
+// Configuration is one system under test: the CLI resolves a target or preset name into it.
+// Freezing later records its content and build identity for comparison across runs.
 type Configuration struct {
 	Kind  ConfigKind
-	Label string // the exact positional the user wrote, e.g. "codex:gpt-5.6/xhigh" or "frontier"
+	Label string // resolved name, e.g. "codex:gpt-5.6/xhigh" or "frontier"
 }
 
 func (c Configuration) String() string { return c.Label }
