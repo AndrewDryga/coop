@@ -18,7 +18,7 @@ func TestCompletedReviewCanBeReadWithoutRunningTheGateAgain(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	var gateCalls atomic.Int32
-	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		gateCalls.Add(1)
 		return ReviewGateResult{Configured: true, Passed: false}, nil
 	}))

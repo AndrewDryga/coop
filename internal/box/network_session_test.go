@@ -99,6 +99,20 @@ func TestControllerJobChildReprovesItsOwnSnapshot(t *testing.T) {
 		}
 		t.Fatalf("authentic job snapshot reached qualification = %+v %v", capture, err)
 	}
+	if capture, err := CapturedEgressFromReference(cfg, RunSpec{Repo: repo, ControllerJob: true}, reference); capture != nil || err == nil || !strings.Contains(err.Error(), "no longer set up") {
+		if capture != nil {
+			_ = capture.Close()
+		}
+		t.Fatalf("typed job reference did not reopen its exact snapshot = %+v %v", capture, err)
+	}
+	wrongFingerprint := reference
+	wrongFingerprint.Fingerprint = strings.Repeat("c", 64)
+	if capture, err := CapturedEgressFromReference(cfg, RunSpec{Repo: repo, ControllerJob: true}, wrongFingerprint); capture != nil || err == nil || !strings.Contains(err.Error(), "not on this host") {
+		if capture != nil {
+			_ = capture.Close()
+		}
+		t.Fatalf("typed job reference accepted another fingerprint = %+v %v", capture, err)
+	}
 	reference.SessionID = "remote_other"
 	encoded, err = reference.Encode()
 	if err != nil {

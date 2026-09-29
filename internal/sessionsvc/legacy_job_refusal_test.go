@@ -130,7 +130,7 @@ func TestRecoveredReviewCannotExecuteAJoblessHistoricalSession(t *testing.T) {
 	if err := fixture.Store().MarkOperationRunning(ctx, op.ID, document); err != nil {
 		t.Fatal(err)
 	}
-	fixture.reviewGate = ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+	fixture.reviewGate = ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		t.Error("historical review executed a gate without job authority")
 		return ReviewGateResult{}, nil
 	})

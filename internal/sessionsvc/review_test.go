@@ -25,10 +25,12 @@ func TestSessionServiceRunReviewCleanGreenReplayAndIsolation(t *testing.T) {
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	var gateCalls atomic.Int32
 	var stagedRepository string
-	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(_ context.Context, gateRepo, candidate string) (ReviewGateResult, error) {
+	var gateRequest ReviewGateRequest
+	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(_ context.Context, request ReviewGateRequest) (ReviewGateResult, error) {
 		gateCalls.Add(1)
-		if gateRepo != stagedRepository || gateRepo == repo || candidate == gateRepo || candidate == repo || !pathExists(candidate) {
-			t.Errorf("gate inputs = (%q, %q)", gateRepo, candidate)
+		gateRequest = request
+		if request.Repository != stagedRepository || request.Repository == repo || request.Candidate == request.Repository || request.Candidate == repo || !pathExists(request.Candidate) {
+			t.Errorf("gate inputs = (%q, %q)", request.Repository, request.Candidate)
 		}
 		return ReviewGateResult{Configured: true, Passed: true}, nil
 	}))
@@ -47,6 +49,12 @@ func TestSessionServiceRunReviewCleanGreenReplayAndIsolation(t *testing.T) {
 	dossier, err := service.RunReview(context.Background(), "review-clean", RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if gateRequest.SessionID != sess.ID || gateRequest.JobDigest != sess.JobDigest ||
+		gateRequest.NetworkMode != sess.NetworkMode || gateRequest.NetworkFingerprint != sess.NetworkFingerprint ||
+		gateRequest.NetworkQualification != sess.NetworkQualification || gateRequest.StateRoot != service.stateRoot ||
+		gateRequest.OperationID != dossier.OperationID {
+		t.Fatalf("gate lost saved job authority: %+v", gateRequest)
 	}
 	if !dossier.Publishable || dossier.Rebase != ReviewRebaseClean || dossier.Gate != ReviewGatePassed || dossier.CandidateHead == "" || dossier.CandidateTree == "" || len(dossier.Patch) == 0 || dossier.PatchTruncated {
 		t.Fatalf("green review dossier = %+v", dossier)
@@ -126,7 +134,7 @@ func TestSessionServiceRunReviewEvictsWarmWriterBeforeGate(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	runner := &reviewWarmRunner{}
-	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		if !runner.evicted.Load() {
 			t.Fatal("review gate started before the warm writer was evicted")
 		}
@@ -223,7 +231,7 @@ func TestSessionServiceRunReviewUsesConfiguredRemoteParent(t *testing.T) {
 	seedGit("push", "-q", "origin", "main")
 	remoteHead := gitOut(seed, "rev-parse", "HEAD")
 
-	service := newReviewTestService(t, seed, 1<<20, ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+	service := newReviewTestService(t, seed, 1<<20, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		return ReviewGateResult{Configured: true, Passed: true}, nil
 	}))
 	defer service.Stop()
@@ -258,7 +266,7 @@ func TestSessionServiceRunReviewUsesConfiguredRemoteParent(t *testing.T) {
 func TestSessionServiceRunReviewUsesCapturedBaseAfterParentHistoryRewrite(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "original base")
-	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(_ context.Context, _, _ string) (ReviewGateResult, error) {
+	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(_ context.Context, _ ReviewGateRequest) (ReviewGateResult, error) {
 		return ReviewGateResult{Configured: true, Passed: true}, nil
 	}))
 	defer service.Stop()
@@ -335,8 +343,8 @@ func TestSessionServiceRunReviewAllowsBuildOutputButRejectsSourceMutation(t *tes
 			}
 			git("add", ".gitignore")
 			git("commit", "-qm", "base")
-			service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(_ context.Context, _, candidate string) (ReviewGateResult, error) {
-				tc.gateWrite(t, candidate)
+			service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(_ context.Context, request ReviewGateRequest) (ReviewGateResult, error) {
+				tc.gateWrite(t, request.Candidate)
 				return ReviewGateResult{Configured: true, Passed: true}, nil
 			}))
 			defer service.Stop()
@@ -382,7 +390,7 @@ func TestSessionServiceRunReviewGateOutcomes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, git := gitrepo.New(t)
 			git("commit", "-q", "--allow-empty", "-m", "base")
-			service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+			service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 				return tc.gate, nil
 			}))
 			if tc.noGate {
@@ -420,7 +428,7 @@ func TestSessionServiceRunReviewConflictAndDirtyReject(t *testing.T) {
 		}
 		git("add", "-A")
 		git("commit", "-qm", "base")
-		service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+		service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 			t.Fatal("gate ran on rebase conflict")
 			return ReviewGateResult{}, nil
 		}))
@@ -452,7 +460,7 @@ func TestSessionServiceRunReviewConflictAndDirtyReject(t *testing.T) {
 	t.Run("dirty", func(t *testing.T) {
 		repo, git := gitrepo.New(t)
 		git("commit", "-q", "--allow-empty", "-m", "base")
-		service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+		service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 			t.Fatal("gate ran for dirty source")
 			return ReviewGateResult{}, nil
 		}))
@@ -477,7 +485,7 @@ func TestSessionServiceRunReviewMovementMakesDossierNonPublishable(t *testing.T)
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	var moved atomic.Bool
-	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		if moved.Swap(true) {
 			return ReviewGateResult{Configured: true, Passed: true}, nil
 		}
@@ -498,8 +506,8 @@ func TestSessionServiceRunReviewMovementMakesDossierNonPublishable(t *testing.T)
 	// The source move is made by the gate callback through the candidate's bound source path
 	// after the service has captured its immutable intent.
 	gate := service.reviewGate
-	service.reviewGate = ReviewGateFunc(func(ctx context.Context, gateRepo, candidate string) (ReviewGateResult, error) {
-		result, err := gate.Run(ctx, gateRepo, candidate)
+	service.reviewGate = ReviewGateFunc(func(ctx context.Context, request ReviewGateRequest) (ReviewGateResult, error) {
+		result, err := gate.Run(ctx, request)
 		if err != nil {
 			return result, err
 		}
@@ -519,7 +527,7 @@ func TestSessionServiceRunReviewMovementMakesDossierNonPublishable(t *testing.T)
 func TestSessionReviewIntentUsesCapturedObjectsBeforePublishabilityCheck(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
-	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		return ReviewGateResult{Configured: true, Passed: true}, nil
 	}))
 	defer service.Stop()
@@ -606,7 +614,7 @@ func TestSessionServiceRunReviewResumesFrozenRunningAndUncertainIntent(t *testin
 				repo,
 				1<<20,
 				ReviewGateFunc(
-					func(context.Context, string, string) (ReviewGateResult, error) {
+					func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 						gateCalls.Add(1)
 						return ReviewGateResult{Configured: true, Passed: true}, nil
 					},
@@ -681,7 +689,7 @@ func TestSessionServiceRunReviewMalformedRunningIntentBecomesUncertain(t *testin
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	var gateCalls atomic.Int32
-	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		gateCalls.Add(1)
 		return ReviewGateResult{Configured: true, Passed: true}, nil
 	}))
@@ -726,7 +734,7 @@ func TestSessionServiceRunReviewConcurrentReplayWaitsForFirst(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var gateCalls atomic.Int32
-	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		if gateCalls.Add(1) == 1 {
 			close(started)
 		}
@@ -792,7 +800,7 @@ func TestSessionServiceRunReviewConcurrentReplayWaitsForFirst(t *testing.T) {
 func TestSessionServiceRunReviewKeepsBoundedPreviewAndExactCandidate(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
-	service := newReviewTestService(t, repo, 48, ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+	service := newReviewTestService(t, repo, 48, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		return ReviewGateResult{Configured: true, Passed: true}, nil
 	}))
 	defer service.Stop()
@@ -830,7 +838,7 @@ func TestSessionReviewArtifactIsRemovedWithDiscardedSession(t *testing.T) {
 		t,
 		repo,
 		48,
-		ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+		ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 			return ReviewGateResult{Configured: true, Passed: true}, nil
 		}),
 	)

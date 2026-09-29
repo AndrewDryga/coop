@@ -17,7 +17,7 @@ func TestRetainedReviewSurvivesLostCompletionWithoutRebuildingWorkspace(t *testi
 	repo, git := gitrepo.New(t)
 	git("commit", "--allow-empty", "-qm", "base")
 	gateCalls := 0
-	service := newReviewTestService(t, repo, 1024, ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+	service := newReviewTestService(t, repo, 1024, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		gateCalls++
 		return ReviewGateResult{Configured: true, Passed: true}, nil
 	}))
@@ -102,7 +102,7 @@ func TestRetainedReviewOwnsLFSPayloadWithoutWorkingFiles(t *testing.T) {
 	writeSessionLFSSource(t, repo, []byte("original\n"))
 	git("add", ".")
 	git("commit", "-qm", "base")
-	service := newReviewTestService(t, repo, 1024, ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+	service := newReviewTestService(t, repo, 1024, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		return ReviewGateResult{Configured: true, Passed: true}, nil
 	}))
 	defer service.Stop()

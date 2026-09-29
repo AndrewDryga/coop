@@ -22,7 +22,7 @@ func TestReviewScansTheChangedCandidateIncludingLargeLFSPayloads(t *testing.T) {
 				git("add", ".")
 			}
 			git("commit", "--allow-empty", "-qm", "base")
-			service := newReviewTestService(t, repo, 1024, ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+			service := newReviewTestService(t, repo, 1024, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 				return ReviewGateResult{Configured: true, Passed: true}, nil
 			}))
 			defer service.Stop()

@@ -84,17 +84,25 @@ type ReviewGateResult struct {
 	StartupError string
 }
 
-// ReviewGate is the narrow gate seam used by RunReview. Implementations must not mutate
-// gateRepo. A gate may create ignored build output in the disposable candidate; RunReview rejects
-// any change to its pinned commit, tree, branch, tracked files, or non-ignored untracked files.
-type ReviewGate interface {
-	Run(context.Context, string, string) (ReviewGateResult, error)
+// ReviewGateRequest carries the saved job authority to the host-owned checker. The candidate is
+// disposable; the repository and network binding come from the authenticated session, not it.
+type ReviewGateRequest struct {
+	Repository, Candidate, StateRoot, OperationID         string
+	SessionID, JobDigest                                  string
+	NetworkMode, NetworkFingerprint, NetworkQualification string
 }
 
-type ReviewGateFunc func(context.Context, string, string) (ReviewGateResult, error)
+// ReviewGate is the narrow gate seam used by RunReview. Implementations must not mutate
+// Repository. A gate may create ignored build output in the disposable candidate; RunReview rejects
+// any change to its pinned commit, tree, branch, tracked files, or non-ignored untracked files.
+type ReviewGate interface {
+	Run(context.Context, ReviewGateRequest) (ReviewGateResult, error)
+}
 
-func (f ReviewGateFunc) Run(ctx context.Context, gateRepo, treeDir string) (ReviewGateResult, error) {
-	return f(ctx, gateRepo, treeDir)
+type ReviewGateFunc func(context.Context, ReviewGateRequest) (ReviewGateResult, error)
+
+func (f ReviewGateFunc) Run(ctx context.Context, request ReviewGateRequest) (ReviewGateResult, error) {
+	return f(ctx, request)
 }
 
 // MaxReviewErrorBytes bounds a gate's startup-error prose, so a host implementing
@@ -559,7 +567,8 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 	if err := s.validateSessionForkAuthority(ctx, bound); err != nil {
 		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "review workspace authority changed")
 	}
-	if _, err := s.sessionExecution(ctx, bound); err != nil {
+	policy, err := s.sessionExecution(ctx, bound)
+	if err != nil {
 		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "review has no valid controller job authority")
 	}
 	candidate, err := s.prepareForkReviewCandidateFromIntent(ctx, op.ID, intent)
@@ -598,7 +607,11 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 	}
 	var gateResult ReviewGateResult
 	if s.reviewGate != nil {
-		gateResult, err = s.reviewGate.Run(ctx, intent.Repository, candidate.dir)
+		gateResult, err = s.reviewGate.Run(ctx, ReviewGateRequest{
+			Repository: intent.Repository, Candidate: candidate.dir, StateRoot: s.stateRoot, OperationID: op.ID,
+			SessionID: bound.ID, JobDigest: bound.JobDigest, NetworkMode: string(policy.Egress.Mode),
+			NetworkFingerprint: bound.NetworkFingerprint, NetworkQualification: bound.NetworkQualification,
+		})
 	}
 	if err != nil {
 		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("run review gate: %w", err))

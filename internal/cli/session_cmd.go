@@ -323,30 +323,21 @@ func sessionReviewGateHost(cfg *config.Config, rt runtime.Runtime) forkctl.Host 
 	}
 }
 
-// defaultSessionReviewGate runs a review candidate through THIS repo's merge gate — the same pass/fail
-// rule `coop fork merge` uses, so a session's verdict can't drift from the one a human gets — with the
-// job's ordinary image (forkctl.JobGate), never a tag named after the job repository. The config and
-// runtime are the service's, resolved by the time it asks; a runtime it hasn't detected yet is the
-// zero value, which the control plane detects on demand.
+// defaultSessionReviewGate runs the worker-owned gate command against the disposable candidate.
+// Unlike a local fork merge, its box uses the saved controller-job network posture and omits
+// project and ambient launch settings. The runtime is detected on demand by the control plane.
 func defaultSessionReviewGate(cfg *config.Config, rt runtime.Runtime) sessionsvc.ReviewGate {
-	return sessionsvc.ReviewGateFunc(func(ctx context.Context, gateRepo, treeDir string) (sessionsvc.ReviewGateResult, error) {
+	return sessionsvc.ReviewGateFunc(func(ctx context.Context, request sessionsvc.ReviewGateRequest) (sessionsvc.ReviewGateResult, error) {
 		if err := ctx.Err(); err != nil {
 			return sessionsvc.ReviewGateResult{}, err
 		}
 		fc := forkctl.New(cfg, rt, sessionReviewGateHost(cfg, rt))
-		image, err := fc.JobGate(gateRepo)
+		configured, passed, err := fc.ReviewControllerJob(ctx, request)
 		if err != nil {
 			return sessionsvc.ReviewGateResult{Configured: true, StartupError: sessionsvc.SanitizeReviewText(err.Error(), sessionsvc.MaxReviewErrorBytes)}, nil
 		}
-		if image == "" {
+		if !configured {
 			return sessionsvc.ReviewGateResult{}, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return sessionsvc.ReviewGateResult{}, err
-		}
-		passed, err := fc.ReviewGatePasses(gateRepo, treeDir, image)
-		if err != nil {
-			return sessionsvc.ReviewGateResult{Configured: true, StartupError: sessionsvc.SanitizeReviewText(err.Error(), sessionsvc.MaxReviewErrorBytes)}, nil
 		}
 		return sessionsvc.ReviewGateResult{Configured: true, Passed: passed}, nil
 	})

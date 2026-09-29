@@ -166,6 +166,10 @@ type RunSpec struct {
 	// mounts beside its checkout. It is never request data; mount validation exact-allows this
 	// source while protecting the rest of the session daemon's state.
 	SessionOutputRoot string `json:"-"`
+	// ControllerReviewRoot/ID identify the daemon-created disposable review checkout. Only that
+	// exact checkout may be mounted from private session state for a controller-job gate.
+	ControllerReviewRoot string `json:"-"`
+	ControllerReviewID   string `json:"-"`
 
 	// CapturedEgress is host-owned frozen network authority, produced by
 	// AdmitNetwork before launch. It is never populated from a request or a

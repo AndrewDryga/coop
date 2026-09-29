@@ -201,6 +201,18 @@ func CapturedEgressFromEnvironment(cfg *config.Config, spec RunSpec) (*CapturedE
 		reference.JobDigest != "" && os.Getenv(ControllerJobEnv) != reference.JobDigest {
 		return nil, errors.New("controller job network reference does not match this child")
 	}
+	return CapturedEgressFromReference(cfg, spec, reference)
+}
+
+// CapturedEgressFromReference reopens one saved owner-keyed snapshot without admitting or
+// recapturing policy. Only a host that already authenticated the session may construct the ref.
+func CapturedEgressFromReference(cfg *config.Config, spec RunSpec, reference SessionNetworkCapture) (*CapturedEgress, error) {
+	if _, err := reference.Encode(); err != nil {
+		return nil, err
+	}
+	if (reference.JobDigest != "") != spec.ControllerJob {
+		return nil, errors.New("controller job network reference does not match this run")
+	}
 	root, err := NetworkStatePath()
 	if err != nil {
 		return nil, err

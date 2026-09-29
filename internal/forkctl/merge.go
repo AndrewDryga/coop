@@ -19,6 +19,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/hostsurface"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/sessionsvc"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -133,12 +134,6 @@ func (c *Control) MergeGate(repo string) (string, error) {
 	return c.gateImage(repo, box.ImageForRepo(repo, c.cfg.BaseImage, c.cfg.ImageOverride))
 }
 
-// JobGate is MergeGate for a controller job's repository: its ordinary image is box.JobImage, as
-// for the job's open and offline turns, never one named after the repository's own Dockerfile.
-func (c *Control) JobGate(repo string) (string, error) {
-	return c.gateImage(repo, box.JobImage(c.cfg.BaseImage, c.cfg.ImageOverride))
-}
-
 func (c *Control) gateImage(repo, img string) (string, error) {
 	gate, err := c.gateFor(repo)
 	if err != nil {
@@ -159,20 +154,84 @@ func (c *Control) gateImage(repo, img string) (string, error) {
 		// the ordinary tag here would strand a project prepared with `coop build --egress filtered`.
 		return img, nil
 	}
+	return img, c.ensureGateImage(img)
+}
+
+func (c *Control) ensureGateImage(img string) error {
 	if img == c.cfg.BaseImage {
 		if err := c.host.ensureBaseImage(); err != nil {
-			return "", err
+			return err
 		}
 	}
 	if !box.ImageExists(c.rt, img) {
 		// Same rule as requireLaunchImage: `image inspect` cannot tell a missing image from a dead daemon,
-		// and a merge blocked on the wrong one sends the fix at a build that would not have helped.
+		// and a gate blocked on the wrong one sends the fix at a build that would not have helped.
 		if err := c.rt.EnsureDaemon(); err != nil {
-			return "", err
+			return err
 		}
-		return "", fmt.Errorf("a merge gate is set but image %q isn't built — run 'coop build --egress open'", img)
+		return fmt.Errorf("a gate is set but image %q isn't built — run 'coop build --egress open'", img)
 	}
-	return img, nil
+	return nil
+}
+
+// ReviewControllerJob runs the worker-owned checker against a disposable controller-job candidate.
+// The ordinary local merge path keeps its project settings; only this path ignores repository box
+// policy and the daemon's ambient run args, environment, MCP, and networking defaults.
+func (c *Control) ReviewControllerJob(ctx context.Context, request sessionsvc.ReviewGateRequest) (configured, passed bool, err error) {
+	var gate []string
+	if c.cfg.Explicit("COOP_GATE") {
+		gate = c.cfg.Gate
+	} else {
+		gate, err = c.gateFor(request.Repository)
+		if err != nil {
+			return true, false, err
+		}
+	}
+	if len(gate) == 0 {
+		return false, false, nil
+	}
+	if request.NetworkMode != "open" && request.NetworkMode != "none" && request.NetworkMode != "filtered" {
+		return true, false, errors.New("controller review has an invalid saved network mode")
+	}
+	if err := c.ensureRuntime(); err != nil {
+		return true, false, err
+	}
+	image := box.JobImage(c.cfg.BaseImage, c.cfg.ImageOverride)
+	if request.NetworkMode != "filtered" {
+		if err := c.ensureGateImage(image); err != nil {
+			return true, false, err
+		}
+	}
+	base := strings.TrimSpace(gitOut(request.Candidate, "rev-parse", "--verify", "refs/coop/session-parent^{commit}"))
+	if base == "" {
+		return true, false, errors.New("resolve trusted review base commit")
+	}
+	launchCfg := c.cfg.Clone()
+	launchCfg.SetEgress(request.NetworkMode)
+	launchCfg.ExtraRunArgs = nil
+	launchCfg.MCPFile = ""
+	spec := box.RunSpec{
+		Image: image, Repo: request.Candidate, PolicyRepo: request.Repository, Cmd: gate,
+		ControllerJob: true, Review: true, Batch: true, Ctx: ctx,
+		ControllerReviewRoot: request.StateRoot, ControllerReviewID: request.OperationID,
+		ActivityRepo: request.Repository, ActivityKind: forkspace.ExecutionReview,
+		ExtraArgs: []string{"-e", "COOP_REVIEW_BASE=" + base},
+	}
+	if request.NetworkMode == "filtered" {
+		capture, err := box.CapturedEgressFromReference(launchCfg, spec, box.SessionNetworkCapture{
+			Project: request.Repository, Fingerprint: request.NetworkFingerprint,
+			Qualification: request.NetworkQualification, SessionID: request.SessionID,
+			AttemptID: request.OperationID, JobDigest: request.JobDigest,
+		})
+		if err != nil {
+			return true, false, err
+		}
+		defer capture.Close()
+		spec.CapturedEgress = capture
+		c.host.settleFilteredRuns(c.rt)
+	}
+	code, err := box.Run(launchCfg, c.rt, spec)
+	return true, code == 0, err
 }
 
 // runGateMode runs the merge gate in the box against treeDir. The gate POLICY is resolved from

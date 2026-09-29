@@ -526,6 +526,47 @@ func TestAuthorityMountGuardAllowsOnlyOneRemoteSessionOutputSubtree(t *testing.T
 	}
 }
 
+func TestControllerReviewMountAllowsOnlyItsPrivateScratch(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "sessions")
+	t.Setenv(ServiceStateRootEnv, state)
+	candidate := filepath.Join(state, "review-candidates", ".staging", "review-one-123456")
+	sibling := filepath.Join(state, "review-candidates", ".staging", "review-two-123456")
+	for _, path := range []string{candidate, sibling} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	spec := RunSpec{Repo: candidate, ControllerJob: true, Review: true,
+		ControllerReviewRoot: state, ControllerReviewID: "review-one"}
+	allow, err := protectRunPrivateState(&config.Config{}, spec, authorityMountAllowlist{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		path string
+		want bool
+	}{{candidate, true}, {sibling, false}, {state, false}, {filepath.Join(state, "control.sock"), false}} {
+		err := validateAuthorityMounts(context.Background(), spec, []string{"-v", test.path + ":/host"}, "", nil, allow)
+		if (err == nil) != test.want {
+			t.Fatalf("mount %q = %v, want allowed=%v", test.path, err, test.want)
+		}
+	}
+	wrong := spec
+	wrong.ControllerReviewID = "review-two"
+	if _, err := protectRunPrivateState(&config.Config{}, wrong, authorityMountAllowlist{}); err == nil {
+		t.Fatal("another operation claimed this review scratch")
+	}
+	alias := filepath.Join(state, "review-candidates", ".staging", "review-one-alias")
+	if err := os.Symlink(sibling, alias); err != nil {
+		t.Fatal(err)
+	}
+	wrong = spec
+	wrong.Repo = alias
+	if _, err := protectRunPrivateState(&config.Config{}, wrong, authorityMountAllowlist{}); err == nil {
+		t.Fatal("a symlink claimed another operation's review scratch")
+	}
+}
+
 func TestAuthorityMountGuardAllowsOnlyBoundControllerJobSources(t *testing.T) {
 	root := t.TempDir()
 	stateRoot := filepath.Join(root, "sessions")

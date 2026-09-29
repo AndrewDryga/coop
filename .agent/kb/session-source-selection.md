@@ -2,8 +2,8 @@
 name: session-source-selection
 description: controller jobs freeze exact source bindings; the worker verifies private staging and refreshes the default separately without changing the admitted checkout
 subsystem: sessions
-sources: [internal/workerproto/job.go, internal/box/image.go, internal/workerconnector/job_sources.go, internal/forkspace/lfs.go, internal/sessionsvc/job.go, internal/sessionsvc/job_tree.go, internal/sessionsvc/empty_source.go, internal/sessionsvc/source.go, internal/sessionsvc/service.go, internal/sessionsvc/workspace.go, internal/box/authority_mounts.go, internal/session/records.go]
-updated: 2026-09-28
+sources: [internal/workerproto/job.go, internal/box/image.go, internal/box/network_session.go, internal/workerconnector/job_sources.go, internal/forkspace/lfs.go, internal/forkctl/merge.go, internal/sessionsvc/job.go, internal/sessionsvc/job_tree.go, internal/sessionsvc/empty_source.go, internal/sessionsvc/source.go, internal/sessionsvc/service.go, internal/sessionsvc/review.go, internal/sessionsvc/workspace.go, internal/box/authority_mounts.go, internal/session/records.go]
+updated: 2026-09-29
 ---
 
 A create carries one canonical controller job and its digest, not a local policy name or a
@@ -48,6 +48,15 @@ roots and another session's files are never sandbox mounts. A host alias above t
 The box image never comes from the job repository: an open or offline job runs the worker's
 base, a filtered one Coop's locked client image ([[box-base-image-tags]]).
 
+Review revalidates the persisted job and carries its saved network mode and capture reference to
+the host-owned gate. An explicit operator `COOP_GATE` is selected before parsing the repository's
+project file; without one, the trusted parent supplies the gate. The candidate cannot choose its
+own checker. The gate runs as a controller job with no project box settings or ambient runtime
+arguments, homes, env file or MCP. Filtered review reopens the exact owner-keyed job snapshot and
+qualification rather than capturing fresh rules. Only the disposable checkout for this review
+operation is mounted from private session state; the source mirror, other candidates, and parent
+state remain fenced. Ordinary local fork gates retain their separate project policy.
+
 Review and changes need a fresh upstream default, not the private staged HEAD. SourceRefresher
 is the trusted-host boundary for that fetch. It must use the saved job and source, import the
 current default's objects without updating a ref, and leave staged HEAD at the original selected
@@ -60,6 +69,9 @@ fetch the selected commit. Neither a branch advance nor an idempotent create ret
 code. The API exposes source metadata through explicit DTO projection, never JobDocument.
 
 ## Changelog
+- 2026-09-29 — reverified review against saved job execution and network authority. The prior
+  gate discarded that authority and used ordinary project admission; the dedicated review path
+  now reopens the saved capture and exact-allows only its operation-specific scratch checkout.
 - 2026-09-28 — a job repository's Dockerfile resolved a shared, never-built `coop-repository`
   tag on the worker; jobs now run the worker's base image (see [[box-base-image-tags]]).
 - 2026-09-27 — live v2 turn exposed the mount guard rejecting its own staged fork; admitted only

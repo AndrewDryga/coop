@@ -16,6 +16,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/sessionsvc"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -1383,10 +1384,8 @@ func TestMergeGateBuildsCoopsBaseAfterAnUpgrade(t *testing.T) {
 	}
 }
 
-// A controller job's review gate runs where its turns run: the worker's base, or the operator's
-// image. The tag MergeGate derives from the job source's folder and Dockerfile is one name for
-// every repository on the worker, and nothing there builds it.
-func TestJobGateRunsInTheJobImage(t *testing.T) {
+// A controller review selects the worker image, never the source repository's Dockerfile tag.
+func TestJobReviewGateRunsInTheJobImage(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	repo := filepath.Join(t.TempDir(), "repository")
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
@@ -1404,15 +1403,77 @@ func TestJobGateRunsInTheJobImage(t *testing.T) {
 	}
 	cfg := &config.Config{Gate: []string{"true"}, BaseImage: "worker-box"}
 	c := New(cfg, runtime.Runtime{Name: shim}, Host{})
-	if img, err := c.JobGate(repo); err != nil || img != "worker-box" {
-		t.Fatalf("JobGate = %q, %v; want the worker's base", img, err)
+	request := sessionsvc.ReviewGateRequest{Repository: repo, Candidate: t.TempDir(), NetworkMode: "none"}
+	if configured, _, err := c.ReviewControllerJob(context.Background(), request); !configured || err == nil || !strings.Contains(err.Error(), "review base") {
+		t.Fatalf("job review = configured %v, error %v; want past image selection", configured, err)
 	}
 	if _, err := c.MergeGate(repo); err == nil || !strings.Contains(err.Error(), "isn't built") {
 		t.Fatalf("MergeGate = %v; want it to keep resolving the repository's own image", err)
 	}
 	cfg.ImageOverride = "operator:1"
-	if img, err := c.JobGate(repo); err != nil || img != "operator:1" {
-		t.Fatalf("JobGate = %q, %v; want the operator's image", img, err)
+	if configured, _, err := c.ReviewControllerJob(context.Background(), request); !configured || err == nil || !strings.Contains(err.Error(), "review base") {
+		t.Fatalf("operator job review = configured %v, error %v; want past image selection", configured, err)
+	}
+}
+
+func TestControllerJobReviewIgnoresProjectAndAmbientLaunchSettings(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("COOP_GATE", "true")
+	t.Setenv("COOP_EGRESS", "open")
+	t.Setenv("COOP_RUN_ARGS", "-e LEAK_FROM_DAEMON=1")
+	repo := initRepo(t)
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, project.File), []byte("box: [newer settings]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", ".agent/project.yaml")
+	git(t, repo, "commit", "-qm", "unusable local project settings")
+	state := filepath.Join(t.TempDir(), "sessions")
+	staging := filepath.Join(state, "review-candidates", ".staging")
+	if err := os.MkdirAll(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	candidate := filepath.Join(staging, "review-one-123456")
+	git(t, repo, "clone", "-q", "--", repo, candidate)
+	git(t, candidate, "update-ref", "refs/coop/session-parent", "HEAD")
+	runtimePath := filepath.Join(t.TempDir(), "docker")
+	argsPath := filepath.Join(t.TempDir(), "args")
+	if err := os.WriteFile(runtimePath, []byte("#!/bin/sh\ncase \"$1\" in\nrun) printf '%s\\n' \"$@\" > \"$COOP_TEST_ARGS\" ;;\nesac\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_ARGS", argsPath)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cfg.ConfigDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg.EnvFile(), []byte("HOST_ENV_CANARY=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg.MCPFile, []byte("{invalid shared MCP"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg.BaseImage = "worker-box"
+	fc := New(cfg, runtime.Runtime{Name: runtimePath}, Host{})
+	configured, passed, err := fc.ReviewControllerJob(context.Background(), sessionsvc.ReviewGateRequest{
+		Repository: repo, Candidate: candidate, StateRoot: state, OperationID: "review-one", NetworkMode: "none",
+	})
+	if err != nil || !configured || !passed {
+		t.Fatalf("controller job review = configured %v passed %v error %v", configured, passed, err)
+	}
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "--network\nnone\n") || !strings.Contains(string(args), box.LabelExecution+"=") ||
+		strings.Contains(string(args), "LEAK_FROM_DAEMON") || strings.Contains(string(args), "HOST_ENV_CANARY") ||
+		strings.Contains(string(args), "--env-file") || strings.Contains(string(args), "newer settings") {
+		t.Fatalf("job review inherited host/project settings:\n%s", args)
 	}
 }
 

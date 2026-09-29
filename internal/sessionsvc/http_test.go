@@ -805,7 +805,7 @@ func TestSessionHTTPPublishesTheGenericSourceBindingThroughCreateAndReview(t *te
 	runGitTest(t, "", "clone", "-q", "-b", "main", remote, checkout)
 	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), seed, nil)
 	service.pullSource(t, seed, 514, pullHead, gitOut(seed, "rev-parse", "main"), gitOut(seed, "merge-base", "main", pullHead))
-	service.reviewGate = ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+	service.reviewGate = ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		return ReviewGateResult{Configured: true, Passed: true}, nil
 	})
 	defer service.Stop()
@@ -1276,7 +1276,7 @@ func newHTTPTestSessionService(t *testing.T, ladder ...string) (*sessionFixture,
 	fixture := newSessionFixture(t, Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"),
 		Runner:    &httpTestSessionRunner{},
-		ReviewGate: ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+		ReviewGate: ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 			return ReviewGateResult{Configured: true, Passed: true}, nil
 		}),
 	}, repo)

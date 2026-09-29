@@ -2,9 +2,9 @@
 name: network-authority-is-proven-not-passed
 description: a filtered child proves its network authority against the owner-private store; controller grants are admitted once, never passed to the child
 scope: security
-sources: [internal/box/run.go, internal/box/network_session.go, internal/networkstate/authority.go, internal/networkstate/job.go, internal/networkstate/approval_review.go, internal/sessionsvc/network.go, internal/cli/net_approve.go]
+sources: [internal/box/run.go, internal/box/network_session.go, internal/box/authority_mounts.go, internal/networkstate/authority.go, internal/networkstate/job.go, internal/networkstate/approval_review.go, internal/sessionsvc/network.go, internal/sessionsvc/review.go, internal/forkctl/merge.go, internal/cli/net_approve.go]
 check: "go test ./internal/box -run 'TestFilteredPublicLaunchRequiresCaptureAndRejectsExtraArgs|TestProjectFilteredLaunchRequiresCaptureBeforeRuntime|TestCapturedEgressFromEnvironmentAuthenticatesAgainstTheOwnerStore|TestControllerJobChildReprovesItsOwnSnapshot'"
-updated: 2026-09-26
+updated: 2026-09-29
 ---
 
 # Network authority is proven against the owner store, never accepted from its carrier
@@ -41,11 +41,17 @@ proves it.
   approval or repository request, and cannot be called by a child.
 - Verify after the fact too: the daemon checks every run's recorded fingerprint against the
   immutable session row and fails the turn on a mismatch.
+- A controller-job review gate also uses the saved session mode and exact capture reference. Its
+  disposable candidate is the only extra private-state mount; a fresh local admission is not a
+  substitute for the job's original snapshot.
 
 Background: [[restricted-networking]] (where authority lives), [[network-consumers]] (who carries a
 reference).
 
 ## Changelog
+- 2026-09-29 — swept the controller turn and review launch paths. Review had discarded the saved
+  network binding and used ordinary admission; it now reopens the exact snapshot. Focused box,
+  forkctl, CLI and service tests cover the review boundary; no second grant writer was added.
 - 2026-09-26 — checked the four production snapshot loaders and added a separate job-scoped
   capture/re-proof path; local project approvals remain only on legacy/direct launches. The
   controller's grant-bearing admission is distinct from the daemon-to-child reference boundary.

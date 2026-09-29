@@ -2109,11 +2109,11 @@ func TestSessionServiceReviewsASelectedPullRequestWithItsInheritedWork(t *testin
 	sessionWorkspaceGit(t, sess.Workspace, "add", "task-change.txt")
 	sessionWorkspaceGit(t, sess.Workspace, "commit", "-qm", "task change")
 
-	service.reviewGate = ReviewGateFunc(func(_ context.Context, _, candidate string) (ReviewGateResult, error) {
-		if got := readFile(t, filepath.Join(candidate, "existing-pr-change.txt")); got != "must be reviewed\n" {
+	service.reviewGate = ReviewGateFunc(func(_ context.Context, request ReviewGateRequest) (ReviewGateResult, error) {
+		if got := readFile(t, filepath.Join(request.Candidate, "existing-pr-change.txt")); got != "must be reviewed\n" {
 			t.Errorf("gate candidate omitted pre-existing PR change: %q", got)
 		}
-		if got := readFile(t, filepath.Join(candidate, "task-change.txt")); got != "new work\n" {
+		if got := readFile(t, filepath.Join(request.Candidate, "task-change.txt")); got != "new work\n" {
 			t.Errorf("gate candidate omitted task change: %q", got)
 		}
 		return ReviewGateResult{Configured: true, Passed: true}, nil

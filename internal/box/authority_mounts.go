@@ -80,10 +80,41 @@ func protectRunPrivateState(cfg *config.Config, spec RunSpec, allow authorityMou
 			return allow, errors.New("read-only session output has no private session state")
 		}
 	}
+	if spec.ControllerReviewRoot != "" || spec.ControllerReviewID != "" {
+		if err := allowControllerReviewCandidate(spec, &allow); err != nil {
+			return allow, err
+		}
+	}
 	if spec.SessionOutputRoot != "" {
 		allow.sources[spec.SessionOutputRoot] = true
 	}
 	return allow, nil
+}
+
+func allowControllerReviewCandidate(spec RunSpec, allow *authorityMountAllowlist) error {
+	if !spec.ControllerJob || !spec.Review || spec.ControllerReviewRoot == "" ||
+		spec.ControllerReviewID == "" || filepath.Base(spec.ControllerReviewID) != spec.ControllerReviewID ||
+		strings.ContainsAny(spec.ControllerReviewID, "/\\\x00\r\n") {
+		return errors.New("controller review mount has no valid job operation")
+	}
+	root, err := filepath.EvalSymlinks(spec.ControllerReviewRoot)
+	if err != nil {
+		return err
+	}
+	source, err := filepath.EvalSymlinks(spec.Repo)
+	if err != nil {
+		return err
+	}
+	staging := filepath.Join(root, "review-candidates", ".staging")
+	if filepath.Dir(source) != staging || !strings.HasPrefix(filepath.Base(source), spec.ControllerReviewID+"-") {
+		return errors.New("controller review mount is outside its operation's scratch tree")
+	}
+	if err := validateGeneratedSessionSource(root, source); err != nil {
+		return err
+	}
+	allow.privateRoots = appendUniqueAuthorityPath(allow.privateRoots, root)
+	allow.sources[spec.Repo] = true
+	return nil
 }
 
 // A controller job's fetched source and companion snapshots live inside the service's otherwise

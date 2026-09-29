@@ -2030,7 +2030,7 @@ root-in-container (a repo `.agent/Dockerfile` that does `USER root`) from holdin
 
 | Var | Default | |
 |---|---|---|
-| `COOP_GATE` | — | gate re-run in the box before a fork merge lands (e.g. `make check`) |
+| `COOP_GATE` | — | worker-owned gate run in the box before a fork merge or controller-job review (e.g. `make check`) |
 | `COOP_EDITOR` | (detected) | editor for `coop fork review --open` |
 | `COOP_REVIEW_CMD` | — | full override for `coop fork review` (`sh -c`) |
 | `COOP_TASKS` | (derived) | explicit task queue dir(s) for `coop tasks` and the loop (space-separated for several). Unset, the queues come from `.agent/project.yaml` — a [monorepo's](#monorepos) subproject queues — else `.agent/tasks`. `--tasks` replaces this for a run (it doesn't merge) |

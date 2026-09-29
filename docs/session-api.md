@@ -779,7 +779,7 @@ curl --unix-socket "$SOCKET" \
 
 Review requires a parked open or exhausted session with no queued turns and a clean committed fork.
 It snapshots exact source and parent commit/tree identities, prepares a disposable candidate
-against current parent `HEAD`, runs the trusted parent gate read-only, and returns:
+against current parent `HEAD`, runs the worker-owned gate on that candidate, and returns:
 
 - creation base, source, parent, and candidate commit/tree identities;
 - the immutable pull-request number/ref/head binding when the session came from an existing PR;
@@ -787,6 +787,13 @@ against current parent `HEAD`, runs the trusted parent gate read-only, and retur
 - bounded policy findings;
 - a bounded inline patch preview from parent tree to candidate tree;
 - `patch_truncated`, `candidate_retained`, `publishable`, and stable not-publishable reason codes.
+
+An explicit worker `COOP_GATE` wins; otherwise the trusted parent repository's `gate:` is used.
+Candidate changes cannot replace the checker. The gate runs in an isolated controller-job box
+with the session's saved network mode (and exact saved filtered-network authority), not the
+repository's `box:` settings or the worker's ambient runtime arguments, env file, or MCP config.
+It may create ignored build output in its disposable checkout; changing the reviewed source makes
+the result unpublishable. No gate, a red gate, or a startup error also prevents publication.
 
 The preview is base64 in JSON. A truncated preview is a transport condition and does not by itself
 make the review unpublishable. Coop retains the exact candidate commit and its verified LFS

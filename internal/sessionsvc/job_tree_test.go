@@ -74,10 +74,10 @@ func TestSessionLFSWorkSurvivesPrimaryCompanionAndReviewMaterialization(t *testi
 	repository := nestedSessionSource(t, payload)
 	revised := append(bytes.Clone(payload), []byte("model edit\n")...)
 	gateCalls := 0
-	fixture := newReviewTestService(t, repository, 1<<20, ReviewGateFunc(func(_ context.Context, _, workspace string) (ReviewGateResult, error) {
+	fixture := newReviewTestService(t, repository, 1<<20, ReviewGateFunc(func(_ context.Context, request ReviewGateRequest) (ReviewGateResult, error) {
 		gateCalls++
 		for path, want := range map[string][]byte{"asset.bin": revised, "vendor/child/nested space/asset.bin": payload} {
-			got, err := os.ReadFile(filepath.Join(workspace, path))
+			got, err := os.ReadFile(filepath.Join(request.Candidate, path))
 			if err != nil || !bytes.Equal(got, want) {
 				t.Fatalf("review did not receive full LFS content at %s: %d bytes, %v", path, len(got), err)
 			}
@@ -216,9 +216,9 @@ func TestReviewGateReceivesTheFullRecursiveTreeAndCannotSilentlyChangeIt(t *test
 	repository := nestedSessionSource(t)
 	modifyChild := false
 	calls := 0
-	fixture := newReviewTestService(t, repository, 1<<20, ReviewGateFunc(func(_ context.Context, _, workspace string) (ReviewGateResult, error) {
+	fixture := newReviewTestService(t, repository, 1<<20, ReviewGateFunc(func(_ context.Context, request ReviewGateRequest) (ReviewGateResult, error) {
 		calls++
-		leaf := filepath.Join(workspace, "vendor/child/nested space/code")
+		leaf := filepath.Join(request.Candidate, "vendor/child/nested space/code")
 		if data, err := os.ReadFile(leaf); err != nil || string(data) != "complete nested code\n" {
 			t.Fatalf("review gate received incomplete nested source: %q, %v", data, err)
 		}

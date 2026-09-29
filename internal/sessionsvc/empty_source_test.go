@@ -103,7 +103,7 @@ func TestEmptySourceJobOwnsPrivateWorkspaceAndSurvivesRestart(t *testing.T) {
 	if changes, err := s.GetChanges(ctx, second.ID); err != nil || changes.BaseCommit != first.BaseCommit {
 		t.Fatalf("empty workspace changes = %+v, %v", changes, err)
 	}
-	s.reviewGate = ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+	s.reviewGate = ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 		return ReviewGateResult{Configured: true, Passed: true}, nil
 	})
 	if review, err := s.RunReview(ctx, "empty-review", RunReviewRequest{SessionID: second.ID, ExpectedRevision: second.Revision}); err != nil || review.ParentHead != first.BaseCommit {

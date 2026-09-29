@@ -129,7 +129,7 @@ func TestABareSessionRefusesRepositoryOperationsAndStillClosesAndDiscards(t *tes
 				return store.CompleteTurn(ctx, session.CompleteTurnRequest{SessionID: sess.ID, TurnID: turn.ID, Message: "OK"})
 			})
 		},
-		ReviewGate: ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+		ReviewGate: ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
 			return ReviewGateResult{Configured: true, Passed: true}, nil
 		}),
 	}, "")
