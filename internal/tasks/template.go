@@ -11,8 +11,8 @@ import (
 	"unicode/utf8"
 )
 
-// A queue without a README (notably a newly selected --tasks path) retains the initial
-// scaffold. Once README.md exists, its task.md Template block is authoritative.
+// A queue without a declared task.md Template block retains the built-in starter.
+// Once declared, the block is authoritative and malformed content fails loudly.
 const fallbackTaskTemplate = `---
 id: 2026-06-26-<slug>
 title: <one-line outcome>
@@ -23,7 +23,9 @@ updated: <ISO-8601 timestamp>
 # <one-line outcome>
 
 **Context:** <the problem, why it matters, and where it happens>
+
 **Acceptance criteria:** <the result and checks that prove the work is finished>
+
 **Approach:** <the steps to take; use spec.md for a longer plan>
 
 ## Subtasks
@@ -70,6 +72,9 @@ func loadTaskTemplate(root string) (taskTemplate, error) {
 			break
 		}
 		block = append(block, "")
+	}
+	if !inTemplate {
+		return parseTaskTemplate(fallbackTaskTemplate)
 	}
 	for len(block) > 0 && block[0] == "" {
 		block = block[1:]

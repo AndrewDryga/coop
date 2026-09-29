@@ -43,9 +43,9 @@ archive is a manual, human step: `coop tasks rm --all-done`.
 `task.md` block below `**Template:**` is the live source for new tasks in this queue;
 `coop backlog add`, in-box proposals, and fork imports use it too. A subproject's own
 `.agent/tasks/README.md` controls only its queue, and `--tasks <path>` selects that queue's
-README. There is no root-template inheritance. In a fresh queue without a README, Coop uses
-its built-in starter until you add one. A malformed present template fails before creating
-a task folder. Edit literal `- [ ]` lines to add or remove default gates; keep at least one
+README. There is no root-template inheritance. Without a README or a `**Template:**` marker in
+its `task.md` section, Coop uses its built-in starter. A malformed declared template fails before
+creating a task folder. Edit literal `- [ ]` lines to add or remove default gates; keep at least one
 checklist item and at most one `<…>` step placeholder. Repeated `--subtask` values replace
 that placeholder and leave literal defaults intact (or append if there is no placeholder).
 
@@ -79,7 +79,9 @@ header comment says exactly this, so the reminder travels with the task.
     # <one-line outcome>
 
     **Context:** <the problem, why it matters, and where it happens>
+
     **Acceptance criteria:** <the result and checks that prove the work is finished>
+
     **Approach:** <the steps to take; use spec.md for a longer plan>
 
     ## Subtasks
@@ -100,8 +102,10 @@ header comment says exactly this, so the reminder travels with the task.
     **Context:** A typo like `REQUEST_TIMEOUT=30sec` parses to 0, which disables the timeout
     instead of shortening it — one slow upstream then hangs the whole request pool. The parse
     lives in the startup config loader.
+
     **Acceptance criteria:** The gate green; a new test asserts an unparseable value keeps the
     documented default and never 0, and the README states the accepted format.
+
     **Approach:** Parse strictly; on error keep the default and log it once. Table-test it.
 
     ## Subtasks

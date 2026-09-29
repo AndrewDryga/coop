@@ -66,6 +66,27 @@ func TestQueueTemplateMalformedRefusesBeforeCreating(t *testing.T) {
 	}
 }
 
+func TestQueueReadmeWithoutTemplateMarkerUsesBuiltInStarter(t *testing.T) {
+	root := t.TempDir()
+	readme := "# Tasks\n\nThis queue has its own instructions.\n\n## task.md example\n\n```md\n# An example, not a template\n```\n"
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(readme), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := tasksFolderAdd(root, []string{"Fallback task"}, StateTodo, "tasks add"); code != 0 || err != nil {
+		t.Fatalf("README without marker blocked task creation: code=%d err=%v", code, err)
+	}
+	items := mustReadTaskTree(t, root)
+	if len(items) != 1 {
+		t.Fatalf("created %d tasks, want one", len(items))
+	}
+	body := readFileString(filepath.Join(items[0].Dir, "task.md"))
+	if !strings.Contains(body, "**Context:** <the problem, why it matters, and where it happens>\n\n**Acceptance criteria:**") ||
+		!strings.Contains(body, "**Approach:** <the steps to take; use spec.md for a longer plan>\n\n## Subtasks") ||
+		!strings.Contains(body, "- [ ] <a small step with a way to check it worked>") {
+		t.Fatalf("task did not use the built-in starter:\n%s", body)
+	}
+}
+
 func TestQueueTemplateSelectionAndSafeTitle(t *testing.T) {
 	repo := t.TempDir()
 	root := filepath.Join(repo, ".agent", "tasks")

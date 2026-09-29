@@ -44,9 +44,9 @@ archive is a manual, human step: `coop tasks rm --all-done`.
 `task.md` block below `**Template:**` is the live source for new tasks in this queue;
 `coop backlog add`, in-box proposals, and fork imports use it too. A subproject's own
 `.agent/tasks/README.md` controls only its queue, and `--tasks <path>` selects that queue's
-README. There is no root-template inheritance. In a fresh queue without a README, Coop uses
-its built-in starter until you add one. A malformed present template fails before creating
-a task folder. Edit literal `- [ ]` lines to add or remove default gates; keep at least one
+README. There is no root-template inheritance. Without a README or a `**Template:**` marker in
+its `task.md` section, Coop uses its built-in starter. A malformed declared template fails before
+creating a task folder. Edit literal `- [ ]` lines to add or remove default gates; keep at least one
 checklist item and at most one `<…>` step placeholder. Repeated `--subtask` values replace
 that placeholder and leave literal defaults intact (or append if there is no placeholder).
 
@@ -76,7 +76,9 @@ A fresh agent must be able to work the task from this file alone: the problem, t
     # <one-line outcome>
 
     **Context:** <the problem, why it matters, and where it happens>
+
     **Acceptance criteria:** <the result and checks that prove the work is finished>
+
     **Approach:** <the steps to take; use spec.md for a longer plan>
 
     ## Subtasks
@@ -96,8 +98,10 @@ A fresh agent must be able to work the task from this file alone: the problem, t
 
     **Context:** A typo like `COOP_EGRESS=None` currently grants full network instead of
     going offline (internal/box/egress.go) — a silent fail-open.
+
     **Acceptance criteria:** `make check` green; a new test asserts an unrecognised value
     maps to offline, and the README documents the allowed values.
+
     **Approach:** Parse into an enum; default the unknown case to offline; table-test it.
 
     ## Subtasks
