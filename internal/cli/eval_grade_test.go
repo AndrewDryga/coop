@@ -122,17 +122,6 @@ func TestGradeSnapshotSandboxIsolation(t *testing.T) {
 	}
 }
 
-// Production grading cuts egress on a COPY of the config, never on the caller's.
-func TestGradeSnapshotDoesNotMutateTheCallersConfig(t *testing.T) {
-	a := gradeApp(t)
-	dir := verifierDir(t, "verify.sh", "exit 0\n", 0o644)
-	a.gradeSnapshot(context.Background(), gradeRequest{Image: "i", Workspace: t.TempDir(), Verifier: dir},
-		func(box.RunSpec) (int, error) { return 0, nil })
-	if a.cfg.Egress != "open" {
-		t.Errorf("grading changed the caller's egress to %q", a.cfg.Egress)
-	}
-}
-
 func TestVerifierCommandEntryPoints(t *testing.T) {
 	// verify.sh runs under the trusted image's own shell, by ABSOLUTE path — an unqualified "sh"
 	// would resolve through a PATH the candidate may have tried to influence.

@@ -945,6 +945,8 @@ func TestProviderScriptedLoopRotatesAccountsBeforeProviders(t *testing.T) {
 			if result.Err != nil || result.ExitCode != 0 {
 				t.Fatalf("%s account rotation = exit %d err %v\nstderr:\n%s", provider, result.ExitCode, result.Err, result.Stderr)
 			}
+			trace := readProcessTrace(t, suite.layout.Trace)
+			assertLoopAttemptContracts(t, suite, trace, taskID, attempts)
 			// The order is the claim: the SECOND account of the same provider is tried before any
 			// other provider, and each hop is recorded against the account that actually hit the limit.
 			records := readLoopStageRecords(t, suite)
@@ -954,7 +956,7 @@ func TestProviderScriptedLoopRotatesAccountsBeforeProviders(t *testing.T) {
 				records[2].Provider != rescue || records[2].Outcome != "success" {
 				t.Fatalf("%s rotation telemetry = %#v", provider, records)
 			}
-			assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+			assertLoopTraceProcessesGone(t, trace)
 		})
 	}
 }

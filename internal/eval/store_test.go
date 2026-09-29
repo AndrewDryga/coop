@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -120,7 +121,7 @@ func TestNewRunIDIsTimeOrderedAndTagged(t *testing.T) {
 	if !(early < late) {
 		t.Errorf("run ids not time-ordered: %q !< %q", early, late)
 	}
-	if len(filepath.Base(early)) == 0 {
-		t.Error("empty run id")
+	if !strings.HasSuffix(early, "-11111111") {
+		t.Errorf("run id lacks workload tag: %q", early)
 	}
 }

@@ -23,10 +23,9 @@ import (
 //
 // Routes covered here are the ones a test can check without a live model: the workspace tree, the
 // git repository that travels with it (history, objects, packed refs, reflog, alternates), and
-// everything the candidate's container is handed — mounts, command, environment. The routes a test
-// cannot reach (a model's own web search, a provider-hosted retrieval index) are handled by
-// construction instead: a trial runs with MCP off and, on `--egress filtered`, with the gateway
-// deciding what it may reach at all.
+// everything the candidate's container is handed — mounts, command, environment. Provider-hosted
+// retrieval and a model's own web search are outside this local test's coverage. MCP is off for
+// trial launches; filtered egress is a separate network boundary, not proof against every route.
 const canary = "CANARY-e3f19a7c-the-expected-answer-must-never-reach-the-model"
 
 // canarySuite writes a suite whose hidden material is saturated with the canary: the verifier
@@ -107,8 +106,11 @@ func TestCanaryNeverReachesTheCandidateWorkspace(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
+	out, err := exec.Command("git", "-C", workspace, "log", "--all", "-S"+canary, "--format=%H").CombinedOutput()
+	if err != nil || len(strings.TrimSpace(string(out))) != 0 {
+		t.Errorf("git history contains the hidden answer or could not be checked: %s, %v", out, err)
+	}
 	for _, probe := range [][]string{
-		{"log", "--all", "-S" + canary, "--oneline"},
 		{"log", "--all", "--format=%H %s"},
 		{"rev-list", "--all", "--objects"},
 		{"reflog", "--all"},
@@ -152,15 +154,25 @@ func TestCanaryNeverReachesTheCandidateContainer(t *testing.T) {
 	if rerr != nil {
 		t.Fatalf("nothing was launched: %v", rerr)
 	}
+	var launches []string
 	for _, line := range strings.Split(string(data), "\n") {
 		if !strings.HasPrefix(line, "run ") {
 			continue
 		}
-		isGrader := strings.Contains(line, gradeVerifierDir)
+		launches = append(launches, line)
+	}
+	if len(launches) != 2 {
+		t.Fatalf("candidate and grader launches = %d, want 2: %s", len(launches), data)
+	}
+	for i, line := range launches {
+		isGrader := i == 1 // the candidate launches first; the verifier path is what we test below
 		if strings.Contains(line, canary) && !isGrader {
 			t.Errorf("the answer appears in a candidate launch:\n%s", line)
 		}
 		// The verifier directory itself must be mounted into the grader and nothing else.
+		if isGrader && !strings.Contains(line, gradeVerifierDir) {
+			t.Errorf("the grader launch lacks its verifier mount:\n%s", line)
+		}
 		if !isGrader && strings.Contains(line, filepath.Join(suite.Dir, "verifiers")) {
 			t.Errorf("the verifier directory is mounted into a non-grading box:\n%s", line)
 		}
