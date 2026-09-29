@@ -27,3 +27,25 @@ func TestScaffoldWritesAWorkingSuiteAndNeverOverwrites(t *testing.T) {
 		t.Fatal("Scaffold overwrote a kept file after suite.yaml was removed")
 	}
 }
+
+func TestScaffoldRefusesKeptFileBeforeCreatingOtherFiles(t *testing.T) {
+	dir := t.TempDir()
+	kept := filepath.Join(dir, "files", "greeting", ".keep")
+	if err := os.MkdirAll(filepath.Dir(kept), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(kept, []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Scaffold(dir); err == nil {
+		t.Fatal("Scaffold accepted a kept file")
+	}
+	for _, rel := range []string{"suite.yaml", "verifiers/greeting/README.md", "verifiers/greeting/verify.sh"} {
+		if _, err := os.Lstat(filepath.Join(dir, rel)); !os.IsNotExist(err) {
+			t.Errorf("failed scaffold created %s: %v", rel, err)
+		}
+	}
+	if body, err := os.ReadFile(kept); err != nil || string(body) != "mine" {
+		t.Fatalf("kept file was changed: %q, %v", body, err)
+	}
+}

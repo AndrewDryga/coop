@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,6 +19,15 @@ func Scaffold(dir string) error {
 		"verifiers/greeting/README.md": scaffoldVerifierNote,
 		"verifiers/greeting/verify.sh": scaffoldVerifier,
 		"files/greeting/.keep":         "",
+	}
+	// A kept file must refuse before any other target is created. O_EXCL below still protects
+	// against a concurrent writer between this preflight and creation.
+	for rel := range files {
+		if _, err := os.Lstat(filepath.Join(dir, rel)); err == nil {
+			return fmt.Errorf("write %s: %w", rel, os.ErrExist)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect %s: %w", rel, err)
+		}
 	}
 	for rel := range files {
 		full := filepath.Join(dir, rel)
@@ -104,14 +114,14 @@ images or tools. Coop runs it in a clean sandbox after the candidate has stopped
 
 ## Write one
 
-Add ` + "`verify.sh`" + ` here (or an executable ` + "`verify`" + `). It runs with the graded
+Edit the generated ` + "`verify.sh`" + ` (or replace it with an executable ` + "`verify`" + `). It runs with the graded
 workspace at /workspace and this directory at /coop-verifier, in a container with no
 model credentials and no network.
 
     #!/bin/sh
     # exit 0 = passed, exit 1 = did not pass, anything else = the grader itself broke
-    test -f /workspace/answer.txt || exit 1
-    grep -q "hello" /workspace/answer.txt || exit 1
+    test -f /workspace/greeting.txt || exit 1
+    test "$(cat /workspace/greeting.txt)" = "hello" || exit 1
 
 ## The three exit codes matter
 
