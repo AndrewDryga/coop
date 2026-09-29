@@ -188,6 +188,23 @@ func TestAReadOnlySessionLaunchesItsForkWithoutAnOutputRoot(t *testing.T) {
 	}
 }
 
+// The output note names this turn's own folder. Ahead of the caller's prompt
+// it ended the provider's prefix cache before the caller's instructions, so a
+// caller whose instructions come first, as Ryker's do, paid for them in full
+// on every call (2026-09-27: 12,160 cached tokens every time, all Codex's own).
+func TestANormalTurnPromptBeginsWithTheCallersWords(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	turn := fixture.submit(t, "inspect this")
+	result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
+	if err != nil || result.State != session.TurnCompleted {
+		t.Fatalf("normal turn = %+v, %v", result, err)
+	}
+	text := promptText(t, fixture.childLog)
+	if !strings.HasPrefix(text, "inspect this\n\n<coop-output>") || !strings.HasSuffix(text, "</coop-output>") {
+		t.Fatalf("normal prompt = %q", text)
+	}
+}
+
 func TestNormalRemoteSessionsAnnounceOneBoxCWDForPrivateForks(t *testing.T) {
 	var workspaces []string
 	for range 2 {

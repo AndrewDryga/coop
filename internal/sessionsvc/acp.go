@@ -3039,7 +3039,12 @@ func (r *sessionTurnRunner) runACP(
 			return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "turn output directory could not be prepared")
 		}
 		defer removeSessionOutputDir(outputDir)
-		content[0]["text"] = fmt.Sprintf("<coop-output>Save only final generated images and charts in %s. Use PNG, JPEG, WebP, or GIF; at most %d files and %d bytes total. Keep source data, virtual environments, caches, and other scratch content outside this directory. Do not put image bytes or data URLs in your reply. Refer to saved filenames in the structured response when the caller requests visuals. Direct image outputs returned by tools are captured in order as generated-1.png (or the matching image extension), generated-2.png, and so on.</coop-output>\n\n%s", outputRelative, session.MaxTurnArtifacts, session.MaxTurnArtifactBytes, promptText)
+		// The note follows the caller's prompt. It names this turn's own
+		// folder, so ahead of the prompt it ended the provider's prefix cache
+		// before the caller's instructions: every routing and learning call
+		// cached only Codex's own 12,160 tokens and paid for Ryker's ~5.5k
+		// instructions in full (2026-09-27).
+		content[0]["text"] = fmt.Sprintf("%s\n\n<coop-output>Save only final generated images and charts in %s. Use PNG, JPEG, WebP, or GIF; at most %d files and %d bytes total. Keep source data, virtual environments, caches, and other scratch content outside this directory. Do not put image bytes or data URLs in your reply. Refer to saved filenames in the structured response when the caller requests visuals. Direct image outputs returned by tools are captured in order as generated-1.png (or the matching image extension), generated-2.png, and so on.</coop-output>", promptText, outputRelative, session.MaxTurnArtifacts, session.MaxTurnArtifactBytes)
 	} else {
 		content[0]["text"] = promptText
 	}
