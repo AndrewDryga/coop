@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -180,5 +181,40 @@ func TestGradeDetailKeepsTheTailBounded(t *testing.T) {
 	}
 	if d := gradeDetail("out", "err"); !strings.Contains(d, "out") || !strings.Contains(d, "err") {
 		t.Errorf("both streams should be kept: %q", d)
+	}
+}
+
+func TestGradeSnapshotBoundsBothVerifierStreamsWhileRunning(t *testing.T) {
+	a := gradeApp(t)
+	dir := verifierDir(t, "verify.sh", "exit 0\n", 0o644)
+	got := a.gradeSnapshot(context.Background(), gradeRequest{Image: "i", Workspace: t.TempDir(), Verifier: dir},
+		func(spec box.RunSpec) (int, error) {
+			for _, stream := range []struct {
+				writer io.Writer
+				end    string
+			}{{spec.Stdout, "STDOUT-END"}, {spec.Stderr, "STDERR-END"}} {
+				if _, err := io.WriteString(stream.writer, strings.Repeat("x", 1<<20)); err != nil {
+					t.Fatal(err)
+				}
+				for i := 0; i < 100; i++ {
+					if _, err := io.WriteString(stream.writer, strings.Repeat("y", 101)); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if _, err := io.WriteString(stream.writer, stream.end); err != nil {
+					t.Fatal(err)
+				}
+				bounded, ok := stream.writer.(*tailBuffer)
+				if !ok || len(bounded.buf) > 4<<10 {
+					t.Fatalf("verifier output stream retained unbounded data: %T", stream.writer)
+				}
+				if !strings.HasSuffix(bounded.String(), stream.end) {
+					t.Fatalf("verifier output lost its diagnostic tail: %q", stream.end)
+				}
+			}
+			return 1, nil
+		})
+	if got.Status != eval.TrialFailed || !strings.Contains(got.Detail, "STDERR-END") {
+		t.Fatalf("verdict/tail = %+v", got)
 	}
 }

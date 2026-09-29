@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -95,7 +94,7 @@ func (a *app) gradeSnapshot(ctx context.Context, req gradeRequest, run boxRunner
 		run = func(spec box.RunSpec) (int, error) { return box.Run(offline, a.rt, spec) }
 	}
 
-	var out, errOut bytes.Buffer
+	out, errOut := tailBuffer{max: 4 << 10}, tailBuffer{max: 4 << 10}
 	spec := box.RunSpec{
 		Ctx:        ctx,
 		Image:      req.Image,

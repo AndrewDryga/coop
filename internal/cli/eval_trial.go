@@ -304,9 +304,17 @@ type tailBuffer struct {
 func (w *tailBuffer) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.max <= 0 {
+		return len(p), nil
+	}
+	if len(p) >= w.max {
+		w.buf = append(w.buf[:0], p[len(p)-w.max:]...)
+		return len(p), nil
+	}
 	w.buf = append(w.buf, p...)
-	if len(w.buf) > w.max {
-		w.buf = w.buf[len(w.buf)-w.max:]
+	if excess := len(w.buf) - w.max; excess > 0 {
+		copy(w.buf, w.buf[excess:])
+		w.buf = w.buf[:w.max]
 	}
 	return len(p), nil
 }
