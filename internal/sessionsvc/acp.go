@@ -2283,6 +2283,7 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 	process, err := startSessionACPProcess(cmd)
 	if process != nil {
 		process.runID = runID
+		process.privateRoot = privateRoot
 		process.mcpServers = mcpServers
 		process.mcpHandoff = mcpHandoff
 		process.sessionMeta = sessionMeta
@@ -2493,15 +2494,18 @@ type sessionACPProcess struct {
 	// for a restricted session (nil otherwise), and restricted says the box keeps no provider
 	// history and mounts no output root — so each turn is a fresh native session with no
 	// output directory announced.
-	cwd                    string
-	outputRoot             string
-	sessionMeta            map[string]any
-	restricted             bool
-	mcpServers             []map[string]any
-	mcpHandoff             string // a filtered child's MCP list, read once after initialize
-	nextID                 int64
-	initialized            bool
-	nativeSessionID        string
+	cwd             string
+	outputRoot      string
+	sessionMeta     map[string]any
+	restricted      bool
+	mcpServers      []map[string]any
+	mcpHandoff      string // a filtered child's MCP list, read once after initialize
+	nextID          int64
+	initialized     bool
+	nativeSessionID string
+	// privateRoot is the session's private state on the host, where a Codex
+	// child writes its rollouts (codex_usage.go).
+	privateRoot            string
 	imageCapable           bool
 	embeddedContextCapable bool
 	stderr                 *sessionACPStderr
@@ -3122,6 +3126,15 @@ func (r *sessionTurnRunner) runACP(
 	usage := promptResult.Usage.session()
 	if !usage.Recorded() && promptResult.Meta != nil {
 		usage = promptResult.Meta.Usage.session()
+	}
+	// codex-acp reports only the turn's last model call; Codex's rollout holds
+	// every call of it. A restricted child keeps no rollout on the host.
+	if limitProvider == codexRolloutProvider && !process.restricted {
+		account := limitTarget.Account()
+		if account == "" && r.sourceCfg != nil {
+			account = r.sourceCfg.DefaultProfileOf(limitProvider)
+		}
+		usage = codexWholeTurnUsage(ctx, codexProfile(process, account), nativeID, usage)
 	}
 	usage.CostUSD, usage.CostRecorded = cumulativeCostUSD, costRecorded
 	return string(assistant), outputArtifacts, usage, nil
