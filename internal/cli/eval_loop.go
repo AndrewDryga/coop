@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,8 +25,8 @@ import (
 // delivers a signal to every handler registered in the process. In-process, one trial hitting its
 // deadline would tear down every other trial running beside it, and the two runs' narration would
 // interleave on one stderr. A child process per trial gives each one its own signal domain, its own
-// output, and an exit code we can read — and `exec.CommandContext` with a process-group kill turns
-// the trial's deadline into something the loop will actually honor.
+// output, and an exit code we can read. A guarded process group gives the loop time to tear down
+// its box on cancellation, then stops descendants that survive its exit.
 //
 // The loop's exit code is CONTEXT, never the verdict. Whether the work is good is the verifier's
 // call, made afterwards on the snapshot, exactly as for an agent case. The exit code only separates
@@ -37,6 +38,10 @@ const (
 	loopExitWorkRemains = 1 // work is left, or the final verification failed
 	loopExitBlocked     = 3 // stopped on a human decision
 )
+
+// Loop cancellation may spend 30 seconds on private services and five more on exact-run container
+// removal. Keep that cleanup chance before forcing the still-owned group down.
+const loopTrialShutdownGrace = 45 * time.Second
 
 // materializeLoopScenario puts everything the loop needs into the trial workspace. It runs BEFORE
 // the trial's size and "did anything happen" baselines are taken, so the harness's own files — the
@@ -93,18 +98,21 @@ func (r *trialRunner) runLoopTrial(ctx context.Context, t eval.Trial, workspace 
 	args := []string{"loop", t.Config.Label, "--no-preflight", "--no-mcp"}
 
 	out, errOut := &tailBuffer{max: 256 << 10}, &tailBuffer{max: 64 << 10}
-	cmd := exec.CommandContext(ctx, self, args...)
+	group, err := startLoopTrialGroup(ctx)
+	if err != nil {
+		return attemptOutcome{}, err
+	}
+	defer group.close()
+	cmd := exec.Command(self, args...)
 	cmd.Dir = workspace
 	cmd.Stdout, cmd.Stderr = out, errOut
 	cmd.Stdin = nil
-	// Its own process group, so a deadline signals the loop and its own children together. (The
-	// boxes are NOT in this group — each runtime client gets its own — so container teardown is the
-	// loop's own signal handler, which tears down the running box and reaps by run label.)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
-	// And a bounded wait after that signal: if the loop's teardown hangs, or a grandchild holds the
-	// output pipe open, the trial must still end rather than pin a worker for the rest of the run.
-	cmd.WaitDelay = 2 * time.Minute
+	// Join the guardian's process group so a deadline signals the loop and its children together.
+	// Boxes are not in this group; the loop's signal handler tears those down by run label.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: group.pid()}
+	// With no CommandContext, WaitDelay starts when the loop exits, not when its deadline fires.
+	// A stray descendant cannot hold the output pipes indefinitely after the leader is gone.
+	cmd.WaitDelay = time.Second
 	// The child's environment is PINNED, not merely inherited. An inherited COOP_REPO is the one
 	// that matters most: `coop loop` resolves its repository from config, not from the working
 	// directory, so an operator who has COOP_REPO set would have the trial run the loop against
@@ -120,15 +128,114 @@ func (r *trialRunner) runLoopTrial(ctx context.Context, t eval.Trial, workspace 
 		"COOP_NO_UPDATE_CHECK=1",
 	)
 
-	runErr := cmd.Run()
-	detail := gradeDetail(out.String(), errOut.String())
-	if cmd.ProcessState == nil {
-		// It never started — a missing binary, a bad working directory. There is no exit code to
-		// read, and nothing about the configuration to learn.
-		return attemptOutcome{detail: detail}, fmt.Errorf("the loop could not be started: %w", runErr)
+	if err := ctx.Err(); err != nil {
+		return attemptOutcome{}, err
 	}
+	if err := cmd.Start(); err != nil {
+		return attemptOutcome{}, fmt.Errorf("the loop could not be started: %w", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	var runErr error
+	select {
+	case runErr = <-done:
+	case <-ctx.Done():
+		if err := group.signal(syscall.SIGTERM); err != nil {
+			_ = group.signal(syscall.SIGKILL)
+			_ = cmd.Process.Kill()
+			return attemptOutcome{}, fmt.Errorf("stop the loop at its deadline: %w", err)
+		}
+		select {
+		case runErr = <-done:
+		case <-time.After(loopTrialShutdownGrace):
+			if err := group.signal(syscall.SIGKILL); err != nil {
+				_ = cmd.Process.Kill()
+				return attemptOutcome{}, fmt.Errorf("force-stop the loop after cleanup grace: %w", err)
+			}
+			runErr = <-done
+		}
+	}
+	// The guardian pins this group ID until here, so the final signal cannot hit a reused group.
+	if err := group.signal(syscall.SIGKILL); err != nil {
+		return attemptOutcome{}, fmt.Errorf("finish stopping the loop process group: %w", err)
+	}
+	detail := gradeDetail(out.String(), errOut.String())
 	code := cmd.ProcessState.ExitCode()
+	if ctx.Err() == nil && errors.Is(runErr, exec.ErrWaitDelay) {
+		return attemptOutcome{detail: detail, code: code}, fmt.Errorf("the loop left a process holding its output open: %w", runErr)
+	}
 	return attemptOutcome{detail: detail, code: code}, loopOutcome(code, ctx.Err())
+}
+
+// Keep an owned member in the loop's process group until the final signal. Cmd.Wait reaps the
+// loop leader before its pipe readers finish, so its PID alone is not safe to signal later.
+type loopTrialGroup struct {
+	guard *exec.Cmd
+	input *os.File
+}
+
+func (g *loopTrialGroup) pid() int { return g.guard.Process.Pid }
+
+func (g *loopTrialGroup) signal(sig syscall.Signal) error {
+	return syscall.Kill(-g.pid(), sig)
+}
+
+func (g *loopTrialGroup) close() {
+	_ = g.input.Close()
+	_ = g.guard.Wait()
+}
+
+func startLoopTrialGroup(ctx context.Context) (*loopTrialGroup, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	inputRead, inputWrite, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	readyRead, readyWrite, err := os.Pipe()
+	if err != nil {
+		inputRead.Close()
+		inputWrite.Close()
+		return nil, err
+	}
+	// The shell uses only builtins: it ignores TERM, acknowledges readiness, then holds its stdin
+	// open. Closing that pipe also releases it if the parent exits before the final signal.
+	guard := exec.Command("/bin/sh", "-c", "trap '' TERM; printf x >&3; read _")
+	guard.Stdin = inputRead
+	guard.Env = []string{"PATH=/usr/bin:/bin"}
+	guard.ExtraFiles = []*os.File{readyWrite}
+	guard.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	err = guard.Start()
+	inputRead.Close()
+	readyWrite.Close()
+	if err != nil {
+		readyRead.Close()
+		inputWrite.Close()
+		return nil, fmt.Errorf("start loop process-group guard: %w", err)
+	}
+	group := &loopTrialGroup{guard: guard, input: inputWrite}
+	ready := make(chan error, 1)
+	go func() {
+		var mark [1]byte
+		_, err := io.ReadFull(readyRead, mark[:])
+		readyRead.Close()
+		ready <- err
+	}()
+	select {
+	case err := <-ready:
+		if err == nil {
+			return group, nil
+		}
+		_ = group.signal(syscall.SIGKILL)
+		group.close()
+		return nil, fmt.Errorf("ready loop process-group guard: %w", err)
+	case <-ctx.Done():
+		_ = group.signal(syscall.SIGKILL)
+		group.close()
+		<-ready
+		return nil, ctx.Err()
+	}
 }
 
 // loopOutcome decides whether a finished loop run should be graded. Separated from running it so the

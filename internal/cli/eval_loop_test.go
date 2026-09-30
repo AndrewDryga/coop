@@ -2,15 +2,19 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/eval"
 	"github.com/AndrewDryga/coop/internal/loop"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 const loopSuiteYAML = `version: 1
@@ -254,6 +258,100 @@ func TestLoopTrialStopsAtTheDeadline(t *testing.T) {
 	if elapsed := time.Since(started); elapsed > 30*time.Second {
 		t.Errorf("the deadline took %v to take effect", elapsed)
 	}
+}
+
+// A TERM-resistant child can keep the output pipe open after the loop exits. The trial must stop
+// that child, not wait for its natural exit or merely close the pipe while leaving it running.
+func TestLoopTrialDeadlineStopsDescendantHoldingOutput(t *testing.T) {
+	suite := loopSuite(t)
+	r := loopRunner(t, suite, nil)
+	ws := loopWorkspace(t, suite)
+	root := t.TempDir()
+	ready, pidFile, heartbeat := filepath.Join(root, "ready"), filepath.Join(root, "pid"), filepath.Join(root, "heartbeat")
+	t.Setenv("COOP_TEST_LOOP_READY", ready)
+	t.Setenv("COOP_TEST_LOOP_PID", pidFile)
+	t.Setenv("COOP_TEST_LOOP_HEARTBEAT", heartbeat)
+	shim := filepath.Join(root, "coop-shim")
+	script := `#!/bin/sh
+(
+  trap '' TERM
+  printf x >> "$COOP_TEST_LOOP_HEARTBEAT"
+  : > "$COOP_TEST_LOOP_READY"
+  while :; do printf x >> "$COOP_TEST_LOOP_HEARTBEAT"; sleep 0.05; done
+) &
+printf '%s' "$!" > "$COOP_TEST_LOOP_PID"
+wait
+`
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	restore := loopExecutable
+	loopExecutable = func() (string, error) { return shim, nil }
+	defer func() { loopExecutable = restore }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := r.runLoopTrial(ctx, eval.Trial{
+			Case: suite.Cases[0], Config: eval.FrozenConfig{Kind: eval.ConfigTarget, Label: "codex"},
+		}, ws)
+		done <- err
+	}()
+	var childPID int
+	cleanupChild := true
+	defer func() {
+		if !cleanupChild {
+			return
+		}
+		if childPID <= 0 {
+			data, _ := os.ReadFile(pidFile)
+			childPID, _ = strconv.Atoi(string(data))
+		}
+		if childPID > 0 {
+			_ = syscall.Kill(childPID, syscall.SIGKILL)
+		}
+	}()
+	wait.For(t, "loop descendant readiness", func() bool {
+		data, err := os.ReadFile(pidFile)
+		if err == nil {
+			childPID, _ = strconv.Atoi(string(data))
+		}
+		if childPID <= 0 {
+			return false
+		}
+		_, err = os.Stat(ready)
+		return err == nil
+	})
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled trial = %v, want context cancellation", err)
+		}
+	case <-time.After(5 * time.Second):
+		_ = syscall.Kill(childPID, syscall.SIGKILL)
+		cleanupChild = false
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("canceled trial remained stuck after fixture cleanup")
+		}
+		t.Fatal("canceled trial waited for a descendant's output pipe")
+	}
+	before, err := os.Stat(heartbeat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	after, err := os.Stat(heartbeat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Size() != before.Size() {
+		t.Fatal("descendant kept running after trial cancellation")
+	}
+	cleanupChild = false
 }
 
 // A scenario whose queue has nothing waiting measures nothing: the loop would report "nothing

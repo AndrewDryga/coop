@@ -55,7 +55,9 @@ the map, and the reasoning behind the one place the obvious fix is wrong.
 - **Loop trials** — a subprocess with a PINNED environment, not an inherited one. `coop loop` resolves
   its repository from configuration rather than its working directory, so an inherited `COOP_REPO`
   would run the loop against the operator's own checkout, with their credentials, making real commits
-  (`internal/cli/eval_loop.go`).
+  (`internal/cli/eval_loop.go`). A small guardian pins its process-group ID until the final signal:
+  a canceled loop gets cleanup time after TERM, but a surviving descendant cannot keep its output
+  pipe and trial slot open indefinitely. The final group KILL occurs before releasing that ID.
 
 ## The credential home is SHARED, and must stay that way
 
@@ -136,6 +138,9 @@ already fully correct. The shipped verifier runs each subcommand on inputs no ta
 also why it cannot be satisfied by a loop that moves folders without finishing anything.
 
 ## Changelog
+- 2026-09-30 — traced eval-loop cancellation through Go's wait/pipe behavior and a red-before
+  TERM-resistant child fixture. The trial now pins group identity through TERM, bounded cleanup,
+  and final KILL; focused deadline tests passed 20 times under CPU load.
 - 2026-09-30 — rechecked the trial image selector: it no longer calls `ImageForRepo` with an empty
   path, which had allowed the caller's Dockerfile to select a project image.
 - 2026-09-30 — rechecked staging, runtime preflight, trial and record paths; documented the
