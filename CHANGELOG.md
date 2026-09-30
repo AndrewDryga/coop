@@ -4,10 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+This is the next public release after v8.1.0 and includes the unpublished v9 series below.
+Public upgraders should follow both the v10 and v9 sections of [MIGRATING.md](MIGRATING.md),
+including MCP/native-settings preparation before their first launch.
+
 - **Breaking: upgrade configuration and controller contracts together.** `coop.conf` rejects
   unknown, duplicate and retired keys; move retired loop settings into `.agent/loop.yaml`.
   Podman and `COOP_AGENT_PACKAGES` are no longer supported. `coop tasks clear`, `split`
-  and `flags`, `coop worker`, `coop sessions serve` and `policies` are removed without aliases.
+  and `flags`, `coop fleet`, `coop fusion`, `coop worker`, `coop sessions serve` and `policies`
+  are removed without aliases. Use presets/peers and direct detached fork loops for composition.
   Use `coop tasks rm --all-done`, the canonical shared queue and the connection command below.
   `coop approve` replaces `coop net approve`; `coop net blocked` replaces `net explain`.
   Back up session state before its schema-25 upgrade; older binaries cannot reopen the new root.
@@ -22,6 +27,12 @@
   proof. Historical evidence remains readable; unsupported old execution authority is not invented.
   Provider accounts still need normal worker authentication: controller-supplied model credential
   exchange is not part of this release.
+
+- **Structured completion and caller validation survive interruption.** Remote turns can bind
+  a JSON Schema and its exact digest, repair invalid output in the same native session, and
+  retain schema-valid candidates for explicit caller acceptance or rejection. Only accepted,
+  digest-bound bytes publish; repair/review budgets are bounded. Pending candidates and durable
+  decision receipts survive restart, while retryable runtime cleanup cannot silently decide them.
 
 - **Complete source custody and controller publication.** Workers fetch pinned GitHub source
   with repository-scoped host grants, verified LFS objects and explicitly authorized recursive
@@ -67,8 +78,9 @@
 - **Host, service and filesystem authority are stronger.** Compose uses private validated
   configuration, approved scope and exact-owned cleanup. Secret-file and custom-volume approvals
   bind actual storage authority; read-only sources must exist and unsafe propagation is refused.
-  Host Git excludes repository-controlled execution settings. Fork generations and network grants
-  use hardlink anchors, not reusable filesystem metadata. Older grants need the documented
+  Host Git excludes repository-controlled execution settings; integrity checks also work with
+  modern Git reference verification without disabling object or reference validation. Fork
+  generations and network grants use hardlink anchors, not reusable filesystem metadata. Older grants need the documented
   migration or fresh approval.
 
 - **Parallel forks share one canonical task queue.** Durable assignments and generation-bound
