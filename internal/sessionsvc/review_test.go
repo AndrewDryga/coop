@@ -958,3 +958,33 @@ func containsReviewReason(reasons []string, want string) bool {
 	}
 	return false
 }
+
+// The real gate reads this ref from the prepared candidate, not its request.
+// Hand-built gate fixtures alone would miss an omitted ref in candidate preparation.
+func TestSessionReviewCandidateNamesItsTrustedParentForTheGate(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	var named string
+	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(_ context.Context, request ReviewGateRequest) (ReviewGateResult, error) {
+		named = strings.TrimSpace(gitOut(request.Candidate, "rev-parse", "--verify", "--quiet", "refs/coop/session-parent^{commit}"))
+		return ReviewGateResult{Configured: true, Passed: true}, nil
+	}))
+	defer service.Stop()
+	sess := createReviewSession(t, service, "trusted-parent")
+	if err := os.WriteFile(filepath.Join(sess.Workspace, "change.txt"), []byte("reviewed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sessionWorkspaceGit(t, sess.Workspace, "add", "change.txt")
+	sessionWorkspaceGit(t, sess.Workspace, "commit", "-qm", "review change")
+
+	dossier, err := service.RunReview(context.Background(), "review-trusted-parent", RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if named == "" || named != dossier.ParentHead {
+		t.Fatalf("the gate's candidate names trusted parent %q, want the parent it was rebased onto %q", named, dossier.ParentHead)
+	}
+	if dossier.Gate != ReviewGatePassed || !dossier.Publishable {
+		t.Fatalf("review with a named parent = %+v", dossier)
+	}
+}

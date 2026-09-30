@@ -782,6 +782,11 @@ func (s *Service) prepareForkReviewCandidateFromIntent(ctx context.Context, oper
 	if err := forkspace.GitRefCommand(ctx, c.dir, "update-ref", "--no-deref", "HEAD", c.base).Run(); err != nil {
 		return c, fmt.Errorf("detach captured review parent: %w", err)
 	}
+	// The worker-owned checker hands the gate this commit as COOP_REVIEW_BASE,
+	// and reads it from the candidate itself (forkctl.ReviewControllerJob).
+	if err := forkspace.GitRefCommand(ctx, c.dir, "update-ref", "refs/coop/session-parent", c.base).Run(); err != nil {
+		return c, fmt.Errorf("name captured review parent: %w", err)
+	}
 	if _, _, err := runSessionCompanionGitContext(ctx, c.dir, sessionWorkspaceGitOutputLimit, "reset", "--hard", "--quiet", c.base); err != nil {
 		return c, fmt.Errorf("checkout captured review parent: %w", err)
 	}

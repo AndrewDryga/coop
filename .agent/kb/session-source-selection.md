@@ -60,6 +60,11 @@ qualification rather than capturing fresh rules. Only the disposable checkout fo
 operation is mounted from private session state; the source mirror, other candidates, and parent
 state remain fenced. Ordinary local fork gates retain their separate project policy.
 
+Candidate preparation writes `refs/coop/session-parent` to the verified captured `intent.ParentHead`
+before checkout/rebase. The worker-owned gate reads that ref for `COOP_REVIEW_BASE`; the candidate's
+rebased HEAD is not its trusted base. Hand-built gate fixtures that set the ref cannot prove the
+service's preparation path supplies it.
+
 Review and changes need a fresh upstream default, not the private staged HEAD. SourceRefresher
 is the trusted-host boundary for that fetch. It must use the saved job and source, import the
 current default's objects without updating a ref, and leave staged HEAD at the original selected
@@ -72,6 +77,9 @@ fetch the selected commit. Neither a branch advance nor an idempotent create ret
 code. The API exposes source metadata through explicit DTO projection, never JobDocument.
 
 ## Changelog
+- 2026-09-30 — traced the controller gate's missing-base failure to candidate preparation. The
+  service now names its verified captured parent in the scratch; the real preparation regression
+  fails without the ref write and preserves the frozen job authority path with it.
 - 2026-09-30 — rechecked source, ACP projection, review and worker limits for v2 complete job
   setup. Removed the stale remote `COOP_GATE` claim; local fork merges keep their own gate policy.
 - 2026-09-29 — reverified review against saved job execution and network authority. The prior
