@@ -250,15 +250,21 @@ func (a *app) executeEvalRun(ctx context.Context, plan *eval.Plan, frozen []eval
 	// Trial images are host-selected, regardless of the checkout coop eval was invoked from.
 	box.ResolveBaseImage(a.cfg)
 	image := box.SharedImage(a.cfg.BaseImage, a.cfg.ImageOverride)
-	code, inspectErr := a.rt.RunInterruptible(ctx, nil, io.Discard, io.Discard, "image", "inspect", image)
-	if err := ctx.Err(); err != nil {
-		return 1, err
+	needsDefault := false
+	for _, c := range plan.Suite.Cases {
+		needsDefault = needsDefault || c.Runtime == nil
 	}
-	if inspectErr != nil {
-		return 1, fmt.Errorf("inspect the box image %s: %w", image, inspectErr)
-	}
-	if code != 0 {
-		return 1, fmt.Errorf("the box image %s is not built yet — run 'coop build --egress open' in a directory without a project Dockerfile", image)
+	if needsDefault {
+		code, inspectErr := a.rt.RunInterruptible(ctx, nil, io.Discard, io.Discard, "image", "inspect", image)
+		if err := ctx.Err(); err != nil {
+			return 1, err
+		}
+		if inspectErr != nil {
+			return 1, fmt.Errorf("inspect the box image %s: %w", image, inspectErr)
+		}
+		if code != 0 {
+			return 1, fmt.Errorf("the box image %s is not built yet — run 'coop build --egress open' in a directory without a project Dockerfile", image)
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return 1, err
@@ -283,6 +289,11 @@ func (a *app) executeEvalRun(ctx context.Context, plan *eval.Plan, frozen []eval
 	if err := ctx.Err(); err != nil {
 		return 1, err
 	}
+	captures, err := a.prepareEvalProfiles(ctx, plan, frozen)
+	if err != nil {
+		return 1, fmt.Errorf("prepare eval runtime profiles: %w", err)
+	}
+	defer captures.close()
 	store, err := eval.CreateRun(root, eval.NewRunRecord(plan, frozen, time.Now()))
 	if err != nil {
 		return 1, err
@@ -305,7 +316,12 @@ func (a *app) executeEvalRun(ctx context.Context, plan *eval.Plan, frozen []eval
 			presets[c.Label] = filepath.Join(inputs, "presets", c.Label)
 		}
 	}
-	runner := &trialRunner{app: a, suite: plan.Suite, workRoot: workRoot, image: image, presets: presets}
+	runner := &trialRunner{app: a, suite: plan.Suite, workRoot: workRoot, image: image, presets: presets, profiles: captures}
+	for _, c := range plan.Suite.Cases {
+		if r := c.Runtime; r != nil {
+			printEvalText("Runtime: ", fmt.Sprintf("%s — %s, %s, %s", c.ID, eval.ProfileProtocol, r.ImageID, r.Platform))
+		}
+	}
 	fmt.Printf("Running %s (%d trials)…\n", store.ID(), len(plan.Suite.Cases)*len(plan.Configs)*plan.Repeat)
 	summary, err := eval.Execute(ctx, plan, frozen, store, runner.run, time.Now)
 	if err != nil {
@@ -434,6 +450,7 @@ func renderEvalComparison(c *eval.Comparison) {
 		// denominator, so a run can't look better by not finishing. Coverage is a separate figure.
 		printEvalText(label+": ", strings.Join(o.Configs, ", "))
 		fmt.Printf("  Run: %s\n", evalDisplayText(id))
+		renderEvalRuntimes("  ", o.Runtimes)
 		printEvalText("  ", evalResultLine(eval.RunSummary{Requested: o.Requested, Counts: map[eval.TrialStatus]int{
 			eval.TrialPassed: o.Passed, eval.TrialFailed: o.Failed, eval.TrialError: o.Errored,
 			eval.TrialTimedOut: o.TimedOut, eval.TrialPending: o.Pending,
@@ -634,5 +651,10 @@ func renderEvalPlan(p *eval.Plan, frozen []eval.FrozenConfig) {
 	fmt.Println("Cases:")
 	for _, c := range p.Suite.Cases {
 		fmt.Printf("  - %-24s budget %s\n", c.ID, c.Timeout)
+		if r := c.Runtime; r != nil {
+			printEvalText("    ", fmt.Sprintf("%s: %s, candidate %s, verifier %s; 1 CPU / 2 GiB / 128 PIDs", eval.ProfileProtocol, r.Workdir, r.AgentTimeout, r.VerifierTimeout))
+			fmt.Println("    Storage: declared 10 GiB; quota unenforced and usage unmeasured.")
+			fmt.Println("    Image/platform unresolved until execution; preview workload fingerprint is provisional.")
+		}
 	}
 }

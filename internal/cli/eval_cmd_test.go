@@ -47,7 +47,8 @@ func TestEvalRunImageIgnoresCurrentCheckout(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := &app{cfg: &config.Config{BaseImage: tc.base, ImageOverride: tc.override}, rt: runtime.Runtime{Name: shim}, rtSet: true}
-			code, err := a.executeEvalRun(context.Background(), nil, nil)
+			plan := &eval.Plan{Suite: &eval.Suite{Cases: []eval.Case{{ID: "default-image"}}}}
+			code, err := a.executeEvalRun(context.Background(), plan, nil)
 			if code != 1 || err == nil || !strings.Contains(err.Error(), "the box image "+tc.want+" is not built yet") {
 				t.Fatalf("image preflight = (%d, %v), want %q", code, err, tc.want)
 			}

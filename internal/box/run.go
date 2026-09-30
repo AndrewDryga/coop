@@ -64,10 +64,13 @@ const (
 
 // RunSpec describes a single container run.
 type RunSpec struct {
-	Image   string
-	Repo    string   // host repo to mount
-	Workdir string   // where Repo mounts; empty defers to resolveWorkdir (the repo's real host path)
-	Cmd     []string // command + args to run in the box
+	Image string
+	// ExpectedImageID binds a host-preflighted workload to its immutable image, even when
+	// filtered preparation resolves the image again from explicit project-build approval.
+	ExpectedImageID string   `json:"-"`
+	Repo            string   // host repo to mount
+	Workdir         string   // where Repo mounts; empty defers to resolveWorkdir (the repo's real host path)
+	Cmd             []string // command + args to run in the box
 	// Mode is the execution mode, fixed at creation. Empty is ModeNormal — every field below
 	// then means what it always did. A restricted mode (readonly, bare) takes the separate
 	// launch in restricted.go: it honors Repo, Cmd, Agent, AgentCommand, Homes, the companions,
@@ -546,6 +549,14 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// only have to tear down.
 	if err := ctxStep(spec.Ctx, "filesystem projection"); err != nil {
 		return -1, err
+	}
+	if id := spec.ExpectedImageID; id != "" {
+		if !strings.HasPrefix(id, "sha256:") || len(id) != 71 || strings.Trim(id[7:], "0123456789abcdef") != "" {
+			return -1, errors.New("expected image must be an immutable image ID (sha256 and 64 lowercase hex digits)")
+		}
+		if spec.CapturedEgress == nil && spec.Image != id {
+			return -1, errors.New("the workload image no longer matches the image selected for this run")
+		}
 	}
 	// A restricted mode takes its own launch, whose whole point is that nothing below — homes,
 	// caches, services, project policy, generated mounts — is assembled for it.

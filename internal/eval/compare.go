@@ -28,7 +28,8 @@ type Comparison struct {
 
 // ConfigOutcome is one run's headline: the configurations it evaluated and its pass/coverage counts.
 type ConfigOutcome struct {
-	Configs []string
+	Configs  []string
+	Runtimes []RunRuntime
 	CaseCounts
 	// Size is the change-size summary over the trials that were actually GRADED. It is a separate
 	// field, never mixed into the counts above, because size is a review signal and not a score: a
@@ -181,7 +182,7 @@ func loadSealed(root, id string) (sealedRun, error) {
 }
 
 func outcomeOf(r sealedRun) ConfigOutcome {
-	var o ConfigOutcome
+	o := ConfigOutcome{Runtimes: r.run.Runtimes}
 	for _, c := range r.run.Configs {
 		o.Configs = append(o.Configs, c.Description())
 	}

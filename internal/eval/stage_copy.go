@@ -110,7 +110,7 @@ const stageMaxEntries = 200_000
 // walkOpenedSuiteTree never resolves a source pathname outside an os.Root. A selected tree must
 // be an export, but nested submodule metadata is omitted just as workspace preparation omits it.
 // Special files are rejected rather than silently omitted from the frozen workload identity.
-func walkOpenedSuiteTree(ctx context.Context, root *os.Root, visit func(rel string, parent *os.Root, name string, info os.FileInfo) error) error {
+func walkOpenedSuiteTree(ctx context.Context, root *os.Root, profile bool, visit func(rel string, parent *os.Root, name string, info os.FileInfo) error) error {
 	seen := 0
 	var walk func(*os.Root, string) error
 	walk = func(parent *os.Root, prefix string) error {
@@ -140,7 +140,7 @@ func walkOpenedSuiteTree(ctx context.Context, root *os.Root, visit func(rel stri
 			}
 			name := entry.Name()
 			if strings.EqualFold(name, ".git") {
-				if prefix == "" {
+				if prefix == "" || profile {
 					return fmt.Errorf("suite tree contains .git; export a clean tree before freezing")
 				}
 				continue
@@ -148,6 +148,9 @@ func walkOpenedSuiteTree(ctx context.Context, root *os.Root, visit func(rel stri
 			info, err := parent.Lstat(name)
 			if err != nil {
 				return err
+			}
+			if profile && info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("runtime profile contains symlink %q; use a clean export", entry.Name())
 			}
 			rel := name
 			if prefix != "" {
@@ -174,9 +177,13 @@ func walkOpenedSuiteTree(ctx context.Context, root *os.Root, visit func(rel stri
 }
 
 func openedTreeDigest(ctx context.Context, root *os.Root) (Fingerprint, error) {
+	return openedTreeDigestWithPolicy(ctx, root, false)
+}
+
+func openedTreeDigestWithPolicy(ctx context.Context, root *os.Root, profile bool) (Fingerprint, error) {
 	w := newHasher()
 	var read int64
-	err := walkOpenedSuiteTree(ctx, root, func(rel string, parent *os.Root, name string, info os.FileInfo) error {
+	err := walkOpenedSuiteTree(ctx, root, profile, func(rel string, parent *os.Root, name string, info os.FileInfo) error {
 		// The copy preserves type and permissions, not sticky/setid bits.
 		stagedMode := info.Mode().Type() | info.Mode().Perm()
 		w.text("path", filepath.ToSlash(rel)).text("mode", stagedMode.String())
@@ -244,7 +251,7 @@ func openStableSuiteFile(parent *os.Root, name string, before os.FileInfo) (*os.
 	return file, nil
 }
 
-func copyOpenedSuiteTree(ctx context.Context, root *os.Root, dest string, remainingBytes *int64, remainingEntries *int) error {
+func copyOpenedSuiteTree(ctx context.Context, root *os.Root, dest string, remainingBytes *int64, remainingEntries *int, profile bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -255,7 +262,7 @@ func copyOpenedSuiteTree(ctx context.Context, root *os.Root, dest string, remain
 		path string
 		mode os.FileMode
 	}
-	err := walkOpenedSuiteTree(ctx, root, func(rel string, parent *os.Root, name string, info os.FileInfo) error {
+	err := walkOpenedSuiteTree(ctx, root, profile, func(rel string, parent *os.Root, name string, info os.FileInfo) error {
 		if *remainingEntries == 0 {
 			return fmt.Errorf("suite exceeds the %d-entry staging limit", stageMaxEntries)
 		}

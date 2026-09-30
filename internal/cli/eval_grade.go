@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/eval"
@@ -60,6 +61,7 @@ type gradeRequest struct {
 	Workspace string // host path of the writable grading snapshot
 	Verifier  string // host path of the verifier directory (hidden material)
 	CaseID    string
+	Runtime   *eval.CaseRuntime
 }
 
 // boxRunner launches one box and reports its exit code; nil in production, injected by tests (the
@@ -70,6 +72,18 @@ type boxRunner func(box.RunSpec) (int, error)
 // trial status. It never returns an error: every failure mode is a TrialResult, because a run must
 // record why a trial has no verdict rather than abort the whole sweep.
 func (a *app) gradeSnapshot(ctx context.Context, req gradeRequest, run boxRunner) eval.TrialResult {
+	if profile := req.Runtime; profile != nil {
+		phaseCtx, cancel := context.WithTimeout(ctx, time.Duration(profile.VerifierTimeout))
+		defer cancel()
+		ctx = phaseCtx
+		if err := profile.VerifyProfile(ctx); err != nil {
+			return fail(ctx, "runtime profile cannot authorize grading: "+err.Error())
+		}
+		if profile.ImageID == "" {
+			return fail(ctx, "runtime profile image was not resolved before the run")
+		}
+		req.Image = profile.ImageID
+	}
 	command, err := verifierCommand(req.Verifier)
 	if err != nil {
 		return eval.TrialResult{Status: eval.TrialError, Detail: err.Error()}
@@ -90,6 +104,9 @@ func (a *app) gradeSnapshot(ctx context.Context, req gradeRequest, run boxRunner
 		// mode explicit, which is what stops a project policy from deciding it a second time; and a
 		// clone, not `*a.cfg`, because Config's per-run maps are shared by a shallow copy.
 		offline := evalTrialConfig(a.cfg) // no operator MCP or ambient runtime mounts in grading
+		if req.Runtime != nil {
+			offline = evalProfileConfig(offline)
+		}
 		offline.SetEgress("none")
 		run = func(spec box.RunSpec) (int, error) { return box.Run(offline, a.rt, spec) }
 	}
@@ -121,7 +138,13 @@ func (a *app) gradeSnapshot(ctx context.Context, req gradeRequest, run boxRunner
 		Stderr:    &errOut,
 		ExtraArgs: []string{"-v", req.Verifier + ":" + gradeVerifierDir + ":ro"},
 	}
+	if req.Runtime != nil {
+		spec.Workdir, spec.ExpectedImageID = req.Runtime.Workdir, req.Runtime.ImageID
+	}
 	code, runErr := run(spec)
+	if ctx.Err() != nil {
+		return fail(ctx, "grading used its phase budget: "+ctx.Err().Error())
+	}
 	detail := gradeDetail(out.String(), errOut.String())
 	switch {
 	case runErr != nil:

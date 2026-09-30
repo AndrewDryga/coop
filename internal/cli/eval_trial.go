@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
@@ -41,8 +42,9 @@ type trialRunner struct {
 	workRoot string // per-run scratch root; each trial gets its own subdirectory
 	// presets maps a preset configuration's label to its staged copy, captured once per run so every
 	// trial materializes the same bytes.
-	presets map[string]string
-	runBox  boxRunner
+	presets  map[string]string
+	runBox   boxRunner
+	profiles evalProfileCaptures
 	// measureSize is injected by tests so the trial contract does not depend on an optional host
 	// binary. Production uses eval.MeasureSize and still reports an honest measurement gap.
 	measureSize func(context.Context, string, ...string) (eval.SizeMetrics, error)
@@ -109,7 +111,16 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 	if r.suite.IsLoop() {
 		attempt = r.runLoopTrial
 	}
-	att, err := attempt(ctx, t, workspace)
+	attemptCtx := ctx
+	if profile := t.Case.Runtime; profile != nil {
+		var cancel context.CancelFunc
+		attemptCtx, cancel = context.WithTimeout(ctx, time.Duration(profile.AgentTimeout))
+		defer cancel()
+	}
+	att, err := attempt(attemptCtx, t, workspace)
+	if attemptCtx.Err() != nil {
+		return fail(attemptCtx, "the attempt used its phase budget: "+attemptCtx.Err().Error())
+	}
 	if err != nil {
 		return fail(ctx, joinDetail("the attempt could not run: "+err.Error(), att.detail))
 	}
@@ -156,7 +167,7 @@ func (r *trialRunner) run(ctx context.Context, t eval.Trial) eval.TrialResult {
 
 	// 7. Grade the snapshot in the sandbox.
 	res := r.app.gradeSnapshot(ctx, gradeRequest{
-		Image: r.image, Workspace: snap.Dir, Verifier: filepath.Join(r.suite.Dir, t.Case.Verifier), CaseID: t.Case.ID,
+		Image: r.image, Workspace: snap.Dir, Verifier: filepath.Join(r.suite.Dir, t.Case.Verifier), CaseID: t.Case.ID, Runtime: t.Case.Runtime,
 	}, r.runBox)
 
 	if beforeErr == nil && afterErr == nil {
@@ -243,6 +254,20 @@ func (r *trialRunner) attempt(ctx context.Context, t eval.Trial, workspace strin
 		Cache:  false,
 		Stdout: stdout,
 		Stderr: errOut,
+	}
+	if profile := t.Case.Runtime; profile != nil {
+		if err := profile.VerifyProfile(ctx); err != nil {
+			return attemptOutcome{}, err
+		}
+		capture := r.profiles[evalProfileKey{profile.Profile, t.Config.Label}]
+		if capture == nil || profile.ImageID == "" {
+			return attemptOutcome{}, fmt.Errorf("runtime profile was not resolved before the run")
+		}
+		cfg = evalProfileConfig(cfg)
+		cfg.SetEgress("filtered")
+		spec.Image, spec.ExpectedImageID = profile.ImageID, profile.ImageID
+		spec.PolicyRepo, spec.Workdir, spec.CapturedEgress = profile.Profile, profile.Workdir, capture
+		spec.AgentCommand = true
 	}
 	run := r.runBox
 	if run == nil {

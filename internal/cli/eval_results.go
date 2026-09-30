@@ -69,6 +69,7 @@ func (a *app) evalInspect(args []string) (int, error) {
 	for _, c := range run.Configs {
 		printEvalText("  - ", c.Description())
 	}
+	renderEvalRuntimes("", run.Runtimes)
 	fmt.Printf("Started: %s\n", run.CreatedAt.Local().Format("2006-01-02 15:04 MST"))
 	printEvalText("Result: ", evalResultLine(*sum))
 	printEvalText("Change size: ", evalChangeSizeLine(evalSizeSummary(trials), sum.Counts[eval.TrialPassed]+sum.Counts[eval.TrialFailed]))
@@ -122,6 +123,13 @@ func (a *app) evalInspect(args []string) (int, error) {
 	fmt.Printf("\nRecords: %s\n", evalDisplayText(filepath.Join(root, id)))
 	fmt.Println("  Trial diagnostics: trials/*.json; retained work, when available: work/")
 	return 0, nil
+}
+
+func renderEvalRuntimes(indent string, runtimes []eval.RunRuntime) {
+	for _, r := range runtimes {
+		printEvalText(indent+"Runtime: ", fmt.Sprintf("%s — %s, %s, %s, %s; %d CPU / %d GiB / %d PIDs", r.Case, r.Protocol, r.ImageID, r.Platform, r.Workdir, r.CPUs, r.MemoryBytes>>30, r.PIDs))
+		printEvalText(indent+"  Coop-adapted: ", fmt.Sprintf("declared storage %d GiB; storage limit unenforced and usage unmeasured", r.DeclaredStorageBytes>>30))
+	}
 }
 
 func evalSizeSummary(trials []eval.TrialRecord) eval.SizeSummary {

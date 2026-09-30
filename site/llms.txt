@@ -1015,6 +1015,15 @@ BEFORE A REAL RUN
   More configurations or repetitions mean more paid work. Each case also has its
   own timeout in suite.yaml; raising the total budget does not raise that limit.
 
+CUSTOM RUNTIME PROFILES
+  Agent cases may name a clean external profile, /app workdir, agent_timeout and
+  verifier_timeout in suite.yaml. Explicitly build the profile on the host with
+  coop build --egress filtered first. No automatic eval build or loop profiles.
+  Fixed limits: 1 CPU, 2 GiB memory, 128 PIDs; provider-only filtered candidate
+  networking and offline grading. Declared 10 GiB storage is unenforced and
+  unmeasured: this is a Coop-adapted workload, not official benchmark parity.
+  Dry-run image/platform identity is provisional. See README for profile setup.
+
 EXAMPLES
   coop eval run core codex --timeout 35m --dry-run
   coop eval run core codex:gpt-5.6 codex:gpt-5.6/xhigh --timeout 70m

@@ -67,6 +67,15 @@ func WorkloadFingerprint(s *Suite) Fingerprint {
 		w.text("case.files", c.Files)
 		w.text("case.fixture", c.Fixture)
 		w.text("case.tasks", c.Tasks)
+		if r := c.Runtime; r != nil {
+			w.text("runtime.protocol", ProfileProtocol)
+			w.text("runtime.profile", string(r.ProfileDigest))
+			w.text("runtime.workdir", r.Workdir)
+			w.text("runtime.agent_timeout", r.AgentTimeout.String())
+			w.text("runtime.verifier_timeout", r.VerifierTimeout.String())
+			w.text("runtime.image", r.ImageID)
+			w.text("runtime.platform", r.Platform)
+		}
 	}
 	return w.sum()
 }

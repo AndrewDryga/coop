@@ -2,8 +2,8 @@
 name: eval-trial-isolation
 description: What isolates one coop eval trial from the next and from the grader — and why the obvious credential fix would break authentication
 subsystem: eval
-sources: [internal/cli/eval_cmd.go, internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_loop.go, internal/cli/eval_results.go, internal/loop/loop.go, internal/eval/compare.go, internal/eval/execute.go, internal/eval/fixtures.go, internal/eval/stage.go, internal/eval/stage_copy.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/eval/store.go, internal/eval/catalog.go, internal/eval/private_root.go, internal/runtime/runtime.go, internal/box/run.go, internal/box/mounts.go, internal/box/authority_mounts.go, internal/agent/codex.go, examples/evals/maintenance/suite.yaml, examples/evals/maintenance/qualification.sh, examples/evals/maintenance/runtime-qualification.sh]
-updated: 2026-09-30
+sources: [internal/cli/eval_cmd.go, internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_runtime_profile.go, internal/cli/eval_loop.go, internal/cli/eval_results.go, internal/loop/loop.go, internal/eval/compare.go, internal/eval/execute.go, internal/eval/fixtures.go, internal/eval/stage.go, internal/eval/stage_copy.go, internal/eval/runtime_profile.go, internal/eval/stage_profile.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/eval/store.go, internal/eval/catalog.go, internal/eval/private_root.go, internal/runtime/runtime.go, internal/box/run.go, internal/box/mounts.go, internal/box/authority_mounts.go, internal/agent/codex.go, examples/evals/maintenance/suite.yaml, examples/evals/maintenance/qualification.sh, examples/evals/maintenance/runtime-qualification.sh]
+updated: 2026-10-01
 ---
 
 `coop eval` measures configurations against each other, so its whole value rests on two trials
@@ -47,6 +47,15 @@ the map, and the reasoning behind the one place the obvious fix is wrong.
   selection would leak into the next and concurrent workers would race.
 - **Image** — the trial selects the operator's `COOP_IMAGE` or the resolved shared base, not a
   project image from the checkout in which `coop eval` was invoked (`internal/cli/eval_cmd.go`).
+- **Explicit agent profiles** — optional four-field runtimes freeze clean external build inputs,
+  original canonical inode authority, immutable approved image/platform and phase budgets before
+  records. The fixed protocol uses `/app`, 1 CPU, 2 GiB and 128 PIDs; declared 10 GiB storage stays
+  unenforced/unmeasured and is disclosed in previews, inspection and comparisons. Original profile
+  content/identity is checked before both phases; retained copies never authorize builds. Candidates
+  use only selected-provider core filtered grants and the original `PolicyRepo`; grading uses the
+  same immutable image but empty policy and offline execution. Phase deadlines inherit the command
+  deadline. Ordinary suites retain their defaults (`internal/cli/eval_runtime_profile.go`,
+  `internal/eval/stage_profile.go`, `internal/cli/eval_trial.go`, `internal/cli/eval_grade.go`).
 - **MCP** — a trial runs with `MCPFile` cleared. Operator MCP servers are a route out of the trial and
   differ per machine, so a run using them would not be reproducible.
 - **Ambient runtime args** — candidate and grader config clones clear `ExtraRunArgs`, and loop
@@ -151,6 +160,9 @@ already fully correct. The shipped verifier runs each subcommand on inputs no ta
 also why it cannot be satisfied by a loop that moves folders without finishing anything.
 
 ## Changelog
+- 2026-10-01 — mapped external-profile retention/approval/image binding and fixed adapted protocol.
+  Six credential-free reference/empty/mutant controls pass through the actual trial runner; this
+  proves orchestration and grader discrimination, not provider-mediated retrieval or full admission.
 - 2026-09-30 — mapped manifest-backed comparison coverage, pairing refusal and fixed-suite repeat
   uncertainty; incomplete records and multiple configurations cannot produce a matched score.
 - 2026-09-30 — mapped the three maintenance loop examples and their independent offline controls;

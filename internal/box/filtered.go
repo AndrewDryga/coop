@@ -274,7 +274,6 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 			return f, errors.New("the images this host was set up with disappeared while the box was starting — run it again")
 		}
 	}
-	f.image = candidate.ClientImage
 	f.builtTags = []string{clientImageTag(candidate.ClientDefinition), gatewayImageTag(candidate.GatewaySource)}
 	// A project that ships its own box Dockerfile runs its own image, built on
 	// the locked client image and proven derived from it with its clients intact
@@ -290,16 +289,8 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	if mode, err := executionMode(spec); err == nil && mode.Restricted() {
 		restricted = true
 	}
-	if smoke == nil && !restricted {
-		derived, derivedTag, err := filteredProjectImage(ctx, rt, cfg, f.docker, f.store, spec, candidate)
-		if err != nil {
-			return f, err
-		}
-		if derived != "" {
-			f.image = derived
-			// The box runs it by ID, so its TAG is what a later build of this project weighs.
-			f.builtTags = append(f.builtTags, derivedTag)
-		}
+	if err := f.selectImage(ctx, rt, cfg, spec, candidate, smoke == nil && !restricted); err != nil {
+		return f, err
 	}
 	f.publish, servePorts, f.serveEnv = filteredPublish(cfg, spec, hostPortFree)
 	if len(approvedServices) != 0 {
@@ -374,6 +365,27 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	}
 	f.runfiles, err = f.store.RunFilesPath(f.record.ID)
 	return f, err
+}
+
+func (f *filteredExecution) selectImage(ctx context.Context, rt runtime.Runtime, cfg *config.Config, spec RunSpec, candidate networkstate.CandidateSpec, projectImage bool) error {
+	f.image = candidate.ClientImage
+	if projectImage {
+		derived, tag, err := filteredProjectImage(ctx, rt, cfg, f.docker, f.store, spec, candidate)
+		if err != nil {
+			return err
+		}
+		if derived != "" {
+			f.image = derived
+			// The box runs it by ID, so its TAG is what a later build of this project weighs.
+			f.builtTags = append(f.builtTags, tag)
+		}
+	}
+	// An explicitly approved rebuild is valid project authority, but not the workload
+	// a caller froze before recording its run. Compare only after the normal image proof.
+	if spec.ExpectedImageID != "" && f.image != spec.ExpectedImageID {
+		return errors.New("the workload image no longer matches the image selected for this run")
+	}
+	return nil
 }
 
 func filteredWritableRoots(cfg *config.Config, spec RunSpec) []string {

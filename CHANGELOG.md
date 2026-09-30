@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Add trusted runtime profiles for agent evals.** Custom cases can bind clean external
+  build inputs to an explicitly approved immutable image, `/app`, fixed CPU/memory/PID caps
+  and separate candidate/verifier budgets. Original profile identity and content remain
+  authoritative; retained copies cannot approve builds. Candidate networking stays provider-only
+  filtered and grading stays offline. Reports disclose the declared but unenforced/unmeasured
+  storage limit; this adaptation is not official benchmark parity or provider qualification.
+
 - **Deliver ACP cancellation before teardown.** A prompt interrupted just after delivery still
   receives a bounded cancellation attempt. Successful cancellation gets a short EOF-drain window
   before forced termination, retaining larger restricted/filtered cleanup allowances.

@@ -1090,6 +1090,39 @@ the same before and after your change, then compare the recorded results.
 Each target or preset after the suite is a separate configuration, not a fallback. For example,
 `coop eval run core codex:gpt-5.6 codex:gpt-5.6/xhigh --timeout 70m --dry-run` previews both.
 
+### Trusted runtime profiles for custom agent cases
+
+An agent case can use an explicitly built, dedicated tool image instead of the shared image:
+
+```yaml
+runtime:
+  profile: /absolute/path/to/clean-profile
+  workdir: /app
+  agent_timeout: 15m
+  verifier_timeout: 15m
+```
+
+Put these four fields under the case and give its `timeout` enough time for both phases and
+preparation. Profiles are not supported by loop suites. The profile must live outside the suite
+and Coop's eval state, with no Git metadata, symlinks or special files. Its project Dockerfile
+defaults to `.agent/Dockerfile` and must inherit Coop's client image. Review its inputs, then
+explicitly run `coop build --egress filtered` from that profile directory before the eval.
+Build networking is ordinary host networking, not the candidate's filtered network.
+Profiles cannot add project environment, services, published ports or extra network grants.
+
+The fixed `coop-adapted-offline-profile-v1` protocol uses `/app`, 1 CPU, 2 GiB memory and 128 PIDs.
+Candidates get only their provider's core filtered networking; graders use the same immutable
+image with no network or credentials. Storage is declared as 10 GiB, but its quota is unenforced
+and usage is unmeasured. This is a disclosed adaptation, not official benchmark parity; exclude
+cases that depend on disk quota or exhaustion. Provider-mediated answer retrieval still needs
+separate qualification.
+
+Coop retains profile bytes privately and records their digest, measured image/platform and phase
+budgets before work. The retained copy never grants build approval: the original profile must
+remain unchanged and available for both phases. Rebuilding a different image after preparation
+also fails the candidate launch. Profile bytes share the suite's 2 GiB / 200,000-entry staging
+limit. A dry run does not resolve the image, so its workload fingerprint is provisional.
+
 ### Understand a result
 
 `coop eval inspect` reads the latest run; add its ID to inspect an older one. It shows recorded

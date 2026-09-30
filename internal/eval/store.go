@@ -48,17 +48,41 @@ const (
 // identity of everything a comparison must be able to tell apart. It is never rewritten after start
 // (the summary seals the outcome); the per-trial records carry what happened.
 type RunRecord struct {
-	Schema    int         `json:"schema"`
-	ID        string      `json:"id"`
-	CreatedAt time.Time   `json:"created_at"`
-	Suite     string      `json:"suite"`
-	Runner    Runner      `json:"runner"`
-	Workload  string      `json:"workload_fingerprint"`
-	Repeat    int         `json:"repeat"`
-	Jobs      int         `json:"jobs"`
-	TimeoutMS int64       `json:"timeout_ms"`
-	Cases     []string    `json:"cases"`
-	Configs   []RunConfig `json:"configs"`
+	Schema    int          `json:"schema"`
+	ID        string       `json:"id"`
+	CreatedAt time.Time    `json:"created_at"`
+	Suite     string       `json:"suite"`
+	Runner    Runner       `json:"runner"`
+	Workload  string       `json:"workload_fingerprint"`
+	Repeat    int          `json:"repeat"`
+	Jobs      int          `json:"jobs"`
+	TimeoutMS int64        `json:"timeout_ms"`
+	Cases     []string     `json:"cases"`
+	Configs   []RunConfig  `json:"configs"`
+	Runtimes  []RunRuntime `json:"runtimes,omitempty"`
+}
+
+// RunRuntime records the host-owned profile and the measured execution identity before work.
+// Paths locate retained evidence and original authority; only semantic fields enter the workload.
+type RunRuntime struct {
+	Case                 string `json:"case"`
+	Protocol             string `json:"protocol"`
+	Profile              string `json:"profile"`
+	RetainedProfile      string `json:"retained_profile"`
+	ProfileDigest        string `json:"profile_digest"`
+	ImageID              string `json:"image_id"`
+	Platform             string `json:"platform"`
+	Workdir              string `json:"workdir"`
+	AgentTimeoutMS       int64  `json:"agent_timeout_ms"`
+	VerifierTimeoutMS    int64  `json:"verifier_timeout_ms"`
+	CPUs                 int    `json:"cpus"`
+	MemoryBytes          int64  `json:"memory_bytes"`
+	PIDs                 int    `json:"pids"`
+	DeclaredStorageBytes int64  `json:"declared_storage_bytes"`
+	StorageEnforced      bool   `json:"storage_enforced"`
+	StorageMeasured      bool   `json:"storage_measured"`
+	CandidateNetwork     string `json:"candidate_network"`
+	VerifierNetwork      string `json:"verifier_network"`
 }
 
 // RunConfig is one evaluated configuration as recorded on the run: its label, fingerprint and build.
@@ -343,6 +367,15 @@ func NewRunRecord(plan *Plan, frozen []FrozenConfig, now time.Time) RunRecord {
 	}
 	for _, c := range plan.Suite.Cases {
 		rec.Cases = append(rec.Cases, c.ID)
+		if r := c.Runtime; r != nil {
+			rec.Runtimes = append(rec.Runtimes, RunRuntime{
+				Case: c.ID, Protocol: ProfileProtocol, Profile: r.Profile, RetainedProfile: r.RetainedProfile,
+				ProfileDigest: string(r.ProfileDigest), ImageID: r.ImageID, Platform: r.Platform, Workdir: r.Workdir,
+				AgentTimeoutMS: time.Duration(r.AgentTimeout).Milliseconds(), VerifierTimeoutMS: time.Duration(r.VerifierTimeout).Milliseconds(),
+				CPUs: 1, MemoryBytes: 2 << 30, PIDs: 128, DeclaredStorageBytes: 10 << 30,
+				CandidateNetwork: "provider-only-filtered", VerifierNetwork: "none",
+			})
+		}
 	}
 	for _, f := range frozen {
 		rec.Configs = append(rec.Configs, RunConfig{

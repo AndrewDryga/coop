@@ -72,6 +72,9 @@ func executionMode(spec RunSpec) (agents.ExecutionMode, error) {
 // checkRestrictedSpec refuses everything a restricted run does not enforce. Each refusal names
 // the field, because a caller that set one expected an effect the profile would silently drop.
 func checkRestrictedSpec(cfg *config.Config, rt runtime.Runtime, spec RunSpec, mode agents.ExecutionMode) error {
+	if spec.ExpectedImageID != "" {
+		return fmt.Errorf("a %s run does not support an expected image ID", mode)
+	}
 	if !rt.SupportsRestrictedFilesystem() {
 		return fmt.Errorf("a %s run is qualified on docker only; %s is not", mode, filepath.Base(rt.Name))
 	}

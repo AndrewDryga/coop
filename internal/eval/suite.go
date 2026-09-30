@@ -70,8 +70,9 @@ type Case struct {
 	Verifier string `yaml:"verifier"`
 
 	// Agent-case fields.
-	Instruction string `yaml:"instruction"` // the task text the model is given
-	Files       string `yaml:"files"`       // an initial file tree the workspace starts from (optional)
+	Instruction string       `yaml:"instruction"` // the task text the model is given
+	Files       string       `yaml:"files"`       // an initial file tree the workspace starts from (optional)
+	Runtime     *CaseRuntime `yaml:"runtime,omitempty"`
 
 	// Loop-case fields.
 	Fixture string `yaml:"fixture"` // the initial repository tree the scenario starts from
@@ -200,6 +201,11 @@ func (s *Suite) validateCase(c *Case) error {
 	}
 	if err := s.relPath("case "+c.ID+" verifier", c.Verifier); err != nil {
 		return err
+	}
+	if c.Runtime != nil {
+		if err := c.Runtime.validate(s, c); err != nil {
+			return fmt.Errorf("case %q runtime: %w", c.ID, err)
+		}
 	}
 	// A case belongs to exactly its suite's runner; a field from the other kind is refused rather
 	// than ignored, so a mis-authored case never runs a workload the author did not describe.

@@ -175,6 +175,9 @@ func StageSuite(ctx context.Context, root string, source *Suite) (_ *Suite, err 
 			}
 		}
 	}
+	if err := stageRuntimeProfiles(ctx, root, source, &staged, &remaining, &remainingEntries); err != nil {
+		return nil, err
+	}
 	staged.ContentDigest = content.sum()
 	if err := staged.validate(); err != nil {
 		return nil, fmt.Errorf("frozen suite: %w", err)
@@ -224,14 +227,18 @@ func RemoveStagedSuite(dir string) error {
 }
 
 func stageOpenedTree(ctx context.Context, source *os.Root, dest string, remainingBytes *int64, remainingEntries *int) (Fingerprint, error) {
-	before, err := openedTreeDigest(ctx, source)
+	return stageOpenedTreeWithPolicy(ctx, source, dest, remainingBytes, remainingEntries, false)
+}
+
+func stageOpenedTreeWithPolicy(ctx context.Context, source *os.Root, dest string, remainingBytes *int64, remainingEntries *int, profile bool) (Fingerprint, error) {
+	before, err := openedTreeDigestWithPolicy(ctx, source, profile)
 	if err != nil {
 		return "", err
 	}
-	if err := copyOpenedSuiteTree(ctx, source, dest, remainingBytes, remainingEntries); err != nil {
+	if err := copyOpenedSuiteTree(ctx, source, dest, remainingBytes, remainingEntries, profile); err != nil {
 		return "", err
 	}
-	after, err := openedTreeDigest(ctx, source)
+	after, err := openedTreeDigestWithPolicy(ctx, source, profile)
 	if err != nil {
 		return "", err
 	}
@@ -239,7 +246,7 @@ func stageOpenedTree(ctx context.Context, source *os.Root, dest string, remainin
 	if err != nil {
 		return "", err
 	}
-	copied, err := openedTreeDigest(ctx, staged)
+	copied, err := openedTreeDigestWithPolicy(ctx, staged, profile)
 	_ = staged.Close()
 	if err != nil {
 		return "", err
