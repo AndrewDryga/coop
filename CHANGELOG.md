@@ -1,18 +1,16 @@
 # Changelog
 
-## Unreleased
+## 10.0.1
 
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+This is the next public release after v8.1.0 and includes the unpublished v9 series below.
+The v10.0.0 tag failed release qualification; no binaries were published for it.
+Public upgraders should follow both the v10 and v9 sections of [MIGRATING.md](MIGRATING.md),
+including MCP/native-settings preparation before their first launch.
+For the complete public-upgrade diff, [compare v8.1.0 with v10.0.1](https://github.com/AndrewDryga/coop/compare/v8.1.0...v10.0.1).
 
 - **Stop admitting worker commands after shutdown.** Cancellation racing a successful controller
   poll no longer starts another source/body download or recreates an acknowledged command receipt.
   Successful response acknowledgements and in-flight cleanup retain their existing behavior.
-
-## 10.0.0
-
-This is the next public release after v8.1.0 and includes the unpublished v9 series below.
-Public upgraders should follow both the v10 and v9 sections of [MIGRATING.md](MIGRATING.md),
-including MCP/native-settings preparation before their first launch.
 
 - **Breaking: upgrade configuration and controller contracts together.** `coop.conf` rejects
   unknown, duplicate and retired keys; move retired loop settings into `.agent/loop.yaml`.
@@ -128,6 +126,11 @@ Offline reference/baseline/mutant controls and runtime checks establish only the
 Stronger provider-qualification requirements do not imply a new paid campaign passed. Docker has
 blocking runtime CI; Apple's supported runtime is not equivalent CI coverage. Maintenance scenarios
 are comparison examples, not official benchmark scores. Repeats do not establish unseen-task performance.
+
+## 10.0.0
+
+Release qualification failed; this tag has no published binaries. Its changes are included
+in v10.0.1 above.
 
 ## 9.0.0
 
