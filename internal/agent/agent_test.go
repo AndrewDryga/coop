@@ -2284,9 +2284,14 @@ func TestCodexControllerJobConfigTurnsOffPluginSync(t *testing.T) {
 	if err != nil || len(job.Mounts) != 1 || job.Mounts[0].BoxPath != "/home/node/.codex/config.toml" {
 		t.Fatalf("controller job config = %+v, %v", job, err)
 	}
-	for _, off := range []string{"features.plugins = false", "features.remote_plugin = false", "features.apps = false"} {
-		if !strings.Contains(job.Mounts[0].Content, off) {
-			t.Errorf("controller job config lacks %q:\n%s", off, job.Mounts[0].Content)
+	var values map[string]any
+	if err := toml.Unmarshal([]byte(job.Mounts[0].Content), &values); err != nil {
+		t.Fatalf("controller job config is not TOML: %v", err)
+	}
+	features, _ := values["features"].(map[string]any)
+	for _, off := range []string{"plugins", "remote_plugin", "recommended_plugins", "apps", "tool_suggest"} {
+		if features[off] != false {
+			t.Errorf("controller job config did not disable %s:\n%s", off, job.Mounts[0].Content)
 		}
 	}
 	ordinary, err := a.MCP(cfg, "/workspace")

@@ -151,8 +151,9 @@ otel.trace_exporter = "none"
 // keys it owns. The host's own value for any of those keys is removed from the box copy — TOML
 // allows one definition — and never rewritten.
 type managedTOML struct {
-	block string
-	keys  []string
+	block            string
+	keys             []string
+	featureOverrides map[string]any
 }
 
 var codexManaged = managedTOML{block: CodexManagedDefaults, keys: []string{"analytics", "check_for_update_on_startup", "otel"}}
@@ -170,20 +171,17 @@ func GenerateCodex(mcpFile, existing string) (string, []string, error) {
 // and a session's first prompt listed whichever plugins had arrived by then, so no two of a
 // controller's sessions shared a prompt prefix the provider could cache: every routing call cached
 // Codex's own instructions and none of the caller's. A headless job has no use for them anyway.
-const codexControllerJobFeatures = `features.plugins = false
-features.remote_plugin = false
-features.recommended_plugins = false
-features.apps = false
-features.tool_suggest = false
-`
-
 var codexControllerJobManaged = managedTOML{
-	block: CodexManagedDefaults + codexControllerJobFeatures,
+	block: CodexManagedDefaults,
 	keys:  append(append([]string{}, codexManaged.keys...), "features"),
+	featureOverrides: map[string]any{
+		"plugins": false, "remote_plugin": false, "recommended_plugins": false,
+		"apps": false, "tool_suggest": false,
+	},
 }
 
 // GenerateCodexControllerJob is GenerateCodex for a controller job's box: the same config with
-// the plugin features off. The host's own [features] give way, as TOML allows one definition.
+// the plugin features off. Unrelated host features keep their values in the box copy.
 func GenerateCodexControllerJob(mcpFile, existing string) (string, []string, error) {
 	return generateTOML(mcpFile, existing, codexControllerJobManaged, codexHeaders)
 }
@@ -220,7 +218,7 @@ func generateTOML(mcpFile, existing string, managed managedTOML, dialect headerD
 			return "", nil, err
 		}
 	}
-	native, err := keepNative(existing, mcpFile != "", managed.keys)
+	native, removed, err := keepNative(existing, mcpFile != "", managed.keys)
 	if err != nil {
 		return "", nil, err
 	}
@@ -230,6 +228,21 @@ func generateTOML(mcpFile, existing string, managed managedTOML, dialect headerD
 	if native != "" {
 		separateTOMLBlock(&b)
 		b.WriteString(native)
+	}
+	if managed.featureOverrides != nil {
+		features, _ := removed["features"].(map[string]any)
+		if features == nil {
+			features = map[string]any{}
+		}
+		for key, value := range managed.featureOverrides {
+			features[key] = value
+		}
+		featureBlock, err := toml.Marshal(map[string]any{"features": features})
+		if err != nil {
+			return "", nil, fmt.Errorf("encode controller features: %w", err)
+		}
+		separateTOMLBlock(&b)
+		b.Write(featureBlock)
 	}
 	for _, name := range sortedKeys(servers) {
 		server := servers[name]
@@ -536,25 +549,27 @@ func envReference(value string) (string, referenceShape) {
 // proven by re-parsing: exactly those keys are gone and nothing else changed. A spelling the
 // textual strip cannot remove (a quoted or dotted table name, an array table) fails closed instead
 // of surviving beside the generated authority. Only an initially absent path is an empty config.
-func keepNative(path string, stripMCP bool, managedKeys []string) (string, error) {
+func keepNative(path string, stripMCP bool, managedKeys []string) (string, map[string]any, error) {
 	if path == "" {
-		return "", nil
+		return "", nil, nil
 	}
 	data, err := readNativeConfig(path)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if data == nil {
-		return "", nil
+		return "", nil, nil
 	}
 	original, err := parseTOML(path, data)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	var managed []string
+	removed := map[string]any{}
 	for _, key := range managedKeys {
-		if _, present := original[key]; present {
+		if value, present := original[key]; present {
 			managed = append(managed, key)
+			removed[key] = value
 			delete(original, key)
 		}
 	}
@@ -564,7 +579,7 @@ func keepNative(path string, stripMCP bool, managedKeys []string) (string, error
 		delete(original, "mcp_servers")
 	}
 	if len(managed) == 0 && !stripMCP {
-		return string(data), nil
+		return string(data), removed, nil
 	}
 	kept := data
 	if stripMCP {
@@ -576,25 +591,25 @@ func keepNative(path string, stripMCP bool, managedKeys []string) (string, error
 	remaining, err := parseTOML(path, kept)
 	if err != nil {
 		if stripMCP {
-			return "", unsupportedNativeMCP(path)
+			return "", nil, unsupportedNativeMCP(path)
 		}
-		return "", unsupportedManagedKey(path, strings.Join(managed, ", "))
+		return "", nil, unsupportedManagedKey(path, strings.Join(managed, ", "))
 	}
 	if _, stillPresent := remaining["mcp_servers"]; stripMCP && stillPresent {
-		return "", unsupportedNativeMCP(path)
+		return "", nil, unsupportedNativeMCP(path)
 	}
 	for _, key := range managed {
 		if _, stillPresent := remaining[key]; stillPresent {
-			return "", unsupportedManagedKey(path, key)
+			return "", nil, unsupportedManagedKey(path, key)
 		}
 	}
 	if !tomlSemanticEqual(original, remaining) {
 		if stripMCP {
-			return "", unsupportedNativeMCP(path)
+			return "", nil, unsupportedNativeMCP(path)
 		}
-		return "", unsupportedManagedKey(path, strings.Join(managed, ", "))
+		return "", nil, unsupportedManagedKey(path, strings.Join(managed, ", "))
 	}
-	return string(kept), nil
+	return string(kept), removed, nil
 }
 
 func readNativeConfig(path string) ([]byte, error) {

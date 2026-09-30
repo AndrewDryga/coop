@@ -1184,7 +1184,7 @@ func TestTaskToolsBindingCannotBeShadowedAndNeedsASocket(t *testing.T) {
 // prefix: every routing call cached Codex's own 12,160 tokens and none of the caller's
 // (Ryker, 2026-09-29, two sessions a minute apart listing different plugin roots).
 func TestGenerateCodexControllerJobTurnsOffWhatCodexSyncsAtStart(t *testing.T) {
-	existingBody := "model = \"o3\"\n\n[features]\nplugins = true\nweb_search = true\n\n[projects.\"/repo\"]\ntrust_level = \"trusted\"\n"
+	existingBody := "model = \"o3\"\n\n[features]\nplugins = true\nweb_search = true\nmulti_agent = false\n\n[projects.\"/repo\"]\ntrust_level = \"trusted\"\n"
 	existing := writeTmp(t, "config.toml", existingBody)
 	got, _, err := GenerateCodexControllerJob("", existing)
 	if err != nil {
@@ -1201,6 +1201,9 @@ func TestGenerateCodexControllerJobTurnsOffWhatCodexSyncsAtStart(t *testing.T) {
 			t.Errorf("features.%s = %v, want false:\n%s", feature, features[feature], got)
 		}
 	}
+	if features["web_search"] != true || features["multi_agent"] != false {
+		t.Errorf("unrelated feature settings were lost: %+v\n%s", features, got)
+	}
 	for _, kept := range []string{"model = \"o3\"\n", "[projects.\"/repo\"]\ntrust_level = \"trusted\"\n"} {
 		if !strings.Contains(got, kept) {
 			t.Errorf("unrelated setting %q lost:\n%s", kept, got)
@@ -1212,7 +1215,22 @@ func TestGenerateCodexControllerJobTurnsOffWhatCodexSyncsAtStart(t *testing.T) {
 
 	// An ordinary box keeps the host's own features.
 	ordinary, _, err := GenerateCodex("", existing)
-	if err != nil || !strings.Contains(ordinary, "[features]\nplugins = true\nweb_search = true\n") {
+	if err != nil || !strings.Contains(ordinary, "[features]\nplugins = true\nweb_search = true\nmulti_agent = false\n") {
 		t.Fatalf("an ordinary box lost the host's features = (%q, %v)", ordinary, err)
+	}
+
+	noHostFeatures, _, err := GenerateCodexControllerJob("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var withoutHost map[string]any
+	if err := toml.Unmarshal([]byte(noHostFeatures), &withoutHost); err != nil {
+		t.Fatalf("controller defaults without host features are not TOML: %v\n%s", err, noHostFeatures)
+	}
+	defaultFeatures, _ := withoutHost["features"].(map[string]any)
+	for _, feature := range []string{"plugins", "remote_plugin", "recommended_plugins", "apps", "tool_suggest"} {
+		if defaultFeatures[feature] != false {
+			t.Errorf("default features.%s = %v, want false", feature, defaultFeatures[feature])
+		}
 	}
 }
