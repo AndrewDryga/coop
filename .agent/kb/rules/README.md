@@ -148,6 +148,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [agents-are-one-file](agents-are-one-file.md) — a coding agent is one self-registering file in `internal/agent`, never a switch elsewhere
 - [internal-import-dag](internal-import-dag.md) — a new internal import edge is an architecture decision — the allowlist test and this card move in the same commit
 - [transport-bounds-do-not-abort-valid-work](transport-bounds-do-not-abort-valid-work.md) — bound retained state and single payloads, never the cumulative volume of valid work
+- [controller-can-read-job-output](controller-can-read-job-output.md) — controllers can read complete job check output automatically; bounded responses never leave only a tail
 - [repository-refresh-bounds-stalls-not-catch-up](repository-refresh-bounds-stalls-not-catch-up.md) — bound a stalled repository refresh without treating a normal catch-up fetch like one remote lookup
 - [structured-output-is-runtime-enforced](structured-output-is-runtime-enforced.md) — a structured-output schema is durable execution control, validated before completion, never prompt-only advice
 - [design-for-shared-checkout-not-forks](design-for-shared-checkout-not-forks.md) — outside agents and `coop loop` share one checkout; forks are optional, never the assumed context of a design
