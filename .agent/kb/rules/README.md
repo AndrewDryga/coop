@@ -154,6 +154,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [hermetic-git-tests](hermetic-git-tests.md) — a test that runs git pins `GIT_CONFIG_GLOBAL` *and* `GIT_CONFIG_SYSTEM`; identity envs alone still let the host's config in
 
 **Agent workflow** — how an agent works here, not what it ships
+- [eval-spend-gates-follow-account-billing](eval-spend-gates-follow-account-billing.md) — eval spending gates follow selected account billing; included subscription allowance needs no new spending prerequisite
 - [full-product-audits-use-every-feature](full-product-audits-use-every-feature.md) — a full audit manually exercises each advertised supported feature on claimed platforms and labels unrun paths honestly
 - [audit-findings-need-practical-impact](audit-findings-need-practical-impact.md) — audit realistic agent access and practical impact; avoid speculative machinery and unproven product-defect claims
 - [batch-delegated-editorial-decisions](batch-delegated-editorial-decisions.md) — finish delegated editorial work in coherent batches; ask only about material choices
