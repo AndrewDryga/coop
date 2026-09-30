@@ -2604,8 +2604,8 @@ type sessionACPProcess struct {
 	stderr                 *sessionACPStderr
 	exited                 atomic.Bool
 	// stopGrace is how long this child may take to stop itself. Zero is the
-	// ordinary child, which owns nothing outside its box and is expected to be
-	// gone in milliseconds. A filtered child owns a gateway only it can seal and
+	// ordinary child, unless a queued cancellation needs a short EOF drain.
+	// A filtered child owns a gateway only it can seal and
 	// remove, so it gets a bounded chance to do that before it is killed.
 	stopGrace time.Duration
 }
@@ -2963,22 +2963,25 @@ func (r *sessionTurnRunner) runACP(
 		}
 		return envelope.ID, string(envelope.Result), nil
 	}
+	cancelSession := func(sessionID string) {
+		cancelCtx, cancel := context.WithTimeout(context.Background(), sessionACPTermGrace)
+		defer cancel()
+		if err := writeSessionACPJSON(cancelCtx, process.stdin, map[string]any{
+			"jsonrpc": "2.0",
+			"method":  "session/cancel",
+			"params":  map[string]any{"sessionId": sessionID},
+		}); err == nil {
+			// A successful pipe write is not a child acknowledgement. Let shutdown
+			// close stdin and drain before signalling, retaining any larger allowance.
+			process.stopGrace = max(process.stopGrace, sessionACPTermGrace)
+		}
+	}
 	waitResponse := func(id json.RawMessage, expectedSession string, cancelPrompt bool) (json.RawMessage, error) {
 		for {
 			select {
 			case <-ctx.Done():
 				if cancelPrompt && expectedSession != "" {
-					cancelCtx, cancel := context.WithTimeout(context.Background(), sessionACPTermGrace)
-					writeErr := writeSessionACPJSON(cancelCtx, process.stdin, map[string]any{
-						"jsonrpc": "2.0",
-						"method":  "session/cancel",
-						"params":  map[string]any{"sessionId": expectedSession},
-					})
-					cancel()
-					if writeErr == nil {
-						timer := time.NewTimer(10 * time.Millisecond)
-						<-timer.C
-					}
+					cancelSession(expectedSession)
 				}
 				return nil, classifyContextFailure(ctx.Err())
 			case frame := <-frames:
@@ -3144,6 +3147,10 @@ func (r *sessionTurnRunner) runACP(
 	prompt := map[string]any{"sessionId": nativeID, "prompt": content}
 	id := next()
 	if err := writeRequest(id, "session/prompt", prompt); err != nil {
+		if ctx.Err() != nil {
+			// Cancellation can win after delivery but before Write reports success.
+			cancelSession(nativeID)
+		}
 		return "", nil, session.Usage{}, err
 	}
 	if checkpointSend {

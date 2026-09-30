@@ -69,6 +69,12 @@ the capture (`TestSessionServiceLogsSanitizedOperationFailureWithCorrelationID`)
 alone would still permit an empty-log assertion. Keep correlation and redaction assertions intact.
 
 ## Changelog
+- 2026-09-30 — ACP hang cancellation now arms on a logged prompt, not the log's
+  creation before initialization. Controlled interrupted-write and delayed-reader
+  regressions both failed old production: delivered prompts missed cancellation,
+  and a fixed 10 ms shutdown sleep lost queued notifications. The runner now sends
+  bounded cancellation on both paths and reuses bounded EOF drain before signalling;
+  larger restricted/filtered grace is preserved. Fixture goroutines are joined.
 - 2026-09-30 — profiled 379 serial `internal/sessionsvc` tests: 516.818 s alone, with the
   slowest test at 23.44 s and the 14 tests over five seconds totaling 157.2 s. Three other
   green plain runs took 507–523 s; one loaded gate hit Go's default 600 s package timeout

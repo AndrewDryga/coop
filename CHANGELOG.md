@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Deliver ACP cancellation before teardown.** A prompt interrupted just after delivery still
+  receives a bounded cancellation attempt. Successful cancellation gets a short EOF-drain window
+  before forced termination, retaining larger restricted/filtered cleanup allowances.
+
 ## 10.0.1
 
 This is the next public release after v8.1.0 and includes the unpublished v9 series below.

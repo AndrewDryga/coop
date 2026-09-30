@@ -2060,12 +2060,13 @@ func TestSessionTurnRunnerPermissionAndUnknownRequests(t *testing.T) {
 }
 
 func TestSessionTurnRunnerBoundsFramesStderrAndCancellation(t *testing.T) {
-	for _, scenario := range []string{"malformed", "oversized", "hang"} {
+	for _, scenario := range []string{"malformed", "oversized", "hang", "hang-delayed-read"} {
 		t.Run(scenario, func(t *testing.T) {
+			hangs := strings.HasPrefix(scenario, "hang")
 			fixture := newSessionACPFixture(t, scenario)
 			turn := fixture.submit(t, "bounded prompt")
 			ctx := contextWithTurnDeadline(t)
-			if scenario == "hang" {
+			if hangs {
 				ctx = hangTimeout(t, fixture.childLog, 100*time.Millisecond)
 			}
 			if _, err := fixture.runner.Run(ctx, fixture.session, turn); err == nil {
@@ -2079,7 +2080,7 @@ func TestSessionTurnRunnerBoundsFramesStderrAndCancellation(t *testing.T) {
 				t.Fatalf("turn state = %s, want failed", got.State)
 			}
 			wantCode := sessionACPProtocolError
-			if scenario == "hang" {
+			if hangs {
 				wantCode = sessionACPTimeoutError
 			}
 			if got.ErrorCode != wantCode {
@@ -2091,13 +2092,88 @@ func TestSessionTurnRunnerBoundsFramesStderrAndCancellation(t *testing.T) {
 			if got := readFile(t, fixture.runtimeLog); !strings.Contains(got, "coop.run") {
 				t.Fatalf("cleanup label missing after %s: %q", scenario, got)
 			}
-			if scenario == "hang" {
+			if hangs {
 				if got := readFile(t, fixture.childLog); !strings.Contains(got, `"method":"session/cancel"`) {
 					t.Fatalf("ACP cancellation notification missing: %q", got)
 				}
 			}
 		})
 	}
+}
+
+func TestSessionACPInterruptedPromptWriteCancelsDeliveredPrompt(t *testing.T) {
+	for _, grace := range []time.Duration{0, sessionACPFilteredStopGrace} {
+		t.Run(grace.String(), func(t *testing.T) {
+			fixture := newSessionACPFixture(t, "normal")
+			turn := fixture.submit(t, "interrupted prompt")
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			writer := &sessionACPCancelDuringPromptWriter{
+				cancel: cancel, release: make(chan struct{}), promptDone: make(chan struct{}),
+				cancelFrame: make(chan []byte, 1),
+			}
+			t.Cleanup(func() {
+				if err := writer.Close(); err != nil {
+					t.Error(err)
+				}
+			})
+			process := &sessionACPProcess{
+				stdin: writer, frames: make(chan sessionACPFrame), initialized: true,
+				nativeSessionID: "native-1", restricted: true, stopGrace: grace,
+			}
+			_, _, _, err := fixture.runner.runACP(ctx, process, fixture.session, turn, turn.Prompt, false)
+			if err == nil || ctx.Err() == nil {
+				t.Fatalf("interrupted prompt = %v, context = %v", err, ctx.Err())
+			}
+			select {
+			case frame := <-writer.cancelFrame:
+				if !bytes.Contains(frame, []byte(`"sessionId":"native-1"`)) {
+					t.Fatalf("cancellation names wrong session: %s", frame)
+				}
+			default:
+				t.Fatal("delivered prompt was not cancelled after interrupted write")
+			}
+			if process.stopGrace != max(grace, sessionACPTermGrace) {
+				t.Fatalf("cancel drain grace = %s, original = %s", process.stopGrace, grace)
+			}
+		})
+	}
+}
+
+// Accept the prompt bytes, but force cancellation to win before its Write result.
+// A concurrent cancel write remains possible, just as with a pipe after delivery.
+type sessionACPCancelDuringPromptWriter struct {
+	cancel        context.CancelFunc
+	release       chan struct{}
+	promptDone    chan struct{}
+	cancelFrame   chan []byte
+	promptStarted atomic.Bool
+}
+
+func (w *sessionACPCancelDuringPromptWriter) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte(`"method":"session/prompt"`)) {
+		w.promptStarted.Store(true)
+		w.cancel()
+		<-w.release
+		defer close(w.promptDone)
+	} else if bytes.Contains(p, []byte(`"method":"session/cancel"`)) {
+		w.cancelFrame <- append([]byte(nil), p...)
+	}
+	return len(p), nil
+}
+
+func (w *sessionACPCancelDuringPromptWriter) Close() error {
+	close(w.release)
+	if w.promptStarted.Load() {
+		timer := time.NewTimer(wait.Deadline)
+		defer timer.Stop()
+		select {
+		case <-w.promptDone:
+		case <-timer.C:
+			return errors.New("interrupted prompt writer did not stop")
+		}
+	}
+	return nil
 }
 
 func TestSessionTurnRunnerBoundsStderrWithoutLosingResponse(t *testing.T) {
@@ -3213,25 +3289,41 @@ func (f *sessionACPFixture) submitRequest(t *testing.T, req session.SubmitTurnRe
 }
 
 // hangTimeout bounds a HANG, not the child's start-up: the context expires — as a deadline, the
-// timeout path under test — hang after the child has written its first frame to childLog, however
-// long spawning it took. A fixed 100 ms from before the spawn proved too short under gate load:
-// the turn timed out before the child existed, and the cancellation the test looks for in the
-// child's log had nowhere to go. The child's start is a fixture guard (bounded by the same 60 s
-// as testutil/wait); only the hang is a timing bound.
+// timeout path under test — hang after the child has received the prompt, however long spawning
+// and initializing it took. Log creation precedes initialize/session/new and is not readiness.
+// Prompt readiness is a fixture guard; only the hang is a timing bound.
 func hangTimeout(t *testing.T, childLog string, hang time.Duration) context.Context {
 	t.Helper()
 	base, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+	done := make(chan struct{})
+	t.Cleanup(func() { cancel(); <-done })
 	go func() {
-		guard := time.Now().Add(60 * time.Second)
-		for time.Now().Before(guard) {
-			if _, err := os.Stat(childLog); err == nil {
-				break
+		defer close(done)
+		guard := time.NewTimer(wait.Deadline)
+		defer guard.Stop()
+		poll := time.NewTicker(wait.Poll)
+		defer poll.Stop()
+		for {
+			data, err := os.ReadFile(childLog)
+			if err == nil && bytes.Contains(data, []byte(`"method":"session/prompt"`)) {
+				timer := time.NewTimer(hang)
+				defer timer.Stop()
+				select {
+				case <-timer.C:
+					cancel()
+				case <-base.Done():
+				}
+				return
 			}
-			time.Sleep(10 * time.Millisecond)
+			select {
+			case <-base.Done():
+				return
+			case <-guard.C:
+				cancel()
+				return
+			case <-poll.C:
+			}
 		}
-		time.Sleep(hang)
-		cancel()
 	}()
 	return deadlineOnCancel{Context: base, deadline: time.Now().Add(time.Hour)}
 }
@@ -3682,6 +3774,11 @@ func TestSessionACPChildHelper(t *testing.T) {
 				_, _ = os.Stderr.WriteString(strings.Repeat("e", 1<<20))
 				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{"stopReason": "end_turn"}})
 			case "hang":
+				continue
+			case "hang-delayed-read":
+				// Deliberately consume cancellation after the old 10 ms shutdown delay,
+				// but within the bounded graceful drain. This is the behavior under test.
+				time.Sleep(200 * time.Millisecond)
 				continue
 			case "requests":
 				promptID = append(promptID[:0], frame.ID...)
