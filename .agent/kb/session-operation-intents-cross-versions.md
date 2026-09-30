@@ -29,7 +29,9 @@ for explicit recovery; it must not leave a Running operation that can never succ
 
 Historical policy-only create intents cannot execute after the cutover. Existing sessions and
 evidence are preserved, but replay never turns an old policy name into a new controller grant.
-Recovered reviews likewise prove the bound session's job before any gate can run.
+Version-1 job documents also lack the v2 check, environment and resource authority: new creates,
+replayed creates, turns and recovered reviews refuse them rather than reconstructing setup from
+the current repository or worker config. Recovered reviews prove the bound v2 job before any gate can run.
 Retired pre-binding sessions may still carry active-turn runtime receipts. Startup excludes both
 current quarantine and retired quarantine from ordinary turn reaping/reconciliation, which requires
 workspace authority; a separate exact-run-label/private-ACP pass proves runtime capacity without
@@ -41,6 +43,8 @@ Startup and the watchdog reconcile other stale operations rather than guessing e
 a stranded reserved row can fail as interrupted admission because no effect was attempted.
 
 ## Changelog
+- 2026-09-30 — rechecked replay against strict v2 JobSpec decoding; v1 has no complete
+  work/review authority and remains inspectable history only.
 - 2026-09-30 — checked retired pre-binding active turns at restart and documented their separate
   runtime-only proof; ordinary workspace-dependent replay remains denied.
 - 2026-09-29 — rechecked existing-workspace adoption against generation anchors and reservation

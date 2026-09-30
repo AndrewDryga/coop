@@ -336,7 +336,7 @@ workspace path.
 | --- | --- | --- |
 | `GET` | `/healthz` | `{"healthy":true}` |
 | `GET` | `/readyz` | `{"ready":true}` after controller startup |
-| `GET` | `/v1/capabilities` | `{"controller_tools_versions":[1],"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1]}` for caller-side protocol negotiation |
+| `GET` | `/v1/capabilities` | `{"job_spec_versions":[2],"controller_tools_versions":[1],"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1]}` for caller-side protocol negotiation |
 | `GET` | `/v1/capacity` | current shared active/warm runtime slots; the connector forwards this measurement in each heartbeat |
 | `GET` | `/v1/storage` | this daemon's own workspace-storage accounting: `storage` (the object a fleet controller reads), `budget`, `totals`, `roots`, `forks` and `problems` |
 
@@ -373,7 +373,7 @@ closes at `storage.high_watermark_bytes` of USED space and reopens only under
 `storage.reserve_bytes` is the free-space floor underneath both, and new work never spends it.
 None of this bounds what an already-running task writes inside its own workspace.
 
-The outbound connector reports `repository-freshness:2`, `session-evidence:1` and
+The outbound connector reports `job-setup:2`, `repository-freshness:2`, `session-evidence:1` and
 `controller-tools:1` only after its local daemon proves the corresponding versions through
 `GET /v1/capabilities`. Missing proof removes that capability from the next heartbeat.
 The controller can distinguish an unsupported evidence export from a session that observed nothing.
@@ -383,7 +383,7 @@ or repository catalogs. Exact code and execution settings belong to each immutab
 ### Sessions
 
 The controller creates `create-session.json` with `task` (an opaque external reference),
-`job` (a version-1 JobSpec), and its canonical SHA-256 `expected_job_digest`.
+`job` (a version-2 JobSpec), and its canonical SHA-256 `expected_job_digest`.
 Optional `controller_tools` binds the controller's authenticated tool endpoint.
 See the shared [protocol fixture](../testdata/protocol/coop-worker-v2.json) and
 [JobSpec definition](../internal/workerproto/job.go) for exact fields and validation.
@@ -397,10 +397,43 @@ curl --unix-socket "$SOCKET" \
   http://localhost/v1/sessions
 ```
 
-The job selects model targets, execution mode, project environment/MCP exposure, network
-rules and queue/turn limits. Coop freezes it before creating a workspace; a changed retry is
-refused. Job settings cannot exceed worker hard limits. Task text is not execution authority.
+The job selects model targets, execution mode, network rules, queue/turn limits and the complete
+work/review setup. In addition to the existing required fields, version 2 requires:
+
+```json
+{
+  "environment": {"CI": "1"},
+  "check": {"argv": ["make", "test"], "environment": {"DATABASE_URL": "postgres://test-db/app"}},
+  "resources": {"cpu_millis": 2000, "memory_bytes": 4294967296, "pids": 512}
+}
+```
+
+These fields must be present even when the environment maps and check argv are empty. The work
+environment reaches only sandbox processes; review receives it plus `check.environment`, whose
+values win for duplicate keys. Env names are ordinary shell identifiers; `COOP_*`, provider
+credential, model and adapter-owned variables are reserved. Values must be UTF-8 without line
+breaks or leading/trailing whitespace, so env-file processing cannot change an accepted value.
+Values are plain job settings, not a way to transfer model or
+GitHub credentials. The check is literal argv, not a shell string: use an explicit shell command
+if shell syntax is needed. Empty `check.argv` and an empty check environment explicitly mean no
+check; that review is not publishable. CPU is in thousandths of one core, memory in bytes, and
+`pids` is the per-container process cap. Every job needs finite positive caps. Coop refuses a job
+that exceeds the worker's configured CPU, memory or PID ceiling or whose runtime cannot enforce
+these limits; it never silently clamps a requested value.
+The accepted range is 10–128000 `cpu_millis`, 6 MiB–1 TiB `memory_bytes`, and 1–65536 `pids`.
+
+Coop freezes the canonical document before creating a workspace; a changed retry is refused.
+Task text and repository settings are not execution authority. Ryker may read repository defaults,
+but must resolve and include every chosen value before submission. The worker's normal and review
+containers use the same frozen setup, with the review-only environment added for the latter.
 There is no local policy name, policy catalog, separate source selector or worker JSON file.
+
+For rollout, Ryker should send version-2 jobs only to workers advertising `job-setup:2`; an old
+daemon may remain behind a new connector, so the advertisement requires live daemon proof. Ryker
+must update its JobSpec encoder and digest vector (`internal/workerproto/job_test.go`), resolve
+project defaults into the job, and stop relying on worker `COOP_GATE` or repository `gate:` for
+remote reviews. No v1 job gains invented setup: historical sessions and evidence stay readable,
+but their turns, reviews and interrupted creates cannot execute until resubmitted as v2 jobs.
 
 #### Frozen repository source
 
@@ -793,10 +826,13 @@ against current parent `HEAD`, runs the worker-owned gate on that candidate, and
 - a bounded inline patch preview from parent tree to candidate tree;
 - `patch_truncated`, `candidate_retained`, `publishable`, and stable not-publishable reason codes.
 
-An explicit worker `COOP_GATE` wins; otherwise the trusted parent repository's `gate:` is used.
-Candidate changes cannot replace the checker. The gate runs in an isolated controller-job box
+The saved job's `check.argv` is the only remote review command. Worker `COOP_GATE`, the parent's
+`gate:` and candidate changes cannot replace it; those first two still apply to ordinary local
+fork merges. The gate runs in an isolated controller-job box
 with the session's saved network mode (and exact saved filtered-network authority), not the
 repository's `box:` settings or the worker's ambient runtime arguments, env file, or MCP config.
+It receives the saved work environment plus check-only overrides and the same per-container
+CPU, memory and PID limits as model work.
 Like the job's turns, it uses the worker-configured image (or the locked filtered client image),
 never an image built from the job repository's Dockerfile.
 It may create ignored build output in its disposable checkout; changing the reviewed source makes

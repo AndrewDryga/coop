@@ -101,6 +101,18 @@ func (c *Config) SetEgress(mode string) {
 	c.explicit["COOP_EGRESS"] = true
 }
 
+// SetRuntimeLimits fixes one admitted launch's caps without changing the operator config.
+// Marking them explicit also carries them through a supervised ACP child.
+func (c *Config) SetRuntimeLimits(cpus, memory, pids string) {
+	if c.explicit == nil {
+		c.explicit = map[string]bool{}
+	}
+	c.CPUs, c.Memory, c.Pids = cpus, memory, pids
+	for _, key := range []string{"COOP_CPUS", "COOP_MEMORY", "COOP_PIDS"} {
+		c.explicit[key] = true
+	}
+}
+
 // Cmd resolves a command setting (COOP_<NAME>_CMD) the same way Load resolves every
 // other: environment variable, then conf file, then the built-in default — then splits
 // it into words. It lets an agent adapter own its own default command without config

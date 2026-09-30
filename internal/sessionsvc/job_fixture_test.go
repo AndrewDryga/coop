@@ -103,11 +103,13 @@ func openSessionFixture(t *testing.T, cfg Config, repository string) (*sessionFi
 		return nil, err
 	}
 	job := workerproto.JobSpec{
-		Version: 1, JobRef: "test:job", Companions: []workerproto.JobCompanion{},
+		Version: 2, JobRef: "test:job", Companions: []workerproto.JobCompanion{},
 		Targets: []string{"codex@work"}, Mode: "normal",
 		Egress: workerproto.JobEgress{Mode: "open", Rules: []workerproto.JobRule{}},
 		Limits: workerproto.JobLimits{MaxTurns: 10, MaxQueuedTurns: 5,
 			MaxQueuedBytes: 1 << 20, MaxPatchBytes: 1 << 20, TurnTimeoutMS: 1000},
+		Environment: map[string]string{}, Check: workerproto.JobCheck{Argv: []string{}, Environment: map[string]string{}},
+		Resources: workerproto.JobResources{CPUMillis: 1000, MemoryBytes: 1 << 30, PIDs: 256},
 	}
 	if repository == "" {
 		job.Mode = "bare"

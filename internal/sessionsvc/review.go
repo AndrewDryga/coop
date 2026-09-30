@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
+	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
 const (
@@ -96,6 +98,9 @@ type ReviewGateRequest struct {
 	Repository, Candidate, StateRoot, OperationID         string
 	SessionID, JobDigest                                  string
 	NetworkMode, NetworkFingerprint, NetworkQualification string
+	Command                                               []string
+	Environment                                           map[string]string
+	Resources                                             workerproto.JobResources
 	Output                                                io.Writer
 }
 
@@ -614,11 +619,16 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 	}
 	var gateResult ReviewGateResult
 	if s.reviewGate != nil {
+		gateEnvironment := maps.Clone(policy.Environment)
+		for key, value := range policy.Check.Environment {
+			gateEnvironment[key] = value
+		}
 		gateLog, openErr := s.openReviewGateOutput(op.ID)
 		gateResult, err = s.reviewGate.Run(ctx, ReviewGateRequest{
 			Repository: intent.Repository, Candidate: candidate.dir, StateRoot: s.stateRoot, OperationID: op.ID,
 			SessionID: bound.ID, JobDigest: bound.JobDigest, NetworkMode: string(policy.Egress.Mode),
 			NetworkFingerprint: bound.NetworkFingerprint, NetworkQualification: bound.NetworkQualification,
+			Command: append([]string(nil), policy.Check.Argv...), Environment: gateEnvironment, Resources: policy.Resources,
 			Output: gateLog,
 		})
 		output := gateLog.finish(gateResult, openErr)

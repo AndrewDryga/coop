@@ -2,8 +2,8 @@
 name: session-source-selection
 description: controller jobs freeze exact source bindings; the worker verifies private staging and refreshes the default separately without changing the admitted checkout
 subsystem: sessions
-sources: [internal/workerproto/job.go, internal/box/image.go, internal/box/network_session.go, internal/workerconnector/job_sources.go, internal/forkspace/lfs.go, internal/forkctl/merge.go, internal/sessionsvc/job.go, internal/sessionsvc/job_tree.go, internal/sessionsvc/empty_source.go, internal/sessionsvc/source.go, internal/sessionsvc/service.go, internal/sessionsvc/review.go, internal/sessionsvc/workspace.go, internal/box/authority_mounts.go, internal/session/records.go]
-updated: 2026-09-29
+sources: [internal/workerproto/job.go, internal/box/image.go, internal/box/network_session.go, internal/workerconnector/job_sources.go, internal/forkspace/lfs.go, internal/forkctl/merge.go, internal/sessionsvc/job.go, internal/sessionsvc/job_resources.go, internal/sessionsvc/acp.go, internal/sessionsvc/job_tree.go, internal/sessionsvc/empty_source.go, internal/sessionsvc/source.go, internal/sessionsvc/service.go, internal/sessionsvc/review.go, internal/sessionsvc/workspace.go, internal/box/authority_mounts.go, internal/session/records.go]
+updated: 2026-09-30
 ---
 
 A create carries one canonical controller job and its digest, not a local policy name or a
@@ -48,11 +48,14 @@ roots and another session's files are never sandbox mounts. A host alias above t
 The box image never comes from the job repository: an open or offline job runs the worker's
 base, a filtered one Coop's locked client image ([[box-base-image-tags]]).
 
-Review revalidates the persisted job and carries its saved network mode and capture reference to
-the host-owned gate. An explicit operator `COOP_GATE` is selected before parsing the repository's
-project file; without one, the trusted parent supplies the gate. The candidate cannot choose its
-own checker. The gate runs as a controller job with no project box settings or ambient runtime
-arguments, homes, env file or MCP. Filtered review reopens the exact owner-keyed job snapshot and
+Review revalidates the persisted v2 job and carries its saved network mode, capture reference,
+check argv, plain environment and resource caps to the host-owned gate. Neither `COOP_GATE` nor
+the parent's project file chooses a remote job's checker; both remain relevant only to local fork
+merges. The candidate cannot choose its own checker. The gate runs as a controller job with no
+project box settings or ambient runtime arguments, homes, env file or MCP. The work environment
+is privately projected into model boxes, not the trusted ACP process; review merges it with
+check-only overrides. Resource caps are compared with operator ceilings and explicitly forwarded
+across the child boundary. Filtered review reopens the exact owner-keyed job snapshot and
 qualification rather than capturing fresh rules. Only the disposable checkout for this review
 operation is mounted from private session state; the source mirror, other candidates, and parent
 state remain fenced. Ordinary local fork gates retain their separate project policy.
@@ -69,6 +72,8 @@ fetch the selected commit. Neither a branch advance nor an idempotent create ret
 code. The API exposes source metadata through explicit DTO projection, never JobDocument.
 
 ## Changelog
+- 2026-09-30 — rechecked source, ACP projection, review and worker limits for v2 complete job
+  setup. Removed the stale remote `COOP_GATE` claim; local fork merges keep their own gate policy.
 - 2026-09-29 — reverified review against saved job execution and network authority. The prior
   gate discarded that authority and used ordinary project admission; the dedicated review path
   now reopens the saved capture and exact-allows only its operation-specific scratch checkout.

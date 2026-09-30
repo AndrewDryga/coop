@@ -24,6 +24,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
+	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
 // A missing <name> (without --all) is a usage error (exit 2), reported before the dirty-tree /
@@ -1408,7 +1409,8 @@ func TestJobReviewGateRunsInTheJobImage(t *testing.T) {
 	}
 	cfg := &config.Config{Gate: []string{"true"}, BaseImage: "worker-box"}
 	c := New(cfg, runtime.Runtime{Name: shim}, Host{})
-	request := sessionsvc.ReviewGateRequest{Repository: repo, Candidate: t.TempDir(), NetworkMode: "none"}
+	request := sessionsvc.ReviewGateRequest{Repository: repo, Candidate: t.TempDir(), NetworkMode: "none",
+		Command: []string{"true"}, Resources: workerproto.JobResources{CPUMillis: 1000, MemoryBytes: 1 << 30, PIDs: 256}}
 	if run, err := c.ReviewControllerJob(context.Background(), request); !run.Configured || err == nil || !strings.Contains(err.Error(), "review base") {
 		t.Fatalf("job review = configured %v, error %v; want past image selection", run.Configured, err)
 	}
@@ -1424,9 +1426,14 @@ func TestJobReviewGateRunsInTheJobImage(t *testing.T) {
 func TestControllerJobReviewIgnoresProjectAndAmbientLaunchSettings(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	t.Setenv("COOP_GATE", "true")
+	t.Setenv("COOP_GATE", "false")
 	t.Setenv("COOP_EGRESS", "open")
 	t.Setenv("COOP_RUN_ARGS", "-e LEAK_FROM_DAEMON=1")
+	t.Setenv("TZ", "Europe/Kyiv")
+	t.Setenv("CI", "ambient-wrong")
+	t.Setenv("DATABASE_URL", "ambient-wrong")
+	t.Setenv("SHARED", "ambient-wrong")
+	t.Setenv("SPECIAL_VALUE", "ambient-wrong")
 	repo := initRepo(t)
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1446,7 +1453,24 @@ func TestControllerJobReviewIgnoresProjectAndAmbientLaunchSettings(t *testing.T)
 	git(t, candidate, "update-ref", "refs/coop/session-parent", "HEAD")
 	runtimePath := filepath.Join(t.TempDir(), "docker")
 	argsPath := filepath.Join(t.TempDir(), "args")
-	if err := os.WriteFile(runtimePath, []byte("#!/bin/sh\ncase \"$1\" in\nrun) printf '%s\\n' \"$@\" > \"$COOP_TEST_ARGS\" ;;\nesac\nexit 0\n"), 0o755); err != nil {
+	shim := `#!/bin/sh
+case "$1" in
+run)
+  printf '%s\n' "$@" > "$COOP_TEST_ARGS"
+  previous=
+  last=
+  for arg do
+    if [ "$previous" = "-e" ]; then export "$arg"; fi
+    previous="$arg"
+    last="$arg"
+  done
+  sh -c "$last"
+  exit $?
+  ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(runtimePath, []byte(shim), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("COOP_TEST_ARGS", argsPath)
@@ -1467,6 +1491,10 @@ func TestControllerJobReviewIgnoresProjectAndAmbientLaunchSettings(t *testing.T)
 	fc := New(cfg, runtime.Runtime{Name: runtimePath}, Host{})
 	run, err := fc.ReviewControllerJob(context.Background(), sessionsvc.ReviewGateRequest{
 		Repository: repo, Candidate: candidate, StateRoot: state, OperationID: "review-one", NetworkMode: "none",
+		Command: []string{"sh", "-c", `test "$CI" = '1' && test "$DATABASE_URL" = 'postgres://test-db/app' && test "$SHARED" = 'review' && test "$SPECIAL_VALUE" = 'dollar$"=value'`},
+		Environment: map[string]string{
+			"CI": "1", "DATABASE_URL": "postgres://test-db/app", "JOB_SETTING": "yes", "SHARED": "review", "SPECIAL_VALUE": `dollar$"=value`, "TZ": "UTC"},
+		Resources: workerproto.JobResources{CPUMillis: 1500, MemoryBytes: 1 << 30, PIDs: 256},
 	})
 	if err != nil || !run.Configured || !run.Passed() {
 		t.Fatalf("controller job review = %+v error %v", run, err)
@@ -1477,7 +1505,14 @@ func TestControllerJobReviewIgnoresProjectAndAmbientLaunchSettings(t *testing.T)
 	}
 	if !strings.Contains(string(args), "--network\nnone\n") || !strings.Contains(string(args), box.LabelExecution+"=") ||
 		strings.Contains(string(args), "LEAK_FROM_DAEMON") || strings.Contains(string(args), "HOST_ENV_CANARY") ||
-		strings.Contains(string(args), "--env-file") || strings.Contains(string(args), "newer settings") {
+		strings.Contains(string(args), "--env-file") || strings.Contains(string(args), "newer settings") ||
+		!strings.Contains(string(args), "JOB_SETTING=yes") ||
+		!strings.Contains(string(args), "CI=1") ||
+		!strings.Contains(string(args), "DATABASE_URL=postgres://test-db/app") ||
+		!strings.Contains(string(args), "\nsh\n-c\n") || strings.Contains(string(args), "\nfalse\n") ||
+		strings.LastIndex(string(args), "TZ=UTC") <= strings.LastIndex(string(args), "TZ=Europe/Kyiv") ||
+		!strings.Contains(string(args), "--cpus\n1.500\n") ||
+		!strings.Contains(string(args), "--memory\n1073741824\n") || !strings.Contains(string(args), "--pids-limit\n256\n") {
 		t.Fatalf("job review inherited host/project settings:\n%s", args)
 	}
 }
@@ -1513,8 +1548,14 @@ func TestControllerJobReviewsKeepEachSavedNetworkMode(t *testing.T) {
 		candidate := filepath.Join(staging, id+"-123456")
 		git(t, repo, "clone", "-q", "--", repo, candidate)
 		git(t, candidate, "update-ref", "refs/coop/session-parent", "HEAD")
+		resources := workerproto.JobResources{CPUMillis: 1000, MemoryBytes: 1 << 30, PIDs: 128}
+		if mode == "none" {
+			resources = workerproto.JobResources{CPUMillis: 1500, MemoryBytes: 2 << 30, PIDs: 256}
+		}
 		return sessionsvc.ReviewGateRequest{Repository: repo, Candidate: candidate, StateRoot: state,
-			OperationID: id, NetworkMode: mode}
+			OperationID: id, NetworkMode: mode, Command: []string{"true"},
+			Environment: map[string]string{"JOB_ID": id},
+			Resources:   resources}
 	}
 	shim := filepath.Join(t.TempDir(), "docker")
 	if err := os.WriteFile(shim, []byte("#!/bin/sh\ncase \"$1\" in\nrun) printf '%s\\n' \"$@\" ;;\nesac\nexit 0\n"), 0o755); err != nil {
@@ -1536,6 +1577,13 @@ func TestControllerJobReviewsKeepEachSavedNetworkMode(t *testing.T) {
 		offline := strings.Contains(output.String(), "--network\nnone\n")
 		if offline != (req.NetworkMode == "none") || (req.NetworkMode == "open" && strings.Contains(output.String(), "--network\n")) {
 			return fmt.Errorf("%s review runtime args:\n%s", req.NetworkMode, &output)
+		}
+		if !strings.Contains(output.String(), "JOB_ID="+req.OperationID+"\n") ||
+			strings.Count(output.String(), "JOB_ID=") != 1 ||
+			!strings.Contains(output.String(), fmt.Sprintf("--cpus\n%.3f\n", float64(req.Resources.CPUMillis)/1000)) ||
+			!strings.Contains(output.String(), fmt.Sprintf("--memory\n%d\n", req.Resources.MemoryBytes)) ||
+			!strings.Contains(output.String(), fmt.Sprintf("--pids-limit\n%d\n", req.Resources.PIDs)) {
+			return fmt.Errorf("%s review leaked another job's setup:\n%s", req.OperationID, &output)
 		}
 		return nil
 	}
@@ -1604,10 +1652,11 @@ func TestControllerJobFilteredReviewUsesTheSavedSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.BaseImage = "worker-box"
-	fc := New(cfg, runtime.Runtime{Name: "must-not-execute"}, Host{})
+	fc := New(cfg, runtime.Runtime{Name: "docker"}, Host{})
 	request := sessionsvc.ReviewGateRequest{Repository: repo, Candidate: candidate, StateRoot: state,
 		OperationID: "filtered-review", NetworkMode: "filtered", SessionID: ref.SessionID,
-		JobDigest: ref.JobDigest, NetworkFingerprint: snapshot.Fingerprint, NetworkQualification: strings.Repeat("b", 64)}
+		JobDigest: ref.JobDigest, NetworkFingerprint: snapshot.Fingerprint, NetworkQualification: strings.Repeat("b", 64),
+		Command: []string{"true"}, Resources: workerproto.JobResources{CPUMillis: 1000, MemoryBytes: 1 << 30, PIDs: 256}}
 	if _, err := fc.ReviewControllerJob(context.Background(), request); err == nil || !strings.Contains(err.Error(), "no longer set up") {
 		t.Fatalf("matching job snapshot did not reach qualification: %v", err)
 	}
@@ -1647,7 +1696,8 @@ func TestControllerJobReviewPrintsIntoTheReviewAndReportsItsExit(t *testing.T) {
 	fc := New(cfg, runtime.Runtime{Name: runtimePath}, Host{})
 	run, err := fc.ReviewControllerJob(context.Background(), sessionsvc.ReviewGateRequest{
 		Repository: repo, Candidate: candidate, StateRoot: state, OperationID: "review-red", NetworkMode: "none",
-		Output: &output,
+		Output: &output, Command: []string{"./run", "gate"},
+		Resources: workerproto.JobResources{CPUMillis: 1000, MemoryBytes: 1 << 30, PIDs: 256},
 	})
 	if err != nil || !run.Configured || run.Passed() || run.ExitCode == nil || *run.ExitCode != 3 ||
 		strings.Join(run.Command, " ") != "./run gate" {

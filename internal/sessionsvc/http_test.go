@@ -106,12 +106,9 @@ func TestSessionHTTPUnixSocketOwnershipAndStalePaths(t *testing.T) {
 	}
 }
 
-// The capabilities document is the caller's negotiation surface AND the published half of the
-// network fence: the freshness and source-selector versions a client must match, plus each served
-// policy's resolved reach. The two implementation versions are independent, so a controller can
-// withhold selector-bound work from a daemon that proves only freshness. An open policy reports
-// its mode and no fingerprint — there is nothing captured to pin.
-func TestSessionHTTPCapabilitiesAdvertiseRepositoryFreshnessVersionsAndPolicyNetworks(t *testing.T) {
+// The daemon proves each supported contract version independently; an older daemon behind a new
+// connector must not inherit a newer connector's job authority claim.
+func TestSessionHTTPCapabilitiesAdvertiseSupportedVersions(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
 	response := sessionHTTPTestRequest(
@@ -125,8 +122,12 @@ func TestSessionHTTPCapabilitiesAdvertiseRepositoryFreshnessVersionsAndPolicyNet
 		t.Fatal(err)
 	}
 	versions, ok := document["repository_freshness_receipt_versions"].([]any)
-	if !ok || len(document) != 3 || len(versions) != 1 || versions[0] != float64(2) {
+	if !ok || len(document) != 4 || len(versions) != 1 || versions[0] != float64(2) {
 		t.Fatalf("capabilities = %#v", document)
+	}
+	jobs, ok := document["job_spec_versions"].([]any)
+	if !ok || len(jobs) != 1 || jobs[0] != float64(2) {
+		t.Fatalf("job spec versions = %#v", document["job_spec_versions"])
 	}
 	evidence, ok := document["session_evidence_versions"].([]any)
 	if !ok || len(evidence) != 1 || evidence[0] != float64(workerproto.SessionEvidenceVersion) {
@@ -136,7 +137,6 @@ func TestSessionHTTPCapabilitiesAdvertiseRepositoryFreshnessVersionsAndPolicyNet
 	if !ok || len(tools) != 1 || tools[0] != float64(1) {
 		t.Fatalf("controller tools versions = %#v", document["controller_tools_versions"])
 	}
-
 }
 
 // What a daemon advertises has to be what a create would accept RIGHT NOW. Approving a change on

@@ -294,11 +294,13 @@ func TestJobSourceGrantIsJobAndExactRepositoryBound(t *testing.T) {
 
 func TestCreateJobCommandForwardsOnlyTheFrozenJob(t *testing.T) {
 	job := workerproto.JobSpec{
-		Version: 1, JobRef: "job:one", Source: ptrJobSource(testJobSource()),
+		Version: 2, JobRef: "job:one", Source: ptrJobSource(testJobSource()),
 		Companions: []workerproto.JobCompanion{}, Targets: []string{"codex"}, Mode: "readonly",
 		RepositoryReadOnly: true, Egress: workerproto.JobEgress{Mode: "none", Rules: []workerproto.JobRule{}},
 		Limits: workerproto.JobLimits{MaxTurns: 1, MaxQueuedTurns: 1, MaxQueuedBytes: 4096,
 			TurnTimeoutMS: 60_000, MaxPatchBytes: 1024},
+		Environment: map[string]string{}, Check: workerproto.JobCheck{Argv: []string{}, Environment: map[string]string{}},
+		Resources: workerproto.JobResources{CPUMillis: 1000, MemoryBytes: 1 << 30, PIDs: 256},
 	}
 	document, err := json.Marshal(job)
 	if err != nil {
@@ -381,12 +383,14 @@ type recordingJobSourceStager struct {
 func TestEmptyPrimaryDoesNotSkipAuthorizedCompanionStaging(t *testing.T) {
 	source := testJobSource()
 	job := workerproto.JobSpec{
-		Version: 1, JobRef: "job:empty", Source: nil,
+		Version: 2, JobRef: "job:empty", Source: nil,
 		Companions: []workerproto.JobCompanion{{Name: "library", Source: source}},
 		Targets:    []string{"codex"}, Mode: "normal", RepositoryReadOnly: true,
 		Egress: workerproto.JobEgress{Mode: "none", Rules: []workerproto.JobRule{}},
 		Limits: workerproto.JobLimits{MaxTurns: 1, MaxQueuedTurns: 1, MaxQueuedBytes: 4096,
 			TurnTimeoutMS: 60_000, MaxPatchBytes: 1024},
+		Environment: map[string]string{}, Check: workerproto.JobCheck{Argv: []string{}, Environment: map[string]string{}},
+		Resources: workerproto.JobResources{CPUMillis: 1000, MemoryBytes: 1 << 30, PIDs: 256},
 	}
 	payload, err := json.Marshal(map[string]any{"job": job})
 	if err != nil {

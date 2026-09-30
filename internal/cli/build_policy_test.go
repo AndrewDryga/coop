@@ -18,6 +18,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
+	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
 func TestFilteredBuildInterruptReturnsThroughCleanup(t *testing.T) {
@@ -217,7 +218,8 @@ func TestSessionReviewGateUsesTheJobImage(t *testing.T) {
 	var result sessionsvc.ReviewGateResult
 	captureTerminal(t, func() {
 		result, err = defaultSessionReviewGate(cfg, runtime.Runtime{Name: shim}).Run(context.Background(), sessionsvc.ReviewGateRequest{
-			Repository: repo, Candidate: t.TempDir(), NetworkMode: "none",
+			Repository: repo, Candidate: t.TempDir(), NetworkMode: "none", Command: []string{"true"},
+			Resources: workerproto.JobResources{CPUMillis: 1000, MemoryBytes: 1 << 30, PIDs: 256},
 		})
 	})
 	if err != nil || !result.Configured || !strings.Contains(result.StartupError, "review base") {
@@ -250,6 +252,7 @@ func TestSessionReviewGateKeepsBaseRepairOutput(t *testing.T) {
 	var output bytes.Buffer
 	result, err := defaultSessionReviewGate(cfg, runtime.Runtime{Name: shim}).Run(context.Background(), sessionsvc.ReviewGateRequest{
 		Repository: t.TempDir(), Candidate: t.TempDir(), NetworkMode: "none", Output: &output,
+		Command: []string{"true"}, Resources: workerproto.JobResources{CPUMillis: 1000, MemoryBytes: 1 << 30, PIDs: 256},
 	})
 	if err != nil || !result.Configured || !strings.Contains(result.StartupError, "build exited with status 23") {
 		t.Fatalf("review base repair = %+v, %v", result, err)

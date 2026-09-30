@@ -18,20 +18,32 @@ import (
 )
 
 // JobSpec is controller-owned execution authority, not an instruction embedded in task text.
-// Version 1 of this document belongs to worker protocol v2. No source path, remote URL or
+// Version 2 of this document belongs to worker protocol v2. No source path, remote URL or
 // credential is accepted here; the trusted host fetches verified source with a separate grant.
 type JobSpec struct {
-	Version            int            `json:"version"`
-	JobRef             string         `json:"job_ref"`
-	Source             *JobSource     `json:"source"`
-	Companions         []JobCompanion `json:"companions"`
-	Targets            []string       `json:"targets"`
-	Mode               string         `json:"mode"`
-	ProjectEnv         bool           `json:"project_env"`
-	ProjectMCP         bool           `json:"project_mcp"`
-	RepositoryReadOnly bool           `json:"repository_read_only"`
-	Egress             JobEgress      `json:"egress"`
-	Limits             JobLimits      `json:"limits"`
+	Version            int               `json:"version"`
+	JobRef             string            `json:"job_ref"`
+	Source             *JobSource        `json:"source"`
+	Companions         []JobCompanion    `json:"companions"`
+	Targets            []string          `json:"targets"`
+	Mode               string            `json:"mode"`
+	RepositoryReadOnly bool              `json:"repository_read_only"`
+	Egress             JobEgress         `json:"egress"`
+	Limits             JobLimits         `json:"limits"`
+	Environment        map[string]string `json:"environment"`
+	Check              JobCheck          `json:"check"`
+	Resources          JobResources      `json:"resources"`
+}
+
+type JobCheck struct {
+	Argv        []string          `json:"argv"`
+	Environment map[string]string `json:"environment"`
+}
+
+type JobResources struct {
+	CPUMillis   int   `json:"cpu_millis"`
+	MemoryBytes int64 `json:"memory_bytes"`
+	PIDs        int   `json:"pids"`
 }
 
 type JobSource struct {
@@ -173,7 +185,7 @@ func requireJobFields(document []byte) error {
 		return value, nil
 	}
 	root, err := object(document, []string{"version", "job_ref", "companions", "targets", "mode",
-		"project_env", "project_mcp", "repository_read_only", "egress", "limits"}, "source")
+		"repository_read_only", "egress", "limits", "environment", "check", "resources"}, "source")
 	if err != nil {
 		return err
 	}
@@ -252,6 +264,26 @@ func requireJobFields(document []byte) error {
 	}
 	_, err = object(root["limits"], []string{"max_turns", "max_queued_turns", "max_queued_bytes",
 		"turn_timeout_ms", "warm_idle_timeout_ms", "max_patch_bytes"})
+	if err != nil {
+		return err
+	}
+	var environment map[string]string
+	if err := json.Unmarshal(root["environment"], &environment); err != nil || environment == nil {
+		return errors.New("job environment must be an object")
+	}
+	check, err := object(root["check"], []string{"argv", "environment"})
+	if err != nil {
+		return err
+	}
+	var argv []string
+	if err := json.Unmarshal(check["argv"], &argv); err != nil || argv == nil {
+		return errors.New("job check argv must be an array")
+	}
+	var checkEnvironment map[string]string
+	if err := json.Unmarshal(check["environment"], &checkEnvironment); err != nil || checkEnvironment == nil {
+		return errors.New("job check environment must be an object")
+	}
+	_, err = object(root["resources"], []string{"cpu_millis", "memory_bytes", "pids"})
 	return err
 }
 
@@ -306,14 +338,11 @@ func rejectDuplicateJobKeys(document []byte) error {
 }
 
 func (s JobSpec) Validate() error {
-	if s.Version != 1 || reference(s.JobRef, 256, "job ref") != nil {
+	if s.Version != 2 || reference(s.JobRef, 256, "job ref") != nil {
 		return errors.New("invalid job version or reference")
 	}
 	if !slices.Contains([]string{"normal", "readonly", "bare"}, s.Mode) {
 		return errors.New("invalid job mode")
-	}
-	if s.ProjectEnv || s.ProjectMCP {
-		return errors.New("job cannot project worker-local project environment or MCP settings")
 	}
 	if s.Companions == nil || s.Egress.Rules == nil || len(s.Targets) == 0 || len(s.Targets) > 4 {
 		return errors.New("job target ladder must contain 1..4 targets")
@@ -324,7 +353,7 @@ func (s JobSpec) Validate() error {
 		}
 	}
 	if s.Mode == "bare" {
-		if s.Source != nil || len(s.Companions) != 0 || s.ProjectEnv || s.ProjectMCP || s.RepositoryReadOnly {
+		if s.Source != nil || len(s.Companions) != 0 || s.RepositoryReadOnly {
 			return errors.New("bare job cannot carry repository or project authority")
 		}
 	}
@@ -352,10 +381,50 @@ func (s JobSpec) Validate() error {
 			return err
 		}
 	}
-	if !s.Egress.valid() || !s.Limits.valid() {
-		return errors.New("invalid job egress or limits")
+	if !s.Egress.valid() || !s.Limits.valid() || !s.Resources.Valid() ||
+		!validJobEnvironment(s.Environment) || !validJobEnvironment(s.Check.Environment) ||
+		!validJobCheck(s.Check) {
+		return errors.New("invalid job egress, limits, environment, check or resources")
 	}
 	return nil
+}
+
+func validJobEnvironment(values map[string]string) bool {
+	if values == nil || len(values) > 64 {
+		return false
+	}
+	for key, value := range values {
+		if key == "" || len(key) > 128 || strings.HasPrefix(key, "COOP_") ||
+			!(key[0] == '_' || key[0] >= 'A' && key[0] <= 'Z' || key[0] >= 'a' && key[0] <= 'z') ||
+			len(value) > 8192 || !utf8.ValidString(value) || strings.ContainsAny(value, "\x00\r\n") ||
+			strings.TrimSpace(value) != value {
+			return false
+		}
+		for _, char := range key[1:] {
+			if !(char == '_' || char >= 'A' && char <= 'Z' || char >= 'a' && char <= 'z' || char >= '0' && char <= '9') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func validJobCheck(check JobCheck) bool {
+	if check.Argv == nil || len(check.Argv) > 64 || len(check.Argv) == 0 && len(check.Environment) != 0 {
+		return false
+	}
+	for index, arg := range check.Argv {
+		if index == 0 && arg == "" || len(arg) > 8192 || !utf8.ValidString(arg) || strings.IndexByte(arg, 0) >= 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (r JobResources) Valid() bool {
+	return r.CPUMillis >= 10 && r.CPUMillis <= 128_000 &&
+		r.MemoryBytes >= 6<<20 && r.MemoryBytes <= 1<<40 &&
+		r.PIDs > 0 && r.PIDs <= 65_536
 }
 
 func (s JobSource) validate() error {

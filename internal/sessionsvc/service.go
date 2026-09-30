@@ -63,6 +63,9 @@ type executionConfig struct {
 	OmitMCP            bool
 	RepositoryReadOnly bool
 	Egress             executionNetwork
+	Environment        map[string]string
+	Check              workerproto.JobCheck
+	Resources          workerproto.JobResources
 	MaxTurns           int
 	MaxQueuedTurns     int
 	MaxQueuedBytes     int

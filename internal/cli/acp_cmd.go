@@ -396,9 +396,13 @@ func (a *app) acpBare(tool, model, profile, effort string) (int, error) {
 	// daemon ends a turn with has to arrive as a cancellation this run can clean up after.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+	controllerJob, err := box.ControllerJobFromEnvironment()
+	if err != nil {
+		return 1, err
+	}
 	return box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Cmd: acpCommand(a.cfg, tool), ForceNoTTY: true, Agent: tool, Homes: a.cfg.Homes,
-		Mode: agents.ModeBare, NetworkClient: egress.ClientACP, Quiet: true,
+		Mode: agents.ModeBare, NetworkClient: egress.ClientACP, Quiet: true, ControllerJob: controllerJob,
 		RunID: sessionsvc.RunIDFromEnv(), Ctx: ctx,
 	})
 }

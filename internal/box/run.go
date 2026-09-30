@@ -2986,7 +2986,13 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 	// scheduling a rate-limit wait ("try again at 4:28 PM"), so a UTC render would land
 	// the wait hours off. TERM above is per-mode; the zone applies to every box.
 	if tz := hostTimezone(); tz != "" {
-		args = append(args, "-e", "TZ="+tz)
+		jobTimezone := false
+		if spec.ControllerJob {
+			_, jobTimezone = EnvFileValues(envFile)["TZ"]
+		}
+		if !jobTimezone {
+			args = append(args, "-e", "TZ="+tz)
+		}
 	}
 	args = append(args, limits...) // resource/privilege caps (docker; nil elsewhere)
 	args = append(args, RenderMounts(mounts, decoy, decoyDir)...)

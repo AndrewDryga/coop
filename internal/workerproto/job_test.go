@@ -11,7 +11,7 @@ import (
 
 func validJobSpec() JobSpec {
 	return JobSpec{
-		Version: 1, JobRef: "job:one",
+		Version: 2, JobRef: "job:one",
 		Source: &JobSource{
 			RepositoryRef: "repo:one", GitHubRepository: "example/repository", GitHubRepositoryID: 17,
 			Binding: session.SourceBinding{
@@ -23,8 +23,11 @@ func validJobSpec() JobSpec {
 			}, Submodules: []JobSubmodule{},
 		},
 		Companions: []JobCompanion{}, Targets: []string{"codex:gpt-6-sol@default"},
-		Mode: "readonly", ProjectEnv: false, ProjectMCP: false, RepositoryReadOnly: true,
-		Egress: JobEgress{Mode: "none", Rules: []JobRule{}},
+		Mode: "readonly", RepositoryReadOnly: true,
+		Egress:      JobEgress{Mode: "none", Rules: []JobRule{}},
+		Environment: map[string]string{"CI": "1"},
+		Check:       JobCheck{Argv: []string{"make", "test"}, Environment: map[string]string{"DATABASE_URL": "postgres://test"}},
+		Resources:   JobResources{CPUMillis: 2000, MemoryBytes: 4 << 30, PIDs: 512},
 		Limits: JobLimits{
 			MaxTurns: 100, MaxQueuedTurns: 20, MaxQueuedBytes: 1 << 20,
 			TurnTimeoutMS: 3_600_000, MaxPatchBytes: 1 << 20,
@@ -85,7 +88,7 @@ func TestJobSpecRoundTripAndDigest(t *testing.T) {
 	if err != nil || first != second {
 		t.Fatalf("job digest changed with JSON field order: %s %s %v", first, second, err)
 	}
-	const rykerDigest = "97a91fd4ddff4be68c9965f6cec437e8fe504eaac45db818be0d9fb48782d915"
+	const rykerDigest = "e3413eaa0fde8dffc7adb163162ab06a1d6b11ccd8918235cde00735cae49400"
 	if first != rykerDigest {
 		t.Fatalf("job digest = %s, want shared Ryker vector %s", first, rykerDigest)
 	}
@@ -96,7 +99,7 @@ func TestJobSpecRejectsMissingAndDuplicateAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"source", "project_env", "companions", "limits"} {
+	for _, field := range []string{"source", "environment", "check", "resources", "companions", "limits"} {
 		t.Run("missing "+field, func(t *testing.T) {
 			var object map[string]json.RawMessage
 			if err := json.Unmarshal(document, &object); err != nil {
@@ -113,9 +116,9 @@ func TestJobSpecRejectsMissingAndDuplicateAuthority(t *testing.T) {
 		})
 	}
 	for name, bad := range map[string][]byte{
-		"duplicate top-level": []byte(strings.Replace(string(document), `"version":1`, `"version":1,"version":1`, 1)),
+		"duplicate top-level": []byte(strings.Replace(string(document), `"version":2`, `"version":2,"version":2`, 1)),
 		"duplicate nested":    []byte(strings.Replace(string(document), `"github_repository_id":17`, `"github_repository_id":17,"github_repository_id":17`, 1)),
-		"case alias":          []byte(strings.Replace(string(document), `"version":1`, `"version":1,"Version":2`, 1)),
+		"case alias":          []byte(strings.Replace(string(document), `"version":2`, `"version":2,"Version":3`, 1)),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := DecodeJobSpec(bad); err == nil {
@@ -143,6 +146,76 @@ func TestJobSpecRejectsMissingAndDuplicateAuthority(t *testing.T) {
 	if _, err := DecodeJobSpec(bad); err == nil {
 		t.Fatal("accepted a missing nested limit")
 	}
+	root["limits"], _ = json.Marshal(validJobSpec().Limits)
+	for _, field := range []string{"argv", "environment"} {
+		var nested map[string]json.RawMessage
+		if err := json.Unmarshal(root["check"], &nested); err != nil {
+			t.Fatal(err)
+		}
+		delete(nested, field)
+		badCheck, _ := json.Marshal(nested)
+		root["check"] = badCheck
+		bad, _ := json.Marshal(root)
+		if _, err := DecodeJobSpec(bad); err == nil {
+			t.Fatalf("accepted check without %s", field)
+		}
+		root["check"], _ = json.Marshal(validJobSpec().Check)
+	}
+}
+
+func TestJobSetupIsRequiredAndChangesDigest(t *testing.T) {
+	base := validJobSpec()
+	baseDigest, err := base.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, change := range map[string]func(*JobSpec){
+		"work environment": func(job *JobSpec) { job.Environment["CI"] = "0" },
+		"check argv":       func(job *JobSpec) { job.Check.Argv[1] = "lint" },
+		"check environment": func(job *JobSpec) {
+			job.Check.Environment["DATABASE_URL"] = "postgres://other"
+		},
+		"cpu":    func(job *JobSpec) { job.Resources.CPUMillis++ },
+		"memory": func(job *JobSpec) { job.Resources.MemoryBytes++ },
+		"pids":   func(job *JobSpec) { job.Resources.PIDs++ },
+	} {
+		t.Run(name, func(t *testing.T) {
+			job := validJobSpec()
+			change(&job)
+			digest, err := job.Digest()
+			if err != nil || digest == baseDigest {
+				t.Fatalf("changed setup digest = %s, err=%v", digest, err)
+			}
+		})
+	}
+	for name, change := range map[string]func(*JobSpec){
+		"retired version":              func(job *JobSpec) { job.Version = 1 },
+		"missing work env":             func(job *JobSpec) { job.Environment = nil },
+		"missing check argv":           func(job *JobSpec) { job.Check.Argv = nil },
+		"reserved env":                 func(job *JobSpec) { job.Environment["COOP_PIDS"] = "0" },
+		"invalid env key":              func(job *JobSpec) { job.Environment["BAD-KEY"] = "x" },
+		"newline env":                  func(job *JobSpec) { job.Check.Environment["CI"] = "1\nEVIL=1" },
+		"trimmed env":                  func(job *JobSpec) { job.Environment["CI"] = " leading" },
+		"zero cpu":                     func(job *JobSpec) { job.Resources.CPUMillis = 0 },
+		"below runtime cpu minimum":    func(job *JobSpec) { job.Resources.CPUMillis = 9 },
+		"zero memory":                  func(job *JobSpec) { job.Resources.MemoryBytes = 0 },
+		"below runtime memory minimum": func(job *JobSpec) { job.Resources.MemoryBytes = (6 << 20) - 1 },
+		"zero pids":                    func(job *JobSpec) { job.Resources.PIDs = 0 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			job := validJobSpec()
+			change(&job)
+			if err := job.Validate(); err == nil {
+				t.Fatal("accepted invalid job setup")
+			}
+		})
+	}
+	minimumMemory := validJobSpec()
+	minimumMemory.Resources.CPUMillis = 10
+	minimumMemory.Resources.MemoryBytes = 6 << 20
+	if err := minimumMemory.Validate(); err != nil {
+		t.Fatalf("runtime minimum memory rejected: %v", err)
+	}
 }
 
 func TestJobTimestampCanonicalIdentity(t *testing.T) {
@@ -153,10 +226,10 @@ func TestJobTimestampCanonicalIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	for timestamp, expected := range map[string]string{
-		"2026-09-26T12:00:00Z":           "97a91fd4ddff4be68c9965f6cec437e8fe504eaac45db818be0d9fb48782d915",
-		"2026-09-26T12:00:00.12345Z":     "44b38704f83bedff2bca113538c0496e0353ec46aa2d3ae9d211276bdba8ca3a",
-		"2026-09-26T12:00:00.000001Z":    "f67dac296a8be0706a1fdb886071747c4dec836613806d858db8ac5718f80e1c",
-		"2026-09-26T12:00:00.123456789Z": "008993e50a1ce995bc4cad96e7793c33ca55355b44c2e9ce3f0e33a7229648e2",
+		"2026-09-26T12:00:00Z":           "e3413eaa0fde8dffc7adb163162ab06a1d6b11ccd8918235cde00735cae49400",
+		"2026-09-26T12:00:00.12345Z":     "97b9bcb9a49b0017e096997e6b3d2faef7f8689c1753e3e3d8d82c92e3ad5bd4",
+		"2026-09-26T12:00:00.000001Z":    "857d39e4484647feddef7ed81bf095c213363858bd3b152a9baa1d0ae6d1adc3",
+		"2026-09-26T12:00:00.123456789Z": "476e6a487c208a38aee4fc5d10ea082efbbdc72a8e555ececf6680349ad73554",
 	} {
 		raw := strings.Replace(string(document), "2026-09-26T12:00:00Z", timestamp, 1)
 		job, err := DecodeJobSpec([]byte(raw))
@@ -168,7 +241,7 @@ func TestJobTimestampCanonicalIdentity(t *testing.T) {
 			t.Fatal(err)
 		}
 		if digest != expected {
-			t.Fatalf("timestamp %s digest = %s, want shared controller vector %s", timestamp, digest, expected)
+			t.Errorf("timestamp %s digest = %s, want shared controller vector %s", timestamp, digest, expected)
 		}
 	}
 	for _, timestamp := range []string{

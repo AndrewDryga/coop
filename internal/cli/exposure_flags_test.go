@@ -204,6 +204,24 @@ func TestCmdACPBareServesTheAdapterWithoutAProject(t *testing.T) {
 	}
 }
 
+func TestControllerJobBareACPKeepsItsFrozenTimezone(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv(box.ControllerJobEnv, strings.Repeat("a", 64))
+	t.Setenv("TZ", "Europe/Kyiv")
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	a := restrictedApp(t, recorder)
+	if err := os.WriteFile(a.cfg.EnvFile(), []byte("TZ=UTC\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := a.cmdACP([]string{"claude", "--bare"}); err != nil || code != 0 {
+		t.Fatalf("controller bare ACP = (%d, %v)", code, err)
+	}
+	line := recordedRunLine(t, recorder)
+	if !strings.Contains(line, "--env-file") || strings.Contains(line, "TZ=Europe/Kyiv") {
+		t.Fatalf("host timezone overrode the controller job: %s", line)
+	}
+}
+
 // The ACP forms refuse by name what they do not offer: --readonly on a plain editor session, a
 // preset or peers with --bare, and --bare on a fork (it names no fork).
 func TestACPExposureUsageErrors(t *testing.T) {

@@ -54,6 +54,27 @@ func TestControllerToolsCapabilityRequiresExactLiveProof(t *testing.T) {
 	}
 }
 
+func TestJobSetupCapabilityRequiresExactLiveDaemonProof(t *testing.T) {
+	for _, test := range []struct {
+		body string
+		want bool
+	}{
+		{`{"job_spec_versions":[2]}`, true},
+		{`{}`, false},
+		{`{"job_spec_versions":[1]}`, false},
+		{`{"job_spec_versions":[1,2]}`, false},
+		{`{"job_spec_versions":[2],"unknown":true}`, false},
+	} {
+		found := false
+		for _, capability := range LiveCapabilities(context.Background(), &capabilityAPI{response: json.RawMessage(test.body)}) {
+			found = found || capability.Name == "job-setup" && capability.Version == "2"
+		}
+		if found != test.want {
+			t.Fatalf("job setup capability for %s = %t, want %t", test.body, found, test.want)
+		}
+	}
+}
+
 func (a *capabilityAPI) Do(_ context.Context, request Request) (json.RawMessage, error) {
 	a.request = request
 	return a.response, a.err

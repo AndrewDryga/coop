@@ -2,7 +2,7 @@
 name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, streams large API bodies under the same command identity, and never falls back to local execution
 subsystem: worker
-sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerproto/protocol.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go]
+sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go]
 updated: 2026-09-30
 ---
 
@@ -27,7 +27,8 @@ The traps the code does not make obvious:
   about nine minutes.
 - **Jobs are not worker advertisements.** Protocol v2 rejects the retired policy digests and
   repository catalog. Capabilities describe daemon features; each immutable job authorizes its
-  own settings and exact source. Source selection has no separate advertised capability.
+  own settings and exact source. `job-setup:2` is advertised only when the running daemon proves
+  it can decode v2 complete setup. Source selection has no separate advertised capability.
 - **Poll references are opaque correlation, not worker identity.** Identity validation, connector
   construction and polling share one formatter. IDs up to 230 bytes keep the legacy
   `poll:<ID>:<sequence>` shape, reserving all 20 uint64 digits. Longer IDs use
@@ -107,6 +108,8 @@ The traps the code does not make obvious:
   start event. The reconnect/ACK regression proves this metadata survives durable delivery.
 
 ## Changelog
+- 2026-09-30 — verified that the connector's job-setup advertisement follows live daemon
+  `job_spec_versions:[2]` proof; an older daemon cannot silently accept incomplete v1 jobs.
 - 2026-09-30 — separated quarantine execution denial from runtime-capacity uncertainty. Startup
   seeds quarantined and retired sessions into the immediate historical drain; exact run-label and
   private credential proof releases capacity while leaving their workspace and native history

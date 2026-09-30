@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1764,12 +1765,30 @@ func (r *sessionTurnRunner) projectSessionConfigFiles(
 			return acpFailure(sessionACPCredentialError, "stale private config is unsafe")
 		}
 		if source.name == "env" && !bound.ProjectEnv {
-			if !controllerTools {
+			var data []byte
+			if bound.JobDigest != "" {
+				job, err := sessionJobSpec(bound)
+				if err != nil {
+					return errors.Join(acpFailure(sessionACPCredentialError, "session job environment is invalid"), err)
+				}
+				keys := make([]string, 0, len(job.Environment))
+				for key := range job.Environment {
+					keys = append(keys, key)
+				}
+				sort.Strings(keys)
+				for _, key := range keys {
+					data = append(data, key+"="+job.Environment[key]+"\n"...)
+				}
+			}
+			if !controllerTools && len(data) == 0 {
 				continue
 			}
-			data, err := bindControllerToolsEnv(nil, bound.ControllerTools.Token)
-			if err != nil {
-				return acpFailure(sessionACPCredentialError, "controller MCP environment is invalid")
+			if controllerTools {
+				var err error
+				data, err = bindControllerToolsEnv(data, bound.ControllerTools.Token)
+				if err != nil {
+					return acpFailure(sessionACPCredentialError, "controller MCP environment is invalid")
+				}
 			}
 			projection.files = append(projection.files, destination)
 			if err := writeCredentialArtifact(destination, data); err != nil {
@@ -2263,9 +2282,20 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 	if err != nil {
 		return nil, errors.Join(acpFailure(sessionACPProcessError, "session network capture is invalid"), err)
 	}
+	launchCfg := r.sourceCfg
+	if bound.JobDigest != "" {
+		job, err := sessionJobSpec(bound)
+		if err != nil {
+			return nil, errors.Join(acpFailure(sessionACPProcessError, "session job authority is invalid"), err)
+		}
+		launchCfg, err = AdmitJobResources(r.sourceCfg, r.rt, job.Resources)
+		if err != nil {
+			return nil, errors.Join(acpFailure(sessionACPProcessError, "session job resources are unavailable"), err)
+		}
+	}
 	env := append(sessionACPChildEnvironment(
 		bound.Repository, bound.Companions, legacyReadOnly, privateRoot, runID,
-		r.sourceCfg, r.rt.Name,
+		launchCfg, r.rt.Name,
 	), network...)
 	if r.store == nil || r.store.ID() == "" {
 		return nil, acpFailure(sessionACPProcessError, "session store ownership is unavailable")

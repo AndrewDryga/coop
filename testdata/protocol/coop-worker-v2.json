@@ -11,6 +11,10 @@
       "sandbox_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "capabilities": [
         {
+          "name": "job-setup",
+          "version": "2"
+        },
+        {
           "name": "controller-tools",
           "version": "1"
         }

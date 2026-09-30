@@ -2866,6 +2866,57 @@ func TestSessionACPChildEnvironmentForwardsOnlyResolvedBoxSettings(t *testing.T)
 	}
 }
 
+func TestJobACPProjectsFrozenEnvironmentAndLimits(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	bound := fixture.session
+	job, err := workerproto.DecodeJobSpec(bound.JobDocument)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job.Environment = map[string]string{"JOB_ONLY": "chosen-by-controller"}
+	job.Resources = workerproto.JobResources{CPUMillis: 1500, MemoryBytes: 1 << 30, PIDs: 256}
+	bound.JobDocument, err = job.CanonicalDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound.JobDigest, err = job.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound.ProjectEnv, bound.ProjectMCP = false, false
+	fixture.runner.sourceCfg.CPUs, fixture.runner.sourceCfg.Memory, fixture.runner.sourceCfg.Pids = "2", "2g", "512"
+	target, _ := agents.ParseTarget(bound.Target)
+	agent, _ := agents.Get(target.Provider)
+	projection, err := fixture.runner.projectCredentials(bound, target, agent, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer projection.remove()
+	envFile := readFile(t, filepath.Join(fixture.private, "env"))
+	if !strings.Contains(envFile, "JOB_ONLY=chosen-by-controller\n") || strings.Contains(envFile, "EMISAR_TOKEN=") {
+		t.Fatalf("projected job env = %q", envFile)
+	}
+	fixture.runner.sourceCfg.Pids = "128"
+	if _, err := fixture.runner.startChildWithRunID(contextWithTurnDeadline(t), bound, sessionTurnRunID(bound.ID, "tight-limit"), fixture.private); err == nil || !strings.Contains(err.Error(), "worker process ceiling") {
+		t.Fatalf("tightened operator ceiling admitted job: %v", err)
+	}
+	fixture.runner.sourceCfg.Pids = "512"
+	process, err := fixture.runner.startChildWithRunID(contextWithTurnDeadline(t), bound, sessionTurnRunID(bound.ID, "admitted-limit"), fixture.private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer process.stop()
+	childEnv := strings.Join(process.cmd.Env, "\n")
+	for _, setting := range []string{"COOP_CPUS=1.500", "COOP_MEMORY=1073741824", "COOP_PIDS=256"} {
+		if !strings.Contains(childEnv, setting) {
+			t.Fatalf("child did not receive %s: %s", setting, childEnv)
+		}
+	}
+	if strings.Contains(childEnv, "JOB_ONLY=chosen-by-controller") {
+		t.Fatal("sandbox job environment leaked into trusted ACP process")
+	}
+}
+
 type sessionACPFixture struct {
 	t          *testing.T
 	store      *session.Store
@@ -2980,11 +3031,13 @@ func newSessionACPFixtureOn(t *testing.T, scenario, sessionTarget string, mode a
 	// These runner tests bypass source staging, but still carry the frozen job
 	// identity that the service now requires before launching an ACP child.
 	job := workerproto.JobSpec{
-		Version: 1, JobRef: "job:runner", Mode: string(mode), Targets: []string{sessionTarget},
+		Version: 2, JobRef: "job:runner", Mode: string(mode), Targets: []string{sessionTarget},
 		Companions: []workerproto.JobCompanion{}, RepositoryReadOnly: request.RepositoryReadOnly,
 		Egress: workerproto.JobEgress{Mode: string(network), Rules: []workerproto.JobRule{}},
 		Limits: workerproto.JobLimits{MaxTurns: 100, MaxQueuedTurns: 20,
 			MaxQueuedBytes: 1 << 20, MaxPatchBytes: 1 << 20, TurnTimeoutMS: 3_600_000},
+		Environment: map[string]string{}, Check: workerproto.JobCheck{Argv: []string{}, Environment: map[string]string{}},
+		Resources: workerproto.JobResources{CPUMillis: 1000, MemoryBytes: 1 << 30, PIDs: 256},
 	}
 	if mode != agents.ModeBare {
 		ref := "refs/heads/main"
@@ -3048,7 +3101,7 @@ func newSessionACPFixtureOn(t *testing.T, scenario, sessionTarget string, mode a
 	t.Setenv("COOP_REPO", filepath.Join(root, "ambient-repo"))
 	t.Setenv("COOP_MCP_FILE", filepath.Join(root, "ambient-mcp.json"))
 	t.Setenv("OPENAI_API_KEY", "secret")
-	runtimePath := filepath.Join(root, "fake-runtime")
+	runtimePath := filepath.Join(root, "docker")
 	runtimeScript := `#!/bin/sh
 printf '%s\n' "$*" >> "$COOP_TEST_SESSION_RUNTIME_LOG"
 if [ "$1" = rm ] && [ "$COOP_TEST_SESSION_BOX_CLEANUP_FAIL" = 1 ]; then

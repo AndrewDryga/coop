@@ -1081,6 +1081,27 @@ func TestAssembleArgsHostTimezone(t *testing.T) {
 	}
 }
 
+func TestControllerJobEnvironmentOverridesHostTimezone(t *testing.T) {
+	t.Setenv("TZ", "Europe/Kyiv")
+	envFile := filepath.Join(t.TempDir(), "env")
+	if err := os.WriteFile(envFile, []byte("TZ=UTC\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
+	args := assembleArgs(cfg, true, RunSpec{Image: "i", Repo: "/r", ControllerJob: true},
+		[]Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
+		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", envFile)
+	if !containsSeq(args, []string{"--env-file", envFile}) || containsSeq(args, []string{"-e", "TZ=Europe/Kyiv"}) {
+		t.Fatalf("controller job work timezone was overwritten: %v", args)
+	}
+	local := assembleArgs(cfg, true, RunSpec{Image: "i", Repo: "/r"},
+		[]Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
+		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", envFile)
+	if !containsSeq(local, []string{"-e", "TZ=Europe/Kyiv"}) {
+		t.Fatalf("local box lost its host timezone: %v", local)
+	}
+}
+
 func TestAssembleArgsInteractiveTTY(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
 	got := assembleArgs(cfg, true, RunSpec{Image: "i", Repo: "/r"}, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},

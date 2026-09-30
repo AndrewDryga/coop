@@ -97,6 +97,50 @@ func TestJoblessHistoricalSessionRemainsReadableButCannotExecute(t *testing.T) {
 	}
 }
 
+func TestVersionOneHistoricalSessionRemainsReadableButCannotExecute(t *testing.T) {
+	ctx := context.Background()
+	var runs atomic.Int32
+	fixture := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), "", func(*session.Store) Runner {
+		return RunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
+			runs.Add(1)
+			return turn, nil
+		})
+	})
+	defer fixture.Stop()
+	old, err := fixture.Store().CreateSession(ctx, "version-one-row", session.CreateSessionRequest{
+		JobDocument: storedTestJobDocument, JobDigest: storedTestJobDigest,
+		Target: "codex", Mode: "bare", OmitEnv: true, OmitMCP: true, NetworkMode: "none",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued, err := fixture.Store().SubmitTurn(ctx, "version-one-queue", session.SubmitTurnRequest{
+		SessionID: old.ID, ExpectedRevision: old.Revision, Prompt: "historical work",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	current, err := fixture.GetSession(ctx, old.ID)
+	if err != nil || current.ID != old.ID || current.JobDigest != storedTestJobDigest {
+		t.Fatalf("historical inspection = %+v, %v", current, err)
+	}
+	if _, err := fixture.SubmitTurn(ctx, "version-one-new-turn", session.SubmitTurnRequest{
+		SessionID: current.ID, ExpectedRevision: current.Revision, Prompt: "new work",
+	}); session.CodeOf(err) != session.CodeInvalidSessionState {
+		t.Fatalf("version-one turn admission = %v", err)
+	}
+	if _, err := fixture.PrepareSession(ctx, current.ID, current.Revision); session.CodeOf(err) != session.CodeInvalidSessionState {
+		t.Fatalf("version-one prepare = %v", err)
+	}
+	turn, err := fixture.GetTurn(ctx, current.ID, queued.ID)
+	if err != nil || turn.State != session.TurnQueued || runs.Load() != 0 {
+		t.Fatalf("version-one restart executed work: %+v, runs=%d, err=%v", turn, runs.Load(), err)
+	}
+}
+
 func TestRecoveredReviewCannotExecuteAJoblessHistoricalSession(t *testing.T) {
 	ctx := context.Background()
 	repo, git := gitrepo.New(t)

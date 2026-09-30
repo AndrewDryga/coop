@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -190,16 +191,7 @@ func (r ReviewGateRun) Passed() bool { return r.Configured && r.ExitCode != nil 
 // policy and the daemon's ambient run args, environment, MCP, and networking defaults. Everything
 // the gate prints, and what Coop prints while starting it, goes to the request's Output.
 func (c *Control) ReviewControllerJob(ctx context.Context, request sessionsvc.ReviewGateRequest) (ReviewGateRun, error) {
-	var gate []string
-	if c.cfg.Explicit("COOP_GATE") {
-		gate = c.cfg.Gate
-	} else {
-		var err error
-		gate, err = c.gateFor(request.Repository)
-		if err != nil {
-			return ReviewGateRun{Configured: true}, err
-		}
-	}
+	gate := append([]string(nil), request.Command...)
 	if len(gate) == 0 {
 		return ReviewGateRun{}, nil
 	}
@@ -208,6 +200,10 @@ func (c *Control) ReviewControllerJob(ctx context.Context, request sessionsvc.Re
 		return run, errors.New("controller review has an invalid saved network mode")
 	}
 	if err := c.ensureRuntime(); err != nil {
+		return run, err
+	}
+	launchCfg, err := sessionsvc.AdmitJobResources(c.cfg, c.rt, request.Resources)
+	if err != nil {
 		return run, err
 	}
 	image := box.SharedImage(c.cfg.BaseImage, c.cfg.ImageOverride)
@@ -220,7 +216,6 @@ func (c *Control) ReviewControllerJob(ctx context.Context, request sessionsvc.Re
 	if base == "" {
 		return run, errors.New("resolve trusted review base commit")
 	}
-	launchCfg := c.cfg.Clone()
 	launchCfg.SetEgress(request.NetworkMode)
 	launchCfg.ExtraRunArgs = nil
 	launchCfg.MCPFile = ""
@@ -231,6 +226,14 @@ func (c *Control) ReviewControllerJob(ctx context.Context, request sessionsvc.Re
 		ActivityRepo: request.Repository, ActivityKind: forkspace.ExecutionReview,
 		ExtraArgs: []string{"-e", "COOP_REVIEW_BASE=" + base},
 		Stdout:    request.Output, Stderr: request.Output,
+	}
+	keys := make([]string, 0, len(request.Environment))
+	for key := range request.Environment {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		spec.ExtraArgs = append(spec.ExtraArgs, "-e", key+"="+request.Environment[key])
 	}
 	if request.NetworkMode == "filtered" {
 		capture, err := box.CapturedEgressFromReference(launchCfg, spec, box.SessionNetworkCapture{

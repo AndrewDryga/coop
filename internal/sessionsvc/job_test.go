@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 	"github.com/AndrewDryga/coop/internal/workerproto"
@@ -77,11 +78,13 @@ func TestControllerJobUsesAnExactPrivateSourceWithoutSharedRepositoryPaths(t *te
 		t.Fatal(err)
 	}
 	job := workerproto.JobSpec{
-		Version: 1, JobRef: "job:source", Source: &source, Companions: []workerproto.JobCompanion{},
+		Version: 2, JobRef: "job:source", Source: &source, Companions: []workerproto.JobCompanion{},
 		Targets: []string{"codex"}, Mode: "normal", RepositoryReadOnly: true,
 		Egress: workerproto.JobEgress{Mode: "open", Rules: []workerproto.JobRule{}},
 		Limits: workerproto.JobLimits{MaxTurns: 2, MaxQueuedTurns: 1, MaxQueuedBytes: 4096,
 			TurnTimeoutMS: 60_000, MaxPatchBytes: 1024},
+		Environment: map[string]string{}, Check: workerproto.JobCheck{Argv: []string{}, Environment: map[string]string{}},
+		Resources: workerproto.JobResources{CPUMillis: 1000, MemoryBytes: 1 << 30, PIDs: 256},
 	}
 	document, err := json.Marshal(job)
 	if err != nil {
@@ -119,13 +122,46 @@ func TestControllerJobUsesAnExactPrivateSourceWithoutSharedRepositoryPaths(t *te
 
 func bareWorkerJob() workerproto.JobSpec {
 	return workerproto.JobSpec{
-		Version: 1, JobRef: "job:route", Companions: []workerproto.JobCompanion{},
+		Version: 2, JobRef: "job:route", Companions: []workerproto.JobCompanion{},
 		Targets: []string{"codex"}, Mode: "bare",
 		Egress: workerproto.JobEgress{Mode: "none", Rules: []workerproto.JobRule{}},
 		Limits: workerproto.JobLimits{
 			MaxTurns: 2, MaxQueuedTurns: 1, MaxQueuedBytes: 4096,
 			TurnTimeoutMS: 60_000, MaxPatchBytes: 1024,
 		},
+		Environment: map[string]string{}, Check: workerproto.JobCheck{Argv: []string{}, Environment: map[string]string{}},
+		Resources: workerproto.JobResources{CPUMillis: 1000, MemoryBytes: 1 << 30, PIDs: 256},
+	}
+}
+
+func TestJobCannotSetProviderCredentialEnvironment(t *testing.T) {
+	for name, set := range map[string]func(*workerproto.JobSpec){
+		"work credential":  func(job *workerproto.JobSpec) { job.Environment["OPENAI_API_KEY"] = "untrusted" },
+		"check credential": func(job *workerproto.JobSpec) { job.Check.Environment["OPENAI_API_KEY"] = "untrusted" },
+		"work model":       func(job *workerproto.JobSpec) { job.Environment["ANTHROPIC_MODEL"] = "unexpected" },
+		"work adapter":     func(job *workerproto.JobSpec) { job.Environment["CODEX_SQLITE_HOME"] = "/tmp/unexpected" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			job := bareWorkerJob()
+			set(&job)
+			if err := validateJobEnvironmentOwnership(job, "/home/node"); err == nil {
+				t.Fatal("controller job overrode a provider credential variable")
+			}
+		})
+	}
+}
+
+func TestJobResourceAdmissionRefusesBeforeSessionCreation(t *testing.T) {
+	fixture := newSessionFixture(t, Config{
+		StateRoot:    filepath.Join(t.TempDir(), "state"),
+		SourceConfig: &config.Config{Pids: "128"}, Runtime: runtime.Runtime{Name: "docker"},
+	}, "")
+	defer fixture.Stop()
+	if _, err := fixture.CreateRemoteSession(context.Background(), "over-limit-job", fixture.request(t, "job:over-limit")); err == nil || !strings.Contains(err.Error(), "worker process ceiling") {
+		t.Fatalf("over-limit job creation = %v", err)
+	}
+	if sessions, err := fixture.Store().ListSessions(context.Background(), 10); err != nil || len(sessions) != 0 {
+		t.Fatalf("rejected job created sessions: %+v, %v", sessions, err)
 	}
 }
 

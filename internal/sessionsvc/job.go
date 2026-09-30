@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -28,16 +29,9 @@ func (s *Service) sessionExecution(ctx context.Context, bound session.Session) (
 	if pending, err := s.store.HasPendingWorkspaceRestore(ctx, bound.ID, ""); err != nil || pending {
 		return executionConfig{}, errors.Join(err, errors.New("workspace restore must finish before execution"))
 	}
-	if bound.JobDigest == "" || len(bound.JobDocument) == 0 {
-		return executionConfig{}, errors.New("session has no durable job authority")
-	}
-	job, err := workerproto.DecodeJobSpec(bound.JobDocument)
+	job, err := sessionJobSpec(bound)
 	if err != nil {
-		return executionConfig{}, fmt.Errorf("decode session job authority: %w", err)
-	}
-	digest, err := job.Digest()
-	if err != nil || digest != bound.JobDigest {
-		return executionConfig{}, errors.New("session job authority digest is invalid")
+		return executionConfig{}, err
 	}
 	policy, err := s.resolveJobExecution(ctx, job)
 	if err != nil {
@@ -79,17 +73,41 @@ func (s *Service) sessionExecution(ctx context.Context, bound session.Session) (
 	return policy, nil
 }
 
+func sessionJobSpec(bound session.Session) (workerproto.JobSpec, error) {
+	if bound.JobDigest == "" || len(bound.JobDocument) == 0 {
+		return workerproto.JobSpec{}, errors.New("session has no durable job authority")
+	}
+	job, err := workerproto.DecodeJobSpec(bound.JobDocument)
+	if err != nil {
+		return workerproto.JobSpec{}, fmt.Errorf("decode session job authority: %w", err)
+	}
+	digest, err := job.Digest()
+	if err != nil || digest != bound.JobDigest {
+		return workerproto.JobSpec{}, errors.New("session job authority digest is invalid")
+	}
+	return job, nil
+}
+
 // resolveJobExecution converts authenticated controller authority to the service's execution snapshot.
 // Source paths are derived from the private state root, never taken from the job document.
 func (s *Service) resolveJobExecution(ctx context.Context, job workerproto.JobSpec) (executionConfig, error) {
 	if err := job.Validate(); err != nil {
 		return executionConfig{}, err
 	}
+	if err := validateJobEnvironmentOwnership(job, s.sourceCfg.HomeInBox); err != nil {
+		return executionConfig{}, err
+	}
+	if s.rt.Name != "" {
+		if _, err := AdmitJobResources(s.sourceCfg, s.rt, job.Resources); err != nil {
+			return executionConfig{}, err
+		}
+	}
 	policy := executionConfig{
 		Mode: agents.ExecutionMode(job.Mode), OmitEnv: true, OmitMCP: true,
 		RepositoryReadOnly: job.RepositoryReadOnly,
 		Egress:             executionNetwork{Mode: egress.Mode(job.Egress.Mode), ExportDestinations: job.Egress.ExportDestinations},
-		MaxTurns:           job.Limits.MaxTurns, MaxQueuedTurns: job.Limits.MaxQueuedTurns,
+		Environment:        job.Environment, Check: job.Check, Resources: job.Resources,
+		MaxTurns: job.Limits.MaxTurns, MaxQueuedTurns: job.Limits.MaxQueuedTurns,
 		MaxQueuedBytes: job.Limits.MaxQueuedBytes, TurnTimeout: time.Duration(job.Limits.TurnTimeoutMS) * time.Millisecond,
 		WarmIdleTimeout: time.Duration(job.Limits.WarmIdleTimeoutMS) * time.Millisecond,
 		MaxPatchBytes:   job.Limits.MaxPatchBytes,
@@ -120,6 +138,32 @@ func (s *Service) resolveJobExecution(ctx context.Context, job workerproto.JobSp
 		policy.Companions = append(policy.Companions, executionCompanion{Name: companion.Name, Repository: repository})
 	}
 	return policy, nil
+}
+
+func validateJobEnvironmentOwnership(job workerproto.JobSpec, homeInBox string) error {
+	for _, name := range agents.Names() {
+		agent, ok := agents.Get(name)
+		if !ok {
+			continue
+		}
+		keys := append(agent.CredentialEnvKeys(), agent.ModelEnv(), agent.EffortEnv())
+		for _, entry := range agent.BoxEnv(homeInBox) {
+			key, _, _ := strings.Cut(entry, "=")
+			keys = append(keys, key)
+		}
+		for _, key := range keys {
+			if key == "" {
+				continue
+			}
+			if _, present := job.Environment[key]; present {
+				return fmt.Errorf("job environment cannot set provider-owned variable %s", key)
+			}
+			if _, present := job.Check.Environment[key]; present {
+				return fmt.Errorf("job check environment cannot set provider-owned variable %s", key)
+			}
+		}
+	}
+	return nil
 }
 
 func jobTargets(job workerproto.JobSpec) ([]agents.Target, error) {

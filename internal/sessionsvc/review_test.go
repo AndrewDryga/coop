@@ -35,6 +35,9 @@ func TestSessionServiceRunReviewCleanGreenReplayAndIsolation(t *testing.T) {
 		return ReviewGateResult{Configured: true, Passed: true}, nil
 	}))
 	defer service.Stop()
+	service.Job.Environment = map[string]string{"CI": "1", "SHARED": "work"}
+	service.Job.Check.Argv = []string{"make", "test"}
+	service.Job.Check.Environment = map[string]string{"SHARED": "review", "DATABASE_URL": "postgres://test-db/app"}
 	sess := createReviewSession(t, service, "clean")
 	stagedRepository = sess.Repository
 	if err := os.WriteFile(filepath.Join(sess.Workspace, "change.txt"), []byte("reviewed\n"), 0o644); err != nil {
@@ -53,7 +56,10 @@ func TestSessionServiceRunReviewCleanGreenReplayAndIsolation(t *testing.T) {
 	if gateRequest.SessionID != sess.ID || gateRequest.JobDigest != sess.JobDigest ||
 		gateRequest.NetworkMode != sess.NetworkMode || gateRequest.NetworkFingerprint != sess.NetworkFingerprint ||
 		gateRequest.NetworkQualification != sess.NetworkQualification || gateRequest.StateRoot != service.stateRoot ||
-		gateRequest.OperationID != dossier.OperationID {
+		gateRequest.OperationID != dossier.OperationID ||
+		!reflect.DeepEqual(gateRequest.Command, []string{"make", "test"}) ||
+		!reflect.DeepEqual(gateRequest.Environment, map[string]string{"CI": "1", "SHARED": "review", "DATABASE_URL": "postgres://test-db/app"}) ||
+		gateRequest.Resources != service.Job.Resources {
 		t.Fatalf("gate lost saved job authority: %+v", gateRequest)
 	}
 	if !dossier.Publishable || dossier.Rebase != ReviewRebaseClean || dossier.Gate != ReviewGatePassed || dossier.CandidateHead == "" || dossier.CandidateTree == "" || len(dossier.Patch) == 0 || dossier.PatchTruncated {
