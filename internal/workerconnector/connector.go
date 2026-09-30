@@ -212,8 +212,11 @@ func (c *Connector) Run(ctx context.Context, interval time.Duration, onError fun
 			// short command waited up to a second to report (get_session and
 			// get_turn averaged ~1.8 s end to end, 2026-09-28). Completions
 			// that land together share that one poll, and polling returns to
-			// its interval after it.
-			timer.Reset(0)
+			// its interval after it. A transfer failure has no result yet, so
+			// redelivery keeps the ordinary retry interval.
+			if done.err == nil {
+				timer.Reset(0)
+			}
 		case <-timer.C:
 			if err := c.pollOnce(ctx, dispatch); err != nil {
 				if ctx.Err() != nil {

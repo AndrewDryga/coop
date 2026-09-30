@@ -136,6 +136,51 @@ func TestConnectorReportsACompletedCommandWithoutWaitingOutTheInterval(t *testin
 	}
 }
 
+// A failed body upload has no result for the controller yet. Redelivery must wait for the
+// ordinary poll interval instead of turning an outage into a tight retry loop.
+func TestConnectorWaitsForIntervalAfterNonterminalTransferFailure(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	body := &testBodyTransport{uploadErr: errors.New("upload unavailable")}
+	executor := tunnelFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write([]byte("result body"))
+	}), body)
+	command := createCommand(time.Now().Add(time.Hour))
+	var first, second time.Time
+	var polls int
+	transport := pollTransportFunc(func(_ context.Context, poll workerproto.Poll) (workerproto.Response, error) {
+		polls++
+		response := workerproto.Response{Version: workerproto.Version, PollRef: poll.PollRef, ServerTime: time.Now()}
+		switch polls {
+		case 1:
+			first = time.Now()
+			response.Commands = []workerproto.Command{command}
+		case 2:
+			second = time.Now()
+			if len(poll.CommandResults) != 0 {
+				t.Errorf("nonterminal transfer published %+v", poll.CommandResults)
+			}
+			cancel()
+		}
+		return response, nil
+	})
+	connector, err := NewConnector(ConnectorConfig{Executor: executor, Hello: func(_ context.Context, clock time.Time) workerproto.WorkerHello { return hello(clock) }, Now: time.Now, Transport: transport})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var transferFailure bool
+	if err := connector.Run(ctx, 600*time.Millisecond, func(err error) { transferFailure = errors.Is(err, errArtifactTransfer) }); !errors.Is(err, context.Canceled) {
+		t.Fatalf("run: %v", err)
+	}
+	if !transferFailure || polls != 2 {
+		t.Fatalf("transfer failure=%t, polls=%d", transferFailure, polls)
+	}
+	if elapsed := second.Sub(first); elapsed < 300*time.Millisecond {
+		t.Fatalf("nonterminal transfer redelivered after %v; want the ordinary poll interval", elapsed)
+	}
+}
+
 func TestCommandLeaseCancellationStopsPreparationAndCanRenew(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var expiry atomic.Int64
