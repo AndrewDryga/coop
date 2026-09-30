@@ -21,7 +21,11 @@ install: ## Build from source and install to ~/.local/bin/coop
 test: require-git-lfs ## Run unit tests (no container runtime needed)
 	@# -p 4 for the same reason as the race target: every package at once oversubscribes a laptop
 	@# until fixture guards and production grace periods expire in tests that pass alone.
-	@go test -p 4 ./...
+	@# The 379 serial sessionsvc tests with Git/LFS fixtures took 517 s alone;
+	@# they exceeded Go's default 10 m package timeout under gate load. This
+	@# 20 m bound guards a hung package, not operation deadlines; behavioral
+	@# timing assertions remain tight, as in the race target.
+	@go test -p 4 -timeout 20m ./...
 
 cover: require-git-lfs ## Run unit tests with a coverage summary
 	@go test -cover ./...

@@ -3,7 +3,7 @@ name: test-fixture-guards-vs-timing-bounds
 description: a test wait that guards a broken fixture is generous (testutil/wait, 60 s); a tight wall-clock bound is reserved for timing that IS the behavior under test, and then attributes its phases
 subsystem: testing
 sources: [Makefile, internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/consult/instructions_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go]
-updated: 2026-09-27
+updated: 2026-09-30
 ---
 
 Two kinds of waits look alike in a test and fail alike on a loaded host, but mean opposite things.
@@ -69,6 +69,13 @@ the capture (`TestSessionServiceLogsSanitizedOperationFailureWithCorrelationID`)
 alone would still permit an empty-log assertion. Keep correlation and redaction assertions intact.
 
 ## Changelog
+- 2026-09-30 — profiled 379 serial `internal/sessionsvc` tests: 516.818 s alone, with the
+  slowest test at 23.44 s and the 14 tests over five seconds totaling 157.2 s. Three other
+  green plain runs took 507–523 s; one loaded gate hit Go's default 600 s package timeout
+  without a failed assertion. Swept the plain and race recipes, then aligned the plain
+  whole-package guard with race at 20 minutes; test and production operation deadlines remain
+  unchanged. The full plain target passed under two added CPU loads in 712 s, with sessionsvc
+  at 533.460 s. Broad fixture sharing or parallelization would risk isolation for unmeasured gain.
 - 2026-09-27 — the 360-test session-service package passed plain tests in 517 seconds but hit Go's default ten-minute package timeout under race instrumentation. The active subtest had run only one second and its entire family passed separately under race in 14 seconds; an earlier gate expired in a different test. Set the race target's whole-package guard to 20 minutes without changing any operation deadline or behavioral assertion. Swept both ordinary and race recipes; package bounds are distinct from fixture waits.
 - 2026-09-25 — verified the large ACP image-turn fixture guards against this rule: three 15-second guards expired only under the two-core Linux parallel race gate; all three tests passed three isolated race runs in 6–8 seconds. Reused the shared 60-second guard for all five large-image turn paths, leaving artifact assertions and production timeouts intact.
 - 2026-09-22 — the canonical race gate caught a log-buffer read before its background writer
