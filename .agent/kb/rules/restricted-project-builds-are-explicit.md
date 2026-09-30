@@ -4,7 +4,7 @@ description: restricted launches consume explicit host project builds; open mode
 scope: security
 sources: [internal/box/derived_image.go, internal/box/project_build.go, internal/box/image.go, internal/networkstate/project_builds.go, internal/cli/build_cmd.go, internal/cli/acp_cmd.go, internal/cli/commands.go, internal/cli/fork_cmd.go, internal/loop/loop.go, internal/forkctl/merge.go]
 check: "go test ./internal/box -run 'TestFilteredProjectImageRequiresExplicitBuild|TestFilteredProjectImageReusesAnUnchangedBuild|TestAutomaticProjectBuildRequiresOpenNetworking'"
-updated: 2026-09-28
+updated: 2026-09-30
 ---
 
 # Require explicit host builds when project networking is restricted
@@ -26,10 +26,14 @@ Cover direct, fork, loop and editor callers; do not require an unused ordinary i
 runs. Keep offline image-existence checks so Docker cannot implicitly pull. Embedded Coop image
 preparation is separate from executing project instructions. This does not freeze runtime source
 edits or change service permissions; see [[project-edits-request-access]]. A controller job's
-turns consume no project image in any mode, and a worker never builds a job repository's
+turns and review gates consume no project image in any mode, and a worker never builds a job repository's
 instructions.
 
 ## Changelog
+- 2026-09-30 — rechecked controller turns and review gates in `commands.go`, `merge.go` and
+  `box/run.go`: both use the worker image and bypass the job repository's Dockerfile. The earlier
+  filtered-review limitation below was superseded by `ReviewControllerJob`; focused open/offline
+  and saved-snapshot review tests pass. The existing project-build rule check also passed.
 - 2026-09-28 — swept the listed sources for controller-job paths: `resolveLaunchImage` and the
   session review gate still named the job repository's project tag; both now take
   `box.JobImage` (the worker's base). Filtered jobs already skipped the project Dockerfile; the

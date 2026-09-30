@@ -795,6 +795,8 @@ An explicit worker `COOP_GATE` wins; otherwise the trusted parent repository's `
 Candidate changes cannot replace the checker. The gate runs in an isolated controller-job box
 with the session's saved network mode (and exact saved filtered-network authority), not the
 repository's `box:` settings or the worker's ambient runtime arguments, env file, or MCP config.
+Like the job's turns, it uses the worker-configured image (or the locked filtered client image),
+never an image built from the job repository's Dockerfile.
 It may create ignored build output in its disposable checkout; changing the reviewed source makes
 the result unpublishable. No gate, a red gate, or a startup error also prevents publication.
 

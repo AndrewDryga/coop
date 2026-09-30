@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -15,7 +16,9 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
@@ -1476,6 +1479,141 @@ func TestControllerJobReviewIgnoresProjectAndAmbientLaunchSettings(t *testing.T)
 		strings.Contains(string(args), "LEAK_FROM_DAEMON") || strings.Contains(string(args), "HOST_ENV_CANARY") ||
 		strings.Contains(string(args), "--env-file") || strings.Contains(string(args), "newer settings") {
 		t.Fatalf("job review inherited host/project settings:\n%s", args)
+	}
+}
+
+// Different jobs can review on one daemon at once. The saved mode belongs to each launch,
+// including an open review when the daemon's own setting is offline.
+func TestControllerJobReviewsKeepEachSavedNetworkMode(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("COOP_GATE", "true")
+	t.Setenv("COOP_EGRESS", "none")
+	repo := initRepo(t)
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{
+		"project.yaml": "box: [invalid local settings]\n",
+		"Dockerfile":   "FROM unavailable:latest\n",
+	} {
+		if err := os.WriteFile(filepath.Join(repo, ".agent", name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(t, repo, "add", ".agent")
+	git(t, repo, "commit", "-qm", "unusable project policy")
+	state := filepath.Join(t.TempDir(), "sessions")
+	staging := filepath.Join(state, "review-candidates", ".staging")
+	if err := os.MkdirAll(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	request := func(id, mode string) sessionsvc.ReviewGateRequest {
+		t.Helper()
+		candidate := filepath.Join(staging, id+"-123456")
+		git(t, repo, "clone", "-q", "--", repo, candidate)
+		git(t, candidate, "update-ref", "refs/coop/session-parent", "HEAD")
+		return sessionsvc.ReviewGateRequest{Repository: repo, Candidate: candidate, StateRoot: state,
+			OperationID: id, NetworkMode: mode}
+	}
+	shim := filepath.Join(t.TempDir(), "docker")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\ncase \"$1\" in\nrun) printf '%s\\n' \"$@\" ;;\nesac\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.BaseImage = "worker-box"
+	fc := New(cfg, runtime.Runtime{Name: shim}, Host{})
+	check := func(req sessionsvc.ReviewGateRequest) error {
+		var output bytes.Buffer
+		req.Output = &output
+		run, err := fc.ReviewControllerJob(context.Background(), req)
+		if err != nil || !run.Passed() {
+			return fmt.Errorf("%s review = %+v, %v", req.NetworkMode, run, err)
+		}
+		offline := strings.Contains(output.String(), "--network\nnone\n")
+		if offline != (req.NetworkMode == "none") || (req.NetworkMode == "open" && strings.Contains(output.String(), "--network\n")) {
+			return fmt.Errorf("%s review runtime args:\n%s", req.NetworkMode, &output)
+		}
+		return nil
+	}
+	for _, mode := range []string{"open", "none"} {
+		if err := check(request("sequential-"+mode, mode)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	requests := []sessionsvc.ReviewGateRequest{request("parallel-open", "open"), request("parallel-none", "none")}
+	results := make(chan error, len(requests))
+	for _, req := range requests {
+		go func() { results <- check(req) }()
+	}
+	for range requests {
+		if err := <-results; err != nil {
+			t.Error(err)
+		}
+	}
+	if cfg.Egress != "none" || !cfg.Explicit("COOP_EGRESS") {
+		t.Fatalf("reviews changed daemon egress: %q, explicit=%t", cfg.Egress, cfg.Explicit("COOP_EGRESS"))
+	}
+}
+
+// A filtered review reopens the accepted job snapshot. A missing host qualification refuses it
+// after that exact lookup; neither the repository's project policy nor a fresh grant is used.
+func TestControllerJobFilteredReviewUsesTheSavedSnapshot(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("COOP_GATE", "true")
+	repo := initRepo(t)
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte("box: [invalid local settings]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "Dockerfile"), []byte("FROM unavailable:latest\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(t.TempDir(), "sessions")
+	staging := filepath.Join(state, "review-candidates", ".staging")
+	if err := os.MkdirAll(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	candidate := filepath.Join(staging, "filtered-review-123456")
+	git(t, repo, "clone", "-q", "--", repo, candidate)
+	git(t, candidate, "update-ref", "refs/coop/session-parent", "HEAD")
+	root, err := box.NetworkStatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := networkstate.Open(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := networkstate.JobSnapshotRef{JobDigest: strings.Repeat("a", 64), SessionID: "remote_one"}
+	snapshot, err := store.CaptureJob(ref, []egress.Rule{{To: egress.Destination{Domain: "job.example.com"}, Protocol: "tls", Ports: []int{443}}}, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.BaseImage = "worker-box"
+	fc := New(cfg, runtime.Runtime{Name: "must-not-execute"}, Host{})
+	request := sessionsvc.ReviewGateRequest{Repository: repo, Candidate: candidate, StateRoot: state,
+		OperationID: "filtered-review", NetworkMode: "filtered", SessionID: ref.SessionID,
+		JobDigest: ref.JobDigest, NetworkFingerprint: snapshot.Fingerprint, NetworkQualification: strings.Repeat("b", 64)}
+	if _, err := fc.ReviewControllerJob(context.Background(), request); err == nil || !strings.Contains(err.Error(), "no longer set up") {
+		t.Fatalf("matching job snapshot did not reach qualification: %v", err)
+	}
+	request.NetworkFingerprint = strings.Repeat("c", 64)
+	if _, err := fc.ReviewControllerJob(context.Background(), request); err == nil || !strings.Contains(err.Error(), "not on this host") {
+		t.Fatalf("wrong job fingerprint was not refused: %v", err)
 	}
 }
 
