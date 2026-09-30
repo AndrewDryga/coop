@@ -1,5 +1,40 @@
 # Migrating
 
+## v10: controller-owned workers and session schema 25
+
+The worker connection is now one command:
+
+```sh
+coop sessions connect --controller https://controller.example --token-file /private/enrollment-token
+```
+
+Use `--state <path>` for a separate private worker root and `--ca-file <path>` for a private
+controller CA. The connection owns its local service; an already-listening root is refused, not
+reused or replaced. `coop worker`, `sessions serve`, `sessions policies` and `connect --config`
+are gone. There is no worker JSON file or local execution-policy catalog to translate.
+
+Before starting a new connection against an existing root, stop its owning connection/service and
+back up that root. Use the old binary's `sessions compact --backup <path>` when available, or a
+verified stopped-root copy. Opening state with the new service upgrades its SQLite schema to 25;
+an older binary cannot reopen that upgraded root. Keep the backup and old binary for rollback.
+
+Controllers must send worker protocol v2 and canonical version-2 JobSpec documents, and select
+workers advertising live `job-setup:2`. Each job freezes source/companions, targets, mode and
+networking plus explicit `environment`, `check.argv`, `check.environment`, and positive CPU,
+memory and PID caps. Resolve repository defaults before submission: worker `COOP_GATE` and
+repository `gate:` no longer choose controller reviews. The same frozen setup applies to work
+and review, with check-only environment values overriding work values. See
+[the session API](docs/session-api.md#sessions) for fields, limits and digest requirements.
+
+Historical jobs remain readable, but jobs without current setup cannot execute new turns, reviews
+or interrupted creates. Preserve required work and history, finish/close/discard through the
+supported old workflow where possible, and resubmit unfinished work as a new v2 job; never edit
+saved documents or synthesize authority to make an old record run. Authenticate provider accounts
+on each worker with Coop's normal login flow; controllers do not transfer model credentials.
+
+For network approval use `coop approve`, not `coop net approve`. Use `coop net blocked` instead
+of `coop net explain`. The remaining v10 configuration/runtime/task changes are listed below.
+
 ## Anchored fork and network identity
 
 Linux overlay filesystems can immediately reuse every observed piece of directory metadata after
@@ -109,13 +144,23 @@ the record, retire it: `POST /v1/sessions/<id>/discard` with
 `{"retire_quarantined":true,"expected_revision":<n>}` tombstones the row and leaves the workspace to
 you. The same applies to a session Coop quarantines later because its workspace vanished.
 
-## The next release: strict `coop.conf`, one removal verb, schema v20
+## v10: strict `coop.conf`, one removal verb and supported runtimes
 
 - **`coop.conf` is validated on every command.** An unknown key, a duplicate key, a malformed
   line, or a retired key stops Coop before any work, naming the file and line. Replace the retired
   loop settings with their `.agent/loop.yaml` fields: `COOP_LOOP_MODEL` → `work.agent`,
   `COOP_REVIEW_MODEL` → `signoff.agent`, `COOP_MAX_REVIEW_ROUNDS` → `signoff.rounds`,
   `COOP_LOOP_CMD` → `work.command`, `COOP_PREFLIGHT` → `preflight.enabled`.
+- **Remove `COOP_AGENT_PACKAGES`.** Coop-managed images use locked client versions. If you need
+  different tooling, review and explicitly select a custom image instead of overriding packages.
+- **Project networking uses `box.egress: offline`, not `none`.** Update `.agent/project.yaml`;
+  controller JobSpec documents still use `none` for their offline mode.
+- **Restricted project images need an explicit build.** Review project build inputs, then run
+  `coop build --egress filtered` before reusing that image under filtered networking. Old automatic
+  build records do not authorize restricted reuse.
+- **Removal/privacy flags have explicit names.** Replace `coop down -v` or `--volumes` with
+  `coop down --delete-volumes` (still deletes stored service data). Replace
+  `coop net export --include-destinations` with `--include-addresses` (still exposes hostnames/IPs).
 - **`coop tasks clear` → `coop tasks rm --all-done`.** The alias 9.0.0 still accepted is gone.
 - **`coop tasks split` is gone.** Parallel forks share the canonical queue; see
   [Canonical tasks across isolated forks](#canonical-tasks-across-isolated-forks) above.
@@ -130,10 +175,8 @@ you. The same applies to a session Coop quarantines later because its workspace 
   `COOP_RUNTIME=podman` now stops with the reason instead of running. Coop no longer manages
   anything on the Podman side, so stop leftover sibling stacks there first:
   `podman compose -p <project> -f .agent/compose.yml down --remove-orphans`.
-- **Session state root schema v20.** `coop sessions serve` upgrades a 9.0.0 (v13) root in place on
-  first start, and an older Coop refuses the upgraded root. Stop the daemon and copy the state root
-  — or take a verified SQLite copy with `coop sessions compact --backup <path>` — before upgrading
-  a host you may need to roll back.
+- **Session state root schema 25.** Back up before the new connection starts its service; see
+  [the controller cutover](#v10-controller-owned-workers-and-session-schema-25) above.
 
 ## v9: one composition model, direct fork loops
 
