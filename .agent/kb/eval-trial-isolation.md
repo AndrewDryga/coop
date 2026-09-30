@@ -2,7 +2,7 @@
 name: eval-trial-isolation
 description: What isolates one coop eval trial from the next and from the grader — and why the obvious credential fix would break authentication
 subsystem: eval
-sources: [internal/cli/eval_cmd.go, internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_loop.go, internal/cli/eval_results.go, internal/loop/loop.go, internal/eval/execute.go, internal/eval/fixtures.go, internal/eval/stage.go, internal/eval/stage_copy.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/eval/store.go, internal/eval/catalog.go, internal/eval/private_root.go, internal/runtime/runtime.go, internal/box/run.go, internal/box/mounts.go, internal/box/authority_mounts.go, internal/agent/codex.go]
+sources: [internal/cli/eval_cmd.go, internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_loop.go, internal/cli/eval_results.go, internal/loop/loop.go, internal/eval/execute.go, internal/eval/fixtures.go, internal/eval/stage.go, internal/eval/stage_copy.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/eval/store.go, internal/eval/catalog.go, internal/eval/private_root.go, internal/runtime/runtime.go, internal/box/run.go, internal/box/mounts.go, internal/box/authority_mounts.go, internal/agent/codex.go, examples/evals/maintenance/suite.yaml, examples/evals/maintenance/qualification.sh, examples/evals/maintenance/runtime-qualification.sh]
 updated: 2026-09-30
 ---
 
@@ -125,6 +125,12 @@ cleanup and sealing are best effort after the deadline.
 
 ## Sizing a loop scenario, and one trap
 
+`examples/evals/maintenance` provides three distinct shell/Python/Node scenarios using the same
+fixture/queue/verifier boundary. Its hidden reference completions include visible regression tests.
+Local and offline-image controls reject unfinished baselines and missing-step/collateral mutants;
+they establish grader behavior, while complete provider loops and paired comparisons still need
+their own recorded qualification. Each control variant gets a separate workspace before mounting.
+
 Measured on the shipped `queue` starter with `codex`: ten small tasks drained in **43 minutes**
 (00:08:04 → 00:51:25) inside its 90m case budget. Budget generously — a trial that runs out of time
 is recorded as a TIMEOUT, which is honest but useless for comparison, and a slower configuration
@@ -138,6 +144,8 @@ already fully correct. The shipped verifier runs each subcommand on inputs no ta
 also why it cannot be satisfied by a loop that moves folders without finishing anything.
 
 ## Changelog
+- 2026-09-30 — mapped the three maintenance loop examples and their independent offline controls;
+  retained the distinction between reference/grader evidence and full provider-loop results.
 - 2026-09-30 — traced eval-loop cancellation through Go's wait/pipe behavior and a red-before
   TERM-resistant child fixture. The trial now pins group identity through TERM, bounded cleanup,
   and final KILL; focused deadline tests passed 20 times under CPU load.

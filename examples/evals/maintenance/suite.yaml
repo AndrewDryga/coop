@@ -1,0 +1,21 @@
+version: 1
+name: maintenance-loops-v1
+runner: loop
+loop_config: ./loop.yaml
+
+cases:
+  - id: deploy-shell
+    fixture: ./fixtures/deploy
+    tasks: ./queues/deploy
+    verifier: ./verifiers/deploy
+    timeout: 60m
+  - id: ledger-python
+    fixture: ./fixtures/ledger
+    tasks: ./queues/ledger
+    verifier: ./verifiers/ledger
+    timeout: 60m
+  - id: static-node
+    fixture: ./fixtures/static
+    tasks: ./queues/static
+    verifier: ./verifiers/static
+    timeout: 60m

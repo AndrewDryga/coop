@@ -1083,6 +1083,9 @@ the same before and after your change, then compare the recorded results.
 - Your own suite: `coop eval init ./evals/my-suite` creates a working greeting example.
   Edit `suite.yaml`, `files/greeting/` and the separate `verifiers/greeting/verify.sh`.
   The verifier's README explains grading; the manifest includes a commented loop example.
+- The source-tree `examples/evals/maintenance/` suite has three independent shell, Python and
+  Node maintenance loops with offline baseline/reference controls. It is a custom comparison
+  example, not an official benchmark score or a shipped `coop eval ls` starter.
 
 Each target or preset after the suite is a separate configuration, not a fallback. For example,
 `coop eval run core codex:gpt-5.6 codex:gpt-5.6/xhigh --timeout 70m --dry-run` previews both.
