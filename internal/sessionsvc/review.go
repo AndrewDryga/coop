@@ -722,6 +722,23 @@ type reviewScratch struct {
 
 func (c reviewScratch) cleanup() { _ = os.RemoveAll(c.dir) }
 
+// A CI checkout and a developer's clone name the default branch as origin/<branch>, and gates
+// compare against it: emisar's dependency-age check refused to run without it (2026-09-30).
+// The candidate is a clone of the staged source, which keeps what it fetched as origin/* that a
+// clone never copies. It names the branch at the default commit the job pinned when that commit
+// is in the candidate, and otherwise at the trusted parent the review was rebased onto.
+func nameReviewDefaultBranch(ctx context.Context, dir string, source *session.SourceBinding, parent string) error {
+	if source == nil || !strings.HasPrefix(source.DefaultRef, "refs/heads/") {
+		return nil
+	}
+	commit := source.DefaultCommit
+	if !validSessionReviewObject(commit) || forkspace.GitRefCommand(ctx, dir, "cat-file", "-e", commit+"^{commit}").Run() != nil {
+		commit = parent
+	}
+	branch := strings.TrimPrefix(source.DefaultRef, "refs/heads/")
+	return forkspace.GitRefCommand(ctx, dir, "update-ref", "refs/remotes/origin/"+branch, commit).Run()
+}
+
 func (s *Service) newReviewScratch(ctx context.Context, operationID, repo, commit string) (reviewScratch, error) {
 	path, err := s.reviewCandidatePath(operationID)
 	if err != nil {
@@ -776,6 +793,9 @@ func (s *Service) prepareForkReviewCandidateFromIntent(ctx context.Context, oper
 	// and reads it from the candidate itself (forkctl.ReviewControllerJob).
 	if err := forkspace.GitRefCommand(ctx, c.dir, "update-ref", "refs/coop/session-parent", c.base).Run(); err != nil {
 		return c, fmt.Errorf("name captured review parent: %w", err)
+	}
+	if err := nameReviewDefaultBranch(ctx, c.dir, intent.Source, c.base); err != nil {
+		return c, fmt.Errorf("name captured default branch: %w", err)
 	}
 	if _, _, err := runSessionCompanionGitContext(ctx, c.dir, sessionWorkspaceGitOutputLimit, "reset", "--hard", "--quiet", c.base); err != nil {
 		return c, fmt.Errorf("checkout captured review parent: %w", err)
