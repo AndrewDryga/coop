@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Stop admitting worker commands after shutdown.** Cancellation racing a successful controller
+  poll no longer starts another source/body download or recreates an acknowledged command receipt.
+  Successful response acknowledgements and in-flight cleanup retain their existing behavior.
+
 ## 10.0.0
 
 This is the next public release after v8.1.0 and includes the unpublished v9 series below.

@@ -82,6 +82,9 @@ func (e *Executor) Execute(ctx context.Context, command workerproto.Command) (wo
 }
 
 func (e *Executor) execute(ctx context.Context, command workerproto.Command, expiresAt func() time.Time) (workerproto.CommandResult, error) {
+	if err := ctx.Err(); err != nil {
+		return workerproto.CommandResult{}, err
+	}
 	if err := command.Validate(); err != nil {
 		return workerproto.CommandResult{}, fmt.Errorf("validate worker command: %w", err)
 	}

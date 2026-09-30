@@ -96,6 +96,35 @@ func TestConnectorPollsAndRenewsWhileOneLargeCommandIsPreparing(t *testing.T) {
 	}
 }
 
+func TestConnectorDoesNotStartWorkAfterAPollCancels(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	body := &waitingBodyTransport{started: make(chan struct{}), release: make(chan struct{})}
+	executor := tunnelFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("canceled work reached the private API")
+		w.WriteHeader(http.StatusInternalServerError)
+	}), body)
+	command := createCommand(time.Now().Add(time.Hour))
+	command.Payload, _ = json.Marshal(workerproto.APIRequest{Method: "POST", Path: "/v1/sessions/s/workspace/restore", BodyRef: &workerproto.BodyReference{SHA256: sha256sum([]byte("body")), ByteSize: 4}})
+	var polls int
+	transport := pollTransportFunc(func(_ context.Context, poll workerproto.Poll) (workerproto.Response, error) {
+		polls++
+		cancel()
+		return workerproto.Response{Version: workerproto.Version, PollRef: poll.PollRef,
+			ServerTime: time.Now(), Commands: []workerproto.Command{command}}, nil
+	})
+	connector, err := NewConnector(ConnectorConfig{Executor: executor, Hello: func(_ context.Context, clock time.Time) workerproto.WorkerHello { return hello(clock) }, Now: time.Now, Transport: transport})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := connector.Run(ctx, time.Millisecond, func(err error) { t.Errorf("connector: %v", err) }); !errors.Is(err, context.Canceled) {
+		t.Fatalf("run: %v", err)
+	}
+	if polls != 1 || body.fetches.Load() != 0 {
+		t.Fatalf("polls=%d downloads=%d after cancellation", polls, body.fetches.Load())
+	}
+}
+
 // A finished command reports on the next poll at once, not after the rest of
 // the interval: the controller waits on its result. Every short command waited
 // up to the one-second interval to report (get_session and get_turn averaged

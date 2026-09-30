@@ -100,6 +100,14 @@ func TestLeaseAndWorkerFencesFailBeforeTheUnixAPI(t *testing.T) {
 	if _, err := executor.Execute(context.Background(), wrongWorker); !errors.Is(err, ErrWorkerMismatch) {
 		t.Fatalf("wrong-worker error = %v", err)
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := executor.Execute(ctx, createCommand(now.Add(time.Minute))); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled error = %v", err)
+	}
+	if receipts, err := executor.journal.pending(); err != nil || len(receipts) != 0 {
+		t.Fatalf("fenced commands created receipts: %+v, %v", receipts, err)
+	}
 
 	if len(api.requests) != 0 {
 		t.Fatalf("fenced commands issued %d requests", len(api.requests))

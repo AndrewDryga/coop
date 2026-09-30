@@ -67,7 +67,10 @@ The traps the code does not make obvious:
 - **Large bodies do not pause heartbeats.** Run owns a bounded FIFO and one execution goroutine;
   polling remains live during source downloads, request preparation and response uploads. Only
   identical command redelivery renews its in-memory lease. Expiry cancels preparation and both
-  lease and placement are checked again before forwarding a mutation. Shutdown waits for execution.
+  lease and placement are checked again before forwarding a mutation. Shutdown waits for execution
+  and refuses new admission at the poll loop, queued start and executor entry. A successful poll
+  still applies acknowledgements even if cancellation races its response; a ready completion or
+  timer must not restart a command after that acknowledgement deletes its receipt.
 - **Response uploads resume from saved bytes.** Binary and large JSON bodies are spooled privately,
   hashed and journaled before upload. A lost upload acknowledgement resends that exact spool after
   restart, without rerunning the API. The controller's command-result acknowledgement releases it.
@@ -108,6 +111,9 @@ The traps the code does not make obvious:
   start event. The reconnect/ACK regression proves this metadata survives durable delivery.
 
 ## Changelog
+- 2026-09-30 — exact-tag/full-main race gates exposed receipt acknowledgement racing shutdown;
+  deterministic cancellation-in-poll regression and repeated transfer/lease tests verify the
+  admission guards without weakening the existing one-download/replay contract.
 - 2026-09-30 — verified that the connector's job-setup advertisement follows live daemon
   `job_spec_versions:[2]` proof; an older daemon cannot silently accept incomplete v1 jobs.
 - 2026-09-30 — separated quarantine execution denial from runtime-capacity uncertainty. Startup

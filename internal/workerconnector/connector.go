@@ -178,7 +178,7 @@ func (c *Connector) Run(ctx context.Context, interval time.Duration, onError fun
 	// One executor owns mutation order. Polling stays live during large source/body
 	// transfers, and only identical redelivery can renew an in-flight command's lease.
 	startNext := func() {
-		if active != nil || len(queue) == 0 {
+		if ctx.Err() != nil || active != nil || len(queue) == 0 {
 			return
 		}
 		job := queue[0]
@@ -197,6 +197,9 @@ func (c *Connector) Run(ctx context.Context, interval time.Duration, onError fun
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
