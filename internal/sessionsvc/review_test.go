@@ -952,3 +952,38 @@ func containsReviewReason(reasons []string, want string) bool {
 	}
 	return false
 }
+
+// 2026-09-30: every controller review of a repository with a gate stopped
+// before its gate started, "resolve trusted review base commit". The
+// worker-owned checker (forkctl.ReviewControllerJob) reads the trusted base
+// it hands the gate as COOP_REVIEW_BASE from the candidate's
+// refs/coop/session-parent, and the candidate a review prepares never had that
+// ref; only tests that build a candidate by hand set it. Ryker's emisar task
+// could not open its pull request, however often its review was asked again.
+func TestSessionReviewCandidateNamesItsTrustedParentForTheGate(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	var named string
+	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(_ context.Context, request ReviewGateRequest) (ReviewGateResult, error) {
+		named = strings.TrimSpace(gitOut(request.Candidate, "rev-parse", "--verify", "--quiet", "refs/coop/session-parent^{commit}"))
+		return ReviewGateResult{Configured: true, Passed: true}, nil
+	}))
+	defer service.Stop()
+	sess := createReviewSession(t, service, "trusted-parent")
+	if err := os.WriteFile(filepath.Join(sess.Workspace, "change.txt"), []byte("reviewed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sessionWorkspaceGit(t, sess.Workspace, "add", "change.txt")
+	sessionWorkspaceGit(t, sess.Workspace, "commit", "-qm", "review change")
+
+	dossier, err := service.RunReview(context.Background(), "review-trusted-parent", RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if named == "" || named != dossier.ParentHead {
+		t.Fatalf("the gate's candidate names trusted parent %q, want the parent it was rebased onto %q", named, dossier.ParentHead)
+	}
+	if dossier.Gate != ReviewGatePassed || !dossier.Publishable {
+		t.Fatalf("review with a named parent = %+v", dossier)
+	}
+}
