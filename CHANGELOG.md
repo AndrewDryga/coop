@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 10.0.0
 
 This is the next public release after v8.1.0 and includes the unpublished v9 series below.
 Public upgraders should follow both the v10 and v9 sections of [MIGRATING.md](MIGRATING.md),
@@ -80,8 +78,8 @@ including MCP/native-settings preparation before their first launch.
   bind actual storage authority; read-only sources must exist and unsafe propagation is refused.
   Host Git excludes repository-controlled execution settings; integrity checks also work with
   modern Git reference verification without disabling object or reference validation. Fork
-  generations and network grants use hardlink anchors, not reusable filesystem metadata. Older grants need the documented
-  migration or fresh approval.
+  generations and network grants use hardlink anchors, not reusable filesystem metadata. Older
+  grants need the documented migration or fresh approval.
 
 - **Parallel forks share one canonical task queue.** Durable assignments and generation-bound
   candidates keep ownership and reviewed completion on the project queue instead of copied queues.
