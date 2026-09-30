@@ -1859,6 +1859,63 @@ func (r *sessionTurnRunner) CleanupSession(ctx context.Context, bound session.Se
 	)
 }
 
+// A pre-owner-binding session proves only runtimes named by this store's session and turn IDs.
+// Its workspace, services and fork registry have no proven owner and must not be consulted.
+func (r *sessionTurnRunner) CleanupUnprovenSessionRuntime(ctx context.Context, bound session.Session) error {
+	if r == nil || r.store == nil || r.rt.Name == "" || r.stateRoot == "" || !validSessionPathComponent(bound.ID) {
+		return acpFailure(sessionACPCleanupError, "unproven session runtime authority is unavailable")
+	}
+	if err := r.failedSessionProcessGone(bound.ID); err != nil {
+		return err
+	}
+	r.warmMu.Lock()
+	warm := r.warm[bound.ID] != nil
+	r.warmMu.Unlock()
+	if warm {
+		return acpFailure(sessionACPCleanupError, "unproven session has a live warm process")
+	}
+	root, err := filepath.EvalSymlinks(r.stateRoot)
+	if err != nil || !filepath.IsAbs(root) || ensureNoSymlinkPath(filepath.Join(root, "acp", bound.ID)) != nil {
+		return acpFailure(sessionACPCleanupError, "private session state is unsafe")
+	}
+
+	// Validate every saved receipt before touching any box: a foreign label in a later
+	// page must not turn a partially completed cleanup into an authority grant.
+	runIDs := []string{sessionWarmRunID(bound.ID)}
+	var after int64
+	for {
+		turns, listErr := r.store.ListTurns(ctx, bound.ID, after, 1000)
+		if listErr != nil {
+			return acpFailure(sessionACPCleanupError, sessionACPBoundedDetail("list session turns", listErr.Error()))
+		}
+		for _, turn := range turns {
+			if turn.SessionID != bound.ID || turn.ID == "" || turn.Ordinal <= after {
+				return acpFailure(sessionACPCleanupError, "session turn identity is invalid")
+			}
+			runID := sessionTurnRunID(bound.ID, turn.ID)
+			if turn.RuntimeRunID != "" && turn.RuntimeRunID != runID && turn.RuntimeRunID != runIDs[0] {
+				return acpFailure(sessionACPCleanupError, "session turn runtime identity is invalid")
+			}
+			runIDs = append(runIDs, runID)
+			after = turn.Ordinal
+		}
+		if len(turns) < 1000 {
+			break
+		}
+	}
+	for _, runID := range runIDs {
+		reapCtx, cancel := context.WithTimeout(ctx, sessionRuntimeReapTimeout)
+		_, err := r.rt.RemoveByLabel(reapCtx, box.LabelRun, runID)
+		cancel()
+		if err != nil {
+			return acpFailure(sessionACPCleanupError, sessionACPBoundedDetail("runtime cleanup failed", err.Error()))
+		}
+	}
+	// Credentials are transient; the provider's native transcript under this private
+	// tree is not. The existing selective cleanup leaves that history intact.
+	return r.cleanupSessionCredentials(bound)
+}
+
 func (r *sessionTurnRunner) cleanupPendingTurnRuntimes(ctx context.Context, bound session.Session) error {
 	if r == nil || r.store == nil {
 		return acpFailure(sessionACPCleanupError, "turn runtime authority is unavailable")
@@ -1950,6 +2007,12 @@ func (r *sessionTurnRunner) cleanupSessionCredentials(bound session.Session) err
 	profile := filepath.Join(privateRoot, target.Provider, "profiles", account)
 	if err := ensureNoSymlinkPath(profile); err != nil {
 		return acpFailure(sessionACPCleanupError, "private credential account is unsafe")
+	}
+	if agent.HostCredential().Declared() {
+		vault := filepath.Join(privateRoot, target.Provider, "host-credentials", account)
+		if err := ensureNoSymlinkPath(vault); err != nil {
+			return acpFailure(sessionACPCleanupError, "private host credential account is unsafe")
+		}
 	}
 	var paths []string
 	seen := make(map[string]bool)

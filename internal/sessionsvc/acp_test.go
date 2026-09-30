@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -2452,6 +2453,189 @@ func TestSessionTurnRunnerInterruptedTurnReapRemovesProjectedCredentials(t *test
 	}
 }
 
+func TestUnprovenSessionRuntimeProofTouchesOnlyRunLabelsAndProjectedCredentials(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	turn := fixture.submit(t, "legacy runtime")
+	runID := sessionTurnRunID(fixture.session.ID, turn.ID)
+	if err := fixture.store.BindTurnRuntime(context.Background(), fixture.session.ID, turn.ID, "", runID); err != nil {
+		t.Fatal(err)
+	}
+	profile := filepath.Join(fixture.private, "codex", "profiles", "work")
+	if err := os.MkdirAll(profile, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	credential := filepath.Join(profile, "auth.json")
+	history := filepath.Join(profile, "native-history")
+	workspace := filepath.Join(fixture.session.Workspace, "keep-workspace")
+	for path, data := range map[string]string{
+		credential: "projected credential", history: "keep native history", workspace: "keep workspace",
+		filepath.Join(fixture.private, "env"): "projected env",
+	} {
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := fixture.runner.CleanupUnprovenSessionRuntime(context.Background(), fixture.session); err != nil {
+		t.Fatal(err)
+	}
+	log := readFile(t, fixture.runtimeLog)
+	for _, label := range []string{
+		box.LabelRun + "=" + sessionWarmRunID(fixture.session.ID), box.LabelRun + "=" + runID,
+	} {
+		if !strings.Contains(log, label) {
+			t.Fatalf("missing exact runtime label %s: %s", label, log)
+		}
+	}
+	if strings.Contains(log, box.LabelExecution+"=") || strings.Contains(log, "com.docker.compose") {
+		t.Fatalf("unproven cleanup touched fork or service authority: %s", log)
+	}
+	for _, path := range []string{credential, filepath.Join(fixture.private, "env")} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("projected credential remains at %s: %v", path, err)
+		}
+	}
+	if got := readFile(t, history); got != "keep native history" {
+		t.Fatalf("native history changed: %q", got)
+	}
+	if got := readFile(t, workspace); got != "keep workspace" {
+		t.Fatalf("unowned workspace changed: %q", got)
+	}
+	stored, err := fixture.store.GetTurn(context.Background(), fixture.session.ID, turn.ID)
+	if err != nil || stored.RuntimeRunID != runID {
+		t.Fatalf("historical turn receipt changed: %+v, %v", stored, err)
+	}
+}
+
+func TestUnprovenSessionRuntimeProofRejectsForeignReceiptBeforeMutation(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	turn := fixture.submit(t, "foreign runtime")
+	foreign := sessionTurnRunID("another-session", "another-turn")
+	if err := fixture.store.BindTurnRuntime(context.Background(), fixture.session.ID, turn.ID, "", foreign); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.runner.CleanupUnprovenSessionRuntime(context.Background(), fixture.session); err == nil {
+		t.Fatal("foreign runtime receipt was accepted")
+	}
+	if _, err := os.Stat(fixture.runtimeLog); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("foreign receipt touched the runtime: %v", err)
+	}
+}
+
+func TestUnprovenSessionRuntimeProofChecksReceiptsPastFirstPage(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	db, err := sql.Open("sqlite", filepath.Join(fixture.store.Root(), "session.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(`INSERT INTO turns
+		(id, session_id, ordinal, idempotency_key, request_hash, state, prompt, queued_at, runtime_run_id)
+		VALUES (?, ?, ?, ?, 'historical', 'completed', '', 1, ?)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for ordinal := 1; ordinal <= 1001; ordinal++ {
+		id := fmt.Sprintf("historical-%04d", ordinal)
+		runID := ""
+		if ordinal == 1001 {
+			runID = sessionTurnRunID("another-session", "another-turn")
+		}
+		if _, err := stmt.Exec(id, fixture.session.ID, ordinal, id, runID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := stmt.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.runner.CleanupUnprovenSessionRuntime(context.Background(), fixture.session); err == nil {
+		t.Fatal("foreign receipt on the second page was accepted")
+	}
+	if _, err := os.Stat(fixture.runtimeLog); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("later foreign receipt allowed partial runtime cleanup: %v", err)
+	}
+}
+
+func TestUnprovenSessionRuntimeProofKeepsUncertainCleanup(t *testing.T) {
+	t.Run("runtime query fails", func(t *testing.T) {
+		fixture := newSessionACPFixture(t, "normal")
+		t.Setenv("COOP_TEST_SESSION_RUNTIME_QUERY_FAIL", "1")
+		if err := fixture.runner.CleanupUnprovenSessionRuntime(context.Background(), fixture.session); err == nil {
+			t.Fatal("failed runtime query was reported as proof")
+		}
+	})
+	t.Run("runtime removal fails", func(t *testing.T) {
+		fixture := newSessionACPFixture(t, "normal")
+		t.Setenv("COOP_TEST_SESSION_BOX_CLEANUP_FAIL", "1")
+		if err := fixture.runner.CleanupUnprovenSessionRuntime(context.Background(), fixture.session); err == nil {
+			t.Fatal("failed runtime removal was reported as proof")
+		}
+		t.Setenv("COOP_TEST_SESSION_BOX_CLEANUP_FAIL", "")
+		if err := fixture.runner.CleanupUnprovenSessionRuntime(context.Background(), fixture.session); err != nil {
+			t.Fatalf("runtime cleanup retry failed: %v", err)
+		}
+	})
+	t.Run("unsafe private parent", func(t *testing.T) {
+		fixture := newSessionACPFixture(t, "normal")
+		root, err := filepath.EvalSymlinks(fixture.runner.stateRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		outside := t.TempDir()
+		if err := os.Symlink(outside, filepath.Join(root, "acp")); err != nil {
+			t.Fatal(err)
+		}
+		if err := fixture.runner.CleanupUnprovenSessionRuntime(context.Background(), fixture.session); err == nil {
+			t.Fatal("symlinked private parent was accepted as proof")
+		}
+		if _, err := os.Stat(fixture.runtimeLog); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("unsafe private state touched runtime: %v", err)
+		}
+	})
+	t.Run("unsafe host credential parent", func(t *testing.T) {
+		fixture := newSessionACPFixture(t, "normal", "gemini@work")
+		profile := filepath.Join(fixture.private, "gemini", "profiles", "work")
+		if err := os.MkdirAll(profile, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		outside := t.TempDir()
+		account := filepath.Join(outside, "work")
+		if err := os.Mkdir(account, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		sentinel := filepath.Join(account, "keep")
+		if err := os.WriteFile(sentinel, []byte("outside private state"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(fixture.private, "gemini", "host-credentials")); err != nil {
+			t.Fatal(err)
+		}
+		if err := fixture.runner.CleanupUnprovenSessionRuntime(context.Background(), fixture.session); err == nil {
+			t.Fatal("symlinked host credential parent was accepted as proof")
+		}
+		if got := readFile(t, sentinel); got != "outside private state" {
+			t.Fatalf("external credential data changed: %q", got)
+		}
+	})
+	t.Run("credential cleanup fails", func(t *testing.T) {
+		fixture := newSessionACPFixture(t, "normal")
+		credential := filepath.Join(fixture.private, "codex", "profiles", "work", "auth.json")
+		if err := os.MkdirAll(credential, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := fixture.runner.CleanupUnprovenSessionRuntime(context.Background(), fixture.session); err == nil {
+			t.Fatal("failed credential cleanup was reported as proof")
+		}
+	})
+}
+
 func TestSessionTurnRunnerInterruptedTurnRejectsForeignRuntimeReceiptBeforeCleanup(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
 	turn := fixture.submit(t, "forged cleanup receipt")
@@ -2871,6 +3055,7 @@ if [ "$1" = rm ] && [ "$COOP_TEST_SESSION_BOX_CLEANUP_FAIL" = 1 ]; then
 	exit 42
 fi
 if [ "$1" = ps ]; then
+	[ "$COOP_TEST_SESSION_RUNTIME_QUERY_FAIL" = 1 ] && exit 43
 	case "$*" in
 		*com.docker.compose.project=*)
 			[ "$COOP_TEST_SESSION_SERVICE_CLEANUP_FAIL" = 1 ] && exit 41

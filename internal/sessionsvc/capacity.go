@@ -17,9 +17,6 @@ func (s *Service) RuntimeCapacity() workerproto.Capacity {
 	s.historicalMu.Lock()
 	unknown := len(s.historicalPending) != 0
 	s.historicalMu.Unlock()
-	s.mu.Lock()
-	unknown = unknown || len(s.quarantined) != 0
-	s.mu.Unlock()
 	s.runtimeMu.Lock()
 	free := sessionRuntimeSlots - len(s.runtimeSlots)
 	s.runtimeMu.Unlock()
@@ -43,9 +40,6 @@ func (s *Service) reserveRuntimeSlot(id string) (bool, <-chan struct{}) {
 	s.historicalMu.Lock()
 	unknown := len(s.historicalPending) != 0
 	s.historicalMu.Unlock()
-	s.mu.Lock()
-	unknown = unknown || len(s.quarantined) != 0
-	s.mu.Unlock()
 	s.runtimeMu.Lock()
 	defer s.runtimeMu.Unlock()
 	if s.runtimeChanged == nil {

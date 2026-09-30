@@ -3,7 +3,7 @@ name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, streams large API bodies under the same command identity, and never falls back to local execution
 subsystem: worker
 sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerproto/protocol.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go]
-updated: 2026-09-28
+updated: 2026-09-30
 ---
 
 `coop sessions connect --controller <https-url> --token-file <path>` connects this machine to a fleet controller. Its
@@ -17,8 +17,9 @@ The traps the code does not make obvious:
 - **Capacity follows live runtime custody.** The daemon's `/v1/capacity` measures four shared
   active/warm slots; creation's Git concurrency is separate. Admission reserves before leasing a
   turn or starting its timeout. Warm expiry holds the session lock through teardown, and failed
-  process/box cleanup retains its slot. Unknown startup or quarantined runtime custody advertises
-  busy, including record-only retirement; deleting a session record is not cleanup proof.
+  process/box cleanup retains its slot. Unknown startup runtime custody advertises busy,
+  including quarantine and record-only retirement; a separate exact-run-label/private-ACP proof
+  can release capacity without granting workspace authority. Deleting a session record is not proof.
   Every session that survives a restart starts unproven and capacity stays zero until the last one
   is proven, so `Start` drains that backlog at once (`drainHistoricalRuntimes`: the janitor's
   bounded batches back-to-back until a pass proves nothing); the one-minute ticker only retries
@@ -106,6 +107,10 @@ The traps the code does not make obvious:
   start event. The reconnect/ACK regression proves this metadata survives durable delivery.
 
 ## Changelog
+- 2026-09-30 — separated quarantine execution denial from runtime-capacity uncertainty. Startup
+  seeds quarantined and retired sessions into the immediate historical drain; exact run-label and
+  private credential proof releases capacity while leaving their workspace and native history
+  untouched. Retired active turns bypass ordinary workspace-dependent startup reaping.
 - 2026-09-28 — Ryker's worker restarted with 17 parked sessions advertised busy for 5+ minutes
   (janitor: 2 proofs per 1-minute tick; capacity zero while any is pending). Start now drains the
   backlog immediately with the same per-session proofs; a pass that proves nothing stops it.

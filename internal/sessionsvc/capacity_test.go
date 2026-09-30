@@ -6,13 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
@@ -350,5 +354,271 @@ func TestRestartProvesItsSessionBacklogWithoutWaitingForTheTicker(t *testing.T) 
 				t.Fatalf("unprovable runtimes: %d free slots from %d proofs; want 0 from one bounded batch of %d", free, proofs, runtimeCleanupBatchSize)
 			}
 		})
+	}
+}
+
+type quarantinedRuntimeProofRunner struct {
+	proofs  atomic.Int32
+	runs    atomic.Int32
+	release <-chan struct{}
+	fail    atomic.Bool
+}
+
+func (r *quarantinedRuntimeProofRunner) Run(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
+	r.runs.Add(1)
+	return turn, errors.New("quarantined session must not run")
+}
+
+func (r *quarantinedRuntimeProofRunner) CleanupUnprovenSessionRuntime(ctx context.Context, _ session.Session) error {
+	r.proofs.Add(1)
+	if r.release != nil {
+		select {
+		case <-r.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if r.fail.Load() {
+		return errors.New("runtime inventory unavailable")
+	}
+	return nil
+}
+
+func TestQuarantinedRuntimeBacklogReleasesCapacityAfterExactProof(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	release := make(chan struct{})
+	runner := &quarantinedRuntimeProofRunner{release: release}
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, func(*session.Store) Runner { return runner })
+	defer service.Stop()
+	const legacyCount = 15
+	sessions := make([]session.Session, 0, legacyCount)
+	for i := range legacyCount {
+		name := fmt.Sprintf("legacy-capacity-%02d", i)
+		bound, _ := createLegacyBoundSession(t, service, repo, name, name, "")
+		sessions = append(sessions, bound)
+	}
+	drained := make(chan struct{})
+	service.testAfterStartupDrain = func() { close(drained) }
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := service.RuntimeCapacity().TurnSlotsFree; got != 0 {
+		t.Fatalf("unproven legacy runtimes advertised %d free slots", got)
+	}
+	close(release)
+	select {
+	case <-drained:
+	case <-time.After(wait.Deadline):
+		t.Fatal("startup did not finish the quarantined runtime proof backlog")
+	}
+	if got := runner.proofs.Load(); got != legacyCount {
+		t.Fatalf("proved %d legacy runtimes, want %d", got, legacyCount)
+	}
+	if got := service.RuntimeCapacity().TurnSlotsFree; got != sessionRuntimeSlots {
+		t.Fatalf("fully proven backlog left %d free slots, want %d", got, sessionRuntimeSlots)
+	}
+	for _, bound := range sessions {
+		if !service.sessionQuarantined(bound.ID) {
+			t.Fatalf("runtime proof made legacy session %s runnable", bound.ID)
+		}
+		if _, err := os.Stat(bound.Workspace); err != nil {
+			t.Fatalf("runtime proof touched legacy workspace %s: %v", bound.ID, err)
+		}
+	}
+	if got := runner.runs.Load(); got != 0 {
+		t.Fatalf("proof ran %d quarantined turns", got)
+	}
+	current := mustSession(t, service, sessions[0].ID)
+	if _, err := service.Discard(context.Background(), "retire-after-proof", DiscardRequest{
+		RetireQuarantined: true, SessionID: current.ID, ExpectedRevision: current.Revision,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := service.RuntimeCapacity().TurnSlotsFree; got != sessionRuntimeSlots {
+		t.Fatalf("retiring a proven session reintroduced capacity uncertainty: %d free slots", got)
+	}
+}
+
+func TestQuarantinedRuntimeProofFailureKeepsCapacityBusyUntilRetry(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	runner := &quarantinedRuntimeProofRunner{}
+	runner.fail.Store(true)
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, func(*session.Store) Runner { return runner })
+	defer service.Stop()
+	bound, _ := createLegacyBoundSession(t, service, repo, "legacy-failed-proof", "legacy-failed-proof", "")
+	drained := make(chan struct{})
+	service.testAfterStartupDrain = func() { close(drained) }
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-drained:
+	case <-time.After(wait.Deadline):
+		t.Fatal("startup proof attempt did not finish")
+	}
+	if got := service.RuntimeCapacity().TurnSlotsFree; got != 0 {
+		t.Fatalf("failed runtime query advertised %d free slots", got)
+	}
+	runner.fail.Store(false)
+	service.cleanupIdleSessionRuntimes(context.Background())
+	if got := service.RuntimeCapacity().TurnSlotsFree; got != sessionRuntimeSlots {
+		t.Fatalf("successful retry left %d free slots", got)
+	}
+	if !service.sessionQuarantined(bound.ID) {
+		t.Fatal("successful runtime proof lifted workspace quarantine")
+	}
+}
+
+func TestQuarantinedOwnedBoxKeepsCapacityBusyUntilExactRemoval(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	root := t.TempDir()
+	state := filepath.Join(root, "state")
+	runtimePath := filepath.Join(root, "fake-runtime")
+	logPath := filepath.Join(root, "runtime.log")
+	boxPath := filepath.Join(root, "owned-box")
+	runtimeScript := `#!/bin/sh
+printf '%s\n' "$*" >> "$COOP_TEST_QUARANTINE_RUNTIME_LOG"
+case "$1" in
+ps)
+	case "$*" in
+	*"label=coop.run=$COOP_TEST_QUARANTINE_RUN_ID"*)
+		[ -f "$COOP_TEST_QUARANTINE_BOX" ] && echo ownedbox
+		;;
+	esac
+	;;
+rm)
+	[ "$COOP_TEST_QUARANTINE_REMOVE_FAIL" = 1 ] && exit 42
+	rm -f "$COOP_TEST_QUARANTINE_BOX"
+	;;
+esac
+`
+	if err := os.WriteFile(runtimePath, []byte(runtimeScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(boxPath, []byte("live"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_QUARANTINE_RUNTIME_LOG", logPath)
+	t.Setenv("COOP_TEST_QUARANTINE_BOX", boxPath)
+	t.Setenv("COOP_TEST_QUARANTINE_REMOVE_FAIL", "1")
+	source := &config.Config{ConfigDir: filepath.Join(root, "source")}
+	service, err := newSessionServiceWithTestStorage(t, Config{
+		StateRoot: state, SourceConfig: source, CleanupInterval: time.Hour,
+		RunnerFactory: func(store *session.Store) Runner {
+			return newSessionTurnRunner(source, state, store, runtime.Runtime{Name: runtimePath}, "")
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	bound, _ := createLegacyBoundSession(t, service, repo, "legacy-owned-box", "legacy-owned-box", "")
+	t.Setenv("COOP_TEST_QUARANTINE_RUN_ID", sessionWarmRunID(bound.ID))
+	drained := make(chan struct{})
+	service.testAfterStartupDrain = func() { close(drained) }
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-drained:
+	case <-time.After(wait.Deadline):
+		t.Fatal("first owned-box removal attempt did not finish")
+	}
+	if got := service.RuntimeCapacity().TurnSlotsFree; got != 0 {
+		t.Fatalf("live owned box advertised %d free slots", got)
+	}
+	if _, err := os.Stat(boxPath); err != nil {
+		t.Fatalf("failed removal lost the owned box: %v", err)
+	}
+	t.Setenv("COOP_TEST_QUARANTINE_REMOVE_FAIL", "")
+	service.cleanupIdleSessionRuntimes(context.Background())
+	if got := service.RuntimeCapacity().TurnSlotsFree; got != sessionRuntimeSlots {
+		t.Fatalf("successful exact removal left %d free slots", got)
+	}
+	if _, err := os.Stat(boxPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("owned box remains after proof: %v", err)
+	}
+	log, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(log), "label="+box.LabelRun+"="+sessionWarmRunID(bound.ID)) ||
+		strings.Contains(string(log), "com.docker.compose") || strings.Contains(string(log), box.LabelExecution+"=") {
+		t.Fatalf("runtime proof used non-session authority: %s", log)
+	}
+	if !service.sessionQuarantined(bound.ID) {
+		t.Fatal("removing the owned box lifted workspace quarantine")
+	}
+}
+
+func TestRetiredQuarantinedActiveTurnRestartsWithoutWorkspaceCleanup(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	root := filepath.Join(t.TempDir(), "state")
+	runner := &quarantinedRuntimeProofRunner{}
+	open := func() *sessionFixture {
+		return newTestSessionService(t, root, repo, func(*session.Store) Runner { return runner })
+	}
+	service := open()
+	bound, _ := createLegacyBoundSession(t, service, repo, "legacy-active-retired", "legacy-active-retired", "")
+	queued, err := service.Store().SubmitTurn(context.Background(), "legacy-active", session.SubmitTurnRequest{
+		SessionID: bound.ID, ExpectedRevision: bound.Revision, Prompt: "interrupted before upgrade",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, ok, err := service.Store().LeaseNextTurn(context.Background(), bound.ID)
+	if err != nil || !ok || active.ID != queued.ID {
+		t.Fatalf("lease legacy turn = %+v, %t, %v", active, ok, err)
+	}
+	runID := sessionTurnRunID(bound.ID, active.ID)
+	if err := service.Store().BindTurnRuntime(context.Background(), bound.ID, active.ID, "", runID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	current := mustSession(t, service, bound.ID)
+	if _, err := service.Discard(context.Background(), "retire-active", DiscardRequest{
+		RetireQuarantined: true, SessionID: current.ID, ExpectedRevision: current.Revision,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	runner = &quarantinedRuntimeProofRunner{release: release}
+	service = open()
+	defer service.Stop()
+	drained := make(chan struct{})
+	service.testAfterStartupDrain = func() { close(drained) }
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatalf("retired active turn broke restart: %v", err)
+	}
+	if got := service.RuntimeCapacity().TurnSlotsFree; got != 0 {
+		t.Fatalf("unproven retired runtime advertised %d free slots", got)
+	}
+	close(release)
+	select {
+	case <-drained:
+	case <-time.After(wait.Deadline):
+		t.Fatal("retired runtime proof did not finish")
+	}
+	if got := service.RuntimeCapacity().TurnSlotsFree; got != sessionRuntimeSlots {
+		t.Fatalf("retired runtime proof left %d free slots", got)
+	}
+	retained, err := service.Store().GetTurn(context.Background(), bound.ID, active.ID)
+	if err != nil || retained.RuntimeRunID != runID || retained.State != active.State {
+		t.Fatalf("retired turn history changed: %+v, %v", retained, err)
+	}
+	if _, err := os.Stat(bound.Workspace); err != nil {
+		t.Fatalf("retired workspace changed: %v", err)
+	}
+	if runner.runs.Load() != 0 {
+		t.Fatal("retired turn ran after restart")
 	}
 }

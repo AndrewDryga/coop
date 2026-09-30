@@ -212,6 +212,11 @@ type sessionRunnerRuntimeCleaner interface {
 	CleanupSession(context.Context, session.Session) error
 }
 
+// A quarantined workspace grants no authority for ordinary session cleanup.
+type sessionRunnerUnprovenRuntimeCleaner interface {
+	CleanupUnprovenSessionRuntime(context.Context, session.Session) error
+}
+
 type sessionRunnerParkedCleaner interface {
 	CleanupParkedSession(context.Context, session.Session) error
 }
@@ -305,8 +310,9 @@ type runtimeCleanupStamp struct {
 }
 
 type runtimeCleanupCandidate struct {
-	session session.Session
-	turn    *session.Turn
+	session  session.Session
+	turn     *session.Turn
+	unproven bool
 }
 
 type Service struct {
@@ -592,9 +598,11 @@ func (s *Service) Start(parent context.Context) error {
 		s.mu.Unlock()
 		return err
 	}
+	skipRuntimeRecovery := make(map[string]struct{}, len(retired))
 	s.historicalMu.Lock()
 	for _, id := range retired {
 		s.historicalPending[id] = struct{}{}
+		skipRuntimeRecovery[id] = struct{}{}
 	}
 	s.historicalMu.Unlock()
 	var quarantinedIDs []string
@@ -608,6 +616,7 @@ func (s *Service) Start(parent context.Context) error {
 				s.host.warnf("remote session %s is quarantined: %v; its durable history, workspace, and services were left untouched", sessions[index].ID, bindErr)
 				quarantined[sessions[index].ID] = struct{}{}
 				quarantinedIDs = append(quarantinedIDs, sessions[index].ID)
+				skipRuntimeRecovery[sessions[index].ID] = struct{}{}
 				continue
 			}
 			s.mu.Lock()
@@ -617,6 +626,11 @@ func (s *Service) Start(parent context.Context) error {
 		}
 		sessions[index] = bound
 	}
+	s.historicalMu.Lock()
+	for id := range quarantined {
+		s.historicalPending[id] = struct{}{}
+	}
+	s.historicalMu.Unlock()
 	s.mu.Lock()
 	clear(s.quarantined)
 	for sessionID := range quarantined {
@@ -638,7 +652,7 @@ func (s *Service) Start(parent context.Context) error {
 	}
 	needsReaper := false
 	for _, turn := range cleanupTurns {
-		if _, skip := quarantined[turn.SessionID]; !skip {
+		if _, skip := skipRuntimeRecovery[turn.SessionID]; !skip {
 			needsReaper = true
 			break
 		}
@@ -659,7 +673,7 @@ func (s *Service) Start(parent context.Context) error {
 		}
 	}
 	for _, turn := range cleanupTurns {
-		if _, skip := quarantined[turn.SessionID]; skip {
+		if _, skip := skipRuntimeRecovery[turn.SessionID]; skip {
 			continue
 		}
 		sess, ok := byID[turn.SessionID]
@@ -696,7 +710,7 @@ func (s *Service) Start(parent context.Context) error {
 		s.mu.Unlock()
 		return fmt.Errorf("startup runtime cleanup failed: %w", errors.Join(reapErrors...))
 	}
-	if _, err := s.store.ReconcileInterruptedTurns(parent, quarantinedIDs...); err != nil {
+	if _, err := s.store.ReconcileInterruptedTurns(parent, append(retired, quarantinedIDs...)...); err != nil {
 		s.mu.Lock()
 		s.starting = false
 		s.mu.Unlock()
@@ -991,9 +1005,10 @@ func (s *Service) cleanupIdleSessionRuntimes(ctx context.Context) (proven int) {
 
 	parkedCleaner, parkedOK := s.runner.(sessionRunnerParkedCleaner)
 	cleaner, cleanupOK := s.runner.(sessionRunnerRuntimeCleaner)
+	unprovenCleaner, unprovenOK := s.runner.(sessionRunnerUnprovenRuntimeCleaner)
 	reaper, reapOK := s.runner.(sessionRunnerTurnReaper)
 	warmInspector, canInspectWarm := s.runner.(sessionRunnerWarmInspector)
-	if !parkedOK && !cleanupOK && !reapOK {
+	if !parkedOK && !cleanupOK && !reapOK && !unprovenOK {
 		return
 	}
 	sessions, err := s.store.ListSessionsForRecovery(ctx)
@@ -1021,6 +1036,13 @@ func (s *Service) cleanupIdleSessionRuntimes(ctx context.Context) (proven int) {
 	candidates := make([]runtimeCleanupCandidate, 0, len(sessions))
 	eligible := make(map[string]struct{})
 	for _, candidate := range sessions {
+		if s.historicalRuntimeNeedsCleanup(candidate.ID) &&
+			(candidate.State == session.SessionDiscarded || s.sessionQuarantined(candidate.ID)) {
+			if unprovenOK {
+				candidates = append(candidates, runtimeCleanupCandidate{session: candidate, unproven: true})
+			}
+			continue
+		}
 		if candidate.State == session.SessionDiscarded {
 			continue
 		}
@@ -1051,7 +1073,7 @@ func (s *Service) cleanupIdleSessionRuntimes(ctx context.Context) (proven int) {
 		candidate := candidates[(start+scanned)%len(candidates)]
 		scanned++
 		stamp := runtimeCleanupStampFor(candidate.session, candidate.turn)
-		if s.runtimeCleanupMatches(candidate.session.ID, stamp) {
+		if !candidate.unproven && s.runtimeCleanupMatches(candidate.session.ID, stamp) {
 			continue
 		}
 		attempts++
@@ -1059,7 +1081,13 @@ func (s *Service) cleanupIdleSessionRuntimes(ctx context.Context) (proven int) {
 		current, getErr := s.store.GetSession(ctx, candidate.session.ID)
 		currentTurn := session.Turn{}
 		cleaned, warmReady := false, false
-		if getErr == nil && candidate.turn != nil {
+		if getErr == nil && candidate.unproven {
+			if s.historicalRuntimeNeedsCleanup(current.ID) &&
+				(current.State == session.SessionDiscarded || s.sessionQuarantined(current.ID)) {
+				getErr = unprovenCleaner.CleanupUnprovenSessionRuntime(ctx, current)
+				cleaned = getErr == nil
+			}
+		} else if getErr == nil && candidate.turn != nil {
 			currentTurn, getErr = s.store.GetTurn(ctx, current.ID, candidate.turn.ID)
 			if getErr == nil && current.Activity == session.ActivityRunning &&
 				current.ActiveTurnID == currentTurn.ID && currentTurn.State == session.TurnAwaitingValidation &&
@@ -1083,11 +1111,13 @@ func (s *Service) cleanupIdleSessionRuntimes(ctx context.Context) (proven int) {
 			if s.testBeforeCleanupStamp != nil {
 				s.testBeforeCleanupStamp()
 			}
-			var turn *session.Turn
-			if currentTurn.ID != "" {
-				turn = &currentTurn
+			if !candidate.unproven {
+				var turn *session.Turn
+				if currentTurn.ID != "" {
+					turn = &currentTurn
+				}
+				s.markRuntimeCleanupDone(current.ID, runtimeCleanupStampFor(current, turn))
 			}
-			s.markRuntimeCleanupDone(current.ID, runtimeCleanupStampFor(current, turn))
 			s.markHistoricalRuntimeClean(current.ID)
 			proven++
 		}
@@ -2617,9 +2647,6 @@ func (s *Service) executeRetireQuarantined(ctx context.Context, op session.Opera
 	if err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
 	}
-	s.historicalMu.Lock()
-	s.historicalPending[sess.ID] = struct{}{}
-	s.historicalMu.Unlock()
 	s.mu.Lock()
 	delete(s.quarantined, sess.ID)
 	s.mu.Unlock()

@@ -343,8 +343,10 @@ workspace path.
 Runtime capacity is four shared slots for active and warm model processes. The session, turn and
 workspace counts describe that same pool, not independent allocations. A queued turn waits before
 its model timeout starts. Failed teardown retains its slot until cleanup succeeds; unresolved
-startup runtime custody reports busy with zero free slots. A failed capacity read also reports
-busy, without preventing the worker from polling for reads and cleanup.
+startup runtime custody reports busy with zero free slots. For a quarantined or retired historical
+session, cleanup may release capacity only after proving its exact session-owned runtime labels
+gone; it does not make the workspace runnable. A failed capacity read also reports busy, without
+preventing the worker from polling for reads and cleanup.
 
 `/v1/storage` measures allocated blocks, never apparent size, and it never opens a file — so it can
 account credential-bearing private session state without reading any of it. A fork's git objects are
@@ -939,12 +941,16 @@ curl --unix-socket "$SOCKET" \
 
 This tombstones the session row only: queued turns are exhausted, a turn that was active when the
 daemon lost authority stays in history as it was, and the workspace, reservation, sidecar services,
-and private ACP state stay on disk for the operator to inspect and remove. A session that is not
-quarantined is refused with `invalid_session_state`.
+and provider-native ACP history stay on disk. A session that is not quarantined is refused with
+`invalid_session_state`.
 
-Record-only retirement does not restore runtime capacity, including after restart: it provides no
-proof that those processes stopped. Inspect and stop the old runtime before bringing up a worker
-with a fresh `--state` directory; retain the old directory for its session history.
+Retirement itself never proves a runtime stopped. Independently, the daemon checks the exact
+`coop.run` labels derived from that store's session and turn IDs, removes any matching boxes, and
+cleans projected credentials under its private ACP state. It retries after a failed or partial
+check and advertises busy until the whole proof succeeds, including after restart. Successful
+runtime proof restores capacity but does not adopt or delete the unowned workspace; quarantined
+sessions remain unrunnable and still require explicit retirement or recovery. If capacity stays
+busy, inspect the worker's runtime-cleanup warning rather than treating a tombstone as proof.
 
 ## Errors
 
