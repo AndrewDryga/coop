@@ -225,6 +225,42 @@ func TestSessionReviewGateUsesTheJobImage(t *testing.T) {
 	}
 }
 
+// A daemon review may need to rebuild Coop's base before it can start the gate. Both build
+// streams belong to this review's output, not the worker's own terminal log.
+func TestSessionReviewGateKeepsBaseRepairOutput(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("COOP_GATE", "true")
+	shim := filepath.Join(t.TempDir(), "docker")
+	script := "#!/bin/sh\ncase \"$1\" in\n" +
+		"image) exit 1 ;;\n" +
+		"info) echo linux/x86_64; exit 0 ;;\n" +
+		"build) echo 'base build stdout'; echo 'base build stderr' >&2; exit 23 ;;\n" +
+		"esac\nexit 0\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.BoxHome = t.TempDir()
+	cfg.BaseImage = "coop-box:" + strings.Repeat("a", 32)
+	box.StampImageMeta(cfg, box.ManagedBaseRepository, "v-old")
+	var output bytes.Buffer
+	result, err := defaultSessionReviewGate(cfg, runtime.Runtime{Name: shim}).Run(context.Background(), sessionsvc.ReviewGateRequest{
+		Repository: t.TempDir(), Candidate: t.TempDir(), NetworkMode: "none", Output: &output,
+	})
+	if err != nil || !result.Configured || !strings.Contains(result.StartupError, "build exited with status 23") {
+		t.Fatalf("review base repair = %+v, %v", result, err)
+	}
+	for _, want := range []string{"base build stdout", "base build stderr"} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("review output lacks %q:\n%s", want, &output)
+		}
+	}
+}
+
 func TestRestrictedACPDoesNotAutomaticallyBuildProject(t *testing.T) {
 	for _, mode := range []string{"filtered", "none"} {
 		t.Run(mode, func(t *testing.T) {

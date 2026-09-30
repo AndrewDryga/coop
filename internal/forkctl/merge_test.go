@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1373,7 +1374,7 @@ func TestMergeGateBuildsCoopsBaseAfterAnUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
-	host := Host{EnsureBaseImage: func() error { calls++; return os.WriteFile(built, nil, 0o644) }}
+	host := Host{EnsureBaseImage: func(io.Writer) error { calls++; return os.WriteFile(built, nil, 0o644) }}
 	base := "coop-box:0123456789abcdef0123456789abcdef"
 	c := New(&config.Config{Gate: []string{"true"}, BaseImage: base}, runtime.Runtime{Name: shim}, host)
 	if img, err := c.MergeGate(t.TempDir()); err != nil || img != base || calls != 1 {
@@ -1537,7 +1538,7 @@ func TestFilteredMergeGateDoesNotRequireAnOrdinaryImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{Gate: []string{"true"}, BaseImage: "coop-box"}
-	c := New(cfg, runtime.Runtime{Name: shim}, Host{EnsureBaseImage: func() error {
+	c := New(cfg, runtime.Runtime{Name: shim}, Host{EnsureBaseImage: func(io.Writer) error {
 		t.Fatal("filtered gate tried to build the ordinary base")
 		return nil
 	}})

@@ -309,8 +309,8 @@ func sessionReviewGateHost(cfg *config.Config, rt runtime.Runtime) forkctl.Host 
 	return forkctl.Host{
 		EnsureRuntime:      ensureRuntime,
 		SettleFilteredRuns: func(gateRuntime runtime.Runtime) { settleNetworkRuns(gateRuntime) },
-		// An upgrade's new base is built as a launch builds it, output to the daemon's log.
-		EnsureBaseImage: func() error {
+		// An upgrade's new base is built as a launch builds it, with diagnostics in this review.
+		EnsureBaseImage: func(output io.Writer) error {
 			gateRuntime, err := ensureRuntime()
 			if err != nil {
 				return err
@@ -318,7 +318,10 @@ func sessionReviewGateHost(cfg *config.Config, rt runtime.Runtime) forkctl.Host 
 			if _, _, ok := box.ManagedBaseRepair(gateRuntime, cfg); !ok {
 				return nil
 			}
-			return box.BuildManagedBase(gateRuntime, cfg, resolveVersion(), os.Stderr)
+			if output == nil {
+				output = os.Stderr
+			}
+			return box.BuildManagedBase(gateRuntime, cfg, resolveVersion(), output)
 		},
 	}
 }

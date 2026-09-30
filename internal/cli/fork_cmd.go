@@ -154,7 +154,7 @@ func (a *app) forkHost() forkctl.Host {
 		ForkCost: loop.WorkspaceCost,
 		// The control plane's runtime is this app's (EnsureRuntime above), so a.rt is the one it passes.
 		SettleFilteredRuns: func(runtime.Runtime) { noteSettledFilteredRuns(a.settleInterruptedFilteredRuns()) },
-		EnsureBaseImage:    a.ensureManagedBase,
+		EnsureBaseImage:    func(io.Writer) error { return a.ensureManagedBase() },
 	}
 }
 

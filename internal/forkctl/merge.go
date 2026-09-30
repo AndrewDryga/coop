@@ -154,12 +154,12 @@ func (c *Control) gateImage(repo, img string) (string, error) {
 		// the ordinary tag here would strand a project prepared with `coop build --egress filtered`.
 		return img, nil
 	}
-	return img, c.ensureGateImage(img)
+	return img, c.ensureGateImage(img, nil)
 }
 
-func (c *Control) ensureGateImage(img string) error {
+func (c *Control) ensureGateImage(img string, output io.Writer) error {
 	if img == c.cfg.BaseImage {
-		if err := c.host.ensureBaseImage(); err != nil {
+		if err := c.host.ensureBaseImage(output); err != nil {
 			return err
 		}
 	}
@@ -212,7 +212,7 @@ func (c *Control) ReviewControllerJob(ctx context.Context, request sessionsvc.Re
 	}
 	image := box.JobImage(c.cfg.BaseImage, c.cfg.ImageOverride)
 	if request.NetworkMode != "filtered" {
-		if err := c.ensureGateImage(image); err != nil {
+		if err := c.ensureGateImage(image, request.Output); err != nil {
 			return run, err
 		}
 	}

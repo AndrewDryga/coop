@@ -9,6 +9,8 @@
 package forkctl
 
 import (
+	"io"
+
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
@@ -35,8 +37,8 @@ type Host struct {
 	SettleFilteredRuns func(rt runtime.Runtime)
 
 	// EnsureBaseImage builds Coop's own base when an upgrade named a new tag that a gate about to
-	// run needs, as a launch does; nil builds nothing.
-	EnsureBaseImage func() error
+	// run needs, as a launch does. Output is the review's log for controller jobs; nil builds nothing.
+	EnsureBaseImage func(output io.Writer) error
 }
 
 func (h Host) ensureRuntime() (runtime.Runtime, error) {
@@ -46,11 +48,11 @@ func (h Host) ensureRuntime() (runtime.Runtime, error) {
 	return h.EnsureRuntime()
 }
 
-func (h Host) ensureBaseImage() error {
+func (h Host) ensureBaseImage(output io.Writer) error {
 	if h.EnsureBaseImage == nil {
 		return nil
 	}
-	return h.EnsureBaseImage()
+	return h.EnsureBaseImage(output)
 }
 
 func (h Host) settleFilteredRuns(rt runtime.Runtime) {
