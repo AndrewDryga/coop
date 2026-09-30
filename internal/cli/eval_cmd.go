@@ -450,15 +450,41 @@ func renderEvalComparison(c *eval.Comparison) {
 		fmt.Println("⚠ Incomplete grading — no definitive winner.")
 		fmt.Println("  Errors and timeouts are not model-quality failures.")
 	}
+	if c.Unpaired != "" {
+		printEvalText("Paired effects unavailable: ", c.Unpaired)
+	}
+	if p := c.Paired; p != nil {
+		fmt.Printf("Paired: %d cases × %d repeats; %d/%d pairs graded.\n", p.Cases, p.Repeat, p.Graded, p.Requested)
+		if e := p.Effect; e != nil {
+			fmt.Printf("Pass-rate change: %+.1f percentage points (after − before).\n", 100*e.Delta)
+			fmt.Printf("95%% bound: %+.1f to %+.1f percentage points.\n", 100*e.Low, 100*e.High)
+			fmt.Println("  Repeat uncertainty on this fixed suite; assumes independent trial executions.")
+			fmt.Println("  Repeats are not new tasks; this does not generalize to unseen tasks.")
+		} else {
+			fmt.Println("Inconclusive: matched grading is incomplete; aggregate change and bound unavailable.")
+		}
+		if p.Repeat < 3 {
+			fmt.Println("Inconclusive: a decision campaign requires at least three repeats per case.")
+		}
+		fmt.Println("Inconclusive: no preregistered decision rule is recorded; no definitive winner.")
+	}
 	fmt.Printf("\nInspect before: coop eval inspect %s\n", c.BaseID)
 	fmt.Printf("Inspect after:  coop eval inspect %s\n", c.NewID)
 	if c.Mismatch != "" || len(c.Cases) == 0 {
 		return
 	}
-	fmt.Println("\nPer case (before → after; summed over configurations):")
+	fmt.Println("\nPer case (before → after; counts include all configurations and repeats):")
 	for _, cc := range c.Cases {
 		fmt.Printf("  %s\n", evalDisplayText(cc.Case))
 		printEvalText("    ", evalCaseResult(cc.Base)+" → "+evalCaseResult(cc.New))
+		if c.Paired != nil {
+			fmt.Printf("    Matched: %d/%d pairs", cc.Matched, c.Paired.Repeat)
+			if cc.Delta != nil {
+				fmt.Printf("; change %+.1f percentage points\n", 100**cc.Delta)
+			} else {
+				fmt.Println("; change unavailable (incomplete grading)")
+			}
+		}
 	}
 }
 

@@ -157,9 +157,81 @@ func TestEvalMeasurementCoverageIsVisibleForPassingRuns(t *testing.T) {
 			t.Fatalf("compare = %d, %v", code, err)
 		}
 	})
-	for _, want := range []string{"measured 1/3 graded trials", "0/3 graded trials"} {
+	for _, want := range []string{"measured 1/3 graded trials", "0/3 graded trials", "95% bound: -100.0 to +100.0", "at least three repeats", "no definitive winner"} {
 		if !strings.Contains(comparison, want) {
 			t.Errorf("comparison hides measurement coverage %q:\n%s", want, comparison)
 		}
+	}
+}
+
+func TestEvalComparisonReportsOnlyFullyMatchedEffects(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	root, err := evalStateRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeRun := func(id string, after, partial, multiple bool) {
+		t.Helper()
+		configs := []eval.RunConfig{{Label: "codex", Fingerprint: "abcdef", Build: "test"}}
+		if multiple {
+			configs = append(configs, eval.RunConfig{Label: "claude"})
+		}
+		store, err := eval.CreateRun(root, eval.RunRecord{
+			ID: id, Suite: "comparison", Workload: "frozen", Repeat: 3,
+			Cases: []string{"a", "b", "c"}, Configs: configs,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range []string{"a", "b", "c"} {
+			for rep := range 3 {
+				if partial && c == "b" && rep == 2 {
+					continue
+				}
+				status := eval.TrialFailed
+				if c == "a" || after && c == "b" {
+					status = eval.TrialPassed
+				}
+				if err := store.WriteTrial(eval.TrialRecord{Case: c, Repetition: rep, Status: status}); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		// Comparison must rebuild coverage rather than trusting these deliberately empty totals.
+		if err := store.Seal(eval.RunSummary{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeRun("before", false, false, false)
+	for _, tc := range []struct {
+		name              string
+		partial, multiple bool
+		want, absent      []string
+	}{
+		{"complete", false, false,
+			[]string{"3 cases × 3 repeats; 9/9 pairs graded", "3/9 passed", "6/9 passed", "Pass-rate change: +33.3 percentage points", "95% bound: -30.7 to +97.4", "fixed suite", "independent trial executions", "Repeats are not new tasks", "no preregistered decision rule", "Matched: 3/3 pairs; change +100.0"}, nil},
+		{"partial", true, false,
+			[]string{"8/9 pairs graded", "5/9 passed", "1 pending", "aggregate change and bound unavailable", "Matched: 2/3 pairs; change unavailable"}, []string{"Pass-rate change:", "95% bound:"}},
+		{"multiple", false, true,
+			[]string{"one configuration per run", "6/18 passed", "9/18 graded", "9 pending"}, []string{"Paired:", "Pass-rate change:", "95% bound:", "Matched:"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			writeRun(tc.name, true, tc.partial, tc.multiple)
+			out := captureStdout(t, func() {
+				if code, err := (&app{}).cmdEval([]string{"compare", "before", tc.name}); code != 0 || err != nil {
+					t.Fatalf("compare = %d, %v", code, err)
+				}
+			})
+			for _, want := range tc.want {
+				if !strings.Contains(out, want) {
+					t.Errorf("comparison missing %q:\n%s", want, out)
+				}
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(out, absent) {
+					t.Errorf("comparison claims unsupported %q:\n%s", absent, out)
+				}
+			}
+		})
 	}
 }

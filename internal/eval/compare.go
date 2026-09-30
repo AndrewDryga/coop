@@ -3,18 +3,12 @@ package eval
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"sort"
 )
 
-// The primary regression workflow: run a suite, change a preset/loop config or the Coop build, run
-// the same suite again, then compare the two runs. Comparison is honest by construction — it leads
-// with pass counts and COVERAGE (how many requested trials actually produced a graded result), pairs
-// each case's outcome across the two runs, and refuses to reduce a mismatched WORKLOAD to a single
-// number. A smaller anything never makes a winner by itself; incomplete coverage has no definitive
-// winner. This is pure over two sealed runs' records; it launches nothing.
-
-// Comparison is the result of comparing two runs of the same workload.
+// Comparison reads retained evidence only; it never launches a trial or chooses a winner.
 type Comparison struct {
 	BaseID string
 	NewID  string
@@ -27,17 +21,15 @@ type Comparison struct {
 	New  ConfigOutcome
 	// Cases pairs each case's per-run status counts, in case-id order.
 	Cases []CaseComparison
+	// Unpaired explains why only separate counts, not matched effects, are available.
+	Unpaired string
+	Paired   *PairedComparison
 }
 
 // ConfigOutcome is one run's headline: the configurations it evaluated and its pass/coverage counts.
 type ConfigOutcome struct {
-	Configs   []string
-	Requested int
-	Passed    int
-	Failed    int
-	Errored   int
-	Pending   int
-	TimedOut  int
+	Configs []string
+	CaseCounts
 	// Size is the change-size summary over the trials that were actually GRADED. It is a separate
 	// field, never mixed into the counts above, because size is a review signal and not a score: a
 	// smaller wrong answer does not beat a larger right one, and two equally correct solutions of
@@ -54,26 +46,40 @@ type SizeSummary struct {
 	CodeAfter  int
 }
 
-// Covered is the trials that reached a graded verdict (passed or failed) — the COVERAGE figure,
-// shown beside the pass count, never used as the pass denominator (that is always Requested). A run
-// with low coverage has no definitive result, however its passes look.
-func (o ConfigOutcome) Covered() int { return o.Passed + o.Failed }
-
 // CaseComparison is one case's outcome in each run.
 type CaseComparison struct {
-	Case string
-	Base CaseCounts
-	New  CaseCounts
+	Case    string
+	Base    CaseCounts
+	New     CaseCounts
+	Matched int
+	// Delta is the pass-rate difference (after minus before), only for a fully graded case.
+	Delta *float64
 }
 
 // CaseCounts is the per-status tally for one case within one run (summed over configurations and
 // repetitions of that case).
 type CaseCounts struct {
+	Requested                                  int
 	Passed, Failed, Errored, Pending, TimedOut int
 }
 
-// Compare reads both runs from root and pairs them. It returns an error only for an unreadable or
-// unsealed run; a WORKLOAD mismatch is reported IN the comparison (Mismatch set), not as an error,
+// Covered counts graded verdicts, never the pass denominator (which is always Requested).
+func (c CaseCounts) Covered() int { return c.Passed + c.Failed }
+
+// PairedComparison keeps task diversity separate from repeat precision. Effect is absent unless
+// every requested pair was graded. It describes this fixed suite, not an unseen task population.
+type PairedComparison struct {
+	Cases, Repeat, Requested, Graded int
+	Effect                           *PairedEffect
+}
+
+// PairedEffect is a fixed-suite pass-rate change and its conservative 95% repeat-uncertainty bound.
+type PairedEffect struct {
+	Delta, Low, High float64
+}
+
+// Compare reads both runs from root and pairs them. It rejects unreadable, unsealed or damaged
+// records; a WORKLOAD mismatch is reported IN the comparison (Mismatch set), not as an error,
 // so the caller can still show the two separate results and explain why they cannot be merged.
 func Compare(root, baseID, newID string) (*Comparison, error) {
 	base, err := loadSealed(root, baseID)
@@ -88,6 +94,10 @@ func Compare(root, baseID, newID string) (*Comparison, error) {
 		BaseID: baseID, NewID: newID, Suite: base.run.Suite,
 		Base: outcomeOf(base), New: outcomeOf(next),
 	}
+	if base.run.Workload == "" || next.run.Workload == "" {
+		cmp.Mismatch = "a workload identity is missing, so these results cannot be paired"
+		return cmp, nil
+	}
 	if base.run.Workload != next.run.Workload {
 		cmp.Mismatch = fmt.Sprintf(
 			"these runs evaluate different workloads (%s vs %s), so their scores are shown separately, not merged",
@@ -95,13 +105,24 @@ func Compare(root, baseID, newID string) (*Comparison, error) {
 		return cmp, nil
 	}
 	cmp.Cases = pairCases(base, next)
+	switch {
+	case baseID == newID:
+		cmp.Unpaired = "choose two distinct runs for a matched comparison"
+	case len(base.run.Configs) != 1 || len(next.run.Configs) != 1:
+		cmp.Unpaired = "paired effects require one configuration per run; configuration correspondence is not inferred"
+	case len(cmp.Cases) != len(base.run.Cases) || len(cmp.Cases) != len(next.run.Cases):
+		cmp.Unpaired = "the requested case sets differ"
+	case base.run.Repeat != next.run.Repeat:
+		cmp.Unpaired = "the requested repetition counts differ"
+	default:
+		cmp.Paired = pairEffects(cmp.Cases, base, next)
+	}
 	return cmp, nil
 }
 
 type sealedRun struct {
-	run     *RunRecord
-	summary *RunSummary
-	trials  []TrialRecord
+	run    *RunRecord
+	trials map[string]TrialRecord
 }
 
 func loadSealed(root, id string) (sealedRun, error) {
@@ -112,7 +133,7 @@ func loadSealed(root, id string) (sealedRun, error) {
 	if err != nil {
 		return sealedRun{}, fmt.Errorf("run %s: %w", id, err)
 	}
-	summary, ok, err := LoadSummary(root, id)
+	_, ok, err := LoadSummary(root, id)
 	if err != nil {
 		return sealedRun{}, err
 	}
@@ -123,15 +144,49 @@ func loadSealed(root, id string) (sealedRun, error) {
 	if err != nil {
 		return sealedRun{}, err
 	}
-	return sealedRun{run: run, summary: summary, trials: trials}, nil
+	if len(run.Cases) == 0 || len(run.Configs) == 0 || run.Repeat < 1 {
+		return sealedRun{}, fmt.Errorf("run %s: damaged requested trial matrix", id)
+	}
+	cases := make(map[string]bool, len(run.Cases))
+	for _, c := range run.Cases {
+		if c == "" || cases[c] {
+			return sealedRun{}, fmt.Errorf("run %s: empty or duplicate case in requested matrix", id)
+		}
+		cases[c] = true
+	}
+	r := sealedRun{run: run, trials: make(map[string]TrialRecord)}
+	for _, tr := range trials {
+		if tr.RunID != id || !cases[tr.Case] || tr.ConfigIndex < 0 || tr.ConfigIndex >= len(run.Configs) || tr.Repetition < 0 || tr.Repetition >= run.Repeat {
+			return sealedRun{}, fmt.Errorf("run %s: trial outside its requested matrix", id)
+		}
+		key := TrialKey(tr.Case, tr.ConfigIndex, tr.Repetition)
+		if _, exists := r.trials[key]; exists {
+			return sealedRun{}, fmt.Errorf("run %s: duplicate trial %q", id, key)
+		}
+		r.trials[key] = tr
+	}
+	// The manifest, not summary counts or file presence, owns the denominator. A missing record
+	// after interruption or damage stays pending; it must never improve the apparent pass rate.
+	for _, c := range run.Cases {
+		for config := range run.Configs {
+			for rep := range run.Repeat {
+				key := TrialKey(c, config, rep)
+				if _, exists := r.trials[key]; !exists {
+					r.trials[key] = TrialRecord{Case: c, ConfigIndex: config, Repetition: rep, Status: TrialPending}
+				}
+			}
+		}
+	}
+	return r, nil
 }
 
 func outcomeOf(r sealedRun) ConfigOutcome {
-	o := ConfigOutcome{Requested: r.summary.Requested}
+	var o ConfigOutcome
 	for _, c := range r.run.Configs {
 		o.Configs = append(o.Configs, c.Description())
 	}
 	for _, tr := range r.trials {
+		tally(&o.CaseCounts, tr.Status)
 		// Only a graded trial's size means anything: an errored or never-started trial's workspace
 		// says nothing about what the configuration would have written.
 		if tr.Size == nil || (tr.Status != TrialPassed && tr.Status != TrialFailed) {
@@ -141,22 +196,6 @@ func outcomeOf(r sealedRun) ConfigOutcome {
 		o.Size.CodeBefore += tr.Size.CodeBefore
 		o.Size.CodeAfter += tr.Size.CodeAfter
 		o.Size.NetGrowth += tr.Size.NetGrowth()
-	}
-	for status, n := range r.summary.Counts {
-		switch status {
-		case TrialPassed:
-			o.Passed += n
-		case TrialFailed:
-			o.Failed += n
-		case TrialError:
-			o.Errored += n
-		case TrialTimedOut:
-			o.TimedOut += n
-		case TrialPending, TrialRunning:
-			o.Pending += n
-		default:
-			o.Errored += n // an unknown status is kept in the matrix, never dropped
-		}
 	}
 	return o
 }
@@ -188,6 +227,7 @@ func pairCases(base, next sealedRun) []CaseComparison {
 }
 
 func tally(c *CaseCounts, status TrialStatus) {
+	c.Requested++
 	switch status {
 	case TrialPassed:
 		c.Passed++
@@ -202,6 +242,36 @@ func tally(c *CaseCounts, status TrialStatus) {
 	default:
 		c.Errored++ // an unknown status is kept, never silently dropped
 	}
+}
+
+func pairEffects(cases []CaseComparison, base, next sealedRun) *PairedComparison {
+	p := &PairedComparison{Cases: len(cases), Repeat: base.run.Repeat, Requested: len(cases) * base.run.Repeat}
+	passedChange := 0
+	for i := range cases {
+		c := &cases[i]
+		passedChange += c.New.Passed - c.Base.Passed
+		for rep := range p.Repeat {
+			key := TrialKey(c.Case, 0, rep)
+			b, n := base.trials[key].Status, next.trials[key].Status
+			if (b == TrialPassed || b == TrialFailed) && (n == TrialPassed || n == TrialFailed) {
+				c.Matched++
+			}
+		}
+		p.Graded += c.Matched
+		if c.Matched == p.Repeat {
+			delta := float64(c.New.Passed-c.Base.Passed) / float64(p.Repeat)
+			c.Delta = &delta
+		}
+	}
+	if p.Graded == p.Requested {
+		delta := float64(passedChange) / float64(p.Requested)
+		// Hoeffding for 2*N*R independent signed Bernoulli terms, each with range 1/(N*R):
+		// P(|estimate - fixed-suite mean| >= h) <= 2*exp(-N*R*h^2). At 95%, h=sqrt(log(40)/(N*R)).
+		// Repeats narrow uncertainty on THESE cases; they do not supply new independent tasks.
+		half := math.Sqrt(math.Log(40) / float64(p.Requested))
+		p.Effect = &PairedEffect{Delta: delta, Low: math.Max(-1, delta-half), High: math.Min(1, delta+half)}
+	}
+	return p
 }
 
 func short(fp string) string { return Fingerprint(fp).Short() }

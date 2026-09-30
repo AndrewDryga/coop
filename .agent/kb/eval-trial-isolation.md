@@ -2,7 +2,7 @@
 name: eval-trial-isolation
 description: What isolates one coop eval trial from the next and from the grader — and why the obvious credential fix would break authentication
 subsystem: eval
-sources: [internal/cli/eval_cmd.go, internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_loop.go, internal/cli/eval_results.go, internal/loop/loop.go, internal/eval/execute.go, internal/eval/fixtures.go, internal/eval/stage.go, internal/eval/stage_copy.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/eval/store.go, internal/eval/catalog.go, internal/eval/private_root.go, internal/runtime/runtime.go, internal/box/run.go, internal/box/mounts.go, internal/box/authority_mounts.go, internal/agent/codex.go, examples/evals/maintenance/suite.yaml, examples/evals/maintenance/qualification.sh, examples/evals/maintenance/runtime-qualification.sh]
+sources: [internal/cli/eval_cmd.go, internal/cli/eval_trial.go, internal/cli/eval_grade.go, internal/cli/eval_loop.go, internal/cli/eval_results.go, internal/loop/loop.go, internal/eval/compare.go, internal/eval/execute.go, internal/eval/fixtures.go, internal/eval/stage.go, internal/eval/stage_copy.go, internal/eval/workspace.go, internal/eval/snapshot.go, internal/eval/store.go, internal/eval/catalog.go, internal/eval/private_root.go, internal/runtime/runtime.go, internal/box/run.go, internal/box/mounts.go, internal/box/authority_mounts.go, internal/agent/codex.go, examples/evals/maintenance/suite.yaml, examples/evals/maintenance/qualification.sh, examples/evals/maintenance/runtime-qualification.sh]
 updated: 2026-09-30
 ---
 
@@ -117,6 +117,13 @@ or named record and keeps absent trials in the requested denominator. Provider/v
 untrusted recorded evidence: bound and escape it for terminal display, never treat it as authority
 or automatically retry a paid run. Errors before grading are not model-quality failures.
 
+`compare` uses the sealed summary only as a completion marker. It validates records against the
+manifest and fills absent requested trials as pending before counting. Matched effects require
+distinct, single-configuration runs with equal nonempty workload identity, case set and repeats;
+only a fully graded case gets a delta, and only full matched coverage gets an aggregate/bound.
+The Hoeffding bound describes independent repeat executions on the fixed suite, not new tasks.
+No campaign decision rule is recorded, so the report is descriptive and declares no winner.
+
 `coop eval run --timeout` has one deadline from command entry through preparation, trials and
 grading. Staging and runtime probes honor it; the executor does not grant a new full budget after
 preparation. A timeout before run creation leaves no run record. Once a run exists, unstarted
@@ -144,6 +151,8 @@ already fully correct. The shipped verifier runs each subcommand on inputs no ta
 also why it cannot be satisfied by a loop that moves folders without finishing anything.
 
 ## Changelog
+- 2026-09-30 — mapped manifest-backed comparison coverage, pairing refusal and fixed-suite repeat
+  uncertainty; incomplete records and multiple configurations cannot produce a matched score.
 - 2026-09-30 — mapped the three maintenance loop examples and their independent offline controls;
   retained the distinction between reference/grader evidence and full provider-loop results.
 - 2026-09-30 — traced eval-loop cancellation through Go's wait/pipe behavior and a red-before

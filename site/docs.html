@@ -888,6 +888,21 @@ roles:
                         separate container without credentials or network. Operator MCP servers
                         are not exposed to trials. Results describe this workload, not general
                         provider parity; code size is a review signal, not a quality score.</p>
+                    <h3>Compare matching evidence</h3>
+                    <p><code>compare</code> keeps the full requested denominator, including missing
+                        records. Duplicate or out-of-matrix records are damaged evidence. Paired
+                        effects require two distinct runs with one configuration each, the same
+                        nonempty workload identity, case set and repetition count. Otherwise the
+                        results remain separate; configuration correspondence is not guessed.</p>
+                    <p>A case's change needs every repeat graded; the aggregate change and 95%
+                        bound need all requested pairs graded. The bound measures repeat uncertainty
+                        on this fixed suite, assuming independent trial executions. It uses
+                        <code>sqrt(log(40)/(cases*repeats))</code> around the pass-rate difference,
+                        clipped to the possible −100 to +100 percentage-point range. Repeats are
+                        not new independent tasks and do not establish unseen-task performance.</p>
+                    <p>A decision campaign needs at least three repeats per case and a preregistered
+                        useful-effect threshold and decision rule. Retained runs do not record that
+                        rule, so the report stays descriptive and inconclusive, with no definitive winner.</p>
                 </section>
 
                 <section class="doc-section" id="loop">

@@ -1100,6 +1100,22 @@ that never started also leave grading incomplete; an incomplete comparison has n
 winner. A sealed run with complete grading exits 0 even with graded failures; incomplete grading
 exits 1 and keeps the run record for inspection. A dry run exits 0 after previewing without trials.
 Code-size changes are a review signal, not a quality score.
+
+`compare` rebuilds each run's full requested matrix from its manifest: missing records stay
+pending, and duplicate or out-of-matrix records are rejected as damaged evidence. Paired effects
+require two distinct runs with the same nonempty workload identity, case set and repeat count,
+and one configuration per run. Other runs keep their separate summaries; Coop does not guess
+which configurations correspond. Each case's change needs all its repeats graded, and the
+aggregate change and uncertainty bound need every requested pair graded.
+
+The report separates case count from repeats and shows the pass-rate change in percentage points
+(after minus before). Its conservative 95% Hoeffding bound measures repeat uncertainty on this
+fixed suite, assuming independent trial executions: `sqrt(log(40)/(cases*repeats))`, clipped to
+the possible −100 to +100 percentage-point range. More repeats are not more independent tasks
+and do not establish performance on unseen tasks. A decision campaign needs at least three repeats
+per case and a preregistered useful-effect threshold and decision rule; retained runs do not record
+that rule, so this descriptive report remains inconclusive rather than announcing a winner.
+
 Coop measures the finished snapshot before the verifier runs. For a non-passing trial, it keeps
 the candidate's original workspace for inspection and removes the writable grading copy; verifier
 build artifacts are not counted or presented as model work. The grader still sees only a sanitized

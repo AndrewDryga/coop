@@ -176,7 +176,7 @@ func evalResultLine(s eval.RunSummary) string {
 }
 
 func evalCaseResult(c eval.CaseCounts) string {
-	parts := []string{fmt.Sprintf("%d passed", c.Passed)}
+	parts := []string{fmt.Sprintf("%d/%d passed", c.Passed, c.Requested), fmt.Sprintf("%d/%d graded", c.Covered(), c.Requested)}
 	for _, s := range []struct {
 		n     int
 		label string
