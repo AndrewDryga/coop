@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 fail() { echo "deploy: $*" >&2; exit 1; }
-[ -f deploy.sh ] && [ -f test.sh ] && [ -f app.conf ] || fail 'original files missing'
+if [ ! -f deploy.sh ] || [ ! -f test.sh ] || [ ! -f app.conf ]; then fail 'original files missing'; fi
 sh ./test.sh >/dev/null 2>&1 || fail 'visible baseline test regressed'
 work=$(mktemp -d)
 trap 'rm -rf "$work"' 0 HUP INT TERM

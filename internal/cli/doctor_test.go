@@ -2,9 +2,12 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -24,6 +27,20 @@ func TestDoctorDefaultMatchesCredentialFixture(t *testing.T) {
 	if marker != ".credentials.json" || key != "ANTHROPIC_API_KEY" ||
 		!strings.Contains(probe, "/fixture/."+ag.Name()+"/"+marker) {
 		t.Fatal("doctor's scoped credential fixture no longer matches the default provider")
+	}
+}
+
+func TestDoctorCredentialProbePreservesRealImageUser(t *testing.T) {
+	base := []string{"-v", "/probe:/credprobe.sh:ro"}
+	if got := doctorCredentialProbeArgs("/probe", true); !slices.Equal(got, base) {
+		t.Fatalf("real image probe overrides its configured user: %v", got)
+	}
+	want := slices.Clone(base)
+	if runtime.GOOS == "linux" {
+		want = append(want, "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()))
+	}
+	if got := doctorCredentialProbeArgs("/probe", false); !slices.Equal(got, want) {
+		t.Fatalf("fallback probe = %v, want %v", got, want)
 	}
 }
 

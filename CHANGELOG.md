@@ -100,6 +100,8 @@
 
 - **CLI, installation and release checks are clearer.** Help, completion, eval discovery, recovery
   guidance and task/network reports describe accepted commands and useful next actions.
+  Doctor's Linux Alpine credential probe uses the fixture owner without weakening credential modes
+  or overriding a real image's user; maintenance verifier guards support CI's older ShellCheck.
   Install and update verify archive checksums; the installer additionally verifies the checksum
   signature when Cosign is installed. Exact-tag CI publishes archives with signed checksums and
   build provenance.

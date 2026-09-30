@@ -3,7 +3,7 @@ name: doctor-report-accounting
 description: how `coop doctor` counts — the 35 checks, the outcomes a row can have, and why a failed probe adds one failure plus the checks it was carrying
 subsystem: doctor
 sources: [internal/cli/doctor.go, internal/cli/doctor_report.go, internal/cli/doctor_checks.go]
-updated: 2026-09-25
+updated: 2026-09-30
 ---
 
 `coop doctor` is the one command whose point IS the ledger: the person asked coop to perform
@@ -39,7 +39,14 @@ It explicitly sets root/subdirectory traversal and seeded-file read modes after 
 `MkdirAll` and `WriteFile` alone inherit the caller's umask and can leave a private-umask
 fixture unreadable inside the box.
 
+Credential profiles are tightened to 0700 by ordinary box preparation. On Linux, the Alpine
+fallback credential probe runs as the fixture owner's UID/GID: root without DAC_OVERRIDE cannot
+traverse a foreign-owned private bind. A real image keeps its configured USER so doctor still
+detects incompatible image ownership. Docker Desktop has a different host UID mapping.
+
 ## Changelog
+- 2026-09-30 — exact-source release CI exposed the Alpine fallback's Linux owner mismatch;
+  scoped probe argv and its regression preserve real-image USER and private credential modes.
 - 2026-09-25 — a private-umask Ubuntu gate exposed doctor fixture files/subdirectories masked
   to owner-only despite a world-traversable root. Explicit fixture modes and nested-directory
   regression restore a readable non-owner probe without changing report semantics.

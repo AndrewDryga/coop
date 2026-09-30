@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -600,6 +601,16 @@ fi
 `, home)
 }
 
+func doctorCredentialProbeArgs(probe string, usingReal bool) []string {
+	args := []string{"-v", probe + ":/credprobe.sh:ro"}
+	// Linux preserves bind ownership: root in Alpine has no DAC_OVERRIDE to read a private
+	// host-owned profile. Real images keep their USER so doctor can detect an incompatible one.
+	if !usingReal && runtime.GOOS == "linux" {
+		args = append(args, "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()))
+	}
+	return args
+}
+
 // doctorCheckCredAndHomeScope proves the credential boundary and writable config-home contract in
 // one normally composed box. It seeds a throwaway credential for every agent and an env file
 // holding every agent's key, then runs a claude-scoped probe that also creates state under
@@ -650,7 +661,7 @@ func doctorCheckCredAndHomeScope(s *doctorSection, a *app, fixture, img string, 
 	_, runErr := box.Run(&credCfg, a.rt, box.RunSpec{
 		Image: img, Repo: fixture, Agent: agents.Default(), Homes: true,
 		Cmd: []string{"sh", "/credprobe.sh"}, Batch: true, Quiet: true, Stdout: &out, Stderr: &errOut,
-		ExtraArgs: []string{"-v", probe + ":/credprobe.sh:ro"},
+		ExtraArgs: doctorCredentialProbeArgs(probe, usingReal),
 	})
 	if runErr != nil || out.Len() == 0 {
 		s.probeFailed("Could not run the credential checks", probeReason(errOut.String(), runErr, "The credential-scope box produced no output."), covers)
@@ -663,8 +674,8 @@ func doctorCheckCredAndHomeScope(s *doctorSection, a *app, fixture, img string, 
 	doctorCheckHome(s, results["HOME"], usingReal)
 }
 
-// doctorCheckHome interprets the config-home write probe. The Alpine fallback runs as root, so it
-// cannot expose the ownership bug this check guards and must not report a false pass.
+// doctorCheckHome interprets the config-home write probe. Alpine does not exercise the real
+// image's settings-directory ownership contract, so the fallback must not report a false pass.
 func doctorCheckHome(s *doctorSection, result string, usingReal bool) {
 	switch {
 	case !usingReal:
