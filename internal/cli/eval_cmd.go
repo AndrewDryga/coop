@@ -247,10 +247,9 @@ func (a *app) executeEvalRun(ctx context.Context, plan *eval.Plan, frozen []eval
 	if err != nil {
 		return 1, err
 	}
-	// Resolve the managed base image to its definition-pinned tag, the same way every other box
-	// command does — an unresolved "coop-box" is not a tag that exists.
+	// Trial images are host-selected, regardless of the checkout coop eval was invoked from.
 	box.ResolveBaseImage(a.cfg)
-	image := box.ImageForRepo("", a.cfg.BaseImage, a.cfg.ImageOverride)
+	image := box.SharedImage(a.cfg.BaseImage, a.cfg.ImageOverride)
 	code, inspectErr := a.rt.RunInterruptible(ctx, nil, io.Discard, io.Discard, "image", "inspect", image)
 	if err := ctx.Err(); err != nil {
 		return 1, err

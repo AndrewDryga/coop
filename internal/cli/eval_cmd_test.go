@@ -9,9 +9,51 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/eval"
+	"github.com/AndrewDryga/coop/internal/runtime"
 )
+
+func TestEvalRunImageIgnoresCurrentCheckout(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	if err := os.MkdirAll(filepath.Join(dir, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".agent", "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".agent", "project.yaml"), []byte("unreadable"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	shim := filepath.Join(t.TempDir(), "docker")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	managed := &config.Config{BaseImage: box.ManagedBaseRepository}
+	box.ResolveBaseImage(managed)
+	if !box.IsManagedBase(managed.BaseImage) {
+		t.Fatalf("managed base was not resolved: %q", managed.BaseImage)
+	}
+	for _, tc := range []struct {
+		name, base, override, want string
+	}{
+		{"base", "worker-base:fixed", "", "worker-base:fixed"},
+		{"override", "worker-base:fixed", "operator:image", "operator:image"},
+		{"managed base", box.ManagedBaseRepository, "", managed.BaseImage},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &app{cfg: &config.Config{BaseImage: tc.base, ImageOverride: tc.override}, rt: runtime.Runtime{Name: shim}, rtSet: true}
+			code, err := a.executeEvalRun(context.Background(), nil, nil)
+			if code != 1 || err == nil || !strings.Contains(err.Error(), "the box image "+tc.want+" is not built yet") {
+				t.Fatalf("image preflight = (%d, %v), want %q", code, err, tc.want)
+			}
+		})
+	}
+}
 
 func TestParseEvalRunArgs(t *testing.T) {
 	cases := []struct {

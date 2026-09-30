@@ -210,7 +210,7 @@ func (c *Control) ReviewControllerJob(ctx context.Context, request sessionsvc.Re
 	if err := c.ensureRuntime(); err != nil {
 		return run, err
 	}
-	image := box.JobImage(c.cfg.BaseImage, c.cfg.ImageOverride)
+	image := box.SharedImage(c.cfg.BaseImage, c.cfg.ImageOverride)
 	if request.NetworkMode != "filtered" {
 		if err := c.ensureGateImage(image, request.Output); err != nil {
 			return run, err

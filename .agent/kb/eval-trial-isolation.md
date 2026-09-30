@@ -45,6 +45,8 @@ the map, and the reasoning behind the one place the obvious fix is wrong.
 - **Per-run config** — every trial gets `cfg.Clone()`. A plain `*cfg` is NOT enough: Config's per-run
   maps (explicit keys, per-agent profile/model/effort) are shared by a shallow copy, so one trial's
   selection would leak into the next and concurrent workers would race.
+- **Image** — the trial selects the operator's `COOP_IMAGE` or the resolved shared base, not a
+  project image from the checkout in which `coop eval` was invoked (`internal/cli/eval_cmd.go`).
 - **MCP** — a trial runs with `MCPFile` cleared. Operator MCP servers are a route out of the trial and
   differ per machine, so a run using them would not be reproducible.
 - **Ambient runtime args** — candidate and grader config clones clear `ExtraRunArgs`, and loop
@@ -134,6 +136,8 @@ already fully correct. The shipped verifier runs each subcommand on inputs no ta
 also why it cannot be satisfied by a loop that moves folders without finishing anything.
 
 ## Changelog
+- 2026-09-30 — rechecked the trial image selector: it no longer calls `ImageForRepo` with an empty
+  path, which had allowed the caller's Dockerfile to select a project image.
 - 2026-09-30 — rechecked staging, runtime preflight, trial and record paths; documented the
   single command deadline and its pending-record/cleanup boundary.
 - 2026-09-29 — rechecked trial copy, measurement and non-pass cleanup; the size and retained

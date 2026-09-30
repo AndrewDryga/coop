@@ -2,7 +2,7 @@
 name: box-base-image-tags
 description: Coop's shared base is tagged by its box definition so two Coop versions on one host keep their own; why there is no :latest alias, how an upgrade is repaired, and what stays shared
 subsystem: box
-sources: [internal/box/reclaim.go, internal/box/derived_image.go, internal/box/filtered.go, internal/box/image.go, internal/box/staleness.go, internal/box/locked_image.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/cli/cli.go, internal/cli/build_cmd.go, internal/cli/session_cmd.go, internal/forkctl/host.go, internal/forkctl/merge.go]
+sources: [internal/box/reclaim.go, internal/box/derived_image.go, internal/box/filtered.go, internal/box/image.go, internal/box/staleness.go, internal/box/locked_image.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/cli/cli.go, internal/cli/build_cmd.go, internal/cli/eval_cmd.go, internal/cli/session_cmd.go, internal/forkctl/host.go, internal/forkctl/merge.go]
 updated: 2026-09-30
 ---
 
@@ -49,13 +49,15 @@ print `Image: coop-box:<definition>` when preparing the shared image. Until the 
 A controller job's turns and reviews never resolve a project image. A worker stages every job source in a
 folder named `repository`, so `ImageForRepo` there names one `coop-repository` tag for every
 repository, and nothing on a worker may build repository instructions. Under
-`COOP_CONTROLLER_JOB`, `resolveLaunchImage` picks `box.JobImage` (the operator's `COOP_IMAGE`,
+`COOP_CONTROLLER_JOB`, `resolveLaunchImage` picks `box.SharedImage` (the operator's `COOP_IMAGE`,
 else the worker's base) without parsing the job's project file: `project.Parse` rejects unknown
 keys, so a file written for a newer Coop would refuse every job on an older worker. A filtered
 job runs the locked client image (`filteredProjectImage` returns nothing for a job), and a
 readonly or bare one `restrictedImage`, which refuses `COOP_IMAGE`. The session review gate uses
 `forkctl.ReviewControllerJob`: it selects the worker image, runs with `ControllerJob`, and reopens
 the session's saved filtered capture instead of consulting repository box policy or Dockerfile.
+`coop eval` selects the same shared-image family for its trials; invoking it from a checkout with
+its own Dockerfile never changes the trial image.
 
 Still shared across Coop versions for one user: a project image (`coop-<repo>`, from `.agent/Dockerfile`;
 on native Linux with a non-default UID/GID it has a user suffix) keeps one name per user, so two
@@ -81,6 +83,9 @@ record, so the 14 days start then), and an image any container still references 
 stopped, whoever owns it — is kept.
 
 ## Changelog
+- 2026-09-30 — rechecked eval and controller image selection after the empty-repository eval
+  lookup selected the caller's project tag. `SharedImage` now names the common override-or-base
+  choice; a checkout's Dockerfile does not affect eval trials or controller jobs.
 - 2026-09-30 — reverified the dedicated controller review path and its saved-mode tests. Replaced
   the stale ordinary `JobGate` claim; review build output now enters the review log. The open and
   offline gate cases share one config without mutation, and filtered review reopens the job snapshot.

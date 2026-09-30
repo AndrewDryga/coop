@@ -57,7 +57,7 @@ func (a *app) resolveLaunchImage() (repo, img string, err error) {
 	}
 	switch {
 	case job:
-		img = box.JobImage(a.cfg.BaseImage, a.cfg.ImageOverride)
+		img = box.SharedImage(a.cfg.BaseImage, a.cfg.ImageOverride)
 	case a.loginProvider != "" && a.cfg.ImageOverride == "":
 		img = a.cfg.BaseImage // authentication must not depend on the project's toolchain image
 	default:
