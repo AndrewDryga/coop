@@ -189,7 +189,7 @@ func initializeCheckpointRepository(ctx context.Context, source, repository, bas
 func validateCheckpointRepository(ctx context.Context, repository string, checkpoint workerproto.WorkspaceCheckpoint, manifest workerproto.WorkspaceCheckpointBundleManifest) error {
 	for _, args := range [][]string{
 		{"merge-base", "--is-ancestor", checkpoint.BaseRevision, checkpoint.CommittedRevision},
-		{"fsck", "--full", "--strict", "--no-reflogs", "--unreachable", "--no-progress", checkpoint.CommittedRevision, manifest.TrackedTree},
+		{"fsck", "--full", "--strict", "--unreachable", "--no-progress", checkpoint.CommittedRevision, manifest.TrackedTree},
 	} {
 		output, truncated, err := runSessionCompanionGitContext(ctx, repository, 4096, args...)
 		if err != nil || truncated || len(output) != 0 {

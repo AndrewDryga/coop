@@ -2,8 +2,8 @@
 name: trusted-git-view
 description: host git runs under a coop-owned GIT_DIR view with an allowlisted config, so a repository's filter/textconv/merge drivers never execute on the host; what the view carries, what must run on the real git dir, and the recovery consequences
 subsystem: forkspace
-sources: [internal/forkspace/gitview.go, internal/forkspace/gitview_config.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go]
-updated: 2026-09-22
+sources: [internal/forkspace/gitview.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/loop/git.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go]
+updated: 2026-09-30
 ---
 
 Every repository coop touches on the host is agent-writable (the box binds `.git` read-write), and
@@ -49,6 +49,14 @@ Session workspace clones use the view itself as their local transport source. A 
 no-checkout clone plus an exact fetch of the validated commit avoids racing mutable loose-object
 files without exposing the source repository's executable Git configuration.
 
+Session integrity checks use `RunGitFsck` instead: modern Git's reference verifier
+refuses the operational view's symlinked refs root. A per-call private view copies
+HEAD, refs, packed-refs and shallow through pinned no-symlink regular-file reads;
+config is safely copied then projected through the same allowlist. Objects remain
+linked and the real index remains selected. These checks exclude reflogs. Temporary
+metadata is removed on construction/command failures and success; cached mutable
+views and real HEAD are never refreshed by an integrity check.
+
 Immutable commit comparisons that must include changed gitlinks use both
 `--ignore-submodules=dirty` and `--submodule=short`. The first overrides the view's conservative
 `diff.ignoreSubmodules=all`; the second pins old/new commit IDs rather than honoring a host
@@ -59,6 +67,9 @@ inline-diff positive control but never during production review. The loop's work
 keep their existing restrictions.
 
 ## Changelog
+- 2026-09-30 — reproduced healthy fsck failure on Git 2.55 and added a scoped real-refs
+  projection, retaining config isolation and full reference/object checks. Tested
+  packed/loose refs, linked/shallow/SHA256 repositories and invalid/special metadata.
 - 2026-09-22 — restored gitlink paths, routing, stats and patches in loop commit reviews while
   forcing short submodule output. A real initialized-submodule fixture plus a mutation control
   demonstrates host driver execution if only the short-format pin is removed. Swept the loop's

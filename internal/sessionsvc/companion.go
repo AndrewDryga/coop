@@ -378,7 +378,7 @@ func verifySessionCompanionContext(ctx context.Context, binding session.Companio
 		}
 		if _, _, err := runSessionCompanionGitContext(ctx,
 			binding.Workspace, sessionWorkspaceGitOutputLimit,
-			"fsck", "--connectivity-only", "--no-dangling", "--no-reflogs",
+			"fsck", "--connectivity-only", "--no-dangling",
 		); err != nil {
 			return errors.New("companion workspace history is incomplete")
 		}

@@ -54,7 +54,7 @@ var allowedEdges = map[string][]string{
 	"gatewayimage":          {"runtime"},
 	"forkctl":               {"agent", "box", "config", "forkspace", "hostsurface", "project", "runtime", "sessionsvc", "tasks", "ui"},
 	"hostsurface":           nil,
-	"forkspace":             {"fsidentity", "processidentity"},
+	"forkspace":             {"fsidentity", "processidentity", "safefile"},
 	"consult":               {"agent"},
 	"ladder":                {"agent"},
 	"liveprocess":           nil,

@@ -200,13 +200,18 @@ func runSessionWorkspaceGitWithEnvContext(
 	if env == nil {
 		env = os.Environ()
 	}
-	cmd, err := forkspace.GitCommandWithEnv(ctx, dir, env, args...)
-	if err != nil {
-		return nil, false, err
+	var runErr error
+	if len(args) > 0 && args[0] == "fsck" {
+		runErr = forkspace.RunGitFsck(ctx, dir, env, stdout, stderr, args[1:]...)
+	} else {
+		cmd, err := forkspace.GitCommandWithEnv(ctx, dir, env, args...)
+		if err != nil {
+			return nil, false, err
+		}
+		cmd.Stdout, cmd.Stderr = stdout, stderr
+		runErr = cmd.Run()
 	}
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	if err := cmd.Run(); err != nil {
+	if err := runErr; err != nil {
 		if ctx.Err() != nil {
 			err = errors.Join(ctx.Err(), err)
 		}
