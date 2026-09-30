@@ -362,6 +362,7 @@ type Service struct {
 	runtimeCleanupDone      map[string]runtimeCleanupStamp
 	testBeforeCleanupStamp  func()
 	testAfterStartupDrain   func()
+	testStartupExecution    func(sessionID string)
 	historicalMu            sync.Mutex
 	historicalPending       map[string]struct{}
 	// storage is this worker's own account of the disk it executes on: the configured limits, the
@@ -747,8 +748,14 @@ func (s *Service) Start(parent context.Context) error {
 	}
 	s.mu.Lock()
 	for _, sess := range sessions {
+		if sess.State == session.SessionDiscarded {
+			continue // never runs again; resolving its job cost git calls per row, past the start window
+		}
 		if _, isQuarantined := quarantined[sess.ID]; isQuarantined {
 			continue // no worker for a session whose workspace authority is unproven
+		}
+		if s.testStartupExecution != nil {
+			s.testStartupExecution(sess.ID)
 		}
 		if _, err := s.sessionExecution(ctx, sess); err != nil {
 			continue // Historical rows remain readable; only saved jobs may execute.
