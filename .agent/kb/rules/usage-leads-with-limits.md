@@ -9,8 +9,10 @@ updated: 2026-10-02
 
 # Usage answers how much capacity remains
 
-`coop usage` and provider summaries show account names, quota bars and resets, then a labeled
-30-day API estimate. Do not add default/plan tags, repeated pricing/history qualifications or a
+`coop usage` and provider summaries show account names, quota bars and resets, then the priced
+30-day total as `Σ≈$406.48`, aligned under the percentage number. Narrow terminals put it at the
+normal four-space fact indent. Exact-account details and non-currency results keep the estimate
+label. Do not add default/plan tags, repeated pricing/history qualifications or a
 blanket disclaimer footer. Default selection belongs in `coop credentials`.
 
 Keep separate model pools, including unused capacity, and bucket-specific blocks. Hide disabled
@@ -27,6 +29,9 @@ The existing `provider@credential` view holds plan, coverage, pricing and retain
 Help explains the data scope. Neither view ends with an unsolicited disclaimer paragraph.
 
 ## Changelog
+- 2026-10-02 — adopted the user's compact Sigma total. Swept the two estimate output paths;
+  both use one renderer, preserving shared attribution and non-currency results. Existing fixtures
+  now pin total alignment and narrow-terminal fallback; help explains the unchanged 30-day meaning.
 - 2026-10-02 — applied the approved follow-up after inspecting actual output: one measured bar
   gutter across accounts, plain-English shared editor label, and one accurate Gemini unavailable
   line for API-key or Vertex modes. Swept both render paths and the Gemini quota note; focused

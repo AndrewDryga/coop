@@ -204,7 +204,7 @@ func TestUsageSummaryKeepsBarsAndOnlyUsefulFacts(t *testing.T) {
 	var out bytes.Buffer
 	renderUsage(&out, ui.Palette{}, 120, now, []string{"claude", "codex", "gemini"}, rows, false)
 	text := out.String()
-	for _, wanted := range []string{"  personal\n", "░░░░░░░░░░    0% used", "██████████  100% used · blocked", "Fable", "gpt-reserve · Weekly", "60412.02 remaining", "30-day API estimate  ≈$406.48", "Unassigned editor usage", "≈$0.82"} {
+	for _, wanted := range []string{"  personal\n", "░░░░░░░░░░    0% used", "██████████  100% used · blocked", "Fable", "gpt-reserve · Weekly", "60412.02 remaining", "Σ≈$406.48", "Unassigned editor usage", "Σ≈$0.82"} {
 		if !strings.Contains(text, wanted) {
 			t.Fatalf("missing %q:\n%s", wanted, text)
 		}
@@ -214,7 +214,7 @@ func TestUsageSummaryKeepsBarsAndOnlyUsefulFacts(t *testing.T) {
 			t.Fatalf("summary contains %q:\n%s", unwanted, text)
 		}
 	}
-	if strings.Index(text, "Weekly") > strings.Index(text, "30-day API estimate") {
+	if strings.Index(text, "Weekly") > strings.Index(text, "Σ≈$") {
 		t.Fatalf("estimate precedes limits:\n%s", text)
 	}
 	if strings.Count(text, "resets Oct 8, 12:00") != 2 {
@@ -232,6 +232,9 @@ func TestUsageSummaryKeepsBarsAndOnlyUsefulFacts(t *testing.T) {
 		if strings.Contains(line, "gpt-reserve") && strings.Contains(line, "blocked") {
 			t.Fatalf("one exhausted bucket blocked the reserve: %s", line)
 		}
+		if index := strings.Index(line, "Σ≈$"); index >= 0 && utf8.RuneCountInString(line[:index]) != barColumn+14 {
+			t.Fatalf("total does not align with the percentage number: %q", line)
+		}
 	}
 	gemini := text[strings.Index(text, "Gemini\n"):]
 	if strings.Count(gemini, "    Limits ") != 2 ||
@@ -240,6 +243,17 @@ func TestUsageSummaryKeepsBarsAndOnlyUsefulFacts(t *testing.T) {
 		t.Fatalf("Gemini repeats or obscures the unavailable reason:\n%s", gemini)
 	}
 	t.Log("\n" + text)
+
+	out.Reset()
+	renderUsage(&out, ui.Palette{}, 30, now, []string{"claude"}, rows[:1], false)
+	if !strings.Contains(out.String(), "    Σ≈$406.48\n") {
+		t.Fatalf("narrow total did not use the compact fallback:\n%s", out.String())
+	}
+	for _, line := range strings.Split(out.String(), "\n") {
+		if utf8.RuneCountInString(line) > 30 {
+			t.Fatalf("narrow summary overflows: %q", line)
+		}
+	}
 
 	out.Reset()
 	renderUsage(&out, ui.Palette{}, 120, now, []string{"claude"}, rows[:1], true)

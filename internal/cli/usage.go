@@ -339,6 +339,20 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 			}
 		}
 	}
+	estimate := func(row usageCredential) {
+		value := usageValueLabel(row, details)
+		if details || !strings.HasPrefix(value, "≈$") {
+			line("    30-day API estimate  ", value)
+			return
+		}
+		value = "Σ" + value
+		// Match the percentage's ones column, including its fixed-width padding.
+		indent := labelWidth + 20
+		if width > 0 && indent+utf8.RuneCountInString(value) > width {
+			indent = 4
+		}
+		line(strings.Repeat(" ", indent), value)
+	}
 	for _, name := range names {
 		fmt.Fprintln(w, pal.Bold(titleName(name)))
 		count := 0
@@ -356,7 +370,7 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 			}
 			line("  ", header)
 			if row.shared {
-				line("    30-day API estimate  ", usageValueLabel(row, details))
+				estimate(row)
 				if details {
 					line("    Credential      ", "unknown · excluded from credential totals")
 				}
@@ -436,7 +450,7 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 			if row.quota.Note != "" {
 				line("    ", agents.DisplayTarget(row.quota.Note))
 			}
-			line("    30-day API estimate  ", usageValueLabel(row, details))
+			estimate(row)
 			if details && row.unpricedTurns > 0 {
 				line("    Coop records    ", fmt.Sprintf("%d retained turns · unpriced aggregates, not added", row.unpricedTurns))
 			}

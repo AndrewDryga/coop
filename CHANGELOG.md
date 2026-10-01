@@ -6,7 +6,8 @@
 
 - **Simpler usage output.** Keep progress bars and show limits before the 30-day API estimate,
   without default tags or repetitive footnotes. Bars align across accounts, shared editor usage
-  has a clearer label, and unavailable limits have one explanation. Select one account for
+  has a clearer label, and unavailable limits have one explanation. Priced totals use a compact
+  `Σ≈$…` line below the percentages. Select one account for
   history and pricing details.
 
 - **Clearer installer output.** Installation, optional shell setup and sandbox checks use

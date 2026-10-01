@@ -20,7 +20,8 @@ partial. Unknown model, cache TTL or long-context tariff inputs stay unpriced.
 Provider quota is account-wide; the dollar estimate is not. The CLI reads only Coop-managed
 credential roots and default session-private ACP roots, not independent native host homes,
 web/mobile usage or other machines. Native runs that write into those same roots can be included.
-The compact view leads with quota bars, then the 30-day API estimate. Exact-account selection
+The compact view leads with quota bars, then a priced 30-day API estimate as an aligned Sigma total.
+Unavailable/unpriced results retain the estimate label. Exact-account selection
 adds plan, coverage, pricing and retained-record details without a blanket disclaimer footer.
 Shared editor ACP roots have no historical account binding; copies shared by two named credentials
 become unattributed instead of being charged to today's default or displayed as account zero.
