@@ -4,10 +4,25 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+This release rolls up the unpublished v10.1.0 and v10.1.1 changes below. When upgrading
+from v8.1.0, follow both the v10 and v9 steps in [MIGRATING.md](MIGRATING.md), including
+the session-state backup. [Compare the public upgrade](https://github.com/AndrewDryga/coop/compare/v8.1.0...v10.1.2).
+
+- **Disclose the approved one-release client-qualification exception.** The operator approved
+  v10.1.2 on October 1 without complete fresh account-recovery and ACP live suites. The pinned
+  Claude 2.1.285 / ACP 0.84.0, Codex 0.159.2 / ACP 2.0.1, Gemini 0.62.0 and Grok 1.0.44
+  clients are **not fully live-qualified**. The exception binds this exact dependency and
+  platform-client identity and expires at the next release or client change. Historical
+  qualification evidence is unchanged; all other CI, signing and provenance checks still apply.
+
 - **Preserve bounded worker receipts with Go 1.27.** Wire encoding keeps raw Unicode
   separators compact instead of expanding valid results past custody and poll limits.
   Canonical identities and protocol limits remain unchanged. Restricted-launch and
   qualification-tool fixtures now reflect the current publication controls and client pins.
+
+- **Keep strict Gemini launch traces aligned with credential leases.** Scripted checks expect
+  the extra account-scoped discovery and credential label used to coordinate native refresh,
+  without accepting arbitrary extra runtime commands or weakening launch checks.
 
 ## 10.1.1
 

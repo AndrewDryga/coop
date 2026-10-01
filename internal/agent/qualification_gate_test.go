@@ -2,8 +2,10 @@ package agent
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -68,10 +70,8 @@ func TestQualificationMismatchNamesWhatMoved(t *testing.T) {
 	}
 }
 
-// The gate itself. It is DORMANT until an operator runs `make provider-qualify` and commits the
-// record — deliberately: forcing the record's existence would block every ordinary `make check` on a
-// paid step. The moment the file lands, this begins failing whenever the client set drifts from it,
-// with no further wiring.
+// A missing record remains dormant. Once recorded, drift fails unless the operator approved the
+// exact, explicitly unqualified release below. That exception never changes qualification evidence.
 func TestTheLockedClientsMatchTheirQualification(t *testing.T) {
 	const record = "locked-clients/qualification.json"
 	data, err := os.ReadFile(filepath.Join(".", record))
@@ -91,7 +91,59 @@ func TestTheLockedClientsMatchTheirQualification(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := ValidateQualification(q, lock, clients); err != nil {
+		changelog, readErr := os.ReadFile(filepath.Join("..", "..", "CHANGELOG.md"))
+		if readErr == nil && permitsV1012QualificationException(lock, clients, string(changelog)) {
+			t.Logf("UNQUALIFIED: operator approved v10.1.2 on 2026-10-01 without complete fresh accounts/ACP suites; historical evidence remains unchanged: %v", err)
+			return
+		}
 		t.Fatalf("the committed qualification is incomplete or no longer describes this binary's clients: %v", err)
+	}
+}
+
+// Delete after v10.1.2. The identity includes the lock and every platform's native/adapter pins;
+// the latest numbered release binds the exception even after Unreleased is reopened on main.
+func permitsV1012QualificationException(lock string, clients map[string][]string, changelog string) bool {
+	identity, err := json.Marshal(Qualification{Lock: lock, Clients: clients})
+	if err != nil || fmt.Sprintf("%x", sha256.Sum256(identity)) != "7cc82deafd1a85be711553ce4c18d7101275c4d0fedadcba9e3ae2dfeb0d6a70" {
+		return false
+	}
+	for line := range strings.SplitSeq(changelog, "\n") {
+		if strings.HasPrefix(line, "## ") && line != "## Unreleased" {
+			return line == "## 10.1.2"
+		}
+	}
+	return false
+}
+
+func TestV1012QualificationExceptionIsBoundToReleaseAndClients(t *testing.T) {
+	for _, tc := range []struct {
+		name, changelog string
+		changeLock      bool
+		changeClient    bool
+		want            bool
+	}{
+		{name: "approved release", changelog: "## 10.1.2\n", want: true},
+		{name: "reopened main", changelog: "## Unreleased\n\n## 10.1.2\n", want: true},
+		{name: "next release", changelog: "## 10.1.3\n\n## 10.1.2\n"},
+		{name: "no release", changelog: "## Unreleased\n"},
+		{name: "changed dependency", changelog: "## 10.1.2\n", changeLock: true},
+		{name: "changed native client", changelog: "## 10.1.2\n", changeClient: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lock, clients, err := QualifiedClientSet()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.changeLock {
+				lock = strings.Repeat("0", 64)
+			}
+			if tc.changeClient {
+				clients["linux/arm64"][0] += " changed"
+			}
+			if got := permitsV1012QualificationException(lock, clients, tc.changelog); got != tc.want {
+				t.Fatalf("exception allowed=%t, want %t", got, tc.want)
+			}
+		})
 	}
 }
 
