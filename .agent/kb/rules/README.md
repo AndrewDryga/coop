@@ -110,6 +110,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [nonzero-progress-segments-stay-visible](nonzero-progress-segments-stay-visible.md) — a positive live or blocked count always gets at least one bar cell
 
 **Docs**
+- [public-release-notes-are-product-focused](public-release-notes-are-product-focused.md) — publish product changes and user actions, not internal engineering decisions
 - [align-trailing-comments](align-trailing-comments.md) — trailing `#` comments in an example line up in one column
 - [docs-bold-sparingly](docs-bold-sparingly.md) — bold marks structure, never mid-sentence emphasis, never inline code
 

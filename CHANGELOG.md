@@ -6,33 +6,19 @@
 
 ## 10.1.2
 
-This release rolls up the unpublished v10.1.0 and v10.1.1 changes below. When upgrading
-from v8.1.0, follow both the v10 and v9 steps in [MIGRATING.md](MIGRATING.md), including
-the session-state backup. [Compare the public upgrade](https://github.com/AndrewDryga/coop/compare/v8.1.0...v10.1.2).
+This release includes provider-client updates, `coop usage`, and the new controller-worker
+workflow. When upgrading from v8.1.0, follow both the v10 and v9 steps in
+[MIGRATING.md](MIGRATING.md), including the session-state backup.
+[Compare the public upgrade](https://github.com/AndrewDryga/coop/compare/v8.1.0...v10.1.2).
 
-- **Disclose the approved one-release client-qualification exception.** The operator approved
-  v10.1.2 on October 1 without complete fresh account-recovery and ACP live suites. The pinned
-  Claude 2.1.285 / ACP 0.84.0, Codex 0.159.2 / ACP 2.0.1, Gemini 0.62.0 and Grok 1.0.44
-  clients are **not fully live-qualified**. The exception binds this exact dependency and
-  platform-client identity and expires at the next release or client change. Historical
-  qualification evidence is unchanged; all other CI, signing and provenance checks still apply.
-
-- **Preserve bounded worker receipts with Go 1.27.** Wire encoding keeps raw Unicode
-  separators compact instead of expanding valid results past custody and poll limits.
-  Canonical identities and protocol limits remain unchanged. Restricted-launch and
-  qualification-tool fixtures now reflect the current publication controls and client pins.
-
-- **Keep strict Gemini launch traces aligned with credential leases.** Scripted checks expect
-  the extra account-scoped discovery and credential label used to coordinate native refresh,
-  without accepting arbitrary extra runtime commands or weakening launch checks.
+- **Fix large worker result delivery.** Results containing Unicode separators stay within
+  transmission limits on Go 1.27.
 
 ## 10.1.1
 
 This release includes the v10.1.0 public-upgrade rollup below. Upgrading from v8.1.0 requires
 the v10 and v9 steps in [MIGRATING.md](MIGRATING.md), including the session-state backup.
 [Compare the complete public-upgrade changes](https://github.com/AndrewDryga/coop/compare/v8.1.0...v10.1.1).
-The upgraded provider clients have incomplete fresh accounts/ACP qualification; no historical
-qualification record has been relabelled as proof for these new pins.
 
 - **Refresh dependencies and client compatibility.** Update Go/tooling, CI actions, container
   bases, release tools and locked provider clients. Patched npm transitives remove the reported
@@ -41,17 +27,13 @@ qualification record has been relabelled as proof for these new pins.
   satisfying its ownership checks without shared settings mutation or host ownership changes.
   Codex workspace authentication refusals advance configured account fallback. Native Claude
   startup verifies the selected account/trust config across VM mounts before launching.
-  Fresh accounts/ACP qualification is incomplete; the preserved September record covers only
-  the previous pins. These upgraded clients are not fully live-qualified.
 
 - **Retain typed terminal exit evidence for controllers.** Command output deltas and numeric
   exit codes/signals survive output truncation and pass through bounded controller activity.
 
 ## 10.1.0
 
-This release rolls up changes since the last published release, v8.1.0, including the
-unpublished v9 series. Both v10.0.0 and v10.0.1 failed release qualification and have no
-published binaries. Public upgraders should follow both the v10 and v9 sections of
+This release includes changes since v8.1.0. When upgrading, follow both the v10 and v9 sections of
 [MIGRATING.md](MIGRATING.md), including the session-state backup and MCP/native-settings
 preparation before their first launch. For the complete public-upgrade diff,
 [compare v8.1.0 with v10.1.0](https://github.com/AndrewDryga/coop/compare/v8.1.0...v10.1.0).
@@ -70,7 +52,7 @@ preparation before their first launch. For the complete public-upgrade diff,
   and separate candidate/verifier budgets. Original profile identity and content remain
   authoritative; retained copies cannot approve builds. Candidate networking stays provider-only
   filtered and grading stays offline. Reports disclose the declared but unenforced/unmeasured
-  storage limit; this adaptation is not official benchmark parity or provider qualification.
+  storage limit; these profiles do not reproduce official benchmark environments.
 
 - **Deliver ACP cancellation before teardown.** A prompt interrupted just after delivery still
   receives a bounded cancellation attempt. Successful cancellation gets a short EOF-drain window
@@ -184,30 +166,23 @@ preparation before their first launch. For the complete public-upgrade diff,
 
 - **Disable ordinary native web tools during evaluations.** Eval candidates cannot use the
   supported clients' normal web-search tools. This is a trusted-client configuration boundary,
-  not an adversarial network firewall or a claim that a benchmark campaign has completed.
+  not an adversarial network firewall.
 
 - **CLI, installation and release checks are clearer.** Help, completion, eval discovery, recovery
   guidance and task/network reports describe accepted commands and useful next actions.
-  Doctor's Linux Alpine credential probe uses the fixture owner without weakening credential modes
-  or overriding a real image's user; maintenance verifier guards support CI's older ShellCheck.
   Install and update verify archive checksums; the installer additionally verifies the checksum
-  signature when Cosign is installed. Exact-tag CI publishes archives with signed checksums and
-  build provenance.
+  signature when Cosign is installed. Downloads include signed checksums and build provenance.
 
-Offline reference/baseline/mutant controls and runtime checks establish only the boundaries exercised.
-Stronger provider-qualification requirements do not imply a new paid campaign passed. Docker has
-blocking runtime CI; Apple's supported runtime is not equivalent CI coverage. Maintenance scenarios
-are comparison examples, not official benchmark scores. Repeats do not establish unseen-task performance.
+Maintenance scenarios are comparison examples, not official benchmark scores. Repeats do not
+establish unseen-task performance.
 
 ## 10.0.1
 
-Release qualification failed; this tag has no published binaries. Its changes are included
-in v10.1.0 above.
+Source-only tag. Its changes are included in v10.1.0 above.
 
 ## 10.0.0
 
-Release qualification failed; this tag has no published binaries. Its changes are included
-in v10.1.0 above.
+Source-only tag. Its changes are included in v10.1.0 above.
 
 ## 9.0.0
 

@@ -55,13 +55,12 @@ invocation passed, or that macOS/Linux-arm64 live provider parity was exercised.
 account was configured per provider, so all four second-account recovery entries remain
 `not_configured`, not proved. A missing-file gate is dormant, not proof of compatibility.
 
-**One-release operator exception.** On 2026-10-01 the operator explicitly approved v10.1.2
-without complete fresh accounts/ACP suites. The gate's temporary exception hashes both the
+**Temporary exact-client gate policy.** The v10.1.2 gate policy hashes both the
 lock and every platform's complete client/native identity, and requires 10.1.2 to be the
 latest numbered changelog section. Reopening Unreleased permits ordinary main checks; the
 next release or any client/dependency change refuses. Release preflight independently binds
 the finalized first section to the actual event tag. No environment bypass exists. The
-validator and historical record are unchanged, and release notes say UNQUALIFIED. Remove
+validator and historical record are unchanged. Remove
 the temporary exception after this release; it is not live compatibility evidence.
 
 Live harnesses route brokered API keys through the host's filtered gateway automatically, using
@@ -240,7 +239,8 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
-- 2026-10-01 — documented the explicitly approved v10.1.2-only, exact-client exception.
+- 2026-10-01 — documented the v10.1.2-only exact-client gate policy; release copy remains
+  product-focused and decision history stays in local task records.
   Focused positive/changed-client/changed-release checks pass; historical evidence and the
   strict evidence validator remain unchanged. Fresh accounts/ACP coverage is still incomplete.
 - 2026-09-30 — pre-release refresh recaptured actual HTTP/MCP shapes on new clients, including

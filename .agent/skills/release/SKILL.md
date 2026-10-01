@@ -23,6 +23,11 @@ each time — this is the contract; follow it.
   entry under the release where the code actually shipped (`git tag --contains <commit>` shows
   which one already has it). Cutting a version for unchanged code misdates the feature.
 - The `## Unreleased` entries ARE the release. Empty ⇒ nothing to cut; say so and stop.
+- Public notes describe product changes, compatibility and user actions. Operator approvals,
+  waivers, test/review diaries, spend details and CI troubleshooting belong in gitignored task
+  records, never the public changelog or release body. Keep real functional limits accurate;
+  removing process narration must not invent validation or capabilities. Follow
+  `.agent/kb/rules/public-release-notes-are-product-focused.md`.
 - Optional dry-run: `make snapshot` (GoReleaser `--snapshot --clean --skip=sign`, no publish;
   signing is CI-only keyless OIDC) to catch config breakage before any tag exists.
 

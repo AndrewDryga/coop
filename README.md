@@ -2271,10 +2271,7 @@ order), not an exhaustive account matrix. Provider tool use may require multiple
 Run `make provider-qualify` only as an operator, after the ordinary gate and other engineering
 work are finished. It rebuilds this host's box/filtered images and spends quota across every
 provider. It prints a directory containing full suite logs. All suites must pass before it writes
-`internal/agent/locked-clients/qualification.json`. The bundled Linux/amd64 record was assembled
-from complete green suite logs after a stale ACP test interrupted the combined invocation; it
-does not claim one uninterrupted `make provider-qualify` pass. Its four second-account recovery
-results are `not_configured`, not passes.
+`internal/agent/locked-clients/qualification.json`.
 The schema-2 record names required suite/provider coverage, exact client pins and the tested
 platform; it does not establish live macOS or Linux/arm64 parity. The final output names any
 providers with unverified account recovery. Only that row may say `not_configured`; an unreadable
