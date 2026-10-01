@@ -513,6 +513,8 @@ type Agent interface {
 	PlainOutputProbe() PlainOutputProbe
 	// ModelCatalog declares native discovery; the caller owns execution, auth and caching.
 	ModelCatalog() ModelCatalogSpec
+	// Usage declares read-only quota inspection and retained native token accounting.
+	Usage() UsageSpec
 	Scaffold() ScaffoldSpec
 	// DisplayName is the human product name for UX surfaces (the ACP toolbar dropdowns):
 	// "Claude Code", "Codex", … Name() stays the grammar token everywhere a value is parsed.

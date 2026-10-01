@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Inspect limits and recorded token value with `coop usage`.** Read all configured providers
+  or one `provider@credential`, preserving independent failures and local reset times. Native
+  histories produce a deduplicated rolling 30-day estimate at current standard API token prices,
+  including subscription activity. Missing prices, partial records and unknown shared-editor
+  credential attribution stay explicit; lossy retained turn aggregates are never added to it.
+
+- **Preserve multiline instructions when freezing eval suites.** Authored instructions retain
+  exact leading newlines and indentation in reloadable frozen manifests.
+
 - **Add trusted runtime profiles for agent evals.** Custom cases can bind clean external
   build inputs to an explicitly approved immutable image, `/app`, fixed CPU/memory/PID caps
   and separate candidate/verifier budgets. Original profile identity and content remain

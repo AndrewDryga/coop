@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -17,6 +18,197 @@ import (
 )
 
 type geminiAgent struct{}
+
+func (geminiAgent) Usage() UsageSpec {
+	return UsageSpec{Quota: geminiUsageQuota, HistoryDirs: []string{"tmp"},
+		HistoryFile: func(path string) bool {
+			return strings.Contains(path, "/chats/") && (strings.HasSuffix(path, ".jsonl") || strings.HasSuffix(path, ".json"))
+		}, ParseHistory: geminiUsageHistory, Price: geminiUsagePrice,
+		NativeCredentialLease: true, NativeCredentialCheck: geminiUsageCredentialCheck,
+		NativeEnv: []string{"NO_BROWSER=true", "GEMINI_FORCE_ENCRYPTED_FILE_STORAGE=false"}}
+}
+
+func geminiUsageCredentialCheck(profile string) error {
+	data, err := ReadCredentialArtifact(filepath.Join(profile, "oauth_creds.json"), 1<<20)
+	if os.IsNotExist(err) {
+		return ErrUsageSignIn
+	}
+	var credential struct {
+		Access  string `json:"access_token"`
+		Refresh string `json:"refresh_token"`
+	}
+	if err != nil || json.Unmarshal(data, &credential) != nil || credential.Access == "" && credential.Refresh == "" {
+		return fmt.Errorf("limits require the original plain-file OAuth store; encrypted/keychain storage is not portable")
+	}
+	return nil
+}
+
+// Standard text-token rates, https://ai.google.dev/gemini-api/docs/pricing — 2026-10-01.
+// Native history does not split audio input; exclude media/tool/storage surcharges from this value.
+// Flash 3.6–3.8 use the published promotion through 2026-12-31, not their future tariffs.
+func geminiUsagePrice(event UsageEvent) (float64, bool) {
+	rates := map[string]usageTariff{
+		"gemini-3.8-flash":                   {Input: .75, Read: .075, Output: 3.75},
+		"gemini-3.7-flash":                   {Input: .75, Read: .075, Output: 3.75},
+		"gemini-3.6-flash":                   {Input: .75, Read: .075, Output: 3.75},
+		"gemini-3.5-flash":                   {Input: 1.5, Read: .15, Output: 9},
+		"gemini-3.5-flash-lite":              {Input: .3, Read: .03, Output: 2.5},
+		"gemini-3.1-pro-preview":             {Input: 2, Read: .2, Output: 12, LongAt: 200001, LongInput: 2, LongOutput: 1.5},
+		"gemini-3.1-pro-preview-customtools": {Input: 2, Read: .2, Output: 12, LongAt: 200001, LongInput: 2, LongOutput: 1.5},
+		"gemini-2.5-pro":                     {Input: 1.25, Read: .125, Output: 10, LongAt: 200001, LongInput: 2, LongOutput: 1.5},
+		"gemini-2.5-flash":                   {Input: .3, Read: .03, Output: 2.5},
+	}
+	rate, ok := rates[event.Model]
+	if !ok {
+		return 0, false
+	}
+	return rate.value(event)
+}
+
+type geminiUsageMessage struct {
+	ID        string `json:"id"`
+	Timestamp string `json:"timestamp"`
+	Type      string `json:"type"`
+	Model     string `json:"model"`
+	Tokens    *struct {
+		Input    *int64 `json:"input"`
+		Read     *int64 `json:"cached"`
+		Output   *int64 `json:"output"`
+		Thoughts *int64 `json:"thoughts"`
+		Tool     *int64 `json:"tool"`
+	} `json:"tokens"`
+}
+
+func geminiUsageHistory(reader io.Reader) (UsageHistory, error) {
+	// Failed/auxiliary calls are not all retained by the native recorder.
+	out := UsageHistory{Partial: true}
+	events := make(map[string]UsageEvent)
+	session := ""
+	add := func(row geminiUsageMessage) {
+		if row.Type != "gemini" || row.Tokens == nil {
+			return
+		}
+		u := row.Tokens
+		event := UsageEvent{ID: session + ":" + row.ID, Model: row.Model, Time: usageReset(row.Timestamp), WriteKnown: true,
+			Input: usageTokens(u.Input) - usageTokens(u.Read), Read: usageTokens(u.Read), Output: usageTokens(u.Output) + usageTokens(u.Thoughts),
+			Partial: u.Input == nil || u.Output == nil || usageTokens(u.Tool) != 0, Approximate: true, ContextKnown: true}
+		if session == "" || row.ID == "" || !event.valid() {
+			return
+		}
+		prior, exists := events[event.ID]
+		if !exists || event.Time.After(prior.Time) || event.Time.Equal(prior.Time) {
+			events[event.ID] = event
+		}
+	}
+	decoder := json.NewDecoder(reader)
+	for {
+		var row struct {
+			geminiUsageMessage
+			Session  string               `json:"sessionId"`
+			Messages []geminiUsageMessage `json:"messages"`
+			Set      struct {
+				Messages []geminiUsageMessage `json:"messages"`
+			} `json:"$set"`
+		}
+		err := decoder.Decode(&row)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			break
+		}
+		if row.Session != "" {
+			session = row.Session
+		}
+		add(row.geminiUsageMessage)
+		for _, message := range row.Messages {
+			add(message)
+		}
+		for _, message := range row.Set.Messages {
+			add(message)
+		}
+		// $rewindTo changes visible conversation history, not already consumed tokens.
+	}
+	for _, event := range events {
+		out.Events = append(out.Events, event)
+	}
+	return out, nil
+}
+
+func geminiUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, error) {
+	auth, _, err := geminiSelectedAuthType(input.ProfileDir)
+	if err != nil {
+		return UsageQuota{}, fmt.Errorf("cannot read selected authentication mode")
+	}
+	if input.APIKey || auth == "gemini-api-key" || auth == "vertex-ai" {
+		return UsageQuota{Note: "Code Assist limits unavailable for API-key or Vertex authentication"}, nil
+	}
+	if auth != "oauth-personal" {
+		return UsageQuota{}, ErrUsageSignIn
+	}
+	if input.Native == nil {
+		return UsageQuota{}, fmt.Errorf("native quota helper unavailable")
+	}
+	data, err := input.Native(ctx, []string{"/usr/local/bin/node", "--input-type=module", "-e", geminiQuotaHelper})
+	if err != nil {
+		return UsageQuota{}, err
+	}
+	var raw geminiQuotaResponse
+	if len(data) > 1<<20 || json.Unmarshal(data, &raw) != nil || raw.Error != "" {
+		return UsageQuota{}, fmt.Errorf("native quota lookup unavailable")
+	}
+	return raw.quota(), nil
+}
+
+// Import only the native auth/server exports: CLI/model initialization can load hooks, MCP
+// servers or perform onboarding. Let the process drain asynchronous native token persistence.
+const geminiQuotaHelper = `import {getOauthClient,CodeAssistServer} from "/opt/coop/clients/node_modules/@google/gemini-cli/bundle/core-3RU5PE2Y.js";
+process.on("unhandledRejection",()=>{process.exitCode=1});
+try {
+  const config={getProxy:()=>undefined,isBrowserLaunchSuppressed:()=>true,isInteractive:()=>false};
+  const client=await getOauthClient("oauth-personal",config);
+  const server=new CodeAssistServer(client,undefined,{});
+  const info=await server.loadCodeAssist({metadata:{ideType:"IDE_UNSPECIFIED",platform:"PLATFORM_UNSPECIFIED",pluginType:"GEMINI"}});
+  const project=info.cloudaicompanionProject;
+  if(!info.currentTier||typeof project!=="string"||!project) throw new Error();
+  const quota=await server.retrieveUserQuota({project});
+  console.log(JSON.stringify({tier:info.paidTier?.name??info.currentTier.name,buckets:quota.buckets?.map(b=>({modelId:b.modelId,tokenType:b.tokenType,remainingAmount:b.remainingAmount,remainingFraction:b.remainingFraction,resetTime:b.resetTime}))}));
+} catch {process.exitCode=1;console.log(JSON.stringify({error:"quota lookup unavailable"}));}`
+
+type geminiQuotaResponse struct {
+	Tier    string `json:"tier"`
+	Error   string `json:"error"`
+	Buckets []struct {
+		Model     string   `json:"modelId"`
+		TokenType string   `json:"tokenType"`
+		Remaining *string  `json:"remainingAmount"`
+		Fraction  *float64 `json:"remainingFraction"`
+		Reset     string   `json:"resetTime"`
+	} `json:"buckets"`
+}
+
+func (raw geminiQuotaResponse) quota() UsageQuota {
+	out := UsageQuota{Plan: raw.Tier}
+	for _, entry := range raw.Buckets {
+		name := entry.Model
+		if name == "" {
+			name = "Code Assist"
+		}
+		if entry.TokenType != "" {
+			name += " · " + entry.TokenType
+		}
+		bucket := UsageBucket{Name: name, Reset: usageReset(entry.Reset)}
+		if entry.Fraction != nil && *entry.Fraction >= 0 && *entry.Fraction <= 1 {
+			used := (1 - *entry.Fraction) * 100
+			bucket.Used = &used
+		}
+		if entry.Remaining != nil {
+			bucket.Remaining = *entry.Remaining
+		}
+		out.Buckets = append(out.Buckets, bucket)
+	}
+	return out
+}
 
 func (geminiAgent) Scaffold() ScaffoldSpec {
 	return ScaffoldSpec{

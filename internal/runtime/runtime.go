@@ -492,10 +492,15 @@ func (r Runtime) Silent(args ...string) bool {
 // ImageID is the id of the image a reference names now, or "" when it cannot be told — a missing
 // image, a runtime that does not answer, or Apple container, whose ids this does not read.
 func (r Runtime) ImageID(image string) string {
+	return r.ImageIDContext(context.Background(), image)
+}
+
+// ImageIDContext keeps image inspection inside a caller's overall operation deadline.
+func (r Runtime) ImageIDContext(parent context.Context, image string) string {
 	if r.kind() == runtimeAppleContainer || image == "" || strings.HasPrefix(image, "-") {
 		return ""
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
 	out, err := contextCommand(ctx, r.Name, "image", "inspect", "--format", "{{.Id}}", image).Output()
 	if err != nil {
