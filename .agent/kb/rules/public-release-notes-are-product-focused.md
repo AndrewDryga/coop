@@ -23,6 +23,9 @@ changes, not a copy of every changelog entry. Explain what people can do and why
 avoid implementation jargon. Keep essential upgrade warnings and link the detailed changelog
 for everything else. The complete changelog still preserves all changes and their attribution.
 
+Prioritize by product impact, not by how recently a fix landed. Major capabilities such as
+isolated networking deserve their own understandable highlight, not a generic security-fixes label.
+
 **Why:** the user explicitly rejected internal-process disclosures in public release notes.
 
 When correcting published copy, edit the existing release body and commit the documentation
@@ -41,6 +44,9 @@ to make the history look tidier. Upgrade instructions describe the actual public
 fictional intermediate releases.
 
 ## Changelog
+- 2026-10-01 — the user identified isolated networking as a missing major highlight. Checked the
+  networking support documentation and latest summary; promoted network controls to the first
+  highlight, explaining modes and sandbox-wide enforcement rather than burying it in security fixes.
 - 2026-10-01 — the user requested important highlights in simple English for GitHub releases.
   Rewrote the latest release body as five highlights plus essential upgrade guidance and full
   change links; kept the detailed changelog and older release notes unchanged. Swept the existing
