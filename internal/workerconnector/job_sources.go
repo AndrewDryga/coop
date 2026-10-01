@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -137,8 +138,19 @@ func (s *privateJobSourceStager) Stage(ctx context.Context, jobRef string, sourc
 		return err
 	}
 	remote, protocol := s.remote(source.RepositoryIdentity())
-	if err := fetchVerifiedSource(ctx, filepath.Join(temporary, "repository"), remote, protocol, grant.Token, source); err != nil {
-		return err
+	repository := filepath.Join(temporary, "repository")
+	seed := previousStagedRepository(parent, key, source.RepositoryIdentity())
+	if err := fetchVerifiedSource(ctx, repository, remote, protocol, grant.Token, source, seed); err != nil {
+		if seed == "" || ctx.Err() != nil {
+			return err
+		}
+		// An earlier copy is only a head start: a damaged one never stops staging.
+		if err := os.RemoveAll(repository); err != nil {
+			return err
+		}
+		if err := fetchVerifiedSource(ctx, repository, remote, protocol, grant.Token, source, ""); err != nil {
+			return err
+		}
 	}
 	if err := s.fetchLFS(ctx, filepath.Join(temporary, "repository"), source.RepositoryIdentity(), protocol, grant.Token,
 		source.Binding.SelectedCommit, source.Binding.DefaultCommit); err != nil {
@@ -266,7 +278,7 @@ func (s *privateJobSourceStager) RefreshDefault(ctx context.Context, jobRef stri
 	return head, nil
 }
 
-func fetchVerifiedSource(ctx context.Context, destination, remote, protocol, token string, source workerproto.JobSource) error {
+func fetchVerifiedSource(ctx context.Context, destination, remote, protocol, token string, source workerproto.JobSource, seed string) error {
 	if err := runSourceGit(ctx, "", token, protocol, "init", "--quiet", "--template=", "--object-format=sha1", destination); err != nil {
 		return err
 	}
@@ -278,6 +290,11 @@ func fetchVerifiedSource(ctx context.Context, destination, remote, protocol, tok
 	}
 	if err := runSourceGit(ctx, destination, token, protocol, "remote", "add", "origin", remote); err != nil {
 		return err
+	}
+	if seed != "" {
+		if err := seedFromStagedCopy(ctx, destination, seed); err != nil {
+			return err
+		}
 	}
 	binding := source.Binding
 	if err := runSourceGit(ctx, destination, token, protocol, "fetch", "--quiet", "--no-tags", "origin", "+"+binding.DefaultRef+":refs/remotes/origin/job-default"); err != nil {
@@ -298,6 +315,11 @@ func fetchVerifiedSource(ctx context.Context, destination, remote, protocol, tok
 			return err
 		}
 	}
+	if seed != "" {
+		if err := runSourceGit(ctx, destination, "", protocol, "update-ref", "-d", stagedSeedRef); err != nil {
+			return err
+		}
+	}
 	if actual, err := sourceGitValue(ctx, destination, token, protocol, "merge-base", binding.DefaultCommit, binding.SelectedCommit); err != nil || actual != binding.BaseCommit {
 		return ErrJobSourceIntegrity
 	}
@@ -308,6 +330,85 @@ func fetchVerifiedSource(ctx context.Context, destination, remote, protocol, tok
 		return err
 	}
 	return verifySourceHead(ctx, destination, binding.SelectedCommit, binding.AdmittedTree)
+}
+
+// stagedSeedRef names an earlier copy's default commit while a new copy fetches, so Git asks
+// the remote only for what that commit does not already have. It is gone before verification.
+const stagedSeedRef = "refs/coop/staged-seed"
+
+// previousStagedRepository is the newest staged copy of the same repository: emisar's default
+// branch moved on 2026-10-01 and every new session cloned its 93,414 objects again at 93 KB/s,
+// past the command's lease, from scratch on each retry, while every other worker command,
+// routing's too, waited behind it. Only a copy whose receipt names this exact repository is
+// used, and only as a head start: the new copy is verified on its own like any other.
+func previousStagedRepository(parent, key string, identity workerproto.RepositoryIdentity) string {
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return ""
+	}
+	var newest string
+	var newestAt time.Time
+	for _, entry := range entries {
+		name := entry.Name()
+		if !entry.IsDir() || strings.HasPrefix(name, ".") || name == key {
+			continue
+		}
+		document, err := os.ReadFile(filepath.Join(parent, name, "source.json"))
+		if err != nil || len(document) > 256<<10 {
+			continue
+		}
+		var recorded workerproto.JobSource
+		if json.Unmarshal(document, &recorded) != nil || recorded.RepositoryIdentity() != identity {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if newest == "" || info.ModTime().After(newestAt) {
+			newest, newestAt = filepath.Join(parent, name, "repository"), info.ModTime()
+		}
+	}
+	return newest
+}
+
+// seedFromStagedCopy links an earlier copy's objects into a new repository, packs and loose
+// objects alike: an object never changes, so both copies can share its file. A ref to the
+// earlier default commit then lets the fetch ask the remote only for what is new.
+func seedFromStagedCopy(ctx context.Context, destination, seed string) error {
+	commit, err := sourceGitValue(ctx, seed, "", "https", "rev-parse", "--verify", "refs/remotes/origin/job-default^{commit}")
+	if err != nil {
+		return err
+	}
+	from := filepath.Join(seed, ".git", "objects")
+	to := filepath.Join(destination, ".git", "objects")
+	err = filepath.WalkDir(from, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(from, path)
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if relative == "info" {
+				return filepath.SkipDir
+			}
+			return os.MkdirAll(filepath.Join(to, relative), 0o700)
+		}
+		if !entry.Type().IsRegular() || strings.HasSuffix(relative, ".keep") {
+			return nil
+		}
+		target := filepath.Join(to, relative)
+		if _, err := os.Lstat(target); err == nil {
+			return nil
+		}
+		return os.Link(path, target)
+	})
+	if err != nil {
+		return err
+	}
+	return runSourceGit(ctx, destination, "", "https", "update-ref", stagedSeedRef, commit)
 }
 
 func (s *privateJobSourceStager) stageSubmodules(ctx context.Context, jobRef, repository, commit string, modules []workerproto.JobSubmodule) error {
