@@ -433,8 +433,8 @@ func assertDirectSuccess(t *testing.T, result procharness.Result, provider, mark
 // difference in the runtime calls these commands make, so any OTHER extra call still fails here.
 func assertDirectRunContract(t *testing.T, suite *directProcessSuite, trace []*processTrace, provider, account string, argv []string, model, effort string, shape traceShape) {
 	t.Helper()
-	assertSequentialTrace(t, trace, shape.events())
-	assertDirectRuntimeInvocations(t, trace, shape)
+	assertSequentialTrace(t, trace, shape.events()+credentialLeaseTraceEvents(provider))
+	assertDirectRuntimeInvocations(t, trace, shape, provider)
 	run := oneProcessEvent(t, trace, "runtime", "run")
 	wantArgv := processTraceArgv(argv)
 	if run.Run == nil || run.Run.Provider != provider || !run.Run.Init || !reflect.DeepEqual(run.Run.ProviderArgv, wantArgv) {

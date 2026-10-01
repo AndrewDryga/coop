@@ -4,7 +4,7 @@ description: validation matches the changed surface; unrelated slow suites run o
 scope: agent-workflow
 sources: [AGENTS.md, .agent/skills/work/SKILL.md, .agent/skills/sweep/SKILL.md, Makefile]
 check: none
-updated: 2026-09-27
+updated: 2026-10-01
 ---
 
 # Match validation to the changed surface and honor focused verification requests
@@ -28,6 +28,10 @@ and quick compile/static checks after each slice. At final qualification, run th
 or slow checks that prove the changed boundaries; do not run unrelated provider matrices merely
 because they exist. A generic request to hurry is not that authorization. Ordinary per-task gate
 defaults and the product's CI checks remain unchanged unless the human explicitly narrows them.
+
+An explicit instruction to stop review agents or broad reviews also controls execution: stop those
+workers and repair the demonstrated failures directly. Do not schedule another board or multi-role
+review under a different name. Existing product CI and missing publication authority stay explicit.
 
 Keep a durable final-verification ledger before closing the first affected task. Record
 each task/commit, its focused evidence and its still-required slow or native checks.
@@ -54,6 +58,10 @@ for the final stop condition. Batching never supplies missing access, review or 
 operation approval. Do not change CI or runtime acceptance checks to speed agent supervision.
 
 ## Changelog
+- 2026-10-01 — recorded the explicit correction against repeated review-agent and unrelated-test
+  scheduling. Stopped both active advisors; swept the current release repair plan and supervisor:
+  only exact failing receipt, restricted-launch, pinned-summary and Gemini-smoke checks are run.
+  The strict client-qualification blocker remains visible; no CI acceptance was weakened.
 - 2026-09-27 — recorded the cleanup-specific correction above. Swept the active cleanup plan and
   four queued cleanup tasks: their copied blanket canonical-gate requirements are being replaced
   by impact-scoped verification; the final ledger retains the already-run relevant provider and

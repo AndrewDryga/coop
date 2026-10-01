@@ -199,8 +199,8 @@ func TestProviderScriptedProcessSmoke(t *testing.T) {
 			}
 
 			trace := readProcessTrace(t, layout.Trace)
-			assertSequentialTrace(t, trace, directTraceEvents)
-			assertDirectRuntimeInvocations(t, trace, noOrphanBoxSweep)
+			assertSequentialTrace(t, trace, directTraceEvents+credentialLeaseTraceEvents(provider))
+			assertDirectRuntimeInvocations(t, trace, noOrphanBoxSweep, provider)
 			run := oneProcessEvent(t, trace, "runtime", "run")
 			if run.Run == nil {
 				t.Fatal("runtime run event has no parsed contract")
@@ -213,7 +213,7 @@ func TestProviderScriptedProcessSmoke(t *testing.T) {
 			if !reflect.DeepEqual(run.Run.ProviderArgv, traceArgv) {
 				t.Fatalf("provider argv = %q, want %q", run.Run.ProviderArgv, traceArgv)
 			}
-			if run.Run.Network != "none" || !reflect.DeepEqual(boxLabelsWithoutDynamicAuthorities(t, run.Run.Labels), []string{"coop=box"}) || !run.Run.Init || run.Run.Interactive || run.Run.TTY {
+			if run.Run.Network != "none" || !reflect.DeepEqual(boxLabelsWithoutDynamicAuthorities(t, run.Run.Labels, provider), []string{"coop=box"}) || !run.Run.Init || run.Run.Interactive || run.Run.TTY {
 				t.Fatalf("runtime boundary = network %q labels %q init %v interactive/tty %v/%v", run.Run.Network, run.Run.Labels, run.Run.Init, run.Run.Interactive, run.Run.TTY)
 			}
 			assertProcessMounts(t, layout, provider, "default", run.Run.Mounts)
@@ -429,7 +429,15 @@ func assertSequentialTrace(t *testing.T, trace []*processTrace, want int) {
 	}
 }
 
-func assertDirectRuntimeInvocations(t *testing.T, trace []*processTrace, shape traceShape) {
+func credentialLeaseTraceEvents(provider string) int {
+	ag, _ := agents.Get(provider)
+	if ag.Usage().NativeCredentialLease {
+		return 1
+	}
+	return 0
+}
+
+func assertDirectRuntimeInvocations(t *testing.T, trace []*processTrace, shape traceShape, provider string) {
 	t.Helper()
 	var got [][]string
 	for _, event := range trace {
@@ -442,6 +450,9 @@ func assertDirectRuntimeInvocations(t *testing.T, trace []*processTrace, shape t
 		// The orphan sweep, before the box work begins: one label-filtered container listing, then
 		// one for the compose networks a dead session leaves holding a subnet.
 		wantPrefix = append(wantPrefix, []string{"ps", "<validated>"}, []string{"network", "<validated>"})
+	}
+	if credentialLeaseTraceEvents(provider) != 0 {
+		wantPrefix = append(wantPrefix, []string{"ps", "<validated>"})
 	}
 	wantPrefix = append(wantPrefix, []string{"info"})
 	wantSuffix := [][]string{}
@@ -461,10 +472,13 @@ func assertDirectRuntimeInvocations(t *testing.T, trace []*processTrace, shape t
 // boxLabelsWithoutDynamicAuthorities drops the two runtime-generated authority labels after
 // proving every box carries exactly one non-empty value for each. Their values are deliberately
 // unpredictable, but their absence would make either orphan cleanup or project activity incomplete.
-func boxLabelsWithoutDynamicAuthorities(t *testing.T, labels []string) []string {
+func boxLabelsWithoutDynamicAuthorities(t *testing.T, labels []string, provider string) []string {
 	t.Helper()
 	var kept []string
 	counts := map[string]int{box.LabelHost: 0, box.LabelExecution: 0}
+	if credentialLeaseTraceEvents(provider) != 0 {
+		counts["coop.credential."+provider] = 0
+	}
 	for _, label := range labels {
 		dynamic := false
 		for key := range counts {
