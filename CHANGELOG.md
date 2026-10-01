@@ -1,8 +1,13 @@
 # Changelog
 
-## Unreleased
+## 10.1.0
 
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+This release rolls up changes since the last published release, v8.1.0, including the
+unpublished v9 series. Both v10.0.0 and v10.0.1 failed release qualification and have no
+published binaries. Public upgraders should follow both the v10 and v9 sections of
+[MIGRATING.md](MIGRATING.md), including the session-state backup and MCP/native-settings
+preparation before their first launch. For the complete public-upgrade diff,
+[compare v8.1.0 with v10.1.0](https://github.com/AndrewDryga/coop/compare/v8.1.0...v10.1.0).
 
 - **Inspect limits and recorded token value with `coop usage`.** Read all configured providers
   or one `provider@credential`, preserving independent failures and local reset times. Native
@@ -23,14 +28,6 @@
 - **Deliver ACP cancellation before teardown.** A prompt interrupted just after delivery still
   receives a bounded cancellation attempt. Successful cancellation gets a short EOF-drain window
   before forced termination, retaining larger restricted/filtered cleanup allowances.
-
-## 10.0.1
-
-This is the next public release after v8.1.0 and includes the unpublished v9 series below.
-The v10.0.0 tag failed release qualification; no binaries were published for it.
-Public upgraders should follow both the v10 and v9 sections of [MIGRATING.md](MIGRATING.md),
-including MCP/native-settings preparation before their first launch.
-For the complete public-upgrade diff, [compare v8.1.0 with v10.0.1](https://github.com/AndrewDryga/coop/compare/v8.1.0...v10.0.1).
 
 - **Stop admitting worker commands after shutdown.** Cancellation racing a successful controller
   poll no longer starts another source/body download or recreates an acknowledged command receipt.
@@ -138,6 +135,10 @@ For the complete public-upgrade diff, [compare v8.1.0 with v10.0.1](https://gith
   per-case changes and conservative fixed-suite repeat uncertainty, with explicit assumptions,
   case/repeat counts and an inconclusive result instead of an unsupported winner.
 
+- **Disable ordinary native web tools during evaluations.** Eval candidates cannot use the
+  supported clients' normal web-search tools. This is a trusted-client configuration boundary,
+  not an adversarial network firewall or a claim that a benchmark campaign has completed.
+
 - **CLI, installation and release checks are clearer.** Help, completion, eval discovery, recovery
   guidance and task/network reports describe accepted commands and useful next actions.
   Doctor's Linux Alpine credential probe uses the fixture owner without weakening credential modes
@@ -151,10 +152,15 @@ Stronger provider-qualification requirements do not imply a new paid campaign pa
 blocking runtime CI; Apple's supported runtime is not equivalent CI coverage. Maintenance scenarios
 are comparison examples, not official benchmark scores. Repeats do not establish unseen-task performance.
 
+## 10.0.1
+
+Release qualification failed; this tag has no published binaries. Its changes are included
+in v10.1.0 above.
+
 ## 10.0.0
 
 Release qualification failed; this tag has no published binaries. Its changes are included
-in v10.0.1 above.
+in v10.1.0 above.
 
 ## 9.0.0
 
