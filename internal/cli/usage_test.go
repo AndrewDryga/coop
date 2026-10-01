@@ -174,6 +174,80 @@ func TestUsageRenderingIndependentFailuresAndReset(t *testing.T) {
 	}
 }
 
+func TestUsageAlignsEveryFactAndQuietsTheTotal(t *testing.T) {
+	now := time.Date(2026, time.October, 1, 12, 0, 0, 0, time.Local)
+	zero, used, full := 0.0, 26.0, 100.0
+	rows := []usageCredential{
+		{provider: "claude", account: "setup", quota: agents.UsageQuota{Note: "limits unavailable for setup-token authentication"}},
+		{provider: "codex", account: "emisar",
+			value: agents.UsageValue{Available: true, Priced: 1, USD: 54.82},
+			quota: agents.UsageQuota{Buckets: []agents.UsageBucket{
+				{Name: "Weekly", Used: &full},
+				{Name: "gpt-reserve · Weekly", Used: &zero},
+				{Name: "Credits", Remaining: "62500"},
+			}}},
+		{provider: "codex", account: "work", quotaErr: agents.ErrUsageSignIn},
+		{provider: "grok", account: "default",
+			value: agents.UsageValue{Available: true, Unpriced: 3},
+			quota: agents.UsageQuota{Note: "shared credit pool", Buckets: []agents.UsageBucket{{Name: "Weekly credits", Used: &used}}}},
+	}
+	names := []string{"claude", "codex", "grok"}
+	var out bytes.Buffer
+	renderUsage(&out, ui.Palette{}, 120, now, names, rows, false)
+	text := out.String()
+
+	// Every fact's value starts where the bars start: one gutter for buckets and fixed labels.
+	gutter := utf8.RuneCountInString("gpt-reserve · Weekly")
+	fact := func(label, value string) string { return "    " + padRight(label, gutter) + "  " + value + "\n" }
+	total := func(value string) string { return strings.Repeat(" ", gutter+20) + value + "\n" }
+	for _, wanted := range []string{
+		fact("Credits", "62500 remaining"),
+		fact("Limits", "unavailable · sign-in required"),
+		fact("", "Run: coop login codex@work"),
+		total("Σ≈$54.82"),
+		total("Σ unpriced"),
+		"  default · shared credit pool\n",
+		"    Limits unavailable for setup-token authentication\n",
+	} {
+		if !strings.Contains(text, wanted) {
+			t.Fatalf("missing aligned line %q:\n%s", wanted, text)
+		}
+	}
+	if strings.Contains(text, "\n    shared credit pool") || strings.Contains(text, "30-day API estimate") {
+		t.Fatalf("summary kept an orphan note or a misaligned estimate label:\n%s", text)
+	}
+	if !strings.HasSuffix(text, "\n") || strings.HasSuffix(text, "\n\n") {
+		t.Fatalf("output must end on its last block without a trailing blank line: %q", text[len(text)-12:])
+	}
+
+	// The total and the account note are quieter than the limits; bars keep their colors.
+	var colored bytes.Buffer
+	pal := ui.Colored()
+	renderUsage(&colored, pal, 120, now, names, rows, false)
+	for _, wanted := range []string{
+		pal.Dim(strings.TrimSuffix(total("Σ≈$54.82"), "\n")) + "\n",
+		pal.Dim(strings.TrimSuffix(total("Σ unpriced"), "\n")) + "\n",
+		"  default" + pal.Dim(" · shared credit pool") + "\n",
+		pal.Red("██████████") + "  100% used",
+	} {
+		if !strings.Contains(colored.String(), wanted) {
+			t.Fatalf("missing styled line %q:\n%s", wanted, colored.String())
+		}
+	}
+
+	// A fact too wide for the gutter stacks under its label instead of spilling past the edge.
+	out.Reset()
+	renderUsage(&out, ui.Palette{}, 40, now, []string{"codex"}, rows[1:3], false)
+	if !strings.Contains(out.String(), "    Limits\n      unavailable · sign-in required\n") {
+		t.Fatalf("narrow limits fact did not stack:\n%s", out.String())
+	}
+	for _, line := range strings.Split(out.String(), "\n") {
+		if utf8.RuneCountInString(line) > 40 {
+			t.Fatalf("narrow summary overflows: %q", line)
+		}
+	}
+}
+
 func TestUsageSummaryKeepsBarsAndOnlyUsefulFacts(t *testing.T) {
 	now := time.Date(2026, time.October, 1, 12, 0, 0, 0, time.Local)
 	zero, full := 0.0, 100.0

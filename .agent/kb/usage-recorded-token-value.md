@@ -20,8 +20,8 @@ partial. Unknown model, cache TTL or long-context tariff inputs stay unpriced.
 Provider quota is account-wide; the dollar estimate is not. The CLI reads only Coop-managed
 credential roots and default session-private ACP roots, not independent native host homes,
 web/mobile usage or other machines. Native runs that write into those same roots can be included.
-The compact view leads with quota bars, then a priced 30-day API estimate as an aligned Sigma total.
-Unavailable/unpriced results retain the estimate label. Exact-account selection
+The compact view leads with quota bars, then the 30-day API estimate as a dim, aligned Sigma total;
+unavailable/unpriced results use the same column (`Σ unpriced`). Exact-account selection
 adds plan, coverage, pricing and retained-record details without a blanket disclaimer footer.
 Shared editor ACP roots have no historical account binding; copies shared by two named credentials
 become unattributed instead of being charged to today's default or displayed as account zero.
@@ -42,6 +42,8 @@ subscription quota but can still have valued native history. Its unavailable lin
 selected mode without a second generic limits placeholder.
 
 ## Changelog
+- 2026-10-02 — summary non-currency estimates now share the dim Σ column; verified against
+  renderUsage in internal/cli/usage.go. Collector, pricing and attribution unchanged.
 - 2026-10-02 — verified the read scope against `AgentProfileDir` and `usageCredentials`; documented
   the approved quota-first summary and existing exact-account detail view. Collector, pricing,
   attribution and exit-status semantics are unchanged; focused CLI fixtures cover both views.

@@ -15,6 +15,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -162,17 +163,22 @@ func (a *app) cmdUsage(args []string) (int, error) {
 	}
 	details := target.Account() != ""
 	renderUsage(os.Stdout, ui.For(os.Stdout), ui.TermWidth(os.Stdout), time.Now(), names, rows, details)
+	var footer []string
 	if details && len(retained.Turns) > 0 {
-		fmt.Println("Retained Coop turn aggregates are unpriced and are not added to native history.")
+		footer = append(footer, "Retained Coop turn aggregates are unpriced and are not added to native history.")
 		if unattributed > 0 {
-			fmt.Printf("%d installation-wide retained turns have no exact historical credential binding.\n", unattributed)
+			footer = append(footer, fmt.Sprintf("%d installation-wide retained turns have no exact historical credential binding.", unattributed))
 		}
 	}
 	if details && retained.Truncated {
-		fmt.Println("Retained Coop turn scan is partial (read limit reached).")
+		footer = append(footer, "Retained Coop turn scan is partial (read limit reached).")
 	}
 	if details && retainedErr != nil && !errors.Is(retainedErr, os.ErrNotExist) {
-		fmt.Println("Retained Coop turn coverage unavailable.")
+		footer = append(footer, "Retained Coop turn coverage unavailable.")
+	}
+	if len(footer) > 0 {
+		fmt.Println()
+		fmt.Println(strings.Join(footer, "\n"))
 	}
 	// Inspection succeeds when it can show any usable quota or native history. Individual errors
 	// stay inline; a total lookup failure is nonzero, not a fabricated empty successful report.
@@ -328,7 +334,16 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 			fmt.Fprintln(w, text)
 		}
 	}
+	// One label gutter for every fact in the view, quota buckets and fixed labels alike, so bars,
+	// balances, reasons and labeled estimates all start in the same column.
 	labelWidth := 14
+	fixed := []string{"Limits"}
+	if details {
+		fixed = append(fixed, "30-day API estimate", "Credential", "Coop records")
+	}
+	for _, label := range fixed {
+		labelWidth = max(labelWidth, utf8.RuneCountInString(label))
+	}
 	for _, row := range rows {
 		if row.shared || !slices.Contains(names, row.provider) {
 			continue
@@ -339,26 +354,59 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 			}
 		}
 	}
-	estimate := func(row usageCredential) {
-		value := usageValueLabel(row, details)
-		if details || !strings.HasPrefix(value, "≈$") {
-			line("    30-day API estimate  ", value)
+	fact := func(label, value string) {
+		prefix := "    " + padRight(label, labelWidth) + "  "
+		// Like a quota row, a fact too wide for the gutter stacks under its label.
+		if width > 0 && utf8.RuneCountInString(prefix+value) > width {
+			if label != "" {
+				line("    ", label)
+			}
+			line("      ", value)
 			return
 		}
-		value = "Σ" + value
+		line(prefix, value)
+	}
+	estimate := func(row usageCredential) {
+		value := usageValueLabel(row, details)
+		if details {
+			fact("30-day API estimate", value)
+			return
+		}
+		if strings.HasPrefix(value, "≈$") {
+			value = "Σ" + value
+		} else {
+			value = "Σ " + value
+		}
 		// Match the percentage's ones column, including its fixed-width padding.
 		indent := labelWidth + 20
 		if width > 0 && indent+utf8.RuneCountInString(value) > width {
 			indent = 4
 		}
-		line(strings.Repeat(" ", indent), value)
+		// The total is quieter than the limits above it. Lay it out as plain text, then dim each
+		// line, so the escape codes never count toward the wrapping width.
+		texts := []string{strings.Repeat(" ", indent) + value}
+		if width > 0 {
+			texts = ui.PrefixedLines(strings.Repeat(" ", indent), value, width)
+		}
+		for _, text := range texts {
+			fmt.Fprintln(w, pal.Dim(text))
+		}
 	}
+	// A blank line separates blocks; nothing trails the last one.
+	wrote := false
 	for _, name := range names {
+		if wrote {
+			fmt.Fprintln(w)
+		}
+		wrote = true
 		fmt.Fprintln(w, pal.Bold(titleName(name)))
 		count := 0
 		for _, row := range rows {
 			if row.provider != name || row.shared && !row.value.Available {
 				continue
+			}
+			if count > 0 {
+				fmt.Fprintln(w)
 			}
 			count++
 			header := agents.DisplayTarget(row.account)
@@ -368,22 +416,30 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 			if details && row.quota.Plan != "" {
 				header += " · " + agents.DisplayTarget(row.quota.Plan)
 			}
-			line("  ", header)
+			// A note about limits that are shown qualifies the whole account, so it rides the
+			// account line; without limits, the note is the account's one reason line.
+			note := agents.DisplayTarget(row.quota.Note)
+			annotate := note != "" && row.quotaErr == nil && len(row.quota.Buckets) > 0
+			if annotate && (width <= 0 || 2+utf8.RuneCountInString(header+" · "+note) <= width) {
+				fmt.Fprintln(w, "  "+header+pal.Dim(" · "+note))
+				note = ""
+			} else {
+				line("  ", header)
+			}
 			if row.shared {
 				estimate(row)
 				if details {
-					line("    Credential      ", "unknown · excluded from credential totals")
+					fact("Credential", "unknown · excluded from credential totals")
 				}
-				fmt.Fprintln(w)
 				continue
 			}
 			if row.quotaErr != nil {
-				line("    Limits          ", "unavailable · "+agents.DisplayTarget(row.quotaErr.Error()))
+				fact("Limits", "unavailable · "+agents.DisplayTarget(row.quotaErr.Error()))
 				if errors.Is(row.quotaErr, agents.ErrUsageSignIn) {
-					line("    Run: ", agents.LoginCommand(name+"@"+row.account))
+					fact("", "Run: "+agents.LoginCommand(name+"@"+row.account))
 				}
-			} else if len(row.quota.Buckets) == 0 && row.quota.Note == "" {
-				fmt.Fprintln(w, "    Limits          unavailable")
+			} else if len(row.quota.Buckets) == 0 && note == "" {
+				fact("Limits", "unavailable")
 			}
 			shownResets := make(map[int64]bool)
 			for _, bucket := range row.quota.Buckets {
@@ -391,10 +447,10 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 					continue
 				}
 				label := agents.DisplayTarget(bucket.Name)
-				fact := ""
+				text := ""
 				bar := ""
 				if bucket.Used != nil {
-					fact = fmt.Sprintf("%3.0f%% used", *bucket.Used)
+					text = fmt.Sprintf("%3.0f%% used", *bucket.Used)
 					filled := int(math.Round(min(100, *bucket.Used) / 10))
 					bar = strings.Repeat("█", filled) + strings.Repeat("░", 10-filled)
 					if *bucket.Used >= 100 {
@@ -412,25 +468,25 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 							remaining = strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", number), "0"), ".")
 						}
 					}
-					if fact != "" {
-						fact += " · "
+					if text != "" {
+						text += " · "
 					}
-					fact += agents.DisplayTarget(remaining) + " remaining"
+					text += agents.DisplayTarget(remaining) + " remaining"
 				}
-				if fact == "" {
-					fact = "usage unknown"
+				if text == "" {
+					text = "usage unknown"
 				}
 				if bucket.Available != nil && !*bucket.Available {
-					fact += " · blocked"
+					text += " · blocked"
 				}
 				if bucket.Note != "" {
-					fact += " · " + agents.DisplayTarget(bucket.Note)
+					text += " · " + agents.DisplayTarget(bucket.Note)
 				}
 				if details || !bucket.Reset.IsZero() && !(bucket.Used != nil && *bucket.Used == 0 && shownResets[bucket.Reset.Unix()]) {
-					fact += " · " + usageResetLabel(bucket.Reset, now)
+					text += " · " + usageResetLabel(bucket.Reset, now)
 					shownResets[bucket.Reset.Unix()] = true
 				}
-				columns := labelWidth + utf8.RuneCountInString(fact) + 6
+				columns := labelWidth + utf8.RuneCountInString(text) + 6
 				if bar != "" {
 					columns += 12
 				}
@@ -439,26 +495,25 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 					if bar != "" {
 						fmt.Fprintf(w, "      %s\n", bar)
 					}
-					line("      ", fact)
+					line("      ", text)
 				} else {
 					if bar != "" {
 						bar += "  "
 					}
-					fmt.Fprintf(w, "    %s  %s%s\n", padRight(label, labelWidth), bar, fact)
+					fmt.Fprintf(w, "    %s  %s%s\n", padRight(label, labelWidth), bar, text)
 				}
 			}
-			if row.quota.Note != "" {
-				line("    ", agents.DisplayTarget(row.quota.Note))
+			if note != "" {
+				r, size := utf8.DecodeRuneInString(note)
+				line("    ", string(unicode.ToUpper(r))+note[size:])
 			}
 			estimate(row)
 			if details && row.unpricedTurns > 0 {
-				line("    Coop records    ", fmt.Sprintf("%d retained turns · unpriced aggregates, not added", row.unpricedTurns))
+				fact("Coop records", fmt.Sprintf("%d retained turns · unpriced aggregates, not added", row.unpricedTurns))
 			}
-			fmt.Fprintln(w)
 		}
 		if count == 0 {
 			line("  ", "No credentials. Sign in: coop login "+name)
-			fmt.Fprintln(w)
 		}
 	}
 }
