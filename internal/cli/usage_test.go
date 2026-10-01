@@ -1,0 +1,175 @@
+package cli
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+	"unicode/utf8"
+
+	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/ui"
+)
+
+type usageBlockingQuotaTransport struct{}
+
+func (usageBlockingQuotaTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	fmt.Fprintln(os.Stdout, "quota-ready")
+	<-request.Context().Done()
+	return nil, request.Context().Err()
+}
+
+func TestUsageSignalCancelsLookup(t *testing.T) {
+	if os.Getenv("COOP_USAGE_SIGNAL_HELPER") == "1" {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("NO_COLOR", "1")
+		cfg := &config.Config{ConfigDir: t.TempDir()}
+		usageFixtureFile(t, filepath.Join(cfg.AgentProfileDir("claude", "work"), ".credentials.json"), fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"fixture","refreshToken":"fixture","expiresAt":%d,"scopes":["user:profile"]}}`, time.Now().Add(time.Hour).UnixMilli()))
+		http.DefaultTransport = usageBlockingQuotaTransport{}
+		a := &app{cfg: cfg}
+		if code, err := a.cmdUsage([]string{"claude@work"}); code != 1 || err != nil {
+			t.Fatalf("cancelled lookup = (%d,%v)", code, err)
+		}
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestUsageSignalCancelsLookup$")
+	cmd.Env = append(os.Environ(), "COOP_USAGE_SIGNAL_HELPER=1")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}()
+	reader := bufio.NewReader(stdout)
+	if line, err := reader.ReadString('\n'); err != nil || line != "quota-ready\n" {
+		t.Fatalf("quota did not enter fixture: %q, %v", line, err)
+	}
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	remaining, _ := io.ReadAll(reader)
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("signal killed command instead of cancelling owned lookup: %v\n%s%s", err, remaining, stderr.String())
+	}
+}
+
+func usageFixtureFile(t *testing.T, path, data string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUsageCommandOutsideRepositoryAndExactSelector(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("NO_COLOR", "1")
+	cfg := &config.Config{ConfigDir: t.TempDir(), RuntimeName: "must-not-run"}
+	stamp := time.Now().UTC().Format(time.RFC3339Nano)
+	data := fmt.Sprintf(`{"type":"assistant","timestamp":%q,"requestId":"r","message":{"id":"m","model":"claude-sonnet-4-6","stop_reason":"end_turn","usage":{"input_tokens":100,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":20}}}`, stamp)
+	usageFixtureFile(t, filepath.Join(cfg.AgentProfileDir("claude", "work"), "projects", "bucket", "s.jsonl"), data)
+	a := &app{cfg: cfg}
+	before := cfg.DefaultProfileOf("claude")
+	out := captureStdout(t, func() {
+		code, err := a.cmdUsage([]string{"claude@work"})
+		if code != 0 || err != nil {
+			t.Errorf("usage=(%d,%v)", code, err)
+		}
+	})
+	for _, wanted := range []string{"Claude", "work", "API value, 30d", "≈$", "sign-in required", "coop login claude@work", "not billing"} {
+		if !strings.Contains(out, wanted) {
+			t.Fatalf("missing %q in %s", wanted, out)
+		}
+	}
+	if strings.ContainsRune(out, '\x1b') || a.rtSet || cfg.DefaultProfileOf("claude") != before {
+		t.Fatal("inspection changed authority or initialized runtime")
+	}
+	for _, args := range [][]string{{"claude:model"}, {"claude/high"}, {"claude@a,b"}, {"no-such-provider"}, {"claude", "extra"}, {"--watch"}} {
+		if _, err := usageSelector(args); err == nil {
+			t.Fatalf("accepted %v", args)
+		}
+	}
+	if !slices.Contains(a.completionCandidatesFor([]string{"usage"}, "claude@"), "claude@work") {
+		t.Fatal("credential completion missing")
+	}
+}
+
+func TestUsageDiscoversPrivateRootsAndKeepsAmbiguityUnknown(t *testing.T) {
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	state := t.TempDir()
+	usageFixtureFile(t, filepath.Join(state, "acp", "session", "codex", "profiles", "retired", "sessions", "x.jsonl"), "fixture")
+	rows, partial := a.usageCredentials([]string{"codex"}, state)
+	if partial || len(rows) != 2 || rows[0].account != "retired" || len(rows[0].paths) != 1 {
+		t.Fatalf("private discovery=%+v partial=%v", rows, partial)
+	}
+	e := agents.UsageEvent{ID: "same", Model: "gpt-6.1-sol", Time: time.Now(), Input: 100, Output: 10, WriteKnown: true, ContextKnown: true}
+	rows = []usageCredential{
+		{provider: "codex", account: "a", history: agents.UsageHistory{Available: true, Events: []agents.UsageEvent{e}}},
+		{provider: "codex", account: "b", history: agents.UsageHistory{Available: true, Events: []agents.UsageEvent{e}}},
+		{provider: "codex", account: "Unattributed ACP", shared: true},
+	}
+	rows = deduplicateUsageCredentials(rows)
+	ag, _ := agents.Get("codex")
+	for i := range rows {
+		rows[i].value = agents.ValueUsageHistory(rows[i].history, time.Now(), ag.Usage().Price)
+	}
+	if rows[0].value.Available || rows[1].value.Available || rows[2].value.Priced != 1 {
+		t.Fatalf("ambiguous history fabricated zero or double charged: %+v", rows)
+	}
+	var out bytes.Buffer
+	renderUsage(&out, ui.Palette{}, 100, time.Now(), []string{"codex"}, rows[:1], func(string) string { return "a" })
+	if strings.Contains(out.String(), "≈$0") || !strings.Contains(out.String(), "attribution is ambiguous") {
+		t.Fatalf("ambiguous selected credential: %s", out.String())
+	}
+}
+
+func TestUsageRenderingIndependentFailuresAndReset(t *testing.T) {
+	now := time.Now()
+	used := 100.0
+	rows := []usageCredential{
+		{provider: "codex", account: "work", value: agents.UsageValue{Available: true, USD: 12.345, Priced: 1, Unpriced: 2, Partial: true}, quota: agents.UsageQuota{Plan: "Pro", Buckets: []agents.UsageBucket{{Name: "5-hour", Used: &used, Reset: now.Add(38 * time.Minute)}}}},
+		{provider: "codex", account: "personal", quotaErr: agents.ErrUsageSignIn},
+	}
+	var wide, narrow bytes.Buffer
+	renderUsage(&wide, ui.Palette{}, 120, now, []string{"codex"}, rows, func(string) string { return "work" })
+	renderUsage(&narrow, ui.Palette{}, 30, now, []string{"codex"}, rows, func(string) string { return "work" })
+	for _, wanted := range []string{"work · Pro · default", "≈$12.35 · partial history · 2 unpriced events", "100% used", "resets in 38m", "coop login codex@personal", "no usable history"} {
+		if !strings.Contains(wide.String(), wanted) {
+			t.Fatalf("missing %q: %s", wanted, wide.String())
+		}
+	}
+	if !strings.Contains(narrow.String(), "    5-hour\n      ") {
+		t.Fatalf("narrow facts did not stack: %s", narrow.String())
+	}
+	for _, line := range strings.Split(narrow.String(), "\n") {
+		if strings.HasPrefix(line, " ") && utf8.RuneCountInString(line) > 30 {
+			t.Fatalf("narrow credential fact overflows: %q", line)
+		}
+	}
+	if usageResetLabel(time.Time{}, now) != "reset unknown" {
+		t.Fatal("missing reset invented")
+	}
+}

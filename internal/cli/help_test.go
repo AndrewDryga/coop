@@ -240,7 +240,7 @@ func TestMaintenancePagesEndThemselves(t *testing.T) {
 var wantManualOrder = []string{
 	"run", "shell", "claude", "codex", "gemini", "grok",
 	"login", "credentials", "credentials default", "credentials rm", "credentials account",
-	"models", "presets init", "presets",
+	"models", "usage", "presets init", "presets",
 	"tasks", "tasks ls", "tasks add", "tasks claim", "tasks release", "tasks lease",
 	"tasks block", "tasks unblock", "tasks done", "tasks path", "tasks queues",
 	"tasks decisions", "tasks lint", "tasks rm", "tasks watch",

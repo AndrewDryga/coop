@@ -26,6 +26,268 @@ import (
 
 type codexAgent struct{}
 
+func (codexAgent) Usage() UsageSpec {
+	return UsageSpec{Quota: codexUsageQuota, HistoryDirs: []string{"sessions", "archived_sessions"},
+		HistoryFile: func(path string) bool {
+			return strings.HasSuffix(path, ".jsonl") && strings.HasPrefix(filepath.Base(path), "rollout-")
+		}, ParseHistory: codexUsageHistory, Price: codexUsagePrice}
+}
+
+// https://developers.openai.com/api/docs/pricing and each model's page — 2026-10-01.
+func codexUsagePrice(event UsageEvent) (float64, bool) {
+	rates := map[string]usageTariff{
+		"gpt-6-astra":   {Input: 10, Read: 1, Write: 12.5, Output: 50, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
+		"gpt-6.1-sol":   {Input: 2, Read: .1, Write: 2.5, Output: 10, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
+		"gpt-6-luna":    {Input: .1, Read: .01, Write: .125, Output: .5, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
+		"gpt-5.6-sol":   {Input: 4, Read: .4, Write: 5, Output: 20, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
+		"gpt-5.3-codex": {Input: 1.75, Read: .175, Write: 1.75, Output: 14},
+	}
+	rate, ok := rates[event.Model]
+	if !ok {
+		return 0, false
+	}
+	return rate.value(event)
+}
+
+type codexUsageCounters struct {
+	Input  *int64 `json:"input_tokens"`
+	Read   *int64 `json:"cached_input_tokens"`
+	Write  *int64 `json:"cache_write_input_tokens"`
+	Output *int64 `json:"output_tokens"`
+}
+
+func (u codexUsageCounters) event(id, model, timestamp string) UsageEvent {
+	return UsageEvent{ID: id, Model: model, Time: usageReset(timestamp),
+		Input: usageTokens(u.Input) - usageTokens(u.Read) - usageTokens(u.Write), Read: usageTokens(u.Read), Write: usageTokens(u.Write), Output: usageTokens(u.Output),
+		WriteKnown: u.Write != nil, Partial: u.Input == nil || u.Output == nil, Approximate: true, ContextKnown: true}
+}
+
+func (u codexUsageCounters) minus(other codexUsageCounters) codexUsageCounters {
+	input, read, write, output := usageTokens(u.Input)-usageTokens(other.Input), usageTokens(u.Read)-usageTokens(other.Read), usageTokens(u.Write)-usageTokens(other.Write), usageTokens(u.Output)-usageTokens(other.Output)
+	return codexUsageCounters{Input: &input, Read: &read, Write: &write, Output: &output}
+}
+
+func codexUsageHistory(reader io.Reader) (UsageHistory, error) {
+	var out UsageHistory
+	var prior *codexUsageCounters
+	model, turn := "", ""
+	modern := make(map[string]UsageEvent)
+	modernTurns := make(map[string]bool)
+	type legacyEvent struct {
+		turn  string
+		event UsageEvent
+	}
+	var legacy []legacyEvent
+	out.Partial = readUsageLines(reader, func(line []byte) bool {
+		var row struct {
+			Timestamp string `json:"timestamp"`
+			Type      string `json:"type"`
+			Payload   struct {
+				Type     string             `json:"type"`
+				Turn     string             `json:"turn_id"`
+				Model    string             `json:"model"`
+				ToModel  string             `json:"to_model"`
+				Response string             `json:"response_id"`
+				Usage    codexUsageCounters `json:"usage"`
+				Info     *struct {
+					Total codexUsageCounters `json:"total_token_usage"`
+					Last  codexUsageCounters `json:"last_token_usage"`
+				} `json:"info"`
+			} `json:"payload"`
+		}
+		if json.Unmarshal(line, &row) != nil {
+			return false
+		}
+		p := row.Payload
+		if row.Type == "turn_context" {
+			model = p.Model
+			if p.Turn != "" {
+				turn = p.Turn
+			}
+			return true
+		}
+		if row.Type == "event_msg" && p.Type == "task_started" && p.Turn != "" {
+			turn = p.Turn
+		}
+		if row.Type == "event_msg" && p.Type == "model_reroute" {
+			model = p.ToModel
+			return true
+		}
+		if row.Type == "token_usage_record" {
+			if p.Response == "" {
+				return false
+			}
+			event := p.Usage.event("response:"+p.Response, model, row.Timestamp)
+			if !event.valid() {
+				return false
+			}
+			modern[event.ID] = event
+			modernTurns[p.Turn] = true
+			return true
+		}
+		if row.Type != "event_msg" || p.Type != "token_count" || p.Info == nil {
+			return true
+		}
+		usage := p.Info.Last
+		contextKnown := true
+		if prior != nil {
+			delta := p.Info.Total.minus(*prior)
+			if delta.event("check", model, row.Timestamp).valid() {
+				usage = delta
+				contextKnown = usageTokens(delta.Input) == usageTokens(p.Info.Last.Input)
+			} else {
+				out.Partial = true
+			}
+		}
+		copy := p.Info.Total
+		prior = &copy
+		if usageTokens(usage.Input) == 0 && usageTokens(usage.Output) == 0 {
+			return true
+		}
+		id := fmt.Sprintf("legacy:%s:%s:%d:%d:%d:%d", row.Timestamp, model, usageTokens(usage.Input), usageTokens(usage.Read), usageTokens(usage.Write), usageTokens(usage.Output))
+		event := usage.event(id, model, row.Timestamp)
+		event.ContextKnown = contextKnown
+		event.WriteKnown = p.Info.Total.Write != nil && p.Info.Last.Write != nil
+		if !event.valid() {
+			return false
+		}
+		legacy = append(legacy, legacyEvent{turn: turn, event: event})
+		return true
+	}) || out.Partial
+	for _, event := range modern {
+		out.Events = append(out.Events, event)
+	}
+	for _, record := range legacy {
+		if modernTurns[record.turn] {
+			continue
+		}
+		if record.turn == "" && len(modern) != 0 {
+			out.Partial = true
+			continue
+		}
+		out.Events = append(out.Events, record.event)
+	}
+	return out, nil
+}
+
+func codexUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, error) {
+	if input.APIKey {
+		return UsageQuota{Note: "subscription limits unavailable for API-key authentication"}, nil
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return UsageQuota{}, fmt.Errorf("quota lookup requires a deadline")
+	}
+	data, err := readCodexCredential(filepath.Join(input.ProfileDir, "auth.json"))
+	if err != nil {
+		return UsageQuota{}, ErrUsageSignIn
+	}
+	var source codexSourceCredential
+	if json.Unmarshal(data, &source) != nil {
+		return UsageQuota{}, ErrUsageSignIn
+	}
+	if source.AuthMode == "apikey" || (source.Tokens == nil && source.OpenAIAPIKey != "") {
+		return UsageQuota{Note: "subscription limits unavailable for API-key authentication"}, nil
+	}
+	if err := renewCodexCredential(input.ProfileDir, deadline); err != nil {
+		return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
+	}
+	data, err = readCodexCredential(filepath.Join(input.ProfileDir, "auth.json"))
+	if err != nil || json.Unmarshal(data, &source) != nil || source.Tokens == nil || source.Tokens.AccessToken == "" || source.Tokens.AccountID == "" {
+		return UsageQuota{}, ErrUsageSignIn
+	}
+	var raw codexQuotaResponse
+	err = readUsageQuota(ctx, http.MethodGet, "https://chatgpt.com/backend-api/wham/usage", http.Header{
+		"Authorization":      {"Bearer " + source.Tokens.AccessToken},
+		"Chatgpt-Account-Id": {source.Tokens.AccountID}, "User-Agent": {"codex_cli_rs/0.153.4"},
+	}, nil, &raw)
+	if err != nil {
+		return UsageQuota{}, err
+	}
+	return raw.quota(), nil
+}
+
+type codexQuotaWindow struct {
+	Used    *float64 `json:"used_percent"`
+	Seconds int64    `json:"limit_window_seconds"`
+	Reset   int64    `json:"reset_at"`
+}
+
+type codexQuotaLimit struct {
+	Allowed   *bool             `json:"allowed"`
+	Primary   *codexQuotaWindow `json:"primary_window"`
+	Secondary *codexQuotaWindow `json:"secondary_window"`
+}
+
+type codexQuotaResponse struct {
+	Plan       string           `json:"plan_type"`
+	Limit      *codexQuotaLimit `json:"rate_limit"`
+	Additional []struct {
+		Name    string           `json:"limit_name"`
+		Feature string           `json:"metered_feature"`
+		Limit   *codexQuotaLimit `json:"rate_limit"`
+	} `json:"additional_rate_limits"`
+	Credits *struct {
+		Has       *bool   `json:"has_credits"`
+		Unlimited bool    `json:"unlimited"`
+		Balance   *string `json:"balance"`
+	} `json:"credits"`
+}
+
+func (raw codexQuotaResponse) quota() UsageQuota {
+	out := UsageQuota{Plan: raw.Plan}
+	appendLimit := func(prefix string, limit *codexQuotaLimit) {
+		if limit == nil {
+			return
+		}
+		for _, entry := range []struct {
+			fallback string
+			window   *codexQuotaWindow
+		}{{"Primary", limit.Primary}, {"Secondary", limit.Secondary}} {
+			if entry.window == nil {
+				continue
+			}
+			name := entry.fallback
+			if entry.window.Seconds == 18000 {
+				name = "5-hour"
+			} else if entry.window.Seconds == 604800 {
+				name = "Weekly"
+			} else if entry.window.Seconds > 0 {
+				name = (time.Duration(entry.window.Seconds) * time.Second).String()
+			}
+			if prefix != "" {
+				name = prefix + " · " + name
+			}
+			bucket := UsageBucket{Name: name, Used: usagePercent(entry.window.Used), Available: limit.Allowed}
+			if entry.window.Reset > 0 {
+				bucket.Reset = time.Unix(entry.window.Reset, 0)
+			}
+			out.Buckets = append(out.Buckets, bucket)
+		}
+	}
+	appendLimit("", raw.Limit)
+	for _, entry := range raw.Additional {
+		name := entry.Name
+		if name == "" {
+			name = entry.Feature
+		}
+		if name == "" {
+			name = "Additional limit"
+		}
+		appendLimit(name, entry.Limit)
+	}
+	if raw.Credits != nil {
+		bucket := UsageBucket{Name: "Credits", Available: raw.Credits.Has}
+		if raw.Credits.Unlimited {
+			bucket.Remaining = "unlimited"
+		} else if raw.Credits.Balance != nil {
+			bucket.Remaining = *raw.Credits.Balance
+		}
+		out.Buckets = append(out.Buckets, bucket)
+	}
+	return out
+}
+
 func (codexAgent) Scaffold() ScaffoldSpec {
 	return ScaffoldSpec{Project: ScaffoldLayout{Dir: ".codex"}}
 }
@@ -466,7 +728,7 @@ func renewCodexCredential(profileDir string, deadline time.Time) error {
 	if err := lock.Chmod(0o600); err != nil {
 		return fmt.Errorf("protect Codex credential refresh lock: %w", err)
 	}
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+	if err := lockCredentialRefresh(lock, deadline); err != nil {
 		return fmt.Errorf("lock Codex credential refresh: %w", err)
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)

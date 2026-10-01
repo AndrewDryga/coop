@@ -114,6 +114,17 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		return appendCompletionCandidates(topLevelCommands, a.targetCandidates(cur, false, true), a.presetCandidates())
 	}
 	switch prev[0] {
+	case "usage":
+		if len(prev) == 1 {
+			var values []string
+			for _, name := range agents.Names() {
+				values = append(values, name)
+				for _, account := range box.EffectiveProfiles(a.cfg, name) {
+					values = append(values, name+"@"+account)
+				}
+			}
+			return values
+		}
 	case "build":
 		if len(prev) == 1 {
 			return []string{"--egress"}

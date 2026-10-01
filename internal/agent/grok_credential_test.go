@@ -159,6 +159,54 @@ func TestGrokCredentialRenewalLeavesAFreshCredentialAlone(t *testing.T) {
 	}
 }
 
+func TestGrokUsageRenewalOnlyUsesSelectedScope(t *testing.T) {
+	for _, tc := range []struct {
+		name                      string
+		selectedFresh, otherFresh bool
+		requests                  int32
+	}{
+		{"expired selected, fresh other", false, true, 1},
+		{"fresh selected, expired other", true, false, 0},
+		{"both expired", false, false, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests atomic.Int32
+			grokRefreshServer(t, &requests, func(w http.ResponseWriter, r *http.Request) {
+				if r.ParseForm() != nil || r.PostForm.Get("client_id") != "selected" {
+					t.Error("refreshed an unselected authority")
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "renewed-access", "refresh_token": "rotated-refresh", "expires_in": 21600})
+			})
+			expiry := func(fresh bool) time.Time {
+				if fresh {
+					return time.Now().Add(5 * time.Hour)
+				}
+				return time.Now().Add(-time.Hour)
+			}
+			other := grokCredentialEntry(grokIssuer, "other", "other-access", expiry(tc.otherFresh), "other-refresh")
+			profile := t.TempDir()
+			mustWrite(t, filepath.Join(profile, "auth.json"), grokCredentialFile(
+				grokCredentialEntry(grokIssuer, "selected", "selected-access", expiry(tc.selectedFresh), "selected-refresh"), other))
+			if err := renewGrokCredentialScope(profile, time.Now().Add(time.Hour), grokIssuer+"::selected"); err != nil {
+				t.Fatal(err)
+			}
+			if got := requests.Load(); got != tc.requests {
+				t.Fatalf("refreshes = %d, want %d", got, tc.requests)
+			}
+			data, err := os.ReadFile(filepath.Join(profile, "auth.json"))
+			var stored map[string]map[string]string
+			if err != nil || json.Unmarshal(data, &stored) != nil {
+				t.Fatal("cannot read refreshed credential")
+			}
+			for key, want := range other {
+				if stored[grokIssuer+"::other"][key] != want {
+					t.Fatalf("unselected field %s was changed", key)
+				}
+			}
+		})
+	}
+}
+
 // The profile is mounted read-write into boxes, so the issuer it names is the agent's to write.
 // The host refreshes only against the pinned endpoint, and only a login from its issuer.
 func TestGrokCredentialRenewalRefusesAnotherIssuer(t *testing.T) {

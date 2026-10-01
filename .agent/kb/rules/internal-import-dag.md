@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-09-30
+updated: 2026-10-01
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -46,6 +46,9 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-10-01 — added `cli -> session` for the read-only retained usage metadata snapshot.
+  The usage command must not open/migrate the service store or invent a second schema in CLI.
+  Session remains presentation-neutral; the full production import scan verifies the edge.
 - 2026-09-30 — added `forkspace -> safefile` for the readonly fsck metadata snapshot.
   Reuse the leaf's no-symlink, nonblocking descriptor opens rather than implement a
   second reader; this adds no cycle. Full production import scan verifies this edge.

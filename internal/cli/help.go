@@ -123,6 +123,7 @@ func renderMenu(p ui.Palette, cfg *config.Config, ref bool) string {
 	row("coop login <agent>", "sign in to an agent")
 	row("coop credentials [<agent>]", "show your signed in accounts")
 	row("coop models [<agent>]", "show available models")
+	row("coop usage [<provider>]", "show limits and recorded 30-day API token value")
 	row("coop presets [<name>]", "show your presets")
 
 	group("TASKS", "each task is a folder in .agent/tasks/")
@@ -237,7 +238,7 @@ func anyAgentSignedIn(cfg *config.Config) bool {
 // frontier`), never added here: the manual's bytes must not depend on the host.
 var manualOrder = append(append([]string{"run", "shell"}, agents.Names()...),
 	"login", "credentials", "credentials default", "credentials rm", "credentials account",
-	"models", "presets init", "presets",
+	"models", "usage", "presets init", "presets",
 	"tasks", "tasks ls", "tasks add", "tasks claim", "tasks release", "tasks lease",
 	"tasks block", "tasks unblock", "tasks done", "tasks path", "tasks queues",
 	"tasks decisions", "tasks lint", "tasks rm", "tasks watch",
@@ -598,6 +599,33 @@ ACCOUNTS
   Show accounts: coop credentials
   Start an agent: coop claude`,
 
+	"usage": `coop usage — show limits and recorded 30-day API token value
+
+Usage: coop usage [<provider>[@credential]]
+
+EXAMPLES
+  coop usage
+  coop usage codex
+  coop usage codex@work
+
+  Quotas are read independently for each selected credential. Reset times are local.
+  API value uses retained native CLI/Coop history and current standard token list prices,
+  including subscription activity. It is not billing, an invoice, or money saved.
+  Missing history, unsupported prices and partial records are labeled explicitly.
+  Shared editor transcripts have no historical credential binding and appear separately.
+  Retained Coop turn aggregates are shown as unpriced, never added to native totals.
+  Web/mobile use, other machines and non-token charges are outside this estimate.
+
+  Gemini's native OAuth quota helper needs Docker and the current Coop base image.
+  It uses the original plain-file login; busy credentials can be retried after the active run.
+  API-key/Vertex modes may have no subscription quota but retain token-history value.
+
+EXIT STATUS
+  0  at least one usable history or quota result; individual failures stay inline
+  1  no usable history or quota results
+  2  invalid selector or arguments
+
+  Credentials: coop credentials`,
 	"credentials": `coop credentials — show and manage your agent accounts
 
 Usage:

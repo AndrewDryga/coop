@@ -24,6 +24,195 @@ import (
 
 type grokAgent struct{}
 
+func (grokAgent) Usage() UsageSpec {
+	return UsageSpec{Quota: grokUsageQuota, HistoryDirs: []string{"sessions"},
+		HistoryFile:   func(path string) bool { return filepath.Base(path) == "usage.json" },
+		HistoryFilter: grokUsageHistoryFilter, ParseHistory: grokUsageHistory, Price: grokUsagePrice}
+}
+
+// Global standard endpoint, https://docs.x.ai/developers/pricing — 2026-10-01.
+func grokUsagePrice(event UsageEvent) (float64, bool) {
+	rates := map[string]usageTariff{
+		"grok-4.7":                     {Input: 2, Read: .5, Write: 2, Output: 6, LongAt: 200000, LongInput: 2, LongOutput: 2},
+		"grok-4.6":                     {Input: 2, Read: .5, Write: 2, Output: 6, LongAt: 200000, LongInput: 2, LongOutput: 2},
+		"grok-4.5":                     {Input: 2, Read: .3, Write: 2, Output: 6, LongAt: 200000, LongInput: 2, LongOutput: 2},
+		"grok-4.3":                     {Input: 1.25, Read: .2, Write: 1.25, Output: 2.5, LongAt: 200000, LongInput: 2, LongOutput: 2},
+		"grok-build-0.1":               {Input: 1, Read: .2, Write: 1, Output: 2, LongAt: 200000, LongInput: 2, LongOutput: 2},
+		"grok-4.20-multi-agent-0309":   {Input: 1.25, Read: .2, Write: 1.25, Output: 2.5, LongAt: 200000, LongInput: 2, LongOutput: 2},
+		"grok-4.20-0309-reasoning":     {Input: 1.25, Read: .2, Write: 1.25, Output: 2.5, LongAt: 200000, LongInput: 2, LongOutput: 2},
+		"grok-4.20-0309-non-reasoning": {Input: 1.25, Read: .2, Write: 1.25, Output: 2.5, LongAt: 200000, LongInput: 2, LongOutput: 2},
+	}
+	rate, ok := rates[event.Model]
+	if !ok {
+		return 0, false
+	}
+	return rate.value(event)
+}
+
+func grokUsageHistoryFilter(root *os.Root, path string) (bool, error) {
+	data, err := readRootUsageArtifact(root, filepath.Join(filepath.Dir(path), "summary.json"), 1<<20)
+	if err != nil {
+		return false, fmt.Errorf("session summary unavailable")
+	}
+	var summary struct {
+		Kind   string `json:"session_kind"`
+		Parent string `json:"parent_session_id"`
+	}
+	if json.Unmarshal(data, &summary) != nil {
+		return false, fmt.Errorf("session summary has an unsupported format")
+	}
+	if summary.Kind == "" {
+		return false, fmt.Errorf("session kind unavailable")
+	}
+	// Native parent turns fold child usage. Reading the separately persisted child as well
+	// would double-charge it; user-created forks must still be read.
+	if !strings.HasPrefix(summary.Kind, "subagent") {
+		return true, nil
+	}
+	if summary.Parent == "" || filepath.Base(summary.Parent) != summary.Parent || summary.Parent == "." || summary.Parent == ".." {
+		return false, fmt.Errorf("subagent parent identity unavailable")
+	}
+	parent := filepath.Join(filepath.Dir(filepath.Dir(path)), summary.Parent, "usage.json")
+	_, err = root.Lstat(parent)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	} // surviving child-only usage is still recorded spend
+	return false, err
+}
+
+type grokUsageCounters struct {
+	Input       *int64 `json:"inputTokens"`
+	Read        *int64 `json:"cachedReadTokens"`
+	Write       *int64 `json:"cacheCreationTokens"`
+	Output      *int64 `json:"outputTokens"`
+	Incomplete  bool   `json:"usageIsIncomplete"`
+	CostPartial bool   `json:"costIsPartial"`
+	Calls       *int64 `json:"modelCalls"`
+}
+
+func grokUsageHistory(reader io.Reader) (UsageHistory, error) {
+	var raw struct {
+		Turns []struct {
+			grokUsageCounters
+			Ended  string                       `json:"endedAt"`
+			Models map[string]grokUsageCounters `json:"modelUsage"`
+		} `json:"turns"`
+	}
+	if json.NewDecoder(reader).Decode(&raw) != nil {
+		return UsageHistory{}, fmt.Errorf("usage history has an unsupported format")
+	}
+	// No per-request ID is retained. Copies preserve endedAt, so equal unchanged inherited
+	// rows can be deduplicated, but this remains weaker identity than a provider response ID.
+	out := UsageHistory{Partial: true}
+	for _, turn := range raw.Turns {
+		models := turn.Models
+		if len(models) == 0 {
+			models = map[string]grokUsageCounters{"": turn.grokUsageCounters}
+		}
+		for model, u := range models {
+			id := fmt.Sprintf("turn:%s:%s:%d:%d:%d:%d", turn.Ended, model, usageTokens(u.Input), usageTokens(u.Read), usageTokens(u.Write), usageTokens(u.Output))
+			event := UsageEvent{ID: id, Model: model, Time: usageReset(turn.Ended),
+				Input: usageTokens(u.Input) - usageTokens(u.Read) - usageTokens(u.Write), Read: usageTokens(u.Read), Write: usageTokens(u.Write), Output: usageTokens(u.Output), WriteKnown: u.Write != nil,
+				Partial: u.Incomplete || u.CostPartial || turn.Incomplete || turn.CostPartial || u.Input == nil || u.Output == nil, ContextKnown: u.Calls != nil && *u.Calls == 1}
+			if event.valid() {
+				out.Events = append(out.Events, event)
+			}
+		}
+	}
+	return out, nil
+}
+
+func grokUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, error) {
+	if input.APIKey {
+		return UsageQuota{Note: "subscription limits unavailable for API-key authentication"}, nil
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return UsageQuota{}, fmt.Errorf("quota lookup requires a deadline")
+	}
+	credentials, valid := readGrokCredentials(input.ProfileDir)
+	if !valid || len(credentials) == 0 {
+		return UsageQuota{}, ErrUsageSignIn
+	}
+	scope := grokIssuer + "::b1a00492-073a-47ea-816f-4c329264a828"
+	credential, found := credentials[scope]
+	if !found {
+		return UsageQuota{}, fmt.Errorf("limits unavailable for this stored authentication authority")
+	}
+	if err := renewGrokCredentialScope(input.ProfileDir, deadline, scope); err != nil {
+		return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
+	}
+	credentials, valid = readGrokCredentials(input.ProfileDir)
+	if !valid {
+		return UsageQuota{}, ErrUsageSignIn
+	}
+	credential, found = credentials[scope]
+	if !found || credential.OIDCIssuer != grokIssuer || credential.OIDCClientID != "b1a00492-073a-47ea-816f-4c329264a828" || credential.Key == "" || credential.UserID == "" {
+		return UsageQuota{}, ErrUsageSignIn
+	}
+	var raw grokQuotaResponse
+	err := readUsageQuota(ctx, http.MethodGet, "https://cli-chat-proxy.grok.com/v1/billing?format=credits", http.Header{
+		"Authorization": {"Bearer " + credential.Key}, "X-Xai-Token-Auth": {"xai-grok-cli"},
+		"X-Userid": {credential.UserID}, "X-Grok-Client-Version": {"1.0.25"}, "X-Grok-Client-Mode": {"headless"},
+	}, nil, &raw)
+	if err != nil {
+		return UsageQuota{}, err
+	}
+	return raw.quota(), nil
+}
+
+type grokQuotaResponse struct {
+	Config *struct {
+		Used   *float64 `json:"creditUsagePercent"`
+		Period *struct {
+			Type string `json:"type"`
+			End  string `json:"end"`
+		} `json:"currentPeriod"`
+		Unified      *bool           `json:"isUnifiedBillingUser"`
+		MonthlyLimit *grokQuotaCents `json:"monthlyLimit"`
+		Spent        *grokQuotaCents `json:"used"`
+		End          string          `json:"billingPeriodEnd"`
+	} `json:"config"`
+}
+
+type grokQuotaCents struct {
+	Value int64 `json:"val"`
+}
+
+func (raw grokQuotaResponse) quota() UsageQuota {
+	var out UsageQuota
+	if raw.Config == nil {
+		return out
+	}
+	bucket := UsageBucket{Name: "Credits", Used: usagePercent(raw.Config.Used)}
+	if raw.Config.Used == nil && raw.Config.MonthlyLimit != nil && raw.Config.Spent != nil && raw.Config.MonthlyLimit.Value > 0 && raw.Config.Spent.Value >= 0 {
+		used := float64(raw.Config.Spent.Value) / float64(raw.Config.MonthlyLimit.Value) * 100
+		bucket.Used = usagePercent(&used)
+		bucket.Name = "Monthly credits"
+	}
+	bucket.Reset = usageReset(raw.Config.End)
+	if raw.Config.Period != nil {
+		if raw.Config.Period.Type != "" {
+			switch raw.Config.Period.Type {
+			case "USAGE_PERIOD_TYPE_WEEKLY":
+				bucket.Name = "Weekly credits"
+			case "USAGE_PERIOD_TYPE_MONTHLY":
+				bucket.Name = "Monthly credits"
+			default:
+				bucket.Name = raw.Config.Period.Type + " credits"
+			}
+		}
+		if raw.Config.Period.End != "" {
+			bucket.Reset = usageReset(raw.Config.Period.End)
+		}
+	}
+	if raw.Config.Unified != nil && *raw.Config.Unified {
+		out.Note = "shared credit pool"
+	}
+	out.Buckets = append(out.Buckets, bucket)
+	return out
+}
+
 func (grokAgent) Scaffold() ScaffoldSpec { return ScaffoldSpec{} }
 
 func (grokAgent) ReviewOutput(raw string, _ ReviewOutputContract) (string, bool) { return raw, true }
@@ -590,9 +779,6 @@ const (
 	grokIssuer          = "https://auth.x.ai"
 	grokTokenURL        = "https://auth.x.ai/oauth2/token"
 	grokCredentialLimit = 1 << 20
-	// grokLockWait bounds the wait for the client's lock. The client holds it across a refresh and
-	// its auth recovery — seconds — and a session turn must not stall behind a wedged holder.
-	grokLockWait = 30 * time.Second
 )
 
 var errGrokCredentialChanged = errors.New("grok credential changed during refresh")
@@ -604,6 +790,10 @@ var errGrokCredentialChanged = errors.New("grok credential changed during refres
 // outlives the deadline is left alone: refresh tokens rotate, so a needless refresh is a needless
 // chance to lose a working login.
 func renewGrokCredential(profileDir string, deadline time.Time) error {
+	return renewGrokCredentialScope(profileDir, deadline, "")
+}
+
+func renewGrokCredentialScope(profileDir string, deadline time.Time, scope string) error {
 	path := filepath.Join(profileDir, "auth.json")
 	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
@@ -613,13 +803,13 @@ func renewGrokCredential(profileDir string, deadline time.Time) error {
 	if info, err := lock.Stat(); err != nil || !info.Mode().IsRegular() {
 		return errors.New("grok credential lock is unsafe")
 	}
-	if err := lockGrokCredential(lock, deadline); err != nil {
-		return err
+	if err := lockCredentialRefresh(lock, deadline); err != nil {
+		return fmt.Errorf("lock Grok credential refresh: %w", err)
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
 
 	for range 3 {
-		err := renewGrokCredentialLocked(path, deadline)
+		err := renewGrokCredentialLocked(path, deadline, scope)
 		if !errors.Is(err, errGrokCredentialChanged) {
 			return err
 		}
@@ -627,28 +817,7 @@ func renewGrokCredential(profileDir string, deadline time.Time) error {
 	return errors.New("grok credential changed repeatedly during refresh")
 }
 
-// lockGrokCredential takes the client's lock, giving up at the turn deadline or after grokLockWait.
-func lockGrokCredential(lock *os.File, deadline time.Time) error {
-	giveUp := time.Now().Add(grokLockWait)
-	if deadline.Before(giveUp) {
-		giveUp = deadline
-	}
-	for {
-		err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-		if err == nil {
-			return nil
-		}
-		if !errors.Is(err, syscall.EWOULDBLOCK) {
-			return fmt.Errorf("lock Grok credential refresh: %w", err)
-		}
-		if time.Now().After(giveUp) {
-			return errors.New("grok credential is being refreshed by another process — try again")
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-}
-
-func renewGrokCredentialLocked(path string, deadline time.Time) error {
+func renewGrokCredentialLocked(path string, deadline time.Time, scope string) error {
 	data, err := readGrokCredentialFile(path)
 	if err != nil {
 		return fmt.Errorf("read Grok credential for refresh: %w", err)
@@ -657,7 +826,15 @@ func renewGrokCredentialLocked(path string, deadline time.Time) error {
 	if err != nil {
 		return fmt.Errorf("decode Grok credential for refresh: %w", err)
 	}
-	for _, credential := range credentials {
+	if scope != "" {
+		if _, ok := credentials[scope]; !ok {
+			return errors.New("grok credential needs sign-in")
+		}
+	}
+	for key, credential := range credentials {
+		if scope != "" && key != scope {
+			continue
+		}
 		if expiresAt, err := time.Parse(time.RFC3339Nano, credential.ExpiresAt); err == nil && expiresAt.After(deadline) {
 			return nil // a sibling may have renewed it while this waited on the lock: adopt it
 		}
@@ -665,6 +842,9 @@ func renewGrokCredentialLocked(path string, deadline time.Time) error {
 	var renewable []string
 	foreign := false
 	for key, credential := range credentials {
+		if scope != "" && key != scope {
+			continue
+		}
 		switch {
 		case credential.RefreshToken == "":
 		case credential.OIDCIssuer != grokIssuer:

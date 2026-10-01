@@ -23,6 +23,208 @@ import (
 
 type claudeAgent struct{}
 
+func (claudeAgent) Usage() UsageSpec {
+	return UsageSpec{Quota: claudeUsageQuota, HistoryDirs: []string{"projects"},
+		HistoryFile: func(path string) bool { return strings.HasSuffix(path, ".jsonl") }, ParseHistory: claudeUsageHistory, Price: claudeUsagePrice}
+}
+
+// https://platform.claude.com/docs/en/about-claude/pricing — verified 2026-10-01.
+func claudeUsagePrice(event UsageEvent) (float64, bool) {
+	rates := map[string]usageTariff{
+		"claude-fable-5-1":          {Input: 10, Read: .25, Write: 12.5, Write1h: 20, Output: 50},
+		"claude-mythos-5-1":         {Input: 10, Read: .25, Write: 12.5, Write1h: 20, Output: 50},
+		"claude-fable-5":            {Input: 10, Read: 1, Write: 12.5, Write1h: 20, Output: 50},
+		"claude-mythos-5":           {Input: 10, Read: 1, Write: 12.5, Write1h: 20, Output: 50},
+		"claude-opus-5-5":           {Input: 4, Read: .2, Write: 5, Write1h: 8, Output: 20},
+		"claude-opus-5":             {Input: 5, Read: .5, Write: 6.25, Write1h: 10, Output: 25},
+		"claude-opus-4-8":           {Input: 5, Read: .5, Write: 6.25, Write1h: 10, Output: 25},
+		"claude-opus-4-7":           {Input: 5, Read: .5, Write: 6.25, Write1h: 10, Output: 25},
+		"claude-opus-4-6":           {Input: 5, Read: .5, Write: 6.25, Write1h: 10, Output: 25},
+		"claude-opus-4-5":           {Input: 5, Read: .5, Write: 6.25, Write1h: 10, Output: 25},
+		"claude-sonnet-5-5":         {Input: 2, Read: .2, Write: 2.5, Write1h: 4, Output: 10},
+		"claude-sonnet-5":           {Input: 2, Read: .2, Write: 2.5, Write1h: 4, Output: 10},
+		"claude-sonnet-4-6":         {Input: 3, Read: .3, Write: 3.75, Write1h: 6, Output: 15},
+		"claude-haiku-4-5":          {Input: 1, Read: .1, Write: 1.25, Write1h: 2, Output: 5},
+		"claude-haiku-4-5-20251001": {Input: 1, Read: .1, Write: 1.25, Write1h: 2, Output: 5},
+	}
+	rate, ok := rates[event.Model]
+	if !ok {
+		return 0, false
+	}
+	return rate.value(event)
+}
+
+func claudeUsageHistory(reader io.Reader) (UsageHistory, error) {
+	var out UsageHistory
+	events := make(map[string]UsageEvent)
+	out.Partial = readUsageLines(reader, func(line []byte) bool {
+		var row struct {
+			Type      string `json:"type"`
+			Timestamp string `json:"timestamp"`
+			Request   string `json:"requestId"`
+			Message   struct {
+				ID    string  `json:"id"`
+				Model string  `json:"model"`
+				Stop  *string `json:"stop_reason"`
+				Usage *struct {
+					Input    *int64 `json:"input_tokens"`
+					Read     *int64 `json:"cache_read_input_tokens"`
+					Write    *int64 `json:"cache_creation_input_tokens"`
+					Output   *int64 `json:"output_tokens"`
+					Creation *struct {
+						Five *int64 `json:"ephemeral_5m_input_tokens"`
+						Hour *int64 `json:"ephemeral_1h_input_tokens"`
+					} `json:"cache_creation"`
+				} `json:"usage"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(line, &row) != nil {
+			return false
+		}
+		if row.Type != "assistant" || row.Message.Usage == nil {
+			return true
+		}
+		u := row.Message.Usage
+		event := UsageEvent{ID: row.Request + ":" + row.Message.ID, Model: row.Message.Model, Time: usageReset(row.Timestamp),
+			Input: usageTokens(u.Input), Read: usageTokens(u.Read), Output: usageTokens(u.Output), WriteKnown: u.Write != nil,
+			Partial: row.Message.Stop == nil || u.Input == nil || u.Output == nil, ContextKnown: true}
+		if row.Request == "" || row.Message.ID == "" {
+			return false
+		}
+		if u.Creation != nil && u.Creation.Five != nil && u.Creation.Hour != nil {
+			event.Write, event.Write1h = *u.Creation.Five, *u.Creation.Hour
+			if event.Write+event.Write1h != usageTokens(u.Write) {
+				return false
+			}
+		} else {
+			event.UnknownWrite = usageTokens(u.Write)
+		}
+		if !event.valid() {
+			return false
+		}
+		prior, exists := events[event.ID]
+		if !exists || (prior.Partial && !event.Partial) || (prior.Partial == event.Partial && event.Time.After(prior.Time)) {
+			events[event.ID] = event
+		}
+		return true
+	})
+	for _, event := range events {
+		out.Events = append(out.Events, event)
+	}
+	return out, nil
+}
+
+func claudeUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, error) {
+	if input.EnvKey == "CLAUDE_CODE_OAUTH_TOKEN" {
+		return UsageQuota{Note: "limits unavailable for setup-token authentication"}, nil
+	}
+	if input.APIKey {
+		return UsageQuota{Note: "subscription limits unavailable for API-key authentication"}, nil
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return UsageQuota{}, fmt.Errorf("quota lookup requires a deadline")
+	}
+	if err := renewClaudeCredential(input.ProfileDir, deadline); err != nil {
+		return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
+	}
+	data, err := readClaudeCredential(filepath.Join(input.ProfileDir, ".credentials.json"))
+	if err != nil {
+		return UsageQuota{}, ErrUsageSignIn
+	}
+	source, err := parseClaudeSourceCredential(data)
+	if err != nil || source.AccessToken == "" {
+		return UsageQuota{}, ErrUsageSignIn
+	}
+	if !slices.Contains(source.Scopes, "user:profile") {
+		return UsageQuota{Note: "limits unavailable for this token's scopes"}, nil
+	}
+	var raw claudeQuotaResponse
+	err = readUsageQuota(ctx, http.MethodGet, "https://api.anthropic.com/api/oauth/usage", http.Header{
+		"Authorization": {"Bearer " + source.AccessToken}, "Anthropic-Beta": {"oauth-2025-04-20"},
+		"Content-Type": {"application/json"}, "User-Agent": {"claude-cli/2.1.260 (external, cli)"},
+	}, nil, &raw)
+	if err != nil {
+		return UsageQuota{}, err
+	}
+	quota := raw.quota()
+	var metadata struct {
+		OAuth struct {
+			Plan string `json:"subscriptionType"`
+		} `json:"claudeAiOauth"`
+	}
+	if json.Unmarshal(data, &metadata) == nil {
+		quota.Plan = metadata.OAuth.Plan
+	}
+	return quota, nil
+}
+
+type claudeQuotaWindow struct {
+	Used  *float64 `json:"utilization"`
+	Reset string   `json:"resets_at"`
+}
+
+type claudeQuotaResponse struct {
+	FiveHour  *claudeQuotaWindow `json:"five_hour"`
+	SevenDay  *claudeQuotaWindow `json:"seven_day"`
+	OAuthApps *claudeQuotaWindow `json:"seven_day_oauth_apps"`
+	Opus      *claudeQuotaWindow `json:"seven_day_opus"`
+	Sonnet    *claudeQuotaWindow `json:"seven_day_sonnet"`
+	Limits    []struct {
+		Kind  string `json:"kind"`
+		Scope struct {
+			Model struct {
+				Name string `json:"display_name"`
+			} `json:"model"`
+		} `json:"scope"`
+		Used  *float64 `json:"percent"`
+		Reset string   `json:"resets_at"`
+	} `json:"limits"`
+	Extra *struct {
+		Enabled *bool    `json:"is_enabled"`
+		Used    *float64 `json:"utilization"`
+	} `json:"extra_usage"`
+}
+
+func (raw claudeQuotaResponse) quota() UsageQuota {
+	var out UsageQuota
+	for _, limit := range raw.Limits {
+		name := limit.Scope.Model.Name
+		if name == "" {
+			name = limit.Kind
+			switch limit.Kind {
+			case "session":
+				name = "5-hour"
+			case "weekly_all":
+				name = "Weekly"
+			}
+		}
+		if name == "" {
+			name = "Reported limit"
+		}
+		out.Buckets = append(out.Buckets, UsageBucket{Name: name, Used: usagePercent(limit.Used), Reset: usageReset(limit.Reset)})
+	}
+	for _, entry := range []struct {
+		name   string
+		window *claudeQuotaWindow
+	}{
+		{"5-hour", raw.FiveHour}, {"Weekly", raw.SevenDay}, {"OAuth apps", raw.OAuthApps},
+		{"Opus", raw.Opus}, {"Sonnet", raw.Sonnet},
+	} {
+		if entry.window != nil && !slices.ContainsFunc(out.Buckets, func(bucket UsageBucket) bool { return bucket.Name == entry.name }) {
+			out.Buckets = append(out.Buckets, UsageBucket{Name: entry.name, Used: usagePercent(entry.window.Used), Reset: usageReset(entry.window.Reset)})
+		}
+	}
+	if raw.Extra != nil {
+		bucket := UsageBucket{Name: "Extra usage", Used: usagePercent(raw.Extra.Used)}
+		if raw.Extra.Enabled != nil && !*raw.Extra.Enabled {
+			bucket.Note = "disabled"
+		}
+		out.Buckets = append(out.Buckets, bucket)
+	}
+	return out
+}
+
 func (claudeAgent) Scaffold() ScaffoldSpec {
 	return ScaffoldSpec{
 		Project: ScaffoldLayout{
@@ -494,7 +696,7 @@ func renewClaudeCredential(profileDir string, deadline time.Time) error {
 	if err := lock.Chmod(0o600); err != nil {
 		return fmt.Errorf("protect Claude credential refresh lock: %w", err)
 	}
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+	if err := lockCredentialRefresh(lock, deadline); err != nil {
 		return fmt.Errorf("lock Claude credential refresh: %w", err)
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)

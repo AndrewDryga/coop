@@ -630,6 +630,19 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         through its queue and repository when it rotates accounts:
                         each iteration starts a fresh run.
                     </p>
+                    <h3>Inspect limits and token value</h3>
+                    <p>
+                        <code>coop usage</code> shows current limits and reset times,
+                        plus the recorded 30-day API token value for each credential.
+                        Use <code>coop usage codex@work</code> for one credential;
+                        this does not switch your default. The estimate includes
+                        subscription activity but is not billing. Partial history,
+                        missing prices and shared ACP history with unknown credential
+                        attribution are labeled; web/mobile use, other machines and
+                        non-token charges are outside the estimate. Gemini OAuth quota
+                        reads need Docker and the current Coop base image, using the
+                        original plain-file login without a model prompt.
+                    </p>
                 </section>
 
                 <section class="doc-section" id="models">

@@ -24,6 +24,7 @@ ACCOUNTS, MODELS & PRESETS — choose the accounts and models your agents use
   coop login <agent>                sign in to an agent
   coop credentials [<agent>]        show your signed in accounts
   coop models [<agent>]             show available models
+  coop usage [<provider>]           show limits and recorded 30-day API token value
   coop presets [<name>]             show your presets
 
 TASKS — each task is a folder in .agent/tasks/
@@ -389,6 +390,36 @@ AUTOMATIC ROTATION
   For more details:
     coop help presets
     coop help loop
+
+==============================================================================
+
+coop usage — show limits and recorded 30-day API token value
+
+Usage: coop usage [<provider>[@credential]]
+
+EXAMPLES
+  coop usage
+  coop usage codex
+  coop usage codex@work
+
+  Quotas are read independently for each selected credential. Reset times are local.
+  API value uses retained native CLI/Coop history and current standard token list prices,
+  including subscription activity. It is not billing, an invoice, or money saved.
+  Missing history, unsupported prices and partial records are labeled explicitly.
+  Shared editor transcripts have no historical credential binding and appear separately.
+  Retained Coop turn aggregates are shown as unpriced, never added to native totals.
+  Web/mobile use, other machines and non-token charges are outside this estimate.
+
+  Gemini's native OAuth quota helper needs Docker and the current Coop base image.
+  It uses the original plain-file login; busy credentials can be retried after the active run.
+  API-key/Vertex modes may have no subscription quota but retain token-history value.
+
+EXIT STATUS
+  0  at least one usable history or quota result; individual failures stay inline
+  1  no usable history or quota results
+  2  invalid selector or arguments
+
+  Credentials: coop credentials
 
 ==============================================================================
 

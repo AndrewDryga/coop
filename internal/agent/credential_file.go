@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"syscall"
+	"time"
 )
 
 // ReadCredentialArtifact reads one provider-home credential through the opened inode, without
@@ -53,4 +54,27 @@ func ReadOptionalCredentialArtifact(path string, limit int64) ([]byte, bool, err
 		return nil, false, nil
 	}
 	return data, err == nil, err
+}
+
+// A native client can hold its refresh lock across a network request. Waiting for that writer
+// must not turn a bounded credential operation into an indefinitely blocked host command.
+func lockCredentialRefresh(lock *os.File, deadline time.Time) error {
+	giveUp := time.Now().Add(30 * time.Second)
+	if deadline.Before(giveUp) {
+		giveUp = deadline
+	}
+	for {
+		remaining := time.Until(giveUp)
+		if remaining <= 0 {
+			return errors.New("credential is being refreshed by another process — try again")
+		}
+		err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) {
+			return err
+		}
+		time.Sleep(min(50*time.Millisecond, remaining))
+	}
 }
