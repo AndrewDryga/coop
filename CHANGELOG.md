@@ -1,8 +1,12 @@
 # Changelog
 
-## Unreleased
+## 10.1.1
 
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+This release includes the v10.1.0 public-upgrade rollup below. Upgrading from v8.1.0 requires
+the v10 and v9 steps in [MIGRATING.md](MIGRATING.md), including the session-state backup.
+[Compare the complete public-upgrade changes](https://github.com/AndrewDryga/coop/compare/v8.1.0...v10.1.1).
+The upgraded provider clients have incomplete fresh accounts/ACP qualification; no historical
+qualification record has been relabelled as proof for these new pins.
 
 - **Refresh dependencies and client compatibility.** Update Go/tooling, CI actions, container
   bases, release tools and locked provider clients. Patched npm transitives remove the reported
