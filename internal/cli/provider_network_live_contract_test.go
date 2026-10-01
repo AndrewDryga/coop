@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -228,6 +229,62 @@ func TestProviderNetworkLiveContractFixture(t *testing.T) {
 	server := config.Servers["coop-probe"]
 	if len(config.Servers) != 1 || server.Command != "/home/node/.gemini/mcpprobe" || server.Env["COOP_PROBE_LOG"] != "/home/node/.gemini/.coop-network-mcp.log" {
 		t.Fatalf("MCP config does not use the selected provider home: %s", data)
+	}
+}
+
+func TestProviderNetworkLiveContractMCPReset(t *testing.T) {
+	for _, kind := range []string{"existing", "missing", "symlink", "directory"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			path, target := filepath.Join(root, "witness with spaces"), filepath.Join(root, "target")
+			const earlier = "earlier launch\n"
+			if err := os.WriteFile(target, []byte(earlier), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			switch kind {
+			case "existing":
+				err = os.WriteFile(path, []byte(earlier), 0o600)
+			case "symlink":
+				err = os.Symlink(target, path)
+			case "directory":
+				err = os.Mkdir(path, 0o700)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"with spaces", "", `quotes '" and $HOME; $(exit 99)`}
+			started := filepath.Join(root, "started")
+			command := append([]string{"/bin/sh", "-c", `touch "$1"; shift; test ! -e "$1" || exit 17; output="$1"; shift; printf '%s\000' "$@" >"$output"`, "probe", started, path}, args...)
+			wrapped := providerNetworkLiveMCPCommand(path, command)
+			output, runErr := exec.Command(wrapped[0], wrapped[1:]...).CombinedOutput()
+			if kind == "directory" {
+				if runErr == nil {
+					t.Fatal("failed reset did not stop the command")
+				}
+				if info, err := os.Stat(path); err != nil || !info.IsDir() {
+					t.Fatal("reset removed a directory")
+				}
+				if _, err := os.Stat(started); !os.IsNotExist(err) {
+					t.Fatal("client command started after reset failed")
+				}
+			} else {
+				if runErr != nil {
+					t.Fatalf("fresh witness command failed: %v, %s", runErr, output)
+				}
+				data, err := os.ReadFile(path)
+				if err != nil || string(data) != strings.Join(args, "\x00")+"\x00" {
+					t.Fatalf("reset retained stale evidence or changed client argv: %q, %v", data, err)
+				}
+				if _, err := os.Stat(started); err != nil {
+					t.Fatal("client command did not start after reset succeeded")
+				}
+			}
+			data, err := os.ReadFile(target)
+			if err != nil || string(data) != earlier {
+				t.Fatal("reset changed an unrelated or symlink target")
+			}
+		})
 	}
 }
 

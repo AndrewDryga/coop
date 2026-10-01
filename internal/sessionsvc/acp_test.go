@@ -200,8 +200,9 @@ func TestTypedProviderFailurePreemptsOutputContractValidation(t *testing.T) {
 	if got := countStrings(methods, "session/prompt"); got != 1 {
 		t.Fatalf("session/prompt calls = %d, want no schema repair; methods=%v", got, methods)
 	}
-	if wire := readFile(t, fixture.childLog); !strings.Contains(wire, `"capabilities":["sessionFailure"]`) {
-		t.Fatalf("ACP initialize did not advertise typed failures: %s", wire)
+	if wire := readFile(t, fixture.childLog); !strings.Contains(wire, `"capabilities":["sessionFailure"]`) ||
+		!strings.Contains(wire, `"terminal_output_delta":true`) {
+		t.Fatalf("ACP initialize did not advertise typed failures and output deltas: %s", wire)
 	}
 	events, eventErr := fixture.store.ListEvents(context.Background(), fixture.session.ID, 0, 50)
 	if eventErr != nil {
@@ -3444,7 +3445,7 @@ func TestAccumulateSessionACPUpdateIgnoresCodexCommentary(t *testing.T) {
 			"sessionUpdate":"agent_message_chunk",
 			"messageId":"commentary-1",
 			"content":{"type":"text","text":"I'm checking the live source first."},
-			"_meta":{"codex":{"phase":"commentary"}}
+			"_meta":{"jetbrains":{"air":{"version":1,"phase":"commentary"}}}
 		}
 	}`)
 	if err := accumulateSessionACPUpdate(codex, commentary, "native-1", &assistant); err != nil {
@@ -3457,7 +3458,7 @@ func TestAccumulateSessionACPUpdateIgnoresCodexCommentary(t *testing.T) {
 			"sessionUpdate":"agent_message_chunk",
 			"messageId":"final-1",
 			"content":{"type":"text","text":"{\"reply\":\"bounded result\"}"},
-			"_meta":{"codex":{"phase":"final_answer"}}
+			"_meta":{"jetbrains":{"air":{"version":1,"phase":"final_answer"}}}
 		}
 	}`)
 	if err := accumulateSessionACPUpdate(codex, final, "native-1", &assistant); err != nil {
@@ -3678,14 +3679,14 @@ func TestSessionACPChildHelper(t *testing.T) {
 						"sessionId": frame.Params.SessionID, "update": map[string]any{
 							"sessionUpdate": "agent_message_chunk", "messageId": "commentary-1",
 							"content": map[string]string{"type": "text", "text": "I'm checking the source first."},
-							"_meta":   map[string]any{"codex": map[string]string{"phase": "commentary"}},
+							"_meta":   map[string]any{"jetbrains": map[string]any{"air": map[string]any{"version": 1, "phase": "commentary"}}},
 						},
 					}})
 					send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
 						"sessionId": frame.Params.SessionID, "update": map[string]any{
 							"sessionUpdate": "agent_message_chunk", "messageId": "final-1",
 							"content": map[string]string{"type": "text", "text": message},
-							"_meta":   map[string]any{"codex": map[string]string{"phase": "final_answer"}},
+							"_meta":   map[string]any{"jetbrains": map[string]any{"air": map[string]any{"version": 1, "phase": "final_answer"}}},
 						},
 					}})
 				} else {

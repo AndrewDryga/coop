@@ -173,11 +173,9 @@ func executeProviderNetworkLiveChild(target agents.Target, marker, attemptFile, 
 	// Stage three is mandatory, independent of the operator's personal MCP configuration. Only
 	// this launch's witness counts; the earlier prompts may have connected without calling a tool.
 	witness := filepath.Join(cfg.AgentProfileDir(target.Provider, account), ".coop-network-mcp.log")
-	if err := os.Remove(witness); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return harnessFail("mcp_witness_reset")
-	}
 	command = ag.Headless(cfg, "Call exactly the coop_probe_tool MCP tool once; wait for its result, then respond with exactly "+
 		marker+" and no other text. Do not answer without calling the tool.")
+	command = providerNetworkLiveMCPCommand(strings.TrimRight(cfg.HomeInBox, "/")+"/."+target.Provider+"/.coop-network-mcp.log", command)
 	if _, code, runErr = runProviderNetworkLiveBox(cfg, rt, capture, target.Provider, command, livePromptDeadline); runErr != nil || code != 0 {
 		if errors.Is(runErr, context.DeadlineExceeded) {
 			return fail(liveprovider.ReasonPromptTimeout, "mcp", "timeout", code)
@@ -387,6 +385,12 @@ func prepareProviderNetworkLiveMCP(layout procharness.Layout, selection liveprov
 	}
 	path := filepath.Join(layout.State, "provider-network-mcp.json")
 	return path, os.WriteFile(path, body, 0o600)
+}
+
+func providerNetworkLiveMCPCommand(path string, command []string) []string {
+	// Reset in the same container that writes the witness. Host unlink/truncate can leave
+	// Docker Desktop's next bind-mounted write missing or prefixed by stale-offset holes.
+	return append([]string{"/bin/sh", "-c", `/bin/rm -f -- "$1" && shift && exec "$@"`, "coop-mcp-witness", path}, command...)
 }
 
 // The profile witness proves cooperative native-client compatibility, not adversarial attestation:

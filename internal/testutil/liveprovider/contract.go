@@ -1095,6 +1095,7 @@ func runGit(layout procharness.Layout, args ...string) ([]byte, error) {
 	cmd.Env = []string{
 		"HOME=" + layout.Home, "PATH=" + os.Getenv("PATH"),
 		"GIT_CONFIG_GLOBAL=" + layout.GitConfig, "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_OPTIONAL_LOCKS=0",
 		"LANG=C", "LC_ALL=C", "TZ=UTC",
 	}
 	output, err := cmd.CombinedOutput()

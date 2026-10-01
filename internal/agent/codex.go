@@ -199,7 +199,7 @@ func codexUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, er
 	var raw codexQuotaResponse
 	err = readUsageQuota(ctx, http.MethodGet, "https://chatgpt.com/backend-api/wham/usage", http.Header{
 		"Authorization":      {"Bearer " + source.Tokens.AccessToken},
-		"Chatgpt-Account-Id": {source.Tokens.AccountID}, "User-Agent": {"codex_cli_rs/0.153.4"},
+		"Chatgpt-Account-Id": {source.Tokens.AccountID}, "User-Agent": {"codex_cli_rs/0.159.2"},
 	}, nil, &raw)
 	if err != nil {
 		return UsageQuota{}, err
@@ -311,8 +311,8 @@ func (codexAgent) LockedClients(platform ClientPlatform) []LockedClient {
 	}
 	native := lockedClientRoot + "/node_modules/@openai/codex-linux-" + cpu + "/vendor/" + target + "/bin/codex"
 	return []LockedClient{
-		{Client: egress.ClientCLI, Package: "@openai/codex", Version: "0.153.4", Binary: "codex", Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@openai/codex/bin/codex.js"}, RequiredExecutables: []LockedExecutable{{Path: native, Version: "0.153.4-linux-" + cpu}}},
-		{Client: egress.ClientACP, Package: "@agentclientprotocol/codex-acp", Version: "1.10.0", Binary: "codex-acp", Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/codex-acp/dist/index.js"}, UnsetEnv: []string{"CODEX_PATH"}, RequiredExecutables: []LockedExecutable{{Path: native, Version: "0.153.4-linux-" + cpu}}},
+		{Client: egress.ClientCLI, Package: "@openai/codex", Version: "0.159.2", Binary: "codex", Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@openai/codex/bin/codex.js"}, RequiredExecutables: []LockedExecutable{{Path: native, Version: "0.159.2-linux-" + cpu}}},
+		{Client: egress.ClientACP, Package: "@agentclientprotocol/codex-acp", Version: "2.0.1", Binary: "codex-acp", Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/codex-acp/dist/index.js"}, UnsetEnv: []string{"CODEX_PATH"}, RequiredExecutables: []LockedExecutable{{Path: native, Version: "0.159.2-linux-" + cpu}}},
 	}
 }
 
@@ -320,7 +320,7 @@ func (codexAgent) LockedClients(platform ClientPlatform) []LockedClient {
 func (a codexAgent) NetworkBundle(input NetworkBundleInput) (egress.Bundle, error) {
 	return directNetworkBundle(a.Name(), "chatgpt-file", input,
 		[]string{"chatgpt.com", "auth.openai.com"},
-		[]string{"https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/model-provider-info/src/lib.rs", "https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/login/src/auth/manager.rs"})
+		[]string{"https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/model-provider-info/src/lib.rs", "https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/login/src/auth/manager.rs"})
 }
 
 // Stream: codex keys every item lifecycle event on the item id, so command_execution, MCP, and
@@ -378,27 +378,30 @@ func (codexAgent) ACP(*config.Config) []string {
 func (codexAgent) ACPSessionDirs() []string { return []string{"sessions"} }
 
 // ACPFinalChunk: codex-acp streams progress commentary and the final answer through the same
-// agent_message_chunk event and marks the host-owned phase in `_meta.codex.phase`; only the final
+// agent_message_chunk event and marks the host-owned phase in `_meta.jetbrains.air.phase`; only the final
 // phase is the answer. A chunk without a phase is treated as answer text, as any other adapter's.
-func (codexAgent) ACPFinalChunk(meta json.RawMessage) bool {
+func codexACPPhase(meta json.RawMessage) string {
 	var m struct {
-		Codex struct {
-			Phase string `json:"phase"`
-		} `json:"codex"`
+		JetBrains struct {
+			Air struct {
+				Version int    `json:"version"`
+				Phase   string `json:"phase"`
+			} `json:"air"`
+		} `json:"jetbrains"`
 	}
-	if len(meta) == 0 || json.Unmarshal(meta, &m) != nil {
-		return true
+	if json.Unmarshal(meta, &m) != nil || m.JetBrains.Air.Version != 1 {
+		return ""
 	}
-	return m.Codex.Phase == "" || m.Codex.Phase == "final_answer"
+	return m.JetBrains.Air.Phase
+}
+
+func (codexAgent) ACPFinalChunk(meta json.RawMessage) bool {
+	phase := codexACPPhase(meta)
+	return phase == "" || phase == "final_answer"
 }
 
 func (codexAgent) ACPProgressChunk(meta json.RawMessage) bool {
-	var m struct {
-		Codex struct {
-			Phase string `json:"phase"`
-		} `json:"codex"`
-	}
-	return json.Unmarshal(meta, &m) == nil && m.Codex.Phase == "commentary"
+	return codexACPPhase(meta) == "commentary"
 }
 
 // PresetSessionID is false: codex has no flag to start a session under a caller-chosen id (it mints
@@ -455,7 +458,7 @@ func (a codexAgent) ACPRestrictedSessionMeta(mode ExecutionMode) (map[string]any
 	return unqualifiedRestrictedACPSession(a, mode)
 }
 
-// codexManagedConfig is the pinned 0.153.4's managed layer, which it loads after -c, the project
+// codexManagedConfig is the pinned 0.159.2's managed layer, which it loads after -c, the project
 // and the user's own config (verified: its model beats the user's; /etc/codex/config.toml is only a
 // default the user's overrides) — so what it sets holds whatever a home or project sets.
 const (
@@ -620,10 +623,9 @@ func (codexAgent) LiveCredentials() LiveCredentialSpec {
 		}},
 		Prepare:     renewCodexCredential,
 		Portability: codexCredentialPortability,
-		// The pinned CLI ends a turn its service refused with "unexpected status 401 Unauthorized: …",
-		// both with no login and with a rejected key.
+		// Native workspace discovery and API-key inference use different 401 refusals.
 		AuthSignals: []string{"not logged in", "authentication required", "401 unauthorized", "invalid api key",
-			"unexpected status 401 unauthorized"},
+			"unexpected status 401 unauthorized", "workspace routing discovery unauthorized (401)"},
 	}
 }
 
@@ -1041,6 +1043,8 @@ func resolveCodexACPHeaders(server map[string]any, lookupEnv func(string) (strin
 	}
 	return nil
 }
+
+func (codexAgent) DefaultsPublication(*config.Config) ([]ConfigPublication, error) { return nil, nil }
 
 // EnsureDefaults pre-trusts the workdir in codex's config.toml so a fresh box doesn't
 // stop at "Do you trust this directory?". Codex records trust as

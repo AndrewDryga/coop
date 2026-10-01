@@ -180,7 +180,8 @@ func (b *credentialBroker) setTransport(dial func(context.Context, string, strin
 func (b *credentialBroker) setProxy(transport http.RoundTripper) {
 	b.proxy = &httputil.ReverseProxy{
 		Transport: transport,
-		Director: func(request *http.Request) {
+		Rewrite: func(proxyRequest *httputil.ProxyRequest) {
+			request := proxyRequest.Out
 			request.URL.Scheme = "https"
 			request.URL.Host = b.route.Upstream
 			request.Host = b.route.Upstream

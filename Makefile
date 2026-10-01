@@ -8,8 +8,8 @@ LDFLAGS := -s -w -X github.com/AndrewDryga/coop/internal/cli.Version=$(VERSION)
 # corresponding targets refuse any other build, so a laptop, a box, and CI cannot silently use
 # different analyzers. Bump them here AND in internal/box/image.go (the box ships the same binaries
 # for the in-box gate); tests in internal/box hold the copies together.
-STATICCHECK_VERSION := v0.7.0
-GOVULNCHECK_VERSION := v1.7.0
+STATICCHECK_VERSION := v0.8.1
+GOVULNCHECK_VERSION := v1.8.0
 
 build: ## Build the coop binary to ./coop
 	@go build -trimpath -ldflags "$(LDFLAGS)" -o coop .
@@ -41,7 +41,7 @@ lint: ## gofmt check + go vet + Staticcheck at the pinned version, for Linux and
 # lived there unseen. Every tag in the tree in one pass; the untagged pass still covers !cooplivetest.
 	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet -tags acpe2e,boxruntimee2e,cooplivetest,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e ./... || exit 1; done
 	@command -v staticcheck >/dev/null 2>&1 || { echo "staticcheck is not installed — run: go install honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION)"; exit 1; }
-	@staticcheck -version | grep -qF "($(STATICCHECK_VERSION))" || { echo "$$(staticcheck -version) is not the pinned $(STATICCHECK_VERSION) — run: go install honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION)"; exit 1; }
+	@staticcheck -version | grep -qF "($(patsubst v%,%,$(STATICCHECK_VERSION)))" || { echo "$$(staticcheck -version) is not the pinned $(STATICCHECK_VERSION) — run: go install honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION)"; exit 1; }
 	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os staticcheck ./... || exit 1; done
 
 # Plumbing for CI's install step, which reads the pin from here instead of repeating it.
@@ -192,7 +192,7 @@ provider-consult-live-e2e-all: ## Strict real coop-consult probe for every provi
 	@COOP_LIVE_TARGETS="$${COOP_LIVE_TARGETS:-all}" COOP_LIVE_REQUIRE_ALL=1 \
 		go test -timeout 30m -tags providerlivee2e,cooplivetest -run '^TestProviderConsultLiveCompatibility$$' -count=1 -v ./internal/cli/
 
-provider-accounts-live-e2e-all: ## PAID: real loop recovery for each provider with two configured accounts
+provider-accounts-live-e2e-all: ## Live model calls: real loop recovery for each provider with two configured accounts
 	@COOP_LIVE_TARGETS=all go test -timeout 55m -tags providerlivee2e,cooplivetest -run '^TestProviderAccountsLiveCompatibility$$' -count=1 -v ./internal/loop/
 
 provider-delegate-live-e2e-all: ## Strict write-capable coop-delegate probe for every provider
@@ -201,12 +201,13 @@ provider-delegate-live-e2e-all: ## Strict write-capable coop-delegate probe for 
 
 # Qualifies the locked clients before a pin moves (package.json/package-lock.json, an adapter's
 # LockedClients): it rebuilds this host's box and filtered setup from the working tree, runs every
-# strict live suite against them, and records the result. PAID — every provider answers real
+# strict live suite against them, and records the result. Every provider answers real
 # prompts. Full logs stay in the printed directory; a failure shows its tail.
+# Included subscriptions need no new spend permission; unknown API-key billing or overage does.
 # The three offline suites run FIRST: they need only the image the setup step just built and call no
 # model, so a red there costs nothing — behind the paid suites, the same red would arrive after every
 # provider had already answered real prompts.
-provider-qualify: ## PAID: qualify the locked clients on every provider and record it (qualification.json)
+provider-qualify: ## Live model calls: qualify all locked clients and record it (qualification.json)
 	@go run ./tools/qualify -preflight
 	@logs="$$(mktemp -d)"; echo "logs: $$logs"; \
 	go build -o "$$logs/coop" . && mkdir "$$logs/repo" \
@@ -230,7 +231,7 @@ acp-e2e: ## Real ACP adapter e2e (isolated binary; needs a configured runtime, b
 	@COOP_ACP_LIVE_REQUIRE_ALL=1 go test -timeout 30m -tags acpe2e -run 'Test(LiveProviderConformance|LiveCrossProviderCarry|ForeignSessionLoadRejectsUnknownID|PresetOwnsSelectorState|CodexTargetRolloutTruth|FrontierStoredTargetTruth)$$' -count=1 -v ./internal/acpproxy/
 
 review-writes-e2e: ## Review mount-isolation e2e (needs Docker; pulls a small test image once)
-	@docker image inspect alpine:3.21 >/dev/null 2>&1 || docker pull alpine:3.21
+	@docker image inspect alpine:3.24.2 >/dev/null 2>&1 || docker pull alpine:3.24.2
 	@go test -tags reviewwritee2e -run '^TestReviewWritesDockerRuntime$$' -count=1 -v ./internal/box/
 
 native-roles-e2e: ## Offline role discovery for Codex/Gemini/Grok; Claude validates explicit role files (needs locked image)

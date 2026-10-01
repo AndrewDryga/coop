@@ -2,8 +2,8 @@
 name: loop-rotation-advance-triggers
 description: the loop rotation advances on rate limits (time-keyed, self-healing) and auth failures (sticky for the run); known-invalid credentials never become rungs
 subsystem: loop
-sources: [internal/ladder/ladder.go, internal/ladder/limit.go, internal/ladder/acp.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/loop/streamjson_providers.go, internal/acpctl/control.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/grok.go, internal/agent/ratelimit.go, internal/agent/role_health.go, internal/agent/testdata/login-failures/README.md, internal/box/auth.go, internal/box/profiles.go]
-updated: 2026-09-19
+sources: [internal/ladder/ladder.go, internal/ladder/limit.go, internal/ladder/acp.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/loop/streamjson_providers.go, internal/acpctl/control.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/grok.go, internal/agent/ratelimit.go, internal/agent/role_health.go, internal/agent/testdata/login-failures/README.md, internal/box/auth.go, internal/box/profiles.go]
+updated: 2026-10-01
 ---
 A loop's rotation starts from credential presence and then applies
 `box.ProfileCredentialReady`. A native marker that its adapter classifies as
@@ -44,6 +44,10 @@ replays them through the real decoders. On 2026-09-19 three of four clients' ref
 (claude "Not logged in · Please run /login", codex "unexpected status 401 Unauthorized: …", gemini
 "[API Error: {… API key not valid …}]"). The role wrappers read the same signals (see
 [[provider-consult-e2e]]), so one list serves the loop and both wrappers.
+Codex 0.159.2 also refuses native workspace discovery with
+`workspace routing discovery unauthorized (401)`. Match that exact terminal phrase; quoted
+assistant narration still is not a refusal. Role wrappers regexp-escape literal signals,
+including parentheses, while preserving their error-line anchors and shell-quoting restrictions.
 
 **Limit evidence is per surface, so a provider's structured limit must reach each one.** ACP
 sessions (the editor control and the sessions API) rotate on `ladder.ACPErrorLimitHint`: shared
@@ -63,6 +67,10 @@ the loop decoder says `authentication required`, the ACP auth check reads a stru
 `grok_errors`.
 
 ## Changelog
+- 2026-10-01 — a real closed-native-login recovery test retried Codex's rejected first account.
+  Captured its workspace-routing terminal refusal and reproduced process_failure offline.
+  Added the exact adapter signal and literal-regexp wrapper rendering; no decoder/rotation
+  changes. The regression covers terminal refusal, wrapper parity and assistant-prose denial.
 - 2026-09-19 — pinned-client refusal captures + signals for claude/codex/gemini; wrappers share them
 - 2026-09-19 — Grok's structured 401 now reaches the auth trigger on the loop, ACP and consult paths
 - 2026-09-18 — added the per-surface limit evidence and the pinned Grok client's captured quota

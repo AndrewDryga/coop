@@ -228,9 +228,11 @@ func verifyProviderLoopLiveRepository(layout procharness.Layout, before provider
 	if err != nil || strings.TrimSpace(string(status)) != "" {
 		return fmt.Errorf("live loop repository is dirty")
 	}
-	unreachable, err := runProviderLoopLiveGit(layout, "fsck", "--no-reflogs", "--unreachable", "--no-progress")
-	if err != nil || strings.TrimSpace(string(unreachable)) != "" {
-		return fmt.Errorf("live loop retained unreachable Git objects")
+	// Native checkpoints may leave valid loose objects without changing the completed work.
+	// Check object integrity, not whether Git has garbage-collected its scratch.
+	objects, err := runProviderLoopLiveGit(layout, "fsck", "--no-reflogs", "--no-dangling", "--no-progress")
+	if err != nil || strings.TrimSpace(string(objects)) != "" {
+		return errors.New("live loop Git object verification failed")
 	}
 	return nil
 }
@@ -697,6 +699,36 @@ func TestProviderLoopLiveContract(t *testing.T) {
 		layout, before, target, marker := newCompleted(t)
 		if err := verifyProviderLoopLiveRepository(layout, before, target, marker); err != nil {
 			t.Fatal(err)
+		}
+	})
+	t.Run("accepts a valid Git snapshot without changing completed work", func(t *testing.T) {
+		layout, before, target, marker := newCompleted(t)
+		env := []string{"GIT_INDEX_FILE=" + filepath.Join(layout.Root, "snapshot.index")}
+		for _, args := range [][]string{
+			{"hash-object", "-w", "--stdin"},
+			{"read-tree", "HEAD"},
+			{"update-index", "--force-remove", "--", "README.md"},
+			{"write-tree"},
+		} {
+			if _, err := runProviderLoopLiveGitEnv(layout, env, args...); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := verifyProviderLoopLiveRepository(layout, before, target, marker); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("rejects a corrupt Git object", func(t *testing.T) {
+		layout, before, target, marker := newCompleted(t)
+		dir := filepath.Join(layout.Repo, ".git", "objects", "00")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, strings.Repeat("1", 38)), []byte("not a Git object"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := verifyProviderLoopLiveRepository(layout, before, target, marker); err == nil {
+			t.Fatal("corrupt Git object passed verification")
 		}
 	})
 	t.Run("accepts Git mutable file permissions changed by box umask", func(t *testing.T) {

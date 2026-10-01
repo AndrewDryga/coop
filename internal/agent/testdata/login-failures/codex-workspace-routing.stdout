@@ -1,0 +1,2 @@
+{"type":"error","message":"workspace routing discovery unauthorized (401)"}
+{"type":"turn.failed","error":{"message":"workspace routing discovery unauthorized (401)"}}

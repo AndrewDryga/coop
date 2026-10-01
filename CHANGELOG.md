@@ -4,6 +4,19 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Refresh dependencies and client compatibility.** Update Go/tooling, CI actions, container
+  bases, release tools and locked provider clients. Patched npm transitives remove the reported
+  fast-uri and ip-address advisories. Codex ACP2 uses its current versioned phase metadata and
+  terminal output stream. Gemini's effort and sign-in settings are image-owned system files,
+  satisfying its ownership checks without shared settings mutation or host ownership changes.
+  Codex workspace authentication refusals advance configured account fallback. Native Claude
+  startup verifies the selected account/trust config across VM mounts before launching.
+  Fresh accounts/ACP qualification is incomplete; the preserved September record covers only
+  the previous pins. These upgraded clients are not fully live-qualified.
+
+- **Retain typed terminal exit evidence for controllers.** Command output deltas and numeric
+  exit codes/signals survive output truncation and pass through bounded controller activity.
+
 ## 10.1.0
 
 This release rolls up changes since the last published release, v8.1.0, including the

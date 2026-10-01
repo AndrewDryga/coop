@@ -728,7 +728,7 @@ func validateGeneratedReadOnlyMount(root string, run runCommand, m mount, provid
 		// `/home/node/.mcp.json` is claude's shared-MCP mount. A loop WORK box always carries one
 		// now, even with no operator MCP file: coop binds its own task tools into the snapshot
 		// (mcp.BindTaskTools), which is how the box reaches its queue at all.
-		if !scenarioProviderHomeTarget(m.Target, providerHomes) && !scenarioProviderHomeTarget(m.Target, agents.Names()) && !peerContractTarget(m.Target) && !geminiThinkingTarget(m.Target) && m.Target != "/home/node/.gitconfig" && m.Target != "/home/node/.coop-gitignore" && m.Target != "/home/node/.mcp.json" {
+		if !scenarioProviderHomeTarget(m.Target, providerHomes) && !scenarioProviderHomeTarget(m.Target, agents.Names()) && !peerContractTarget(m.Target) && m.Target != "/home/node/.gitconfig" && m.Target != "/home/node/.coop-gitignore" && m.Target != "/home/node/.mcp.json" {
 			return fmt.Errorf("generated config mount target %q is outside the provider and git homes", m.Target)
 		}
 	case strings.HasPrefix(name, "coop-githooks-"):
@@ -762,12 +762,6 @@ func generatedFixtureArtifactName(root, source string) (string, error) {
 		return strings.Split(rel, string(filepath.Separator))[0], nil
 	}
 	return "", errors.New("outside generated fixture state")
-}
-
-// geminiThinkingTarget is where Coop mounts Gemini's per-effort thinking settings: one file per
-// level, beside the account's ~/.gemini and never inside it.
-func geminiThinkingTarget(target string) bool {
-	return target == "/home/node/.coop-gemini/thinking/low.json" || target == "/home/node/.coop-gemini/thinking/high.json"
 }
 
 func scenarioProviderHomeTarget(target string, providerHomes []string) bool {

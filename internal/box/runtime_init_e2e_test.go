@@ -21,7 +21,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
-const runtimeInitTestImage = "alpine:3.21"
+const runtimeInitTestImage = "alpine:3.24.2"
 
 func TestRuntimeEntrypointDescendantSupervision(t *testing.T) {
 	rt := runtimeInitTestRuntime(t)
@@ -294,7 +294,7 @@ func buildRuntimeEntrypointImage(t *testing.T, rt runtime.Runtime) string {
 	if err := os.WriteFile(filepath.Join(dir, "coop-entry"), []byte(entrypointScript(t)), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	dockerfile := "FROM alpine:3.21\nRUN apk add --no-cache util-linux socat\nCOPY coop-entry /usr/local/bin/coop-entry\nENTRYPOINT [\"/usr/local/bin/coop-entry\"]\n"
+	dockerfile := "FROM alpine:3.24.2\nRUN apk add --no-cache util-linux socat\nCOPY coop-entry /usr/local/bin/coop-entry\nENTRYPOINT [\"/usr/local/bin/coop-entry\"]\n"
 	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(dockerfile), 0o644); err != nil {
 		t.Fatal(err)
 	}

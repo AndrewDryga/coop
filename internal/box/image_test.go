@@ -211,7 +211,7 @@ func TestBaseDockerfileInstallsTheQualifiedClients(t *testing.T) {
 	// The FROM images are driven by build args so an update can float them.
 	for _, want := range []string{
 		"ARG NODE_IMAGE=node:24-slim", "FROM ${NODE_IMAGE}",
-		"ARG GO_IMAGE=golang:1.26.6-bookworm", "FROM ${GO_IMAGE} AS go-tools-builder",
+		"ARG GO_IMAGE=golang:1.27.1-bookworm", "FROM ${GO_IMAGE} AS go-tools-builder",
 		"go install honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}",
 		"go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}",
 		"ARG JV_VERSION=v0.7.0",

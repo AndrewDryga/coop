@@ -1738,8 +1738,8 @@ coop sets the working directory itself, so no `WORKDIR` is required. A skeleton:
 ```dockerfile
 FROM <your-language-base>
 RUN <install your toolchain> \
- && npm install -g @anthropic-ai/claude-code@2.1.260 @openai/codex@0.153.4 @google/gemini-cli@0.59.0 \
-      @agentclientprotocol/claude-agent-acp@0.75.1 @agentclientprotocol/codex-acp@1.10.0 \
+ && npm install -g @anthropic-ai/claude-code@2.1.285 @openai/codex@0.159.2 @google/gemini-cli@0.62.0 \
+      @agentclientprotocol/claude-agent-acp@0.84.0 @agentclientprotocol/codex-acp@2.0.1 \
  && git config --system --add safe.directory '*'
 ARG COOP_BOX_UID=1000
 ARG COOP_BOX_GID=1000
@@ -1784,6 +1784,14 @@ run has used in 14 days and no container references is removed, and the build sa
 built before Coop reclaimed them carry no mark of its own, so they are never candidates. Every launch records the image it used,
 so a second Coop version you still run keeps its own base — and an image of your own is never
 touched, whatever it is tagged.
+
+Images based on Coop inherit Gemini's root-owned `/etc/gemini-cli/` settings. Independent images
+must also carry `thinking/low.json`, `thinking/high.json`, and `login.json` there for Coop's
+per-call thinking and sign-in tool restrictions; Gemini ignores system files below a user-owned
+home. Prefer inheriting Coop's base rather than recreating its client layer.
+Current Coop entrypoints also verify publication of Claude's selected account/trust config before
+starting a command. Rebuild inherited images to pick up this check; independent entrypoints do not
+provide it.
 </details>
 
 <details><summary><b>Reusing an existing devcontainer</b></summary>
@@ -1793,8 +1801,8 @@ layer on top:
 
 ```dockerfile
 FROM your-devcontainer-image          # the team's source of truth for the env
-RUN npm install -g @anthropic-ai/claude-code@2.1.260 @openai/codex@0.153.4 @google/gemini-cli@0.59.0 \
-      @agentclientprotocol/claude-agent-acp@0.75.1 @agentclientprotocol/codex-acp@1.10.0 \
+RUN npm install -g @anthropic-ai/claude-code@2.1.285 @openai/codex@0.159.2 @google/gemini-cli@0.62.0 \
+      @agentclientprotocol/claude-agent-acp@0.84.0 @agentclientprotocol/codex-acp@2.0.1 \
  && git config --system --add safe.directory '*'
 USER <the devcontainer's non-root user>
 # If that user's home isn't /home/node, run with COOP_HOME_IN_BOX=/home/<user>.

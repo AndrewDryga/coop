@@ -127,7 +127,7 @@ func TestRuntimeComposeLogicalOwnersShareSourceButNotServices(t *testing.T) {
 	}
 	repo, source := writeCompose(t, `services:
   probe:
-    image: alpine:3.21
+    image: alpine:3.24.2
     command: ["sh", "-c", "sleep 300"]
     expose: ["8080"]
     volumes:

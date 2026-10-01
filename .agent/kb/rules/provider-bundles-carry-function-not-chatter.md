@@ -4,7 +4,7 @@ description: a provider bundle grants what the client needs to function; the cli
 scope: security
 sources: [internal/agent/network_bundle.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/locked_clients_test.go, internal/mcp/mcp.go, internal/cli/provider_network_live_e2e_test.go]
 check: "go test ./internal/agent -run 'TestProviderBundlesCarryFunctionNotChatter|TestManagedClientDefaultsAreBoxOnly'"
-updated: 2026-09-20
+updated: 2026-10-01
 ---
 
 # A provider bundle carries function; a managed client's chatter is switched off, not granted or hidden
@@ -48,8 +48,8 @@ talking to itself.
   refresh and the default-on capability (Claude's connector eligibility never consults the traffic
   mode). The live probe then pins the silence: no retained refusal of a chatter host after a
   hello-and-exit session (`verifyProviderNetworkLiveSilence`).
-- Never add a denial filter keyed by hostname, and never present a box default as qualification:
-  gemini has these defaults and is still unsupported for filtered runs.
+- Never add a denial filter keyed by hostname, and never present box defaults as qualification:
+  prove the supported login on the exact pinned client with the live network probe.
 - A default-on FEATURE whose traffic no control can switch off, and which a bundle must not carry,
   has a third answer: broker exactly what it fetches, credential-free. Codex's curated plugin store
   is the case — with an API key it looked up chatgpt.com, github.com and api.github.com on every
@@ -70,6 +70,9 @@ Background: [[restricted-networking]] (bundles are one of five layers),
 [[mcp-authority-projection]] (the overlays are projections of the host profile, never edits).
 
 ## Changelog
+- 2026-10-01 — removed the obsolete Gemini filtered-run exclusion after the strict network
+  suite passed all four pinned providers, including Gemini prompt, resume, MCP and silence checks.
+  Swept the four adapter bundles and the shared network verifier; no denial suppression added.
 - 2026-09-20 — a third answer beside grant-or-switch-off: broker the fetch credential-free, proved
   on Codex's curated plugin store (no warning, no denial, the store still syncs).
 - 2026-09-19 — Grok's launch-time update check is off too: `GROK_DISABLE_AUTOUPDATER=1` in its

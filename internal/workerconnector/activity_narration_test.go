@@ -79,6 +79,7 @@ func TestPublicActivityBoundsWhatACommandPrinted(t *testing.T) {
 	encoded, _ := json.Marshal(map[string]any{
 		"tool_call_id": "exec-3", "kind": "execute", "status": "completed", "title": "Run make",
 		"input": map[string]any{"command": "make"}, "output": map[string]any{"formatted_output": printed, "exit_code": 2},
+		"terminal_exit": map[string]any{"exit_code": 2, "signal": "SIGTERM", "ignored": "private"},
 	})
 	payload, ok := publicActivityPayload("tool.completed", encoded)
 	if !ok || len(payload) > maximumNarrationEventBytes {
@@ -89,6 +90,16 @@ func TestPublicActivityBoundsWhatACommandPrinted(t *testing.T) {
 	output, _ := narrated["output"].(map[string]any)
 	if output["truncated"] != true || !strings.HasPrefix(output["preview"].(string), `{"exit_code":2,"formatted_output":"line of build output\n`) {
 		t.Fatalf("a long output did not cross as a marked preview: %.300s", payload)
+	}
+	if terminal, _ := narrated["terminal_exit"].(map[string]any); len(terminal) != 2 || terminal["exit_code"] != float64(2) || terminal["signal"] != "SIGTERM" {
+		t.Fatalf("truncated output lost typed terminal exit: %.300s", payload)
+	}
+}
+
+func TestPublicActivityTerminalExitRejectsUntrustedFields(t *testing.T) {
+	value := decodeNarration(t, "tool.completed", `{"terminal_exit":{"exit_code":1.5,"signal":"`+"ghp_"+strings.Repeat("aB7C", 9)+`","ignored":"private"}}`)
+	if value["terminal_exit"] != nil || value["withheld"].(map[string]any)["terminal_exit"] != "likely GitHub token" {
+		t.Fatalf("untrusted terminal metadata crossed: %v", value)
 	}
 }
 

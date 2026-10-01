@@ -130,12 +130,18 @@ func verifyAccountLiveRepository(layout procharness.Layout, baseline, marker str
 		{[]string{"rev-parse", "HEAD^"}, baseline},
 		{[]string{"diff", "--name-status", baseline, "HEAD"}, "A\t" + accountLiveFile},
 		{[]string{"show", "HEAD:" + accountLiveFile}, marker},
-		{[]string{"log", "-1", "--format=%B"}, "test: account recovery\n\nCoop-Task: " + accountLiveTaskID},
+		{[]string{"log", "-1", "--format=%s"}, "test: account recovery"},
 	} {
 		got, err := gitOutErr(layout.Repo, check.args...)
 		if err != nil || got != check.want {
 			return errors.New("account recovery committed change mismatch")
 		}
+	}
+	// The task fixes the subject and task binding, not descriptive prose or other trailers.
+	commits, err := tasks.TaskTrailerCommits(layout.Repo, baseline+"..HEAD", false)
+	if err != nil || len(commits) != 1 || commits[0].Malformed ||
+		!slices.Equal(commits[0].Values, []string{accountLiveTaskID}) {
+		return errors.New("account recovery task trailer mismatch")
 	}
 	return nil
 }
@@ -340,7 +346,32 @@ func TestProviderAccountsLiveContractController(t *testing.T) {
 	if err := verifyAccountLiveRepository(layout, baseline, marker); err != nil {
 		t.Fatal(err)
 	}
+	for _, scenario := range []struct {
+		name, message string
+		accepted      bool
+	}{
+		{"descriptive body and another trailer", "test: account recovery\n\nVerify native account recovery.\n\nCoop-Task: " + accountLiveTaskID + "\nCo-authored-by: Test <test@example.invalid>", true},
+		{"missing trailer", "test: account recovery", false},
+		{"wrong trailer", "test: account recovery\n\nCoop-Task: other", false},
+		{"duplicate trailer", "test: account recovery\n\nCoop-Task: " + accountLiveTaskID + "\nCoop-Task: " + accountLiveTaskID, false},
+		{"wrong subject", "test: other\n\nCoop-Task: " + accountLiveTaskID, false},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			if err := accountLiveFixtureGit(layout, "commit", "--amend", "-qm", scenario.message); err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyAccountLiveRepository(layout, baseline, marker); (err == nil) != scenario.accepted {
+				t.Fatalf("repository accepted=%t: %v", err == nil, err)
+			}
+		})
+	}
 	// Controls reject a plausible but uncommitted or differently graded result after success.
+	if err := accountLiveFixtureGit(layout, "commit", "--amend", "-qm", "test: account recovery\n\nCoop-Task: "+accountLiveTaskID); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyAccountLiveRepository(layout, baseline, marker); err != nil {
+		t.Fatal(err)
+	}
 	writeTaskFile(t, filepath.Join(layout.Repo, accountLiveFile), "wrong\n")
 	if verifyAccountLiveRepository(layout, baseline, marker) == nil {
 		t.Fatal("wrong marker accepted")

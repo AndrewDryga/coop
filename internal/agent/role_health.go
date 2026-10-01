@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -98,7 +99,7 @@ coop_login_rejected() {
 		a, _ := Get(name)
 		var alternatives []string
 		for _, signal := range a.LiveCredentials().AuthSignals {
-			alternatives = append(alternatives, strings.ReplaceAll(strings.ToLower(strings.TrimSpace(signal)), ".", "[.]"))
+			alternatives = append(alternatives, regexp.QuoteMeta(strings.ToLower(strings.TrimSpace(signal))))
 		}
 		if len(alternatives) > 0 {
 			fmt.Fprintf(&b, "\t%s) coop_login_signals='%s' ;;\n", name, strings.Join(alternatives, "|"))

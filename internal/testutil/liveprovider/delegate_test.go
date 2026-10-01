@@ -5,9 +5,43 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
+
+func TestGitObservationPreservesIndex(t *testing.T) {
+	layout, err := procharness.NewLayout(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := InitRepository(layout); err != nil {
+		t.Fatal(err)
+	}
+	index := filepath.Join(layout.Repo, ".git", "index")
+	before, err := os.ReadFile(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(layout.Repo, "README.md")
+	info, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(file, info.ModTime().Add(time.Hour), info.ModTime().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(layout, "status", "--porcelain=v1"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("read-only Git observation refreshed the index")
+	}
+}
 
 func TestVerifyDelegateRepository(t *testing.T) {
 	for _, change := range []string{"only output", "missing", "wrong content", "extra", "ignored", "staged", "commit", "git config", "symlink", "hardlink"} {

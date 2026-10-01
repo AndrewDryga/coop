@@ -1026,6 +1026,7 @@ func TestAssembleArgsMinimal(t *testing.T) {
 		"-e", "GEMINI_TELEMETRY_ENABLED=false",
 		"-e", "GROK_TELEMETRY_ENABLED=false",
 		"-e", "GROK_DISABLE_AUTOUPDATER=1",
+		"-e", "COOP_CONFIG_PUBLICATION=",
 		"--label", "coop=box",
 		// Every box records the host process supervising it (see TestAssembleArgsSupervisorLabel).
 		"--label", "coop.host=" + supervisorLabelValue(workspaceScope("/repo"), os.Getpid()),

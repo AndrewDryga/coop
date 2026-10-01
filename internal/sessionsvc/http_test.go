@@ -542,7 +542,7 @@ func TestSemanticCandidateIsAcceptedEndToEndByExactDigest(t *testing.T) {
 	}
 	schema := json.RawMessage(`{"type":"object"}`)
 	schemaDigest := sha256.Sum256(schema)
-	turn, err := service.Store().SubmitTurn(ctx, "semantic-http-turn", session.SubmitTurnRequest{
+	_, err = service.Store().SubmitTurn(ctx, "semantic-http-turn", session.SubmitTurnRequest{
 		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "answer",
 		OutputContract: &session.OutputContract{
 			JSONSchema: schema, SHA256: hex.EncodeToString(schemaDigest[:]),

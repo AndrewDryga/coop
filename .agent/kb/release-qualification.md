@@ -3,7 +3,7 @@ name: release-qualification
 description: "tagged releases reuse exact-commit CI, validate finalized notes and preserve tag identity"
 subsystem: release
 sources: [.github/workflows/ci.yml, .github/workflows/release.yml, .goreleaser.yaml, tools/release_preflight.py, release_test.go]
-updated: 2026-09-17
+updated: 2026-09-30
 ---
 
 Release `qualify` locally calls ci.yml from the event commit; its canonical gate, Docker
@@ -16,7 +16,7 @@ Unreleased, empty notes, Setext release headings, raw HTML blocks and unclosed c
 refuse. Code examples stay literal, comments outside code are removed, and failures emit no partial notes. This is a
 release-format validator, not a general Markdown renderer.
 
-GoReleaser2.16.0 prefers GORELEASER_CURRENT_TAG over other tags at HEAD, so the workflow pins it
+GoReleaser 2.18.2 prefers GORELEASER_CURRENT_TAG over other tags at HEAD, so the workflow pins it
 to the validated event tag. Its changelog pipe must remain enabled to consume --release-notes.
 Its dirty-tree check precedes before hooks: `go mod tidy -diff` refuses graph drift without
 rewriting the files after qualification; the completions hook remains generated from source.
@@ -27,6 +27,8 @@ tag or protection during build/publication. Local fixture tests cannot prove hos
 or publication succeeded. Test refs/remotes are confined to temporary filesystem repositories.
 
 ## Changelog
+- 2026-09-30 — updated GoReleaser pin; config check and unsigned four-platform local snapshot
+  pass under Go 1.27.1. Hosted signing/publication still require exact-tag qualification.
 - 2026-09-17 — Podman removed; the qualifying doctor job is Docker only.
 - 2026-09-06 — created from M01; verified workflow dependencies, tag/notes helper fixtures and
   pinned GoReleaser pipeline ordering. No repository settings change or public tag probe.

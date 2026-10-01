@@ -2,8 +2,8 @@
 name: box-home-nested-mounts
 description: Avoid bind targets that make Docker create missing application-owned home parents as root
 subsystem: box
-sources: [internal/box/run.go, internal/box/gitenv.go, internal/cli/doctor.go]
-updated: 2026-09-10
+sources: [internal/box/run.go, internal/box/gitenv.go, internal/cli/doctor.go, internal/box/config_publication.go, internal/box/config_publication.js, internal/agent/claude.go]
+updated: 2026-10-01
 ---
 
 Docker prepares bind targets before the image's non-root user starts. If a generated mount targets
@@ -20,6 +20,18 @@ images. `coop doctor` guards the underlying contract by writing a throwaway dire
 The same mechanism rules the restricted modes' tmpfs home: no bind may target anything under it,
 which is why their seed is bound outside the home and copied in ([[restricted-execution-modes]]).
 
+A host atomic rename can briefly expose stale content and metadata through a VM bind mount.
+After defaults, normal launches carry a digest of the selected Claude `.claude.json`; the current
+Coop-managed entrypoint requires matching bounded bytes and stable descriptor metadata before
+starting any command, including ACP. Mismatches reopen at most three times, then fail by filename.
+The witness is removed before client startup; no bytes are restored or rewritten. Claude peers
+are covered too. `settings.json` is excluded because project fallbacks may legitimately overlay it.
+Rebuilt managed images are required: independent custom entrypoints and later concurrent native
+writes are outside this startup check.
+
 ## Changelog
+- 2026-10-01 — captured a stale857-byte guest read followed by899-byte descriptor metadata and an
+  exact899-byte reopen, all before native startup; documented the bounded publication check and
+  project-overlay/custom-entrypoint limits. Focused stale-first-read and refusal regressions pass.
 - 2026-09-10 — re-verified against run.go; noted the tmpfs-home consequence the restricted modes hit
 - 2026-07-16 — created after bisecting Chromium exit 133 to the nested Git bind targets

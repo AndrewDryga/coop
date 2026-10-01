@@ -58,6 +58,77 @@ func activityPayload(t *testing.T, event session.Event) map[string]any {
 	return payload
 }
 
+func TestSessionActivityRetainsTerminalDeltasAndExit(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		chunks []string
+		exit   map[string]any
+	}{
+		{"repeated chunks", []string{"same\n", "same\n", "last\n"}, map[string]any{"exit_code": 7, "signal": nil}},
+		{"empty output", nil, map[string]any{"exit_code": 0, "signal": nil}},
+		{"signal", []string{"interrupted"}, map[string]any{"exit_code": nil, "signal": "SIGTERM"}},
+		{"bounded output", []string{strings.Repeat("x", sessionActivityInputBytes*2), "tail"}, map[string]any{"exit_code": 1, "signal": nil}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store, sess := newActivityTestStore(t)
+			activity := newSessionActivity(store, sess, "turn-terminal")
+			observe := func(update map[string]any) {
+				update["toolCallId"] = "command-1"
+				raw, err := json.Marshal(map[string]any{"update": update})
+				if err != nil {
+					t.Fatal(err)
+				}
+				activity.observe(raw)
+			}
+			observe(map[string]any{"sessionUpdate": "tool_call", "title": "run check", "kind": "execute", "status": "in_progress"})
+			observe(map[string]any{"sessionUpdate": "tool_call_update", "_meta": map[string]any{
+				"terminal_output_delta": map[string]any{"terminal_id": "another-command", "data": "misattributed"},
+				"terminal_exit":         map[string]any{"terminal_id": "another-command", "exit_code": 99},
+			}})
+			for _, chunk := range test.chunks {
+				observe(map[string]any{"sessionUpdate": "tool_call_update", "_meta": map[string]any{"terminal_output_delta": map[string]any{"terminal_id": "command-1", "data": chunk}}})
+			}
+			exit := test.exit
+			exit["terminal_id"] = "command-1"
+			observe(map[string]any{"sessionUpdate": "tool_call_update", "status": "completed", "_meta": map[string]any{"terminal_exit": exit}})
+			observe(map[string]any{"sessionUpdate": "tool_call_update", "_meta": map[string]any{"terminal_output_delta": map[string]any{"terminal_id": "command-1", "data": "after completion"}}})
+			activity.close(context.Background())
+			events := activityEvents(t, store, sess.ID)
+			if len(events) != 2 || events[1].Type != session.EventToolCompleted {
+				t.Fatalf("events = %+v", events)
+			}
+			payload := activityPayload(t, events[1])
+			output, ok := payload["output"].(map[string]any)
+			if !ok {
+				t.Fatalf("terminal output missing: %+v", payload)
+			}
+			if test.name == "bounded output" {
+				if output["truncated"] != true {
+					t.Fatalf("output truncation not reported: %+v", output)
+				}
+				if len(events[1].Payload) > sessionActivityInputBytes*2 {
+					t.Fatalf("unbounded terminal evidence: %d", len(events[1].Payload))
+				}
+			} else if output["formatted_output"] != strings.Join(test.chunks, "") {
+				t.Fatalf("terminal output = %+v, chunks = %q", output, test.chunks)
+			}
+			terminalExit, ok := payload["terminal_exit"].(map[string]any)
+			if !ok {
+				t.Fatalf("terminal exit missing: %+v", payload)
+			}
+			for _, key := range []string{"exit_code", "signal"} {
+				want := exit[key]
+				if n, ok := want.(int); ok {
+					want = float64(n)
+				}
+				if terminalExit[key] != want {
+					t.Fatalf("%s = %v, want %v", key, terminalExit[key], want)
+				}
+			}
+		})
+	}
+}
+
 // A large public progress frame must not silently lose its tail at the narration boundary.
 func TestPublicProgressKeepsOneLogicalMessageForSafeRedaction(t *testing.T) {
 	store, sess := newActivityTestStore(t)

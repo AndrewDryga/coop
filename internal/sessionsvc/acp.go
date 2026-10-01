@@ -3246,12 +3246,12 @@ func (r *sessionTurnRunner) runACP(
 	return string(assistant), outputArtifacts, usage, nil
 }
 
-// sessionACPClientCapabilities opts into the one adapter extension Coop consumes. Without it,
-// codex-acp turns terminal provider failures into compatibility text, which is indistinguishable
-// from an assistant answer and can be misclassified as invalid structured output.
+// sessionACPClientCapabilities opts into typed failures and command-output deltas.
+// Without these, adapters can flatten failures into answer text or omit shell output.
 func sessionACPClientCapabilities() map[string]any {
 	return map[string]any{
 		"_meta": map[string]any{
+			"terminal_output_delta": true,
 			"jetbrains": map[string]any{
 				"air": map[string]any{
 					"version":      sessionACPAirVersion,

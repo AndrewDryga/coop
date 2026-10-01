@@ -51,7 +51,8 @@ func TestCredentialBrokerReplacesOnlyTheQualifiedCredentialAndStreams(t *testing
 	seen := make(chan struct{}, 1)
 	b, _ := testCredentialBroker(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if request.URL.Scheme != "https" || request.URL.Host != "api.anthropic.com" || request.Host != "api.anthropic.com" ||
-			request.Header.Get("x-api-key") != "real-secret-key" || request.Header.Get("Authorization") != "" {
+			request.Header.Get("x-api-key") != "real-secret-key" || request.Header.Get("Authorization") != "" ||
+			request.Header.Get("Forwarded") != "" || request.Header.Get("X-Forwarded-For") != "" {
 			t.Errorf("upstream request widened or retained substitute: %#v", request)
 		}
 		seen <- struct{}{}
@@ -59,7 +60,10 @@ func TestCredentialBrokerReplacesOnlyTheQualifiedCredentialAndStreams(t *testing
 			Body: io.NopCloser(strings.NewReader("data: first\n\ndata: second\n\n"))}, nil
 	}))
 	recorder := httptest.NewRecorder()
-	b.handler().ServeHTTP(recorder, brokerRequest(`{"stream":true}`))
+	request := brokerRequest(`{"stream":true}`)
+	request.Header.Set("Forwarded", "for=client-supplied")
+	request.Header.Set("X-Forwarded-For", "client-supplied")
+	b.handler().ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "data: first\n\ndata: second\n\n" {
 		t.Fatalf("stream response = %d %q", recorder.Code, recorder.Body.String())
 	}

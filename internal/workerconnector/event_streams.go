@@ -386,6 +386,18 @@ func publicActivityPayload(kind string, raw json.RawMessage) (json.RawMessage, b
 		narrated.evidence("output", value["output"])
 		narrated.evidence("content", value["content"])
 		narrated.evidence("locations", value["locations"])
+		if exit, ok := value["terminal_exit"].(map[string]any); ok {
+			terminal := map[string]any{}
+			if code, ok := exit["exit_code"].(float64); ok && code >= -1<<31 && code < 1<<31 && code == float64(int64(code)) {
+				terminal["exit_code"] = int64(code)
+			}
+			if signal, ok := exit["signal"].(string); ok && len(signal) <= 200 && !strings.ContainsRune(signal, 0) {
+				terminal["signal"] = signal
+			}
+			if len(terminal) > 0 {
+				narrated.evidence("terminal_exit", terminal)
+			}
+		}
 	case "model.plan":
 		if entries, ok := value["entries"].([]any); ok {
 			public["step_count"] = min(len(entries), maximumPlanSteps)

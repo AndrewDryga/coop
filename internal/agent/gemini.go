@@ -162,7 +162,7 @@ func geminiUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, e
 
 // Import only the native auth/server exports: CLI/model initialization can load hooks, MCP
 // servers or perform onboarding. Let the process drain asynchronous native token persistence.
-const geminiQuotaHelper = `import {getOauthClient,CodeAssistServer} from "/opt/coop/clients/node_modules/@google/gemini-cli/bundle/core-3RU5PE2Y.js";
+const geminiQuotaHelper = `import {getOauthClient,CodeAssistServer} from "/opt/coop/clients/node_modules/@google/gemini-cli/bundle/core-BXNHRQQE.js";
 process.on("unhandledRejection",()=>{process.exitCode=1});
 try {
   const config={getProxy:()=>undefined,isBrowserLaunchSuppressed:()=>true,isInteractive:()=>false};
@@ -404,31 +404,10 @@ func geminiSessionMetadata(r io.Reader) (sessionID, projectHash string) {
 
 func (geminiAgent) Login(*config.Config) []string { return []string{"gemini"} }
 
-func (geminiAgent) LoginConfig(cfg *config.Config) (MCPConfig, error) {
-	gm, _, err := mcp.GenerateGemini("", "")
-	if err != nil {
-		return MCPConfig{}, err
-	}
-	gm, err = ensureGeminiBoxDefaults(gm, false)
-	if err != nil {
-		return MCPConfig{}, err
-	}
-	var settings map[string]any
-	if err := json.Unmarshal([]byte(gm), &settings); err != nil {
-		return MCPConfig{}, err
-	}
-	// Gemini intersects this system allowlist with user/workspace lists. An explicitly empty
-	// list disables all MCP; an empty mcpServers object would merely merge with existing servers.
-	settings["mcp"] = map[string]any{"allowed": []string{}}
-	data, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return MCPConfig{}, err
-	}
-	systemPath := cfg.HomeInBox + "/.coop-gemini-login.json"
+func (geminiAgent) LoginConfig(*config.Config) (MCPConfig, error) {
 	return MCPConfig{
-		Mounts:      []MCPMount{{Content: string(append(data, '\n')), BoxPath: systemPath}},
 		CommandArgs: []string{"--extensions", "none"},
-		Env:         []string{"GEMINI_CLI_SYSTEM_SETTINGS_PATH=" + systemPath, "NO_BROWSER=true"},
+		Env:         []string{"GEMINI_CLI_SYSTEM_SETTINGS_PATH=/etc/gemini-cli/login.json", "NO_BROWSER=true"},
 	}, nil
 }
 
@@ -449,14 +428,28 @@ func (a geminiAgent) ACPRestrictedSessionMeta(mode ExecutionMode) (map[string]an
 }
 
 // geminiNoUpdates is Gemini's update switch, a system-settings block. /etc/gemini-cli/settings.json
-// is the pinned 0.59.0's system layer, which overrides both the user's and a workspace's settings
+// is the pinned 0.62.0's system layer, which overrides both the user's and a workspace's settings
 // (it reports a bad file there by path). Pointing GEMINI_CLI_SYSTEM_SETTINGS_PATH at another file
 // replaces that layer instead of merging with it, so every system file Coop writes repeats the block.
 var geminiNoUpdates = map[string]any{"enableAutoUpdate": false, "enableAutoUpdateNotification": false}
 
 func (geminiAgent) UpdateControls() UpdateControls {
-	data, _ := json.Marshal(map[string]any{"general": geminiNoUpdates}) // literals: cannot fail
-	return UpdateControls{Files: []SystemFile{{Path: "/etc/gemini-cli/settings.json", Content: string(data) + "\n"}}}
+	// Gemini 0.62 requires every system file and ancestor to be root-owned and non-writable
+	// by others. Image-owned files satisfy that; host-generated mounts below the user home do not.
+	files := []SystemFile{
+		{Path: "/etc/gemini-cli/settings.json", Content: geminiSystemSettings(map[string]any{"general": geminiNoUpdates})},
+		// An empty system allowlist disables MCP, rather than merging with native servers.
+		{Path: "/etc/gemini-cli/login.json", Content: geminiSystemSettings(map[string]any{
+			"general": geminiNoUpdates, "mcp": map[string]any{"allowed": []string{}},
+			"context":  map[string]any{"fileFiltering": map[string]any{"respectGitIgnore": false}},
+			"privacy":  map[string]any{"usageStatisticsEnabled": false},
+			"security": map[string]any{"folderTrust": map[string]any{"enabled": false}},
+		})},
+	}
+	for _, effort := range []string{"low", "high"} {
+		files = append(files, SystemFile{Path: geminiThinkingDir + "/" + effort + ".json", Content: geminiThinkingSettings(effort)})
+	}
+	return UpdateControls{Files: files}
 }
 
 // Models are common Gemini model ids. Illustrative — any id the CLI accepts works.
@@ -472,7 +465,7 @@ func (geminiAgent) ExampleModel() string { return "gemini-3.5-flash" }
 func (geminiAgent) ModelEnv() string { return "GEMINI_MODEL" }
 
 // Effort/EffortEnv: the Gemini CLI has no reasoning-effort flag or environment variable; it takes
-// thinking from settings, which MCP generates (see geminiThinkingWiring).
+// thinking from image-owned settings, which MCP selects (see geminiThinkingWiring).
 func (geminiAgent) Effort() EffortSpec {
 	return EffortSpec{Settings: true, Validate: validateGeminiEffort}
 }
@@ -640,8 +633,8 @@ func (geminiAgent) StoredCredentialStatus(profileDir string, _ time.Time) Stored
 
 // MCP builds the settings mounted inside a gemini box: the host settings plus the box-only
 // file-filtering override and the managed-client defaults (no auto-update, no update prompt,
-// no usage statistics), and shared servers only when MCP is active — and beside them the
-// per-effort thinking settings. The host file is never written here; EnsureDefaults owns the one
+// no usage statistics), and shared servers only when MCP is active. The per-effort system files
+// come from the image. The host file is never written here; EnsureDefaults owns the one
 // host-side change (folder trust).
 func (geminiAgent) MCP(cfg *config.Config, _ string) (MCPConfig, error) {
 	gm, requiredEnv, err := mcp.GenerateGemini(cfg.MCPFile, filepath.Join(cfg.AgentDir("gemini"), "settings.json"))
@@ -652,11 +645,11 @@ func (geminiAgent) MCP(cfg *config.Config, _ string) (MCPConfig, error) {
 	if err != nil {
 		return MCPConfig{}, err
 	}
-	thinking, env, err := geminiThinkingWiring(cfg)
+	env, err := geminiThinkingWiring(cfg)
 	if err != nil {
 		return MCPConfig{}, err
 	}
-	mounts := append([]MCPMount{{Content: gm, BoxPath: cfg.HomeInBox + "/.gemini/settings.json"}}, thinking...)
+	mounts := []MCPMount{{Content: gm, BoxPath: cfg.HomeInBox + "/.gemini/settings.json"}}
 	return MCPConfig{Mounts: mounts, Env: env, RequiredEnv: requiredEnv}, nil
 }
 
@@ -702,6 +695,8 @@ func ensureGeminiBoxDefaults(settingsJSON string, disableWebTools bool) (string,
 func (geminiAgent) ACPMCPServers(string, func(string) (string, bool)) ([]map[string]any, error) {
 	return nil, nil
 }
+
+func (geminiAgent) DefaultsPublication(*config.Config) ([]ConfigPublication, error) { return nil, nil }
 
 // EnsureDefaults guarantees a valid settings.json (an empty/missing one makes gemini
 // fail at launch) and turns off its folder-trust prompt — the box is the sandbox. An
@@ -835,9 +830,9 @@ func (geminiAgent) LockedClients(platform ClientPlatform) []LockedClient {
 	if !platform.valid() {
 		return nil
 	}
-	client := LockedClient{Package: "@google/gemini-cli", Version: "0.59.0", Binary: "gemini",
+	client := LockedClient{Package: "@google/gemini-cli", Version: "0.62.0", Binary: "gemini",
 		Exec:                []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@google/gemini-cli/bundle/gemini.js"},
-		RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@google/gemini-cli/bundle/gemini.js", Version: "0.59.0"}}}
+		RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@google/gemini-cli/bundle/gemini.js", Version: "0.62.0"}}}
 	cli, acp := client, client
 	cli.Client, acp.Client = egress.ClientCLI, egress.ClientACP
 	return []LockedClient{cli, acp}
@@ -846,7 +841,7 @@ func (geminiAgent) LockedClients(platform ClientPlatform) []LockedClient {
 func (a geminiAgent) NetworkBundle(input NetworkBundleInput) (egress.Bundle, error) {
 	return directNetworkBundle(a.Name(), "api-key", input,
 		[]string{"generativelanguage.googleapis.com"},
-		[]string{"https://github.com/google-gemini/gemini-cli/blob/v0.59.0/packages/core/src/core/contentGenerator.ts"})
+		[]string{"https://github.com/google-gemini/gemini-cli/blob/v0.62.0/packages/core/src/core/contentGenerator.ts"})
 }
 
 // NetworkAuthSelection refuses native OAuth and Vertex until each has its own
@@ -866,7 +861,7 @@ func (geminiAgent) NetworkAuthSelection(profileDir string, markerPresent bool) (
 	return NetworkAuthSelection{AuthMode: "api-key", EnvKey: "GEMINI_API_KEY"}, nil
 }
 
-// Gemini has no reasoning-effort flag or variable: the pinned client (0.59.0) takes thinking only
+// Gemini has no reasoning-effort flag or variable: the pinned client (0.62.0) takes thinking only
 // from its settings. What it does with them was captured at the request level, against a local
 // listener (.agent/kb/gemini-effort-thinking-settings.md), and two facts decide the shape here.
 //
@@ -874,7 +869,7 @@ func (geminiAgent) NetworkAuthSelection(profileDir string, markerPresent bool) (
 // Gemma, whose thinkingLevel has only LOW and HIGH; chat-base-2.5 for Gemini 2.5, whose
 // thinkingBudget is a token count. The model named at launch does not decide which one applies:
 // the client remaps names (gemini-3-pro-preview is sent as gemini-3.1-pro-preview, and a 2.5 flash
-// request goes to gemini-3.5-flash on an API key), routes auto, and falls back on quota. A setting
+// request goes to the current GA flash on an API key), routes auto, and falls back on quota. A setting
 // keyed on the typed name is silently a no-op; a setting on both bases reaches whichever model is
 // actually called.
 //
@@ -904,7 +899,7 @@ var geminiThinking = map[string]struct {
 var geminiThinkingModels = []string{
 	"auto", "pro", "flash", "flash-lite", "auto-gemini-3", "auto-gemini-2.5",
 	"gemini-3-pro-preview", "gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools",
-	"gemini-3-flash-preview", "gemini-3.5-flash", "gemini-3-flash", "gemini-3.1-flash-lite",
+	"gemini-3-flash-preview", "gemini-3.5-flash", "gemini-3.8-flash", "gemini-3-flash", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite",
 	"gemini-3.1-flash-lite-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
 	"gemma-4-31b-it", "gemma-4-26b-a4b-it",
 }
@@ -924,40 +919,26 @@ func validateGeminiEffort(model, effort string) error {
 // geminiThinkingEnv names the in-box directory holding one settings file per effort, for the
 // consult and delegate arms to pick from by their $effort.
 const geminiThinkingEnv = "COOP_GEMINI_THINKING"
+const geminiThinkingDir = "/etc/gemini-cli/thinking"
 
-// geminiThinkingWiring mounts one system-settings file per effort outside ~/.gemini (the account's
-// own profile) and points the box's own Gemini at the one for this run's effort. Consult and
-// delegate arms choose again per call.
-func geminiThinkingWiring(cfg *config.Config) ([]MCPMount, []string, error) {
-	dir := cfg.HomeInBox + "/.coop-gemini/thinking"
-	efforts := make([]string, 0, len(geminiThinking))
-	for effort := range geminiThinking {
-		efforts = append(efforts, effort)
-	}
-	slices.Sort(efforts)
-	mounts := make([]MCPMount, 0, len(efforts))
-	for _, effort := range efforts {
-		content, err := geminiThinkingSettings(effort)
-		if err != nil {
-			return nil, nil, err
-		}
-		mounts = append(mounts, MCPMount{Content: content, BoxPath: dir + "/" + effort + ".json"})
-	}
-	env := []string{geminiThinkingEnv + "=" + dir}
+// geminiThinkingWiring selects one image-owned system file per call. Consult and delegate
+// arms choose again per call, without mutating the account's shared settings.
+func geminiThinkingWiring(cfg *config.Config) ([]string, error) {
+	env := []string{geminiThinkingEnv + "=" + geminiThinkingDir}
 	if effort := cfg.EffortFor("gemini"); effort != "" {
 		if _, ok := geminiThinking[effort]; !ok {
-			return nil, nil, fmt.Errorf("gemini effort %q has no thinking setting; use low or high", effort)
+			return nil, fmt.Errorf("gemini effort %q has no thinking setting; use low or high", effort)
 		}
-		env = append(env, "GEMINI_CLI_SYSTEM_SETTINGS_PATH="+dir+"/"+effort+".json")
+		env = append(env, "GEMINI_CLI_SYSTEM_SETTINGS_PATH="+geminiThinkingDir+"/"+effort+".json")
 	}
-	return mounts, env, nil
+	return env, nil
 }
 
 // geminiThinkingSettings is one effort's system settings: both family bases at that effort, as
 // customAliases so they merge over any the user or project defines, and the update switch this file
 // displaces from the image's system layer. gemini-3-flash is the one chat model the pinned client
 // gives no alias, so it would inherit neither base; here it gets its family's.
-func geminiThinkingSettings(effort string) (string, error) {
+func geminiThinkingSettings(effort string) string {
 	thinking := geminiThinking[effort]
 	base := func(config map[string]any) map[string]any {
 		return map[string]any{"extends": "chat-base", "modelConfig": map[string]any{
@@ -968,9 +949,10 @@ func geminiThinkingSettings(effort string) (string, error) {
 		"chat-base-2.5":  base(map[string]any{"thinkingBudget": thinking.budget}),
 		"gemini-3-flash": map[string]any{"extends": "chat-base-3", "modelConfig": map[string]any{"model": "gemini-3-flash"}},
 	}}}
-	data, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("assemble Gemini %s thinking settings: %w", effort, err)
-	}
-	return string(append(data, '\n')), nil
+	return geminiSystemSettings(settings)
+}
+
+func geminiSystemSettings(settings map[string]any) string {
+	data, _ := json.MarshalIndent(settings, "", "  ") // internal literal settings: cannot fail
+	return string(append(data, '\n'))
 }

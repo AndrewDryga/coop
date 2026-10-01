@@ -255,7 +255,8 @@ type RunSpec struct {
 	// role agents join the credential scope, and a delegate role mounts coop-delegate
 	// plus its per-role contracts and env. The cli loads and applies the preset's
 	// model/credential selections before calling Run.
-	Preset *preset.Preset
+	Preset            *preset.Preset
+	configPublication string // host-prepared startup witness, never controller input
 }
 
 func runServiceOwner(spec RunSpec) string {
@@ -1222,6 +1223,10 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	markLaunchImages(cfg, append([]string{spec.Image, cfg.BaseImage}, filtered.builtImageTags()...)...)
 	if spec.Homes {
 		if err := ensureAgentDefaults(cfg, spec, workdir); err != nil {
+			return -1, err
+		}
+		spec.configPublication, err = prepareConfigPublication(cfg, spec)
+		if err != nil {
 			return -1, err
 		}
 		// An ACP box shares the lead's session transcripts across credentials (see assembleArgs), so
@@ -3093,6 +3098,7 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 		args = append(args, cfg.ExtraRunArgs...)
 	}
 	args = append(args, spec.ExtraArgs...)
+	args = append(args, "-e", "COOP_CONFIG_PUBLICATION="+spec.configPublication)
 	// Docker keeps the last value for a repeated label key. Coop's tracking labels must win over
 	// operator extras so cleanup and ownership queries still find this box.
 	args = append(args, "--label", LabelKey+"="+LabelBox)

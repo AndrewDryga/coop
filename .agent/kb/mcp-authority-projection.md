@@ -3,7 +3,7 @@ name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
 sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/box/mcp_broker.go, internal/box/open_broker.go, internal/box/restricted.go, internal/networkgateway/open_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
-updated: 2026-09-22
+updated: 2026-09-30
 ---
 
 `COOP_MCP_FILE` is one host authority, but a box has four different consumers. `box.Run` captures
@@ -80,11 +80,13 @@ the client rather than granted or hidden: [[provider-bundles-carry-function-not-
 Sign-in is deliberately not a coding session. `RunSpec.Login` selects `Agent.LoginConfig`, skips
 the shared MCP snapshot and project mount, and mounts only the selected credential home plus its
 managed login controls. Gemini keeps user `settings.json` writable so native Google selection can
-survive its relaunch; separate immutable system settings retain managed defaults and deny MCP via
+survive its relaunch; image-owned `/etc/gemini-cli/login.json` retains managed defaults and denies MCP via
 `mcp.allowed: []`, while `--extensions none` prevents extension activation. Native system merges
 do not replace a user's server map with an empty map, and v0.59's remote-admin merge supersedes
 local `admin` controls: neither is a substitute for the empty allowlist. Project services, ports,
 instructions and preset/peer tools do not belong in login. Network admission still applies.
+Gemini 0.62 rejects a system file or ancestor owned by a nonroot user or writable by group/others.
+Login and effort files therefore belong in the image, not runtime mounts below the model home.
 
 Gemini's native schema rejects canonical `bearer_token_env_var`. Its renderer converts that field
 to `headers.Authorization: "Bearer ${NAME}"` and returns the required variable names; it never
@@ -188,6 +190,9 @@ adds ordinary `CommandArgs` must decide whether its nested commands need an equi
 mounting the raw snapshot for every scoped credential is not the fallback.
 
 ## Changelog
+- 2026-09-30 — Gemini 0.62 ignored user-home system settings. Moved fixed login and effort
+  settings into root-owned image files; offline actual-client login-layer probe blocks configured
+  MCP, and low/high requests use their selected levels. Interactive authentication not repeated.
 - 2026-09-22 — removed stale SSE refusal/fallback sentences that contradicted the implemented
   same-host route below. Rechecked MCP route planning and open readonly-session handoff tests.
 - 2026-09-20 — a read-only session brokers its MCP secrets through the same sibling helper; its

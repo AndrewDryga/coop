@@ -98,7 +98,7 @@ func hiddenAncestorFixture(t *testing.T, policy, rules, parent string) (repo, fi
 	file = filepath.Join(repo, "compose.yml")
 	body := fmt.Sprintf(`services:
   probe:
-    image: alpine:3.21
+    image: alpine:3.24.2
     user: "%d:%d"
     mem_limit: 128m
     cpus: 1

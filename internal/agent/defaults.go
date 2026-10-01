@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,25 @@ import (
 // in a directory the user AND the agent in the box both write, so their size is not coop's to
 // trust: an oversized one is refused by name instead of being slurped whole into the process.
 const MaxNativeConfigBytes = 4 << 20
+
+type ConfigPublication struct {
+	Path   string `json:"path"`
+	Digest string `json:"digest"`
+}
+
+func snapshotJSONDefaults(hostPath, boxPath string) (ConfigPublication, error) {
+	data, exists, err := readDefaultsFile(hostPath)
+	if err != nil {
+		return ConfigPublication{}, err
+	}
+	if !exists {
+		return ConfigPublication{}, fmt.Errorf("agent settings %s disappeared before launch", hostPath)
+	}
+	if _, _, err := parseJSONDefaults(data); err != nil {
+		return ConfigPublication{}, fmt.Errorf("parse %s: %w", hostPath, err)
+	}
+	return ConfigPublication{Path: boxPath, Digest: fmt.Sprintf("%x", sha256.Sum256(data))}, nil
+}
 
 func readDefaultsFile(path string) ([]byte, bool, error) {
 	// Resolve the path first so the opened inode can be checked against it below. O_NOFOLLOW

@@ -576,6 +576,10 @@ func runConsultLiveEdge(
 		AgentCommand: true, Batch: true, Quiet: true, Homes: true, Network: false, Cache: false,
 		SupervisorID: supervisor, Stdout: stdout, Stderr: stderr, Ctx: ctx,
 	}
+	if delegate {
+		// Git observation must not rewrite the host-created index's VM stat cache.
+		spec.ExtraArgs = []string{"-e", "GIT_OPTIONAL_LOCKS=0"}
+	}
 	capture, err := admitConsultLiveBox(cfg, rt, spec)
 	if err != nil {
 		if errors.Is(err, box.ErrNetworkSetupFailed) {
@@ -588,7 +592,7 @@ func runConsultLiveEdge(
 	}
 	defer capture.Close()
 	spec.CapturedEgress = capture
-	spec.ExtraArgs = consultLiveCIDArgs(rt, cidDir, phase, capture)
+	spec.ExtraArgs = append(spec.ExtraArgs, consultLiveCIDArgs(rt, cidDir, phase, capture)...)
 	if err := writeConsultAttempt(filepath.Join(attemptDir, phase)); err != nil {
 		return consultHarnessFailure(peer.Provider, false, "attempt_marker")
 	}

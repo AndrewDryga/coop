@@ -70,6 +70,23 @@ type sessionActivityTool struct {
 	finished                                bool
 	input, output, content, locations       json.RawMessage
 	inputPaths, locationPaths, contentPaths activityPaths
+	terminalOutput                          string
+	terminalSeen, terminalTruncated         bool
+	terminalExit                            *sessionActivityTerminalExit
+}
+
+type sessionActivityTerminal struct {
+	Delta *struct {
+		ID   string `json:"terminal_id"`
+		Data string `json:"data"`
+	} `json:"terminal_output_delta"`
+	Exit *sessionActivityTerminalExit `json:"terminal_exit"`
+}
+
+type sessionActivityTerminalExit struct {
+	ID     string  `json:"terminal_id"`
+	Code   *int    `json:"exit_code"`
+	Signal *string `json:"signal"`
 }
 
 type sessionActivity struct {
@@ -164,16 +181,17 @@ func (a *sessionActivity) observe(raw json.RawMessage) {
 	}
 	var envelope struct {
 		Update struct {
-			SessionUpdate string          `json:"sessionUpdate"`
-			ToolCallID    string          `json:"toolCallId"`
-			Title         string          `json:"title"`
-			Kind          string          `json:"kind"`
-			Status        string          `json:"status"`
-			RawInput      json.RawMessage `json:"rawInput"`
-			RawOutput     json.RawMessage `json:"rawOutput"`
-			Locations     json.RawMessage `json:"locations"`
-			Content       json.RawMessage `json:"content"`
-			Entries       json.RawMessage `json:"entries"`
+			SessionUpdate string                  `json:"sessionUpdate"`
+			ToolCallID    string                  `json:"toolCallId"`
+			Title         string                  `json:"title"`
+			Kind          string                  `json:"kind"`
+			Status        string                  `json:"status"`
+			RawInput      json.RawMessage         `json:"rawInput"`
+			RawOutput     json.RawMessage         `json:"rawOutput"`
+			Locations     json.RawMessage         `json:"locations"`
+			Content       json.RawMessage         `json:"content"`
+			Entries       json.RawMessage         `json:"entries"`
+			Meta          sessionActivityTerminal `json:"_meta"`
 		} `json:"update"`
 	}
 	if json.Unmarshal(raw, &envelope) != nil {
@@ -182,7 +200,7 @@ func (a *sessionActivity) observe(raw json.RawMessage) {
 	update := envelope.Update
 	switch update.SessionUpdate {
 	case "tool_call", "tool_call_update":
-		a.observeTool(update.ToolCallID, update.Title, update.Kind, update.Status, update.RawInput, update.RawOutput, update.Content, update.Locations)
+		a.observeTool(update.ToolCallID, update.Title, update.Kind, update.Status, update.RawInput, update.RawOutput, update.Content, update.Locations, update.Meta)
 	case "agent_thought_chunk", "assistant_thought_chunk":
 		a.observeThought(update.Content)
 	case "plan":
@@ -190,7 +208,7 @@ func (a *sessionActivity) observe(raw json.RawMessage) {
 	}
 }
 
-func (a *sessionActivity) observeTool(id, title, kind, status string, rawInput, rawOutput, content, locations json.RawMessage) {
+func (a *sessionActivity) observeTool(id, title, kind, status string, rawInput, rawOutput, content, locations json.RawMessage, terminal sessionActivityTerminal) {
 	if id == "" {
 		return
 	}
@@ -234,6 +252,20 @@ func (a *sessionActivity) observeTool(id, title, kind, status string, rawInput, 
 			*field.target = boundedActivityInput(field.source)
 		}
 	}
+	if terminal.Delta != nil && terminal.Delta.ID == id && !tool.finished {
+		tool.terminalSeen = true
+		text := tool.terminalOutput + terminal.Delta.Data
+		tool.terminalTruncated = tool.terminalTruncated || len(text) > sessionActivityInputBytes
+		tool.terminalOutput = boundedActivityText(text, sessionActivityInputBytes)
+	}
+	if terminal.Exit != nil && terminal.Exit.ID == id {
+		tool.terminalSeen = true
+		if terminal.Exit.Signal != nil {
+			signal := boundedActivityText(*terminal.Exit.Signal, sessionActivityTitleBytes)
+			terminal.Exit.Signal = &signal
+		}
+		tool.terminalExit = terminal.Exit
+	}
 	if !tool.started {
 		tool.started = true
 		// A thought that preceded an action belongs before it, so the story
@@ -259,7 +291,18 @@ func (a *sessionActivity) observeTool(id, title, kind, status string, rawInput, 
 	// otherwise be handed a fresh entry and narrate the whole call again.
 	tool.finished = true
 	a.flushProgressLocked()
-	a.enqueueLocked(session.EventToolCompleted, a.withToolPaths(tool, map[string]any{
+	if tool.terminalSeen {
+		output := map[string]any{"formatted_output": tool.terminalOutput}
+		if tool.terminalTruncated {
+			output["truncated"] = true
+		}
+		if tool.terminalExit != nil {
+			output["exit_code"], output["signal"] = tool.terminalExit.Code, tool.terminalExit.Signal
+		}
+		raw, _ := json.Marshal(output)
+		tool.output = boundedActivityInput(raw)
+	}
+	payload := map[string]any{
 		"tool_call_id": id,
 		"title":        tool.title,
 		"kind":         tool.kind,
@@ -268,7 +311,12 @@ func (a *sessionActivity) observeTool(id, title, kind, status string, rawInput, 
 		"output":       tool.output,
 		"content":      tool.content,
 		"locations":    tool.locations,
-	}))
+	}
+	if tool.terminalExit != nil {
+		// Keep exit evidence typed even when a large output becomes a partial preview.
+		payload["terminal_exit"] = tool.terminalExit
+	}
+	a.enqueueLocked(session.EventToolCompleted, a.withToolPaths(tool, payload))
 }
 
 func (a *sessionActivity) withToolPaths(tool *sessionActivityTool, payload map[string]any) map[string]any {

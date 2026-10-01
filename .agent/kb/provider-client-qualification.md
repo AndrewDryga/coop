@@ -3,7 +3,7 @@ name: provider-client-qualification
 description: locked clients, strict schema2 qualification requirements and Linux/amd64 live evidence
 subsystem: agent
 sources: [internal/agent/locked_clients.go, internal/agent/qualification.go, internal/agent/qualification_gate_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/credentials.go]
-updated: 2026-09-29
+updated: 2026-09-30
 ---
 
 **One manifest.** `locked-clients/package.json` + `package-lock.json` (embedded) and each adapter's
@@ -31,7 +31,9 @@ This applies to both native-resume stages, not only the ordinary prompt suite;
 signed-in accounts keep their open path. The selected credential kind is determined
 from the real host config before the isolated child starts.
 
-**The record.** `make provider-qualify` is PAID and needs explicit spending authorization, last after other engineering.
+**The record.** `make provider-qualify` calls real models, last after other engineering.
+Included subscription access needs no additional spend permission; unknown API-key billing or
+paid overage does. Credentials being present does not prove an account's billing allowance.
 It rebuilds this host's images, runs offline probes first and every required live suite, then
 atomically writes `locked-clients/qualification.json`. `QualificationRequirements` is the single
 schema2 suite/provider/evidence map used by the recorder and `TestTheLockedClientsMatchTheirQualification`.
@@ -82,8 +84,8 @@ session (an OPEN singleton still shows every repo preset, unfiltered by lead cap
 
 **Conformance rows** (D = deterministic in `make check`; R = the real pinned client, run OFFLINE in
 the locked image with `--network none` — free, but outside `make check` because it needs the image
-`coop net setup` builds. An R suite both gates `provider-qualify` before paid prompts and enters
-the record with its explicit provider scope. L = a paid live assertion implemented in the harness,
+`coop net setup` builds. An R suite gates `provider-qualify` before model calls and enters
+the record with its explicit provider scope. L = a live assertion implemented in the harness,
 not a claim that it has run successfully; all four providers except unavailable second accounts):
 
 The three R probes bind-mount synthetic files from `t.TempDir()` into the locked client image,
@@ -229,6 +231,10 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-09-30 — pre-release refresh recaptured actual HTTP/MCP shapes on new clients, including
+  managed Codex provider precedence and Gemini system-file ownership/effort behavior, offline
+  with synthetic credentials. New full schema2 live qualification remains pending; retained the
+  old record unchanged. Clarified account-billing permission rather than assuming every call is paid.
 - 2026-09-29 — rechecked native-role and skill/MCP offline probes against their actual commands.
   Claude's explicit role-file validation is not automatic discovery; its skill validator proves
   layout/parsing only, and its shared MCP route remains live-only. Updated test/Make labels without

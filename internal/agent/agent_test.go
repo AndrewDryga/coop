@@ -1893,7 +1893,6 @@ func TestMCP(t *testing.T) {
 			t.Errorf("%s MCP: %v", name, err)
 			continue
 		}
-		wiring.Mounts = withoutThinking(wiring.Mounts)
 		if len(wiring.Mounts) != 1 || wiring.Mounts[0].BoxPath != boxPath || wiring.Mounts[0].Content == "" || len(wiring.CommandArgs) != 0 {
 			t.Errorf("%s MCP = %v; want one non-empty mount at %s", name, wiring, boxPath)
 			continue
@@ -1975,7 +1974,7 @@ func TestMCPWithoutSharedSourceBuildsOnlyTheAlwaysOnOverlays(t *testing.T) {
 	}
 	gemini, _ := Get("gemini")
 	wiring, err := gemini.MCP(cfg, "/workspace")
-	if mounts := withoutThinking(wiring.Mounts); err != nil || len(mounts) != 1 || mounts[0].BoxPath != "/home/node/.gemini/settings.json" {
+	if mounts := wiring.Mounts; err != nil || len(mounts) != 1 || mounts[0].BoxPath != "/home/node/.gemini/settings.json" {
 		t.Fatalf("gemini MCP without shared source = (%+v, %v), want always-on settings mount", wiring, err)
 	}
 	codex, _ := Get("codex")
@@ -2046,7 +2045,7 @@ func TestManagedClientDefaultsAreBoxOnly(t *testing.T) {
 	}
 
 	wiring, err = gemini.MCP(cfg, "/workspace")
-	if wiring.Mounts = withoutThinking(wiring.Mounts); err != nil || len(wiring.Mounts) != 1 {
+	if err != nil || len(wiring.Mounts) != 1 {
 		t.Fatalf("gemini MCP = (%+v, %v)", wiring, err)
 	}
 	var geminiBox map[string]any

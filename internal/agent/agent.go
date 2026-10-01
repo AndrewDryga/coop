@@ -664,6 +664,8 @@ type Agent interface {
 	// sandbox) in its config dir so a fresh box goes straight to work. A present invalid
 	// settings file is an error, never an empty default. workdir is the resolved box cwd.
 	EnsureDefaults(cfg *config.Config, workdir string) error
+	// DefaultsPublication identifies mutable config bytes the guest must see before startup.
+	DefaultsPublication(cfg *config.Config) ([]ConfigPublication, error)
 	// UpdateControls are the switches that stop this agent's client updating itself.
 	UpdateControls() UpdateControls
 	// LockedClients declares this adapter's exact pinned installations for one

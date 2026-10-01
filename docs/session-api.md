@@ -623,7 +623,7 @@ and are always sequenced before the turn's own terminal event, so a caller that 
 
 ```text
 tool.started            # tool_call_id, title, kind, input, path_context
-tool.completed          # tool_call_id, title, kind, status, input, output, content, locations, path_context
+tool.completed          # tool_call_id, title, kind, status, input, output, content, locations, terminal_exit, path_context
 model.plan              # entries
 model.thought           # text
 model.progress          # outward commentary text, not private reasoning
@@ -632,6 +632,9 @@ activity.elided         # dropped, reason
 provider.backoff        # attempt, target, next_target, retry_after_seconds, reset_at, all_limited_until
 provider.alive          # frames, bytes
 ```
+
+When available, `terminal_exit` carries a numeric `exit_code` and/or a `signal` separately
+from command output, so a truncated output preview does not erase the exit result.
 
 When structured filesystem evidence is available, `path_context` contains `basis: "lexical"`
 and up to 16 `paths` entries. Each entry identifies its evidence with a JSON-pointer `source`,

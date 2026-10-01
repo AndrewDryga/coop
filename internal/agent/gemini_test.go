@@ -12,23 +12,11 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
-// withoutThinking drops gemini's per-effort thinking mounts, so a test about an adapter's native
-// config reads just that config. TestGeminiThinkingWiring owns the thinking mounts.
-func withoutThinking(mounts []MCPMount) []MCPMount {
-	var out []MCPMount
-	for _, m := range mounts {
-		if !strings.Contains(m.BoxPath, "/.coop-gemini/thinking/") {
-			out = append(out, m)
-		}
-	}
-	return out
-}
-
 // The thinking mapping is a reading of one client's internals — its family base names, its model
 // list, its LOW/HIGH enum. Moving the locked client must send someone back to re-read them, so the
 // version the mapping was captured on is pinned here, apart from the locked declaration it guards.
 func TestGeminiThinkingIsQualifiedOnTheLockedClient(t *testing.T) {
-	const qualified = "0.59.0"
+	const qualified = "0.62.0"
 	gemini, _ := Get("gemini")
 	clients := gemini.LockedClients(ClientPlatform{OS: "linux", Architecture: "arm64", Libc: "glibc"})
 	if len(clients) == 0 {
@@ -52,6 +40,7 @@ func TestGeminiEffortValidation(t *testing.T) {
 		{"", "low"}, {"", "high"}, {"", ""},
 		{"gemini-2.5-pro", "low"}, {"gemini-3-pro-preview", "high"}, {"auto", "low"},
 		{"flash", "high"}, {"gemini-3-flash", "low"}, {"gemma-4-31b-it", "high"},
+		{"gemini-3.8-flash", "low"}, {"gemini-3.5-flash-lite", "high"},
 		{"some-future-model", ""}, // no effort, nothing to carry
 	} {
 		if err := ValidateEffort(gemini, ok.model, ok.effort); err != nil {
@@ -78,8 +67,8 @@ func TestGeminiEffortValidation(t *testing.T) {
 	}
 }
 
-// One system-settings file per effort, both family bases in it, mounted outside the account's own
-// profile; the box's Gemini points at the one for this run's effort and nothing else.
+// One image-owned system file per effort, both family bases in it; Gemini requires root-owned
+// files and ancestors, so settings must never be mounted below the account's own profile.
 func TestGeminiThinkingWiring(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node"}
 	gemini, _ := Get("gemini")
@@ -88,15 +77,16 @@ func TestGeminiThinkingWiring(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"COOP_GEMINI_THINKING=/home/node/.coop-gemini/thinking"}; !slices.Equal(wiring.Env, want) {
+	if want := []string{"COOP_GEMINI_THINKING=/etc/gemini-cli/thinking"}; !slices.Equal(wiring.Env, want) {
 		t.Errorf("gemini env without an effort = %v, want only the directory the arms choose from", wiring.Env)
 	}
 	files := map[string]string{}
-	for _, m := range wiring.Mounts {
-		if strings.HasPrefix(m.BoxPath, "/home/node/.coop-gemini/thinking/") {
-			files[filepath.Base(m.BoxPath)] = m.Content
-		} else if m.BoxPath != "/home/node/.gemini/settings.json" {
-			t.Errorf("unexpected gemini mount %s", m.BoxPath)
+	if len(wiring.Mounts) != 1 || wiring.Mounts[0].BoxPath != "/home/node/.gemini/settings.json" {
+		t.Fatalf("Gemini runtime mounts must contain only user settings: %v", wiring.Mounts)
+	}
+	for _, file := range gemini.UpdateControls().Files {
+		if strings.HasPrefix(file.Path, "/etc/gemini-cli/thinking/") {
+			files[filepath.Base(file.Path)] = file.Content
 		}
 	}
 	for effort, want := range map[string]struct {
@@ -105,7 +95,7 @@ func TestGeminiThinkingWiring(t *testing.T) {
 	}{"low": {"LOW", 1024}, "high": {"HIGH", 24576}} {
 		content, ok := files[effort+".json"]
 		if !ok {
-			t.Errorf("no thinking settings mounted for %s: %v", effort, files)
+			t.Errorf("no image-owned thinking settings for %s: %v", effort, files)
 			continue
 		}
 		var settings struct {
@@ -151,7 +141,7 @@ func TestGeminiThinkingWiring(t *testing.T) {
 
 	cfg.SetActiveEffort("gemini", "high")
 	wiring, err = gemini.MCP(cfg, "/workspace")
-	if err != nil || !slices.Contains(wiring.Env, "GEMINI_CLI_SYSTEM_SETTINGS_PATH=/home/node/.coop-gemini/thinking/high.json") {
+	if err != nil || !slices.Contains(wiring.Env, "GEMINI_CLI_SYSTEM_SETTINGS_PATH=/etc/gemini-cli/thinking/high.json") {
 		t.Errorf("gemini with effort high = (%v, %v), want the box pointed at high.json", wiring.Env, err)
 	}
 	cfg.SetActiveEffort("gemini", "medium")

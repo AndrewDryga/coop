@@ -56,7 +56,7 @@ var directProviderContracts = map[string]directProviderContract{
 	"gemini": {
 		base: []string{"gemini", "--yolo"}, modelEnv: "GEMINI_MODEL", supportsEffort: true,
 		settingsEnv:    "GEMINI_CLI_SYSTEM_SETTINGS_PATH",
-		effortSettings: func(level string) string { return "/home/node/.coop-gemini/thinking/" + level + ".json" },
+		effortSettings: func(level string) string { return "/etc/gemini-cli/thinking/" + level + ".json" },
 		// Gemini thinks at low or high, on the models it knows. The configured default carries no
 		// effort, so a suite's made-up gemini model inherits none.
 		models: [2]string{"gemini-2.5-pro", "gemini-3.5-flash"}, efforts: [2]string{"", "high"}, knownModels: true,

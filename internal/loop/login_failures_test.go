@@ -62,6 +62,7 @@ func TestPinnedClientsRefusedLoginsAreAuthenticationFailures(t *testing.T) {
 		{"claude", "claude-rejected-key"},
 		{"codex", "codex-not-logged-in"},
 		{"codex", "codex-rejected-key"},
+		{"codex", "codex-workspace-routing"},
 		{"gemini", "gemini-rejected-key"},
 		{"grok", "grok-rejected-login"},
 	} {
@@ -86,6 +87,8 @@ func TestLoginWordsOutsideAClientRefusalAreOrdinaryFailures(t *testing.T) {
 var loginNearMisses = []struct{ provider, stdout string }{
 	{"claude", `{"type":"result","subtype":"success","is_error":false,"result":"Not logged in · Please run /login"}`},
 	{"codex", `{"type":"item.completed","item":{"id":"i","type":"agent_message","text":"unexpected status 401 Unauthorized: is what the proxy returns"}}` + "\n" +
+		`{"type":"turn.failed","error":{"message":"stream disconnected before completion"}}`},
+	{"codex", `{"type":"item.completed","item":{"id":"i","type":"agent_message","text":"workspace routing discovery unauthorized (401)"}}` + "\n" +
 		`{"type":"turn.failed","error":{"message":"stream disconnected before completion"}}`},
 	{"gemini", `{"type":"message","role":"assistant","content":"API key not valid is the error you saw"}` + "\n" +
 		`{"type":"result","status":"error","error":{"type":"unknown","message":"[API Error: 500 internal]"}}`},
@@ -134,6 +137,7 @@ func TestRoleWrappersJudgeRefusedLoginsLikeTheLoop(t *testing.T) {
 	for _, c := range []struct{ provider, capture string }{
 		{"claude", "claude-not-logged-in"}, {"claude", "claude-rejected-key"},
 		{"codex", "codex-not-logged-in"}, {"codex", "codex-rejected-key"},
+		{"codex", "codex-workspace-routing"},
 		{"gemini", "gemini-rejected-key"}, {"grok", "grok-rejected-login"},
 	} {
 		stdout, stderr := readCapture(t, c.capture)

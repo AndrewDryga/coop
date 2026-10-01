@@ -3,7 +3,7 @@ name: provider-live-e2e
 description: Probe installed upstream CLIs with isolated read-only, native-resume, and task-completion workflows
 subsystem: testing
 sources: [Makefile, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/image.go, internal/box/run.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/runtime/process_group_live.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/acpctl/process_live.go, internal/cli/provider_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/loop/live_stream_probe.go, internal/loop/provider_accounts_live_e2e_test.go, internal/loop/provider_accounts_live_credentials_test.go, internal/cli/provider_loop_task_channel_live_test.go, internal/cli/provider_loop_task_observation_live_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go]
-updated: 2026-09-24
+updated: 2026-10-01
 ---
 
 `make provider-live-e2e COOP_LIVE_TARGETS='...'` is the permissive prerequisite probe;
@@ -47,7 +47,10 @@ path/account/token-free `COOP_PROVIDER_LOOP_LIVE_SUMMARY` and remains opt-in bec
 provider starts one headless session. Before any post-provider Git command, the verifier walks the
 entire Git administrative tree without following links; it then requires the exact commit-message
 file, raw reflog append, and an index structurally equal to a canonical index rebuilt from `HEAD`
-apart from cross-mount stat fields, so ignored Git metadata cannot hide provider output.
+apart from cross-mount stat fields, binding the visible changes and administrative state.
+Git object integrity is checked separately; valid loose scratch/checkpoint objects are allowed.
+This compatibility fixture is not a proof of zero retained data in Git objects. Hidden-eval
+material isolation remains a separate staging/admission contract.
 Commit-message diagnostics distinguish a missing file, unsafe/unreadable file, and
 contents differing from `HEAD`, without printing either message. A no-follow bounded
 read precedes the administrative walk; both still precede any Git command. The content
@@ -67,6 +70,10 @@ tool call must be ordered within one probe process. The concurrent probe reader 
 notifications; missing, wrong or repeated calls fail. The profile witness is cooperative
 compatibility proof, not tamper-resistant grading. Each prompt has its own three-minute deadline;
 version probes remain 45 seconds, and the parent permits all three stages plus cleanup.
+Reset the profile witness inside the stage-three container, immediately before executing the
+unchanged client argv. Host-side unlink reproduced failed recreation on a VirtioFS bind mount;
+host truncation produced NUL-prefixed appends. The secure host reader and exact ordered witness
+remain required; a reset failure prevents the client command from starting.
 
 `provider-accounts-live-e2e-all` is separate real-controller proof, in the loop package's tagged
 tests. It chooses the first two compatible configured accounts in name order, prepares both and
@@ -75,6 +82,8 @@ An opaque witness verifies the second copy was untouched by fault injection. The
 seam preserves admission/decoding/task MCP and rejects any third or unexpected work launch before
 calling box.Run. Parent deadline/revocation/cleanup remain independent. Host-owned telemetry must
 show authentication(first), success(second), one completed task and one exact task-bound commit.
+Its Git contract fixes the subject and requires exactly one correct task trailer through the
+production trailer reader; ordinary descriptive bodies and other trailers are allowed.
 Fewer than two configured accounts is explicitly not_configured; bad configured pairs fail.
 This is not a claim of exhaustive account coverage or live success from deterministic tests.
 
@@ -182,6 +191,19 @@ isolation failures and take precedence over a provider result. Stable summaries 
 raw output; reproduce behavior in the deterministic fixture.
 
 ## Changelog
+- 2026-10-01 — real Codex recovery passed all code/queue/history checks but failed an
+  unstated whole-message equality requirement. Verify the requested subject and unique task
+  binding instead, using the production trailer reader. Descriptive-body/coauthor control
+  reproduces red; missing/wrong/duplicate bindings and wrong subjects remain denied.
+- 2026-10-01 — a completed Grok loop retained only Git's empty blob, falsely rejected as
+  repository damage. Verify object integrity without requiring garbage collection; exact
+  commit/ref/reflog/index/admin/task checks remain unchanged. Snapshot scratch reproduces red
+  before the correction; full contract race passes, including corrupt-object/hidden-commit
+  denials. Narrowed this compatibility fixture's retained-data claim; eval isolation unchanged.
+- 2026-09-30 — traced a real Codex MCP witness failure to host/guest reset incoherence. Native
+  JSON proved tool completion; a model-free same-profile Docker A/B reproduced unlink failure.
+  Host truncation still failed the native replay with NUL-prefixed ordered events. Reset in the
+  writer's container, preserving exact client argv and stopping before it on reset failure.
 - 2026-09-24 — reverified four live parent entrypoints and their clean-child runtime settings.
   A real VM qualification built a managed base but skipped every provider as `missing_image`
   before any paid call; parents now resolve the definition tag before admission.

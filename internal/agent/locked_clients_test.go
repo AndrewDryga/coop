@@ -21,7 +21,7 @@ func TestLockedClientsAreCompletePinnedAndFresh(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(closure.Clients) != 8 || len(closure.Files) != 10 || closure.ClientRoot != "/opt/coop/clients" || len(closure.Digest) != 64 || closure.Digest == previous {
+		if len(closure.Clients) != 8 || len(closure.Files) != 13 || closure.ClientRoot != "/opt/coop/clients" || len(closure.Digest) != 64 || closure.Digest == previous {
 			t.Fatal("incomplete or platform-ambiguous closure", closure.Digest)
 		}
 		previous = closure.Digest
@@ -252,7 +252,7 @@ func TestNetworkBundleAndLockedClientSupportAgree(t *testing.T) {
 
 func TestQualifiedClientsAreTheSameOnEveryPlatform(t *testing.T) {
 	want := QualifiedClients()
-	if len(want) != 6 || !slices.Contains(want, "@anthropic-ai/claude-code 2.1.260") || !slices.Contains(want, "grok 1.0.25") {
+	if len(want) != 6 || !slices.Contains(want, "@anthropic-ai/claude-code 2.1.285") || !slices.Contains(want, "grok 1.0.44") {
 		t.Fatalf("qualified clients = %v", want)
 	}
 	for _, arch := range []string{"amd64", "arm64"} {

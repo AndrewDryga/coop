@@ -66,13 +66,20 @@ func TestLoginOnlyMountsSelectedCredentialAndManagedSettings(t *testing.T) {
 				t.Fatal("login generated project instructions")
 			}
 			if name == "gemini" {
-				if !strings.Contains(string(data), "GEMINI_CLI_SYSTEM_SETTINGS_PATH=/home/node/.coop-gemini-login.json") ||
+				if !strings.Contains(string(data), "GEMINI_CLI_SYSTEM_SETTINGS_PATH=/etc/gemini-cli/login.json") ||
 					!strings.Contains(string(data), "NO_BROWSER=true") || !strings.Contains(string(data), "gemini --extensions none") {
 					t.Fatalf("Gemini login lacks native isolated settings: %s", data)
 				}
 				var settings map[string]any
-				if len(rendered) != 1 || json.Unmarshal([]byte(rendered[0]), &settings) != nil {
-					t.Fatalf("login must render exactly its system settings: %d files", len(rendered))
+				if len(rendered) != 0 {
+					t.Fatalf("login must use image-owned system settings, not user-owned mounts: %d files", len(rendered))
+				}
+				for _, file := range ag.UpdateControls().Files {
+					if file.Path == "/etc/gemini-cli/login.json" {
+						if err := json.Unmarshal([]byte(file.Content), &settings); err != nil {
+							t.Fatal(err)
+						}
+					}
 				}
 				mcp, ok := settings["mcp"].(map[string]any)
 				allowed, hasAllowed := mcp["allowed"].([]any)
@@ -91,7 +98,7 @@ func TestLoginManagedConfigFailureStopsBeforeRuntime(t *testing.T) {
 	artifacts := defaultCompositionArtifactOps()
 	artifacts.writeFile = func(string, string) (string, error) { return "", sentinel }
 	code, err := runWithCompositionArtifacts(cfg, recorderRuntime(t, recorder), RunSpec{
-		Repo: t.TempDir(), Agent: "gemini", Cmd: []string{"gemini"}, Homes: true, Login: true, Quiet: true, Batch: true,
+		Repo: t.TempDir(), Agent: "codex", Cmd: []string{"codex"}, Homes: true, Login: true, Quiet: true, Batch: true,
 	}, artifacts)
 	if code != -1 || !errors.Is(err, sentinel) {
 		t.Fatalf("login = %d, %v", code, err)

@@ -198,15 +198,14 @@ func TestCredentialBrokerRoutesAdmitWhatThePinnedClientsSend(t *testing.T) {
 		version  string
 		requests []string
 	}
-	gemini := capture{"0.59.0", []string{"POST /v1beta/models/gemini-3.1-flash-lite:generateContent",
-		"POST /v1beta/models/gemini-3.1-pro-preview:streamGenerateContent?alt=sse"}}
+	gemini := capture{"0.62.0", []string{"POST /v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse"}}
 	captured := map[string]map[egress.Client]capture{
-		// claude-agent-acp runs its SDK's own claude (2.1.257), which sends the same line.
-		"claude": {egress.ClientCLI: {"2.1.260", []string{"POST /v1/messages?beta=true"}},
-			egress.ClientACP: {"0.75.1", []string{"POST /v1/messages?beta=true"}}},
+		// claude-agent-acp runs its SDK's own claude (2.1.284), which sends the same line.
+		"claude": {egress.ClientCLI: {"2.1.285", []string{"POST /v1/messages?beta=true"}},
+			egress.ClientACP: {"0.84.0", []string{"POST /v1/messages?beta=true"}}},
 		// codex-acp drives the same native codex.
-		"codex": {egress.ClientCLI: {"0.153.4", []string{"POST /v1/responses"}},
-			egress.ClientACP: {"1.10.0", []string{"POST /v1/responses"}}},
+		"codex": {egress.ClientCLI: {"0.159.2", []string{"POST /v1/responses"}},
+			egress.ClientACP: {"2.0.1", []string{"POST /v1/responses"}}},
 		"gemini": {egress.ClientCLI: gemini, egress.ClientACP: gemini},
 	}
 	for _, name := range agents.Names() {

@@ -644,6 +644,7 @@ func TestAssembleArgsNormalModeGolden(t *testing.T) {
 		"-v", "/tmp/g:/home/node/.gemini/settings.json:ro",
 		"--env-file", filepath.Join(dir, "env"),
 		"-e", "X=1",
+		"-e", "COOP_CONFIG_PUBLICATION=",
 		"--label", "coop=box",
 		"--label", "coop.host=" + supervisorLabelValue(workspaceScope("/repo"), os.Getpid()),
 		"--label", "coop.run=run-1",

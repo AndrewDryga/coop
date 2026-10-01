@@ -52,7 +52,7 @@ func BaseDockerfile(arch string) (string, error) {
 type baseImageParts struct{ files, install, browserDeps, loginPath, provision, pathEnv, scripts string }
 
 func renderBaseDockerfile(parts baseImageParts) string {
-	return fmt.Sprintf(baseDockerfileTemplate, parts.files, parts.install, parts.browserDeps, parts.loginPath, parts.provision, parts.pathEnv, parts.scripts)
+	return fmt.Sprintf(baseDockerfileTemplate, parts.files, parts.install, parts.browserDeps, parts.loginPath, configPublicationShell+parts.provision, parts.pathEnv, parts.scripts)
 }
 
 // Base-image references for the shared box. coop build pins the FROM image to a
@@ -60,22 +60,22 @@ func renderBaseDockerfile(parts baseImageParts) string {
 // fetches the newest. Bump pinnedNodeImage when you intentionally move the stable
 // base (e.g. after a `coop update` proves a newer node works).
 const (
-	pinnedNodeImage   = "node:24-slim@sha256:cb4e8f7c443347358b7875e717c29e27bf9befc8f5a26cf18af3c3dec80e58c5" // node 24 (slim)
+	pinnedNodeImage   = "node:24-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6" // node 24 (slim)
 	floatingNodeImage = "node:24-slim"
-	pinnedGoImage     = "golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36"
-	floatingGoImage   = "golang:1.26.6-bookworm"
+	pinnedGoImage     = "golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195"
+	floatingGoImage   = "golang:1.27.1-bookworm"
 )
 
 // baseDockerfileTemplate is shared by the base and the filtered client image: OS tools, the
 // qualified clients and process supervision. Its slots carry the client installation, each image's
 // PATH and the base's optional startup provisioning.
 const baseDockerfileTemplate = `ARG NODE_IMAGE=node:24-slim
-ARG GO_IMAGE=golang:1.26.6-bookworm
+ARG GO_IMAGE=golang:1.27.1-bookworm
 
 FROM ${GO_IMAGE} AS go-tools-builder
-ARG STATICCHECK_VERSION=v0.7.0
+ARG STATICCHECK_VERSION=v0.8.1
 RUN GOBIN=/out CGO_ENABLED=0 go install honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}
-ARG GOVULNCHECK_VERSION=v1.7.0
+ARG GOVULNCHECK_VERSION=v1.8.0
 RUN GOBIN=/out CGO_ENABLED=0 go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
 ARG JV_VERSION=v0.7.0
 RUN GOBIN=/out CGO_ENABLED=0 go install github.com/santhosh-tekuri/jsonschema/cmd/jv@${JV_VERSION}
@@ -86,7 +86,7 @@ COPY --from=go-tools-builder /out/staticcheck /usr/local/bin/staticcheck
 COPY --from=go-tools-builder /out/govulncheck /usr/local/bin/govulncheck
 COPY --from=go-tools-builder /out/jv /usr/local/bin/jv
 
-ARG ASDF_VERSION=0.19.0
+ARG ASDF_VERSION=0.20.2
 %s
 
 # Agent CLIs + ACP adapters, plus asdf and the build deps it needs to install or

@@ -17,7 +17,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
-const reviewWritesTestImage = "alpine:3.21"
+const reviewWritesTestImage = "alpine:3.24.2"
 
 func TestReviewWritesDockerRuntime(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {

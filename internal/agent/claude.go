@@ -142,7 +142,7 @@ func claudeUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, e
 	var raw claudeQuotaResponse
 	err = readUsageQuota(ctx, http.MethodGet, "https://api.anthropic.com/api/oauth/usage", http.Header{
 		"Authorization": {"Bearer " + source.AccessToken}, "Anthropic-Beta": {"oauth-2025-04-20"},
-		"Content-Type": {"application/json"}, "User-Agent": {"claude-cli/2.1.260 (external, cli)"},
+		"Content-Type": {"application/json"}, "User-Agent": {"claude-cli/2.1.285 (external, cli)"},
 	}, nil, &raw)
 	if err != nil {
 		return UsageQuota{}, err
@@ -289,8 +289,8 @@ func (claudeAgent) LockedClients(platform ClientPlatform) []LockedClient {
 		cpu = "x64"
 	}
 	return []LockedClient{
-		{Client: egress.ClientCLI, Package: "@anthropic-ai/claude-code", Version: "2.1.260", Binary: "claude", Exec: []string{lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude", Version: "2.1.260"}}},
-		{Client: egress.ClientACP, Package: "@agentclientprotocol/claude-agent-acp", Version: "0.75.1", Binary: "claude-agent-acp", Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"}, UnsetEnv: []string{"CLAUDE_CODE_EXECUTABLE"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-agent-sdk-linux-" + cpu + "/claude", Version: "0.3.257"}}},
+		{Client: egress.ClientCLI, Package: "@anthropic-ai/claude-code", Version: "2.1.285", Binary: "claude", Exec: []string{lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude", Version: "2.1.285"}}},
+		{Client: egress.ClientACP, Package: "@agentclientprotocol/claude-agent-acp", Version: "0.84.0", Binary: "claude-agent-acp", Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"}, UnsetEnv: []string{"CLAUDE_CODE_EXECUTABLE"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-agent-sdk-linux-" + cpu + "/claude", Version: "0.3.284"}}},
 	}
 }
 
@@ -455,7 +455,7 @@ func (claudeAgent) RestrictedCommand(mode ExecutionMode, cmd []string) ([]string
 // `strictMcpConfig` is `--strict-mcp-config`, and an empty `tools` array is `--tools ""`. The
 // bare statement rides `_meta.systemPrompt.append`, which the adapter folds into the SDK's
 // claude_code preset and the SDK sends as `appendSystemPrompt` on the CLI's initialize request.
-// Read out of the adapter's dist (0.76.0, SDK 0.3.257) and proved against a recording claude
+// Captured from the adapter's dist (0.76.0, SDK 0.3.257) against a recording claude
 // executable; the task artifacts hold both argv transcripts.
 func (claudeAgent) ACPRestrictedSessionMeta(mode ExecutionMode) (map[string]any, error) {
 	switch mode {
@@ -474,7 +474,7 @@ func (claudeAgent) ACPRestrictedSessionMeta(mode ExecutionMode) (map[string]any,
 	return meta, nil
 }
 
-// UpdateControls: DISABLE_UPDATES is the first switch the pinned 2.1.260 updater checks, and a
+// UpdateControls: DISABLE_UPDATES is the first switch the pinned 2.1.285 updater checks, and a
 // manual `claude update` refuses under it too — read out of the binary and its ACP adapter's SDK.
 func (claudeAgent) UpdateControls() UpdateControls {
 	return UpdateControls{Env: []string{"DISABLE_UPDATES=1"}}
@@ -988,6 +988,16 @@ func (a claudeAgent) EnsureDefaults(cfg *config.Config, workdir string) error {
 	return nil
 }
 
+func (a claudeAgent) DefaultsPublication(cfg *config.Config) ([]ConfigPublication, error) {
+	// settings.json may deliberately be overlaid by a project fallback; the
+	// mutable native account/trust document is always the selected profile's.
+	publication, err := snapshotJSONDefaults(filepath.Join(cfg.AgentDir(a.Name()), ".claude.json"), cfg.HomeInBox+"/."+a.Name()+"/.claude.json")
+	if err != nil {
+		return nil, err
+	}
+	return []ConfigPublication{publication}, nil
+}
+
 // ensureSandboxOff pins Claude Code's bash OS-sandbox off in settings.json, filling
 // only the missing keys so a user's explicit choice survives. Reports a change.
 func ensureSandboxOff(m map[string]any) bool {
@@ -1056,7 +1066,7 @@ func (claudeAgent) ACPSessionSettings(target Target) []ACPSessionSetting {
 // release-notes fetch, feedback and availability checks (and with them feature-flag fetching);
 // the update controls also refuse a manual `claude update`, because Coop qualifies the exact
 // installed client and a self-update would run one nobody qualified. Read out of the locked
-// 2.1.260 binary and code.claude.com/docs/en/env-vars: inference, the OAuth refresh and the
+// 2.1.285 binary and code.claude.com/docs/en/env-vars: inference, the OAuth refresh and the
 // claude.ai connectors — whose eligibility never consults the traffic mode — keep working.
 func (a claudeAgent) BoxEnv(homeInBox string) []string {
 	return append([]string{

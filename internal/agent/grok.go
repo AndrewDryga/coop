@@ -153,7 +153,7 @@ func grokUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, err
 	var raw grokQuotaResponse
 	err := readUsageQuota(ctx, http.MethodGet, "https://cli-chat-proxy.grok.com/v1/billing?format=credits", http.Header{
 		"Authorization": {"Bearer " + credential.Key}, "X-Xai-Token-Auth": {"xai-grok-cli"},
-		"X-Userid": {credential.UserID}, "X-Grok-Client-Version": {"1.0.25"}, "X-Grok-Client-Mode": {"headless"},
+		"X-Userid": {credential.UserID}, "X-Grok-Client-Version": {"1.0.44"}, "X-Grok-Client-Mode": {"headless"},
 	}, nil, &raw)
 	if err != nil {
 		return UsageQuota{}, err
@@ -223,7 +223,7 @@ func init() { register(grokAgent{}) }
 
 func (grokAgent) Name() string { return "grok" }
 
-// SkillsCapable: the pinned 1.0.25 client discovers skills natively from ~/.grok/skills/<name>/
+// SkillsCapable: the pinned 1.0.44 client discovers skills natively from ~/.grok/skills/<name>/
 // SKILL.md — the directory Coop's shared projection already targets (~/.<agent>/skills) — and lists
 // them in `grok inspect`. Project-scope .grok/skills outranks user scope in its own precedence, so a
 // repository's own skills still win over the projected copy.
@@ -231,7 +231,7 @@ func (grokAgent) SkillsCapable() bool { return true }
 func (grokAgent) DisplayName() string { return "Grok" }
 func (grokAgent) Vendor() string      { return "xAI" }
 
-// Stream: grok's streaming-json carries a tool lifecycle with ids. Probed against the pinned 1.0.25
+// Stream: grok's streaming-json carries a tool lifecycle with ids. Captured against the 1.0.25
 // client (the v0.2.101 CLI emitted only `thought`, `text` and `end`): every tool opens with a
 // `tool_call` under a `toolCallId` and ends at ACP's completed, failed or cancelled — on a
 // `tool_call_update`, or on the `tool_call` itself — as the binary's own format notes say the
@@ -404,7 +404,7 @@ func (a grokAgent) ACPRestrictedSessionMeta(mode ExecutionMode) (map[string]any,
 	return unqualifiedRestrictedACPSession(a, mode)
 }
 
-// UpdateControls: the pinned 1.0.25 checks for a CLI update on launch unless
+// UpdateControls: the pinned 1.0.44 checks for a CLI update on launch unless
 // GROK_DISABLE_AUTOUPDATER is set (its own documentation, embedded in the binary).
 func (grokAgent) UpdateControls() UpdateControls {
 	return UpdateControls{Env: []string{"GROK_DISABLE_AUTOUPDATER=1"}}
@@ -643,9 +643,10 @@ func (grokAgent) ACPMCPServers(string, func(string) (string, bool)) ([]map[strin
 // EnsureDefaults is a no-op: grok launches in the mounted repo (a project dir) with its
 // auth.json mounted, so it goes straight to work without a first-run prompt to pre-answer.
 // (Any config.toml keys a fresh box turns out to need are a box-verified finalization item.)
-func (grokAgent) EnsureDefaults(*config.Config, string) error { return nil }
+func (grokAgent) EnsureDefaults(*config.Config, string) error                     { return nil }
+func (grokAgent) DefaultsPublication(*config.Config) ([]ConfigPublication, error) { return nil, nil }
 
-// ACPRateLimitSignals: the pinned 1.0.25 ACP adapter, replayed against each quota status, reports a
+// ACPRateLimitSignals: the 1.0.25 ACP adapter, replayed against each quota status, reports a
 // 402 — its "run out of credits" — as a generic -32603 "Internal error" whose only mark is
 // data.http_status 402, set from the HTTP response whatever the server's body says. Its 429 needs no
 // signal: the error's own message is "Rate limited", which the shared prose check already reads.
@@ -659,7 +660,7 @@ func (grokAgent) ACPRateLimitSignals() []ACPSignal {
 func (grokAgent) ACPSessionSettings(Target) []ACPSessionSetting { return nil }
 
 // BoxEnv: grok reads its config + auth from ~/.grok, where coop mounts its profile. The one
-// variable is the client's telemetry switch. Left on, the pinned 1.0.25 client looks up
+// variable is the client's telemetry switch. Left on, the pinned 1.0.44 client looks up
 // api.mixpanel.com and grok.com dozens of times per prompt, and api.x.ai too — 128 blocked lookups
 // in one filtered run, a burst alert every time, and detail the record had to drop — and with it
 // off it looks up none of them and answers the same.
@@ -738,15 +739,15 @@ func (grokAgent) LockedClients(platform ClientPlatform) []LockedClient {
 	if !platform.valid() {
 		return nil
 	}
-	arch, digest := "aarch64", "c401805423a934de6ae1544da5ab210ad406fd446328e6b06557f1a3a003721c"
+	arch, digest := "aarch64", "3c6b81c173f42cb6e889b3f812fe533db6612e5e2c0fe72eaca8bf26ce85c4d1"
 	if platform.Architecture == "amd64" {
-		arch, digest = "x86_64", "54bfe73e542b2207a21a5888f58ceb2e4fb22bccc66d53d19b54bc8289cc2476"
+		arch, digest = "x86_64", "bcf854ae0efcb59c6e8cb344651df32f845c9bda284639a153cd5732c972ae05"
 	}
 	destination := lockedClientRoot + "/native/grok"
-	client := LockedClient{Version: "1.0.25", Binary: "grok", Exec: []string{destination},
-		RequiredExecutables: []LockedExecutable{{Path: destination, Version: "1.0.25"}},
+	client := LockedClient{Version: "1.0.44", Binary: "grok", Exec: []string{destination},
+		RequiredExecutables: []LockedExecutable{{Path: destination, Version: "1.0.44"}},
 		NativeArtifact: &LockedNativeArtifact{
-			URL:    "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.25-linux-" + arch + ".gz",
+			URL:    "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.44-linux-" + arch + ".gz",
 			SHA256: digest, Destination: destination,
 		}}
 	cli, acp := client, client
@@ -757,7 +758,7 @@ func (grokAgent) LockedClients(platform ClientPlatform) []LockedClient {
 func (a grokAgent) NetworkBundle(input NetworkBundleInput) (egress.Bundle, error) {
 	return directNetworkBundle(a.Name(), "access-file", input,
 		[]string{"auth.x.ai", "cli-chat-proxy.grok.com", "code.grok.com"},
-		[]string{"https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.25-linux-aarch64.gz"})
+		[]string{"https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.44-linux-aarch64.gz"})
 }
 
 // NetworkAuthSelection asks for a long-lived access token only where nothing can renew one. A box
@@ -950,7 +951,7 @@ type grokRefreshResponse struct {
 	ExpiresIn    int64  `json:"expires_in"`
 }
 
-// requestGrokCredentialRefresh sends the exact form the pinned 1.0.25 client sends, captured
+// requestGrokCredentialRefresh sends the form captured from the 1.0.25 client
 // against a logging issuer: grant_type, refresh_token, client_id, principal_type and principal_id.
 func requestGrokCredentialRefresh(credential grokSourceCredential, deadline time.Time) (grokRefreshResponse, error) {
 	endpoint := strings.TrimSpace(os.Getenv("GROK_REFRESH_TOKEN_URL_OVERRIDE"))

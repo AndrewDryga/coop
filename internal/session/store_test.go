@@ -219,7 +219,7 @@ func TestTurnRuntimeBindingSurvivesCompletionUntilExactCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	turn, err := store.SubmitTurn(ctx, "runtime-turn", SubmitTurnRequest{
+	_, err = store.SubmitTurn(ctx, "runtime-turn", SubmitTurnRequest{
 		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "answer",
 	})
 	if err != nil {
@@ -1792,7 +1792,7 @@ func TestCompletedTurnsPersistProviderCostAsCumulativeDeltas(t *testing.T) {
 	}
 	complete := func(key string, cumulative float64) Turn {
 		t.Helper()
-		turn, err := store.SubmitTurn(ctx, key, SubmitTurnRequest{
+		_, err := store.SubmitTurn(ctx, key, SubmitTurnRequest{
 			SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: key,
 		})
 		if err != nil {
