@@ -99,7 +99,7 @@ func TestUsageCommandOutsideRepositoryAndExactSelector(t *testing.T) {
 			t.Errorf("usage=(%d,%v)", code, err)
 		}
 	})
-	for _, wanted := range []string{"Claude", "work", "API value, 30d", "≈$", "sign-in required", "coop login claude@work", "not billing"} {
+	for _, wanted := range []string{"Claude", "work", "30-day API estimate", "≈$", "sign-in required", "coop login claude@work"} {
 		if !strings.Contains(out, wanted) {
 			t.Fatalf("missing %q in %s", wanted, out)
 		}
@@ -140,7 +140,7 @@ func TestUsageDiscoversPrivateRootsAndKeepsAmbiguityUnknown(t *testing.T) {
 		t.Fatalf("ambiguous history fabricated zero or double charged: %+v", rows)
 	}
 	var out bytes.Buffer
-	renderUsage(&out, ui.Palette{}, 100, time.Now(), []string{"codex"}, rows[:1], func(string) string { return "a" })
+	renderUsage(&out, ui.Palette{}, 100, time.Now(), []string{"codex"}, rows[:1], true)
 	if strings.Contains(out.String(), "≈$0") || !strings.Contains(out.String(), "attribution is ambiguous") {
 		t.Fatalf("ambiguous selected credential: %s", out.String())
 	}
@@ -154,9 +154,9 @@ func TestUsageRenderingIndependentFailuresAndReset(t *testing.T) {
 		{provider: "codex", account: "personal", quotaErr: agents.ErrUsageSignIn},
 	}
 	var wide, narrow bytes.Buffer
-	renderUsage(&wide, ui.Palette{}, 120, now, []string{"codex"}, rows, func(string) string { return "work" })
-	renderUsage(&narrow, ui.Palette{}, 30, now, []string{"codex"}, rows, func(string) string { return "work" })
-	for _, wanted := range []string{"work · Pro · default", "≈$12.35 · partial history · 2 unpriced events", "100% used", "resets in 38m", "coop login codex@personal", "no usable history"} {
+	renderUsage(&wide, ui.Palette{}, 120, now, []string{"codex"}, rows, true)
+	renderUsage(&narrow, ui.Palette{}, 30, now, []string{"codex"}, rows, true)
+	for _, wanted := range []string{"work · Pro", "≈$12.35 · partial history · 2 unpriced events", "100% used", "resets in 38m", "coop login codex@personal", "no usable history"} {
 		if !strings.Contains(wide.String(), wanted) {
 			t.Fatalf("missing %q: %s", wanted, wide.String())
 		}
@@ -171,5 +171,68 @@ func TestUsageRenderingIndependentFailuresAndReset(t *testing.T) {
 	}
 	if usageResetLabel(time.Time{}, now) != "reset unknown" {
 		t.Fatal("missing reset invented")
+	}
+}
+
+func TestUsageSummaryKeepsBarsAndOnlyUsefulFacts(t *testing.T) {
+	now := time.Date(2026, time.October, 1, 12, 0, 0, 0, time.Local)
+	zero, full := 0.0, 100.0
+	blocked := false
+	reset := now.Add(7 * 24 * time.Hour)
+	rows := []usageCredential{
+		{provider: "claude", account: "personal", unpricedTurns: 3,
+			value: agents.UsageValue{Available: true, Priced: 1, USD: 406.48, Partial: true, Approximate: true, Unpriced: 22},
+			quota: agents.UsageQuota{Plan: "max", Buckets: []agents.UsageBucket{
+				{Name: "5-hour", Used: &zero},
+				{Name: "Weekly", Used: &zero, Reset: reset},
+				{Name: "Fable", Used: &zero, Reset: reset},
+				{Name: "Extra usage", Note: "disabled"},
+			}}},
+		{provider: "codex", account: "emisar",
+			quota: agents.UsageQuota{Buckets: []agents.UsageBucket{
+				{Name: "Weekly", Used: &full, Available: &blocked},
+				{Name: "gpt-reserve · Weekly", Used: &zero, Reset: reset},
+				{Name: "Credits", Remaining: "60412.0160080000"},
+			}}},
+		{provider: "codex", account: "Unattributed ACP", shared: true,
+			value: agents.UsageValue{Available: true, Priced: 1, USD: 0.82, Approximate: true}},
+	}
+	var out bytes.Buffer
+	renderUsage(&out, ui.Palette{}, 120, now, []string{"claude", "codex"}, rows, false)
+	text := out.String()
+	for _, wanted := range []string{"  personal\n", "░░░░░░░░░░    0% used", "██████████  100% used · blocked", "Fable", "gpt-reserve · Weekly", "60412.02 remaining", "30-day API estimate  ≈$406.48", "Unattributed ACP", "≈$0.82"} {
+		if !strings.Contains(text, wanted) {
+			t.Fatalf("missing %q:\n%s", wanted, text)
+		}
+	}
+	for _, unwanted := range []string{" · default", " · max", "partial history", "approximate token tariff", "unpriced events", "retained turns", "Extra usage", "reset unknown", "usage unknown", "not billing", "Based on retained", "Reset times are local"} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("summary contains %q:\n%s", unwanted, text)
+		}
+	}
+	if strings.Index(text, "Weekly") > strings.Index(text, "30-day API estimate") {
+		t.Fatalf("estimate precedes limits:\n%s", text)
+	}
+	if strings.Count(text, "resets Oct 8, 12:00") != 2 {
+		t.Fatalf("inactive Fable repeats the weekly reset:\n%s", text)
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, "gpt-reserve") && strings.Contains(line, "blocked") {
+			t.Fatalf("one exhausted bucket blocked the reserve: %s", line)
+		}
+	}
+	t.Log("\n" + text)
+
+	out.Reset()
+	renderUsage(&out, ui.Palette{}, 120, now, []string{"claude"}, rows[:1], true)
+	for _, wanted := range []string{"partial history", "approximate token tariff", "22 unpriced events", "3 retained turns", "Extra usage", "disabled"} {
+		if !strings.Contains(out.String(), wanted) {
+			t.Fatalf("account detail missing %q:\n%s", wanted, out.String())
+		}
+	}
+	for _, unwanted := range []string{" · default", "not billing", "Based on retained", "Reset times are local"} {
+		if strings.Contains(out.String(), unwanted) {
+			t.Fatalf("account detail contains %q:\n%s", unwanted, out.String())
+		}
 	}
 }

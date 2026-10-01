@@ -3,7 +3,7 @@ name: usage-recorded-token-value
 description: Usage reports native quota and recorded token value independently; historical account ambiguity and missing tariffs stay explicit
 subsystem: usage
 sources: [internal/agent/usage.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/usage.go, internal/box/run.go, internal/cli/usage.go, internal/session/usage.go]
-updated: 2026-10-01
+updated: 2026-10-02
 ---
 
 `coop usage [<provider>[@credential]]` is an inspection, not a model run or a billing report.
@@ -17,9 +17,13 @@ parent/child aggregates have different identity and token inclusion semantics. G
 is included only when its parent accounting is demonstrably absent; all Grok history remains
 partial. Unknown model, cache TTL or long-context tariff inputs stay unpriced.
 
-The CLI reads ordinary credential roots and default session-private ACP roots. Shared editor
-ACP roots have no historical account binding; copies shared by two named credentials become
-unattributed instead of being charged to today's default or displayed as account zero.
+Provider quota is account-wide; the dollar estimate is not. The CLI reads only Coop-managed
+credential roots and default session-private ACP roots, not independent native host homes,
+web/mobile usage or other machines. Native runs that write into those same roots can be included.
+The compact view leads with quota bars, then the 30-day API estimate. Exact-account selection
+adds plan, coverage, pricing and retained-record details without a blanket disclaimer footer.
+Shared editor ACP roots have no historical account binding; copies shared by two named credentials
+become unattributed instead of being charged to today's default or displayed as account zero.
 `ReadUsageSnapshot` opens existing SQLite read-only, including live WAL, without `Store.Open`,
 schema migration or checkpoint. Creation/rotation events provide historical targets; rotation
 during a turn and implicit defaults remain ambiguous. Old aggregate usage is unpriced coverage,
@@ -35,6 +39,9 @@ unavailable results, not temporary refresh-token copies. API-key/Vertex auth has
 subscription quota but can still have valued native history.
 
 ## Changelog
+- 2026-10-02 — verified the read scope against `AgentProfileDir` and `usageCredentials`; documented
+  the approved quota-first summary and existing exact-account detail view. Collector, pricing,
+  attribution and exit-status semantics are unchanged; focused CLI fixtures cover both views.
 - 2026-10-01 — created after verifying the adapters, account dedup, read-only WAL snapshot and
   helper/run lifecycle. Focused fixtures cover pricing boundaries, exact credential selection,
   failed cleanup, ambiguous attribution, orphan child accounting and asynchronous persistence.

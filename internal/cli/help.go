@@ -123,7 +123,7 @@ func renderMenu(p ui.Palette, cfg *config.Config, ref bool) string {
 	row("coop login <agent>", "sign in to an agent")
 	row("coop credentials [<agent>]", "show your signed in accounts")
 	row("coop models [<agent>]", "show available models")
-	row("coop usage [<provider>]", "show limits and recorded 30-day API token value")
+	row("coop usage [<provider>]", "show limits and a 30-day API estimate")
 	row("coop presets [<name>]", "show your presets")
 
 	group("TASKS", "each task is a folder in .agent/tasks/")
@@ -599,7 +599,7 @@ ACCOUNTS
   Show accounts: coop credentials
   Start an agent: coop claude`,
 
-	"usage": `coop usage — show limits and recorded 30-day API token value
+	"usage": `coop usage — show limits and a 30-day API estimate
 
 Usage: coop usage [<provider>[@credential]]
 
@@ -608,13 +608,13 @@ EXAMPLES
   coop usage codex
   coop usage codex@work
 
-  Quotas are read independently for each selected credential. Reset times are local.
-  API value uses retained native CLI/Coop history and current standard token list prices,
-  including subscription activity. It is not billing, an invoice, or money saved.
-  Missing history, unsupported prices and partial records are labeled explicitly.
-  Shared editor transcripts have no historical credential binding and appear separately.
-  Retained Coop turn aggregates are shown as unpriced, never added to native totals.
-  Web/mobile use, other machines and non-token charges are outside this estimate.
+  Limits are provider-reported and account-wide. Reset times are local.
+  The 30-day API estimate prices recorded tokens at standard API rates,
+  including subscription activity. It reads local Coop account and editor history,
+  not the provider's billing records or usage on other devices.
+  Select provider@credential for history coverage and pricing details.
+  Shared editor history without an account binding is listed separately.
+  Retained Coop turn aggregates are unpriced, never added to native totals.
 
   Gemini's native OAuth quota helper needs Docker and the current Coop base image.
   It uses the original plain-file login; busy credentials can be retried after the active run.

@@ -21,7 +21,7 @@ ACCOUNTS, MODELS & PRESETS — choose the accounts and models your agents use
   coop login <agent>                sign in to an agent
   coop credentials [<agent>]        show your signed in accounts
   coop models [<agent>]             show available models
-  coop usage [<provider>]           show limits and recorded 30-day API token value
+  coop usage [<provider>]           show limits and a 30-day API estimate
   coop presets [<name>]             show your presets
 
 TASKS — each task is a folder in .agent/tasks/

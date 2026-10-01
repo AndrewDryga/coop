@@ -80,6 +80,7 @@ updated: <YYYY-MM-DD>                # last edit
 ```
 
 ## Index
+- [usage-leads-with-limits](usage-leads-with-limits.md) — quota bars first, estimate last; account details hold coverage facts, no blanket footers
 
 - [replacements-remove-old-paths](replacements-remove-old-paths.md) — simplification removes obsolete configuration, adapters and callers in the same change
 

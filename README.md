@@ -188,7 +188,7 @@ spelled out here (there's room to render them).
 |---|---|
 | `coop login <agent>[@<name>]` | [authenticate](#authentication) an agent (token persists in the config dir); `@<name>` adds a second account |
 | `coop credentials [agent [credential]]` | list stored credentials + which are signed in; a path grammar edits one (e.g. `coop credentials claude work default` · `… rm`) |
-| `coop usage [provider[@credential]]` | current allowance/reset times and rolling 30-day API-equivalent token value from retained CLI/Coop history; subscription use is included, but the estimate is not billing |
+| `coop usage [provider[@credential]]` | account-wide limits with progress bars and a 30-day API estimate from local history; select one account for history and pricing details |
 | `coop models [agent]` | the model menu per agent ([picking models](#picking-models)) — set one in the target (`<agent>:<model>`) or a [preset](#presets-the-whole-arrangement-in-one-yaml-file) |
 | `coop presets [name]` | list [orchestration presets](#presets-the-whole-arrangement-in-one-yaml-file) (lead + roles) or show one; `coop presets init` scaffolds the frontier recipe |
 
@@ -671,8 +671,8 @@ instead of parking on it:
 coop login claude@work        # a second account…
 coop login claude@personal    # …and a third
 coop credentials              # list them and which are signed in
-coop usage                    # limits and recorded 30-day API token value
-coop usage codex@work         # inspect one credential without switching the default
+coop usage                    # limits and a 30-day API estimate
+coop usage codex@work         # include history and pricing details for one account
 ```
 
 When `coop loop` (or a `coop fork --loop`) hits a rate/usage limit it switches to the

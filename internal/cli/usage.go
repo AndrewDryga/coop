@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -159,17 +160,18 @@ func (a *app) cmdUsage(args []string) (int, error) {
 	if target.Account() != "" {
 		rows = slices.DeleteFunc(rows, func(row usageCredential) bool { return row.shared || row.account != target.Account() })
 	}
-	renderUsage(os.Stdout, ui.For(os.Stdout), ui.TermWidth(os.Stdout), time.Now(), names, rows, a.cfg.DefaultProfileOf)
-	if len(retained.Turns) > 0 {
+	details := target.Account() != ""
+	renderUsage(os.Stdout, ui.For(os.Stdout), ui.TermWidth(os.Stdout), time.Now(), names, rows, details)
+	if details && len(retained.Turns) > 0 {
 		fmt.Println("Retained Coop turn aggregates are unpriced and are not added to native history.")
 		if unattributed > 0 {
 			fmt.Printf("%d installation-wide retained turns have no exact historical credential binding.\n", unattributed)
 		}
 	}
-	if retained.Truncated {
+	if details && retained.Truncated {
 		fmt.Println("Retained Coop turn scan is partial (read limit reached).")
 	}
-	if retainedErr != nil && !errors.Is(retainedErr, os.ErrNotExist) {
+	if details && retainedErr != nil && !errors.Is(retainedErr, os.ErrNotExist) {
 		fmt.Println("Retained Coop turn coverage unavailable.")
 	}
 	// Inspection succeeds when it can show any usable quota or native history. Individual errors
@@ -316,7 +318,7 @@ func deduplicateUsageCredentials(rows []usageCredential) []usageCredential {
 	return rows
 }
 
-func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []string, rows []usageCredential, defaultOf func(string) string) {
+func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []string, rows []usageCredential, details bool) {
 	line := func(prefix, value string) {
 		if width <= 0 {
 			fmt.Fprintln(w, prefix+value)
@@ -335,44 +337,15 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 			}
 			count++
 			header := agents.DisplayTarget(row.account)
-			if row.quota.Plan != "" {
+			if details && row.quota.Plan != "" {
 				header += " · " + agents.DisplayTarget(row.quota.Plan)
 			}
-			if !row.shared && row.account == defaultOf(name) {
-				header += " · default"
-			}
 			line("  ", header)
-			value := "unavailable · no usable history"
-			if row.unpricedTurns > 0 {
-				value = "unpriced · retained Coop turn aggregates only"
-			}
-			if row.ambiguous {
-				value = "unavailable · historical credential attribution is ambiguous"
-			}
-			if row.value.Available {
-				if row.value.Priced == 0 && row.value.Unpriced > 0 {
-					value = "unpriced"
-				} else if row.value.Priced == 0 && row.value.Partial {
-					value = "unavailable · no usable usage in the partial 30-day history"
-				} else {
-					value = fmt.Sprintf("≈$%.2f", row.value.USD)
-				}
-				if row.value.Partial {
-					value += " · partial history"
-				}
-				if row.value.Approximate {
-					value += " · approximate token tariff"
-				}
-				if row.value.Unpriced > 0 {
-					value += fmt.Sprintf(" · %d unpriced events", row.value.Unpriced)
-				}
-			}
-			line("    API value, 30d   ", value)
-			if row.unpricedTurns > 0 {
-				line("    Coop records    ", fmt.Sprintf("%d retained turns · unpriced aggregates, not added", row.unpricedTurns))
-			}
 			if row.shared {
-				line("    Credential      ", "unknown · excluded from credential totals")
+				line("    30-day API estimate  ", usageValueLabel(row, details))
+				if details {
+					line("    Credential      ", "unknown · excluded from credential totals")
+				}
 				fmt.Fprintln(w)
 				continue
 			}
@@ -386,14 +359,21 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 			}
 			labelWidth := 14
 			for _, b := range row.quota.Buckets {
+				if !details && b.Note == "disabled" {
+					continue
+				}
 				labelWidth = max(labelWidth, utf8.RuneCountInString(agents.DisplayTarget(b.Name)))
 			}
+			shownResets := make(map[int64]bool)
 			for _, bucket := range row.quota.Buckets {
+				if !details && bucket.Note == "disabled" {
+					continue
+				}
 				label := agents.DisplayTarget(bucket.Name)
-				fact := "usage unknown"
+				fact := ""
 				bar := ""
 				if bucket.Used != nil {
-					fact = fmt.Sprintf("%.0f%% used", *bucket.Used)
+					fact = fmt.Sprintf("%3.0f%% used", *bucket.Used)
 					filled := int(math.Round(min(100, *bucket.Used) / 10))
 					bar = strings.Repeat("█", filled) + strings.Repeat("░", 10-filled)
 					if *bucket.Used >= 100 {
@@ -405,7 +385,19 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 					}
 				}
 				if bucket.Remaining != "" {
-					fact += " · " + agents.DisplayTarget(bucket.Remaining) + " remaining"
+					remaining := bucket.Remaining
+					if !details {
+						if number, err := strconv.ParseFloat(remaining, 64); err == nil && !math.IsNaN(number) && !math.IsInf(number, 0) {
+							remaining = strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", number), "0"), ".")
+						}
+					}
+					if fact != "" {
+						fact += " · "
+					}
+					fact += agents.DisplayTarget(remaining) + " remaining"
+				}
+				if fact == "" {
+					fact = "usage unknown"
 				}
 				if bucket.Available != nil && !*bucket.Available {
 					fact += " · blocked"
@@ -413,19 +405,33 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 				if bucket.Note != "" {
 					fact += " · " + agents.DisplayTarget(bucket.Note)
 				}
-				reset := usageResetLabel(bucket.Reset, now)
-				if width > 0 && labelWidth+utf8.RuneCountInString(fact)+utf8.RuneCountInString(reset)+25 > width {
+				if details || !bucket.Reset.IsZero() && !(bucket.Used != nil && *bucket.Used == 0 && shownResets[bucket.Reset.Unix()]) {
+					fact += " · " + usageResetLabel(bucket.Reset, now)
+					shownResets[bucket.Reset.Unix()] = true
+				}
+				columns := labelWidth + utf8.RuneCountInString(fact) + 6
+				if bar != "" {
+					columns += 12
+				}
+				if width > 0 && columns > width {
 					line("    ", label)
 					if bar != "" {
 						fmt.Fprintf(w, "      %s\n", bar)
 					}
-					line("      ", fact+" · "+reset)
+					line("      ", fact)
 				} else {
-					fmt.Fprintf(w, "    %s  %s  %s · %s\n", padRight(label, labelWidth), bar, fact, reset)
+					if bar != "" {
+						bar += "  "
+					}
+					fmt.Fprintf(w, "    %s  %s%s\n", padRight(label, labelWidth), bar, fact)
 				}
 			}
 			if row.quota.Note != "" {
 				line("    ", agents.DisplayTarget(row.quota.Note))
+			}
+			line("    30-day API estimate  ", usageValueLabel(row, details))
+			if details && row.unpricedTurns > 0 {
+				line("    Coop records    ", fmt.Sprintf("%d retained turns · unpriced aggregates, not added", row.unpricedTurns))
 			}
 			fmt.Fprintln(w)
 		}
@@ -434,9 +440,46 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 			fmt.Fprintln(w)
 		}
 	}
-	fmt.Fprintf(w, "Estimated API token value at current standard list prices (%s), not billing.\n", agents.UsagePricingDate)
-	fmt.Fprintln(w, "Based on retained CLI/Coop history; excludes web/mobile, other machines and non-token charges.")
-	fmt.Fprintln(w, "Reset times are local. Shared ACP history has no historical credential binding.")
+}
+
+func usageValueLabel(row usageCredential, details bool) string {
+	value := "unavailable"
+	if details {
+		value += " · no usable history"
+	}
+	if row.unpricedTurns > 0 {
+		value = "unpriced"
+		if details {
+			value += " · retained Coop turn aggregates only"
+		}
+	}
+	if row.ambiguous {
+		value = "unavailable · historical credential attribution is ambiguous"
+	}
+	if row.value.Available {
+		if row.value.Priced == 0 && row.value.Unpriced > 0 {
+			value = "unpriced"
+		} else if row.value.Priced == 0 && row.value.Partial {
+			value = "unavailable"
+			if details {
+				value += " · no usable usage in the partial 30-day history"
+			}
+		} else {
+			value = fmt.Sprintf("≈$%.2f", row.value.USD)
+		}
+		if details {
+			if row.value.Partial {
+				value += " · partial history"
+			}
+			if row.value.Approximate {
+				value += " · approximate token tariff"
+			}
+			if row.value.Unpriced > 0 {
+				value += fmt.Sprintf(" · %d unpriced events", row.value.Unpriced)
+			}
+		}
+	}
+	return value
 }
 
 func usageResetLabel(reset, now time.Time) string {
@@ -450,9 +493,9 @@ func usageResetLabel(reset, now time.Time) string {
 		}
 		return fmt.Sprintf("resets in %dh %dm", minutes/60, minutes%60)
 	}
-	format := "Mon, Jan 2, 15:04 MST"
+	format := "Jan 2, 15:04"
 	if reset.In(time.Local).Year() != now.In(time.Local).Year() {
-		format = "Mon, Jan 2 2006, 15:04 MST"
+		format = "Jan 2 2006, 15:04"
 	}
 	return "resets " + reset.In(time.Local).Format(format)
 }
