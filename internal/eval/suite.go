@@ -70,8 +70,9 @@ type Case struct {
 	Verifier string `yaml:"verifier"`
 
 	// Agent-case fields.
-	Instruction string       `yaml:"instruction"` // the task text the model is given
-	Files       string       `yaml:"files"`       // an initial file tree the workspace starts from (optional)
+	// Quote multiline text: yaml.v3 block scalars can lose leading newlines when frozen.
+	Instruction string       `yaml:"instruction,flow"` // the task text the model is given
+	Files       string       `yaml:"files"`            // an initial file tree the workspace starts from (optional)
 	Runtime     *CaseRuntime `yaml:"runtime,omitempty"`
 
 	// Loop-case fields.

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -58,6 +59,34 @@ func stagedAgentSuite(t *testing.T) *Suite {
 		t.Fatal(err)
 	}
 	return suite
+}
+
+func TestStageSuitePreservesIndentedMultilineInstruction(t *testing.T) {
+	const instruction = "\nInspect the database.\n\n  Keep the database unchanged.\n"
+	source := stagedAgentSuite(t)
+	manifest, err := os.ReadFile(source.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest = []byte(strings.Replace(string(manifest), `"print hello"`, strconv.Quote(instruction), 1))
+	if err := os.WriteFile(source.Path, manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source, err = Load(source.Path)
+	if err != nil || source.Cases[0].Instruction != instruction {
+		t.Fatalf("authored instruction failed to load unchanged: %+v, %v", source, err)
+	}
+	staged, err := StageSuite(context.Background(), t.TempDir(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Load(staged.Path)
+	if err != nil {
+		t.Fatalf("frozen manifest cannot be reloaded: %v", err)
+	}
+	if reloaded.Cases[0].Instruction != instruction {
+		t.Fatalf("frozen instruction changed: %q", reloaded.Cases[0].Instruction)
+	}
 }
 
 func TestStageSuiteFreezesInputAndVerifierBytes(t *testing.T) {
