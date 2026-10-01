@@ -8,6 +8,14 @@ import (
 func TestWorkloadFingerprintChangesWithEveryWorkloadEdit(t *testing.T) {
 	base := loadAgent(t)
 	fp := WorkloadFingerprint(base)
+	old := newHasher().text("schema", "eval.workload.v2").text("version", "1").text("runner", string(base.Runner)).text("content", string(base.ContentDigest))
+	for _, c := range base.Cases {
+		old.text("case.id", c.ID).text("case.timeout", c.Timeout.String()).text("case.verifier", c.Verifier).
+			text("case.instruction", c.Instruction).text("case.files", c.Files).text("case.fixture", c.Fixture).text("case.tasks", c.Tasks)
+	}
+	if fp == old.sum() {
+		t.Fatal("new web-tool protocol shares the previous workload identity")
+	}
 
 	// Stable: the same parsed suite hashes the same every time.
 	if WorkloadFingerprint(base) != fp {

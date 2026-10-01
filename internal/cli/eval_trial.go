@@ -294,6 +294,7 @@ func evalTrialConfig(base *config.Config) *config.Config {
 	cfg := base.Clone()
 	cfg.MCPFile = ""
 	cfg.ExtraRunArgs = nil
+	cfg.EvalDisableWebTools = true
 	return cfg
 }
 

@@ -647,6 +647,7 @@ func renderEvalPlan(p *eval.Plan, frozen []eval.FrozenConfig) {
 	fmt.Printf("Deadline: %s from command start (stops preparation, trials and grading)\n", p.Timeout)
 	fmt.Println()
 	fmt.Println("Isolation: operator MCP servers and COOP_RUN_ARGS are omitted from trials")
+	fmt.Println("Native web search/fetch: disabled (not an authenticated-request firewall)")
 	fmt.Println()
 	fmt.Println("Cases:")
 	for _, c := range p.Suite.Cases {

@@ -1037,6 +1037,18 @@ func TestAssembleArgsMinimal(t *testing.T) {
 	}
 }
 
+func TestAssembleArgsEvalWebToolPolicy(t *testing.T) {
+	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
+	spec := RunSpec{Image: "coop-box", Agent: "codex", Homes: true}
+	for _, enabled := range []bool{false, true} {
+		cfg.EvalDisableWebTools = enabled
+		args := assembleArgs(cfg, true, spec, nil, "", "", "/app", ttyNone, false, nil, nil, nil, nil, nil, "", "")
+		if slices.Contains(args, "COOP_EVAL_DISABLE_WEB_TOOLS=1") != enabled {
+			t.Fatalf("policy %t was not carried to role launches: %v", enabled, args)
+		}
+	}
+}
+
 func TestAssembleArgsInitProcess(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
 	args := func(initProcess bool) []string {

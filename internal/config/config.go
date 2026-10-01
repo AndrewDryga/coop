@@ -43,6 +43,9 @@ type Config struct {
 	NoUpdateCheck bool // COOP_NO_UPDATE_CHECK — opt out of the once-a-day update-available check
 	StreamTrace   bool // COOP_STREAM_TRACE — persist raw and rendered output for streaming loop attempts
 	ACPWarm       bool // COOP_ACP_WARM — keep alternate ACP providers warm (environment only)
+	// EvalDisableWebTools is internal trial state, also carried to a loop subprocess.
+	// It disables ordinary native search/fetch, not arbitrary authenticated requests.
+	EvalDisableWebTools bool
 
 	ServicesNet    string   // COOP_SERVICES_NET — override the services network name
 	ACPCarryTokens int      // COOP_ACP_CARRY_TOKENS — per-session budget (≈tokens, ~4 bytes each) for the conversation carried across an ACP provider switch (default 200000)
@@ -242,14 +245,15 @@ func Load() (*Config, error) {
 		RepoOverride:  get("COOP_REPO", ""),
 		ImageOverride: get("COOP_IMAGE", ""),
 
-		Homes:         homes,
-		Network:       network,
-		AutoUp:        autoUp,
-		Cache:         cache,
-		Caffeinate:    caffeinate,
-		NoUpdateCheck: noUpdateCheck,
-		StreamTrace:   streamTrace,
-		ACPWarm:       acpWarm,
+		Homes:               homes,
+		Network:             network,
+		AutoUp:              autoUp,
+		Cache:               cache,
+		Caffeinate:          caffeinate,
+		NoUpdateCheck:       noUpdateCheck,
+		StreamTrace:         streamTrace,
+		ACPWarm:             acpWarm,
+		EvalDisableWebTools: os.Getenv("COOP_EVAL_DISABLE_WEB_TOOLS") == "1",
 
 		ServicesNet:    get("COOP_SERVICES_NET", ""),
 		ACPCarryTokens: carryTokens,

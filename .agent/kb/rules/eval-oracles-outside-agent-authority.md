@@ -4,7 +4,7 @@ description: hidden eval material stays outside every candidate access path, inc
 scope: security
 sources: [internal/box/run.go, internal/box/authority_mounts.go, internal/box/network_exposure.go, internal/box/derived_image.go, internal/box/taskchannel.go, internal/mcp/mcp.go, internal/eval/fixtures.go, internal/eval/suite.go, internal/eval/stage.go, internal/eval/stage_copy.go, internal/cli/eval_trial.go]
 check: none
-updated: 2026-09-29
+updated: 2026-10-01
 ---
 
 # Keep hidden evaluation material outside candidate authority
@@ -24,9 +24,15 @@ not just HEAD. Do not rewrite the developer's source history. Keep hidden data o
 layers, caches and provider histories. Grade a separate sanitized copy outside candidate authority,
 and do not feed hidden grading back into a running loop. Use canary denial tests. Restricted public
 evals must also deny direct and provider-mediated answer retrieval; prompts and domain filters
-alone are not proof. This is a preventive eval contract, not a claim about generic box guarantees.
+alone are not proof. For the user-approved trusted-client adaptation, disable ordinary native
+search/fetch and record that exact policy; do not claim adversarial authenticated-request
+enforcement. This is a preventive eval contract, not a claim about generic box guarantees.
 
 ## Changelog
+- 2026-10-01 — the user chose ordinary search-tool disabling, not adversarial provider-request
+  prevention. Swept agent/loop eval configs, four adapter commands/settings and managed role
+  launch fragments; all now carry the eval-only policy. Existing staging/mount/history/grader
+  checks remain required. Restricted retrieval is labeled by its actual trusted-client boundary.
 - 2026-09-29 — swept the candidate Git-history and launch canary checks and the snapshot
   retention path. The history probe now requires an empty search result, the candidate launch is
   identified independently of its mount contents, and the writable grading copy is discarded.

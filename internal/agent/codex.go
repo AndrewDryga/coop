@@ -78,6 +78,9 @@ func (codexAgent) base(cfg *config.Config) []string {
 	if len(b) == 0 {
 		b = []string{"codex"}
 	}
+	if cfg.EvalDisableWebTools {
+		b = append(b, "-c", "web_search=disabled")
+	}
 	return withEffort(withModel(b, cfg.ModelFor("codex")), codexAgent{}, cfg.EffortFor("codex"))
 }
 
@@ -970,7 +973,7 @@ const codexConsultUsage = `[.[] | select(type=="object" and .type=="turn.complet
 		 | .output=(.output + .reasoning) | select(.output<=1000000000)] | last // empty`
 
 func (codexAgent) ConsultFresh() string {
-	return `codex_run codex exec --enable use_legacy_landlock -s read-only ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"; finish_status=$?
+	return `codex_run codex exec ${codex_eval_web_tools:-} --enable use_legacy_landlock -s read-only ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"; finish_status=$?
 	# Only record a thread id parsed from a bounded usable reply. The generic wrapper commits this
 	# candidate after validating the decoded stdout, so failed calls never become resumable.
 	tid=$(jq -r 'select(.type=="thread.started" and (.thread_id|type)=="string") | .thread_id | select(test("^[A-Za-z0-9._:-]{1,512}$"))' "$codex_raw" 2>/dev/null | head -n1)
@@ -981,15 +984,19 @@ func (codexAgent) ConsultFresh() string {
 }
 
 func (codexAgent) ConsultResume() string {
-	return `codex_run codex exec resume --enable use_legacy_landlock "$id" -c sandbox_mode=read-only ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"; return "$?"`
+	return `codex_run codex exec resume --enable use_legacy_landlock "$id" -c sandbox_mode=read-only ${codex_eval_web_tools:-} ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"; return "$?"`
 }
 
 func (codexAgent) DelegateExec() string {
-	return `codex exec --dangerously-bypass-approvals-and-sandbox ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"`
+	return `codex exec ${codex_eval_web_tools:-} --dangerously-bypass-approvals-and-sandbox ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"`
 }
 
 func (codexAgent) UsagePrelude() string {
-	return codexConsultText + consultPeerRowShell("codex", codexConsultUsage)
+	return `codex_eval_web_tools=
+if [ "${COOP_EVAL_DISABLE_WEB_TOOLS:-0}" = 1 ]; then
+	codex_eval_web_tools='-c web_search=disabled'
+fi
+` + codexConsultText + consultPeerRowShell("codex", codexConsultUsage)
 }
 func (a codexAgent) ShellPrelude() string {
 	return a.UsagePrelude() + consultCaptureShell("codex", "Codex")

@@ -55,7 +55,8 @@ func (w *hasher) sum() Fingerprint { return Fingerprint(hex.EncodeToString(w.h.S
 // a later source edit cannot change a trial while keeping the comparison key.
 func WorkloadFingerprint(s *Suite) Fingerprint {
 	w := newHasher()
-	w.text("schema", "eval.workload.v2")
+	w.text("schema", "eval.workload.v3")
+	w.text("native.web_tools", NativeWebToolsPolicy)
 	w.text("version", strconv.Itoa(s.Version))
 	w.text("runner", string(s.Runner))
 	w.text("content", string(s.ContentDigest))

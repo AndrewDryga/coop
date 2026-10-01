@@ -35,6 +35,17 @@ func clearAgentEnv(t *testing.T) {
 	}
 }
 
+func TestEvalWebToolsInternalState(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	for _, value := range []string{"", "0", "1"} {
+		t.Setenv("COOP_EVAL_DISABLE_WEB_TOOLS", value)
+		cfg, err := Load()
+		if err != nil || cfg.EvalDisableWebTools != (value == "1") {
+			t.Fatalf("internal policy %q: config=%+v, err=%v", value, cfg, err)
+		}
+	}
+}
+
 func mustLoad(t *testing.T) *Config {
 	t.Helper()
 	cfg, err := Load()

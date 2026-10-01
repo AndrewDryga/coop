@@ -178,7 +178,8 @@ func TestLoopTrialPinsTheChildToTheTrial(t *testing.T) {
 	shim := filepath.Join(t.TempDir(), "coop-shim")
 	script := "#!/bin/sh\n{ echo \"ARGS=$*\"; echo \"PWD=$PWD\"; " +
 		"echo \"COOP_REPO=$COOP_REPO\"; echo \"COOP_TASKS=[$COOP_TASKS]\"; echo \"COOP_IMAGE=$COOP_IMAGE\"; " +
-		"echo \"COOP_MCP_FILE=[$COOP_MCP_FILE]\"; echo \"COOP_RUN_ARGS=[$COOP_RUN_ARGS]\"; echo \"COOP_CACHE=$COOP_CACHE\"; } > " + dump + "\nexit 0\n"
+		"echo \"COOP_MCP_FILE=[$COOP_MCP_FILE]\"; echo \"COOP_RUN_ARGS=[$COOP_RUN_ARGS]\"; echo \"COOP_CACHE=$COOP_CACHE\"; " +
+		"echo \"COOP_EVAL_DISABLE_WEB_TOOLS=$COOP_EVAL_DISABLE_WEB_TOOLS\"; } > " + dump + "\nexit 0\n"
 	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -190,6 +191,7 @@ func TestLoopTrialPinsTheChildToTheTrial(t *testing.T) {
 	t.Setenv("COOP_REPO", "/the/operators/real/checkout")
 	t.Setenv("COOP_TASKS", "/the/operators/real/queue")
 	t.Setenv("COOP_RUN_ARGS", "-v /the/operators/real/checkout:/leak")
+	t.Setenv("COOP_EVAL_DISABLE_WEB_TOOLS", "0")
 
 	out, err := r.runLoopTrial(context.Background(), eval.Trial{
 		Case: suite.Cases[0], Config: eval.FrozenConfig{Kind: eval.ConfigTarget, Label: "codex"},
@@ -209,6 +211,7 @@ func TestLoopTrialPinsTheChildToTheTrial(t *testing.T) {
 		"COOP_MCP_FILE=[]", // no operator MCP servers inside a trial
 		"COOP_RUN_ARGS=[]", // no ambient runtime binds inside a trial
 		"COOP_CACHE=0",
+		"COOP_EVAL_DISABLE_WEB_TOOLS=1",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("child environment missing %q:\n%s", want, got)

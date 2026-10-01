@@ -1114,8 +1114,12 @@ The fixed `coop-adapted-offline-profile-v1` protocol uses `/app`, 1 CPU, 2 GiB m
 Candidates get only their provider's core filtered networking; graders use the same immutable
 image with no network or credentials. Storage is declared as 10 GiB, but its quota is unenforced
 and usage is unmeasured. This is a disclosed adaptation, not official benchmark parity; exclude
-cases that depend on disk quota or exhaustion. Provider-mediated answer retrieval still needs
-separate qualification.
+cases that depend on disk quota or exhaustion.
+
+All eval candidates disable normal native web search and fetch, including Coop-managed consults
+and delegates; terminal, file and editing tools remain available. This policy is recorded in the
+run and workload identity. It is a trusted-client control, not a firewall against a model crafting
+its own authenticated provider requests. Regular Coop runs retain their normal web tools.
 
 Coop retains profile bytes privately and records their digest, measured image/platform and phase
 budgets before work. The retained copy never grants build approval: the original profile must

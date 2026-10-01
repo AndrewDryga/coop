@@ -334,6 +334,9 @@ func TestEvalTrialConfigDropsMCPAndDoesNotTouchTheCallers(t *testing.T) {
 	base.MCPFile = filepath.Join(t.TempDir(), "mcp.json")
 	base.ExtraRunArgs = []string{"-v", filepath.Join(t.TempDir(), "host") + ":/leak"}
 	cfg := evalTrialConfig(base)
+	if !cfg.EvalDisableWebTools || base.EvalDisableWebTools {
+		t.Fatal("native web tools must be disabled only on the trial clone")
+	}
 	if cfg.MCPFile != "" {
 		t.Errorf("a candidate was given MCP servers: %q", cfg.MCPFile)
 	}

@@ -886,7 +886,10 @@ roles:
                     <p>Each trial gets a private workspace without source Git history. The
                         hidden verifier is kept outside model mounts and runs afterwards in a
                         separate container without credentials or network. Operator MCP servers
-                        are not exposed to trials. Results describe this workload, not general
+                        are not exposed to trials. Normal native search/fetch are disabled,
+                        including Coop-managed peers and delegates; terminal and file tools remain
+                        available. This is a trusted-client control, not an authenticated-request
+                        firewall. Regular Coop runs are unchanged. Results describe this workload, not general
                         provider parity; code size is a review signal, not a quality score.</p>
                     <h3>Compare matching evidence</h3>
                     <p><code>compare</code> keeps the full requested denominator, including missing

@@ -217,7 +217,7 @@ func (geminiAgent) LoginConfig(cfg *config.Config) (MCPConfig, error) {
 	if err != nil {
 		return MCPConfig{}, err
 	}
-	gm, err = ensureGeminiBoxDefaults(gm)
+	gm, err = ensureGeminiBoxDefaults(gm, false)
 	if err != nil {
 		return MCPConfig{}, err
 	}
@@ -456,7 +456,7 @@ func (geminiAgent) MCP(cfg *config.Config, _ string) (MCPConfig, error) {
 	if err != nil {
 		return MCPConfig{}, err
 	}
-	gm, err = ensureGeminiBoxDefaults(gm)
+	gm, err = ensureGeminiBoxDefaults(gm, cfg.EvalDisableWebTools)
 	if err != nil {
 		return MCPConfig{}, err
 	}
@@ -468,12 +468,34 @@ func (geminiAgent) MCP(cfg *config.Config, _ string) (MCPConfig, error) {
 	return MCPConfig{Mounts: mounts, Env: env, RequiredEnv: requiredEnv}, nil
 }
 
-func ensureGeminiBoxDefaults(settingsJSON string) (string, error) {
+func ensureGeminiBoxDefaults(settingsJSON string, disableWebTools bool) (string, error) {
 	settings := map[string]any{}
 	if err := json.Unmarshal([]byte(settingsJSON), &settings); err != nil {
 		return "", fmt.Errorf("assemble Gemini box defaults: %w", err)
 	}
-	if !disableGeminiFolderTrust(settings) {
+	changed := disableGeminiFolderTrust(settings)
+	if disableWebTools {
+		tools, ok := settings["tools"].(map[string]any)
+		if settings["tools"] != nil && !ok {
+			return "", fmt.Errorf("gemini tools settings must be an object")
+		}
+		if tools == nil {
+			tools = map[string]any{}
+			settings["tools"] = tools
+		}
+		exclude, ok := tools["exclude"].([]any)
+		if tools["exclude"] != nil && !ok {
+			return "", fmt.Errorf("gemini tools.exclude must be an array")
+		}
+		for _, tool := range []string{"google_web_search", "web_fetch"} {
+			if !slices.Contains(exclude, any(tool)) {
+				exclude = append(exclude, tool)
+			}
+		}
+		tools["exclude"] = exclude
+		changed = true
+	}
+	if !changed {
 		return settingsJSON, nil
 	}
 	data, err := json.MarshalIndent(settings, "", "  ")

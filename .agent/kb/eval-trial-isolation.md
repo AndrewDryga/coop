@@ -58,6 +58,11 @@ the map, and the reasoning behind the one place the obvious fix is wrong.
   `internal/eval/stage_profile.go`, `internal/cli/eval_trial.go`, `internal/cli/eval_grade.go`).
 - **MCP** — a trial runs with `MCPFile` cleared. Operator MCP servers are a route out of the trial and
   differ per machine, so a run using them would not be reproducible.
+- **Native web tools** — eval config clones disable ordinary search/fetch through each adapter's
+  native controls. The loop child pins the internal flag, and boxes carry it to Coop-managed fresh,
+  resumed and delegated roles. Gemini merges exclusions into its existing generated settings, so
+  effort overlays retain them. The policy is recorded in manifests and workload v3 fingerprints.
+  This is a trusted-client control, not adversarial authenticated-request enforcement.
 - **Ambient runtime args** — candidate and grader config clones clear `ExtraRunArgs`, and loop
   children pin `COOP_RUN_ARGS=`. Operator binds can expose host data or hidden verifiers to a
   candidate; even harmless flags would alter a trial without appearing in its fingerprint.
@@ -160,6 +165,8 @@ already fully correct. The shipped verifier runs each subcommand on inputs no ta
 also why it cannot be satisfied by a loop that moves folders without finishing anything.
 
 ## Changelog
+- 2026-10-01 — applied the user's ordinary search/fetch-disable decision. Scoped argv, executable
+  role-shell, settings/effort, clone and loop-child controls pass; regular commands stay unchanged.
 - 2026-10-01 — mapped external-profile retention/approval/image binding and fixed adapted protocol.
   Six credential-free reference/empty/mutant controls pass through the actual trial runner; this
   proves orchestration and grader discrimination, not provider-mediated retrieval or full admission.

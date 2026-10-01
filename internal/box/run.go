@@ -3011,6 +3011,9 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 	if spec.Homes {
 		// Only the launched agent's credential home plus named consult peers — never every
 		// agent's, so a plain run can't read the others'.
+		if cfg.EvalDisableWebTools {
+			args = append(args, "-e", "COOP_EVAL_DISABLE_WEB_TOOLS=1")
+		}
 		scope := credentialScope(cfg, spec)
 		for _, agent := range scope {
 			args = append(args, "-v", cfg.AgentDir(agent)+":"+cfg.HomeInBox+"/."+agent)

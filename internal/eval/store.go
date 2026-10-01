@@ -22,6 +22,9 @@ import (
 // reinterpretation of an old one.
 
 const (
+	// NativeWebToolsPolicy names normal client controls, not a provider-request firewall.
+	NativeWebToolsPolicy = "search-and-fetch-disabled-v1"
+
 	// runSchema and trialSchema version the on-disk records independently of the Coop build.
 	runSchema   = 1
 	trialSchema = 1
@@ -48,18 +51,19 @@ const (
 // identity of everything a comparison must be able to tell apart. It is never rewritten after start
 // (the summary seals the outcome); the per-trial records carry what happened.
 type RunRecord struct {
-	Schema    int          `json:"schema"`
-	ID        string       `json:"id"`
-	CreatedAt time.Time    `json:"created_at"`
-	Suite     string       `json:"suite"`
-	Runner    Runner       `json:"runner"`
-	Workload  string       `json:"workload_fingerprint"`
-	Repeat    int          `json:"repeat"`
-	Jobs      int          `json:"jobs"`
-	TimeoutMS int64        `json:"timeout_ms"`
-	Cases     []string     `json:"cases"`
-	Configs   []RunConfig  `json:"configs"`
-	Runtimes  []RunRuntime `json:"runtimes,omitempty"`
+	Schema         int          `json:"schema"`
+	ID             string       `json:"id"`
+	CreatedAt      time.Time    `json:"created_at"`
+	Suite          string       `json:"suite"`
+	Runner         Runner       `json:"runner"`
+	Workload       string       `json:"workload_fingerprint"`
+	Repeat         int          `json:"repeat"`
+	Jobs           int          `json:"jobs"`
+	TimeoutMS      int64        `json:"timeout_ms"`
+	Cases          []string     `json:"cases"`
+	Configs        []RunConfig  `json:"configs"`
+	Runtimes       []RunRuntime `json:"runtimes,omitempty"`
+	NativeWebTools string       `json:"native_web_tools,omitempty"`
 }
 
 // RunRuntime records the host-owned profile and the measured execution identity before work.
@@ -356,14 +360,15 @@ func NewRunID(now time.Time, workload Fingerprint) string {
 // each configuration carries its own fingerprint and the Coop build it ran under.
 func NewRunRecord(plan *Plan, frozen []FrozenConfig, now time.Time) RunRecord {
 	rec := RunRecord{
-		Schema:    runSchema,
-		CreatedAt: now.UTC(),
-		Suite:     plan.Suite.Name,
-		Runner:    plan.Suite.Runner,
-		Workload:  string(WorkloadFingerprint(plan.Suite)),
-		Repeat:    plan.Repeat,
-		Jobs:      plan.Jobs,
-		TimeoutMS: plan.Timeout.Milliseconds(),
+		NativeWebTools: NativeWebToolsPolicy,
+		Schema:         runSchema,
+		CreatedAt:      now.UTC(),
+		Suite:          plan.Suite.Name,
+		Runner:         plan.Suite.Runner,
+		Workload:       string(WorkloadFingerprint(plan.Suite)),
+		Repeat:         plan.Repeat,
+		Jobs:           plan.Jobs,
+		TimeoutMS:      plan.Timeout.Milliseconds(),
 	}
 	for _, c := range plan.Suite.Cases {
 		rec.Cases = append(rec.Cases, c.ID)

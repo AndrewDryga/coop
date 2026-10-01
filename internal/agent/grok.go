@@ -71,6 +71,9 @@ func (grokAgent) base(cfg *config.Config) []string {
 	if len(b) == 0 { // an explicitly-empty override must still leave a runnable executable
 		b = []string{"grok"}
 	}
+	if cfg.EvalDisableWebTools {
+		b = append(b, "--disable-web-search")
+	}
 	return withEffort(withModel(b, cfg.ModelFor("grok")), grokAgent{}, cfg.EffortFor("grok"))
 }
 
@@ -517,19 +520,23 @@ const grokConsultUsage = `select(.[-1].type=="end")
 
 func (grokAgent) ConsultFresh() string {
 	return "printf '%s' \"$id\" >\"$candidate_idfile\"\n" +
-		`grok_run grok --tools "` + grokReadOnlyTools + `" --session-id "$id" --output-format streaming-json ${model:+--model "$model"} ${effort:+--reasoning-effort "$effort"} -p "$prompt"`
+		`grok_run grok ${grok_eval_web_tools:-} --tools "` + grokReadOnlyTools + `" --session-id "$id" --output-format streaming-json ${model:+--model "$model"} ${effort:+--reasoning-effort "$effort"} -p "$prompt"`
 }
 
 func (grokAgent) ConsultResume() string {
-	return `grok_run grok --tools "` + grokReadOnlyTools + `" --resume "$id" --output-format streaming-json ${model:+--model "$model"} ${effort:+--reasoning-effort "$effort"} -p "$prompt"`
+	return `grok_run grok ${grok_eval_web_tools:-} --tools "` + grokReadOnlyTools + `" --resume "$id" --output-format streaming-json ${model:+--model "$model"} ${effort:+--reasoning-effort "$effort"} -p "$prompt"`
 }
 
 func (grokAgent) DelegateExec() string {
-	return `grok --permission-mode bypassPermissions --output-format streaming-json ${model:+--model "$model"} ${effort:+--reasoning-effort "$effort"} -p "$prompt"`
+	return `grok ${grok_eval_web_tools:-} --permission-mode bypassPermissions --output-format streaming-json ${model:+--model "$model"} ${effort:+--reasoning-effort "$effort"} -p "$prompt"`
 }
 
 func (grokAgent) UsagePrelude() string {
-	return grokConsultText + consultPeerRowShell("grok", grokConsultUsage)
+	return `grok_eval_web_tools=
+if [ "${COOP_EVAL_DISABLE_WEB_TOOLS:-0}" = 1 ]; then
+	grok_eval_web_tools='--disable-web-search'
+fi
+` + grokConsultText + consultPeerRowShell("grok", grokConsultUsage)
 }
 func (a grokAgent) ShellPrelude() string {
 	return a.UsagePrelude() + consultCaptureShell("grok", "Grok")

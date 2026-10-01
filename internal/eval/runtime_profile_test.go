@@ -54,6 +54,9 @@ func TestRuntimeProfileYAMLAndRunMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if retained.NativeWebTools != NativeWebToolsPolicy {
+		t.Fatalf("native web-tool policy missing from manifest: %q", retained.NativeWebTools)
+	}
 	if len(retained.Runtimes) != 1 {
 		t.Fatal("runtime missing from manifest")
 	}
@@ -81,7 +84,7 @@ func TestRuntimeProfileYAMLAndRunMetadata(t *testing.T) {
 		t.Fatalf("runtime disclosure lost on mismatch: %+v, %v", cmp, err)
 	}
 	var old RunRecord
-	if err := json.Unmarshal([]byte(`{"schema":1,"cases":["ordinary"]}`), &old); err != nil || len(old.Runtimes) != 0 {
+	if err := json.Unmarshal([]byte(`{"schema":1,"cases":["ordinary"]}`), &old); err != nil || len(old.Runtimes) != 0 || old.NativeWebTools != "" {
 		t.Fatal("old manifest no longer readable")
 	}
 	body = []byte(strings.Replace(string(body), "workdir: /app", "workdir: /app\n        image_id: forged", 1))

@@ -1040,6 +1040,9 @@ Each trial gets a private workspace with no source history. The hidden verifier
 is never mounted for the model. Grading runs afterwards in a separate container
 without credentials or network. Operator MCP servers and COOP_RUN_ARGS are
 omitted from trials; use Coop-managed logins rather than runtime args for credentials.
+Normal native web search/fetch are disabled, including Coop-managed peers and roles.
+Terminal and file tools remain available. This is a trusted-client control, not a
+firewall against model-crafted authenticated provider requests. Normal runs are unchanged.
 
 After a real run is sealed, exit 0 means every trial received a graded pass/fail
 verdict, even if some failed. Incomplete coverage exits 1; the run record and

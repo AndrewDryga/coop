@@ -126,6 +126,7 @@ func (r *trialRunner) runLoopTrial(ctx context.Context, t eval.Trial, workspace 
 		"COOP_MCP_FILE=",       // no operator MCP servers inside a trial
 		"COOP_RUN_ARGS=",       // no ambient host mounts or unrecorded runtime flags
 		"COOP_NO_UPDATE_CHECK=1",
+		"COOP_EVAL_DISABLE_WEB_TOOLS=1",
 	)
 
 	if err := ctx.Err(); err != nil {

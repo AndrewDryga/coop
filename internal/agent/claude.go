@@ -123,6 +123,9 @@ func (claudeAgent) base(cfg *config.Config) []string {
 	}
 	cmd = withModel(cmd, cfg.ModelFor("claude"))
 	cmd = withEffort(cmd, claudeAgent{}, cfg.EffortFor("claude"))
+	if cfg.EvalDisableWebTools {
+		cmd = append(cmd, "--disallowedTools", "WebSearch,WebFetch")
+	}
 	return cmd
 }
 
@@ -901,19 +904,23 @@ const claudeConsultUsage = `select(length==1) | .[0]
 
 func (claudeAgent) ConsultFresh() string {
 	return "printf '%s' \"$id\" >\"$candidate_idfile\"\n" +
-		`claude_run claude -p --permission-mode plan --session-id "$id" --output-format json ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` -- "$prompt"`
+		`claude_run claude ${claude_eval_web_tools:-} -p --permission-mode plan --session-id "$id" --output-format json ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` -- "$prompt"`
 }
 
 func (claudeAgent) ConsultResume() string {
-	return `claude_run claude -p --permission-mode plan --resume "$id" --output-format json ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` -- "$prompt"`
+	return `claude_run claude ${claude_eval_web_tools:-} -p --permission-mode plan --resume "$id" --output-format json ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` -- "$prompt"`
 }
 
 func (claudeAgent) DelegateExec() string {
-	return `claude -p --dangerously-skip-permissions --output-format json ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` -- "$prompt"`
+	return `claude ${claude_eval_web_tools:-} -p --dangerously-skip-permissions --output-format json ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` -- "$prompt"`
 }
 
 func (claudeAgent) UsagePrelude() string {
-	return claudeConsultText + consultPeerRowShell("claude", claudeConsultUsage)
+	return `claude_eval_web_tools=
+if [ "${COOP_EVAL_DISABLE_WEB_TOOLS:-0}" = 1 ]; then
+	claude_eval_web_tools='--disallowedTools WebSearch,WebFetch'
+fi
+` + claudeConsultText + consultPeerRowShell("claude", claudeConsultUsage)
 }
 func (a claudeAgent) ShellPrelude() string {
 	return a.UsagePrelude() + consultCaptureShell("claude", "Claude")
