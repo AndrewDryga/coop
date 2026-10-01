@@ -325,3 +325,28 @@ func assertSymlinkRemedy(t *testing.T, repo, requirement string) {
 		t.Fatalf("Load error = %v; want the link named and the requirement %q", err, requirement)
 	}
 }
+
+// A controller review takes only the review stack from a candidate's project file: emisar's
+// review database never started because that path read nothing from it (2026-10-01). The rest of
+// the file is not the review's to read, so a box setting it never uses cannot fail a review, while
+// the review block is checked as Load checks it.
+func TestLoadReviewReadsOnlyTheReviewStack(t *testing.T) {
+	review, err := LoadReview(writeProject(t, "box: [settings no review uses]\nreview:\n  compose: dev/review-compose.yml\n  env:\n    DATABASE_URL: postgres://postgres@db/test\n"))
+	if err != nil || review.Compose != "dev/review-compose.yml" || review.Env["DATABASE_URL"] != "postgres://postgres@db/test" {
+		t.Fatalf("review = %+v, %v", review, err)
+	}
+	if review, err := LoadReview(t.TempDir()); err != nil || review.Compose != "" || review.Env != nil {
+		t.Fatalf("a repository without a project file declares no stack: %+v, %v", review, err)
+	}
+	for name, body := range map[string]string{
+		"escaping compose":   "review:\n  compose: ../compose.yml\n",
+		"unknown review key": "review:\n  composer: dev/review-compose.yml\n",
+		"reserved env name":  "review:\n  env:\n    COOP_REVIEW: \"0\"\n",
+		"multi-line env":     "review:\n  env:\n    URL: \"a\\nb\"\n",
+		"not a review block": "review: [dev/review-compose.yml]\n",
+	} {
+		if _, err := LoadReview(writeProject(t, body)); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+}

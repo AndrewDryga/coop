@@ -595,6 +595,14 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	var err error
 	if spec.ControllerJob {
 		p = &project.Project{}
+		if spec.Review && !spec.FormatCorrection {
+			// A controller review runs the candidate's own gate, so it also gets the review stack the
+			// candidate declares, and nothing else from its project file. The stack's Compose file is
+			// validated before anything starts, as any agent-written one is (ValidateComposeFile).
+			if p.Review, err = project.LoadReview(spec.Repo); err != nil {
+				return -1, fmt.Errorf("read the candidate's review stack: %w", err)
+			}
+		}
 		local := *cfg
 		local.AutoUp = false
 		cfg = &local
@@ -655,7 +663,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		if p.Review.Compose != "" {
 			composeFile = ComposeFileAt(spec.Repo, p.Review.Compose)
 		}
-		spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_REVIEW=1")
+		review := []string{"-e", "COOP_REVIEW=1"}
 		keys := make([]string, 0, len(p.Review.Env))
 		for key := range p.Review.Env {
 			keys = append(keys, key)
@@ -664,7 +672,14 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		for _, key := range keys {
 			// Explicit -e arguments follow --env-file, so trusted review policy cannot be
 			// weakened by an operator's ordinary agent environment.
-			spec.ExtraArgs = append(spec.ExtraArgs, "-e", key+"="+p.Review.Env[key])
+			review = append(review, "-e", key+"="+p.Review.Env[key])
+		}
+		if spec.ControllerJob {
+			// The job's environment, already in ExtraArgs, is the controller's: it comes after the
+			// candidate's, so Docker keeps the job's value wherever both name a variable.
+			spec.ExtraArgs = append(review, spec.ExtraArgs...)
+		} else {
+			spec.ExtraArgs = append(spec.ExtraArgs, review...)
 		}
 	}
 	var mcpSnapshot []byte
@@ -1281,7 +1296,13 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// Publish before any sibling service or runtime side effect. Fork-bound publication takes the
 	// same lifecycle lock as rm/fresh/merge and validates the exact workspace generation, so either
 	// the reservation wins and mutation refuses, or mutation wins and this launch fails closed.
+	reviewServicesAttempted := false
 	finish := func(code int, runErr error) (int, error) {
+		// A review's stack is as disposable as its candidate: containers, network and volumes.
+		if reviewServicesAttempted {
+			cleanupErr := DownServicesFile(rt, spec.Repo, composeFile, true, io.Discard, io.Discard, privateRoots...)
+			runErr = errors.Join(runErr, cleanupErr)
+		}
 		// A filtered run ends its activity only after exact runtime cleanup has
 		// confirmed the workload is gone.
 		if execution.ID != "" && filtered == nil {
@@ -1363,7 +1384,11 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		serviceNetwork = ComposeProjectFor(spec.Repo, serviceOwner) + "_default"
 	}
 	servicesInspected := false
-	if composeFile != "" && autoUpServices(cfg, spec, rt) {
+	// A controller review starts the review stack its candidate declares; ordinary auto-start leaves
+	// reviews alone. Egress must be open: the stack's network carries the box's own traffic.
+	reviewStack := spec.ControllerJob && spec.Review && p.Review.Compose != "" && composeFile != "" &&
+		cfg.Egress == "open" && rt.SupportsCompose()
+	if composeFile != "" && (autoUpServices(cfg, spec, rt) || reviewStack) {
 		projectRepo := spec.ActivityRepo
 		if projectRepo == "" {
 			projectRepo = spec.Repo
@@ -1381,6 +1406,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			// continue-without-services behavior.
 			var composeStderr bytes.Buffer
 			servicesInspected = true
+			reviewServicesAttempted = reviewStack
 			unlock, lockErr := forkspace.LockServiceLaunch(serviceCtx, projectRepo, true)
 			if lockErr != nil {
 				return finish(-1, fmt.Errorf("wait for a safe service launch: %w", lockErr))
@@ -1422,7 +1448,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		return finish(-1, err)
 	}
 	networkName := ""
-	if cfg.Egress == "open" && spec.Network && rt.Silent("network", "inspect", serviceNetwork) {
+	if cfg.Egress == "open" && (spec.Network || reviewStack) && rt.Silent("network", "inspect", serviceNetwork) {
 		networkName = serviceNetwork
 	}
 	if open != nil {

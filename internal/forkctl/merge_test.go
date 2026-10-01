@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1716,4 +1718,94 @@ func TestForkMergeAllSkipsOnlyGenuinelyEmptyFork(t *testing.T) {
 		strings.Contains(got, "Merged 0 forks") || strings.Contains(got, "empty fork will be deleted") {
 		t.Fatalf("empty skip output:\n%s", got)
 	}
+}
+
+// emisar's draft-PR reviews failed three times on 2026-10-01: its gate's database tests found no
+// PostgreSQL, though its project file declares a review stack for exactly that. A controller review
+// read nothing from the candidate's project file. It now starts the candidate's review stack, joins
+// its network, gives the gate the stack's environment under the job's own, and removes the stack
+// after; the controller's own environment still comes last, and nothing else from the project
+// file applies.
+func TestControllerJobReviewStartsTheCandidatesReviewStack(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("COOP_GATE", "true")
+	t.Setenv("COOP_EGRESS", "open")
+	repo := initRepo(t)
+	for path, body := range map[string]string{
+		project.File: "box:\n  env:\n    BOX_ONLY: \"1\"\nreview:\n  compose: dev/review-compose.yml\n  env:\n" +
+			"    CI: \"1\"\n    DATABASE_URL: postgres://postgres:postgres@db/emisar_test\n",
+		"dev/review-compose.yml": "services:\n  db:\n    image: postgres:18\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(repo, path)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(repo, path), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-qm", "a review stack")
+	state := filepath.Join(t.TempDir(), "sessions")
+	staging := filepath.Join(state, "review-candidates", ".staging")
+	if err := os.MkdirAll(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	candidate := filepath.Join(staging, "review-stack-123456")
+	git(t, repo, "clone", "-q", "--", repo, candidate)
+	git(t, candidate, "update-ref", "refs/coop/session-parent", "HEAD")
+	// Named like the service tests' runtime, so no real Docker daemon is asked for its identity.
+	runtimePath := filepath.Join(t.TempDir(), "rt")
+	callsPath := filepath.Join(t.TempDir(), "calls")
+	argsPath := filepath.Join(t.TempDir(), "args")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$COOP_TEST_CALLS\"\n" +
+		"case \"$*\" in\n  *\"config --services\"*) printf 'db\\n' ;;\nesac\n" +
+		"case \"$1\" in\nrun) printf '%s\\n' \"$@\" > \"$COOP_TEST_ARGS\" ;;\nesac\nexit 0\n"
+	if err := os.WriteFile(runtimePath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_CALLS", callsPath)
+	t.Setenv("COOP_TEST_ARGS", argsPath)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.BaseImage = "worker-box"
+	fc := New(cfg, runtime.Runtime{Name: runtimePath}, Host{})
+	run, err := fc.ReviewControllerJob(context.Background(), sessionsvc.ReviewGateRequest{
+		Repository: repo, Candidate: candidate, StateRoot: state, OperationID: "review-stack", NetworkMode: "open",
+	})
+	if err != nil || !run.Passed() {
+		t.Fatalf("controller job review = %+v error %v", run, err)
+	}
+	calls := readLines(t, callsPath)
+	up := slices.IndexFunc(calls, func(call string) bool { return strings.Contains(call, "up -d --wait --remove-orphans") })
+	boxRun := slices.IndexFunc(calls, func(call string) bool { return strings.HasPrefix(call, "run ") })
+	down := slices.IndexFunc(calls, func(call string) bool { return strings.Contains(call, "down --remove-orphans --volumes") })
+	if up < 0 || boxRun < 0 || down < 0 || !(up < boxRun && boxRun < down) {
+		t.Fatalf("the review stack must start before the gate and go after it:\n%s", strings.Join(calls, "\n"))
+	}
+	args := strings.Join(readLines(t, argsPath), "\n") + "\n"
+	network := regexp.MustCompile(`--network\n([^\n]+_default)\n`).FindStringSubmatch(args)
+	if network == nil || !strings.Contains(calls[up], "-p "+strings.TrimSuffix(network[1], "_default")) {
+		t.Fatalf("the gate must join the review stack's network:\n%s\n%s", args, calls[up])
+	}
+	if !strings.Contains(args, "-e\nDATABASE_URL=postgres://postgres:postgres@db/emisar_test\n") {
+		t.Fatalf("the gate must get the review stack's environment:\n%s", args)
+	}
+	if strings.Index(args, "CI=1\n") > strings.Index(args, "COOP_REVIEW_BASE=") {
+		t.Fatalf("the controller's own environment must come after the candidate's:\n%s", args)
+	}
+	if strings.Contains(args, "BOX_ONLY") {
+		t.Fatalf("a controller review must not take the candidate's box settings:\n%s", args)
+	}
+}
+
+func readLines(t *testing.T, path string) []string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Split(strings.TrimSpace(string(data)), "\n")
 }
