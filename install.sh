@@ -106,7 +106,8 @@ url="https://github.com/$repo/releases/download/$ver/$asset"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-echo "coop: downloading $asset ($ver)…"
+printf 'Installing Coop %s\n' "${ver#v}"
+printf '  Downloading %s…\n\n' "$asset"
 curl -fsSL "$url" -o "$tmp/coop.tar.gz" || { echo "coop: download failed: $url" >&2; exit 1; }
 
 # Verify the download against the release's published checksums — defends against a
@@ -130,7 +131,7 @@ if command -v cosign >/dev/null 2>&1; then
         --certificate-identity "https://github.com/AndrewDryga/coop/.github/workflows/release.yml@refs/tags/$ver" \
         --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
         >/dev/null 2>&1; then
-      echo "coop: verified checksums.txt signature with cosign"
+      printf '  ✓ Release signature verified with Cosign\n'
     else
       echo "coop: checksums.txt failed cosign signature verification — aborting" >&2
       exit 1
@@ -145,14 +146,15 @@ else
   echo "coop: cosign not found; skipping signature check (see README → Verifying a download)" >&2
 fi
 verify_checksum "$asset" "$tmp/checksums.txt" "$tmp/coop.tar.gz" || exit 1
+printf '  ✓ Download checksum verified\n'
 
 tar -xzf "$tmp/coop.tar.gz" -C "$tmp"
 atomic_install "$tmp/coop" "$bindir/coop"
-echo "coop: installed $bindir/coop ($("$bindir/coop" version))"
+printf '  ✓ Installed %s (%s)\n' "$bindir/coop" "$("$bindir/coop" version)"
 
 case ":$PATH:" in
   *":$bindir:"*) ;;
-  *) printf "\n  %s is not on your PATH — add to your shell rc:\n    export PATH=\"%s:\$PATH\"\n\n" "$bindir" "$bindir" ;;
+  *) printf "\n  %s is not on your PATH — add to your shell rc:\n    export PATH=\"%s:\$PATH\"\n" "$bindir" "$bindir" ;;
 esac
 
 # Zsh only, and only ever as instructions: the installer never edits a shell startup file.
@@ -165,16 +167,18 @@ esac
 # CORRECT_ALL offers to "correct" `coop codex` to the repo's own .codex/ directory.
 case "${SHELL:-}" in
   *zsh)
-    printf "\n  Zsh completion (optional) — coop does not edit your shell files. Run once:\n"
+    printf "\nZsh completion (optional)\n\n"
+    printf "  Coop does not edit your shell files. Run once:\n\n"
     printf "    mkdir -p ~/.config/coop\n"
     printf "    coop completion zsh > ~/.config/coop/completion.zsh\n"
-    printf "  then add this to ~/.zshrc, AFTER your compinit line:\n"
-    printf "    source ~/.config/coop/completion.zsh\n"
-    printf "  Spelling correction stays on everywhere; only coop's own arguments are exempt.\n\n"
+    printf "\n  Then add this to ~/.zshrc, AFTER your compinit line:\n\n"
+    printf "    source ~/.config/coop/completion.zsh\n\n"
+    printf "  Spelling correction stays on everywhere; only Coop's own arguments are exempt.\n"
     ;;
 esac
 
 # Build the sandbox image + verify, when a container runtime is available.
+printf '\n'
 if [ "${COOP_NO_BUILD:-0}" = 1 ]; then
   echo "coop: skipped image build (COOP_NO_BUILD=1) — next: coop build --egress open && coop doctor"
 elif command -v container >/dev/null 2>&1 || command -v docker >/dev/null 2>&1; then
@@ -183,6 +187,7 @@ elif command -v container >/dev/null 2>&1 || command -v docker >/dev/null 2>&1; 
     echo "Retry: coop build --egress open && coop doctor" >&2
     exit 1
   fi
+  printf '\n'
   if ! "$bindir/coop" doctor; then
     echo "Setup checks failed. The Coop binary is installed, but setup is incomplete." >&2
     echo "After fixing the reported problem, run: coop doctor" >&2
@@ -193,5 +198,7 @@ else
   echo "      then run: coop build --egress open && coop doctor"
 fi
 
-echo
-echo "Done. From any repo:  coop claude   # a sandboxed agent"
+printf '\nDone. Now run in any repo:\n\n'
+printf '  coop claude   # start a sandboxed agent\n\n'
+printf 'For more information:\n\n'
+printf '  coop help\n'

@@ -24,11 +24,12 @@ func TestInstallSetupOutcome(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name, build, doctor, calls string
-		ok                         bool
+		ok, signed                 bool
 	}{
-		{"build fails", "23", "0", "build --egress open\n", false},
-		{"doctor fails", "0", "24", "build --egress open\ndoctor\n", false},
-		{"ready", "0", "0", "build --egress open\ndoctor\n", true},
+		{"build fails", "23", "0", "build --egress open\n", false, false},
+		{"doctor fails", "0", "24", "build --egress open\ndoctor\n", false, false},
+		{"ready", "0", "0", "build --egress open\ndoctor\n", true, false},
+		{"ready with signed release and Zsh", "0", "0", "build --egress open\ndoctor\n", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -64,8 +65,16 @@ func TestInstallSetupOutcome(t *testing.T) {
 			stub := `#!/bin/sh
 case "$1" in
   version) echo fixture ;;
-  build) printf 'build %s %s\n' "$2" "$3" >> "$TEST_CALLS"; exit "$TEST_BUILD_EXIT" ;;
-  doctor) printf 'doctor\n' >> "$TEST_CALLS"; exit "$TEST_DOCTOR_EXIT" ;;
+  build)
+    printf 'build %s %s\n' "$2" "$3" >> "$TEST_CALLS"
+    if test "$TEST_BUILD_EXIT" = 0; then
+      printf '✓ Box image built\n  14 supervised editor sessions will reconnect with the new image.\n'
+    fi
+    exit "$TEST_BUILD_EXIT" ;;
+  doctor)
+    printf 'doctor\n' >> "$TEST_CALLS"
+    printf 'Checking the Coop box on the Docker runtime\n'
+    exit "$TEST_DOCTOR_EXIT" ;;
   *) exit 97 ;;
 esac
 `
@@ -93,13 +102,19 @@ test "$#" -eq 4 && test "$1" = -fsSL && test "$3" = -o || exit 97
 case "$2" in
   https://github.com/AndrewDryga/coop/releases/download/v9.9.9/coop_9.9.9_linux_amd64.tar.gz) cp "$TEST_ROOT/archive" "$4" ;;
   https://github.com/AndrewDryga/coop/releases/download/v9.9.9/checksums.txt) cp "$TEST_ROOT/checksums" "$4" ;;
+  https://github.com/AndrewDryga/coop/releases/download/v9.9.9/checksums.txt.bundle) printf fixture > "$4" ;;
   *) exit 97 ;;
 esac
 `, 0o755)
+			shell := "/bin/sh"
+			if tc.signed {
+				write(filepath.Join(bin, "cosign"), "#!/bin/sh\ntest \"$1\" = verify-blob\n", 0o755)
+				shell = "/bin/zsh"
+			}
 			calls := filepath.Join(root, "calls")
 			installed := filepath.Join(root, "installed", "coop")
 			cmd := exec.Command(sh, "./install.sh")
-			cmd.Env = []string{"PATH=" + bin, "HOME=" + root, "TMPDIR=" + root, "SHELL=/bin/sh",
+			cmd.Env = []string{"PATH=" + bin, "HOME=" + root, "TMPDIR=" + root, "SHELL=" + shell,
 				"COOP_VERSION=v9.9.9", "COOP_NO_BUILD=0", "COOP_BIN_DIR=" + filepath.Dir(installed),
 				"TEST_ROOT=" + root, "TEST_CALLS=" + calls, "TEST_BUILD_EXIT=" + tc.build, "TEST_DOCTOR_EXIT=" + tc.doctor}
 			out, err := cmd.CombinedOutput()
@@ -109,8 +124,38 @@ esac
 			if got, err := os.ReadFile(calls); err != nil || string(got) != tc.calls {
 				t.Errorf("setup calls = %q, want %q: %v\n%s", got, tc.calls, err, out)
 			}
-			if strings.Contains(string(out), "Done. From any repo:") != tc.ok {
+			footer := "\nDone. Now run in any repo:\n\n" +
+				"  coop claude   # start a sandboxed agent\n\n" +
+				"For more information:\n\n  coop help\n"
+			if strings.Contains(string(out), "Done.") != tc.ok || (tc.ok && !strings.Contains(string(out), footer)) {
 				t.Errorf("final success must match setup outcome:\n%s", out)
+			}
+			for _, want := range []string{
+				"Installing Coop 9.9.9\n  Downloading coop_9.9.9_linux_amd64.tar.gz…\n\n",
+				"  ✓ Download checksum verified\n",
+				fmt.Sprintf("  ✓ Installed %s (fixture)\n", installed),
+			} {
+				if !strings.Contains(string(out), want) {
+					t.Errorf("installer output is missing %q:\n%s", want, out)
+				}
+			}
+			if tc.build == "0" && !strings.Contains(string(out), "sessions will reconnect with the new image.\n\nChecking the Coop box") {
+				t.Errorf("build and doctor output need a blank line between sections:\n%s", out)
+			}
+			if tc.signed {
+				completion := "\nZsh completion (optional)\n\n" +
+					"  Coop does not edit your shell files. Run once:\n\n" +
+					"    mkdir -p ~/.config/coop\n" +
+					"    coop completion zsh > ~/.config/coop/completion.zsh\n\n" +
+					"  Then add this to ~/.zshrc, AFTER your compinit line:\n\n" +
+					"    source ~/.config/coop/completion.zsh\n\n" +
+					"  Spelling correction stays on everywhere; only Coop's own arguments are exempt.\n"
+				if !strings.Contains(string(out), completion) || !strings.Contains(string(out), "  ✓ Release signature verified with Cosign\n") {
+					t.Errorf("signed Zsh setup output is incomplete or incorrectly spaced:\n%s", out)
+				}
+				t.Logf("installer output:\n%s", out)
+			} else if strings.Contains(string(out), "✓ Release signature verified") || strings.Contains(string(out), "Zsh completion") {
+				t.Errorf("installer claims verification or guidance that did not apply:\n%s", out)
 			}
 			if !tc.ok && (!strings.Contains(string(out), "setup is incomplete") || !strings.Contains(string(out), "coop doctor")) {
 				t.Errorf("failed setup needs an accurate recovery action:\n%s", out)
@@ -359,7 +404,7 @@ func TestInstallZshGuidanceOnly(t *testing.T) {
 		"coop completion zsh > ~/.config/coop/completion.zsh",
 		"AFTER your compinit line",
 		"source ~/.config/coop/completion.zsh",
-		"coop does not edit your shell files",
+		"Coop does not edit your shell files",
 		"Spelling correction stays on everywhere",
 	} {
 		if !strings.Contains(text, want) {

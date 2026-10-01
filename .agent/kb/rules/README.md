@@ -94,6 +94,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [acp-connects-before-selection](acp-connects-before-selection.md) — plain coop acp connects automatically so the editor can expose its live selectors
 
 **CLI output** — what the terminal shows
+- [installer-output-is-spaced-and-actionable](installer-output-is-spaced-and-actionable.md) — installer progress and shell instructions use readable blocks, with separate start/help examples
 - [selectors-need-a-real-choice](selectors-need-a-real-choice.md) — hide already-selected singleton dropdowns while retaining native state
 - [acp-waits-and-switches-are-visible](acp-waits-and-switches-are-visible.md) — announce automatic quota fallback and every newly queued account wait
 - [login-guidance-at-provider-start](login-guidance-at-provider-start.md) — put sign-in guidance below Starting and separate success from shutdown
