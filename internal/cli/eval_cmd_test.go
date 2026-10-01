@@ -137,7 +137,7 @@ func TestRenderEvalPlanSeparatesSections(t *testing.T) {
 		"[workload " + eval.WorkloadFingerprint(p.Suite).Short() + "]\n\nConfigurations:\n",
 		"build test-build]\n\nMatrix:",
 		"from command start (stops preparation, trials and grading)\n\nIsolation:",
-		"omitted from trials\n\nCases:\n",
+		"omitted from trials\nNative web search/fetch: disabled (not an authenticated-request firewall)\n\nCases:\n",
 	} {
 		if !strings.Contains(out, boundary) {
 			t.Errorf("plan lacks section boundary %q:\n%s", boundary, out)
