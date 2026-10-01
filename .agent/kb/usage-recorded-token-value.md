@@ -24,6 +24,7 @@ The compact view leads with quota bars, then the 30-day API estimate. Exact-acco
 adds plan, coverage, pricing and retained-record details without a blanket disclaimer footer.
 Shared editor ACP roots have no historical account binding; copies shared by two named credentials
 become unattributed instead of being charged to today's default or displayed as account zero.
+The view calls that shared row `Unassigned editor usage`; this does not change its account binding.
 `ReadUsageSnapshot` opens existing SQLite read-only, including live WAL, without `Store.Open`,
 schema migration or checkpoint. Creation/rotation events provide historical targets; rotation
 during a turn and implicit defaults remain ambiguous. Old aggregate usage is unpriced coverage,
@@ -36,7 +37,8 @@ authority against participating Coop runs/logins, including consult peers. Profi
 labels keep failed teardown busy after the host flock closes. Native processes and older Coop
 versions do not participate; encrypted/keychain portability and missing runtime remain explicit
 unavailable results, not temporary refresh-token copies. API-key/Vertex auth has no Code Assist
-subscription quota but can still have valued native history.
+subscription quota but can still have valued native history. Its unavailable line names the
+selected mode without a second generic limits placeholder.
 
 ## Changelog
 - 2026-10-02 — verified the read scope against `AgentProfileDir` and `usageCredentials`; documented

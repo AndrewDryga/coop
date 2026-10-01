@@ -328,6 +328,17 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 			fmt.Fprintln(w, text)
 		}
 	}
+	labelWidth := 14
+	for _, row := range rows {
+		if row.shared || !slices.Contains(names, row.provider) {
+			continue
+		}
+		for _, bucket := range row.quota.Buckets {
+			if details || bucket.Note != "disabled" {
+				labelWidth = max(labelWidth, utf8.RuneCountInString(agents.DisplayTarget(bucket.Name)))
+			}
+		}
+	}
 	for _, name := range names {
 		fmt.Fprintln(w, pal.Bold(titleName(name)))
 		count := 0
@@ -337,6 +348,9 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 			}
 			count++
 			header := agents.DisplayTarget(row.account)
+			if row.shared {
+				header = "Unassigned editor usage"
+			}
 			if details && row.quota.Plan != "" {
 				header += " · " + agents.DisplayTarget(row.quota.Plan)
 			}
@@ -354,15 +368,8 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 				if errors.Is(row.quotaErr, agents.ErrUsageSignIn) {
 					line("    Run: ", agents.LoginCommand(name+"@"+row.account))
 				}
-			} else if len(row.quota.Buckets) == 0 {
+			} else if len(row.quota.Buckets) == 0 && row.quota.Note == "" {
 				fmt.Fprintln(w, "    Limits          unavailable")
-			}
-			labelWidth := 14
-			for _, b := range row.quota.Buckets {
-				if !details && b.Note == "disabled" {
-					continue
-				}
-				labelWidth = max(labelWidth, utf8.RuneCountInString(agents.DisplayTarget(b.Name)))
 			}
 			shownResets := make(map[int64]bool)
 			for _, bucket := range row.quota.Buckets {

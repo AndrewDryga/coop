@@ -175,6 +175,35 @@ func TestUsageAPIKeyAndNativeHelper(t *testing.T) {
 	}
 }
 
+func TestUsageGeminiUnavailableReason(t *testing.T) {
+	for _, tc := range []struct {
+		auth, mode string
+		apiKey     bool
+	}{
+		{"", "API-key", true},
+		{"gemini-api-key", "API-key", false},
+		{"vertex-ai", "Vertex", true},
+	} {
+		t.Run(tc.mode+tc.auth, func(t *testing.T) {
+			profile := t.TempDir()
+			if tc.auth != "" {
+				data := []byte(`{"security":{"auth":{"selectedType":"` + tc.auth + `"}}}`)
+				if err := os.WriteFile(filepath.Join(profile, "settings.json"), data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			quota, err := geminiUsageQuota(context.Background(), UsageQuotaInput{ProfileDir: profile, APIKey: tc.apiKey,
+				Native: func(context.Context, []string) ([]byte, error) {
+					t.Fatal("unavailable quota launched a native helper")
+					return nil, nil
+				}})
+			if err != nil || len(quota.Buckets) != 0 || quota.Note != "Limits unavailable for "+tc.mode+" authentication" {
+				t.Fatalf("quota=%+v error=%v", quota, err)
+			}
+		})
+	}
+}
+
 func TestUsageGeminiHelperDrainsCredentialPersistence(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {

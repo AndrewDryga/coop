@@ -194,18 +194,22 @@ func TestUsageSummaryKeepsBarsAndOnlyUsefulFacts(t *testing.T) {
 				{Name: "gpt-reserve · Weekly", Used: &zero, Reset: reset},
 				{Name: "Credits", Remaining: "60412.0160080000"},
 			}}},
+		{provider: "codex", account: "personal",
+			quota: agents.UsageQuota{Buckets: []agents.UsageBucket{{Name: "Weekly", Used: &full}}}},
 		{provider: "codex", account: "Unattributed ACP", shared: true,
 			value: agents.UsageValue{Available: true, Priced: 1, USD: 0.82, Approximate: true}},
+		{provider: "gemini", account: "api-key", quota: agents.UsageQuota{Note: "Limits unavailable for API-key authentication"}},
+		{provider: "gemini", account: "vertex", quota: agents.UsageQuota{Note: "Limits unavailable for Vertex authentication"}},
 	}
 	var out bytes.Buffer
-	renderUsage(&out, ui.Palette{}, 120, now, []string{"claude", "codex"}, rows, false)
+	renderUsage(&out, ui.Palette{}, 120, now, []string{"claude", "codex", "gemini"}, rows, false)
 	text := out.String()
-	for _, wanted := range []string{"  personal\n", "░░░░░░░░░░    0% used", "██████████  100% used · blocked", "Fable", "gpt-reserve · Weekly", "60412.02 remaining", "30-day API estimate  ≈$406.48", "Unattributed ACP", "≈$0.82"} {
+	for _, wanted := range []string{"  personal\n", "░░░░░░░░░░    0% used", "██████████  100% used · blocked", "Fable", "gpt-reserve · Weekly", "60412.02 remaining", "30-day API estimate  ≈$406.48", "Unassigned editor usage", "≈$0.82"} {
 		if !strings.Contains(text, wanted) {
 			t.Fatalf("missing %q:\n%s", wanted, text)
 		}
 	}
-	for _, unwanted := range []string{" · default", " · max", "partial history", "approximate token tariff", "unpriced events", "retained turns", "Extra usage", "reset unknown", "usage unknown", "not billing", "Based on retained", "Reset times are local"} {
+	for _, unwanted := range []string{" · default", " · max", "partial history", "approximate token tariff", "unpriced events", "retained turns", "Extra usage", "reset unknown", "usage unknown", "not billing", "Based on retained", "Reset times are local", "Unattributed ACP"} {
 		if strings.Contains(text, unwanted) {
 			t.Fatalf("summary contains %q:\n%s", unwanted, text)
 		}
@@ -216,10 +220,24 @@ func TestUsageSummaryKeepsBarsAndOnlyUsefulFacts(t *testing.T) {
 	if strings.Count(text, "resets Oct 8, 12:00") != 2 {
 		t.Fatalf("inactive Fable repeats the weekly reset:\n%s", text)
 	}
+	barColumn := -1
 	for _, line := range strings.Split(text, "\n") {
+		if index := strings.IndexAny(line, "█░"); index >= 0 {
+			column := utf8.RuneCountInString(line[:index])
+			if barColumn >= 0 && column != barColumn {
+				t.Fatalf("bars shifted between accounts: %s", line)
+			}
+			barColumn = column
+		}
 		if strings.Contains(line, "gpt-reserve") && strings.Contains(line, "blocked") {
 			t.Fatalf("one exhausted bucket blocked the reserve: %s", line)
 		}
+	}
+	gemini := text[strings.Index(text, "Gemini\n"):]
+	if strings.Count(gemini, "    Limits ") != 2 ||
+		!strings.Contains(gemini, "Limits unavailable for API-key authentication") ||
+		!strings.Contains(gemini, "Limits unavailable for Vertex authentication") {
+		t.Fatalf("Gemini repeats or obscures the unavailable reason:\n%s", gemini)
 	}
 	t.Log("\n" + text)
 

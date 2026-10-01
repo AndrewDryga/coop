@@ -5,7 +5,9 @@
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
 - **Simpler usage output.** Keep progress bars and show limits before the 30-day API estimate,
-  without default tags or repetitive footnotes. Select one account for history and pricing details.
+  without default tags or repetitive footnotes. Bars align across accounts, shared editor usage
+  has a clearer label, and unavailable limits have one explanation. Select one account for
+  history and pricing details.
 
 - **Clearer installer output.** Installation, optional shell setup and sandbox checks use
   separate readable blocks, with final examples for starting an agent and finding help.
