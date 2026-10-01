@@ -17,7 +17,10 @@ each time — this is the contract; follow it.
 ## 1. Pre-flight — is there anything real to ship?
 - On `main`, clean tree, not behind `origin/main` (the only ahead commits should be your own
   release prep). Gate green: `make check`.
-- **Refuse a no-op.** `git diff --stat "$(git tag --sort=v:refname | tail -1)"..main` — if it
+- Identify the latest published, non-draft, non-prerelease version with
+  `gh release list --limit 100 --json tagName,isDraft,isPrerelease,publishedAt` before comparing
+  changes. A local or failed tag is not a published release.
+- **Refuse a no-op.** `git diff --stat <latest-published-tag>..main` — if it
   touches only `CHANGELOG.md`/docs (no code), STOP: the binary would be byte-identical to the
   last release. The fix is almost always changelog *attribution*, not a new version — move the
   entry under the release where the code actually shipped (`git tag --contains <commit>` shows
@@ -32,10 +35,14 @@ each time — this is the contract; follow it.
   signing is CI-only keyless OIDC) to catch config breakage before any tag exists.
 
 ## 2. Pick the version (semver — or take the user's)
-- Latest: `git tag --sort=v:refname | tail -1`.
+- Latest: the published version established in pre-flight, not the highest local Git tag.
 - Bump by what's in Unreleased: new functionality → **minor** `x.Y.0`; fixes/hardening only →
   **patch** `x.y.Z`; a breaking change → **major**. A version the user named wins.
 - Guard: the tag must not already exist and must sort after the latest.
+- Move all unpublished attempt entries into Unreleased before finalizing; preserve their change
+  descriptions, correcting only behavior superseded before publication. Only the version that
+  actually ships gets a numbered release entry. Release notes and full-changelog links compare
+  against the previous published release; do not let GitHub choose an unpublished tag as baseline.
 
 ## 3. Finalize + tag (all local, still reversible)
 - Rename `## Unreleased` → `## <version>` (NO date — house format is a bare `## X.Y.Z`).
@@ -55,5 +62,6 @@ each time — this is the contract; follow it.
 
 ## 5. If it breaks
 - Failed before publishing? Delete the tag both sides (`git tag -d "v<version>"`,
-  `git push origin ":v<version>"`), fix, retry.
+  `git push origin ":v<version>"`), restore its changes under Unreleased, fix, retry. Verify no
+  public release/assets exist first and retain the exact tag identity in task artifacts.
 - Already published? Never rewrite a public tag — roll forward with a follow-up patch.

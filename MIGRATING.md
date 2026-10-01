@@ -1,6 +1,11 @@
 # Migrating
 
-## v10: controller-owned workers and session schema 25
+## v10.1.2: upgrading from v8.1.0
+
+This guide covers the changes since v8.1.0. Complete the applicable steps below before
+starting workers, fork loops or MCP-enabled sessions with the new binary.
+
+### Controller-owned workers and session schema 25
 
 The worker connection is now one command:
 
@@ -33,9 +38,9 @@ saved documents or synthesize authority to make an old record run. Authenticate 
 on each worker with Coop's normal login flow; controllers do not transfer model credentials.
 
 For network approval use `coop approve`, not `coop net approve`. Use `coop net blocked` instead
-of `coop net explain`. The remaining v10 configuration/runtime/task changes are listed below.
+of `coop net explain`. The remaining configuration/runtime/task changes are listed below.
 
-## Anchored fork and network identity
+### Anchored fork and network identity
 
 Linux overlay filesystems can immediately reuse every observed piece of directory metadata after
 deletion, including inode and birth time. Coop therefore no longer treats allocator metadata as
@@ -96,7 +101,7 @@ Sidecar repository binds using SELinux relabel or propagation options now refuse
 options before retrying. A read-only session also requires its bind source to exist already,
 because Compose's short syntax would otherwise create a directory on the host.
 
-## Canonical tasks across isolated forks
+### Canonical tasks across isolated forks
 
 Fork loops now schedule from the project's canonical task queue. They no longer copy a complete
 `.agent/tasks` tree into each fork, and `coop tasks split` has been retired. Before upgrading, stop
@@ -144,7 +149,7 @@ the record, retire it: `POST /v1/sessions/<id>/discard` with
 `{"retire_quarantined":true,"expected_revision":<n>}` tombstones the row and leaves the workspace to
 you. The same applies to a session Coop quarantines later because its workspace vanished.
 
-## v10: strict `coop.conf`, one removal verb and supported runtimes
+### Strict `coop.conf`, one removal verb and supported runtimes
 
 - **`coop.conf` is validated on every command.** An unknown key, a duplicate key, a malformed
   line, or a retired key stops Coop before any work, naming the file and line. Replace the retired
@@ -161,7 +166,7 @@ you. The same applies to a session Coop quarantines later because its workspace 
 - **Removal/privacy flags have explicit names.** Replace `coop down -v` or `--volumes` with
   `coop down --delete-volumes` (still deletes stored service data). Replace
   `coop net export --include-destinations` with `--include-addresses` (still exposes hostnames/IPs).
-- **`coop tasks clear` → `coop tasks rm --all-done`.** The alias 9.0.0 still accepted is gone.
+- **`coop tasks clear` → `coop tasks rm --all-done`.** The old alias is gone.
 - **`coop tasks split` is gone.** Parallel forks share the canonical queue; see
   [Canonical tasks across isolated forks](#canonical-tasks-across-isolated-forks) above.
 - **Automatic runtime detection prefers Docker.** On a machine with both Docker and Apple
@@ -176,11 +181,11 @@ you. The same applies to a session Coop quarantines later because its workspace 
   anything on the Podman side, so stop leftover sibling stacks there first:
   `podman compose -p <project> -f .agent/compose.yml down --remove-orphans`.
 - **Session state root schema 25.** Back up before the new connection starts its service; see
-  [the controller cutover](#v10-controller-owned-workers-and-session-schema-25) above.
+  [the controller cutover](#controller-owned-workers-and-session-schema-25) above.
 
-## v9: one composition model, direct fork loops
+### One composition model, direct fork loops
 
-Fusion was a second command grammar over capabilities Coop already exposes directly. v9 removes
+Fusion was a second command grammar over capabilities Coop already exposes directly. Coop removes
 the command and its mandatory "consult everyone before every action" governor prompt; it does not
 remove presets, named peers, roles, or consultation.
 
@@ -200,20 +205,20 @@ an unrelated signed-in provider no longer prevents a supported lead from startin
 `coop-consult` still provides read-only fresh/continue sessions and target fallback for
 named peers and preset consult roles.
 
-Before the first MCP-enabled v9 launch, make the configured `COOP_MCP_FILE` a private readable
-regular file no larger than 4 MiB. Shared MCP also makes Coop inspect the selected Codex or Grok
+Before the first MCP-enabled launch after upgrading, make the configured `COOP_MCP_FILE` a
+private readable regular file no larger than 4 MiB. Shared MCP also inspects the selected Codex or Grok
 native config, so apply the same preparation there. Gemini's native `settings.json` is projected
-even without shared MCP and must be safe before any Gemini v9 launch. Replace a final symlink with a
+even without shared MCP and must be safe before any Gemini launch. Replace a final symlink with a
 private regular copy rather than preserving the link, and keep the shared source outside
 repositories, companion repositories, credential homes, and ACP session stores that Coop mounts
-wholesale. Set `COOP_MCP_FILE` to a canonical path without `..`. V9 leaves an unsafe input untouched
+wholesale. Set `COOP_MCP_FILE` to a canonical path without `..`. Coop leaves an unsafe input untouched
 and refuses the affected launch; after correcting the file or source path, retry the original
 command.
 
 Project Dockerfiles selected by `.agent/Dockerfile` or `box.dockerfile` must now be regular
 in-repository files. Replace a symlink with a regular copy before `coop build`.
 
-Fleet was a declarative wrapper over the fork and loop commands. v9 removes its command family,
+Fleet was a declarative wrapper over the fork and loop commands. Coop removes its command family,
 live board, and `.agent/fleet.yaml` parser while keeping the direct primitives:
 
 | Retired | Use |
@@ -225,22 +230,22 @@ live board, and `.agent/fleet.yaml` parser while keeping the direct primitives:
 | `coop fleet prune` | `coop fork rm <name>` for each obsolete fork (`--yes` confirms non-interactively; `--force` separately overrides dirty/unmerged protection). |
 
 `coop fork merge --all` still lands every fork through a revalidating rebase queue. There is no
-replacement manifest or batch up/down command in v9; the smaller explicit surface is intentional.
+replacement manifest or batch up/down command; start and stop each worker explicitly.
 
 Coop also no longer inspects or removes basename-only Compose projects created before per-workspace
 hashed project names. Finish or stop sibling services before upgrading. If one of those old stacks
 remains afterward, inspect it with `docker compose ls`, then run
-`docker compose -p <legacy-project> -f .agent/compose.yml down --remove-orphans`. v9 manages only
+`docker compose -p <legacy-project> -f .agent/compose.yml down --remove-orphans`. Coop manages only
 projects named by the current `ComposeProject(workspace)` scheme.
 
-Fork session re-entry also has one v9 record: `.coop/session.<provider>.<account>`. Coop ignores the
+Fork session re-entry uses one record: `.coop/session.<provider>.<account>`. Coop ignores the
 older provider-only `.coop/session.<provider>` file and no longer adopts the latest Codex session by
 cwd. The first re-entry without a current exact hint starts a fresh conversation. Coop records an
 exact hint for later resumes when the provider creates one unambiguous session. Remove provider-only
 files when convenient; Coop will neither read nor rewrite them.
 
 `coop init` now maintains only the current scaffold and does not rewrite pre-v8 generated files.
-For a direct pre-v8-to-v9 upgrade:
+If upgrading from a version older than v8:
 
 - In `.githooks/prepare-commit-msg`, replace
   `$HOME/.config/coop/git-hooks/prepare-commit-msg` with
@@ -255,11 +260,11 @@ For a direct pre-v8-to-v9 upgrade:
 Existing project-owned hooks and custom hook paths remain protected; `init` will describe how to
 chain Coop's current hook instead of overwriting them.
 
-Audit-reopen authority is also current-only in v9: active records remain version 3 and
+Audit-reopen authority is also current-only: active records remain version 3 and
 non-authorizing pending records remain version 4. No tagged Coop release wrote the retired v1/v2
 formats, so released-version upgrades need no conversion. The now-unused
 `coop tasks unblock --adopt-audit-head` bridge has no replacement. If an untagged developer build
-left a v1/v2 record, reconcile that task with the originating pre-v9 build before upgrading; v9
+left a v1/v2 record, reconcile that task with the originating build before upgrading; current Coop
 leaves the record intact and refuses to lease, complete, or unblock the task. Do not delete raw
 task-authority registry files to bypass that refusal.
 

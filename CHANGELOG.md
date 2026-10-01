@@ -6,19 +6,13 @@
 
 ## 10.1.2
 
-This release includes provider-client updates, `coop usage`, and the new controller-worker
-workflow. When upgrading from v8.1.0, follow both the v10 and v9 steps in
-[MIGRATING.md](MIGRATING.md), including the session-state backup.
+Changes since v8.1.0 include provider-client updates, `coop usage`, and the new controller-worker
+workflow. Follow the [upgrade guide](MIGRATING.md#v1012-upgrading-from-v810), including the
+session-state backup, before upgrading.
 [Compare the public upgrade](https://github.com/AndrewDryga/coop/compare/v8.1.0...v10.1.2).
 
 - **Fix large worker result delivery.** Results containing Unicode separators stay within
   transmission limits on Go 1.27.
-
-## 10.1.1
-
-This release includes the v10.1.0 public-upgrade rollup below. Upgrading from v8.1.0 requires
-the v10 and v9 steps in [MIGRATING.md](MIGRATING.md), including the session-state backup.
-[Compare the complete public-upgrade changes](https://github.com/AndrewDryga/coop/compare/v8.1.0...v10.1.1).
 
 - **Refresh dependencies and client compatibility.** Update Go/tooling, CI actions, container
   bases, release tools and locked provider clients. Patched npm transitives remove the reported
@@ -30,13 +24,6 @@ the v10 and v9 steps in [MIGRATING.md](MIGRATING.md), including the session-stat
 
 - **Retain typed terminal exit evidence for controllers.** Command output deltas and numeric
   exit codes/signals survive output truncation and pass through bounded controller activity.
-
-## 10.1.0
-
-This release includes changes since v8.1.0. When upgrading, follow both the v10 and v9 sections of
-[MIGRATING.md](MIGRATING.md), including the session-state backup and MCP/native-settings
-preparation before their first launch. For the complete public-upgrade diff,
-[compare v8.1.0 with v10.1.0](https://github.com/AndrewDryga/coop/compare/v8.1.0...v10.1.0).
 
 - **Inspect limits and recorded token value with `coop usage`.** Read all configured providers
   or one `provider@credential`, preserving independent failures and local reset times. Native
@@ -173,19 +160,6 @@ preparation before their first launch. For the complete public-upgrade diff,
   Install and update verify archive checksums; the installer additionally verifies the checksum
   signature when Cosign is installed. Downloads include signed checksums and build provenance.
 
-Maintenance scenarios are comparison examples, not official benchmark scores. Repeats do not
-establish unseen-task performance.
-
-## 10.0.1
-
-Source-only tag. Its changes are included in v10.1.0 above.
-
-## 10.0.0
-
-Source-only tag. Its changes are included in v10.1.0 above.
-
-## 9.0.0
-
 - **Remote-session structured output is enforced at the completion boundary.** A turn may carry a
   bounded JSON Schema plus the SHA-256 digest of its exact bytes; Coop persists and compiles that
   contract, instructs the model with it, and refuses to complete on malformed or schema-invalid
@@ -203,18 +177,19 @@ Source-only tag. Its changes are included in v10.1.0 above.
   candidate, and the caller retries the still-current decision with a fresh idempotency key after
   runtime recovery.
 
-- **Detached forks have one repository-owned worker-state format.** Every current pidfile starts
-  with `owner-v1`; Coop no longer decodes, signals, rewrites, or partially cleans up headerless
-  pre-v8 records. Start/recreate, merge, remove, and stop reject unsupported state before runtime or
+- **Detached forks have one repository-owned worker-state format.** Current detached workers use
+  generation-bound `owner-v2` records; stopped `owner-v1` records remain readable for safe cleanup.
+  Coop no longer decodes, signals, rewrites, or partially cleans up headerless pre-v8 records.
+  Start/recreate, merge, remove, and stop reject unsupported state before runtime or
   workspace effects while retaining the exact file as lifecycle authority. Stop detached forks
   with v8 before upgrading, or follow the verified process/container procedure in the
-  [migration guide](MIGRATING.md#detached-worker-state); never fabricate current ownership by
-  prepending the header. Current worker, cleanup-pending, reservation, stable-identity, exact-owner
-  reap, and atomic-write wire behavior is unchanged. Detached startup now hands the exact launched
-  reservation from parent to child and publishes the child's PID/token before any child mutation,
+  [migration guide](MIGRATING.md#canonical-tasks-across-isolated-forks); never fabricate current
+  ownership by prepending the header. Worker, cleanup-pending, reservation, stable-identity,
+  exact-owner reap, and atomic-write behavior retain ownership checks. Detached startup hands the
+  exact launched reservation from parent to child and publishes the child's PID/token before any child mutation,
   so a successful concurrent stop cannot be undone by a delayed child.
 
-- **Task authority no longer carries an automatic pre-v8 cache migration.** V9 opens only the
+- **Task authority no longer carries an automatic pre-v8 cache migration.** Coop opens only the
   current durable registry at `~/.local/state/coop/task-leases/v1`; it removes the adoption flock,
   cross-volume record copier, staging tree, and rename path from every authority open. If that
   durable root is absent while the retired cache registry contains anything, Coop refuses before
@@ -232,7 +207,8 @@ Source-only tag. Its changes are included in v10.1.0 above.
 - **`coop init` targets the current scaffold only.** Re-init still fills missing current files and
   preserves every existing hook, symlink, and custom hooks path, but it no longer recognizes and
   rewrites pre-v8 hook bytes, root-anchored `.agent` ignore rules, or the retired `.agent/rules/`
-  un-ignore. `MIGRATING.md` gives the one-time manual replacements for a direct pre-v8-to-v9 jump.
+  un-ignore. `MIGRATING.md` gives the one-time manual replacements for a direct upgrade from a
+  version older than v8.
 
 - **Fork session re-entry uses one exact hint.** Coop now reads only the current
   `.coop/session.<provider>.<account>` record. It no longer adopts provider-only fork records or
@@ -245,8 +221,8 @@ Source-only tag. Its changes are included in v10.1.0 above.
   inode-verified registry under `~/.local/state/coop/task-leases/`; task `tmp/` is scratch only.
 
 - **Fleet is removed in favor of direct detached fork loops.** Start each worker with `coop fork
-  <name> <target|preset> --loop -d --tasks <path>`; use `coop tasks split <n>` for mechanical queue
-  slices, `coop tasks watch` for merged progress, `coop fork ls`/`logs -f` for fork state and output,
+  <name> <target|preset> --loop -d --tasks <path>`; use the canonical shared queue instead of copied
+  queue slices, `coop tasks watch` for merged progress, `coop fork ls`/`logs -f` for fork state and output,
   `coop fork stop <name>` to stop one, `coop fork rm <name>` to remove one, and `coop fork merge
   --all` to land all forks. Coop no longer reads `.agent/fleet.yaml`. Removing its manifest parser,
   batch lifecycle, live board, adapter badges, duplicated credential/target resolution, and cast
@@ -260,7 +236,7 @@ Source-only tag. Its changes are included in v10.1.0 above.
   separate `fusion` grammar, mandatory governor prompt, council state, and duplicate resolution
   paths leaves one lead-and-roles implementation.
 
-- **The security baseline is enforced locally and in CI.** Coop now builds with Go 1.26.6, runs a
+- **The security baseline is enforced locally and in CI.** Coop now builds with Go 1.27.1, runs a
   pinned `govulncheck` as part of the one `make check` recipe, and asks Dependabot to watch Go
   modules weekly. MCP configuration also rejects duplicate case-insensitive header names and
   competing inline/environment Authorization sources instead of producing provider-dependent auth.
@@ -282,8 +258,9 @@ Source-only tag. Its changes are included in v10.1.0 above.
   Remote Development can run `coop acp <target>` beside the remote repository, while a custom
   agent may invoke that same stdio command through `ssh -T`. Coop therefore adds no
   unauthenticated listener, socket bridge, client lifecycle, or second network trust boundary.
-  The initial ACP target or preset is now required instead of guessing the first signed-in
-  provider; the live Provider and Account selectors remain available after connection.
+  Plain `coop acp` starts automatically with the first signed-in provider; explicit targets and
+  presets take precedence. The live Provider and Account selectors remain available after
+  connection.
 
 - **An ACP session now starts when the editor spells the repo path differently than git does.** Coop
   mounts the repo at `git rev-parse --show-toplevel`'s spelling, and inside the box — Linux, and
@@ -301,6 +278,9 @@ Source-only tag. Its changes are included in v10.1.0 above.
   gate now probe the daemon on that branch and surface the actionable "daemon isn't responding"
   message instead. The probe runs only when the image already looks absent, so a normal launch pays
   nothing for it.
+
+Maintenance scenarios are comparison examples, not official benchmark scores. Repeats do not
+establish unseen-task performance.
 
 ## 8.1.0
 
@@ -2731,6 +2711,19 @@ aliases — every retired spelling exits with the exact rewrite to run instead �
 
 ## 2.4.0
 
+- **`--consult` makes the second opinion opt-in.** Peer consultation requires the `--consult`
+  flag — `coop claude --consult` (or `codex`/`gemini`; in Zed, `coop acp claude --consult`).
+  Off by default: the directive is injected only into the launched agent and names only
+  authenticated peers.
+
+- **Agents can ask each other for a second opinion.** With `--consult`, a normal `coop claude`
+  (or `codex` / `gemini`) run carries a light, optional directive: on a genuinely hard or risky
+  call the agent may consult its peers **read-only and in parallel** to catch blind spots, then
+  decide. It's injected only into the agent you launched (so peers it spawns don't recurse)
+  and **names only peers that are authenticated** — if no other agent is logged in, nothing
+  is added. The everyday, low-cost cousin of `coop fusion`, which mandates a full council +
+  synthesis. Also covers `coop acp <agent>`; autonomous runs (`loop`, `dispatch`) are unaffected.
+
 - **Fusion mode consults on every task.** The governor's directive is now
   unconditional — no "trivial change" or "I already know it" exception — so a
   fusion governor always consults both peers before answering or acting (only
@@ -2893,25 +2886,6 @@ aliases — every retired spelling exits with the exact rewrite to run instead �
   the `AGENTS.md` contract gains rules: tasks must be self-contained (workable from the
   BOOT files alone), don't create git branches unless asked, and `IDEAS.md`/`BACKLOG.md`
   hold a dump of your current thinking (spec included), not triage notes.
-
-## 2.3.1
-
-- **`--consult` makes the second opinion opt-in.** The peer-consultation directive
-  introduced in 2.3.0 was always on; it now requires the `--consult` flag —
-  `coop claude --consult` (or `codex`/`gemini`; in Zed, `coop acp claude --consult`).
-  Off by default, otherwise unchanged: still injected only into the launched agent,
-  still naming only the authenticated peers.
-
-## 2.3.0
-
-- **Agents can ask each other for a second opinion.** A normal `coop claude` (or
-  `codex` / `gemini`) run now carries a light, optional directive: on a genuinely
-  hard or risky call the agent may consult its peers **read-only and in parallel**
-  to catch blind spots, then decide. It's injected only into the agent you launched
-  (so peers it spawns don't recurse) and **names only peers that are authenticated**
-  — if no other agent is logged in, nothing is added. The everyday, low-cost cousin
-  of `coop fusion`, which mandates a full council + synthesis. Also covers
-  `coop acp <agent>`; autonomous runs (`loop`, `dispatch`) are unaffected.
 
 ## 2.2.2
 
