@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Preserve bounded worker receipts with Go 1.27.** Wire encoding keeps raw Unicode
+  separators compact instead of expanding valid results past custody and poll limits.
+  Canonical identities and protocol limits remain unchanged. Restricted-launch and
+  qualification-tool fixtures now reflect the current publication controls and client pins.
+
 ## 10.1.1
 
 This release includes the v10.1.0 public-upgrade rollup below. Upgrading from v8.1.0 requires

@@ -141,7 +141,7 @@ func TestSummaryResultsRequireEveryProviderOnThePinnedCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pinned["claude"] != "claude-cli 2.1.260" || len(pinned) != len(agents.Names()) {
+	if pinned["claude"] != "claude-cli 2.1.285" || len(pinned) != len(agents.Names()) {
 		t.Fatalf("pinned CLI versions = %v", pinned)
 	}
 	good := passedEverywhere(t, pinned)

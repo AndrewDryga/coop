@@ -1,8 +1,9 @@
 package workerconnector
 
 import (
-	"bytes"
 	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -16,13 +17,7 @@ import (
 // escaping is unnecessary on this private JSON transport and can multiply a valid payload's size.
 // Identity digests and replay comparisons deliberately keep their existing canonical encoder.
 func encodeWireJSON(value any) ([]byte, error) {
-	var buffer bytes.Buffer
-	encoder := json.NewEncoder(&buffer)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(value); err != nil {
-		return nil, err
-	}
-	return buffer.Bytes()[:buffer.Len()-1], nil
+	return jsonv2.Marshal(value, json.DefaultOptionsV1(), jsontext.EscapeForHTML(false), jsontext.EscapeForJS(false))
 }
 
 type receiptPage struct {
