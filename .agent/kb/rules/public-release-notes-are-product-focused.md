@@ -18,6 +18,11 @@ Preserve real user-impacting limitations and migrations. Removing process narrat
 invent successful tests, broader compatibility or capabilities the product does not have.
 Contributor instructions may explain how a check works without narrating a particular run.
 
+GitHub release notes are a short, plain-English summary of the most important user-facing
+changes, not a copy of every changelog entry. Explain what people can do and why it matters;
+avoid implementation jargon. Keep essential upgrade warnings and link the detailed changelog
+for everything else. The complete changelog still preserves all changes and their attribution.
+
 **Why:** the user explicitly rejected internal-process disclosures in public release notes.
 
 When correcting published copy, edit the existing release body and commit the documentation
@@ -36,6 +41,10 @@ to make the history look tidier. Upgrade instructions describe the actual public
 fictional intermediate releases.
 
 ## Changelog
+- 2026-10-01 — the user requested important highlights in simple English for GitHub releases.
+  Rewrote the latest release body as five highlights plus essential upgrade guidance and full
+  change links; kept the detailed changelog and older release notes unchanged. Swept the existing
+  rule and release skill to distinguish concise release summaries from lossless changelog history.
 - 2026-10-01 — swept all 36 published release bodies and the changelog version headings against
   GitHub release history. Folded unpublished v9/v10 attempts into v10.1.2 and the unshipped 2.3
   changes into v2.4.0; corrected both comparison baselines and the current migration guide.

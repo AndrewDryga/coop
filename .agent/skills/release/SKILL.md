@@ -26,6 +26,9 @@ each time — this is the contract; follow it.
   entry under the release where the code actually shipped (`git tag --contains <commit>` shows
   which one already has it). Cutting a version for unchanged code misdates the feature.
 - The `## Unreleased` entries ARE the release. Empty ⇒ nothing to cut; say so and stop.
+- Write the GitHub release body as a short summary of the most important changes in plain
+  English, not every changelog item. Explain user benefits, keep essential upgrade warnings,
+  and link the complete changelog. Preserve all detailed entries in CHANGELOG.md.
 - Public notes describe product changes, compatibility and user actions. Operator approvals,
   waivers, test/review diaries, spend details and CI troubleshooting belong in gitignored task
   records, never the public changelog or release body. Keep real functional limits accurate;
