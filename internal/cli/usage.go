@@ -334,188 +334,338 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 			fmt.Fprintln(w, text)
 		}
 	}
-	// One label gutter for every fact in the view, quota buckets and fixed labels alike, so bars,
-	// balances, reasons and labeled estimates all start in the same column.
-	labelWidth := 14
-	fixed := []string{"Limits"}
-	if details {
-		fixed = append(fixed, "30-day API estimate", "Credential", "Coop records")
-	}
-	for _, label := range fixed {
-		labelWidth = max(labelWidth, utf8.RuneCountInString(label))
-	}
-	for _, row := range rows {
-		if row.shared || !slices.Contains(names, row.provider) {
-			continue
-		}
-		for _, bucket := range row.quota.Buckets {
-			if details || bucket.Note != "disabled" {
-				labelWidth = max(labelWidth, utf8.RuneCountInString(agents.DisplayTarget(bucket.Name)))
-			}
-		}
-	}
-	fact := func(label, value string) {
-		prefix := "    " + padRight(label, labelWidth) + "  "
-		// Like a quota row, a fact too wide for the gutter stacks under its label.
-		if width > 0 && utf8.RuneCountInString(prefix+value) > width {
-			if label != "" {
-				line("    ", label)
-			}
-			line("      ", value)
-			return
-		}
-		line(prefix, value)
-	}
-	estimate := func(row usageCredential) {
-		value := usageValueLabel(row, details)
-		if details {
-			fact("30-day API estimate", value)
-			return
-		}
-		if strings.HasPrefix(value, "≈$") {
-			value = "Σ" + value
-		} else {
-			value = "Σ " + value
-		}
-		// Match the percentage's ones column, including its fixed-width padding.
-		indent := labelWidth + 20
-		if width > 0 && indent+utf8.RuneCountInString(value) > width {
-			indent = 4
-		}
-		// The total is quieter than the limits above it. Lay it out as plain text, then dim each
-		// line, so the escape codes never count toward the wrapping width.
-		texts := []string{strings.Repeat(" ", indent) + value}
+	// Quieter text is laid out as plain text first and dimmed after, so escape codes never count
+	// toward the wrapping width.
+	quiet := func(prefix, value string) {
+		texts := []string{prefix + value}
 		if width > 0 {
-			texts = ui.PrefixedLines(strings.Repeat(" ", indent), value, width)
+			texts = ui.PrefixedLines(prefix, value, width)
 		}
 		for _, text := range texts {
 			fmt.Fprintln(w, pal.Dim(text))
 		}
 	}
-	// A blank line separates blocks; nothing trails the last one.
-	wrote := false
-	for _, name := range names {
-		if wrote {
+	for n, name := range names {
+		if n > 0 {
 			fmt.Fprintln(w)
 		}
-		wrote = true
 		fmt.Fprintln(w, pal.Bold(titleName(name)))
-		count := 0
+		var shown []usageCredential
 		for _, row := range rows {
-			if row.provider != name || row.shared && !row.value.Available {
-				continue
+			// An editor row is nothing but its total, so the summary shows it only with one.
+			if row.provider == name && !(row.shared && (!row.value.Available || !details && usageTotal(row) == "")) {
+				shown = append(shown, row)
 			}
-			if count > 0 {
+		}
+		if len(shown) == 0 {
+			line("  ", "No credentials. Sign in: coop login "+name)
+			continue
+		}
+		cols := usageLayout(shown, details, width)
+		// A value, balance, reason or total starts at the value column, after an empty bar slot
+		// when the provider shows bars.
+		gap := "  "
+		if cols.bars {
+			gap += strings.Repeat(" ", 12)
+		}
+		prefixWidth := 4 + cols.labelWidth + utf8.RuneCountInString(gap)
+		stack := width > 0 && prefixWidth+usageMinValueWidth > width
+		// columns prints a label, an optional bar and a value, continuing an overflowing value in
+		// the value column; a terminal too narrow for the columns stacks the row instead.
+		columns := func(label, bar, coloredBar, value string) {
+			if stack {
+				if label != "" {
+					line("    ", label)
+				}
+				if bar != "" {
+					fmt.Fprintf(w, "      %s\n", coloredBar)
+				}
+				for _, text := range usageWrap(value, width-6) {
+					fmt.Fprintln(w, "      "+text)
+				}
+				return
+			}
+			slot := gap
+			if bar != "" {
+				slot = "  " + coloredBar + "  "
+			}
+			values := []string{value}
+			if width > 0 {
+				values = usageWrap(value, width-prefixWidth)
+			}
+			fmt.Fprintf(w, "    %s%s%s\n", padRight(label, cols.labelWidth), slot, values[0])
+			for _, more := range values[1:] {
+				fmt.Fprintf(w, "%s%s\n", strings.Repeat(" ", prefixWidth), more)
+			}
+		}
+		fact := func(label, value string) { columns(label, "", "", value) }
+		for i, row := range shown {
+			// Blank lines separate multi-line accounts; one-line accounts stack together.
+			if i > 0 && (!cols.oneLine[i] || !cols.oneLine[i-1]) {
 				fmt.Fprintln(w)
 			}
-			count++
-			header := agents.DisplayTarget(row.account)
-			if row.shared {
-				header = "Unassigned editor usage"
+			header := usageHeader(row, details)
+			if cols.oneLine[i] {
+				total := usageTotal(row)
+				if total == "" {
+					fmt.Fprintln(w, "  "+header)
+					continue
+				}
+				pad := strings.Repeat(" ", cols.valueColumn-2-utf8.RuneCountInString(header))
+				fmt.Fprintln(w, "  "+header+pad+pal.Dim(total))
+				continue
 			}
-			if details && row.quota.Plan != "" {
-				header += " · " + agents.DisplayTarget(row.quota.Plan)
-			}
+			buckets := usageShownBuckets(row, details)
 			// A note about limits that are shown qualifies the whole account, so it rides the
 			// account line; without limits, the note is the account's one reason line.
 			note := agents.DisplayTarget(row.quota.Note)
-			annotate := note != "" && row.quotaErr == nil && len(row.quota.Buckets) > 0
-			if annotate && (width <= 0 || 2+utf8.RuneCountInString(header+" · "+note) <= width) {
+			if note != "" && row.quotaErr == nil && len(buckets) > 0 && (width <= 0 || 2+utf8.RuneCountInString(header+" · "+note) <= width) {
 				fmt.Fprintln(w, "  "+header+pal.Dim(" · "+note))
 				note = ""
 			} else {
 				line("  ", header)
-			}
-			if row.shared {
-				estimate(row)
-				if details {
-					fact("Credential", "unknown · excluded from credential totals")
-				}
-				continue
 			}
 			if row.quotaErr != nil {
 				fact("Limits", "unavailable · "+agents.DisplayTarget(row.quotaErr.Error()))
 				if errors.Is(row.quotaErr, agents.ErrUsageSignIn) {
 					fact("", "Run: "+agents.LoginCommand(name+"@"+row.account))
 				}
-			} else if len(row.quota.Buckets) == 0 && note == "" {
+			} else if usageLimitsUnknown(row, buckets) {
 				fact("Limits", "unavailable")
 			}
 			shownResets := make(map[int64]bool)
-			for _, bucket := range row.quota.Buckets {
-				if !details && bucket.Note == "disabled" {
-					continue
-				}
+			for _, bucket := range buckets {
 				label := agents.DisplayTarget(bucket.Name)
-				text := ""
-				bar := ""
+				text := usageBucketText(bucket, details, now, shownResets)
+				bar, colored := "", ""
 				if bucket.Used != nil {
-					text = fmt.Sprintf("%3.0f%% used", *bucket.Used)
 					filled := int(math.Round(min(100, *bucket.Used) / 10))
 					bar = strings.Repeat("█", filled) + strings.Repeat("░", 10-filled)
+					colored = pal.Cyan(bar)
 					if *bucket.Used >= 100 {
-						bar = pal.Red(bar)
+						colored = pal.Red(bar)
 					} else if *bucket.Used >= 80 {
-						bar = pal.Yellow(bar)
-					} else {
-						bar = pal.Cyan(bar)
+						colored = pal.Yellow(bar)
 					}
 				}
-				if bucket.Remaining != "" {
-					remaining := bucket.Remaining
-					if !details {
-						if number, err := strconv.ParseFloat(remaining, 64); err == nil && !math.IsNaN(number) && !math.IsInf(number, 0) {
-							remaining = strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", number), "0"), ".")
-						}
-					}
-					if text != "" {
-						text += " · "
-					}
-					text += agents.DisplayTarget(remaining) + " remaining"
-				}
-				if text == "" {
-					text = "usage unknown"
-				}
-				if bucket.Available != nil && !*bucket.Available {
-					text += " · blocked"
-				}
-				if bucket.Note != "" {
-					text += " · " + agents.DisplayTarget(bucket.Note)
-				}
-				if details || !bucket.Reset.IsZero() && !(bucket.Used != nil && *bucket.Used == 0 && shownResets[bucket.Reset.Unix()]) {
-					text += " · " + usageResetLabel(bucket.Reset, now)
-					shownResets[bucket.Reset.Unix()] = true
-				}
-				columns := labelWidth + utf8.RuneCountInString(text) + 6
-				if bar != "" {
-					columns += 12
-				}
-				if width > 0 && columns > width {
-					line("    ", label)
-					if bar != "" {
-						fmt.Fprintf(w, "      %s\n", bar)
-					}
-					line("      ", text)
-				} else {
-					if bar != "" {
-						bar += "  "
-					}
-					fmt.Fprintf(w, "    %s  %s%s\n", padRight(label, labelWidth), bar, text)
-				}
+				columns(label, bar, colored, text)
 			}
 			if note != "" {
 				r, size := utf8.DecodeRuneInString(note)
 				line("    ", string(unicode.ToUpper(r))+note[size:])
 			}
-			estimate(row)
-			if details && row.unpricedTurns > 0 {
-				fact("Coop records", fmt.Sprintf("%d retained turns · unpriced aggregates, not added", row.unpricedTurns))
+			if details {
+				fact("30-day API estimate", usageValueLabel(row, true))
+				if row.shared {
+					fact("Credential", "unknown · excluded from credential totals")
+				}
+				if row.unpricedTurns > 0 {
+					fact("Coop records", fmt.Sprintf("%d retained turns · unpriced aggregates, not added", row.unpricedTurns))
+				}
+				continue
+			}
+			if total := usageTotal(row); total != "" {
+				indent := max(cols.valueColumn, 4)
+				if width > 0 && indent+utf8.RuneCountInString(total) > width {
+					indent = 4
+				}
+				quiet(strings.Repeat(" ", indent), total)
 			}
 		}
-		if count == 0 {
-			line("  ", "No credentials. Sign in: coop login "+name)
+	}
+}
+
+// usageColumns is one provider's layout. Labels pad to labelWidth, bars follow them, and every
+// value (percentage, balance, reason or Σ total) starts at valueColumn, so a provider's columns
+// fit its own labels rather than the longest label anywhere in the report.
+type usageColumns struct {
+	labelWidth, valueColumn int
+	bars                    bool
+	oneLine                 []bool // accounts with nothing but a total print it on their header line
+}
+
+func usageLayout(rows []usageCredential, details bool, width int) usageColumns {
+	cols := usageColumns{oneLine: make([]bool, len(rows))}
+	blocks := false
+	for i, row := range rows {
+		buckets := usageShownBuckets(row, details)
+		if !details && len(buckets) == 0 && row.quotaErr == nil && row.quota.Note == "" && (row.shared || row.quota.Auth != "") {
+			cols.oneLine[i] = true
+			continue
+		}
+		blocks = true
+		for _, bucket := range buckets {
+			cols.labelWidth = max(cols.labelWidth, utf8.RuneCountInString(agents.DisplayTarget(bucket.Name)))
+			cols.bars = cols.bars || bucket.Used != nil
+		}
+		labels := []string{}
+		if row.quotaErr != nil || usageLimitsUnknown(row, buckets) {
+			labels = append(labels, "Limits")
+		}
+		if details {
+			labels = append(labels, "30-day API estimate")
+			if row.shared {
+				labels = append(labels, "Credential")
+			}
+			if row.unpricedTurns > 0 {
+				labels = append(labels, "Coop records")
+			}
+		}
+		for _, label := range labels {
+			cols.labelWidth = max(cols.labelWidth, utf8.RuneCountInString(label))
 		}
 	}
+	gutter := 6
+	if cols.bars {
+		gutter += 12
+	}
+	if blocks {
+		cols.valueColumn = cols.labelWidth + gutter
+	}
+	// A one-line account sets its total two spaces after its name, up to a modest column; a
+	// longer name or a narrow terminal gives it a total line of its own instead.
+	limit := max(cols.valueColumn, 40)
+	for i, row := range rows {
+		if !cols.oneLine[i] {
+			continue
+		}
+		total := usageTotal(row)
+		if total == "" {
+			continue
+		}
+		column := 2 + utf8.RuneCountInString(usageHeader(row, details)) + 2
+		if column > limit || width > 0 && column+utf8.RuneCountInString(total) > width {
+			cols.oneLine[i] = false
+			continue
+		}
+		cols.valueColumn = max(cols.valueColumn, column)
+	}
+	for i, row := range rows {
+		if cols.oneLine[i] && width > 0 && cols.valueColumn+utf8.RuneCountInString(usageTotal(row)) > width {
+			cols.oneLine[i] = false
+		}
+	}
+	// Labels widen with the value column, keeping each bar directly before its value.
+	cols.labelWidth = max(cols.labelWidth, cols.valueColumn-gutter)
+	return cols
+}
+
+func usageHeader(row usageCredential, details bool) string {
+	header := agents.DisplayTarget(row.account)
+	if row.shared {
+		header = "Unassigned editor usage"
+	}
+	if row.quota.Auth != "" {
+		header += " (" + agents.DisplayTarget(row.quota.Auth) + ")"
+	}
+	if details && row.quota.Plan != "" {
+		header += " · " + agents.DisplayTarget(row.quota.Plan)
+	}
+	return header
+}
+
+// usageShownBuckets drops extra usage the provider reports as disabled; account details keep it.
+func usageShownBuckets(row usageCredential, details bool) []agents.UsageBucket {
+	var out []agents.UsageBucket
+	for _, bucket := range row.quota.Buckets {
+		if details || bucket.Note != "disabled" {
+			out = append(out, bucket)
+		}
+	}
+	return out
+}
+
+// usageLimitsUnknown is an account whose lookup returned neither limits nor a reason for them.
+func usageLimitsUnknown(row usageCredential, buckets []agents.UsageBucket) bool {
+	return !row.shared && row.quotaErr == nil && len(buckets) == 0 && row.quota.Note == "" && row.quota.Auth == ""
+}
+
+func usageBucketText(bucket agents.UsageBucket, details bool, now time.Time, shownResets map[int64]bool) string {
+	text := ""
+	if bucket.Used != nil {
+		// Right-aligned to the width of "100%", so "used" and the resets line up in every row.
+		text = fmt.Sprintf("%3.0f%% used", *bucket.Used)
+	}
+	if bucket.Remaining != "" {
+		remaining := bucket.Remaining
+		if !details {
+			if number, err := strconv.ParseFloat(remaining, 64); err == nil && !math.IsNaN(number) && !math.IsInf(number, 0) {
+				remaining = strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", number), "0"), ".")
+			}
+		}
+		if text != "" {
+			text += " · "
+		}
+		text += agents.DisplayTarget(remaining) + " remaining"
+	}
+	if text == "" {
+		text = "usage unknown"
+	}
+	// The provider's own "not allowed" flag only restates a full bar in the summary; account
+	// details keep it for limits, never for a credit balance.
+	if details && bucket.Used != nil && bucket.Available != nil && !*bucket.Available {
+		text += " · limit reached"
+	}
+	if bucket.Note != "" {
+		text += " · " + agents.DisplayTarget(bucket.Note)
+	}
+	if details || !bucket.Reset.IsZero() && !(bucket.Used != nil && *bucket.Used == 0 && shownResets[bucket.Reset.Unix()]) {
+		text += " · " + usageResetLabel(bucket.Reset, now)
+		shownResets[bucket.Reset.Unix()] = true
+	}
+	return text
+}
+
+// usageMinValueWidth is the narrowest value column worth keeping beside labels and bars.
+const usageMinValueWidth = 12
+
+// usageWrap fits a value into room columns, breaking at its " · " separators so each fact stays
+// whole where it can. A fact that is still too long breaks before its parenthetical, as in
+// "resets in 2d 2h" / "(Oct 4, 08:35 UTC)", and only then by words.
+func usageWrap(value string, room int) []string {
+	if utf8.RuneCountInString(value) <= room {
+		return []string{value}
+	}
+	type piece struct{ text, join string }
+	var pieces []piece
+	for i, part := range strings.Split(value, " · ") {
+		join := " · "
+		if i == 0 {
+			join = ""
+		}
+		if head, tail, ok := strings.Cut(part, " ("); ok && utf8.RuneCountInString(part) > room {
+			pieces = append(pieces, piece{head, join}, piece{"(" + tail, " "})
+			continue
+		}
+		pieces = append(pieces, piece{part, join})
+	}
+	var lines []string
+	current := ""
+	for _, p := range pieces {
+		if current != "" && utf8.RuneCountInString(current+p.join+p.text) <= room {
+			current += p.join + p.text
+			continue
+		}
+		if current != "" {
+			lines = append(lines, current)
+		}
+		current = p.text
+		if utf8.RuneCountInString(p.text) > room {
+			wrapped := ui.WrapLines(p.text, room)
+			lines = append(lines, wrapped[:len(wrapped)-1]...)
+			current = wrapped[len(wrapped)-1]
+		}
+	}
+	return append(lines, current)
+}
+
+// usageTotal is the summary's Σ total. Without a dollar estimate there is no total to show:
+// account details say why.
+func usageTotal(row usageCredential) string {
+	if value := usageValueLabel(row, false); strings.HasPrefix(value, "≈$") {
+		return "Σ" + value
+	}
+	return ""
 }
 
 func usageValueLabel(row usageCredential, details bool) string {
@@ -562,16 +712,20 @@ func usageResetLabel(reset, now time.Time) string {
 	if reset.IsZero() {
 		return "reset unknown"
 	}
-	if reset.After(now) && reset.Sub(now) < 24*time.Hour {
-		minutes := int(math.Ceil(reset.Sub(now).Minutes()))
-		if minutes < 60 {
-			return fmt.Sprintf("resets in %dm", minutes)
-		}
-		return fmt.Sprintf("resets in %dh %dm", minutes/60, minutes%60)
-	}
 	format := "Jan 2, 15:04"
-	if reset.In(time.Local).Year() != now.In(time.Local).Year() {
+	if reset.UTC().Year() != now.UTC().Year() {
 		format = "Jan 2 2006, 15:04"
 	}
-	return "resets " + reset.In(time.Local).Format(format)
+	when := reset.UTC().Format(format) + " UTC"
+	if !reset.After(now) {
+		return "reset passed (" + when + ")"
+	}
+	minutes := int(math.Ceil(reset.Sub(now).Minutes()))
+	left := fmt.Sprintf("%dm", minutes)
+	if days := minutes / (24 * 60); days > 0 {
+		left = fmt.Sprintf("%dd %dh", days, minutes%(24*60)/60)
+	} else if minutes >= 60 {
+		left = fmt.Sprintf("%dh %dm", minutes/60, minutes%60)
+	}
+	return "resets in " + left + " (" + when + ")"
 }

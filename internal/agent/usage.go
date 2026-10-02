@@ -41,6 +41,9 @@ type UsageQuota struct {
 	Plan    string
 	Buckets []UsageBucket
 	Note    string
+	// Auth names a sign-in kind that has no provider limits to report, such as "API key"; the
+	// summary shows it beside the account instead of explaining the missing limits.
+	Auth string
 }
 
 type UsageBucket struct {

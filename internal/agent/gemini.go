@@ -141,11 +141,10 @@ func geminiUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, e
 		return UsageQuota{}, fmt.Errorf("cannot read selected authentication mode")
 	}
 	if input.APIKey || auth == "gemini-api-key" || auth == "vertex-ai" {
-		mode := "API-key"
 		if auth == "vertex-ai" {
-			mode = "Vertex"
+			return UsageQuota{Auth: "Vertex"}, nil
 		}
-		return UsageQuota{Note: "Limits unavailable for " + mode + " authentication"}, nil
+		return UsageQuota{Auth: "API key"}, nil
 	}
 	if auth != "oauth-personal" {
 		return UsageQuota{}, ErrUsageSignIn

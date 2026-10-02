@@ -177,73 +177,158 @@ func TestUsageRenderingIndependentFailuresAndReset(t *testing.T) {
 func TestUsageAlignsEveryFactAndQuietsTheTotal(t *testing.T) {
 	now := time.Date(2026, time.October, 1, 12, 0, 0, 0, time.Local)
 	zero, used, full := 0.0, 26.0, 100.0
+	allowed := false
 	rows := []usageCredential{
-		{provider: "claude", account: "setup", quota: agents.UsageQuota{Note: "limits unavailable for setup-token authentication"}},
 		{provider: "codex", account: "emisar",
 			value: agents.UsageValue{Available: true, Priced: 1, USD: 54.82},
 			quota: agents.UsageQuota{Buckets: []agents.UsageBucket{
-				{Name: "Weekly", Used: &full},
+				{Name: "Weekly", Used: &full, Available: &allowed},
 				{Name: "gpt-reserve · Weekly", Used: &zero},
 				{Name: "Credits", Remaining: "62500"},
 			}}},
 		{provider: "codex", account: "work", quotaErr: agents.ErrUsageSignIn},
+		{provider: "codex", account: "Unattributed ACP", shared: true,
+			value: agents.UsageValue{Available: true, Priced: 1, USD: 0.82}},
+		{provider: "gemini", account: "blitz_ai_studio", quota: agents.UsageQuota{Auth: "API key"},
+			value: agents.UsageValue{Available: true, Priced: 1, USD: 0.48}},
+		{provider: "gemini", account: "personal", quota: agents.UsageQuota{Auth: "API key"},
+			value: agents.UsageValue{Available: true, Priced: 1, USD: 2.62}},
 		{provider: "grok", account: "default",
 			value: agents.UsageValue{Available: true, Unpriced: 3},
 			quota: agents.UsageQuota{Note: "shared credit pool", Buckets: []agents.UsageBucket{{Name: "Weekly credits", Used: &used}}}},
 	}
-	names := []string{"claude", "codex", "grok"}
+	names := []string{"codex", "gemini", "grok"}
 	var out bytes.Buffer
 	renderUsage(&out, ui.Palette{}, 120, now, names, rows, false)
 	text := out.String()
 
-	// Every fact's value starts where the bars start: one gutter for buckets and fixed labels.
-	gutter := utf8.RuneCountInString("gpt-reserve · Weekly")
-	fact := func(label, value string) string { return "    " + padRight(label, gutter) + "  " + value + "\n" }
-	total := func(value string) string { return strings.Repeat(" ", gutter+20) + value + "\n" }
+	// Codex: labels fit its longest label; balances, reasons and totals all start where
+	// "100% used" starts, two spaces after the bar, and percentages right-align to it.
+	labels := utf8.RuneCountInString("gpt-reserve · Weekly")
+	value := labels + 18
+	at := func(column int, text string) string { return strings.Repeat(" ", column) + text + "\n" }
 	for _, wanted := range []string{
-		fact("Credits", "62500 remaining"),
-		fact("Limits", "unavailable · sign-in required"),
-		fact("", "Run: coop login codex@work"),
-		total("Σ≈$54.82"),
-		total("Σ unpriced"),
-		"  default · shared credit pool\n",
-		"    Limits unavailable for setup-token authentication\n",
+		"    Weekly                ██████████  100% used\n",
+		"    gpt-reserve · Weekly  ░░░░░░░░░░    0% used",
+		"    Credits" + at(value-11, "62500 remaining"),
+		"    Limits" + at(value-10, "unavailable · sign-in required"),
+		at(value, "Run: coop login codex@work"),
+		at(value, "Σ≈$54.82"),
+		"  Unassigned editor usage" + at(value-25, "Σ≈$0.82"),
+		// Accounts with nothing but a total are one line each, stacked, with no explanation.
+		"Gemini\n  blitz_ai_studio (API key)  Σ≈$0.48\n  personal (API key)" + at(29-20, "Σ≈$2.62"),
+		// Grok fits its own label; its note rides the account line, and without API pricing it
+		// has no total line at all.
+		"  default · shared credit pool\n    Weekly credits  ███░░░░░░░   26% used\n",
 	} {
 		if !strings.Contains(text, wanted) {
-			t.Fatalf("missing aligned line %q:\n%s", wanted, text)
+			t.Fatalf("missing aligned text %q:\n%s", wanted, text)
 		}
 	}
-	if strings.Contains(text, "\n    shared credit pool") || strings.Contains(text, "30-day API estimate") {
-		t.Fatalf("summary kept an orphan note or a misaligned estimate label:\n%s", text)
+	for _, unwanted := range []string{"blocked", "limit reached", "Limits unavailable", "\n    shared credit pool", "30-day API estimate", "unpriced"} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("summary contains %q:\n%s", unwanted, text)
+		}
 	}
 	if !strings.HasSuffix(text, "\n") || strings.HasSuffix(text, "\n\n") {
 		t.Fatalf("output must end on its last block without a trailing blank line: %q", text[len(text)-12:])
 	}
 
-	// The total and the account note are quieter than the limits; bars keep their colors.
+	// Totals and account notes are quieter than the limits; bars keep their colours.
 	var colored bytes.Buffer
 	pal := ui.Colored()
 	renderUsage(&colored, pal, 120, now, names, rows, false)
 	for _, wanted := range []string{
-		pal.Dim(strings.TrimSuffix(total("Σ≈$54.82"), "\n")) + "\n",
-		pal.Dim(strings.TrimSuffix(total("Σ unpriced"), "\n")) + "\n",
+		pal.Dim(strings.TrimSuffix(at(value, "Σ≈$54.82"), "\n")) + "\n",
+		"  blitz_ai_studio (API key)  " + pal.Dim("Σ≈$0.48") + "\n",
 		"  default" + pal.Dim(" · shared credit pool") + "\n",
 		pal.Red("██████████") + "  100% used",
 	} {
 		if !strings.Contains(colored.String(), wanted) {
-			t.Fatalf("missing styled line %q:\n%s", wanted, colored.String())
+			t.Fatalf("missing styled text %q:\n%s", wanted, colored.String())
 		}
 	}
 
-	// A fact too wide for the gutter stacks under its label instead of spilling past the edge.
+	// Account details keep the provider's flag, in words, for a limit but not for a balance.
 	out.Reset()
-	renderUsage(&out, ui.Palette{}, 40, now, []string{"codex"}, rows[1:3], false)
+	renderUsage(&out, ui.Palette{}, 120, now, []string{"codex"}, rows[:1], true)
+	if !strings.Contains(out.String(), "100% used · limit reached") || strings.Count(out.String(), "limit reached") != 1 {
+		t.Fatalf("account details lost or misapplied the limit flag:\n%s", out.String())
+	}
+
+	// A fact too wide for its columns stacks under its label instead of spilling past the edge.
+	out.Reset()
+	renderUsage(&out, ui.Palette{}, 40, now, []string{"codex"}, rows[:2], false)
 	if !strings.Contains(out.String(), "    Limits\n      unavailable · sign-in required\n") {
 		t.Fatalf("narrow limits fact did not stack:\n%s", out.String())
 	}
 	for _, line := range strings.Split(out.String(), "\n") {
 		if utf8.RuneCountInString(line) > 40 {
 			t.Fatalf("narrow summary overflows: %q", line)
+		}
+	}
+}
+
+func TestUsageResetLabelCountsDownAndNamesUTC(t *testing.T) {
+	// The host zone must not leak into the label: 08:00 at UTC-6 is 14:00 UTC.
+	now := time.Date(2026, time.October, 2, 8, 0, 0, 0, time.FixedZone("host", -6*60*60))
+	for _, tc := range []struct {
+		reset time.Time
+		want  string
+	}{
+		{now.Add(38 * time.Minute), "resets in 38m (Oct 2, 14:38 UTC)"},
+		{now.Add(4*time.Hour + 55*time.Minute), "resets in 4h 55m (Oct 2, 18:55 UTC)"},
+		{now.Add(2*24*time.Hour + 9*time.Hour + 35*time.Minute), "resets in 2d 9h (Oct 4, 23:35 UTC)"},
+		{now.Add(-time.Hour), "reset passed (Oct 2, 13:00 UTC)"},
+		{now.AddDate(0, 3, 0), "resets in 92d 0h (Jan 2 2027, 14:00 UTC)"},
+		{time.Time{}, "reset unknown"},
+	} {
+		if got := usageResetLabel(tc.reset, now); got != tc.want {
+			t.Errorf("usageResetLabel(%v) = %q, want %q", tc.reset, got, tc.want)
+		}
+	}
+}
+
+func TestUsageWrapsValuesInTheirColumn(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		room  int
+		want  []string
+	}{
+		{"0% used", 20, []string{"0% used"}},
+		{"100% used · resets in 2d 2h (Oct 4, 08:35 UTC)", 40, []string{"100% used", "resets in 2d 2h (Oct 4, 08:35 UTC)"}},
+		{"100% used · resets in 2d 2h (Oct 4, 08:35 UTC)", 22, []string{"100% used", "resets in 2d 2h", "(Oct 4, 08:35 UTC)"}},
+		{"unavailable · sign-in required", 12, []string{"unavailable", "sign-in", "required"}},
+	} {
+		if got := usageWrap(tc.value, tc.room); !slices.Equal(got, tc.want) {
+			t.Errorf("usageWrap(%q, %d) = %q, want %q", tc.value, tc.room, got, tc.want)
+		}
+	}
+
+	// On a narrower terminal a row keeps its columns and continues in the value column.
+	now := time.Date(2026, time.October, 2, 6, 35, 0, 0, time.UTC)
+	full := 100.0
+	rows := []usageCredential{{provider: "codex", account: "personal",
+		value: agents.UsageValue{Available: true, Priced: 1, USD: 0.4},
+		quota: agents.UsageQuota{Buckets: []agents.UsageBucket{
+			{Name: "Weekly", Used: &full, Reset: now.Add(50 * time.Hour)},
+			{Name: "Credits", Remaining: "60149.85"},
+		}}}}
+	var out bytes.Buffer
+	renderUsage(&out, ui.Palette{}, 44, now, []string{"codex"}, rows, false)
+	value := strings.Repeat(" ", 4+len("Credits")+2+12)
+	want := "  personal\n" +
+		"    Weekly   ██████████  100% used\n" +
+		value + "resets in 2d 2h\n" +
+		value + "(Oct 4, 08:35 UTC)\n" +
+		"    Credits" + strings.Repeat(" ", 2+12) + "60149.85 remaining\n" +
+		value + "Σ≈$0.40\n"
+	if !strings.HasSuffix(out.String(), want) {
+		t.Fatalf("narrow row lost its columns:\n%s\nwant suffix:\n%s", out.String(), want)
+	}
+	for _, line := range strings.Split(out.String(), "\n") {
+		if utf8.RuneCountInString(line) > 44 {
+			t.Fatalf("narrow row overflows: %q", line)
 		}
 	}
 }
@@ -272,18 +357,18 @@ func TestUsageSummaryKeepsBarsAndOnlyUsefulFacts(t *testing.T) {
 			quota: agents.UsageQuota{Buckets: []agents.UsageBucket{{Name: "Weekly", Used: &full}}}},
 		{provider: "codex", account: "Unattributed ACP", shared: true,
 			value: agents.UsageValue{Available: true, Priced: 1, USD: 0.82, Approximate: true}},
-		{provider: "gemini", account: "api-key", quota: agents.UsageQuota{Note: "Limits unavailable for API-key authentication"}},
-		{provider: "gemini", account: "vertex", quota: agents.UsageQuota{Note: "Limits unavailable for Vertex authentication"}},
+		{provider: "gemini", account: "api-key", quota: agents.UsageQuota{Auth: "API key"}},
+		{provider: "gemini", account: "vertex", quota: agents.UsageQuota{Auth: "Vertex"}},
 	}
 	var out bytes.Buffer
 	renderUsage(&out, ui.Palette{}, 120, now, []string{"claude", "codex", "gemini"}, rows, false)
 	text := out.String()
-	for _, wanted := range []string{"  personal\n", "░░░░░░░░░░    0% used", "██████████  100% used · blocked", "Fable", "gpt-reserve · Weekly", "60412.02 remaining", "Σ≈$406.48", "Unassigned editor usage", "Σ≈$0.82"} {
+	for _, wanted := range []string{"  personal\n", "░░░░░░░░░░    0% used", "██████████  100% used", "Fable", "gpt-reserve · Weekly", "60412.02 remaining", "Σ≈$406.48", "Unassigned editor usage", "Σ≈$0.82"} {
 		if !strings.Contains(text, wanted) {
 			t.Fatalf("missing %q:\n%s", wanted, text)
 		}
 	}
-	for _, unwanted := range []string{" · default", " · max", "partial history", "approximate token tariff", "unpriced events", "retained turns", "Extra usage", "reset unknown", "usage unknown", "not billing", "Based on retained", "Reset times are local", "Unattributed ACP"} {
+	for _, unwanted := range []string{" · default", " · max", "partial history", "approximate token tariff", "unpriced events", "retained turns", "Extra usage", "reset unknown", "usage unknown", "not billing", "Based on retained", "Reset times are local", "Unattributed ACP", "blocked", "Σ unavailable", "Σ unpriced"} {
 		if strings.Contains(text, unwanted) {
 			t.Fatalf("summary contains %q:\n%s", unwanted, text)
 		}
@@ -291,11 +376,17 @@ func TestUsageSummaryKeepsBarsAndOnlyUsefulFacts(t *testing.T) {
 	if strings.Index(text, "Weekly") > strings.Index(text, "Σ≈$") {
 		t.Fatalf("estimate precedes limits:\n%s", text)
 	}
-	if strings.Count(text, "resets Oct 8, 12:00") != 2 {
+	if strings.Count(text, usageResetLabel(reset, now)) != 2 {
 		t.Fatalf("inactive Fable repeats the weekly reset:\n%s", text)
 	}
+	// Within a provider every bar starts in one column, each total starts where "100%" would,
+	// two spaces after the bar, and every percentage ends in one column, so "used" lines up; a
+	// new provider measures its own columns.
 	barColumn := -1
 	for _, line := range strings.Split(text, "\n") {
+		if line != "" && !strings.HasPrefix(line, " ") {
+			barColumn = -1
+		}
 		if index := strings.IndexAny(line, "█░"); index >= 0 {
 			column := utf8.RuneCountInString(line[:index])
 			if barColumn >= 0 && column != barColumn {
@@ -303,18 +394,16 @@ func TestUsageSummaryKeepsBarsAndOnlyUsefulFacts(t *testing.T) {
 			}
 			barColumn = column
 		}
-		if strings.Contains(line, "gpt-reserve") && strings.Contains(line, "blocked") {
-			t.Fatalf("one exhausted bucket blocked the reserve: %s", line)
+		if index := strings.Index(line, "Σ"); index >= 0 && barColumn >= 0 && utf8.RuneCountInString(line[:index]) != barColumn+12 {
+			t.Fatalf("total does not start with the percentage: %q", line)
 		}
-		if index := strings.Index(line, "Σ≈$"); index >= 0 && utf8.RuneCountInString(line[:index]) != barColumn+14 {
-			t.Fatalf("total does not align with the percentage number: %q", line)
+		if index := strings.Index(line, "% used"); index >= 0 && utf8.RuneCountInString(line[:index]) != barColumn+15 {
+			t.Fatalf("percentage is not right-aligned: %q", line)
 		}
 	}
 	gemini := text[strings.Index(text, "Gemini\n"):]
-	if strings.Count(gemini, "    Limits ") != 2 ||
-		!strings.Contains(gemini, "Limits unavailable for API-key authentication") ||
-		!strings.Contains(gemini, "Limits unavailable for Vertex authentication") {
-		t.Fatalf("Gemini repeats or obscures the unavailable reason:\n%s", gemini)
+	if strings.Contains(gemini, "Limits") || strings.Contains(gemini, "Σ") || !strings.HasSuffix(gemini, "Gemini\n  api-key (API key)\n  vertex (Vertex)\n") {
+		t.Fatalf("Gemini sign-ins without limits or pricing are not one plain line each:\n%s", gemini)
 	}
 	t.Log("\n" + text)
 
@@ -322,6 +411,9 @@ func TestUsageSummaryKeepsBarsAndOnlyUsefulFacts(t *testing.T) {
 	renderUsage(&out, ui.Palette{}, 30, now, []string{"claude"}, rows[:1], false)
 	if !strings.Contains(out.String(), "    Σ≈$406.48\n") {
 		t.Fatalf("narrow total did not use the compact fallback:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "    5-hour\n      ░░░░░░░░░░\n        0% used\n") {
+		t.Fatalf("stacked percentage lost its alignment:\n%s", out.String())
 	}
 	for _, line := range strings.Split(out.String(), "\n") {
 		if utf8.RuneCountInString(line) > 30 {

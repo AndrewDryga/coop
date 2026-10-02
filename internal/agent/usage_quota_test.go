@@ -168,7 +168,7 @@ func TestUsageAPIKeyAndNativeHelper(t *testing.T) {
 				t.Fatal("API-key quota launched a helper")
 				return nil, nil
 			}})
-			if err != nil || quota.Note == "" || len(quota.Buckets) != 0 {
+			if err != nil || quota.Auth != "API key" || quota.Note != "" || len(quota.Buckets) != 0 {
 				t.Fatalf("quota=%+v error=%v", quota, err)
 			}
 		})
@@ -180,8 +180,8 @@ func TestUsageGeminiUnavailableReason(t *testing.T) {
 		auth, mode string
 		apiKey     bool
 	}{
-		{"", "API-key", true},
-		{"gemini-api-key", "API-key", false},
+		{"", "API key", true},
+		{"gemini-api-key", "API key", false},
 		{"vertex-ai", "Vertex", true},
 	} {
 		t.Run(tc.mode+tc.auth, func(t *testing.T) {
@@ -197,7 +197,7 @@ func TestUsageGeminiUnavailableReason(t *testing.T) {
 					t.Fatal("unavailable quota launched a native helper")
 					return nil, nil
 				}})
-			if err != nil || len(quota.Buckets) != 0 || quota.Note != "Limits unavailable for "+tc.mode+" authentication" {
+			if err != nil || len(quota.Buckets) != 0 || quota.Auth != tc.mode || quota.Note != "" {
 				t.Fatalf("quota=%+v error=%v", quota, err)
 			}
 		})

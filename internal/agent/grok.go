@@ -124,7 +124,7 @@ func grokUsageHistory(reader io.Reader) (UsageHistory, error) {
 
 func grokUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, error) {
 	if input.APIKey {
-		return UsageQuota{Note: "subscription limits unavailable for API-key authentication"}, nil
+		return UsageQuota{Auth: "API key"}, nil
 	}
 	deadline, ok := ctx.Deadline()
 	if !ok {

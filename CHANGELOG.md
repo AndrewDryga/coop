@@ -6,9 +6,12 @@
 
 - **Simpler usage output.** Keep progress bars and show limits before the 30-day API estimate,
   without default tags or repetitive footnotes. Bars align across accounts, shared editor usage
-  has a clearer label, and unavailable limits have one explanation. Every value starts in one
-  column, and the 30-day totals use a compact, dimmed `Σ≈$…` line below the percentages. Select
-  one account for history and pricing details.
+  has a clearer label, and each provider's columns fit its own labels. Percentages right-align so
+  resets line up, balances and the dimmed 30-day `Σ≈$…` totals start where `100%` does, totals
+  appear only when usage has API pricing, and API-key or Vertex sign-ins without limits fit on
+  one line, such as `personal (API key)  Σ≈$2.62`. Resets show the time left and the moment in
+  UTC, such as `resets in 2d 2h (Oct 4, 08:35 UTC)`. Select one account for history and pricing
+  details.
 
 - **Clearer installer output.** Installation, optional shell setup and sandbox checks use
   separate readable blocks, with final examples for starting an agent and finding help.

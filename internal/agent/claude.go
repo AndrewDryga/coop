@@ -116,10 +116,10 @@ func claudeUsageHistory(reader io.Reader) (UsageHistory, error) {
 
 func claudeUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, error) {
 	if input.EnvKey == "CLAUDE_CODE_OAUTH_TOKEN" {
-		return UsageQuota{Note: "limits unavailable for setup-token authentication"}, nil
+		return UsageQuota{Auth: "setup token"}, nil
 	}
 	if input.APIKey {
-		return UsageQuota{Note: "subscription limits unavailable for API-key authentication"}, nil
+		return UsageQuota{Auth: "API key"}, nil
 	}
 	deadline, ok := ctx.Deadline()
 	if !ok {

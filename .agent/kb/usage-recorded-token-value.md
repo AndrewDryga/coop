@@ -20,9 +20,11 @@ partial. Unknown model, cache TTL or long-context tariff inputs stay unpriced.
 Provider quota is account-wide; the dollar estimate is not. The CLI reads only Coop-managed
 credential roots and default session-private ACP roots, not independent native host homes,
 web/mobile usage or other machines. Native runs that write into those same roots can be included.
-The compact view leads with quota bars, then the 30-day API estimate as a dim, aligned Sigma total;
-unavailable/unpriced results use the same column (`Σ unpriced`). Exact-account selection
-adds plan, coverage, pricing and retained-record details without a blanket disclaimer footer.
+The compact view leads with quota bars, then the 30-day API estimate as a dim, aligned Sigma total
+when one is priced; unavailable/unpriced results show no total in the summary. Sign-ins without
+provider limits (API key, setup token, Vertex) report `UsageQuota.Auth` and render as one line
+beside their total. Exact-account selection adds plan, coverage, pricing and retained-record
+details without a blanket disclaimer footer.
 Shared editor ACP roots have no historical account binding; copies shared by two named credentials
 become unattributed instead of being charged to today's default or displayed as account zero.
 The view calls that shared row `Unassigned editor usage`; this does not change its account binding.
@@ -42,6 +44,9 @@ subscription quota but can still have valued native history. Its unavailable lin
 selected mode without a second generic limits placeholder.
 
 ## Changelog
+- 2026-10-02 — summary totals now appear only when priced; verified against usageTotal.
+- 2026-10-02 — sign-ins without limits now report `UsageQuota.Auth` instead of a reason sentence;
+  verified against the four adapters and renderUsage.
 - 2026-10-02 — summary non-currency estimates now share the dim Σ column; verified against
   renderUsage in internal/cli/usage.go. Collector, pricing and attribution unchanged.
 - 2026-10-02 — verified the read scope against `AgentProfileDir` and `usageCredentials`; documented
