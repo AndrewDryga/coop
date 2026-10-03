@@ -1943,12 +1943,16 @@ func TestControllerJobReviewStartsTheCandidatesReviewStack(t *testing.T) {
 	candidate := filepath.Join(staging, "review-stack-123456")
 	git(t, repo, "clone", "-q", "--", repo, candidate)
 	git(t, candidate, "update-ref", "refs/coop/session-parent", "HEAD")
-	// Named like the service tests' runtime, so no real Docker daemon is asked for its identity.
-	runtimePath := filepath.Join(t.TempDir(), "rt")
+	// Named docker, since only Docker can enforce a job's resource limits; the fixture endpoint
+	// keeps a real Docker daemon from being asked for its identity.
+	t.Setenv("DOCKER_CONTEXT", "")
+	t.Setenv("DOCKER_HOST", "unix:///fixture.sock")
+	runtimePath := filepath.Join(t.TempDir(), "docker")
 	callsPath := filepath.Join(t.TempDir(), "calls")
 	argsPath := filepath.Join(t.TempDir(), "args")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$COOP_TEST_CALLS\"\n" +
-		"case \"$*\" in\n  *\"config --services\"*) printf 'db\\n' ;;\nesac\n" +
+		"case \"$*\" in\n  *\"config --services\"*) printf 'db\\n' ;;\n" +
+		"  *\"info --format\"*) printf '{\"ID\":\"daemon-one\",\"OSType\":\"linux\",\"Architecture\":\"amd64\",\"ServerVersion\":\"29\",\"KernelVersion\":\"fixture\",\"SecurityOptions\":[]}\\n' ;;\nesac\n" +
 		"case \"$1\" in\nrun) printf '%s\\n' \"$@\" > \"$COOP_TEST_ARGS\" ;;\nesac\nexit 0\n"
 	if err := os.WriteFile(runtimePath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -1963,6 +1967,8 @@ func TestControllerJobReviewStartsTheCandidatesReviewStack(t *testing.T) {
 	fc := New(cfg, runtime.Runtime{Name: runtimePath}, Host{})
 	run, err := fc.ReviewControllerJob(context.Background(), sessionsvc.ReviewGateRequest{
 		Repository: repo, Candidate: candidate, StateRoot: state, OperationID: "review-stack", NetworkMode: "open",
+		Command: []string{"./run", "gate"}, Environment: map[string]string{"CI": "job"},
+		Resources: workerproto.JobResources{CPUMillis: 1000, MemoryBytes: 1 << 30, PIDs: 256},
 	})
 	if err != nil || !run.Passed() {
 		t.Fatalf("controller job review = %+v error %v", run, err)
@@ -1982,8 +1988,9 @@ func TestControllerJobReviewStartsTheCandidatesReviewStack(t *testing.T) {
 	if !strings.Contains(args, "-e\nDATABASE_URL=postgres://postgres:postgres@db/emisar_test\n") {
 		t.Fatalf("the gate must get the review stack's environment:\n%s", args)
 	}
-	if strings.Index(args, "CI=1\n") > strings.Index(args, "COOP_REVIEW_BASE=") {
-		t.Fatalf("the controller's own environment must come after the candidate's:\n%s", args)
+	candidateCI, jobCI := strings.Index(args, "CI=1\n"), strings.Index(args, "CI=job\n")
+	if candidateCI < 0 || jobCI < 0 || candidateCI > strings.Index(args, "COOP_REVIEW_BASE=") || candidateCI > jobCI {
+		t.Fatalf("the job's own environment must come after the candidate's, so it wins:\n%s", args)
 	}
 	if strings.Contains(args, "BOX_ONLY") {
 		t.Fatalf("a controller review must not take the candidate's box settings:\n%s", args)
