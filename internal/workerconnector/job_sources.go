@@ -170,12 +170,17 @@ func (s *privateJobSourceStager) Stage(ctx context.Context, jobRef string, sourc
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	seed := previousStagedRepository(parent, key, source.RepositoryIdentity())
+	// The create comes back about three times a second while a history downloads, and Ryker
+	// mints a GitHub token for every grant asked of it (blitz, 2026-10-03).
+	if seed == "" && s.stillDownloading(parent, source.RepositoryIdentity()) {
+		return errJobSourceDownloading
+	}
 	grant, err := s.sourceGrant(ctx, jobRef, source.RepositoryIdentity())
 	if err != nil {
 		return err
 	}
 	remote, protocol := s.remote(source.RepositoryIdentity())
-	seed := previousStagedRepository(parent, key, source.RepositoryIdentity())
 	if seed == "" {
 		if seed, err = s.firstDownload(ctx, parent, remote, protocol, grant.Token, source); err != nil {
 			return err
@@ -295,6 +300,26 @@ func (s *privateJobSourceStager) firstDownload(ctx context.Context, parent, remo
 		download.err = s.downloadHistory(background, parent, final, remote, protocol, token, source)
 	}()
 	return "", errJobSourceDownloading
+}
+
+// stillDownloading reports a first download of the repository under way in the background. One
+// that has finished is not: firstDownload collects its outcome.
+func (s *privateJobSourceStager) stillDownloading(parent string, source workerproto.RepositoryIdentity) bool {
+	if !s.backgroundFirstDownload {
+		return false
+	}
+	s.downloadsMu.Lock()
+	defer s.downloadsMu.Unlock()
+	download := s.downloads[filepath.Dir(firstDownloadRepository(parent, source))]
+	if download == nil {
+		return false
+	}
+	select {
+	case <-download.done:
+		return false
+	default:
+		return true
+	}
 }
 
 // downloadHistory fetches the repository's default branch with its whole history into a

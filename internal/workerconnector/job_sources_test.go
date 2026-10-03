@@ -571,6 +571,30 @@ func (s *recordingJobSourceStager) Stage(_ context.Context, jobRef string, sourc
 // blitz's routing queued behind it until the fetch gave up, again and again. The first
 // download now runs in the background; the create is tried again on its next delivery, and
 // every later copy starts from that download and fetches only what is new.
+// While a repository's history downloads, its create comes back about three times a second
+// (blitz, 2026-10-03), and every staging asked the controller for a grant first: Ryker mints a
+// GitHub token for each one. A retry while the download runs answers without asking.
+func TestStagingWhileTheHistoryDownloadsAsksForNoGrant(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	grants := &jobSourceGrantFixture{}
+	source := testJobSource()
+	under := filepath.Dir(firstDownloadRepository(filepath.Join(root, "job-sources"), source.RepositoryIdentity()))
+	stager := &privateJobSourceStager{transport: grants, stateRoot: root, remoteForTest: t.TempDir(),
+		backgroundFirstDownload: true, downloads: map[string]*firstDownload{under: {done: make(chan struct{})}}}
+
+	for range 3 {
+		if err := stager.Stage(context.Background(), "job:downloading", source); !errors.Is(err, errJobSourceDownloading) {
+			t.Fatalf("staging while the history downloads = %v", err)
+		}
+	}
+	if grants.calls != 0 {
+		t.Fatalf("staging while the history downloads asked for %d grants", grants.calls)
+	}
+}
+
 func TestFirstStagingDownloadsTheWholeHistoryInTheBackgroundOnce(t *testing.T) {
 	ctx := context.Background()
 	remote, git := gitrepo.New(t)
