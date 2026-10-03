@@ -565,3 +565,65 @@ func (s *recordingJobSourceStager) Stage(_ context.Context, jobRef string, sourc
 	s.sources = append(s.sources, source)
 	return nil
 }
+
+// theblitzapp/blitz-core's whole history is 15 GB, about 45 minutes at 6 MiB/s (2026-10-03).
+// Staging it inside a create command held the worker, which runs one command at a time, and
+// blitz's routing queued behind it until the fetch gave up, again and again. The first
+// download now runs in the background; the create is tried again on its next delivery, and
+// every later copy starts from that download and fetches only what is new.
+func TestFirstStagingDownloadsTheWholeHistoryInTheBackgroundOnce(t *testing.T) {
+	ctx := context.Background()
+	remote, git := gitrepo.New(t)
+	value := func(revision string) string {
+		t.Helper()
+		out, err := sourceGitValue(ctx, remote, "", "file", "rev-parse", revision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	commit := func(content string) workerproto.JobSource {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(remote, "code"), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		git("add", "code")
+		git("commit", "-qm", content)
+		source := testJobSource()
+		head := value("HEAD")
+		source.Binding.DefaultCommit, source.Binding.SelectedCommit, source.Binding.BaseCommit = head, head, head
+		source.Binding.AdmittedTree = value("HEAD^{tree}")
+		return source
+	}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stager := &privateJobSourceStager{transport: &jobSourceGrantFixture{}, stateRoot: root,
+		remoteForTest: remote, backgroundFirstDownload: true}
+
+	first := commit("first")
+	if err := stager.Stage(ctx, "job:history", first); !errors.Is(err, errJobSourceDownloading) {
+		t.Fatalf("a first staging waited for its download: %v", err)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		err := stager.Stage(ctx, "job:history", first)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, errJobSourceDownloading) || time.Now().After(deadline) {
+			t.Fatalf("staging after its download = %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	download := filepath.Dir(firstDownloadRepository(filepath.Join(root, "job-sources"), first.RepositoryIdentity()))
+	if _, err := os.Lstat(filepath.Join(download, "source.json")); err != nil {
+		t.Fatalf("the first download is not kept for later copies: %v", err)
+	}
+
+	// A new commit is staged on its first delivery, starting from the downloaded history.
+	if err := stager.Stage(ctx, "job:history", commit("second")); err != nil {
+		t.Fatalf("a later commit was not staged from the download: %v", err)
+	}
+}

@@ -3,6 +3,7 @@ package workerconnector
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -23,6 +25,19 @@ import (
 )
 
 var ErrJobSourceIntegrity = errors.New("job source identity or working tree does not match")
+
+// errJobSourceDownloading reports a repository's first download, its whole history, still
+// running in the background: the command is tried again on its next delivery.
+var errJobSourceDownloading = errors.New("the repository's history is still downloading")
+
+// firstDownloadTimeout bounds a repository's first download. theblitzapp/blitz-core's 15 GB
+// took about 45 minutes at 6 MiB/s (2026-10-03); a transfer that stalls is git's own to give up.
+const firstDownloadTimeout = 6 * time.Hour
+
+type firstDownload struct {
+	done chan struct{}
+	err  error
+}
 
 // The credential is transient host-side transport data, never part of the durable job.
 // A public repository needs none: the controller grants it as Public with no token, and
@@ -63,13 +78,20 @@ type privateJobSourceStager struct {
 	submoduleRemotesForTest map[string]string
 	lookupTimeoutForTest    time.Duration
 	gitForTest              func(context.Context, string, string, string, ...string) (string, error)
+	// A repository's first download, its whole history, runs in the background when set, as
+	// NewJobSourceStager sets it: a large one takes far longer than any command may hold the
+	// worker, which runs one command at a time. Later copies start from it and fetch only
+	// what is new. Unset, as tests build a stager, staging waits for it.
+	backgroundFirstDownload bool
+	downloadsMu             sync.Mutex
+	downloads               map[string]*firstDownload
 }
 
 func NewJobSourceStager(transport JobSourceTransport, stateRoot string) (*privateJobSourceStager, error) {
 	if transport == nil || !filepath.IsAbs(stateRoot) {
 		return nil, errors.New("job source stager needs a transport and absolute private state root")
 	}
-	return &privateJobSourceStager{transport: transport, stateRoot: stateRoot}, nil
+	return &privateJobSourceStager{transport: transport, stateRoot: stateRoot, backgroundFirstDownload: true}, nil
 }
 
 func (e *Executor) stageCreateJobSources(ctx context.Context, body []byte) error {
@@ -99,13 +121,23 @@ func (e *Executor) stageCreateJobSources(ctx context.Context, body []byte) error
 	for _, companion := range job.Companions {
 		sources = append(sources, companion.Source)
 	}
+	// Every repository whose history is still downloading starts its download now, so a job
+	// with several new repositories does not discover them one delivery at a time.
+	downloading := false
 	for _, source := range sources {
 		if err := e.jobSourceStager.Stage(ctx, job.JobRef, source); err != nil {
+			if errors.Is(err, errJobSourceDownloading) {
+				downloading = true
+				continue
+			}
 			if errors.Is(err, ErrJobSourceIntegrity) {
 				return fmt.Errorf("%w: %v", ErrRequestRejected, err)
 			}
 			return classifyArtifactFetch(err, "fetch job source")
 		}
+	}
+	if downloading {
+		return classifyArtifactFetch(errJobSourceDownloading, "fetch job source")
 	}
 	return nil
 }
@@ -142,6 +174,13 @@ func (s *privateJobSourceStager) Stage(ctx context.Context, jobRef string, sourc
 	if err != nil {
 		return err
 	}
+	remote, protocol := s.remote(source.RepositoryIdentity())
+	seed := previousStagedRepository(parent, key, source.RepositoryIdentity())
+	if seed == "" {
+		if seed, err = s.firstDownload(ctx, parent, remote, protocol, grant.Token, source); err != nil {
+			return err
+		}
+	}
 	temporary, err := os.MkdirTemp(parent, ".source-")
 	if err != nil {
 		return err
@@ -150,14 +189,22 @@ func (s *privateJobSourceStager) Stage(ctx context.Context, jobRef string, sourc
 	if err := os.Chmod(temporary, 0o700); err != nil {
 		return err
 	}
-	remote, protocol := s.remote(source.RepositoryIdentity())
 	repository := filepath.Join(temporary, "repository")
-	seed := previousStagedRepository(parent, key, source.RepositoryIdentity())
 	if err := fetchVerifiedSource(ctx, repository, remote, protocol, grant.Token, source, seed); err != nil {
-		if seed == "" || ctx.Err() != nil {
+		if ctx.Err() != nil {
 			return err
 		}
-		// An earlier copy is only a head start: a damaged one never stops staging.
+		// An earlier copy is only a head start: a damaged one never stops staging. A damaged
+		// first download is downloaded again, in the background like the first time.
+		if seed == firstDownloadRepository(parent, source.RepositoryIdentity()) {
+			if err := os.RemoveAll(filepath.Dir(seed)); err != nil {
+				return err
+			}
+			if _, err := s.firstDownload(ctx, parent, remote, protocol, grant.Token, source); err != nil {
+				return err
+			}
+			return errJobSourceDownloading
+		}
 		if err := os.RemoveAll(repository); err != nil {
 			return err
 		}
@@ -194,6 +241,105 @@ func (s *privateJobSourceStager) Stage(ctx context.Context, jobRef string, sourc
 			return verifyStagedJobSource(ctx, final, source)
 		}
 		return fmt.Errorf("publish private job source: %w", err)
+	}
+	return nil
+}
+
+// firstDownloadRepository is where a repository's first download keeps its whole history. Its
+// name is a digest like a staged source's, so the storage inventory accepts it, and its
+// source.json names the repository, so later stagings take it as their earlier copy.
+func firstDownloadRepository(parent string, identity workerproto.RepositoryIdentity) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("coop-first-download\x00%s\x00%s\x00%d",
+		identity.RepositoryRef, identity.GitHubRepository, identity.GitHubRepositoryID)))
+	return filepath.Join(parent, hex.EncodeToString(sum[:]), "repository")
+}
+
+// firstDownload returns the repository's whole history for a staging to start from, and
+// downloads it the first time. In the background (backgroundFirstDownload) it reports
+// errJobSourceDownloading until the download is there; otherwise it waits for it.
+func (s *privateJobSourceStager) firstDownload(ctx context.Context, parent, remote, protocol, token string, source workerproto.JobSource) (string, error) {
+	repository := firstDownloadRepository(parent, source.RepositoryIdentity())
+	final := filepath.Dir(repository)
+	if _, err := os.Lstat(filepath.Join(final, "source.json")); err == nil {
+		return repository, nil
+	}
+	if !s.backgroundFirstDownload {
+		if err := s.downloadHistory(ctx, parent, final, remote, protocol, token, source); err != nil {
+			return "", err
+		}
+		return repository, nil
+	}
+	s.downloadsMu.Lock()
+	defer s.downloadsMu.Unlock()
+	if s.downloads == nil {
+		s.downloads = map[string]*firstDownload{}
+	}
+	if download := s.downloads[final]; download != nil {
+		select {
+		case <-download.done:
+			delete(s.downloads, final)
+			if download.err != nil {
+				return "", download.err
+			}
+			return repository, nil
+		default:
+			return "", errJobSourceDownloading
+		}
+	}
+	download := &firstDownload{done: make(chan struct{})}
+	s.downloads[final] = download
+	go func() {
+		defer close(download.done)
+		background, cancel := context.WithTimeout(context.Background(), firstDownloadTimeout)
+		defer cancel()
+		download.err = s.downloadHistory(background, parent, final, remote, protocol, token, source)
+	}()
+	return "", errJobSourceDownloading
+}
+
+// downloadHistory fetches the repository's default branch with its whole history into a
+// scratch directory and publishes it at final. Progress keeps bytes flowing while GitHub packs
+// a large history, minutes before its first object: a quiet fetch receives nothing then, and
+// git's low-speed limit gives up on it.
+func (s *privateJobSourceStager) downloadHistory(ctx context.Context, parent, final, remote, protocol, token string, source workerproto.JobSource) error {
+	ctx, err := withSourceCredentials(ctx, s.stateRoot)
+	if err != nil {
+		return err
+	}
+	temporary, err := os.MkdirTemp(parent, ".source-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(temporary)
+	if err := os.Chmod(temporary, 0o700); err != nil {
+		return err
+	}
+	repository := filepath.Join(temporary, "repository")
+	if err := runSourceGit(ctx, "", token, protocol, "init", "--quiet", "--template=", "--object-format=sha1", repository); err != nil {
+		return err
+	}
+	if err := os.Chmod(repository, 0o700); err != nil {
+		return err
+	}
+	if err := runSourceGit(ctx, repository, token, protocol, "remote", "add", "origin", remote); err != nil {
+		return err
+	}
+	if err := runSourceGit(ctx, repository, token, protocol, "fetch", "--progress", "--no-tags", "origin",
+		"+"+source.Binding.DefaultRef+":refs/remotes/origin/job-default"); err != nil {
+		return err
+	}
+	document, err := json.Marshal(source)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(temporary, "source.json"), document, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(temporary, final); err != nil {
+		if _, statErr := os.Lstat(filepath.Join(final, "source.json")); statErr == nil {
+			return nil
+		}
+		return fmt.Errorf("publish first download: %w", err)
 	}
 	return nil
 }
