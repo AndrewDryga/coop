@@ -25,12 +25,25 @@ import (
 var ErrJobSourceIntegrity = errors.New("job source identity or working tree does not match")
 
 // The credential is transient host-side transport data, never part of the durable job.
+// A public repository needs none: the controller grants it as Public with no token, and
+// the worker fetches it anonymously, as anyone may (a repository vendoring an open-source
+// library from outside every organization the controller's GitHub App reaches).
 type JobSourceGrant struct {
 	RepositoryRef      string    `json:"repository_ref"`
 	GitHubRepository   string    `json:"github_repository"`
 	GitHubRepositoryID int64     `json:"github_repository_id"`
 	Token              string    `json:"token"`
+	Public             bool      `json:"public,omitempty"`
 	ExpiresAt          time.Time `json:"expires_at"`
+}
+
+// validCredential reports whether the grant carries a bounded credential, or says the
+// repository is public and carries none.
+func (g JobSourceGrant) validCredential() bool {
+	if g.Public {
+		return g.Token == ""
+	}
+	return len(g.Token) > 0 && len(g.Token) <= 4096
 }
 
 type JobSourceTransport interface {
@@ -201,7 +214,7 @@ func (s *privateJobSourceStager) sourceGrant(ctx context.Context, jobRef string,
 		return JobSourceGrant{}, err
 	}
 	if grant.RepositoryRef != source.RepositoryRef || grant.GitHubRepository != source.GitHubRepository ||
-		grant.GitHubRepositoryID != source.GitHubRepositoryID || len(grant.Token) == 0 || len(grant.Token) > 4096 ||
+		grant.GitHubRepositoryID != source.GitHubRepositoryID || !grant.validCredential() ||
 		!grant.ExpiresAt.After(time.Now().Add(30*time.Second)) {
 		return JobSourceGrant{}, ErrJobSourceIntegrity
 	}

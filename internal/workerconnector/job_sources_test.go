@@ -25,6 +25,10 @@ import (
 type jobSourceGrantFixture struct {
 	calls   int
 	expired bool
+	// public names the repository refs the controller grants as public, without a token.
+	public map[string]bool
+	// token, when set, replaces whatever the grant would carry.
+	token *string
 }
 
 func TestSourceStagingRequiresAndMaterializesTheEntireAuthorizedGitlinkTree(t *testing.T) {
@@ -134,7 +138,72 @@ func (f *jobSourceGrantFixture) FetchJobSourceGrant(_ context.Context, _ string,
 	if f.expired {
 		expires = time.Now().Add(-time.Second)
 	}
-	return JobSourceGrant{RepositoryRef: source.RepositoryRef, GitHubRepository: source.GitHubRepository, GitHubRepositoryID: source.GitHubRepositoryID, Token: "temporary-token", ExpiresAt: expires}, nil
+	grant := JobSourceGrant{RepositoryRef: source.RepositoryRef, GitHubRepository: source.GitHubRepository, GitHubRepositoryID: source.GitHubRepositoryID, Token: "temporary-token", ExpiresAt: expires}
+	if f.public[source.RepositoryRef] {
+		grant.Public, grant.Token = true, ""
+	}
+	if f.token != nil {
+		grant.Token = *f.token
+	}
+	return grant, nil
+}
+
+// A repository may vendor an open-source library from outside every organization the
+// controller's GitHub App reaches (theblitzapp/blitz-core vendors skypjack/entt). The
+// controller grants such a public repository without a credential; the worker stages it
+// anonymously, and refuses a grant that is neither credentialed nor public, or both.
+func TestSourceStagingFetchesAPublicSubmoduleWithoutACredential(t *testing.T) {
+	ctx := context.Background()
+	library, libraryGit := gitrepo.New(t)
+	if err := os.WriteFile(filepath.Join(library, "entt.hpp"), []byte("// header\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	libraryGit("add", "entt.hpp")
+	libraryGit("commit", "-qm", "library")
+	value := func(repo, revision string) string {
+		t.Helper()
+		out, err := sourceGitValue(ctx, repo, "", "file", "rev-parse", revision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	remote, git := gitrepo.New(t)
+	git("update-index", "--add", "--cacheinfo", "160000,"+value(library, "HEAD")+",lib/libentt")
+	if err := os.WriteFile(filepath.Join(remote, ".gitmodules"), []byte("[submodule \"entt\"]\npath = lib/libentt\nurl = https://github.com/skypjack/entt.git\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".gitmodules")
+	git("commit", "-qm", "parent")
+	source := testJobSource()
+	source.Binding.DefaultCommit = value(remote, "HEAD")
+	source.Binding.SelectedCommit, source.Binding.BaseCommit = source.Binding.DefaultCommit, source.Binding.DefaultCommit
+	source.Binding.AdmittedTree = value(remote, "HEAD^{tree}")
+	source.Submodules = []workerproto.JobSubmodule{{Path: "lib/libentt", RepositoryRef: "public:skypjack:entt",
+		GitHubRepository: "skypjack/entt", GitHubRepositoryID: 2, Commit: value(library, "HEAD"),
+		Tree: value(library, "HEAD^{tree}"), Submodules: []workerproto.JobSubmodule{}}}
+	stager := func(grant *jobSourceGrantFixture) *privateJobSourceStager {
+		t.Helper()
+		root := t.TempDir()
+		if err := os.Chmod(root, 0700); err != nil {
+			t.Fatal(err)
+		}
+		return &privateJobSourceStager{transport: grant, stateRoot: root, remoteForTest: remote,
+			submoduleRemotesForTest: map[string]string{"skypjack/entt": library}}
+	}
+	public := map[string]bool{"public:skypjack:entt": true}
+	if err := stager(&jobSourceGrantFixture{public: public}).Stage(ctx, "job:public", source); err != nil {
+		t.Fatalf("public submodule was not staged: %v", err)
+	}
+	withToken, none := "temporary-token", ""
+	for name, grant := range map[string]*jobSourceGrantFixture{
+		"public with a credential":  {public: public, token: &withToken},
+		"no credential, not public": {token: &none},
+	} {
+		if err := stager(grant).Stage(ctx, "job:public", source); !errors.Is(err, ErrJobSourceIntegrity) {
+			t.Fatalf("%s: staged with %v", name, err)
+		}
+	}
 }
 
 func TestSourceStagingRefusesChangedOrUnprovenFrozenObjects(t *testing.T) {
@@ -358,6 +427,17 @@ func TestJobSourceGrantIsJobAndExactRepositoryBound(t *testing.T) {
 	grant.GitHubRepositoryID++
 	if _, err := transport.FetchJobSourceGrant(context.Background(), "job:one", source); !errors.Is(err, ErrJobSourceIntegrity) {
 		t.Fatalf("wrong repo = %v", err)
+	}
+	grant.GitHubRepositoryID--
+	grant.Public, grant.Token = true, ""
+	if fetched, err := transport.FetchJobSourceGrant(context.Background(), "job:one", source); err != nil || !fetched.Public || fetched.Token != "" {
+		t.Fatalf("public grant = %+v, %v", fetched, err)
+	}
+	for _, refused := range []JobSourceGrant{{Public: true, Token: "x"}, {Public: false, Token: ""}} {
+		grant.Public, grant.Token = refused.Public, refused.Token
+		if _, err := transport.FetchJobSourceGrant(context.Background(), "job:one", source); !errors.Is(err, ErrJobSourceIntegrity) {
+			t.Fatalf("grant public=%v token=%q = %v", refused.Public, refused.Token, err)
+		}
 	}
 }
 
