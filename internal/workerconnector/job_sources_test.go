@@ -25,6 +25,10 @@ import (
 type jobSourceGrantFixture struct {
 	calls   int
 	expired bool
+	// public names the repository refs the controller grants as public, without a token.
+	public map[string]bool
+	// token, when set, replaces whatever the grant would carry.
+	token *string
 }
 
 func TestSourceStagingRequiresAndMaterializesTheEntireAuthorizedGitlinkTree(t *testing.T) {
@@ -134,7 +138,72 @@ func (f *jobSourceGrantFixture) FetchJobSourceGrant(_ context.Context, _ string,
 	if f.expired {
 		expires = time.Now().Add(-time.Second)
 	}
-	return JobSourceGrant{RepositoryRef: source.RepositoryRef, GitHubRepository: source.GitHubRepository, GitHubRepositoryID: source.GitHubRepositoryID, Token: "temporary-token", ExpiresAt: expires}, nil
+	grant := JobSourceGrant{RepositoryRef: source.RepositoryRef, GitHubRepository: source.GitHubRepository, GitHubRepositoryID: source.GitHubRepositoryID, Token: "temporary-token", ExpiresAt: expires}
+	if f.public[source.RepositoryRef] {
+		grant.Public, grant.Token = true, ""
+	}
+	if f.token != nil {
+		grant.Token = *f.token
+	}
+	return grant, nil
+}
+
+// A repository may vendor an open-source library from outside every organization the
+// controller's GitHub App reaches (theblitzapp/blitz-core vendors skypjack/entt). The
+// controller grants such a public repository without a credential; the worker stages it
+// anonymously, and refuses a grant that is neither credentialed nor public, or both.
+func TestSourceStagingFetchesAPublicSubmoduleWithoutACredential(t *testing.T) {
+	ctx := context.Background()
+	library, libraryGit := gitrepo.New(t)
+	if err := os.WriteFile(filepath.Join(library, "entt.hpp"), []byte("// header\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	libraryGit("add", "entt.hpp")
+	libraryGit("commit", "-qm", "library")
+	value := func(repo, revision string) string {
+		t.Helper()
+		out, err := sourceGitValue(ctx, repo, "", "file", "rev-parse", revision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	remote, git := gitrepo.New(t)
+	git("update-index", "--add", "--cacheinfo", "160000,"+value(library, "HEAD")+",lib/libentt")
+	if err := os.WriteFile(filepath.Join(remote, ".gitmodules"), []byte("[submodule \"entt\"]\npath = lib/libentt\nurl = https://github.com/skypjack/entt.git\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".gitmodules")
+	git("commit", "-qm", "parent")
+	source := testJobSource()
+	source.Binding.DefaultCommit = value(remote, "HEAD")
+	source.Binding.SelectedCommit, source.Binding.BaseCommit = source.Binding.DefaultCommit, source.Binding.DefaultCommit
+	source.Binding.AdmittedTree = value(remote, "HEAD^{tree}")
+	source.Submodules = []workerproto.JobSubmodule{{Path: "lib/libentt", RepositoryRef: "public:skypjack:entt",
+		GitHubRepository: "skypjack/entt", GitHubRepositoryID: 2, Commit: value(library, "HEAD"),
+		Tree: value(library, "HEAD^{tree}"), Submodules: []workerproto.JobSubmodule{}}}
+	stager := func(grant *jobSourceGrantFixture) *privateJobSourceStager {
+		t.Helper()
+		root := t.TempDir()
+		if err := os.Chmod(root, 0700); err != nil {
+			t.Fatal(err)
+		}
+		return &privateJobSourceStager{transport: grant, stateRoot: root, remoteForTest: remote,
+			submoduleRemotesForTest: map[string]string{"skypjack/entt": library}}
+	}
+	public := map[string]bool{"public:skypjack:entt": true}
+	if err := stager(&jobSourceGrantFixture{public: public}).Stage(ctx, "job:public", source); err != nil {
+		t.Fatalf("public submodule was not staged: %v", err)
+	}
+	withToken, none := "temporary-token", ""
+	for name, grant := range map[string]*jobSourceGrantFixture{
+		"public with a credential":  {public: public, token: &withToken},
+		"no credential, not public": {token: &none},
+	} {
+		if err := stager(grant).Stage(ctx, "job:public", source); !errors.Is(err, ErrJobSourceIntegrity) {
+			t.Fatalf("%s: staged with %v", name, err)
+		}
+	}
 }
 
 func TestSourceStagingRefusesChangedOrUnprovenFrozenObjects(t *testing.T) {
@@ -262,6 +331,75 @@ func TestJobSourceStagerFetchesPrivateVerifiedRepository(t *testing.T) {
 	}
 }
 
+// emisar's default branch moved on 2026-10-01, and the next session cloned all 93,414 of its
+// objects again at 93 KB/s, past the command's lease, from scratch on every retry, while every
+// other worker command, routing's too, waited behind it. A new commit of a repository already
+// staged starts from the earlier copy's objects and fetches only what is new.
+func TestStagingANewCommitStartsFromTheEarlierCopyOfTheRepository(t *testing.T) {
+	ctx := context.Background()
+	remote, git := gitrepo.New(t)
+	stage := func(content string) (workerproto.JobSource, string) {
+		if err := os.WriteFile(filepath.Join(remote, "code"), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		git("add", "code")
+		git("commit", "-qm", content)
+		commit, err := sourceGitValue(ctx, remote, "", "file", "rev-parse", "HEAD")
+		if err != nil {
+			t.Fatal(err)
+		}
+		tree, err := sourceGitValue(ctx, remote, "", "file", "rev-parse", "HEAD^{tree}")
+		if err != nil {
+			t.Fatal(err)
+		}
+		source := testJobSource()
+		source.Binding.DefaultCommit, source.Binding.SelectedCommit = commit, commit
+		source.Binding.BaseCommit, source.Binding.AdmittedTree = commit, tree
+		key, err := source.StagingKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return source, key
+	}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	stager := &privateJobSourceStager{transport: &jobSourceGrantFixture{}, stateRoot: root, remoteForTest: remote}
+
+	first, firstKey := stage("first version")
+	if err := stager.Stage(ctx, "job:one", first); err != nil {
+		t.Fatal(err)
+	}
+	firstRepository := filepath.Join(root, "job-sources", firstKey, "repository")
+	firstBlob, err := sourceGitValue(ctx, firstRepository, "", "file", "rev-parse", "HEAD:code")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second, secondKey := stage("second version")
+	if err := stager.Stage(ctx, "job:two", second); err != nil {
+		t.Fatal(err)
+	}
+	secondRepository := filepath.Join(root, "job-sources", secondKey, "repository")
+
+	object := filepath.Join(".git", "objects", firstBlob[:2], firstBlob[2:])
+	earlier, err := os.Stat(filepath.Join(firstRepository, object))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seeded, err := os.Stat(filepath.Join(secondRepository, object))
+	if err != nil || !os.SameFile(earlier, seeded) {
+		t.Fatalf("the new copy did not start from the earlier one: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(secondRepository, "code")); err != nil || string(data) != "second version" {
+		t.Fatalf("staged %q %v", data, err)
+	}
+	if refs, _ := sourceGitValue(ctx, secondRepository, "", "file", "for-each-ref", "refs/coop"); refs != "" {
+		t.Fatalf("the seed ref stayed behind: %q", refs)
+	}
+}
+
 func TestJobSourceGrantIsJobAndExactRepositoryBound(t *testing.T) {
 	source := testJobSource().RepositoryIdentity()
 	grant, _ := (&jobSourceGrantFixture{}).FetchJobSourceGrant(context.Background(), "job:one", source)
@@ -289,6 +427,17 @@ func TestJobSourceGrantIsJobAndExactRepositoryBound(t *testing.T) {
 	grant.GitHubRepositoryID++
 	if _, err := transport.FetchJobSourceGrant(context.Background(), "job:one", source); !errors.Is(err, ErrJobSourceIntegrity) {
 		t.Fatalf("wrong repo = %v", err)
+	}
+	grant.GitHubRepositoryID--
+	grant.Public, grant.Token = true, ""
+	if fetched, err := transport.FetchJobSourceGrant(context.Background(), "job:one", source); err != nil || !fetched.Public || fetched.Token != "" {
+		t.Fatalf("public grant = %+v, %v", fetched, err)
+	}
+	for _, refused := range []JobSourceGrant{{Public: true, Token: "x"}, {Public: false, Token: ""}} {
+		grant.Public, grant.Token = refused.Public, refused.Token
+		if _, err := transport.FetchJobSourceGrant(context.Background(), "job:one", source); !errors.Is(err, ErrJobSourceIntegrity) {
+			t.Fatalf("grant public=%v token=%q = %v", refused.Public, refused.Token, err)
+		}
 	}
 }
 

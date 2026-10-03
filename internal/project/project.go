@@ -154,11 +154,60 @@ func fileReason(err error) string {
 }
 
 func Load(repo string) (*Project, error) {
+	data, err := readProject(repo)
+	if err != nil {
+		return nil, err
+	}
+	if data == nil {
+		return &Project{}, nil
+	}
+	return Parse(data)
+}
+
+// LoadReview reads only the review stack <repo>/.agent/project.yaml declares: the one part of a
+// candidate's project a controller review takes from it, since the gate it runs is the
+// candidate's own code too. The rest of the file is not read, so a box setting no controller job
+// uses cannot fail a review; the review block itself is checked as Load checks it. A missing file
+// declares no stack.
+func LoadReview(repo string) (Review, error) {
+	data, err := readProject(repo)
+	if err != nil || data == nil {
+		return Review{}, err
+	}
+	var doc struct {
+		Review yaml.Node `yaml:"review"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return Review{}, fmt.Errorf("%s: %w", File, err)
+	}
+	var review Review
+	if doc.Review.Kind != 0 {
+		block, err := yaml.Marshal(&doc.Review)
+		if err != nil {
+			return Review{}, fmt.Errorf("%s: %w", File, err)
+		}
+		dec := yaml.NewDecoder(bytes.NewReader(block))
+		dec.KnownFields(true)
+		if err := dec.Decode(&review); err != nil && !errors.Is(err, io.EOF) {
+			return Review{}, fmt.Errorf("%s: review: %w", File, err)
+		}
+	}
+	if review.Compose, err = reviewRelPath("compose", review.Compose); err != nil {
+		return Review{}, err
+	}
+	if err := validateLiteralEnv("review.env", review.Env); err != nil {
+		return Review{}, err
+	}
+	return review, nil
+}
+
+// readProject returns the project file's bytes, nil when the repository has none.
+func readProject(repo string) ([]byte, error) {
 	path := filepath.Join(repo, filepath.FromSlash(File))
 	agentDir := filepath.Dir(path)
 	dirInfo, err := os.Lstat(agentDir)
 	if errors.Is(err, os.ErrNotExist) {
-		return &Project{}, nil
+		return nil, nil
 	}
 	if err != nil {
 		return nil, readError(fileReason(err))
@@ -171,7 +220,7 @@ func Load(repo string) (*Project, error) {
 	}
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return &Project{}, nil
+		return nil, nil
 	}
 	if err != nil {
 		return nil, readError(fileReason(err))
@@ -186,7 +235,10 @@ func Load(repo string) (*Project, error) {
 	if err != nil {
 		return nil, readError(fileReason(err))
 	}
-	return Parse(data)
+	if data == nil {
+		data = []byte{}
+	}
+	return data, nil
 }
 
 func readProjectFile(path string, parent, before os.FileInfo) ([]byte, error) {

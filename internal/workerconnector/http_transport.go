@@ -192,7 +192,7 @@ func (t *HTTPTransport) FetchJobSourceGrant(
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&grant) != nil || decoder.Decode(&struct{}{}) != io.EOF ||
 		grant.RepositoryRef != source.RepositoryRef || grant.GitHubRepository != source.GitHubRepository ||
-		grant.GitHubRepositoryID != source.GitHubRepositoryID || len(grant.Token) < 1 || len(grant.Token) > 4096 ||
+		grant.GitHubRepositoryID != source.GitHubRepositoryID || !grant.validCredential() ||
 		!grant.ExpiresAt.After(time.Now().Add(30*time.Second)) {
 		return JobSourceGrant{}, ErrJobSourceIntegrity
 	}

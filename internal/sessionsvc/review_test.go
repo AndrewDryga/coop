@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -959,8 +960,61 @@ func containsReviewReason(reasons []string, want string) bool {
 	return false
 }
 
-// The real gate reads this ref from the prepared candidate, not its request.
-// Hand-built gate fixtures alone would miss an omitted ref in candidate preparation.
+// 2026-09-30: every controller review of a repository with a gate stopped
+// before its gate started, "resolve trusted review base commit". The
+// worker-owned checker (forkctl.ReviewControllerJob) reads the trusted base
+// it hands the gate as COOP_REVIEW_BASE from the candidate's
+// refs/coop/session-parent, and the candidate a review prepares never had that
+// ref; only tests that build a candidate by hand set it. Ryker's emisar task
+// could not open its pull request, however often its review was asked again.
+// 2026-09-30: once the review reached emisar's gate, its dependency-age check refused to run,
+// "base ref \"origin/main\" does not resolve; fetch it ... refusing to skip the age check". A CI
+// checkout and a developer's clone both name the default branch as origin/<branch>; the candidate
+// a review prepares named none, so Ryker's emisar task still could not open its pull request.
+func TestSessionReviewCandidateNamesTheDefaultBranchForTheGate(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	var named string
+	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(_ context.Context, request ReviewGateRequest) (ReviewGateResult, error) {
+		named = strings.TrimSpace(gitOut(request.Candidate, "rev-parse", "--verify", "--quiet", "origin/main^{commit}"))
+		return ReviewGateResult{Configured: true, Passed: true}, nil
+	}))
+	defer service.Stop()
+	binding := service.Job.Source.Binding
+	if binding.DefaultRef != "refs/heads/main" {
+		t.Fatalf("fixture default branch = %q, want refs/heads/main", binding.DefaultRef)
+	}
+	// The worker's stager keeps what it fetched as origin/* beside a detached HEAD, with no
+	// local branch, and a clone never copies another repository's origin/* refs.
+	key, err := service.Job.Source.StagingKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged := filepath.Join(service.stateRoot, "job-sources", key, "repository")
+	for _, args := range [][]string{
+		{"update-ref", "--no-deref", "HEAD", binding.DefaultCommit},
+		{"update-ref", "refs/remotes/origin/main", binding.DefaultCommit},
+		{"update-ref", "-d", "refs/heads/main"},
+	} {
+		if output, err := exec.Command("git", append([]string{"-C", staged}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, output)
+		}
+	}
+	sess := createReviewSession(t, service, "default-branch")
+	if err := os.WriteFile(filepath.Join(sess.Workspace, "change.txt"), []byte("reviewed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sessionWorkspaceGit(t, sess.Workspace, "add", "change.txt")
+	sessionWorkspaceGit(t, sess.Workspace, "commit", "-qm", "review change")
+
+	if _, err := service.RunReview(context.Background(), "review-default-branch", RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision}); err != nil {
+		t.Fatal(err)
+	}
+	if named == "" || named != binding.DefaultCommit {
+		t.Fatalf("the gate's candidate names origin/main %q, want the pinned default commit %q", named, binding.DefaultCommit)
+	}
+}
+
 func TestSessionReviewCandidateNamesItsTrustedParentForTheGate(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
