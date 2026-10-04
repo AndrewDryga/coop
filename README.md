@@ -1675,12 +1675,18 @@ If your repo pins versions in a `.tool-versions` (asdf), the base box provisions
 toolchain at runtime — resolved from the working dir up the tree, or
 `~/.tool-versions` — and caches it in a shared volume. So a repo with *just* a
 `.tool-versions` (no `.agent/Dockerfile`, no scaffolding) gets its toolchain with zero
-setup:
+setup on an open-network run:
 
 ```bash
 cd ~/code/phoenix-app   # has a .tool-versions
 coop claude             # provisions elixir/erlang/node/… from it, then runs the agent
 ```
+
+This runtime setup is for open networking only. A filtered run (the default once you run
+`coop init`) uses the locked client image, which has no asdf, so nothing is installed when the
+box starts. There the toolchain has to be built into an `.agent/Dockerfile`: `coop init` writes
+one when it finds a `.tool-versions`, `coop init --stack asdf` writes one later, and
+`coop build` builds it.
 
 The first install of a new toolchain can be slow (e.g. Erlang compiles), then it's
 reused across runs and repos. Set `COOP_NO_ASDF=1` (in `agents/env`) to skip provisioning
@@ -2164,7 +2170,7 @@ when a tool needs current joined state.
 | **Gemini says its Google sign-in client is no longer supported** | Google retired Gemini CLI access for individual Google accounts. Run `coop login gemini[@<name>]` and paste a Gemini API key from the displayed AI Studio link; Coop does not launch that retired Google flow. Enterprise Gemini CLI and Vertex credentials remain separate provider-supported options and are not supported with `--egress filtered`. Coop refuses Vertex `GOOGLE_API_KEY` in every network mode. |
 | **Agent seems stuck / a detached loop won't quit** | `coop fork logs <name> -f` to watch it; `coop fork stop <name>` to stop a detached loop. A foreground run is just Ctrl-C. |
 | **"permission denied" writing `~/.cache` / build or test caches** | Inspect the cache volume's ownership. Its name is `coop-cache` for the default image user, or `coop-cache-<uid>-<gid>` on native Linux (see `id -u` and `id -g`). If it was initialized with the wrong owner, preserve anything useful, remove only that idle cache volume, then run `coop build`. Never loosen your credential directory's permissions. |
-| **`go`/`gofmt`: "No version is set for command go"** | The box provisions toolchains from `.tool-versions` via asdf — add the required `golang` version there so it's installed and shimmed. Set `COOP_NO_ASDF=1` to skip provisioning. |
+| **`go`/`gofmt`: "No version is set for command go"** | The box provisions toolchains from `.tool-versions` via asdf — add the required `golang` version there so it's installed and shimmed. A filtered box installs it only at build time, so run `coop build` after. Set `COOP_NO_ASDF=1` to skip provisioning. |
 | **A pinned `.tool-versions` tool (`go`, `ruby`, …) is installed yet "not found" in a *login* shell** | asdf's shims sit on PATH via the image's `ENV`, which only reaches the agent process and non-login shells. A login shell (`sh -lc`, `bash -l`) sources `/etc/profile`, which resets PATH and drops the shims. The base box adds an `/etc/profile.d` drop-in to re-add them; rebuild an older box with `coop build` to pick it up. |
 | **Zed (ACP) can't find the agent** | Zed must launch `coop` from a shell where it's on `PATH` (the installer puts it in `~/.local/bin`). Point Zed's ACP command at the absolute path if needed, and confirm `coop acp` (optionally with a target or preset) runs in a terminal first. |
 | **An editor (ACP) session misbehaves** | Turn on wire tracing: set `COOP_ACP_TRACE=1` in the agent server's `env`, or `touch ~/.config/coop/acp-debug` (works on an already-running server). coop appends the editor↔box traffic to `~/.config/coop/acp-trace-<pid>.log` (size-bounded, auto-pruned). It carries prompts and file contents — treat it as sensitive. |
