@@ -601,6 +601,11 @@ credentials at all. `coop login <agent>` mounts only the agent being signed in.
 > for that credential. (b) stays *inside* the container — not a host escape — but it's a
 > durable foothold. A fuller fix (copy credentials into an ephemeral in-box location,
 > persist nothing host-side) is planned; for now, `COOP_EGRESS=none` covers the exfil half.
+> The same home also holds that account's session history from *every* project it ran in —
+> Claude's `projects/` transcripts, Codex's `sessions/` and `history.jsonl`, Gemini's chats,
+> Grok's `sessions/` — so the agent can also (c) read what you and it said in your other
+> projects, including code and anything pasted there. To keep a project's sessions apart,
+> give it its own account: `coop login claude@client`, then `coop claude@client`.
 
 ### Authentication
 
