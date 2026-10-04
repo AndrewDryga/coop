@@ -17,6 +17,6 @@ OPTIONS
   Removing a fork also removes its service containers and Docker volumes.
 
 EXAMPLES
-  coop fork review login
-  coop fork merge login
+  coop fork review myfork
+  coop fork merge myfork
   coop fork merge --all

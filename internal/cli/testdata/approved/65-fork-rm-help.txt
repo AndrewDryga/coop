@@ -12,5 +12,5 @@ OPTIONS
   imported are discarded; tasks already imported into the project are kept.
 
 EXAMPLES
-  coop fork rm login
-  coop fork rm login --force
+  coop fork rm myfork
+  coop fork rm myfork --force

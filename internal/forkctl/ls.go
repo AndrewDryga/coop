@@ -55,7 +55,7 @@ func (c *Control) ForkLs(args []string) (int, error) {
 	if len(names) == 0 {
 		listing("No forks yet.")
 		listing("")
-		listing("  Create one: coop fork login claude")
+		listing("  Create one: coop fork myfork claude")
 		return 0, nil
 	}
 	statuses := make([]forkStatus, 0, len(names))

@@ -4,10 +4,10 @@ Usage: coop fork <name> [<target|preset>] [<options>]
        coop fork <command> [<args>...]
 
 START WORK
-  coop fork login claude         create a fork and start Claude
-  coop fork login                continue an existing fork's session
-  coop fork login frontier       use a preset
-  coop fork login claude -d      work through tasks in the background
+  coop fork myfork claude        create a fork and start Claude
+  coop fork myfork               continue an existing fork's session
+  coop fork myfork frontier      use a preset
+  coop fork myfork claude -d     work through tasks in the background
 
 REVIEW AND MERGE
   ls             show forks and their progress

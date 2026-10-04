@@ -15,7 +15,7 @@ OPTIONS
   with --open.
 
 EXAMPLES
-  coop fork review login
-  coop fork review login --stat --gate
+  coop fork review myfork
+  coop fork review myfork --stat --gate
 
-  Merge after review: coop fork merge login
+  Merge after review: coop fork merge myfork

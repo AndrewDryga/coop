@@ -1233,9 +1233,9 @@ OPTIONS
   any native model and effort choices remain available. With --readonly, open the fork.
 
 EXAMPLE
-  coop fork login acp claude:opus
+  coop fork myfork acp claude:opus
 
-  Create the fork first: coop fork login claude
+  Create the fork first: coop fork myfork claude
   Editor setup: coop help acp`,
 
 	"fork ls": `coop fork ls — show forks and their progress
@@ -1267,10 +1267,10 @@ OPTIONS
   with --open.
 
 EXAMPLES
-  coop fork review login
-  coop fork review login --stat --gate
+  coop fork review myfork
+  coop fork review myfork --stat --gate
 
-  Merge after review: coop fork merge login`,
+  Merge after review: coop fork merge myfork`,
 
 	"fork merge": `coop fork merge — bring a fork's commits into your current branch
 
@@ -1291,8 +1291,8 @@ OPTIONS
   Removing a fork also removes its service containers and Docker volumes.
 
 EXAMPLES
-  coop fork review login
-  coop fork merge login
+  coop fork review myfork
+  coop fork merge myfork
   coop fork merge --all`,
 
 	"fork rm": `coop fork rm — delete a fork and its local work
@@ -1309,8 +1309,8 @@ OPTIONS
   imported are discarded; tasks already imported into the project are kept.
 
 EXAMPLES
-  coop fork rm login
-  coop fork rm login --force`,
+  coop fork rm myfork
+  coop fork rm myfork --force`,
 
 	"fork stop": `coop fork stop — stop a fork's background loop
 
@@ -1320,8 +1320,8 @@ Usage: coop fork stop <name>
   available so you can continue it later.
 
 EXAMPLES
-  coop fork stop login
-  coop fork login claude --loop`,
+  coop fork stop myfork
+  coop fork myfork claude --loop`,
 
 	"fork logs": `coop fork logs — show a fork's loop output
 
@@ -1334,8 +1334,8 @@ OPTIONS
   Press Ctrl-C to leave the log view; the loop keeps running.
 
 EXAMPLES
-  coop fork logs login
-  coop fork logs login --follow
+  coop fork logs myfork
+  coop fork logs myfork --follow
   coop fork logs --follow`,
 
 	"fork path": `coop fork path — print a fork's folder path
@@ -1343,7 +1343,7 @@ EXAMPLES
 Usage: coop fork path <name>
 
 EXAMPLE
-  coop fork path login`,
+  coop fork path myfork`,
 
 	"fork open": `coop fork open — open a fork in your editor
 
@@ -1352,7 +1352,7 @@ Usage: coop fork open <name>
   Uses COOP_EDITOR, your global Git editor or an available editor.
 
 EXAMPLE
-  coop fork open login`,
+  coop fork open myfork`,
 
 	"context": `coop context — show the instructions relevant to your work
 

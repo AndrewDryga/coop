@@ -1182,10 +1182,10 @@ Usage: coop fork <name> [<target|preset>] [<options>]
        coop fork <command> [<args>...]
 
 START WORK
-  coop fork login claude         create a fork and start Claude
-  coop fork login                continue an existing fork's session
-  coop fork login frontier       use a preset
-  coop fork login claude -d      work through tasks in the background
+  coop fork myfork claude        create a fork and start Claude
+  coop fork myfork               continue an existing fork's session
+  coop fork myfork frontier      use a preset
+  coop fork myfork claude -d     work through tasks in the background
 
 REVIEW AND MERGE
   ls             show forks and their progress
@@ -1248,9 +1248,9 @@ OPTIONS
   any native model and effort choices remain available. With --readonly, open the fork.
 
 EXAMPLE
-  coop fork login acp claude:opus
+  coop fork myfork acp claude:opus
 
-  Create the fork first: coop fork login claude
+  Create the fork first: coop fork myfork claude
   Editor setup: coop help acp
 
 ==============================================================================
@@ -1286,10 +1286,10 @@ OPTIONS
   with --open.
 
 EXAMPLES
-  coop fork review login
-  coop fork review login --stat --gate
+  coop fork review myfork
+  coop fork review myfork --stat --gate
 
-  Merge after review: coop fork merge login
+  Merge after review: coop fork merge myfork
 
 ==============================================================================
 
@@ -1312,8 +1312,8 @@ OPTIONS
   Removing a fork also removes its service containers and Docker volumes.
 
 EXAMPLES
-  coop fork review login
-  coop fork merge login
+  coop fork review myfork
+  coop fork merge myfork
   coop fork merge --all
 
 ==============================================================================
@@ -1332,8 +1332,8 @@ OPTIONS
   imported are discarded; tasks already imported into the project are kept.
 
 EXAMPLES
-  coop fork rm login
-  coop fork rm login --force
+  coop fork rm myfork
+  coop fork rm myfork --force
 
 ==============================================================================
 
@@ -1345,8 +1345,8 @@ Usage: coop fork stop <name>
   available so you can continue it later.
 
 EXAMPLES
-  coop fork stop login
-  coop fork login claude --loop
+  coop fork stop myfork
+  coop fork myfork claude --loop
 
 ==============================================================================
 
@@ -1361,8 +1361,8 @@ OPTIONS
   Press Ctrl-C to leave the log view; the loop keeps running.
 
 EXAMPLES
-  coop fork logs login
-  coop fork logs login --follow
+  coop fork logs myfork
+  coop fork logs myfork --follow
   coop fork logs --follow
 
 ==============================================================================
@@ -1372,7 +1372,7 @@ coop fork path — print a fork's folder path
 Usage: coop fork path <name>
 
 EXAMPLE
-  coop fork path login
+  coop fork path myfork
 
 ==============================================================================
 
@@ -1383,7 +1383,7 @@ Usage: coop fork open <name>
   Uses COOP_EDITOR, your global Git editor or an available editor.
 
 EXAMPLE
-  coop fork open login
+  coop fork open myfork
 
 ==============================================================================
 

@@ -16,6 +16,9 @@
 - **Clearer installer output.** Installation, optional shell setup and sandbox checks use
   separate readable blocks, with final examples for starting an agent and finding help.
 
+- **Clearer fork examples.** Fork help calls its example fork `myfork`, so
+  `coop fork myfork claude` no longer reads like a sign-in command.
+
 ## 10.1.2
 
 Changes since v8.1.0 include provider-client updates, `coop usage`, and the new controller-worker

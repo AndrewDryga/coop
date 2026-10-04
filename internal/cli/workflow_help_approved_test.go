@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"slices"
 	"strings"
 	"testing"
+
+	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
 // Every `coop help backlog|context|loop [<command>]` page is a byte-exact fixture. The approved
@@ -62,6 +66,37 @@ func TestForkLaunchHelpNamesItsFork(t *testing.T) {
 	// The command index is about OTHER forks, so it keeps its placeholder.
 	if !strings.Contains(page, "  review <name>  review a fork's changes") {
 		t.Errorf("the command index must stay generic:\n%s", page)
+	}
+}
+
+// An example fork name has to read as a name. A Coop command, fork verb or provider in that slot
+// reads as syntax: `coop fork login claude` looked like signing in to forks.
+func TestForkHelpExampleNamesAreNotCoopWords(t *testing.T) {
+	words := map[string]bool{}
+	for _, word := range slices.Concat(topLevelCommands, forkspace.VerbList(), agents.Names()) {
+		words[word] = true
+	}
+	pages := map[string]string{"fork": forkHelpText(""), "acp": commandHelp["acp"]}
+	for key, page := range commandHelp {
+		if strings.HasPrefix(key, "fork ") {
+			pages[key] = page
+		}
+	}
+	for key, page := range pages {
+		for _, line := range strings.Split(page, "\n") {
+			for _, rest := range strings.Split(line, "coop fork ")[1:] {
+				fields := strings.Fields(rest)
+				if len(fields) > 0 && forkspace.Reserved(fields[0]) {
+					fields = fields[1:] // coop fork <verb> <name>
+				}
+				if len(fields) == 0 || strings.HasPrefix(fields[0], "<") || strings.HasPrefix(fields[0], "-") {
+					continue // a placeholder or a flag, not an example name
+				}
+				if words[fields[0]] {
+					t.Errorf("%q help names an example fork %q, which is a Coop word:\n%s", key, fields[0], line)
+				}
+			}
+		}
 	}
 }
 

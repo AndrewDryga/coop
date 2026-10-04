@@ -227,7 +227,7 @@ func asUsage(err error) *ui.UsageError {
 // helpPath is the command path a help request is ABOUT: the leading plain words of argv, stopping
 // at the first option, at `--` (everything after it belongs to the agent), and at two words deep —
 // past a family and its subcommand, the rest is arguments, not a deeper page. fork is the one
-// family that takes a third word: its commands sit AFTER the fork name (`coop fork login acp`).
+// family that takes a third word: its commands sit AFTER the fork name (`coop fork myfork acp`).
 func helpPath(argv []string) []string {
 	depth := 2
 	switch {
@@ -459,7 +459,7 @@ func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
 		return 0, nil
 	}
 	// `coop help fork <name> acp` names a fork BETWEEN the family and its command, so fork's leaf
-	// pages also resolve on the last word — `coop help fork login acp` is that page, not a fork
+	// pages also resolve on the last word — `coop help fork myfork acp` is that page, not a fork
 	// called "acp".
 	if cmd == "fork" && len(path) > 1 {
 		if leaf := cmd + " " + path[len(path)-1]; commandHelp[leaf] != "" {
@@ -469,7 +469,7 @@ func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
 	}
 	switch {
 	case cmd == "fork":
-		// `coop fork login --help` is the launch contract for THAT fork; `coop help fork` the family.
+		// `coop fork myfork --help` is the launch contract for THAT fork; `coop help fork` the family.
 		name := ""
 		if len(path) > 1 {
 			name = path[1]

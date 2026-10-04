@@ -165,7 +165,7 @@ type RunSpec struct {
 	Sink     io.Writer        // extra copy of the agent's output (a fork's log), nil for none
 
 	// Continue is the exact command that resumes THIS run, quoted by every report that tells the
-	// reader how to carry on ("coop loop claude", "coop fork login claude --loop"). The launch owns
+	// reader how to carry on ("coop loop claude", "coop fork myfork claude --loop"). The launch owns
 	// it: only the caller knows which spelling the user actually typed.
 	Continue string
 

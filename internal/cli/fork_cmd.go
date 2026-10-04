@@ -49,13 +49,13 @@ func forkHelp(name string) (int, error) {
 	return 0, nil
 }
 
-// forkHelpText is the fork family page. Asked about ONE fork (`coop fork login --help`), its usage
+// forkHelpText is the fork family page. Asked about ONE fork (`coop fork myfork --help`), its usage
 // line and START WORK examples name that fork, so the reader can copy the line they need — help
 // never launches it. The command index below stays generic: those rows are other forks' commands.
 // name == "" is the reference form the manual and `coop help fork` print, with the approved
 // placeholder fork.
 func forkHelpText(name string) string {
-	slot, example := "<name>", "login"
+	slot, example := "<name>", "myfork"
 	if name != "" {
 		slot, example = name, name
 	}

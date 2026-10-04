@@ -6,5 +6,5 @@ Usage: coop fork stop <name>
   available so you can continue it later.
 
 EXAMPLES
-  coop fork stop login
-  coop fork login claude --loop
+  coop fork stop myfork
+  coop fork myfork claude --loop
