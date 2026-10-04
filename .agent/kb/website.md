@@ -55,6 +55,12 @@ and the interface 16px. Spacing comes from flow rules on `.doc-section > *`: 24p
 `:where(...)` list there, or it sits 24px from its neighbours like prose; components set their own
 `font`, so never style `.doc-section p, li` broadly (that once made command notes 18px).
 
+**Figures.** Every number on the homepage is an `.evidence` line: the figure in `<strong>`, then one
+sentence that links its source and claims only what the source says. A figure about one attack or
+mistake sits inside that case's `.attack`, between the threat and its stopped lines, so the pinned
+chapters change figures as the cases change while you scroll, and the phone list shows each one with
+its case. Never put figures on a timer. A case with no source that fits it gets no figure.
+
 **Tests pin docs wording.** Rewording `site/docs.html` can fail Go tests far from the site:
 `internal/cli/help_test.go` TestCurrentDocsDoNotAdvertiseRetiredContracts needs "commits no starter
 subagents" and rejects retired config names; `internal/cli/eval_cmd_test.go` needs the eval commands
@@ -77,3 +83,4 @@ nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 - 2026-10-04 — the docs' type scale and rhythm (task 2026-10-04-give-the-docs-one-type-scale-and-a-steady-vertic).
 - 2026-10-04 — the asciinema casts, player and cast tools are gone (task 2026-10-04-retire-the-asciinema-cast-pipeline-the-old-websi).
 - 2026-10-04 — asset links carry a content hash instead of a hand-bumped date (task 2026-10-04-bust-the-browser-cache-whenever-the-site-s-css-o).
+- 2026-10-04 — each homepage case carries its own sourced figure (task 2026-10-04-give-each-homepage-case-its-own-sourced-figure-a).

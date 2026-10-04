@@ -215,6 +215,9 @@ main:focus { outline: none; }
 :is(.step, .group-panel, .feature-copy) > .evidence { display: flex; align-items: center; gap: 24px; max-width: 32rem; margin-top: 32px; font-size: 1rem; line-height: 1.5; }
 :is(.step, .group-panel, .feature-copy) > .evidence + p { margin-top: 32px; }
 .evidence strong { flex: none; color: var(--text); font-size: 2.75rem; font-weight: 700; line-height: 1; letter-spacing: -0.04em; font-feature-settings: var(--display), "tnum" 1; white-space: nowrap; }
+/* a case's own figure: under the threat it proves, before how the box stops it */
+.attack > .evidence { display: flex; align-items: center; gap: 20px; max-width: 30rem; margin-top: 16px; color: var(--body); font-size: 1rem; line-height: 1.5; text-wrap: pretty; }
+.attack > .evidence strong { font-size: 2.25rem; }
 .ticks, .beat { display: none; }
 .ticks span { width: 28px; height: 2px; border-radius: 1px; background: var(--line); }
 .js-story .step-group { --lead-in: 10vh; --beat: 40vh; position: relative; height: calc(100vh + var(--lead-in) + var(--items) * var(--beat)); }
@@ -604,7 +607,7 @@ main:focus { outline: none; }
   .attack-rail { margin-top: 32px; padding-left: 18px; }
   .attacks { gap: 32px; }
   .attack .threat { font-size: 1.25rem; }
-  :is(.step, .group-panel, .feature-copy) > .evidence { flex-direction: column; align-items: flex-start; gap: 8px; }
+  :is(.step, .group-panel, .feature-copy, .attack) > .evidence { flex-direction: column; align-items: flex-start; gap: 8px; }
   .agents button { min-width: 0; padding-inline: 0; }
   .feature-copy p { font-size: 1.125rem; }
   .scene-card { padding: 14px 14px 16px; }

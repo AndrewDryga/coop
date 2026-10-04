@@ -24,10 +24,10 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
   <link rel="manifest" href="site.webmanifest">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=d8bd02cb77">
+  <link rel="stylesheet" href="assets/css/site.css?v=fcbf609c5b">
   <script>if (matchMedia("(min-width: 1024px)").matches && "IntersectionObserver" in window) { document.documentElement.classList.add("js-story"); setTimeout(() => document.documentElement.classList.contains("story-ready") || document.documentElement.classList.remove("js-story"), 3000); }</script>
-  <script src="assets/js/site.js?v=d8bd02cb77" defer></script>
-  <script src="assets/js/analytics.js?v=d8bd02cb77" defer></script>
+  <script src="assets/js/site.js?v=fcbf609c5b" defer></script>
+  <script src="assets/js/analytics.js?v=fcbf609c5b" defer></script>
   <noscript><style>.copy, .agents { display: none; }</style></noscript>
 </head>
 <body>
@@ -88,25 +88,28 @@
           <div class="group-panel">
             <h2>But why?</h2>
             <p>Agents do what they read in code, docs and issues, even when an attacker wrote it.</p>
-            <p class="evidence"><strong>1 in 3</strong> <span>companies faced prompt injection attacks on their AI apps within a year, <a href="https://www.gartner.com/en/newsroom/press-releases/2025-09-22-gartner-survey-reveals-generative-artificial-intelligence-attacks-are-on-the-rise">Gartner found</a>.</span></p>
             <div class="attack-rail">
               <div class="ticks" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
               <ol class="attacks" role="list">
                 <li class="attack" data-attack="ssh">
                   <p class="threat">A comment hidden in a README tells your agent to post your SSH key in an issue.</p>
+                  <p class="evidence"><strong>+32%</strong> <span>more malicious prompt injections on the web in three months, <a href="https://blog.google/security/prompt-injections-web/">Google found</a>.</span></p>
                   <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Your SSH keys aren’t in the box, so there’s nothing to post.</span></p>
                 </li>
                 <li class="attack" data-attack="issue">
                   <p class="threat">An issue on a public repo tells your agent to publish your private code.</p>
+                  <p class="evidence"><strong>1 in 3</strong> <span>companies faced prompt injection attacks on their AI apps within a year, <a href="https://www.gartner.com/en/newsroom/press-releases/2025-09-22-gartner-survey-reveals-generative-artificial-intelligence-attacks-are-on-the-rise">Gartner found</a>.</span></p>
                   <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>The box has no GitHub credentials, and your other repos aren’t in it.</span></p>
                   <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Nor can it upload your code anywhere else.</span></p>
                 </li>
                 <li class="attack" data-attack="key">
                   <p class="threat">Hidden text in a setup guide tells your agent to send its Anthropic API key to an attacker.</p>
+                  <p class="evidence"><strong>13 of 13</strong> <span>frontier models fell to hidden instructions in a public attack competition, <a href="https://arxiv.org/abs/2603.15714">a 2026 study found</a>.</span></p>
                   <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>The box holds only a stand-in key that works for this run alone. The real key stays outside.</span></p>
                 </li>
                 <li class="attack" data-attack="env">
                   <p class="threat">A package your agent installs sends your <code>.env</code> to a stranger’s server.</p>
+                  <p class="evidence"><strong>1.8 million</strong> <span>malicious open source packages logged by mid-2026, <a href="https://www.sonatype.com/blog/q2-2026-open-source-malware-index-attackers-abuse-developer-trust">Sonatype found</a>.</span></p>
                   <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>In the box <code>.env</code> is empty, and that server can’t be reached.</span></p>
                 </li>
               </ol>
@@ -117,16 +120,17 @@
           <div class="group-panel">
             <h2>And sometimes agents just get it wrong</h2>
             <p>A wrong path, an unexpected shell expansion, the wrong server.</p>
-            <p class="evidence"><strong>56%</strong> <span>of coding-agent runs on vague DevOps tasks went beyond what was asked, <a href="https://arxiv.org/abs/2607.02294">a 2026 study found</a>.</span></p>
             <div class="attack-rail">
               <div class="ticks" aria-hidden="true"><span></span><span></span><span></span></div>
               <ol class="attacks" role="list">
                 <li class="attack" data-attack="wipe">
                   <p class="threat">An agent cleaning up runs <code>rm -rf tests/ plan/ ~/</code></p>
+                  <p class="evidence"><strong>56%</strong> <span>of coding-agent runs on vague DevOps tasks went beyond what was asked, <a href="https://arxiv.org/abs/2607.02294">a 2026 study found</a>.</span></p>
                   <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>In the box, that <code>~/</code> isn’t your home folder. Your files aren’t there.</span></p>
                 </li>
                 <li class="attack" data-attack="prod">
                   <p class="threat">An agent uses your cloud CLI to SSH into production and drops the database.</p>
+                  <p class="evidence"><strong>80%</strong> <span>of companies say their AI agents have taken unintended actions, <a href="https://www.sailpoint.com/press-releases/sailpoint-ai-agent-adoption-report">SailPoint found</a>.</span></p>
                   <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>The box has no cloud logins or SSH keys, and it can’t reach your servers.</span></p>
                 </li>
                 <li class="attack" data-attack="push">
