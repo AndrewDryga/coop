@@ -33,6 +33,11 @@
   its pattern (`prod.yml  # note`): only a line that starts with `#` is a comment, so such an entry
   is one pattern that hides nothing. The README example puts its comments on their own lines.
 
+- **Claude's MCP logs stay with their run.** Every box shares one `~/.cache` volume across
+  projects and accounts, and Claude Code kept per-project MCP logs (tool traffic included) in it,
+  where any other box could read them. Each run now gets its own empty
+  `~/.cache/claude-cli-nodejs`; the rest of the cache stays shared.
+
 - **`coop init` warns on Apple container.** Filtered networking, which `coop init` turns on,
   needs Docker. On Apple `container`, init now says so up front and names both ways forward:
   start or install Docker, or run with `--egress open`. The project file stays filtered, so

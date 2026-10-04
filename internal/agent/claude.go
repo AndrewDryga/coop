@@ -352,6 +352,11 @@ func (a claudeAgent) HeadlessSession(cfg *config.Config, prompt, id string, resu
 // the claude it spawns via ModelEnv (ANTHROPIC_MODEL), which box.Run exports.
 func (claudeAgent) ACP(*config.Config) []string { return []string{"claude-agent-acp"} }
 
+// CachePrivateDirs: Claude Code keeps per-project MCP server logs (cwd, session id, tool traffic)
+// in ~/.cache/claude-cli-nodejs/<project>/mcp-logs-<server>/, where the shared cache volume would
+// show them to every other box.
+func (claudeAgent) CachePrivateDirs() []string { return []string{"claude-cli-nodejs"} }
+
 // ACPSessionDirs: claude stores the transcript in projects/ and a session index + aux state in
 // sessions/ (and session-env/, file-history/); session/load needs the index too, so share them all.
 func (claudeAgent) ACPSessionDirs() []string {

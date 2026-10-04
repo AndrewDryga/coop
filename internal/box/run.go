@@ -240,6 +240,9 @@ type RunSpec struct {
 	// else means nothing is mounted or bound.
 	TaskTools  TaskToolServer
 	taskVolume string // the channel's run-private volume name, chosen by Run
+	// cachePrivate maps each cache subdirectory a scoped agent keeps per-project data in to this
+	// run's empty stand-in for it (cachePrivateDirs); Run creates them.
+	cachePrivate map[string]string
 
 	// Peers is the EXPLICIT peer set for this run — the targets named by repeatable
 	// --peer (a normal run, ACP, or a loop run), each provider[:model] (no
@@ -898,6 +901,19 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 		mounts = append(mounts, protected...)
 		tmpDirs = append(tmpDirs, snapshots...)
+	}
+	if spec.Cache {
+		for _, dir := range cachePrivateDirs(cfg, spec) {
+			private, err := os.MkdirTemp(artifacts.parent, "coop-cache-"+dir+"-")
+			if err != nil {
+				return -1, err
+			}
+			tmpDirs = append(tmpDirs, private)
+			if spec.cachePrivate == nil {
+				spec.cachePrivate = map[string]string{}
+			}
+			spec.cachePrivate[dir] = private
+		}
 	}
 	var policy *egress.Snapshot
 	if filtered != nil {
@@ -3162,6 +3178,11 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 	}
 	if spec.Cache {
 		args = append(args, "-v", boxAgentIdentity().volume("coop-cache")+":"+cfg.HomeInBox+"/.cache")
+		for _, dir := range cachePrivateDirs(cfg, spec) {
+			if private := spec.cachePrivate[dir]; private != "" {
+				args = append(args, "-v", private+":"+cfg.HomeInBox+"/.cache/"+dir)
+			}
+		}
 	}
 	// The task channel's socket, read-only: the box connects to it and can neither replace nor
 	// unlink it (connect needs write permission on the socket inode, which the helper set, not
@@ -3176,6 +3197,26 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 		args = append(args, "-v", boxAgentIdentity().volume("coop-asdf")+":"+cfg.HomeInBox+"/.asdf")
 	}
 	return append(args, "-w", workdir)
+}
+
+// cachePrivateDirs lists the ~/.cache subdirectories the run's scoped agents keep per-project data
+// in. The cache volume is shared by every box, across repositories and accounts, so each one is
+// covered by an empty directory of the run's own: Claude's MCP logs sat there for every project.
+func cachePrivateDirs(cfg *config.Config, spec RunSpec) []string {
+	var dirs []string
+	for _, name := range credentialScope(cfg, spec) {
+		if ag, ok := agents.Get(name); ok {
+			if private, ok := ag.(agents.CachePrivateDirs); ok {
+				for _, dir := range private.CachePrivateDirs() {
+					if !slices.Contains(dirs, dir) {
+						dirs = append(dirs, dir)
+					}
+				}
+			}
+		}
+	}
+	slices.Sort(dirs)
+	return dirs
 }
 
 // hostTimezone resolves the host's IANA zone name ("America/Merida"): $TZ when set,

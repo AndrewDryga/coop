@@ -1951,7 +1951,9 @@ lists every workspace's service URLs for host tooling.
 Agents can change data in services they can reach; use disposable development databases.
 `coop down` stops the services and keeps their volumes. `coop down --delete-volumes` asks
 before permanently deleting the project's service volumes. A shared `coop-cache` volume
-at `~/.cache` keeps disposable runs from re-downloading the world.
+at `~/.cache` keeps disposable runs from re-downloading the world. Claude's per-project MCP
+logs (`~/.cache/claude-cli-nodejs`) are the exception: each run gets an empty folder of its own,
+so one project's logs never reach another project's box.
 
 `.agent/compose.yml` runs on your host daemon (that's how a service becomes a real
 container), so coop validates it before every run — `coop up` and each networked launch

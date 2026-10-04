@@ -622,6 +622,28 @@ func translateWorkdir(root, workdir string, mounts []mount) (string, error) {
 	return procharness.CanonicalUnderRoot(root, host)
 }
 
+// validateCachePrivateMount accepts the run's own empty stand-in for a cache subdirectory an
+// adapter keeps per-project data in (box.cachePrivateDirs), and nothing else under ~/.cache.
+func validateCachePrivateMount(m mount, dir string) error {
+	declared := false
+	for _, name := range agents.Names() {
+		if ag, ok := agents.Get(name); ok {
+			if private, ok := ag.(agents.CachePrivateDirs); ok && slices.Contains(private.CachePrivateDirs(), dir) {
+				declared = true
+			}
+		}
+	}
+	info, err := os.Stat(m.Source)
+	if !declared || err != nil || !info.IsDir() || !strings.HasPrefix(filepath.Base(m.Source), "coop-cache-"+dir+"-") {
+		return fmt.Errorf("unexpected cache mount %q:%q", m.Source, m.Target)
+	}
+	entries, err := os.ReadDir(m.Source)
+	if err != nil || len(entries) != 0 {
+		return fmt.Errorf("cache stand-in %q must start empty", m.Source)
+	}
+	return nil
+}
+
 func validateMountPolicy(root string, run runCommand, providerHomes []string) error {
 	repoMounts := 0
 	for _, m := range run.Mounts {
@@ -665,6 +687,12 @@ func validateMountPolicy(root string, run runCommand, providerHomes []string) er
 		}
 		if provider, ok := skillsMountProvider(m.Target); ok {
 			if err := validateSkillsMount(root, provider, m, providerHomes); err != nil {
+				return err
+			}
+			continue
+		}
+		if dir, ok := strings.CutPrefix(m.Target, "/home/node/.cache/"); ok && !m.ReadOnly {
+			if err := validateCachePrivateMount(m, dir); err != nil {
 				return err
 			}
 			continue

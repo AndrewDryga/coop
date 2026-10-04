@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -2635,6 +2636,44 @@ func TestLeadInstructionMount(t *testing.T) {
 	}
 	if content, _, _, _, err := leadInstructionMount(cfg, "claude", nil, nil, "", true); err != nil || !strings.Contains(content, ".agent/Dockerfile installs them") {
 		t.Errorf("a filtered run's lead must get the filtered box note, got %v:\n%s", err, content)
+	}
+}
+
+// Every box shares ~/.cache through one volume, across repositories and accounts, and Claude Code
+// keeps per-project MCP logs in ~/.cache/claude-cli-nodejs. A box with Claude in scope gets an
+// empty directory of its own there, removed after the run; a box without Claude, or without the
+// cache, gets nothing extra.
+func TestRunGivesClaudeAPrivateCacheLogDir(t *testing.T) {
+	standIn := regexp.MustCompile(`-v (\S*/coop-cache-claude-cli-nodejs-[^:\s]*):/home/node/\.cache/claude-cli-nodejs(\s|$)`)
+	for _, tc := range []struct {
+		name  string
+		agent string
+		cache bool
+		want  bool
+	}{{"claude with the cache", "claude", true, true}, {"codex with the cache", "codex", true, false}, {"claude without the cache", "claude", false, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
+			recorder := filepath.Join(t.TempDir(), "runtime-args")
+			code, err := Run(cfg, recorderRuntime(t, recorder), RunSpec{
+				Image: "i", Repo: t.TempDir(), Cmd: []string{"true"}, Agent: tc.agent, Homes: true, Batch: true, Quiet: true, Cache: tc.cache,
+			})
+			if err != nil || code != 0 {
+				t.Fatalf("Run = (%d, %v), want success", code, err)
+			}
+			args, err := os.ReadFile(recorder)
+			if err != nil {
+				t.Fatal(err)
+			}
+			match := standIn.FindStringSubmatch(string(args))
+			if (match != nil) != tc.want {
+				t.Fatalf("private Claude cache dir mounted = %t, want %t:\n%s", match != nil, tc.want, args)
+			}
+			if match != nil {
+				if _, err := os.Stat(match[1]); !os.IsNotExist(err) {
+					t.Errorf("the run's cache stand-in %s outlived the run: %v", match[1], err)
+				}
+			}
+		})
 	}
 }
 

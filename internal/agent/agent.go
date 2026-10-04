@@ -157,6 +157,13 @@ type EffortSpec struct {
 	Validate func(model, effort string) error
 }
 
+// CachePrivateDirs is implemented by an agent that writes per-project data under ~/.cache. Every
+// box shares ~/.cache through one cache volume, across repositories and accounts, so each named
+// subdirectory is covered by an empty directory private to the run.
+type CachePrivateDirs interface {
+	CachePrivateDirs() []string
+}
+
 // SessionDiscoverer is the optional capability for an adapter that cannot choose its new
 // session ID but can discover the native ID after a run. Forks persist it and resume exactly it.
 type SessionDiscoverer interface {
