@@ -18,7 +18,7 @@
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="You need a sandbox: a home folder where only the project sits inside the sandbox, secrets read as empty, and only the AI provider is reachable.">
   <meta name="twitter:card" content="summary_large_image">
-  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"co:op","description":"Run Claude Code, Codex, Gemini and Grok in a sandbox that only sees your project. Secrets are replaced with empty files and networking is restricted. Free and open source.","url":"https://coop.dryga.com/","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://github.com/AndrewDryga/coop/blob/main/LICENSE","softwareHelp":"https://coop.dryga.com/docs.html","sameAs":["https://github.com/AndrewDryga/coop"],"publisher":{"@type":"Organization","name":"Protectorate"}}</script>
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"co:op","description":"Run Claude Code, Codex, Gemini and Grok in a sandbox that only sees your project. Secrets are replaced with empty files and networking is restricted. Free and open source.","url":"https://coop.dryga.com/","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://github.com/AndrewDryga/coop/blob/main/LICENSE","softwareHelp":"https://coop.dryga.com/docs.html","sameAs":["https://github.com/AndrewDryga/coop"],"publisher":{"@type":"Organization","name":"Protectorate","url":"https://github.com/ProtectorateHQ"}}</script>
   <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="assets/img/favicon.ico" sizes="32x32">
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
@@ -193,9 +193,10 @@
         <li class="feature-row">
           <div class="feature-copy">
             <h3>Project services</h3>
-            <p>Postgres, Redis and anything else in your Compose file run next to the box, on a private network.</p>
+            <p>Postgres, Redis and anything else in your Compose file run beside the box, each in its own container.</p>
+            <p>They’re isolated the same way: a private network with no direct internet, and your secrets hidden.</p>
           </div>
-          <figure class="scene-card services" data-scene="services" aria-label="coop up starts a database and Redis next to the sandbox, on a private network"><p class="card-title"><span class="prompt">$ </span>coop up</p><div class="svc-map"><div class="svc-box"><svg class="wall" aria-hidden="true"><rect x="0" y="0" width="100%" height="100%" rx="10" pathLength="1"/></svg><span class="zone-tag">Sandbox</span><p class="svc-agent"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#mark-claude"/></svg>Claude Code</p><p class="svc-project">shop/</p></div><ul class="svc-list" role="list"><li class="svc" data-svc="db"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6.5" rx="7" ry="2.5"/><path d="M5 6.5v11c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-11M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg><span class="svc-name">db</span><span class="svc-dot"></span></li><li class="svc" data-svc="redis"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5l8 4-8 4-8-4z"/><path d="M4 12.5l8 4 8-4M4 16.5l8 4 8-4"/></svg><span class="svc-name">redis</span><span class="svc-dot"></span></li></ul></div></figure>
+          <figure class="scene-card services" data-scene="services" aria-label="coop up starts a database and Redis beside the sandbox, each in its own container, on a private network with no direct internet"><p class="card-title"><span class="prompt">$ </span>coop up</p><div class="svc-map"><span class="net-tag">Private network</span><div class="svc-box"><svg class="wall" aria-hidden="true"><rect x="0" y="0" width="100%" height="100%" rx="10" pathLength="1"/></svg><span class="zone-tag">Sandbox</span><p class="svc-agent"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#mark-claude"/></svg>Claude Code</p><p class="svc-project">shop/</p></div><ul class="svc-list" role="list"><li class="svc" data-svc="db"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6.5" rx="7" ry="2.5"/><path d="M5 6.5v11c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-11M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg><span class="svc-name">db</span><span class="svc-dot"></span></li><li class="svc" data-svc="redis"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5l8 4-8 4-8-4z"/><path d="M4 12.5l8 4 8-4M4 16.5l8 4 8-4"/></svg><span class="svc-name">redis</span><span class="svc-dot"></span></li></ul></div></figure>
         </li>
         <li class="feature-row">
           <div class="feature-copy">
@@ -241,8 +242,9 @@
       <a href="docs.html">Docs</a>
       <a href="https://github.com/AndrewDryga/coop">GitHub</a>
       <a href="https://emisar.dev">Emisar</a>
+      <a href="https://github.com/AndrewDryga/responder">Ryker</a>
     </nav>
-    <p>A Protectorate product. MIT licensed.</p>
+    <p>By <a href="https://github.com/ProtectorateHQ">Protectorate</a></p>
   </footer>
 </body>
 </html>

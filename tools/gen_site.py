@@ -430,15 +430,17 @@ TEAM = ('<figure class="scene-card team" data-scene="team" aria-label="The start
         + seat("gemini", "fast", "Gemini 3.5 Flash", "editor") + "</ul></div></figure>")
 
 
-# Project services: the sandbox and, beside it on the private network, the containers `coop up`
-# starts; then the line it prints when they answer (internal/cli/services_cmd.go).
+# Project services: the sandbox and, beside it, the containers `coop up` starts, all inside the
+# private network they share; with filtered networking that network has no direct internet route
+# (docs/networking.md, "A service: grant").
 def service(name, glyph):
     return f'<li class="svc" data-svc="{name}">{glyph}<span class="svc-name">{name}</span><span class="svc-dot"></span></li>'
 
 
 SERVICES = ('<figure class="scene-card services" data-scene="services" aria-label="coop up starts a database and Redis '
-            'next to the sandbox, on a private network">'
+            'beside the sandbox, each in its own container, on a private network with no direct internet">'
             '<p class="card-title"><span class="prompt">$ </span>coop up</p><div class="svc-map">'
+            '<span class="net-tag">Private network</span>'
             '<div class="svc-box">' + WALL + '<span class="zone-tag">Sandbox</span>'
             f'<p class="svc-agent">{mark("claude")}Claude Code</p><p class="svc-project">shop/</p></div>'
             '<ul class="svc-list" role="list">' + service("db", DATABASE) + service("redis", LAYERS) + "</ul></div></figure>")

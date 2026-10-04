@@ -238,6 +238,7 @@ box:
           <li><code data-copy-source><span class="k">coop</span> down</code><span class="cmd-note"># stop them, keep their data</span></li>
           <li><code data-copy-source><span class="k">coop</span> down --delete-volumes</code><span class="cmd-note"># also delete their data</span></li>
         </ul>
+        <p>Services are isolated like the box. Secrets in the files you mount into them are hidden the same way, and their ports open only on your computer. With filtered networking, the box reaches only the services you approved (with a <code>to: {service: "db"}</code> rule), and they run on a private network with no direct internet: their HTTPS goes through the same filter, and a service whose definition changes waits for your approval again.</p>
         <p>When <code>coop up</code> finishes, it names the services Compose resolved, in Compose order; if Compose can't resolve them, co:op stops before starting anything and tells you what to fix. Agents can change data in any service they can reach, so give them disposable development databases. Deleting service volumes can't be undone, which is why it asks first.</p>
         <p>When the base image needs refreshing, <code>coop update</code> updates co:op itself and then rebuilds the box on fresh packages, and <code>coop update --box-only</code> rebuilds just the box. <code>coop build</code> is the stable, pinned rebuild (<code>coop build --egress filtered</code> for a project with filtered networking). Each one installs the agent versions your co:op release pins.</p>
       </section>
@@ -627,8 +628,9 @@ roles:
       <a href="docs.html">Docs</a>
       <a href="https://github.com/AndrewDryga/coop">GitHub</a>
       <a href="https://emisar.dev">Emisar</a>
+      <a href="https://github.com/AndrewDryga/responder">Ryker</a>
     </nav>
-    <p>A Protectorate product. MIT licensed.</p>
+    <p>By <a href="https://github.com/ProtectorateHQ">Protectorate</a></p>
   </footer>
 </body>
 </html>

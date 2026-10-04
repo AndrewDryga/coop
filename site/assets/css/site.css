@@ -326,9 +326,11 @@ main:focus { outline: none; }
 .org[data-asked="fast"] .org-roles::after { border-color: var(--muted); }
 .seat.is-asked { background: #262d38; }
 
-/* project services: the sandbox, and beside it on the private network the containers coop up starts */
+/* project services: the sandbox and, beside it, the containers coop up starts, inside the private
+   network they share (dashed: it has no direct internet) */
 .services { container-type: inline-size; }
-.svc-map { display: grid; grid-template-columns: minmax(0, 1fr) 48px minmax(0, 0.85fr); align-items: center; margin-top: 10px; }
+.svc-map { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 48px minmax(0, 0.85fr); align-items: center; margin-top: 22px; padding: 28px 18px 18px; border: 1px dashed var(--line); border-radius: 14px; }
+.net-tag { position: absolute; top: 0; left: 14px; padding-inline: 6px; background: var(--surface); color: var(--muted); font: 500 1rem/1.5 var(--sans); transform: translateY(-50%); }
 .svc-box { position: relative; display: grid; gap: 8px; padding: 22px 16px 18px; }
 .svc-agent { display: flex; align-items: center; gap: 10px; font-family: var(--sans); font-weight: 500; }
 .svc-project { padding-left: 28px; }
@@ -412,6 +414,8 @@ main:focus { outline: none; }
 .footer nav a { display: inline-flex; align-items: center; min-height: 44px; color: var(--body); text-decoration: none; }
 @media (hover: hover) { .footer nav a:hover { color: var(--text); } }
 .footer > p { margin-left: auto; }
+.footer > p a { color: var(--body); text-decoration: none; }
+@media (hover: hover) { .footer > p a:hover { color: var(--text); } }
 
 /* Docs: the contents beside a reading column. Prose runs at 18px on a 46rem measure; code, tables
    and the terminals keep 16px. */
@@ -420,6 +424,13 @@ main:focus { outline: none; }
 .docs-side summary { color: var(--text); font-weight: 600; list-style: none; pointer-events: none; }
 .docs-side summary::-webkit-details-marker { display: none; }
 .side-group { margin-top: 24px; color: var(--muted); font-weight: 600; }
+/* with the script, a group's name is a button and only one group is open at a time */
+.side-group:has(button) { margin-top: 8px; }
+.side-group button { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 2.25rem; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.side-group button::after { content: ""; width: 7px; height: 7px; margin-right: 6px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; rotate: -45deg; transition: rotate 160ms var(--ease); }
+.side-group button[aria-expanded="true"] { color: var(--text); }
+.side-group button[aria-expanded="true"]::after { rotate: 45deg; translate: 0 -2px; }
+@media (hover: hover) { .side-group button:hover { color: var(--text); } }
 .docs-side ul { margin-top: 8px; }
 .docs-side a { display: block; padding: 6px 0 6px 16px; border-left: 1px solid var(--divider); color: var(--body); line-height: 1.4; text-decoration: none; }
 .docs-side a[aria-current] { border-left-color: var(--text); color: var(--text); }

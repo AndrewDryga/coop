@@ -43,6 +43,11 @@ line after the tag (HTML drops that newline; `tools/align-comments.py` measures 
 trailing comment is `<span class="t">` (the align tool finds it by that exact string) and a
 whole-line comment `<span class="t whole">`.
 
+**The docs contents fold.** site.js turns each `.side-group` label into a button (`aria-expanded`,
+`aria-controls`) over its `hidden` list and keeps one group open: the one holding the section being
+read, until you open another by its name. Without the script every group stays open. Keep the
+expanded contents under a 1280x700 window when adding sections or groups.
+
 **Tests pin docs wording.** Rewording `site/docs.html` can fail Go tests far from the site:
 `internal/cli/help_test.go` TestCurrentDocsDoNotAdvertiseRetiredContracts needs "commits no starter
 subagents" and rejects retired config names; `internal/cli/eval_cmd_test.go` needs the eval commands
@@ -60,3 +65,4 @@ nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 ## Changelog
 - 2026-10-04 — created with the site replacement (task 2026-10-03-settle-the-co-op-website-direction); verified against every file in sources. Added the pinned-wording trap after the docs copy pass dropped "commits no starter subagents" and failed help_test.go.
 - 2026-10-04 — shell commands became copyable command lists and file snippets got name headers (task 2026-10-04-make-the-docs-read-as-one-guide-with-a-copy-butt); the code-block paragraph now describes both.
+- 2026-10-04 — the docs contents fold to the group being read (task 2026-10-04-show-services-isolation-link-ryker-and-protector).

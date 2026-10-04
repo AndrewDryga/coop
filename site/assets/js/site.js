@@ -366,6 +366,26 @@ if (side) {
   fold();
   const links = new Map([...side.querySelectorAll('a[href^="#"]')].map((link) => [link.hash.slice(1), link]));
   for (const link of links.values()) link.addEventListener("click", () => { if (!wide.matches) side.open = false; });
+  // Only one group of the contents is open at a time, so the list stays shorter than a laptop's
+  // window: the group holding the section being read, until you open another by its name.
+  const groups = [...side.querySelectorAll(".side-group")].map((label, i) => {
+    const list = label.nextElementSibling;
+    list.id ||= `contents-${i}`;
+    const button = Object.assign(document.createElement("button"), { type: "button", textContent: label.textContent });
+    button.setAttribute("aria-controls", list.id);
+    label.replaceChildren(button);
+    return { button, list };
+  });
+  const show = (open) => {
+    for (const group of groups) {
+      group.button.setAttribute("aria-expanded", String(group === open));
+      group.list.hidden = group !== open;
+    }
+  };
+  for (const group of groups) group.button.addEventListener("click", () => show(group.list.hidden ? group : null));
+  const groupOf = (link) => groups.find((group) => group.list.contains(link));
+  let readingGroup = groupOf(links.get(decodeURIComponent(location.hash.slice(1)))) ?? groups[0];
+  show(readingGroup);
   if ("IntersectionObserver" in window) {
     const reading = new IntersectionObserver((entries) => {
       for (const { target, isIntersecting } of entries) {
@@ -374,6 +394,9 @@ if (side) {
           if (id === target.id) link.setAttribute("aria-current", "location");
           else link.removeAttribute("aria-current");
         }
+        // reading on into another group opens it in place of the last
+        const group = groupOf(links.get(target.id));
+        if (group !== readingGroup) show((readingGroup = group));
         // keep the marked entry in sight in the contents' own scroll, without moving the page
         const link = links.get(target.id), item = link.getBoundingClientRect(), pane = side.getBoundingClientRect();
         if (wide.matches && item.top < pane.top) side.scrollTop += item.top - pane.top;
