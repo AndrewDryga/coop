@@ -14,8 +14,8 @@ OPTIONS
 
   --egress <mode>        choose filtered, open, or none
   --allow-domain <host>  allow TLS access to this host on port 443
-                          repeat to allow more hosts
-  --egress-rules <path>   load network rules from a file
+                         repeat to allow more hosts
+  --egress-rules <path>  load network rules from a file
 
   Put Coop options before --. Everything after it belongs to your command.
   --readonly and --bare cannot be combined.

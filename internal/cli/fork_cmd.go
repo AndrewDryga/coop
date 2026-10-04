@@ -96,9 +96,9 @@ SESSION OPTIONS
   -y, --yes       with --fresh, skip confirmation
 
 NETWORK OPTIONS
-  --egress <mode>       internet access: filtered, open or none
-  --allow-domain <name> allow this exact domain over TLS on port 443; repeatable
-  --egress-rules <file> add this file's network rules for the run
+  --egress <mode>        internet access: filtered, open or none
+  --allow-domain <name>  allow this exact domain over TLS on port 443; repeatable
+  --egress-rules <file>  add this file's network rules for the run
 
 LOOP OPTIONS
   --loop              work through the project's task queue

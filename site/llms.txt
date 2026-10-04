@@ -91,8 +91,8 @@ OPTIONS
 
   --egress <mode>        choose filtered, open, or none
   --allow-domain <host>  allow TLS access to this host on port 443
-                          repeat to allow more hosts
-  --egress-rules <path>   load network rules from a file
+                         repeat to allow more hosts
+  --egress-rules <path>  load network rules from a file
 
   Put Coop options before --. Everything after it belongs to your command.
   --readonly and --bare cannot be combined.
@@ -124,8 +124,8 @@ OPTIONS
 
   --egress <mode>        choose filtered, open, or none
   --allow-domain <host>  allow TLS access to this host on port 443
-                          repeat to allow more hosts
-  --egress-rules <path>   load network rules from a file
+                         repeat to allow more hosts
+  --egress-rules <path>  load network rules from a file
 
   --readonly and --bare cannot be combined.
   These two modes require Docker.
@@ -1203,9 +1203,9 @@ SESSION OPTIONS
   -y, --yes       with --fresh, skip confirmation
 
 NETWORK OPTIONS
-  --egress <mode>       internet access: filtered, open or none
-  --allow-domain <name> allow this exact domain over TLS on port 443; repeatable
-  --egress-rules <file> add this file's network rules for the run
+  --egress <mode>        internet access: filtered, open or none
+  --allow-domain <name>  allow this exact domain over TLS on port 443; repeatable
+  --egress-rules <file>  add this file's network rules for the run
 
 LOOP OPTIONS
   --loop              work through the project's task queue
@@ -1745,7 +1745,7 @@ adding formatting checks, or adding Postgres or Redis.
 
 OPTIONS
   --agents <list>       set up Claude, Codex, Gemini, or all
-                       default: agents you are signed in to
+                        default: agents you are signed in to
 
   --services [<list>]   add Postgres, Redis, or both
 
@@ -1854,14 +1854,14 @@ EDITOR SETUP
   No providers signed in? Run coop login <agent>, then reconnect your editor.
 
 OPTIONS
-  --peer <agent>          start a peer provider for read-only advice
+  --peer <agent>         start a peer provider for read-only advice
                          repeat to add more peers
   --bare                 run without the repository, project context, or tools
 
   --egress <mode>        choose filtered, open, or none
   --allow-domain <host>  allow TLS access to this host on port 443
                          repeat to allow more hosts
-  --egress-rules <path>   load network rules from a file
+  --egress-rules <path>  load network rules from a file
 
   --bare requires a single agent, without peers or a preset.
   It requires Docker and --egress open or none.

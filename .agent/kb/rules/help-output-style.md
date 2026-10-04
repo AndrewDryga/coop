@@ -4,7 +4,7 @@ description: "UPPERCASE help headings, aligned command rows, practical prose and
 scope: cli-output
 sources: [internal/cli/help.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/cli/presetcmd.go, internal/cli/help_test.go, internal/cli/conformance_test.go]
 check: "none"
-updated: 2026-09-27
+updated: 2026-10-04
 ---
 
 # Help output: consistent headings, useful commands, practical guidance
@@ -45,11 +45,17 @@ future agents from inventing flags or rewriting approved copy.
 **How to apply:** update shared renderers, focused pages, completion and generated references
 together. Table-driven tests should cover headings, row gaps, and full command-path routing;
 the full manual must be assembled from the same pages, not a second command registry.
-Existing TestHelpRowsAlign, TestHelpTextAligned, TestAllHelpAvoidsMiddleDots and
+Existing TestHelpRowsAlign, TestHelpOptionRowsAlign, TestHelpTextAligned, TestAllHelpAvoidsMiddleDots and
 TestCLIConformance cover portions of the historical rules, not this entire contract. Expand
 their relevant coverage during implementation; `check: none` remains honest until that lands.
 
 ## Changelog
+- 2026-10-04 — option descriptions on the ACP page started one column late on two rows, and the
+  approved fixture pinned the drift. Swept every help source with the new TestHelpOptionRowsAlign:
+  in each blank-line group of an OPTIONS block, every description and continuation line starts in
+  one column, at least two spaces past the option. It found the same drift on the run, shell and
+  init pages, and a one-space gap in the fork page's NETWORK OPTIONS; all five are fixed with their
+  fixtures (13, 14, 15, 59, 67). check stays none: the test covers alignment, not the whole card.
 - 2026-09-27 — kept the `tasks watch` row focused on its live human action after the user
   questioned `--json` in that row. Swept the main menu for `--json` rows: this was the only one;
   focused watch help still explains the single-snapshot flag.

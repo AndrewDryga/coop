@@ -168,6 +168,89 @@ func TestHelpRowsAlign(t *testing.T) {
 	}
 }
 
+// Within each blank-line-separated group of an OPTIONS block, every option's description and every
+// continuation line start in one column, at least two spaces past the option. The approved
+// fixtures are byte-pinned, so a fixture once kept a one-column drift on the ACP page for as long
+// as nobody looked; this reads the help sources themselves.
+func TestHelpOptionRowsAlign(t *testing.T) {
+	pages := map[string]string{"run": runHelp, "fork": forkHelpText("")}
+	for _, name := range agents.Names() {
+		pages["agent "+name] = agentHelp(name)
+	}
+	for name, help := range commandHelp {
+		pages[name] = help
+	}
+	for name, help := range pages {
+		var groups [][]string
+		var group []string
+		inOptions := false
+		end := func() {
+			if len(group) > 0 {
+				groups = append(groups, group)
+			}
+			group = nil
+		}
+		for _, line := range strings.Split(help, "\n") {
+			switch {
+			case line != "" && !strings.HasPrefix(line, " "): // a heading starts or ends a block
+				end()
+				inOptions = strings.HasSuffix(line, "OPTIONS")
+			case !inOptions:
+			case strings.TrimSpace(line) == "":
+				end()
+			default:
+				group = append(group, line)
+			}
+		}
+		end()
+		for _, g := range groups {
+			checkOptionGroup(t, name, g)
+		}
+	}
+}
+
+// checkOptionGroup checks one group of option rows. A group with no two-space gap anywhere is
+// prose that happens to open with a flag ("--readonly and --bare cannot be combined."), not a table.
+func checkOptionGroup(t *testing.T, page string, group []string) {
+	t.Helper()
+	descAt := func(line string) int { // where an option row's description starts, or -1
+		gap := strings.Index(line[2:], "  ")
+		if !strings.HasPrefix(line, "  -") || gap < 0 {
+			return -1
+		}
+		rest := line[2+gap:]
+		return 2 + gap + len(rest) - len(strings.TrimLeft(rest, " "))
+	}
+	table := false
+	for _, line := range group {
+		table = table || descAt(line) >= 0
+	}
+	if !table {
+		return
+	}
+	column := 0
+	for _, line := range group {
+		col := -1
+		switch {
+		case strings.HasPrefix(line, "  -"):
+			if col = descAt(line); col < 0 {
+				t.Errorf("%s help: an option row needs two spaces before its description:\n%s", page, line)
+				continue
+			}
+		case strings.HasPrefix(line, "   "): // a description's continuation line
+			col = len(line) - len(strings.TrimLeft(line, " "))
+		default:
+			continue
+		}
+		if column == 0 {
+			column = col
+		} else if col != column {
+			t.Errorf("%s help: option text starts at column %d, not %d like the rows above it:\n%s",
+				page, col, column, strings.Join(group, "\n"))
+		}
+	}
+}
+
 // RenderManual is the single source for `coop help --all`, docs/cli.md, and site/llms.txt — it must
 // be deterministic and plain (no ANSI, no host-specific version/paths/state), or gendocs -check flaps.
 func TestRenderManual(t *testing.T) {

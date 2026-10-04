@@ -13,8 +13,8 @@ OPTIONS
 
   --egress <mode>        choose filtered, open, or none
   --allow-domain <host>  allow TLS access to this host on port 443
-                          repeat to allow more hosts
-  --egress-rules <path>   load network rules from a file
+                         repeat to allow more hosts
+  --egress-rules <path>  load network rules from a file
 
   --readonly and --bare cannot be combined.
   These two modes require Docker.

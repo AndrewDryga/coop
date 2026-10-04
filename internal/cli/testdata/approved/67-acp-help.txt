@@ -19,14 +19,14 @@ EDITOR SETUP
   No providers signed in? Run coop login <agent>, then reconnect your editor.
 
 OPTIONS
-  --peer <agent>          start a peer provider for read-only advice
+  --peer <agent>         start a peer provider for read-only advice
                          repeat to add more peers
   --bare                 run without the repository, project context, or tools
 
   --egress <mode>        choose filtered, open, or none
   --allow-domain <host>  allow TLS access to this host on port 443
                          repeat to allow more hosts
-  --egress-rules <path>   load network rules from a file
+  --egress-rules <path>  load network rules from a file
 
   --bare requires a single agent, without peers or a preset.
   It requires Docker and --egress open or none.

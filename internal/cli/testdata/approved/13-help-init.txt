@@ -24,7 +24,7 @@ adding formatting checks, or adding Postgres or Redis.
 
 OPTIONS
   --agents <list>       set up Claude, Codex, Gemini, or all
-                       default: agents you are signed in to
+                        default: agents you are signed in to
 
   --services [<list>]   add Postgres, Redis, or both
 
