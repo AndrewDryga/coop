@@ -1368,8 +1368,9 @@ Under the hood `coop acp [<target|preset>]` runs the selected provider's matchin
 (`@agentclientprotocol/claude-agent-acp`, `@agentclientprotocol/codex-acp`, `gemini --acp`,
 `grok agent stdio`)
 inside the box over stdio. In normal writable sessions, the repo mounts at its real host path — the same path
-`coop` and `coop loop` use — so Zed's absolute paths resolve *and* the session history
-lines up: a thread you started with `coop loop` is there to resume in Zed.
+`coop` and `coop loop` use — so Zed's absolute paths resolve. Editor threads keep their own
+history (`~/.config/coop/<agent>/acp-sessions/`), shared by all your accounts for that agent so a
+switch mid-thread keeps the conversation; sessions from `coop <agent>` or `coop loop` aren't in it.
 
 coop's proxy sits between the editor and the box and owns the session:
 
@@ -2169,7 +2170,7 @@ when a tool needs current joined state.
 | **An editor (ACP) session misbehaves** | Turn on wire tracing: set `COOP_ACP_TRACE=1` in the agent server's `env`, or `touch ~/.config/coop/acp-debug` (works on an already-running server). coop appends the editor↔box traffic to `~/.config/coop/acp-trace-<pid>.log` (size-bounded, auto-pruned). It carries prompts and file contents — treat it as sensitive. |
 | **A loop's live view misrenders provider activity** | Run it with `COOP_STREAM_TRACE=1`; each streaming attempt writes byte-exact raw JSONL plus Coop's rendered lines under `.agent/runs/<run>.streams/`. The files may contain prompts, tool inputs, and model output — treat them as sensitive. |
 | **A merge refuses** | Dirty tree → commit/stash first. Policy flagged a secret/large file → review, then `--force`. Non-interactive shell → pass `--yes`. Gate (`COOP_GATE`) went red on the rebased tree → it rolled back; fix and re-run. |
-| **Secrets still visible / a custom secret isn't hidden** | Run `coop doctor` to see what's shadowed. Add repo-specific paths to a `.coopignore` (see [Hiding secrets from the box](#hiding-secrets-from-the-box)). |
+| **Secrets still visible / a custom secret isn't hidden** | Add its path to a `.coopignore` (see [Hiding secrets from the box](#hiding-secrets-from-the-box)). `coop check-secrets` finds secrets hiding inside ordinary files, which hiding by name can't cover. |
 | **"box image is stale … run 'coop build'"** | You changed `.agent/Dockerfile` or `.tool-versions` since the image was built. `coop build` to rebuild; the warning clears once the image matches. |
 | **A scaffolded `db` (postgres:18) exits 1 on `coop up`** | Scaffolds from before this fix mounted `pgdata` at `/var/lib/postgresql/data`, which postgres 18+ refuses (it wants a single mount at `/var/lib/postgresql`). Edit `.agent/compose.yml` and move the mount up one level. New scaffolds are already fixed. |
 

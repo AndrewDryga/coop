@@ -2238,12 +2238,12 @@ func ensureAgentDefaults(cfg *config.Config, spec RunSpec, workdir string) error
 }
 
 // resolveWorkdir picks where the repo mounts inside the box — and thus the
-// agent's cwd. The default is the repo's real host path, so each agent's
-// per-project session history (~/.<agent>/projects/<cwd>) is identical across
-// `coop`, `coop loop`, and `coop acp`; a loop's thread is then visible and
-// resumable when you open the same repo in an ACP editor like Zed. An explicit
-// spec.Workdir (doctor's self-contained fixture) or COOP_WORKDIR (cfg.Workdir)
-// overrides it, in that order.
+// agent's cwd. The default is the repo's real host path, so an ACP editor's
+// absolute paths resolve in the box, and `coop` and `coop loop` file their
+// per-project session history (~/.<agent>/projects/<cwd>) under the same key.
+// Editor threads live in their own store (acpSharedDir), apart from both. An
+// explicit spec.Workdir (doctor's self-contained fixture) or COOP_WORKDIR
+// (cfg.Workdir) overrides it, in that order.
 func resolveWorkdir(spec RunSpec, cfg *config.Config) string {
 	if spec.Workdir != "" {
 		return spec.Workdir
