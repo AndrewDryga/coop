@@ -374,7 +374,7 @@ CHECK_SECRETS = ('<figure class="window" aria-label="coop check-secrets finds an
                         line("If this is a false positive, add this entry to .coopsecretsignore and replace &lt;reason&gt; with an explanation:"),
                         line(""), line('  <span class="dim"># config/client.go — OpenAI API key</span>'),
                         line("  fp-v1:b2758b3a796f81888b6f896f9c420ee855608fdcb828dfc2b83f736768171a6c "
-                             '<span class="dim"># &lt;reason&gt;</span>'))
+                             '<span class="dim"># &lt;reason&gt;</span>', "hash"))
                  + "</figure>")
 
 # What `coop claude` prints before the agent starts, with networking filtered (internal/box/launch_sections.go).

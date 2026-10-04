@@ -48,6 +48,13 @@ whole-line comment `<span class="t whole">`.
 read, until you open another by its name. Without the script every group stays open. Keep the
 expanded contents under a 1280x700 window when adding sections or groups.
 
+**The docs' type and rhythm** are one scale in the Docs block of `site.css`: prose 18px on 32px
+lines in a 42rem column (about 68 characters a line); leads 20px; subheadings 24px; code, tables
+and the interface 16px. Spacing comes from flow rules on `.doc-section > *`: 24px between prose,
+32px around every block, 48px over and 16px under a subheading. A new kind of block joins the
+`:where(...)` list there, or it sits 24px from its neighbours like prose; components set their own
+`font`, so never style `.doc-section p, li` broadly (that once made command notes 18px).
+
 **Tests pin docs wording.** Rewording `site/docs.html` can fail Go tests far from the site:
 `internal/cli/help_test.go` TestCurrentDocsDoNotAdvertiseRetiredContracts needs "commits no starter
 subagents" and rejects retired config names; `internal/cli/eval_cmd_test.go` needs the eval commands
@@ -66,3 +73,4 @@ nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 - 2026-10-04 — created with the site replacement (task 2026-10-03-settle-the-co-op-website-direction); verified against every file in sources. Added the pinned-wording trap after the docs copy pass dropped "commits no starter subagents" and failed help_test.go.
 - 2026-10-04 — shell commands became copyable command lists and file snippets got name headers (task 2026-10-04-make-the-docs-read-as-one-guide-with-a-copy-butt); the code-block paragraph now describes both.
 - 2026-10-04 — the docs contents fold to the group being read (task 2026-10-04-show-services-isolation-link-ryker-and-protector).
+- 2026-10-04 — the docs' type scale and rhythm (task 2026-10-04-give-the-docs-one-type-scale-and-a-steady-vertic).
