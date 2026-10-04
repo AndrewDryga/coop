@@ -10,7 +10,7 @@
 # GoReleaser build output (make snapshot / release)
 /dist/
 
-# python bytecode cache (tools/gen_casts.py)
+# python bytecode cache (tools/*.py)
 __pycache__/
 
 # coop working state (commit knowledge, ignore state)

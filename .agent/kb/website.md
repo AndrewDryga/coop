@@ -21,8 +21,7 @@ every push to main. Two parts are generated and committed:
 **The scenes copy real CLI output**, each citing its renderer or approved transcript
 (`internal/cli/testdata/approved/`, e.g. doctor is `18a-doctor-all-passed.txt`; the loop's headers
 are `internal/loop/report.go`). A user-visible output change must update the matching scene and
-regenerate, or the site shows output the CLI no longer prints. The old asciinema casts
-(`site/casts/`) are no longer loaded by any page.
+regenerate, or the site shows output the CLI no longer prints.
 
 **Replays** (`SCENES.loop` in site.js; fork and doctor reuse it) are bottom-anchored 15-row windows:
 commands type out, a beat's lines arrive one at a time, and each beat dwells by reading time (500ms
@@ -74,3 +73,4 @@ nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 - 2026-10-04 — shell commands became copyable command lists and file snippets got name headers (task 2026-10-04-make-the-docs-read-as-one-guide-with-a-copy-butt); the code-block paragraph now describes both.
 - 2026-10-04 — the docs contents fold to the group being read (task 2026-10-04-show-services-isolation-link-ryker-and-protector).
 - 2026-10-04 — the docs' type scale and rhythm (task 2026-10-04-give-the-docs-one-type-scale-and-a-steady-vertic).
+- 2026-10-04 — the asciinema casts, player and cast tools are gone (task 2026-10-04-retire-the-asciinema-cast-pipeline-the-old-websi).

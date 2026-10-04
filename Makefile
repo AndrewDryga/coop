@@ -94,13 +94,6 @@ docs-check: ## Fail if the committed CLI docs drifted from help.go (run 'make do
 align: require-python3 ## Check trailing-# comment alignment in README + site + CLI docs (--write to fix)
 	@python3 tools/align-comments.py --check
 
-casts: require-python3 ## Regenerate + safety-check site terminal casts (needs python3)
-	@python3 tools/gen_casts.py
-	@python3 tools/cast_hygiene.py site/casts
-
-casts-check: require-python3 ## Validate published casts for private paths, credentials, and secret-shaped values
-	@python3 tools/cast_hygiene.py site/casts
-
 tools-test: require-python3 ## Run standard-library tests for repository maintenance tools
 	@python3 -m unittest discover -s tools -p 'test_*.py'
 
@@ -140,7 +133,7 @@ race: require-git-lfs ## Full unit suite under the race detector (the slowest ga
 # CI-only by necessity: the doctor runtime matrix and the review-writes job need a real container
 # runtime, so they stay separate CI jobs and this target stays runtime-independent. Run them by
 # hand with 'make doctor', 'make box-runtime-e2e', and 'make review-writes-e2e'.
-check: lint shellcheck build-all vuln align docs-check casts-check tools-test rules-check test provider-scripted-e2e live-process-control race ## The gate, identical to CI's check job: lint + vulnerability scan + freshness + tests (plain, e2e, race) + build
+check: lint shellcheck build-all vuln align docs-check tools-test rules-check test provider-scripted-e2e live-process-control race ## The gate, identical to CI's check job: lint + vulnerability scan + freshness + tests (plain, e2e, race) + build
 
 provider-scripted-e2e: ## Deterministic all-provider process e2e (no runtime or credentials needed)
 	@go test ./internal/testutil/procharness ./internal/cli/testdata/providerfixture
@@ -254,6 +247,6 @@ clean: ## Remove build artifacts
 help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
-.PHONY: build install test cover lint staticcheck-version govulncheck-version vuln shellcheck require-python3 snapshot doctor docs docs-check align casts casts-check tools-test rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all provider-qualify acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e clean help
+.PHONY: build install test cover lint staticcheck-version govulncheck-version vuln shellcheck require-python3 snapshot doctor docs docs-check align tools-test rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all provider-qualify acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e clean help
 .PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all
 .PHONY: require-git-lfs

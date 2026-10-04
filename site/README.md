@@ -72,9 +72,3 @@ python3 tools/gen_seo_assets.py og       # just the 1200×630 social card
 
 Regenerate the card after changing the homepage's hero. Edit the canonical and
 `og:url` base (and `site/CNAME`) if the site ever moves off `coop.dryga.com`.
-
-## Old recordings
-
-`casts/` and `assets/vendor/` (the asciinema player) belong to the previous site.
-No page loads them any more; they stay until their tooling (`tools/gen_casts.py`,
-`make casts-check`) is retired.
