@@ -1,5 +1,5 @@
-// Command agent runs a coding agent in a sandbox it can't escape, with the
-// repo's secrets shadowed out of reach. See `coop help`.
+// Command coop runs coding agents in a sandbox that holds only your project, with the repo's
+// secrets hidden from them. See `coop help`.
 package main
 
 import (
