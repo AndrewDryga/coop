@@ -8,6 +8,8 @@ from pathlib import Path
 
 
 SITE = Path(__file__).resolve().parents[1] / "site"
+sys.path.insert(0, str(SITE.parent / "tools"))
+import gen_site  # noqa: E402 — the generator owns the terminals and their sources
 
 
 class Page(HTMLParser):
@@ -108,6 +110,30 @@ class SiteContentTest(unittest.TestCase):
         workflow = (SITE.parent / ".github" / "workflows" / "pages.yml").read_text(encoding="utf-8")
         self.assertIn("run: cp install.sh site/install.sh", workflow)
         self.assertIn("'install.sh'", workflow, "an install.sh change must redeploy the site")
+
+    def test_terminals_match_their_cli_sources(self):
+        self.assertEqual(gen_site.terminal_drift(), [])
+
+    def test_terminal_drift_names_the_page_block_and_line(self):
+        # Drift on each side: the CLI rewords a line the loop shows, the doctor's transcript loses a
+        # check, and the homepage shows a fork line the CLI never prints.
+        def drifted(rel):
+            text = (gen_site.ROOT / rel).read_text()
+            if str(rel) == "internal/loop/report.go":
+                return text.replace("Task completed: ", "Finished: ")
+            if str(rel).endswith("18a-doctor-all-passed.txt"):
+                return text.replace("  ✓ .envrc is hidden\n", "")
+            if str(rel) == "site/index.html":
+                return text.replace("Rebasing onto main", "Replaying onto main")
+            return text
+
+        problems = gen_site.terminal_drift(drifted)
+        for want in ("index.html, block loop: shape 'Task completed: {}' needs 'Task completed: '",
+                     "docs.html, block loop: shape 'Task completed: {}' needs 'Task completed: '",
+                     "docs.html, block doctor: line '  ✓ .envrc is hidden' is not in internal/cli/testdata/approved/18a-doctor-all-passed.txt",
+                     "index.html, block fork: line 'Replaying onto main' matches no shape listed for it"):
+            with self.subTest(want=want):
+                self.assertTrue(any(problem.startswith(want) for problem in problems), "\n".join(problems))
 
     def test_pages_share_the_main_navigation(self):
         for path, install in ((SITE / "index.html", "#start"), (SITE / "docs.html", "./#start")):

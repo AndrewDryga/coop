@@ -42,9 +42,10 @@ python3 tools/gen_site.py           # regenerate after editing the template or a
 python3 tools/gen_site.py --check   # what make tools-test runs: fails if either page is stale
 ```
 
-The terminal scenes copy the CLI's real output (the approved transcripts under
-`internal/cli/testdata/approved/` and the renderers they cite), so update a scene
-when the output it shows changes. The homepage's task-commit count comes from
+The terminal scenes copy the CLI's real output: the approved transcripts under
+`internal/cli/testdata/approved/` and the Go code that prints each line, listed per
+terminal in `TERMINAL_SOURCES`. When that output changes, `--check` fails, naming the
+page, terminal and line, until the scene matches it again. The homepage's task-commit count comes from
 `git log origin/main` when you regenerate.
 
 Both pages load the stylesheet and scripts with `?v=` and a short hash of those files, which

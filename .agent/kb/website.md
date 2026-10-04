@@ -18,10 +18,14 @@ every push to main. Two parts are generated and committed:
   `<!-- /gen_site -->` (`DOCS_SCENES`: check-secrets, doctor, claude, loop, fork). The rest of
   docs.html is hand-written; `--check` catches an edited or stale region, not prose edits.
 
-**The scenes copy real CLI output**, each citing its renderer or approved transcript
-(`internal/cli/testdata/approved/`, e.g. doctor is `18a-doctor-all-passed.txt`; the loop's headers
-are `internal/loop/report.go`). A user-visible output change must update the matching scene and
-regenerate, or the site shows output the CLI no longer prints.
+**The scenes copy real CLI output**, and `TERMINAL_SOURCES` in `gen_site.py` says where each
+terminal's lines come from. A transcript block (doctor is `18a-doctor-all-passed.txt`) must use
+only lines of that approved file. Any other block cites the Go files that print it and the shape of
+each line (`{}` is a value), and each shape's literal parts must still be in those files; pure
+example values such as task titles are listed. `terminal_drift` checks both pages through
+`gen_site.py --check` and `tools/test_site_content.py`, naming the page, block and line. So a CLI
+wording change fails make check until the scene is updated, and so does a scene line the CLI never
+prints. A new terminal needs an entry, or the check names it.
 
 **Replays** (`SCENES.loop` in site.js; fork and doctor reuse it) are bottom-anchored 15-row windows:
 commands type out, a beat's lines arrive one at a time, and each beat dwells by reading time (500ms
@@ -88,3 +92,4 @@ nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 - 2026-10-04 — asset links carry a content hash instead of a hand-bumped date (task 2026-10-04-bust-the-browser-cache-whenever-the-site-s-css-o).
 - 2026-10-04 — each homepage case carries its own sourced figure (task 2026-10-04-give-each-homepage-case-its-own-sourced-figure-a).
 - 2026-10-04 — the measured warm start in story step 1 (task 2026-10-04-show-how-fast-a-warm-box-starts-on-the-homepage).
+- 2026-10-04 — terminals are checked against their CLI sources (task 2026-10-02-fail-the-docs-check-when-a-site-output-snippet-d).

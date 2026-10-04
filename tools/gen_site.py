@@ -14,6 +14,7 @@ Usage:  python3 tools/gen_site.py           # rewrite site/index.html and the do
 """
 
 import hashlib
+import html
 import pathlib
 import re
 import subprocess
@@ -364,7 +365,7 @@ DOCTOR = ('<figure class="window scene-replay scene-doctor" data-scene="doctor" 
           + "".join(loop_line(beat, entry) for beat, (bar, entries) in enumerate(DOCTOR_BEATS) for entry in entries)
           + "</code></pre></figure>")
 
-# `coop check-secrets` with one finding (internal/cli/checksecrets.go reportFindings); it exits 1.
+# `coop check-secrets` with one finding (approved/19e-finding-and-ignored-blind-spot.txt, its first block).
 FAIL = '<span class="fail">✗</span>'
 CHECK_SECRETS = ('<figure class="window" aria-label="coop check-secrets finds an OpenAI API key in a source file, says how to '
                  'remove it, and how to mark a false positive">'
@@ -372,7 +373,8 @@ CHECK_SECRETS = ('<figure class="window" aria-label="coop check-secrets finds an
                  + term(at_prompt("coop check-secrets"), line(f"{FAIL} 1 possible secret found"), line(""),
                         line("  config/client.go:12"), line("    OpenAI API key"), line(""),
                         line("Remove real secrets from files you intend to commit."),
-                        line("If this is a false positive, add this entry to .coopsecretsignore and replace &lt;reason&gt; with an explanation:"),
+                        line("If this is a false positive, add this entry to .coopsecretsignore"),
+                        line("and replace &lt;reason&gt; with an explanation:"),
                         line(""), line('  <span class="dim"># config/client.go — OpenAI API key</span>'),
                         line("  fp-v1:b2758b3a796f81888b6f896f9c420ee855608fdcb828dfc2b83f736768171a6c "
                              '<span class="dim"># &lt;reason&gt;</span>', "hash"))
@@ -388,6 +390,109 @@ CLAUDE_RUN = ('<figure class="window" aria-label="coop claude hides two secret p
                      line(f"  {OK} Everything else blocked"), line(""), line("Starting Claude Code", "strong"))
               + "</figure>")
 DOCS_SCENES = {"doctor": DOCTOR, "check-secrets": CHECK_SECRETS, "claude": CLAUDE_RUN, "loop": LOOP, "fork": FORK}
+
+
+# Where each terminal's lines come from, so a CLI change can't leave the site showing output the CLI
+# no longer prints (terminal_drift, run by --check and tools/test_site_content.py). A transcript is
+# approved output, and every line of the block must be one of its lines. Otherwise the block cites
+# the Go files that print it and the shape of each line it shows, {} standing for a value; the
+# shape's literal parts, its own text between the values unless listed, must still be in one of
+# those files. A line that is only an example value, such as a task title, is listed as one.
+def shape(text, *parts):
+    return text, parts or tuple(part for part in text.split("{}") if part.strip())
+
+
+TERMINAL_SOURCES = {
+    "doctor": {"transcript": "internal/cli/testdata/approved/18a-doctor-all-passed.txt"},
+    "check-secrets": {"transcript": "internal/cli/testdata/approved/19e-finding-and-ignored-blind-spot.txt"},
+    "claude": {"go": ["internal/box/launch_sections.go"], "examples": ["Claude Code"], "shapes": [
+        shape("Protecting secrets"), shape("{} hidden from the box", "hidden from the box", '"secret path"'),
+        shape("Connecting account"), shape("{} · Signed in", '"Signed in"'), shape("Configuring network access"),
+        shape("{} endpoints allowed"), shape("Everything else blocked"), shape("Starting {}", '"Starting "')]},
+    "loop": {"go": ["internal/loop/report.go", "internal/loop/iteration.go", "internal/loop/banners.go",
+                    "internal/loop/streamjson.go", "internal/loop/streamjson_providers.go"],
+             "examples": [CHECKOUT, HEALTH, LIMITS], "shapes": [
+        shape("━", 'strings.Repeat("━"'), shape("─", 'strings.Repeat("─"'), shape("Task {} - Attempt {}"),
+        shape("Agent  {}"), shape("Queue  {}"), shape("Starting {}", '"Starting "'), shape("✦ {}", 'llmIcon = "✦"'),
+        shape("✎ Edit {}", '"✎"'), shape("⚙ Bash {}", '"⚙", "Bash"'), shape("Task completed: {}"),
+        shape("Final review · Round {} of {}"), shape("Tasks  {} completed", 'label: "Tasks"', '"%d completed"'),
+        shape("Final review · {} needs more work", '"Final review', '"needs"', '" more work"'),
+        shape("Continuing the task queue"), shape("All tasks passed final review · {}/{} done")]},
+    "fork": {"go": ["internal/cli/fork_cmd.go", "internal/forkctl/supervise.go", "internal/forkctl/ls.go",
+                    "internal/forkctl/status.go", "internal/forkctl/review.go", "internal/forkctl/dossier.go",
+                    "internal/forkctl/merge.go", "internal/ui/confirm.go"],
+             "examples": ["/Users/you/code/shop-forks/api", "9c41e2a webhook: verify Stripe signatures",
+                          "3a7f0db webhook: dedupe replayed events by id"], "shapes": [
+        shape("Creating fork: {}", '"Creating fork"', '"%s: %s"'), shape("Started fork {} in the background"),
+        shape("Agent: {}"), shape("Logs:  coop fork logs {} --follow"), shape("Stop:  coop fork stop {}"),
+        shape("Forks", 'listing("Forks")'), shape("{} · ready to merge · updated {}", '" · updated "', '"ready to merge"'),
+        shape("Branch: {}"), shape("Tasks: {} ready to merge", '"    Tasks: %s"', '"ready to merge"'), shape("Changes: {}"),
+        shape("Review a fork: coop fork review <name>"), shape("Changes in fork {}"), shape("Into: {}"),
+        shape("{} · {} · +{} −{}", '"  %s · %s · +%d −%d"'), shape("Commits", 'say("Commits")'), shape("Files", 'say("Files")'),
+        shape("code:", 'dossierCode   = "code"'), shape("tests:", 'dossierTests  = "tests"'),
+        shape("{}  {}  +{} -{}", '" + f.path', '"  +%d -%d"'), shape("Project checks will run when you merge."),
+        shape("Merge fork {} into {}"), shape("{} · +{} −{}", '"  %s · +%d −%d"'),
+        shape("Merge these commits? [Y/n] {}", '"Merge these commits?"', '"Y/n"'), shape("Rebasing onto {}"),
+        shape("Running project checks"), shape("Running: {}"), shape("Merged fork {} into {}")]},
+    "worker": {"go": ["internal/cli/session_connect.go"], "examples": [], "shapes": [
+        shape("Local session service ready"), shape("Connecting to {}…"), shape("Worker identity ready: {}")]},
+    "watch": {"go": ["internal/tasks/watch.go", "internal/tasks/lease.go", "internal/taskstate/taskstate.go", "internal/ui/live.go"],
+              "examples": [], "shapes": [
+        shape("[{}]  {} todo · {} in_progress · {} blocked · {} done", '"%d %s"', '"10_in_progress"', '"░"'),
+        shape("◰ {} ({}/{}) · busy {}", '"◰"', '" (%d/%d)"', '"busy "'), shape("○ {}", '"○"'), shape("⚑ {}", '"⚑"')]},
+}
+
+STATUS_MARKS = ("✓ ", "✗ ", "⚠ ")  # ui.OK/Fail/Warn print these before the message the source holds
+
+
+def terminal_blocks(page):
+    """Each terminal on a page by name (its data-scene, else the gen_site region holding it), with
+    the lines a visitor sees: replay frames included, the reader's typed commands and blank or
+    ellipsis-only lines left out."""
+    blocks = {}
+    for figure in re.finditer(r'<figure class="window[^"]*"[^>]*>.*?</figure>', page, re.S):
+        named = re.search(r'data-scene="([^"]+)"', figure.group(0)[:300])
+        region = re.findall(r"<!-- gen_site: ([\w-]+) -->", page[:figure.start()])
+        name = named.group(1) if named else (region[-1] if region else None)
+        lines = []
+        for cls, inner in re.findall(r'<span class="line([^"]*)"[^>]*>(.*?)(?=<span class="line|</code>|</template>)', figure.group(0), re.S):
+            text = html.unescape(re.sub(r"<[^>]+>", "", inner)).rstrip()
+            if "cmdline" not in cls and text.strip() not in ("", "…", "...") and text not in lines:
+                lines.append(text)
+        if name and lines:
+            blocks[name] = lines
+    return blocks
+
+
+def terminal_drift(read=lambda rel: (ROOT / rel).read_text()):
+    """Every problem with the terminals' sources, as 'page, block: what' lines; empty when none."""
+    problems = []
+    for page_path in (OUT, DOCS_PAGE):
+        page = page_path.name
+        for name, lines in terminal_blocks(read(page_path.relative_to(ROOT))).items():
+            source = TERMINAL_SOURCES.get(name)
+            if source is None:
+                problems.append(f"{page}, block {name}: no source is listed in TERMINAL_SOURCES")
+                continue
+            if "transcript" in source:
+                known = {line.rstrip() for line in read(source["transcript"]).splitlines()}
+                problems += [f"{page}, block {name}: line {line!r} is not in {source['transcript']}"
+                             for line in lines if line not in known]
+                continue
+            texts = [read(path) for path in source["go"]]
+            for text, parts in source["shapes"]:
+                problems += [f"{page}, block {name}: shape {text!r} needs {part!r}, which none of {', '.join(source['go'])} has"
+                             for part in parts if not any(part in go for go in texts)]
+            patterns = [re.compile("^" + ".+?".join(map(re.escape, text.split("{}"))) + "$") for text, _ in source["shapes"]]
+            for line in lines:
+                said = line.strip()
+                for mark in STATUS_MARKS:
+                    said = said.removeprefix(mark)
+                if set(said) in ({"━"}, {"─"}):
+                    said = said[0]
+                if said not in source["examples"] and not any(p.match(said) for p in patterns):
+                    problems.append(f"{page}, block {name}: line {line!r} matches no shape listed for it")
+    return sorted(set(problems))
 
 
 # Account rotation: each target with its usage meter, drawn as `coop usage` draws it (10 cells:
@@ -555,6 +660,8 @@ def main():
                  if path.read_text() != page]
         if stale:
             sys.exit(f"out of date: {', '.join(map(str, stale))}; edit tools/site/ or tools/gen_site.py and run python3 tools/gen_site.py")
+        if drift := terminal_drift():
+            sys.exit("terminal output no longer matches its source:\n  " + "\n  ".join(drift))
         return
     if sys.argv[1:]:
         sys.exit(__doc__)
