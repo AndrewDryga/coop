@@ -10,6 +10,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/secretscan"
+	"github.com/AndrewDryga/coop/internal/shadowpath"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
@@ -155,11 +156,16 @@ func TestApprovedSecretScans(t *testing.T) {
 		{
 			fixture: "19l-coopignore-hidden-candidate", code: 1,
 			repo: scanRepo{git: true, files: map[string]string{
-				".coopignore":             "config/credentials.yaml\n",
-				"config/credentials.yaml": "token: sk-proj-N7qFvZm2Ld8RwXcTb3JhKp6Ys9Ug4Aa1\n",
+				".coopignore":             "config/stripe.live.json\n",
+				"config/stripe.live.json": "token: sk-proj-N7qFvZm2Ld8RwXcTb3JhKp6Ys9Ug4Aa1\n",
 				"src/app.go":              "package app\n",
 			}},
 		},
+	}
+	// 19l is about a file only .coopignore hides: a path on the built-in list would make the
+	// case pass with .coopignore ignored.
+	if rel := "config/stripe.live.json"; shadowpath.MatchesAny(filepath.Base(rel), shadowpath.SecretGlobs) || shadowpath.MatchesPath(rel, shadowpath.SecretGlobs) {
+		t.Errorf("%s matches a built-in secret pattern; case 19l needs a path only .coopignore hides", rel)
 	}
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) {
