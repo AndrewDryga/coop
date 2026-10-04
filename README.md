@@ -117,32 +117,36 @@ awk -v f="$ASSET" '$2==f{print $1"  "f}' checksums.txt | shasum -a 256 -c -
 
 ## Quickstart
 
-From nothing to disposable agents draining a task queue, sandboxed:
+From nothing to an agent at work in the box. The same steps as the
+[website](https://coop.dryga.com/#start) and the [docs](https://coop.dryga.com/docs.html#quickstart):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh | sh
 # ^ installs the binary, and (if a runtime is present) builds the box + runs coop doctor
 
-cd ~/code/your-repo        # 1. any git repo
-coop init                  # 2. scaffold AGENTS.md, the .agent/ queue, and the hooks
-coop login claude          # 3. authenticate once (paste-code, no browser; token persists)
-coop doctor                # 4. prove isolation holds (run 'coop build --egress open' first if needed)
-
-# 5. queue a few tasks (a folder each under .agent/tasks/00_todo/)…
-coop tasks add "Add a /health endpoint"
-coop tasks add "Backfill tests for the parser"
-coop tasks add "Document the config file"
-
-# Open each printed task.md and replace its placeholders with the problem,
-# completion criteria, approach, and checkable subtasks before starting the loop.
-
-coop loop claude           # 6. disposable agents work the queue until done, then sign off
+coop login claude          # 1. sign in, once per account
+cd ~/code/your-repo        # 2. any git repo
+coop init                  # 3. set up the project: settings, task queue, hooks
+coop claude                # 4. start the agent in the box
 ```
 
-Prefer to steer an agent yourself? Skip the queue and go interactive:
+`coop init` configures the agents you're signed in to, which is why sign-in comes first.
+
+Rather hand work off? Queue it as a task, filled in so an agent can start without asking,
+and let disposable agents work through the queue:
 
 ```bash
-coop claude                                   # sandboxed Claude — no permission prompts, secrets shadowed
+coop tasks add "Add a /health endpoint" \
+  --context "The load balancer needs a cheap liveness check." \
+  --acceptance "GET /health returns 200 with {\"ok\":true}, and a test covers it." \
+  --approach "Add the route beside the others, then a handler test." \
+  --subtask "Route and handler" --subtask "Test"
+coop loop claude           # works the queue until it's done, then a final review signs off
+```
+
+Other ways into the box:
+
+```bash
 coop codex                                    # same box, Codex instead
 coop gemini                                   # ...or Gemini
 coop claude --peer codex --peer gemini        # named read-only peers are available for hard calls
@@ -160,7 +164,8 @@ Anything after the agent name is passed through to it, on top of those flags —
 exception: its `-p` is `--profile`, not a prompt, so run a one-shot prompt with
 `coop codex exec "…"` and use `-p` only to pick a profile.)
 
-If `coop doctor` says the image isn't built, run `coop build --egress open` once. Stuck on any step?
+If the installer found no container runtime, install one, then run
+`coop build --egress open && coop doctor`. Stuck on any step?
 See [Troubleshooting](#troubleshooting). New to forks and reviewing agent work like a
 PR? Jump to [Forks](#forks-hand-off-work-like-a-pr).
 
