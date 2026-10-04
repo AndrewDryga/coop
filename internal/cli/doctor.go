@@ -33,7 +33,7 @@ ID=sandbox.env               check empty .env
 ID=sandbox.envrc             check empty .envrc
 ID=sandbox.tfvars            check empty config/prod.tfvars
 ID=sandbox.private_key       check empty deploy/id_ed25519
-ID=sandbox.coopignore        check empty config/credentials.yaml
+ID=sandbox.coopignore        check empty config/stripe.live.json
 if [ -d secrets ] && [ -z "$(ls -A secrets 2>/dev/null)" ]; then echo "RESULT PASS sandbox.secret_directory"; else echo "RESULT FAIL sandbox.secret_directory"; fi
 # A symlink must not read around the shadow: notes-link -> .env resolves to the emptied .env.
 if [ -L notes-link ] && [ ! -s notes-link ]; then echo "RESULT PASS sandbox.secret_symlink"; else echo "RESULT FAIL sandbox.secret_symlink"; fi
@@ -687,6 +687,9 @@ func doctorCheckHome(s *doctorSection, result string, usingReal bool) {
 	}
 }
 
+// doctorCoopignorePath is the fixture's secret that only its .coopignore hides.
+const doctorCoopignorePath = "config/stripe.live.json"
+
 // buildFixture creates a throwaway git repo seeded with secrets and decoys.
 func buildFixture() (string, error) {
 	dir, err := os.MkdirTemp("", "coop-doctor-")
@@ -708,12 +711,13 @@ func buildFixture() (string, error) {
 		"deploy/id_ed25519":  "-----BEGIN OPENSSH PRIVATE KEY-----\nhunter2\n",
 		"config/prod.tfvars": "x = \"hunter2\"\n",
 		// A repo-specific secret the default denylist can't know about, hidden via
-		// .coopignore — proves the user-extensible path, not just the built-ins.
-		".coopignore":             "config/credentials.yaml\n",
-		"config/credentials.yaml": "token: hunter2\n",
-		"secrets/api-token":       "tok-hunter2\n",
-		"src/app.js":              "console.log(1)\n",
-		".gitignore":              ".env\n.envrc\n*.tfvars\nsecrets/\ndeploy/\nconfig/credentials.yaml\n",
+		// .coopignore — proves the user-extensible path, not just the built-ins. No built-in
+		// pattern may match it, or the check passes with .coopignore ignored (doctor_test.go).
+		".coopignore":        doctorCoopignorePath + "\n",
+		doctorCoopignorePath: "{\"key\": \"sk_live_hunter2\"}\n",
+		"secrets/api-token":  "tok-hunter2\n",
+		"src/app.js":         "console.log(1)\n",
+		".gitignore":         ".env\n.envrc\n*.tfvars\nsecrets/\ndeploy/\n" + doctorCoopignorePath + "\n",
 	}
 	for rel, body := range files {
 		p := filepath.Join(dir, rel)

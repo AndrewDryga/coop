@@ -15,6 +15,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/shadowpath"
 )
 
 func TestDoctorDefaultMatchesCredentialFixture(t *testing.T) {
@@ -110,6 +111,40 @@ func TestDoctorVerdictCountsUnrunChecks(t *testing.T) {
 	})
 	if !strings.Contains(out, "✗ 2 checks passed; 1 probe failed; 4 checks could not be completed; 1 could not be checked") {
 		t.Errorf("verdict did not account for every check:\n%s", out)
+	}
+}
+
+// The ".coopignore paths are hidden" check must fail when .coopignore is missing or ignored. It
+// used config/credentials.yaml, which the built-in list hides anyway, so it passed regardless.
+// Its file is hidden only by the fixture's .coopignore: no built-in pattern matches it, and
+// without the .coopignore it is visible, so the in-box "empty" check on it would fail.
+func TestDoctorCoopignoreCheckNeedsCoopignore(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	rel := doctorCoopignorePath
+	if !strings.Contains(doctorProbe, "ID=sandbox.coopignore        check empty "+rel+"\n") {
+		t.Fatalf("the probe's .coopignore check does not read %s:\n%s", rel, doctorProbe)
+	}
+	if shadowpath.MatchesAny(filepath.Base(rel), shadowpath.SecretGlobs) || shadowpath.MatchesPath(rel, shadowpath.SecretGlobs) {
+		t.Fatalf("%s matches a built-in secret pattern, so the check passes even if .coopignore is ignored", rel)
+	}
+	dir, err := buildFixture()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	if !shadowpath.NewDecider(dir)(rel) {
+		t.Fatalf("the fixture's .coopignore does not hide %s", rel)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, rel)); err != nil || len(data) == 0 {
+		t.Fatalf("%s must have content, or the in-box empty check passes on the real file: %v", rel, err)
+	}
+	if err := os.Remove(filepath.Join(dir, shadowpath.CoopIgnoreFile)); err != nil {
+		t.Fatal(err)
+	}
+	if shadowpath.NewDecider(dir)(rel) {
+		t.Errorf("%s stays hidden without .coopignore, so the check cannot fail when .coopignore breaks", rel)
 	}
 }
 

@@ -30,7 +30,7 @@ var doctorSecretChecks = []doctorCheckDef{
 	{"sandbox.envrc", ".envrc is hidden", ".envrc is readable in the box", ""},
 	{"sandbox.tfvars", "Terraform variable files are hidden", "config/prod.tfvars is readable in the box", ""},
 	{"sandbox.private_key", "Private keys are hidden", "deploy/id_ed25519 is readable in the box", ""},
-	{"sandbox.coopignore", "Custom .coopignore paths are hidden", "config/credentials.yaml is readable in the box", ""},
+	{"sandbox.coopignore", "Custom .coopignore paths are hidden", "config/stripe.live.json is readable in the box", ""},
 	{"sandbox.secret_directory", "Secret directories are empty", "Secret directories expose files", "secrets/"},
 	{"sandbox.secret_symlink", "Links cannot reveal hidden secrets", "A link can reveal a hidden secret", "notes-link → .env"},
 	{"sandbox.readonly_decoy", "Hidden secret files cannot be written", "A hidden secret file can be written", ".env"},
