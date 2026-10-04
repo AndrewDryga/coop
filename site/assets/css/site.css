@@ -402,7 +402,7 @@ main:focus { outline: none; }
 .copy:active { transform: translateY(1px); }
 @media (hover: hover) { .copy:hover { background: var(--raised); color: var(--text); } }
 .copy-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.command.copy-failed .copy-status { z-index: 3; top: calc(100% + 8px); right: 0; width: max-content; max-width: 100%; height: auto; overflow: visible; clip-path: none; padding: 10px 14px; border-radius: 10px; background: var(--raised); box-shadow: 0 16px 48px rgb(0 0 0 / 45%); color: var(--text); font: 400 1rem/1.4 var(--sans); white-space: normal; }
+.copy-failed > .copy-status { z-index: 3; top: calc(100% + 8px); right: 0; width: max-content; max-width: 100%; height: auto; overflow: visible; clip-path: none; padding: 10px 14px; border-radius: 10px; background: var(--raised); box-shadow: 0 16px 48px rgb(0 0 0 / 45%); color: var(--text); font: 400 1rem/1.4 var(--sans); white-space: normal; }
 
 /* Footer */
 .footer { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 32px; margin-top: 96px; padding-block: 32px 48px; border-top: 1px solid var(--divider); color: var(--muted); font-size: 1rem; }
@@ -442,8 +442,21 @@ main:focus { outline: none; }
 .docs-main :not(pre) > code { padding: 0.1em 0.35em; border-radius: 6px; background: rgb(255 255 255 / 6%); color: var(--text); font-size: max(0.9em, 1rem); overflow-wrap: anywhere; }
 /* code wraps rather than hiding its end off the side; a comment (.t) dims, as do operators (.o) */
 .docs-main pre.code { margin-top: 24px; padding: 20px 24px; border-radius: 12px; background: var(--surface); color: var(--body); font-size: 1rem; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
-.code :is(.k, .s) { color: var(--text); }
-.code :is(.t, .o) { color: var(--muted); }
+:is(.code, .cmds) :is(.k, .s) { color: var(--text); }
+:is(.code, .cmds) :is(.t, .o) { color: var(--muted); }
+/* commands you copy, one per row: the command, its note beside it (under it on a phone) and a Copy
+   button, added by site.js, that copies the command alone */
+.cmds { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 24px; margin-top: 24px; padding: 6px 6px 6px 24px; border-radius: 12px; background: var(--surface); font: 400 1rem/1.7 var(--mono); }
+.cmds li { position: relative; display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; min-height: 44px; }
+.docs-main .cmds code { grid-column: 1; padding: 0 0 0 2ch; border-radius: 0; background: none; color: var(--body); font-size: 1rem; text-indent: -2ch; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cmds code::before { content: "$ " / ""; color: var(--muted); }
+.cmd-note { grid-column: 2; color: var(--muted); }
+.cmds .copy { grid-column: 3; }
+/* a file you copy whole: its name over it, beside its Copy button */
+.code-file { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; margin-top: 24px; border-radius: 12px; background: var(--surface); }
+.code-file-name { padding: 6px 0 6px 24px; color: var(--muted); font: 400 1rem/1.7 var(--mono); }
+.code-file .copy { grid-column: 2; grid-row: 1; margin-right: 6px; }
+.docs-main .code-file pre.code { grid-column: 1 / -1; margin-top: 0; border-top: 1px solid var(--divider); border-radius: 0 0 12px 12px; background: transparent; }
 .docs-main .window, .why, .table-scroll { margin-top: 24px; }
 .why { padding: 20px 24px; border-radius: 12px; background: var(--surface); }
 .why-label { display: block; color: var(--text); font-size: 1.125rem; font-weight: 600; }
@@ -584,8 +597,12 @@ main:focus { outline: none; }
   .setup-bar .window-dots { display: none; }
   .setup .agents { display: grid; width: 100%; }
   .start-lead { font-size: 1.125rem; }
-  /* a phone has no room for a comment beside its command: it takes the next line, indented */
+  /* a phone has no room for a note beside its command: it takes the next line, indented */
   .docs-main pre.code .t:not(.whole) { display: inline-block; width: 100%; padding-left: 2ch; }
+  .cmds { grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; padding-left: 16px; }
+  .cmd-note { grid-column: 1; grid-row: 2; padding-left: 4ch; text-indent: -2ch; }
+  .cmds .copy { grid-column: 2; grid-row: 1 / span 2; }
+  .code-file-name { padding-left: 16px; }
   .footer > p { margin-left: 0; }
   .platform { padding-top: 32px; }
   .footer { margin-top: 64px; }
@@ -605,7 +622,7 @@ main:focus { outline: none; }
   *, *::before, *::after { transition-duration: 0ms !important; transition-delay: 0ms !important; animation: none !important; }
 }
 @media (forced-colors: active) {
-  .window, .scene-card, .seat, .svc, .why, .docs-main pre.code { border: 1px solid CanvasText; }
+  .window, .scene-card, .seat, .svc, .why, .docs-main pre.code, .cmds, .code-file { border: 1px solid CanvasText; }
   .wall rect { stroke: Highlight; }
   .slot.live, .seat.is-asked { outline: 1px solid Highlight; outline-offset: -1px; }
   .button, .copy, .agents button { border: 1px solid ButtonText; }

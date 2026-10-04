@@ -1,3 +1,4 @@
+import html
 import re
 import subprocess
 import sys
@@ -44,17 +45,36 @@ class Page(HTMLParser):
 
 
 class SiteContentTest(unittest.TestCase):
-    def test_evaluations_are_navigable_and_use_readable_code_blocks(self):
+    def test_evaluations_are_navigable_and_copyable(self):
         page = Page(SITE / "docs.html")
         self.assertTrue(any(tag == "a" and attrs.get("href") == "#evals" for tag, attrs in page.elements))
         self.assertEqual(sum(tag == "section" and attrs.get("id") == "evals" for tag, attrs in page.elements), 1)
         source = (SITE / "docs.html").read_text(encoding="utf-8")
         section = source.split('id="evals">', 1)[1].split("</section>", 1)[0]
-        blocks = re.findall(r'<pre([^>]*)>(.*?)</pre>', section, re.S)
-        self.assertEqual(len(blocks), 2)
-        for attrs, _ in blocks:
-            self.assertIn('class="code"', attrs)
-        self.assertIn("--dry-run", blocks[0][1])
+        commands = [html.unescape(re.sub(r"<[^>]+>", "", c)) for c in re.findall(r"<code data-copy-source>(.*?)</code>", section, re.S)]
+        self.assertGreaterEqual(len(commands), 3)
+        self.assertIn("--dry-run", commands[0])
+
+    def test_docs_commands_copy_as_runnable_shell(self):
+        source = (SITE / "docs.html").read_text(encoding="utf-8")
+        # every shell command sits in a copyable list, never in a plain code block, so each one copies alone
+        for block in re.findall(r'<pre class="code"[^>]*>(.*?)</pre>', source, re.S):
+            self.assertNotIn('<span class="k">', block, "a shell command in a plain code block has no Copy button of its own")
+        commands = [html.unescape(re.sub(r"<[^>]+>", "", c)) for c in re.findall(r"<code data-copy-source>(.*?)</code>", source, re.S)]
+        self.assertGreater(len(commands), 30)
+        # a note sits beside its command in one line down to a 1024px window: 57 characters for both
+        for block in re.findall(r'<ul class="cmds"[^>]*>(.*?)</ul>', source, re.S):
+            rows = re.findall(r'<code data-copy-source>(.*?)</code>(?:<span class="cmd-note">(.*?)</span>)?', block, re.S)
+            widest = max(len(html.unescape(re.sub(r"<[^>]+>", "", code))) for code, _ in rows)
+            for code, note in filter(lambda row: row[1], rows):
+                with self.subTest(note=note):
+                    self.assertLessEqual(widest + len(html.unescape(note)), 57, "this note wraps beside its block's widest command")
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertFalse(command.startswith("$") or "#" in command, "a copied command carries a prompt or a comment")
+                runnable = re.sub(r"<[\w-]+>", "placeholder", command)  # <host>, <url>: names you fill in
+                parsed = subprocess.run(["sh", "-n"], input=runnable, text=True, capture_output=True, check=False)
+                self.assertEqual(parsed.returncode, 0, parsed.stderr)
 
     def test_service_examples_use_the_supported_delete_flag(self):
         for path in (SITE.parent / "README.md", SITE / "docs.html"):

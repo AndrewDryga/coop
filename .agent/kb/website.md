@@ -30,13 +30,18 @@ commands type out, a beat's lines arrive one at a time, and each beat dwells by 
 half a screen before it arrives and plays it once on view. Reduced motion, or a card too narrow for
 its `fits` check, leaves it finished.
 
-**Docs code blocks** (`pre.code`) start their content on the line after `<pre class="code">` (HTML
-drops that newline): `tools/align-comments.py` measures from column 0, so a block starting on the
-tag's own line reads as misaligned. A trailing comment is `<span class="t">` (the align tool finds
-it by that exact string), a whole-line comment `<span class="t whole">`, an operator like `&&`
-`<span class="o">`. On phones the CSS drops each trailing `.t` onto its own indented line, which is
-why an operator must not be `.t`. Keep code lines at 65 visible characters or fewer, so nothing
-wraps at 1024px.
+**Docs commands and files.** A shell command a reader copies is a row in a command list:
+`<ul class="cmds" role="list"><li><code data-copy-source>…</code><span class="cmd-note"># …</span></li>`.
+site.js gives every row (and every `.code-file`) the homepage's Copy button, so a button copies one
+command, never a block: pasting a whole block would run unrelated commands, `coop down
+--delete-volumes` included. A note sits beside its command, so a block's widest command plus any
+note must stay within 57 characters (else it wraps at 1024px); `tools/test_site_content.py` checks
+that, that every command parses with `sh -n`, and that no `<pre class="code">` holds a shell command.
+A file snippet is `<div class="code-file">` with a `<p class="code-file-name">` header over a
+`<pre class="code" data-copy-source>`, copied whole. Inside those `pre` blocks, content starts on the
+line after the tag (HTML drops that newline; `tools/align-comments.py` measures from column 0), a
+trailing comment is `<span class="t">` (the align tool finds it by that exact string) and a
+whole-line comment `<span class="t whole">`.
 
 **Tests pin docs wording.** Rewording `site/docs.html` can fail Go tests far from the site:
 `internal/cli/help_test.go` TestCurrentDocsDoNotAdvertiseRetiredContracts needs "commits no starter
@@ -54,3 +59,4 @@ nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 
 ## Changelog
 - 2026-10-04 — created with the site replacement (task 2026-10-03-settle-the-co-op-website-direction); verified against every file in sources. Added the pinned-wording trap after the docs copy pass dropped "commits no starter subagents" and failed help_test.go.
+- 2026-10-04 — shell commands became copyable command lists and file snippets got name headers (task 2026-10-04-make-the-docs-read-as-one-guide-with-a-copy-butt); the code-block paragraph now describes both.

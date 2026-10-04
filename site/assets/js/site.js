@@ -3,6 +3,22 @@
 // Everything here is an enhancement: without JavaScript the commands are plain selectable text
 // (a <noscript> style hides the Copy buttons) and every section is in place.
 
+// The docs mark each command and file you can copy; give each one the homepage's Copy button.
+const COPY_ICONS = '<svg class="icon copy-idle" viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/>'
+  + '<path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></svg>'
+  + '<svg class="icon copy-done" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+for (const field of document.querySelectorAll(".cmds li, .code-file")) {
+  const source = field.querySelector("[data-copy-source]");
+  const name = field.querySelector(".code-file-name");
+  const button = Object.assign(document.createElement("button"), { className: "copy", type: "button", innerHTML: COPY_ICONS });
+  button.dataset.copy = "";
+  button.setAttribute("aria-label", `Copy ${name ? name.textContent : source.textContent.trim()}`);
+  const status = Object.assign(document.createElement("span"), { className: "copy-status" });
+  status.setAttribute("role", "status");
+  status.dataset.copyStatus = "";
+  field.append(button, status);
+}
+
 // Copy buttons: "Copied" for two seconds. On failure, select the command and say so next to it until
 // the next attempt.
 for (const button of document.querySelectorAll("[data-copy]")) {
