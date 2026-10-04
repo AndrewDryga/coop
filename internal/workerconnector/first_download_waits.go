@@ -10,7 +10,8 @@ import (
 // poll, and staging it again only finds the download still running. blitz-core's 45-minute first
 // download was tried, and logged, at every poll (2026-10-03). A held command is tried again
 // after five seconds, then twice as long each time, up to two minutes; every other command keeps
-// the ordinary pace.
+// the ordinary pace. Polling goes on meanwhile, so the controller keeps redelivering the command
+// and renewing its lease, and Run reports the wait once, when it begins.
 const (
 	firstDownloadRetry    = 5 * time.Second
 	firstDownloadRetryMax = 2 * time.Minute
@@ -23,6 +24,12 @@ type firstDownloadWaits struct {
 type firstDownloadWait struct {
 	notBefore time.Time
 	delay     time.Duration
+}
+
+// waiting reports whether a command's last try found its first download still running.
+func (w *firstDownloadWaits) waiting(commandID string) bool {
+	_, ok := w.waits[commandID]
+	return ok
 }
 
 // held reports whether a delivered command is still waiting out its delay.

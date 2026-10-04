@@ -2,8 +2,8 @@
 name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, streams large API bodies under the same command identity, and never falls back to local execution
 subsystem: worker
-sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go]
-updated: 2026-10-01
+sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/first_download_waits.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go]
+updated: 2026-10-04
 ---
 
 `coop sessions connect --controller <https-url> --token-file <path>` connects this machine to a fleet controller. Its
@@ -71,6 +71,14 @@ The traps the code does not make obvious:
   and refuses new admission at the poll loop, queued start and executor entry. A successful poll
   still applies acknowledgements even if cancellation races its response; a ready completion or
   timer must not restart a command after that acknowledgement deletes its receipt.
+- **A create waiting on a first download is held, quietly.** A repository's first download (its
+  whole history) runs in the background, and a create that needs it fails with
+  `errJobSourceDownloading`, which has no result, so the controller redelivers it on every poll.
+  `firstDownloadWaits` (first_download_waits.go) skips staging it for 5 s, doubling to 2 min;
+  polling goes on meanwhile, so redelivery keeps renewing the controller's lease. Run reports the
+  wait once, when it begins, not on every try. Tests that drive Run should use synctest and few
+  polls, because every poll fsyncs the journal; a fake API needs `Forward` too, or a create is
+  rejected before it reaches the stager.
 - **Response uploads resume from saved bytes.** Binary and large JSON bodies are spooled privately,
   hashed and journaled before upload. A lost upload acknowledgement resends that exact spool after
   restart, without rerunning the API. The controller's command-result acknowledgement releases it.
@@ -111,6 +119,8 @@ The traps the code does not make obvious:
   start event. The reconnect/ACK regression proves this metadata survives durable delivery.
 
 ## Changelog
+- 2026-10-04 — documented the first-download hold (d019c807) and its once-per-wait report
+  (task 2026-10-04-a-create-waiting-on-a-repository-s-first-downloa), verified against connector.go.
 - 2026-10-01 — Go1.27's default JSONv2 leaves JavaScript escaping enabled when
   SetEscapeHTML(false) is used. The wire-only encoder now explicitly disables both HTML
   and JavaScript escaping with v1 semantic options; receipt bounds and canonical identity

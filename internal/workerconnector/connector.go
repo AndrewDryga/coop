@@ -209,9 +209,12 @@ func (c *Connector) Run(ctx context.Context, interval time.Duration, onError fun
 			return ctx.Err()
 		case done := <-completed:
 			delete(pending, done.job.command.CommandID)
+			// A command still waiting on its first download was reported when the wait began;
+			// every later try that finds the download running says nothing new.
+			stillWaiting := waits.waiting(done.job.command.CommandID) && errors.Is(done.err, errJobSourceDownloading)
 			waits.settled(done.job.command.CommandID, done.err, c.now())
 			active = nil
-			if done.err != nil && ctx.Err() == nil {
+			if done.err != nil && ctx.Err() == nil && !stillWaiting {
 				onError(fmt.Errorf("command %s: %w", done.job.command.CommandID, done.err))
 			}
 			startNext()
