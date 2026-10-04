@@ -2271,10 +2271,10 @@ func TestInstructionOverrideUsed(t *testing.T) {
 	os.MkdirAll(cfg.AgentDir("claude"), 0o755)
 	os.WriteFile(filepath.Join(cfg.AgentDir("claude"), "CLAUDE.md"), []byte("OVERRIDE"), 0o644)
 
-	if c, err := agentBaseInstructions(cfg, "claude", "CLAUDE.md", ""); err != nil || !strings.Contains(c, "OVERRIDE") || strings.Contains(c, "SHARED") {
+	if c, err := agentBaseInstructions(cfg, "claude", "CLAUDE.md", "", false); err != nil || !strings.Contains(c, "OVERRIDE") || strings.Contains(c, "SHARED") {
 		t.Errorf("claude should use its per-agent override, not the shared file:\n%s", c)
 	}
-	if x, err := agentBaseInstructions(cfg, "codex", "AGENTS.md", ""); err != nil || !strings.Contains(x, "SHARED") {
+	if x, err := agentBaseInstructions(cfg, "codex", "AGENTS.md", "", false); err != nil || !strings.Contains(x, "SHARED") {
 		t.Errorf("codex (no override) should use the shared file:\n%s", x)
 	}
 }
@@ -2291,7 +2291,7 @@ func TestInstructionOverrideIsBoundedNonblockingAndRootConfined(t *testing.T) {
 	if err := os.WriteFile(override, make([]byte, maxInstructionFileBytes+1), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agentBaseInstructions(cfg, "claude", "CLAUDE.md", ""); err == nil || !strings.Contains(err.Error(), "exceeds") {
+	if _, err := agentBaseInstructions(cfg, "claude", "CLAUDE.md", "", false); err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("oversized instruction error = %v", err)
 	}
 	if err := os.Remove(override); err != nil {
@@ -2302,7 +2302,7 @@ func TestInstructionOverrideIsBoundedNonblockingAndRootConfined(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := agentBaseInstructions(cfg, "claude", "CLAUDE.md", "")
+		_, err := agentBaseInstructions(cfg, "claude", "CLAUDE.md", "", false)
 		done <- err
 	}()
 	select {
@@ -2323,7 +2323,7 @@ func TestInstructionOverrideIsBoundedNonblockingAndRootConfined(t *testing.T) {
 	if err := os.Symlink(outside, override); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agentBaseInstructions(cfg, "claude", "CLAUDE.md", ""); err == nil {
+	if _, err := agentBaseInstructions(cfg, "claude", "CLAUDE.md", "", false); err == nil {
 		t.Fatal("out-of-profile instruction symlink was read")
 	}
 	if err := os.Remove(override); err != nil {
@@ -2335,7 +2335,7 @@ func TestInstructionOverrideIsBoundedNonblockingAndRootConfined(t *testing.T) {
 	if err := os.Symlink("rules.md", override); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := agentBaseInstructions(cfg, "claude", "CLAUDE.md", ""); err != nil || !strings.Contains(got, "INTERNAL RULE") {
+	if got, err := agentBaseInstructions(cfg, "claude", "CLAUDE.md", "", false); err != nil || !strings.Contains(got, "INTERNAL RULE") {
 		t.Fatalf("internal instruction symlink = %q, %v", got, err)
 	}
 }
@@ -2374,13 +2374,13 @@ func TestAssembleArgsMountsInstructions(t *testing.T) {
 // the consult lead is excluded (it gets its augmented file instead).
 func TestInstructionPlan(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
-	if got, err := instructionPlan(cfg, RunSpec{}, ""); err != nil || got != nil {
+	if got, err := instructionPlan(cfg, RunSpec{}, "", false); err != nil || got != nil {
 		t.Errorf("no homes → no plan, got %v", got)
 	}
-	if got, err := instructionPlan(cfg, RunSpec{Homes: true}, ""); err != nil || got != nil {
+	if got, err := instructionPlan(cfg, RunSpec{Homes: true}, "", false); err != nil || got != nil {
 		t.Errorf("raw run has no selected providers, got %v, %v", got, err)
 	}
-	plan, err := instructionPlan(cfg, RunSpec{Homes: true, Agent: "claude"}, "")
+	plan, err := instructionPlan(cfg, RunSpec{Homes: true, Agent: "claude"}, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2392,7 +2392,11 @@ func TestInstructionPlan(t *testing.T) {
 			t.Errorf("%s plan content missing the box env note", it.agent)
 		}
 	}
-	plan, err = instructionPlan(cfg, RunSpec{Homes: true, ConsultLead: "claude", Peers: []agents.Target{{Provider: "codex"}}}, "")
+	plan, err = instructionPlan(cfg, RunSpec{Homes: true, Agent: "claude"}, "", true)
+	if err != nil || len(plan) != 1 || !strings.Contains(plan[0].content, ".agent/Dockerfile installs them") {
+		t.Errorf("a filtered run's plan must carry the filtered box note, got %v, %v", plan, err)
+	}
+	plan, err = instructionPlan(cfg, RunSpec{Homes: true, ConsultLead: "claude", Peers: []agents.Target{{Provider: "codex"}}}, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2604,7 +2608,7 @@ func TestLeadInstructionMount(t *testing.T) {
 	}
 	cfg := &config.Config{ConfigDir: dir, HomeInBox: "/home/node"}
 
-	content, file, wired, ok, err := leadInstructionMount(cfg, "claude", nil, nil, "")
+	content, file, wired, ok, err := leadInstructionMount(cfg, "claude", nil, nil, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2619,7 +2623,7 @@ func TestLeadInstructionMount(t *testing.T) {
 	}
 
 	// With a peer NAMED, the directive is injected and coop-consult is wired.
-	content, _, wired, _, err = leadInstructionMount(cfg, "claude", nil, []string{"codex"}, "")
+	content, _, wired, _, err = leadInstructionMount(cfg, "claude", nil, []string{"codex"}, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2628,6 +2632,9 @@ func TestLeadInstructionMount(t *testing.T) {
 	}
 	if !strings.Contains(content, "second opinion") {
 		t.Errorf("with a named peer, expected the second-opinion directive, got:\n%s", content)
+	}
+	if content, _, _, _, err := leadInstructionMount(cfg, "claude", nil, nil, "", true); err != nil || !strings.Contains(content, ".agent/Dockerfile installs them") {
+		t.Errorf("a filtered run's lead must get the filtered box note, got %v:\n%s", err, content)
 	}
 }
 
@@ -2847,7 +2854,7 @@ func TestRunRequiredBoxArtifactFailuresStopBeforeRuntime(t *testing.T) {
 		cfg, spec, artifacts, recorder, rt := newFixture(t, "codex")
 		originalWrite := artifacts.writeFile
 		artifacts.writeFile = func(_, content string) (string, error) {
-			if strings.HasPrefix(content, boxEnvNote) {
+			if strings.HasPrefix(content, boxEnvNote(false)) {
 				return "", sentinel
 			}
 			return originalWrite("", content)
@@ -3176,7 +3183,7 @@ func TestPresetRoleTargetDefaultsDoNotInheritRawPeerOverride(t *testing.T) {
 func TestAgentBaseInstructions(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: dir}
-	got, err := agentBaseInstructions(cfg, "claude", "CLAUDE.md", "")
+	got, err := agentBaseInstructions(cfg, "claude", "CLAUDE.md", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3192,8 +3199,30 @@ func TestAgentBaseInstructions(t *testing.T) {
 			t.Errorf("box note does not warn about shadowed decoys in git status (%q):\n%s", want, got)
 		}
 	}
+	// Toolchains: the open box's base image installs .tool-versions pins on start; a filtered box's
+	// image has no asdf, so its note must send the agent to the project's .agent/Dockerfile instead.
+	if !strings.Contains(got, "in .tool-versions, which is provisioned automatically on start.") {
+		t.Errorf("an open box's note must keep the .tool-versions promise:\n%s", got)
+	}
+	filtered, err := agentBaseInstructions(cfg, "claude", "CLAUDE.md", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{".agent/Dockerfile installs them", `"coop init --stack asdf" writes one`, "Nothing is installed when this box starts."} {
+		if !strings.Contains(filtered, want) {
+			t.Errorf("a filtered box's note must say where toolchains come from (%q):\n%s", want, filtered)
+		}
+	}
+	if strings.Contains(filtered, "provisioned automatically") {
+		t.Errorf("a filtered box's note promises .tool-versions provisioning it can't do:\n%s", filtered)
+	}
+	for _, note := range []string{got, filtered} {
+		if strings.Contains(note, "%!") || strings.Contains(note, "%s") {
+			t.Errorf("box note has a formatting leftover:\n%s", note)
+		}
+	}
 	os.WriteFile(filepath.Join(dir, "INSTRUCTIONS.md"), []byte("MY RULE"), 0o644)
-	got, err = agentBaseInstructions(cfg, "claude", "CLAUDE.md", "")
+	got, err = agentBaseInstructions(cfg, "claude", "CLAUDE.md", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3431,7 +3460,7 @@ func TestLeadInstructionMountPreset(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "INSTRUCTIONS.md"), []byte("BASE RULES"), 0o644)
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: dir}
 
-	content, file, wired, ok, err := leadInstructionMount(cfg, "claude", frontierPreset(), nil, "")
+	content, file, wired, ok, err := leadInstructionMount(cfg, "claude", frontierPreset(), nil, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3454,7 +3483,7 @@ func TestLeadInstructionMountPreset(t *testing.T) {
 	// A delegate-only preset wires no consult (nothing read-only to call).
 	delegateOnly := &preset.Preset{Name: "d", LeadTargets: []agents.Target{{Provider: "claude"}},
 		Roles: []preset.Role{{Name: "fast", Mode: preset.ModeDelegate, Targets: []agents.Target{{Provider: "gemini"}}}}}
-	if _, _, wired, _, err := leadInstructionMount(cfg, "claude", delegateOnly, nil, ""); err != nil {
+	if _, _, wired, _, err := leadInstructionMount(cfg, "claude", delegateOnly, nil, "", false); err != nil {
 		t.Fatal(err)
 	} else if wired {
 		t.Error("a delegate-only preset must not mount coop-consult")
@@ -3462,7 +3491,7 @@ func TestLeadInstructionMountPreset(t *testing.T) {
 
 	// An explicit peer composes with a preset instead of disappearing behind it. This
 	// also wires coop-consult for a preset that has no consult roles of its own.
-	content, _, wired, _, err = leadInstructionMount(cfg, "claude", delegateOnly, []string{"codex"}, "")
+	content, _, wired, _, err = leadInstructionMount(cfg, "claude", delegateOnly, []string{"codex"}, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

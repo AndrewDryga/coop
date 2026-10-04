@@ -1108,7 +1108,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	var consultMounts []extraMount
 	consultWired := false
 	if spec.Homes && spec.ConsultLead != "" {
-		content, file, wired, ok, err := leadInstructionMount(cfg, spec.ConsultLead, spec.Preset, peerProviders(spec.Peers), networkNote)
+		content, file, wired, ok, err := leadInstructionMount(cfg, spec.ConsultLead, spec.Preset, peerProviders(spec.Peers), networkNote, filtered != nil)
 		if err != nil {
 			return -1, fmt.Errorf("assemble lead instruction for %s: %w", spec.ConsultLead, err)
 		}
@@ -1156,7 +1156,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// override if present, else the shared INSTRUCTIONS.md), mounted at its native global path
 	// — so it never burns a turn rediscovering the box. The consult lead is handled above, with its
 	// augmented file.
-	plan, err := instructionPlan(cfg, spec, networkNote)
+	plan, err := instructionPlan(cfg, spec, networkNote, filtered != nil)
 	if err != nil {
 		return -1, err
 	}
@@ -2268,13 +2268,28 @@ func Workdir(cfg *config.Config, repo string) string {
 // It states the ground truth the agents most often probe or trip over: the missing OS sandbox,
 // what's installed (now that the image carries bare python/pip), where it may write, and that
 // secrets are read-only decoys.
-const boxEnvNote = `# Environment (coop box) — ground truth, don't reprobe it
+//
+// Where other toolchains come from depends on the image. An open box runs the base image, whose
+// entrypoint installs a repo's .tool-versions pins with asdf on start. A filtered box runs the
+// locked client image or a project image built on it; neither has asdf (lockedPath), so only the
+// project's .agent/Dockerfile can put a toolchain there.
+func boxEnvNote(filtered bool) string {
+	toolchains := "Other toolchains (go, ruby, erlang, …) exist only if the repo pins\n" +
+		"  them in .tool-versions, which is provisioned automatically on start."
+	if filtered {
+		toolchains = "Other toolchains (go, ruby, erlang, …) exist only if the project's\n" +
+			"  .agent/Dockerfile installs them (\"coop init --stack asdf\" writes one from\n" +
+			"  .tool-versions). Nothing is installed when this box starts."
+	}
+	return fmt.Sprintf(boxEnvNoteFormat, toolchains)
+}
+
+const boxEnvNoteFormat = `# Environment (coop box) — ground truth, don't reprobe it
 You run inside a coop container: a Debian box that IS your sandbox and security boundary.
 - OS-level sandboxing (bubblewrap) is intentionally absent. A "bubblewrap is required" notice
   is expected, not a bug — don't investigate or work around it, just proceed.
 - Installed and ready: node, npm, yarn, python (= python3), pip, git, gcc/make, jq, rg, fd,
-  curl, wget, perl, psql. Other toolchains (go, ruby, erlang, …) exist only if the repo pins
-  them in .tool-versions, which is provisioned automatically on start.
+  curl, wget, perl, psql. %s
 - Playwright's Chromium system libraries are preinstalled. The browser binary downloads on
   first use (cached in ~/.cache, so once per machine): run "npx playwright install chromium"
   if it's missing. Launch headless and pass args: ['--no-sandbox'] — Chromium's own sandbox
@@ -2297,7 +2312,7 @@ You run inside a coop container: a Debian box that IS your sandbox and security 
 // agentBaseInstructions is what an agent receives as its global instructions: the always-on
 // box environment note, followed by the user's instructions — a per-agent override if present,
 // else the shared INSTRUCTIONS.md. Consult and preset routing augment this; they do not replace it.
-func agentBaseInstructions(cfg *config.Config, agent, file, network string) (string, error) {
+func agentBaseInstructions(cfg *config.Config, agent, file, network string, filtered bool) (string, error) {
 	user := ""
 	data, present, err := readOptionalRegularFile(cfg.AgentDir(agent), file)
 	if err != nil {
@@ -2315,9 +2330,9 @@ func agentBaseInstructions(cfg *config.Config, agent, file, network string) (str
 		}
 	}
 	if strings.TrimSpace(user) == "" {
-		return boxEnvNote + network, nil
+		return boxEnvNote(filtered) + network, nil
 	}
-	return boxEnvNote + network + "\n" + user, nil
+	return boxEnvNote(filtered) + network + "\n" + user, nil
 }
 
 const maxInstructionFileBytes = 1 << 20
@@ -2543,7 +2558,7 @@ func synthHomeFallbackMounts(repo, homeInBox, artifactParent string, agentNames 
 // note plus the user's instructions (per agentBaseInstructions). The consult lead is excluded —
 // it gets its augmented file instead. Pure (no temp files / mounts),
 // so the selection and content are unit-testable; Run writes + mounts the result.
-func instructionPlan(cfg *config.Config, spec RunSpec, network string) ([]instructionItem, error) {
+func instructionPlan(cfg *config.Config, spec RunSpec, network string, filtered bool) ([]instructionItem, error) {
 	if !spec.Homes || spec.Login {
 		return nil, nil
 	}
@@ -2553,7 +2568,7 @@ func instructionPlan(cfg *config.Config, spec RunSpec, network string) ([]instru
 			continue
 		}
 		if file := instructionFile(agent); file != "" {
-			content, err := agentBaseInstructions(cfg, agent, file, network)
+			content, err := agentBaseInstructions(cfg, agent, file, network, filtered)
 			if err != nil {
 				return nil, err
 			}
@@ -2685,12 +2700,12 @@ func assembleAgentsDir(parent string, gen []genFile) (string, error) {
 // reports whether coop-consult is reachable through either a preset role or an explicit peer.
 // ok is false only when the agent has no native instruction file. Pure, so the "no named peer
 // still mounts the base" invariant is unit-tested without a container.
-func leadInstructionMount(cfg *config.Config, lead string, p *preset.Preset, peers []string, network string) (content, file string, wired, ok bool, err error) {
+func leadInstructionMount(cfg *config.Config, lead string, p *preset.Preset, peers []string, network string, filtered bool) (content, file string, wired, ok bool, err error) {
 	file = instructionFile(lead)
 	if file == "" {
 		return "", "", false, false, nil
 	}
-	base, err := agentBaseInstructions(cfg, lead, file, network)
+	base, err := agentBaseInstructions(cfg, lead, file, network, filtered)
 	if err != nil {
 		return "", "", false, false, err
 	}

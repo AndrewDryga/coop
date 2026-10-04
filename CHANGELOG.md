@@ -33,6 +33,11 @@
   its pattern (`prod.yml  # note`): only a line that starts with `#` is a comment, so such an entry
   is one pattern that hides nothing. The README example puts its comments on their own lines.
 
+- **Filtered boxes tell agents where toolchains come from.** The note an agent gets inside a
+  filtered box no longer promises that `.tool-versions` is installed on start, which only open
+  boxes do. It says a pinned toolchain comes from the project's `.agent/Dockerfile`, which
+  `coop init --stack asdf` writes from `.tool-versions`.
+
 ## 10.1.2
 
 Changes since v8.1.0 include provider-client updates, `coop usage`, and the new controller-worker
