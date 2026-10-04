@@ -6,6 +6,7 @@ package shadowpath
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -279,7 +280,11 @@ func RepoCommentedEntries(repo string) []string {
 	return CommentedEntries(data)
 }
 
-// NewDecider returns the one visibility predicate for a repository-relative slash path.
+// NewDecider returns the one visibility predicate for a repository-relative slash path. A launch
+// asks it about every path in the repository, so it remembers each directory's verdict, ancestors
+// included: a path then costs its own check plus one lookup. Re-deciding every ancestor for every
+// path took 4 s in a checkout whose task folders held 41,000 files (2026-10-04). The answers are
+// shadowed's, which stays the reference (TestDeciderMatchesShadowed).
 func NewDecider(repo string) func(string) bool {
 	canonical, err := filepath.EvalSymlinks(repo)
 	if err != nil {
@@ -291,12 +296,19 @@ func NewDecider(repo string) func(string) bool {
 			return g
 		}
 		var g UserGlobs
+		rel := CoopIgnoreFile
+		if dirRel != "" {
+			rel = filepath.Join(filepath.FromSlash(dirRel), CoopIgnoreFile)
+		}
+		// Almost no directory has a .coopignore, and one lstat says so; the safe read below opens
+		// the root and every component. Only "nothing there" skips it: anything else, a link or an
+		// error included, gets the safe read, which alone decides what counts.
+		if _, statErr := os.Lstat(filepath.Join(canonical, rel)); errors.Is(statErr, fs.ErrNotExist) {
+			cache[dirRel] = g
+			return g
+		}
 		root, openErr := safefile.OpenRoot(canonical)
 		if openErr == nil {
-			rel := CoopIgnoreFile
-			if dirRel != "" {
-				rel = filepath.Join(filepath.FromSlash(dirRel), CoopIgnoreFile)
-			}
 			if data, readErr := safefile.ReadRegular(root, rel, ignoreLimit); readErr == nil {
 				g = ParseUserGlobs(data)
 			}
@@ -305,30 +317,56 @@ func NewDecider(repo string) func(string) bool {
 		cache[dirRel] = g
 		return g
 	}
+	dirs := map[string]bool{"": false} // the repository root is never hidden
+	var dirShadowed func(string) bool
+	dirShadowed = func(dirRel string) bool {
+		if hidden, ok := dirs[dirRel]; ok {
+			return hidden
+		}
+		hidden := dirShadowed(parentSlash(dirRel)) || shadowedHere(dirRel, loadDir)
+		dirs[dirRel] = hidden
+		return hidden
+	}
 	return func(relSlash string) bool {
-		return shadowed(relSlash, loadDir)
+		relSlash = cleanSlash(relSlash)
+		return dirShadowed(parentSlash(relSlash)) || shadowedHere(relSlash, loadDir)
 	}
 }
 
-func shadowed(relSlash string, loadDir func(string) UserGlobs) bool {
-	shadowedHere := func(relSlash string) bool {
-		name := relSlash
-		if i := strings.LastIndexByte(relSlash, '/'); i >= 0 {
-			name = relSlash[i+1:]
-		}
-		lname := strings.ToLower(name)
-		allowed := MatchesAny(lname, AllowGlobs) ||
-			(MatchesAny(lname, allowTemplateGlobs) && !MatchesAny(lname, hardSecretGlobs))
-		return MatchesAny(lname, SecretGlobs) && !allowed || shadowedByCoopignore(relSlash, loadDir)
+// parentSlash is the directory holding a cleaned slash path, "" at the top.
+func parentSlash(relSlash string) string {
+	if i := strings.LastIndexByte(relSlash, '/'); i >= 0 {
+		return relSlash[:i]
 	}
-	return func(relSlash string) bool {
-		for i := 0; i < len(relSlash); i++ {
-			if relSlash[i] == '/' && shadowedHere(relSlash[:i]) {
-				return true
-			}
+	return ""
+}
+
+// shadowed hides a path when it, or any directory above it, is hidden on its own.
+func shadowed(relSlash string, loadDir func(string) UserGlobs) bool {
+	relSlash = cleanSlash(relSlash)
+	for i := 0; i < len(relSlash); i++ {
+		if relSlash[i] == '/' && shadowedHere(relSlash[:i], loadDir) {
+			return true
 		}
-		return shadowedHere(relSlash)
-	}(filepath.ToSlash(filepath.Clean(filepath.FromSlash(relSlash))))
+	}
+	return shadowedHere(relSlash, loadDir)
+}
+
+// shadowedHere is one path's own verdict, its ancestors aside: a secret name no allow rule
+// rescues, or a .coopignore rule on the way down to it.
+func shadowedHere(relSlash string, loadDir func(string) UserGlobs) bool {
+	name := relSlash
+	if i := strings.LastIndexByte(relSlash, '/'); i >= 0 {
+		name = relSlash[i+1:]
+	}
+	lname := strings.ToLower(name)
+	allowed := MatchesAny(lname, AllowGlobs) ||
+		(MatchesAny(lname, allowTemplateGlobs) && !MatchesAny(lname, hardSecretGlobs))
+	return MatchesAny(lname, SecretGlobs) && !allowed || shadowedByCoopignore(relSlash, loadDir)
+}
+
+func cleanSlash(relSlash string) string {
+	return filepath.ToSlash(filepath.Clean(filepath.FromSlash(relSlash)))
 }
 
 func shadowedByCoopignore(relSlash string, loadDir func(string) UserGlobs) bool {

@@ -2,12 +2,16 @@ package shadowpath
 
 import (
 	"errors"
+	"io/fs"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"runtime/debug"
 	"slices"
 	"syscall"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/safefile"
 )
 
 func TestReadRegularClosesNestedDescriptors(t *testing.T) {
@@ -97,5 +101,106 @@ func TestCommentedEntries(t *testing.T) {
 	}
 	if got := RepoCommentedEntries(t.TempDir()); got != nil {
 		t.Fatalf("a repository without .coopignore reported %q", got)
+	}
+}
+
+// NewDecider remembers directory verdicts for speed; shadowed is the plain definition. Every path
+// of a tree with secrets at several depths, nested .coopignore rules, allow-listed names and
+// paths inside hidden directories gets the same answer from both, asked in shuffled order so the
+// memo cannot lean on a walk's order.
+func TestDeciderMatchesShadowed(t *testing.T) {
+	repo := t.TempDir()
+	files := map[string]string{
+		".coopignore":                    "vault/\nconfig/stripe.live.json\n*.dump\n",
+		"src/app.go":                     "",
+		"src/.env":                       "",
+		"src/.env.example":               "",
+		"src/certs/ca-bundle.pem":        "",
+		"src/certs/server.pem":           "",
+		"src/keys.template":              "",
+		"src/id_rsa.template":            "",
+		"config/stripe.live.json":        "",
+		"config/app.json":                "",
+		"vault/token":                    "",
+		"vault/deep/x/y.txt":             "",
+		"secrets/a/b/c.txt":              "",
+		"db/backup.dump":                 "",
+		"pkg/.coopignore":                "local/\nsettings.json\n",
+		"pkg/local/notes.md":             "",
+		"pkg/settings.json":              "",
+		"pkg/sub/settings.json":          "",
+		"pkg/sub/.coopignore":            "*\n",
+		"pkg/sub/anything.go":            "",
+		"tasks/t1/tmp/clone/.env":        "",
+		"tasks/t1/tmp/clone/src/main.go": "",
+		"tasks/t1/tmp/clone/.ssh/id":     "",
+		"tasks/t1/artifacts/report.md":   "",
+		"Credentials/README.md":          "",
+		"docs/kubeconfig.yaml.example":   "",
+		"docs/guide/credentials.yml":     "",
+	}
+	for rel, body := range files {
+		p := filepath.Join(repo, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Links the safe read refuses: a .coopignore that is a symlink, and a directory reached
+	// through one. The decider's lstat shortcut must not change what they mean.
+	if err := os.WriteFile(filepath.Join(repo, "outside-rules"), []byte("*\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "linked"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../outside-rules", filepath.Join(repo, "linked", CoopIgnoreFile)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "linked", "plain.txt"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("pkg", filepath.Join(repo, "pkglink")); err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{"pkglink/settings.json", "pkglink/local/notes.md", "pkglink/sub/anything.go", "missing/dir/.env", "missing/file.go"}
+	if err := filepath.WalkDir(repo, func(p string, _ fs.DirEntry, err error) error {
+		if err != nil || p == repo {
+			return err
+		}
+		rel, err := filepath.Rel(repo, p)
+		paths = append(paths, filepath.ToSlash(rel))
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reference := func(dirRel string) UserGlobs { // the safe read, for every directory, uncached
+		root, err := safefile.OpenRoot(repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+		data, err := safefile.ReadRegular(root, filepath.Join(filepath.FromSlash(dirRel), CoopIgnoreFile), ignoreLimit)
+		if err != nil {
+			return UserGlobs{}
+		}
+		return ParseUserGlobs(data)
+	}
+	rand.New(rand.NewPCG(1, 2)).Shuffle(len(paths), func(i, j int) { paths[i], paths[j] = paths[j], paths[i] })
+	decide := NewDecider(repo)
+	hidden := 0
+	for _, rel := range paths {
+		want := shadowed(rel, reference)
+		if got := decide(rel); got != want {
+			t.Errorf("%s: decider says hidden=%t, shadowed says %t", rel, got, want)
+		}
+		if want {
+			hidden++
+		}
+	}
+	if hidden == 0 || hidden == len(paths) {
+		t.Fatalf("the tree should mix hidden and visible paths, got %d of %d hidden", hidden, len(paths))
 	}
 }
