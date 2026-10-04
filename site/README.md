@@ -47,9 +47,9 @@ The terminal scenes copy the CLI's real output (the approved transcripts under
 when the output it shows changes. The homepage's task-commit count comes from
 `git log origin/main` when you regenerate.
 
-Both pages load `assets/css/site.css` and `assets/js/site.js` with a `?v=` date.
-Bump it in `tools/site/index.tpl.html` and `docs.html` whenever either file changes,
-so a returning visitor never pairs new HTML with a cached stylesheet.
+Both pages load the stylesheet and scripts with `?v=` and a short hash of those files, which
+`tools/gen_site.py` writes. Regenerate after changing them (`--check` fails until you do), and every
+browser fetches the new copy instead of reusing a cached one.
 
 ## Deploy
 

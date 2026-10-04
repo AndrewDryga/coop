@@ -60,8 +60,9 @@ subagents" and rejects retired config names; `internal/cli/eval_cmd_test.go` nee
 verbatim; `tools/test_site_content.py` needs the `#evals` section and `coop down --delete-volumes`.
 Run `go test ./internal/cli/` after a docs copy pass, not only `make tools-test`.
 
-**Cache-busting.** Both pages load `assets/css/site.css` and `assets/js/site.js` with `?v=<date>`;
-bump it in the template and in docs.html when either file changes (Pages caches for 10 minutes).
+**Cache-busting.** Both pages load `site.css`, `site.js` and `analytics.js` with `?v=<hash of the
+three>`, written by `tools/gen_site.py`, so `--check` fails after any CSS or JS edit until you
+regenerate. (A fixed date once left the owner looking at a stale stylesheet all afternoon.)
 
 **The social card** (`tools/gen_seo_assets.py og`) is the homepage's own hero, rendered from a copy
 with every `<script>` stripped so the sandbox picture is finished. Headless Chrome runs scripts even
@@ -74,3 +75,4 @@ nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 - 2026-10-04 — the docs contents fold to the group being read (task 2026-10-04-show-services-isolation-link-ryker-and-protector).
 - 2026-10-04 — the docs' type scale and rhythm (task 2026-10-04-give-the-docs-one-type-scale-and-a-steady-vertic).
 - 2026-10-04 — the asciinema casts, player and cast tools are gone (task 2026-10-04-retire-the-asciinema-cast-pipeline-the-old-websi).
+- 2026-10-04 — asset links carry a content hash instead of a hand-bumped date (task 2026-10-04-bust-the-browser-cache-whenever-the-site-s-css-o).

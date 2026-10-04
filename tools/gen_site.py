@@ -13,6 +13,7 @@ Usage:  python3 tools/gen_site.py           # rewrite site/index.html and the do
         python3 tools/gen_site.py --check   # fail if either is out of date
 """
 
+import hashlib
 import pathlib
 import re
 import subprocess
@@ -519,16 +520,33 @@ def render(count):
         page = page.replace("{{" + name + "}}", value)
     left = re.findall(r"\{\{\w+\}\}", page)
     assert not left, left
-    return typographic(page)
+    return stamp_assets(typographic(page))
+
+
+ASSETS = ("assets/css/site.css", "assets/js/site.js", "assets/js/analytics.js")
+
+
+def asset_version():
+    """A short hash of the stylesheet and scripts, put on their links (?v=) so a browser holding an
+    older copy fetches the new one the moment either file changes."""
+    digest = hashlib.sha256()
+    for name in ASSETS:
+        digest.update((ROOT / "site" / name).read_bytes())
+    return digest.hexdigest()[:10]
+
+
+def stamp_assets(page):
+    """The page with every CSS and JS link carrying the current asset version."""
+    return re.sub(r'(assets/(?:css|js)/[\w.-]+\.(?:css|js))\?v=[\w-]+', rf"\1?v={asset_version()}", page)
 
 
 def fill_docs(docs):
-    """The docs with each marked region holding its scene."""
+    """The docs with each marked region holding its scene, and their asset links stamped."""
     def scene(found):
         return f"{found.group(1)}{DOCS_SCENES[found.group(2)]}{found.group(3)}"
     filled, regions = re.subn(r"(<!-- gen_site: ([\w-]+) -->)(?s:.*?)(<!-- /gen_site -->)", scene, docs)
     assert regions == len(DOCS_SCENES), f"site/docs.html marks {regions} scenes, expected {len(DOCS_SCENES)}"
-    return filled
+    return stamp_assets(filled)
 
 
 def main():
