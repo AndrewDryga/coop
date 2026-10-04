@@ -137,7 +137,9 @@ func (e *Executor) stageCreateJobSources(ctx context.Context, body []byte) error
 		}
 	}
 	if downloading {
-		return classifyArtifactFetch(errJobSourceDownloading, "fetch job source")
+		// Still a transfer for now, and recognizably a download, so the connector can hold the
+		// command back instead of staging it again at every delivery (firstDownloadWaits).
+		return fmt.Errorf("%w: fetch job source: %w", errArtifactTransfer, errJobSourceDownloading)
 	}
 	return nil
 }

@@ -148,6 +148,7 @@ func (c *Connector) Run(ctx context.Context, interval time.Duration, onError fun
 	}
 	completed := make(chan completion, 1)
 	pending := make(map[string]*pendingCommand)
+	var waits firstDownloadWaits
 	var queue []*pendingCommand
 	var active *pendingCommand
 	dispatch := func(command workerproto.Command) error {
@@ -164,6 +165,9 @@ func (c *Connector) Run(ctx context.Context, interval time.Duration, onError fun
 			case job.renewed <- struct{}{}:
 			default:
 			}
+			return nil
+		}
+		if waits.held(command.CommandID, c.now()) {
 			return nil
 		}
 		if len(pending) >= workerproto.MaxBatchItems {
@@ -205,6 +209,7 @@ func (c *Connector) Run(ctx context.Context, interval time.Duration, onError fun
 			return ctx.Err()
 		case done := <-completed:
 			delete(pending, done.job.command.CommandID)
+			waits.settled(done.job.command.CommandID, done.err, c.now())
 			active = nil
 			if done.err != nil && ctx.Err() == nil {
 				onError(fmt.Errorf("command %s: %w", done.job.command.CommandID, done.err))
