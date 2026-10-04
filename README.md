@@ -295,10 +295,16 @@ directory over secret directories, a read-only empty file over secret files. Tem
 (`internal/box/secrets.go`); add a `.coopignore` at the repo root for your own:
 
 ```gitignore
-prod.yml                 # basename — matched at any depth
-config/credentials.yaml  # exact path; its final name stays hidden if the parent moves
-vault/                   # a directory — its contents are hidden whole
+# a file name, matched at any depth
+prod.yml
+# an exact path; its final name stays hidden if the parent moves
+config/stripe.live.json
+# a directory, hidden whole
+vault/
 ```
+
+Comments go on their own lines, as in `.gitignore`: `prod.yml  # note` is one pattern, comment and
+all, and a launch warns about it.
 
 Exact path entries keep their final file or directory name hidden throughout that policy's scope.
 This prevents a box from exposing the same secret later by renaming its parent directory.

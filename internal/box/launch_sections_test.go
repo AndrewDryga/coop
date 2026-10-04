@@ -185,6 +185,19 @@ func TestNetworkAllowancesNeverOmitAGrant(t *testing.T) {
 	if got := captureStderr(t, func() { newLaunchSections(RunSpec{Cmd: []string{"sh"}}).secrets(0) }); got != "Protecting secrets\n  ✓ No secret paths to hide\n" {
 		t.Fatalf("zero secrets rendered %q", got)
 	}
+	// A .coopignore entry with a comment after its pattern hides nothing: the launch says so under
+	// Protecting secrets, as a plain warning outside a narrated launch, and nothing when quiet.
+	entries := []string{"prod.yml   # basename"}
+	caution := `  ⚠ .coopignore entry "prod.yml   # basename" is one pattern, comment and all; put comments on their own line` + "\n"
+	if got := captureStderr(t, func() { newLaunchSections(RunSpec{Cmd: []string{"sh"}}).coopignoreComments(entries, false) }); got != caution {
+		t.Fatalf("narrated commented entry = %q", got)
+	}
+	if got := captureStderr(t, func() { newLaunchSections(RunSpec{Batch: true}).coopignoreComments(entries, false) }); !strings.Contains(got, `"prod.yml   # basename" is one pattern`) {
+		t.Fatalf("batch commented entry = %q", got)
+	}
+	if got := captureStderr(t, func() { newLaunchSections(RunSpec{Quiet: true}).coopignoreComments(entries, true) }); got != "" {
+		t.Fatalf("quiet commented entry = %q", got)
+	}
 }
 
 // What is known about the image goes under its own heading as cautions, never as a `coop:` line

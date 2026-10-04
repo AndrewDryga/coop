@@ -244,6 +244,41 @@ func ParseUserGlobs(data []byte) UserGlobs {
 	return g
 }
 
+// CommentedEntries lists the .coopignore entries that carry a comment after the pattern, such as
+// "prod.yml   # basename". As in .gitignore, only a line that starts with # is a comment, so each
+// of these is one pattern, comment and all, which hides nothing its author meant to hide.
+func CommentedEntries(data []byte) []string {
+	var out []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if i := strings.Index(line, "#"); i > 0 && (line[i-1] == ' ' || line[i-1] == '\t') {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// RepoCommentedEntries is CommentedEntries for the repository's root .coopignore, the file the
+// docs tell people to write; an unreadable or absent file has none.
+func RepoCommentedEntries(repo string) []string {
+	if repo == "" {
+		return nil
+	}
+	root, err := safefile.OpenRoot(repo)
+	if err != nil {
+		return nil
+	}
+	defer root.Close()
+	data, err := safefile.ReadRegular(root, CoopIgnoreFile, ignoreLimit)
+	if err != nil {
+		return nil
+	}
+	return CommentedEntries(data)
+}
+
 // NewDecider returns the one visibility predicate for a repository-relative slash path.
 func NewDecider(repo string) func(string) bool {
 	canonical, err := filepath.EvalSymlinks(repo)

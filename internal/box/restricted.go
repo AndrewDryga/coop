@@ -19,6 +19,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/gatewayimage"
 	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/shadowpath"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -599,6 +600,7 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 		} else if n > 0 && !spec.Quiet {
 			ui.Note("shadowed %d secret path(s)", n)
 		}
+		sections.coopignoreComments(shadowpath.RepoCommentedEntries(spec.Repo), spec.Quiet)
 		// One empty read-only file shadows every secret file, one empty read-only dir every
 		// secret directory — the same decoys the normal launch uses.
 		decoyFile, err := os.CreateTemp(artifacts.parent, "coop-decoy-")

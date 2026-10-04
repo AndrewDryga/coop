@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"syscall"
 	"testing"
 )
@@ -70,5 +71,31 @@ func TestReadRegularClosesNestedDescriptors(t *testing.T) {
 	}
 	if got := countFDs(); got > baseline+4 {
 		t.Fatalf("nested reads retained %d descriptors (baseline %d, now %d)", got-baseline, baseline, got)
+	}
+}
+
+// Only a line that starts with # is a comment, so an entry with a comment after its pattern is one
+// pattern that hides nothing its author meant; CommentedEntries finds those, and only those.
+func TestCommentedEntries(t *testing.T) {
+	data := []byte("# a whole-line comment\nprod.yml   # basename\nvault/\tthe folder # note\nissue#12.txt\n  # indented comment\nkeys/*.pem\n")
+	got := CommentedEntries(data)
+	want := []string{"prod.yml   # basename", "vault/\tthe folder # note"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("CommentedEntries = %q, want %q", got, want)
+	}
+	// and such an entry really does hide nothing: the pattern keeps its comment
+	g := ParseUserGlobs([]byte("prod.yml   # basename\n"))
+	if slices.Contains(g.Base, "prod.yml") {
+		t.Fatalf("a commented entry parsed as %q; the warning would be wrong", g.Base)
+	}
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, CoopIgnoreFile), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := RepoCommentedEntries(repo); !slices.Equal(got, want) {
+		t.Fatalf("RepoCommentedEntries = %q, want %q", got, want)
+	}
+	if got := RepoCommentedEntries(t.TempDir()); got != nil {
+		t.Fatalf("a repository without .coopignore reported %q", got)
 	}
 }

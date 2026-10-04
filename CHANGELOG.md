@@ -29,6 +29,10 @@
 - **Plainer claims.** The help header, README and docs describe the box as a sandbox that holds
   only your project, not one an agent "can't escape", and link what the agent can still reach.
 
+- **A commented `.coopignore` entry is flagged.** A launch warns when an entry has a comment after
+  its pattern (`prod.yml  # note`): only a line that starts with `#` is a comment, so such an entry
+  is one pattern that hides nothing. The README example puts its comments on their own lines.
+
 ## 10.1.2
 
 Changes since v8.1.0 include provider-client updates, `coop usage`, and the new controller-worker

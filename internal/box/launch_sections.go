@@ -151,6 +151,20 @@ func (s *launchSections) secrets(hidden int) {
 	ui.Pass("%s hidden from the box", ui.Count(hidden, "secret path"))
 }
 
+// coopignoreComments warns about .coopignore entries with a comment after the pattern: such an
+// entry is one pattern, comment and all, so it hides nothing its author meant to. Under Protecting
+// secrets in a narrated launch; a plain warning elsewhere, unless the run is quiet.
+func (s *launchSections) coopignoreComments(entries []string, quiet bool) {
+	for _, entry := range entries {
+		switch {
+		case s.on:
+			ui.Caution(".coopignore entry %q is one pattern, comment and all; put comments on their own line", entry)
+		case !quiet:
+			ui.Warn(".coopignore entry %q is one pattern, comment and all; put comments on their own line", entry)
+		}
+	}
+}
+
 // accountRow is one account a launch connects: the provider, the account, and whether its API key
 // is protected — kept on this computer — or it is a signed-in login. Names only: no credential value
 // ever reaches presentation.

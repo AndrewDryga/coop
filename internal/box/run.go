@@ -28,6 +28,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/shadowpath"
 	"github.com/AndrewDryga/coop/internal/taskchannel"
 	"github.com/AndrewDryga/coop/internal/ui"
 	"golang.org/x/sys/unix"
@@ -786,6 +787,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	} else if n > 0 && !spec.Quiet {
 		ui.Note("shadowed %d secret path(s)", n)
 	}
+	sections.coopignoreComments(shadowpath.RepoCommentedEntries(spec.Repo), spec.Quiet)
 	// The sibling-services compose file is NOT shadowed: an in-box agent may author it, but coop
 	// validates it host-side before auto-running it (ValidateComposeFile), so
 	// it can only ever declare a repo-scoped, loopback-only container — never host root. That
