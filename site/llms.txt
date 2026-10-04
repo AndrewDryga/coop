@@ -1,4 +1,4 @@
-coop — run a coding agent all night long in a box it can't escape.
+coop — run a coding agent all night long in a sandbox that holds only your project.
 
 Usage: coop <command> [<args>...]
 

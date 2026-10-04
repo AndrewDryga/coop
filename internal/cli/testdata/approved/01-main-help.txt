@@ -1,4 +1,4 @@
-coop v9.0.0-187-g1176bf4-dirty — run a coding agent all night long in a box it can't escape.
+coop v9.0.0-187-g1176bf4-dirty — run a coding agent all night long in a sandbox that holds only your project.
 
 Usage: coop <command> [<args>...]
 

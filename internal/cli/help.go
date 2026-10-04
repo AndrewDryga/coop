@@ -91,9 +91,9 @@ func renderMenu(p ui.Palette, cfg *config.Config, ref bool) string {
 		providers = append(providers, titleName(name))
 	}
 	if ref { // the reference omits the build version — its bytes must not depend on the tag/commit
-		fmt.Fprintf(&b, "%s — run a coding agent all night long in a box it can't escape.\n", p.Bold("coop"))
+		fmt.Fprintf(&b, "%s — run a coding agent all night long in a sandbox that holds only your project.\n", p.Bold("coop"))
 	} else {
-		fmt.Fprintf(&b, "%s %s — run a coding agent all night long in a box it can't escape.\n", p.Bold("coop"), resolveVersion())
+		fmt.Fprintf(&b, "%s %s — run a coding agent all night long in a sandbox that holds only your project.\n", p.Bold("coop"), resolveVersion())
 	}
 	// One blank line separates who this is from the usage contract; the GET STARTED
 	// block and every group below keep their own spacing.

@@ -26,6 +26,9 @@
 - **Loop report grammar.** A task the final review reopened once reads "was reopened once by the
   review", not "was reopened 1 times".
 
+- **Plainer claims.** The help header, README and docs describe the box as a sandbox that holds
+  only your project, not one an agent "can't escape", and link what the agent can still reach.
+
 ## 10.1.2
 
 Changes since v8.1.0 include provider-client updates, `coop usage`, and the new controller-worker

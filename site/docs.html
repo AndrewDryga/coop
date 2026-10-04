@@ -58,7 +58,7 @@
         <p class="side-group">The box</p>
         <ul role="list">
           <li><a href="#sandbox">The sandbox</a></li>
-          <li><a href="#secrets">Secrets stay out</a></li>
+          <li><a href="#secrets">Hiding secrets</a></li>
           <li><a href="#networking">Networking</a></li>
           <li><a href="#doctor">Prove it</a></li>
           <li><a href="#toolchain">Toolchain and services</a></li>
@@ -100,7 +100,7 @@
       <section class="doc-section" id="idea">
         <h2>The idea</h2>
         <p class="section-lead">Coding agents do their best work with the guardrails off, free to edit any file and run any command without stopping to ask. But the same freedom lets them read your SSH keys, upload your code or delete the wrong folder, and nobody can review every command an agent runs.</p>
-        <p>co:op takes the risk out of that freedom by giving the agent a box of its own: a disposable container that holds only the repo you're working on. Your home folder, SSH keys, cloud credentials and other projects aren't in it, and the repo's own secrets, like <code>.env</code> files and private keys, are emptied before the agent starts. Inside the box the agent can do anything; outside it, there's nothing for it to reach.</p>
+        <p>co:op contains that freedom in a box of its own: a disposable container that holds only the repo you're working on. Your home folder, SSH keys, cloud credentials and other projects aren't in it, and the repo's known secret files, like <code>.env</code> files and private keys, are emptied before the agent starts. Inside the box the agent can do anything; what it can still reach outside, this guide spells out section by section.</p>
         <p>Every way of running an agent uses that same box: an interactive session, a fork, an unattended loop, a role in a preset. The rest of this guide builds on it, one step at a time.</p>
         <p class="callout">One exception to keep in mind: an editor connected over ACP can act on your computer for the agent, with the editor's own permissions. <a href="#editors">Editors</a> explains that boundary.</p>
       </section>
@@ -174,7 +174,7 @@
       </section>
 
       <section class="doc-section" id="secrets">
-        <h2>Secrets stay out</h2>
+        <h2>Hiding secrets</h2>
         <p class="section-lead">Your repo is in the box, and repos hold secrets of their own: <code>.env</code> files, private keys, live API tokens. co:op hides those by name before the agent starts, and <code>coop check-secrets</code> finds the ones hiding inside ordinary files.</p>
         <p>Files and folders that look like secrets, such as <code>.env</code>, <code>*.pem</code>, <code>*.tfvars</code>, <code>secrets/</code>, <code>.ssh</code> and a long list of well-known names, are <strong>shadowed</strong>: each secret file is covered by an empty read-only file, and each secret folder by an empty read-only folder. The agent can see that they exist, but they're empty and can't be written. Templates (<code>*.example</code>, <code>*.sample</code>, <code>*.template</code>) stay visible on purpose, so the agent still learns the <em>shape</em> of your config.</p>
         <p>The built-in list can't know where <em>your</em> repo keeps its own secrets, like live keys in <code>config/stripe.live.json</code>. List those in a <code>.coopignore</code> file at the repo root, one pattern per line, and they're hidden the same way. Comments go on their own lines:</p>

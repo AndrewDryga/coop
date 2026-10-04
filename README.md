@@ -4,7 +4,7 @@
 
 <img src=".github/assets/coop.png" alt="Coop" width="180">
 
-**Run a coding agent on your real repos every day — in a box it can't escape, with your secrets out of its reach, and with a whip that will make them work all night.**
+**Run a coding agent on your real repos every day — in a sandbox that holds only your project, with its known secret files hidden, and with a whip that will make them work all night.**
 
 [![CI](https://github.com/AndrewDryga/coop/actions/workflows/ci.yml/badge.svg)](https://github.com/AndrewDryga/coop/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/AndrewDryga/coop?sort=semver)](https://github.com/AndrewDryga/coop/releases/latest)
@@ -16,7 +16,8 @@
 Coding agents are most useful with the brakes off (`--dangerously-skip-permissions`,
 `--yolo`) — and that's exactly when you don't want them loose on your laptop.
 Coop runs them in a disposable container that mounts only the repo you're working
-on, shadows its secrets, and can't reach your home dir, SSH keys, or other projects.
+on and hides its known secret files; your home dir, SSH keys and other projects aren't
+mounted (the *Blast radius* note below lists what the agent's own sign-in home still holds).
 One command, installed once; the same box drives Claude, Codex, Gemini, and Grok.
 
 ```bash
@@ -24,7 +25,7 @@ cd ~/code/some-repo && coop claude     # a sandboxed Claude, brakes off, secrets
 ```
 
 > **📖 New here? Start at [coop.dryga.com](https://coop.dryga.com)** — the friendly guide, with
-> the *why* behind each feature, walkthroughs, and live terminal demos. This README is the
+> the *why* behind each feature, walkthroughs, and terminal scenes drawn from real output. This README is the
 > quick reference; the site is the readable docs.
 
 It's the working tooling behind two write-ups:
@@ -151,8 +152,8 @@ coop run -- npm test                          # run any command in the box
 
 Point it at a repo and go. Each agent launches with its own "don't stop to ask" flags
 (`--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and-sandbox`,
-`--yolo`), all inside the same sandbox. The worst an off-the-rails agent can do is
-trash one repo you can restore from git.
+`--yolo`), all inside the same sandbox. An agent that goes off the rails works on the
+repo it was given, which you can restore from git, not on the rest of your machine.
 
 Anything after the agent name is passed through to it, on top of those flags — so
 `coop claude --continue` resumes Claude's last session, still sandboxed. (Codex is the
@@ -262,7 +263,7 @@ spelled out here (there's room to render them).
 | Command | What it does |
 |---|---|
 | `coop doctor` | [prove isolation](#prove-it-coop-doctor) — attack the box and check it holds |
-| `coop check-secrets [--include-ignored]` | scan committed files for secrets by content — `--include-ignored` widens to the [whole visible tree](#secrets-never-enter-the-box) (exit 1 on a hit, or on a file it could not read); review a false positive into [`.coopsecretsignore`](#secrets-never-enter-the-box) |
+| `coop check-secrets [--include-ignored]` | scan committed files for secrets by content — `--include-ignored` widens to the [whole visible tree](#hiding-secrets-from-the-box) (exit 1 on a hit, or on a file it could not read); review a false positive into [`.coopsecretsignore`](#hiding-secrets-from-the-box) |
 
 **Set up & maintain**
 
@@ -286,7 +287,7 @@ In a normal run, the repo is bind-mounted into the box at the same path it has o
 the agent edits real files and you see them live in your editor. Everything else —
 your home dir, SSH keys, the rest of the disk — simply isn't in the container.
 
-### Secrets never enter the box
+### Hiding secrets from the box
 
 `.env`, `*.tfvars`, `*.pem`, `secrets/`, `.ssh`, and friends are shadowed: a read-only empty
 directory over secret directories, a read-only empty file over secret files. Templates
@@ -2162,7 +2163,7 @@ when a tool needs current joined state.
 | **An editor (ACP) session misbehaves** | Turn on wire tracing: set `COOP_ACP_TRACE=1` in the agent server's `env`, or `touch ~/.config/coop/acp-debug` (works on an already-running server). coop appends the editor↔box traffic to `~/.config/coop/acp-trace-<pid>.log` (size-bounded, auto-pruned). It carries prompts and file contents — treat it as sensitive. |
 | **A loop's live view misrenders provider activity** | Run it with `COOP_STREAM_TRACE=1`; each streaming attempt writes byte-exact raw JSONL plus Coop's rendered lines under `.agent/runs/<run>.streams/`. The files may contain prompts, tool inputs, and model output — treat them as sensitive. |
 | **A merge refuses** | Dirty tree → commit/stash first. Policy flagged a secret/large file → review, then `--force`. Non-interactive shell → pass `--yes`. Gate (`COOP_GATE`) went red on the rebased tree → it rolled back; fix and re-run. |
-| **Secrets still visible / a custom secret isn't hidden** | Run `coop doctor` to see what's shadowed. Add repo-specific paths to a `.coopignore` (see [Secrets never enter the box](#secrets-never-enter-the-box)). |
+| **Secrets still visible / a custom secret isn't hidden** | Run `coop doctor` to see what's shadowed. Add repo-specific paths to a `.coopignore` (see [Hiding secrets from the box](#hiding-secrets-from-the-box)). |
 | **"box image is stale … run 'coop build'"** | You changed `.agent/Dockerfile` or `.tool-versions` since the image was built. `coop build` to rebuild; the warning clears once the image matches. |
 | **A scaffolded `db` (postgres:18) exits 1 on `coop up`** | Scaffolds from before this fix mounted `pgdata` at `/var/lib/postgresql/data`, which postgres 18+ refuses (it wants a single mount at `/var/lib/postgresql`). Edit `.agent/compose.yml` and move the mount up one level. New scaffolds are already fixed. |
 
