@@ -1,1602 +1,596 @@
 <!doctype html>
 <html lang="en">
-    <head>
-        <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Docs — coop</title>
-        <meta
-            name="description"
-            content="A friendly guide to running coding agents you don't fully trust — safely, and at scale. The idea, install, the sandbox, the loop, forks, presets, and more."
-        />
-        <link rel="canonical" href="https://coop.dryga.com/docs.html" />
-        <meta name="theme-color" content="#0e1014" />
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1014">
+  <title>Docs · co:op</title>
+  <meta name="description" content="How to run coding agents in co:op's sandbox: install, secrets, forks, presets, the loop, editors and configuration.">
+  <link rel="canonical" href="https://coop.dryga.com/docs.html">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="co:op">
+  <meta property="og:url" content="https://coop.dryga.com/docs.html">
+  <meta property="og:title" content="co:op docs">
+  <meta property="og:description" content="How to run coding agents in co:op's sandbox: install, secrets, forks, presets, the loop, editors and configuration.">
+  <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="You need a sandbox: a home folder where only the project sits inside the sandbox, secrets read as empty, and only the AI provider is reachable.">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/img/favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="manifest" href="site.webmanifest">
+  <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/site.css?v=20261004">
+  <script src="assets/js/site.js?v=20261004" defer></script>
+  <script src="assets/js/analytics.js?v=20261004" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
 
-        <!-- icons + PWA manifest -->
-        <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml" />
-        <link rel="icon" href="assets/img/favicon.ico" sizes="32x32" />
-        <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png" />
-        <link rel="manifest" href="site.webmanifest" />
+  <header class="wrap nav">
+    <a class="brand" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="32" height="32" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-optional" href="./#sandbox">Sandbox</a>
+      <a class="nav-optional" href="./#features">Features</a>
+      <a href="docs.html" aria-current="page">Docs</a>
+      <a class="nav-optional" href="https://github.com/AndrewDryga/coop">GitHub</a>
+      <a class="button button-small" href="./#start">Install</a>
+    </nav>
+  </header>
 
-        <!-- Open Graph -->
-        <meta property="og:type" content="article" />
-        <meta property="og:site_name" content="coop" />
-        <meta property="og:url" content="https://coop.dryga.com/docs.html" />
-        <meta
-            property="og:title"
-            content="coop docs — run coding agents you don't fully trust, safely"
-        />
-        <meta
-            property="og:description"
-            content="A friendly guide to running coding agents you don't fully trust — safely, and at scale. The idea, install, the sandbox, the loop, forks, presets, and more."
-        />
-        <meta
-            property="og:image"
-            content="https://coop.dryga.com/assets/img/og-image.png"
-        />
-        <meta property="og:image:type" content="image/png" />
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta
-            property="og:image:alt"
-            content="The coop wordmark and tagline beside a terminal draining an overnight task queue."
-        />
-        <meta property="og:locale" content="en_US" />
+  <div class="wrap docs">
+    <details class="docs-side" open>
+      <summary>On this page</summary>
+      <nav aria-label="On this page">
+          <p class="side-group">Start here</p>
+          <ul role="list">
+            <li><a href="#idea">The idea</a></li>
+            <li><a href="#install">Install</a></li>
+            <li><a href="#quickstart">Quickstart</a></li>
+          </ul>
+          <p class="side-group">The box</p>
+          <ul role="list">
+            <li><a href="#sandbox">The sandbox</a></li>
+            <li><a href="#secrets">Secrets stay out</a></li>
+            <li><a href="#networking">Networking</a></li>
+            <li><a href="#doctor">Prove it</a></li>
+          </ul>
+          <p class="side-group">Working with agents</p>
+          <ul role="list">
+            <li><a href="#run">Run an agent</a></li>
+            <li><a href="#forks">Forks</a></li>
+            <li><a href="#peers">Second opinions</a></li>
+            <li><a href="#credentials">Credentials and failover</a></li>
+            <li><a href="#models">Pick the model</a></li>
+            <li><a href="#presets">Presets</a></li>
+            <li><a href="#evals">Evaluations</a></li>
+          </ul>
+          <p class="side-group">Run unattended</p>
+          <ul role="list">
+            <li><a href="#loop">The loop</a></li>
+            <li><a href="#parallel-forks">Parallel forks</a></li>
+          </ul>
+          <p class="side-group">Integrate</p>
+          <ul role="list">
+            <li><a href="#editors">Editors</a></li>
+            <li><a href="#toolchain">Toolchain and services</a></li>
+            <li><a href="#mcp-remote">MCP and remote sessions</a></li>
+          </ul>
+          <p class="side-group">Reference</p>
+          <ul role="list">
+            <li><a href="#config">Configuration</a></li>
+            <li><a href="#troubleshooting">Troubleshooting</a></li>
+          </ul>
+      </nav>
+    </details>
 
-        <!-- Twitter / X -->
-        <meta name="twitter:card" content="summary_large_image" />
-        <meta
-            name="twitter:title"
-            content="coop docs — run coding agents you don't fully trust, safely"
-        />
-        <meta
-            name="twitter:description"
-            content="A friendly guide to running coding agents you don't fully trust — safely, and at scale. The idea, install, the sandbox, the loop, forks, presets, and more."
-        />
-        <meta
-            name="twitter:image"
-            content="https://coop.dryga.com/assets/img/og-image.png"
-        />
-        <meta
-            name="twitter:image:alt"
-            content="The coop wordmark and tagline beside a terminal draining an overnight task queue."
-        />
+    <main id="main" class="docs-main" tabindex="-1">
+      <h1>Documentation</h1>
+      <p class="lead">How to run coding agents you don't fully trust, safely and at scale. Each part explains what it does and why it works that way.</p>
 
-        <link rel="stylesheet" href="assets/vendor/asciinema-player.css" />
-        <link rel="stylesheet" href="assets/css/site.css?v=20260926" />
-    </head>
-    <body>
-        <header class="nav">
-            <div class="container nav-inner">
-                <a class="brand" href="./"
-                    ><span class="wordmark"
-                        >co<span class="colon">:</span>op</span
-                    ></a
-                >
-                <button class="nav-toggle" aria-label="Menu" aria-expanded="false" aria-controls="primary-nav" data-nav-toggle>
-                    ☰
-                </button>
-                <nav class="nav-links" id="primary-nav" data-nav>
-                    <a href="index.html#features">Features</a>
-                    <a href="index.html#security">Security</a>
-                    <a href="docs.html">Docs</a>
-                    <a href="index.html#install">Install</a>
-                    <a
-                        class="gh"
-                        href="https://github.com/AndrewDryga/coop"
-                        target="_blank"
-                        rel="noopener"
-                        >GitHub ↗</a
-                    >
-                    <a class="nav-cta" href="#quickstart">Get started</a>
-                </nav>
-            </div>
-        </header>
+      <section class="doc-section" id="idea">
+        <h2>The idea</h2>
+        <p class="section-lead">Coding agents do their best work with the guardrails off, free to edit any file and run any command without stopping to ask. That's exactly when you don't want one loose on your laptop.</p>
+        <p>In a terminal or loop run, co:op runs the agent in a disposable container that sees only the repo you're working on. Your home folder, SSH keys, cloud credentials and other projects aren't in it. The repo's own secrets, like <code>.env</code> files, private keys and a <code>secrets/</code> folder, are emptied before the agent starts.</p>
+        <div class="why">
+          <span class="why-label">Why it's built this way</span>
+          <p>In terminal and loop runs, the container limits what the agent can reach to its mounted repo. An editor session over ACP also passes the agent's requests for files and terminals on your computer to the editor, so read the <a href="#editors">editor security note</a> before you use one.</p>
+        </div>
+        <p>The same box runs interactive sessions, forks, unattended loops and preset roles. With ACP, the editor's own permissions are a separate boundary.</p>
+      </section>
 
-        <div class="container docs">
-            <details class="docs-side" open>
-                <summary>On this page</summary>
-                <h5>Start here</h5>
-                <a href="#idea">The idea</a>
-                <a href="#install">Install</a>
-                <a href="#quickstart">Quickstart</a>
-                <h5>The box</h5>
-                <a href="#sandbox">The sandbox</a>
-                <a href="#secrets">Secrets stay out</a>
-                <a href="#doctor">Prove it</a>
-                <h5>Working with agents</h5>
-                <a href="#run">Run an agent</a>
-                <a href="#forks">Forks</a>
-                <a href="#peers">Second opinions</a>
-                <a href="#credentials">Credentials &amp; failover</a>
-                <a href="#models">Pick the model</a>
-                <a href="#presets">Presets</a>
-                <a href="#evals">Evaluations</a>
-                <h5>Run unattended</h5>
-                <a href="#loop">The loop</a>
-                <a href="#parallel-forks">Parallel forks</a>
-                <h5>Integrate</h5>
-                <a href="#editors">Editors</a>
-                <a href="#toolchain">Toolchain &amp; services</a>
-                <a href="#mcp-remote">MCP &amp; remote sessions</a>
-                <h5>Reference</h5>
-                <a href="#config">Configuration</a>
-                <a href="#troubleshooting">Troubleshooting</a>
-            </details>
+      <section class="doc-section" id="install">
+        <h2>Install</h2>
+        <p class="section-lead">One binary: no Go toolchain, no clone. co:op runs on macOS and Linux (amd64 or arm64) with Git and a container runtime.</p>
+        <pre class="code">
+<span class="k">curl</span> -fsSL https://raw.githubusercontent.com/<wbr>AndrewDryga/coop/main/<wbr>install.sh | sh</pre>
+        <p>This puts <code>coop</code> in <code>~/.local/bin</code>. If a container runtime is installed, it also builds the sandbox image and runs <code>coop doctor</code>. If not, run that step yourself once you have one:</p>
+        <pre class="code">
+<span class="k">coop</span> build --egress open <span class="o">&amp;&amp;</span> <span class="k">coop</span> doctor</pre>
+        <p>Docker is the default and fully supported runtime. You can choose Apple <a href="https://github.com/apple/container">container</a> (macOS 26+), but not every co:op feature is qualified on it yet. co:op detects both and prefers Docker. The <code>coop</code> binary is fully static, with no other dependencies.</p>
+        <p class="callout">The one-line command trusts GitHub and the repository's <code>main</code> branch, since it runs the downloaded script. The script always checks the release checksum with a local SHA-256 tool and stops if it can't. With <a href="https://github.com/sigstore/cosign">cosign</a> on your <code>PATH</code>, it also checks that the checksum came from the exact release workflow and tag. To verify the download before running anything, follow the <a href="https://github.com/AndrewDryga/coop#verifying-a-download">manual steps</a>. To build from source: <code>git clone https://github.com/AndrewDryga/coop &amp;&amp; cd coop &amp;&amp; make install</code>.</p>
+      </section>
 
-            <main class="docs-main">
-                <h1>Documentation</h1>
-                <p class="lead">
-                    A guide to running coding agents you don't fully trust —
-                    safely, and at scale. It explains not just <em>how</em> each
-                    piece works, but <em>why</em> it works that way.
-                </p>
+      <section class="doc-section" id="quickstart">
+        <h2>Quickstart</h2>
+        <p class="section-lead">The shortest path from nothing to a sandboxed agent.</p>
+        <pre class="code">
+<span class="k">cd</span> ~/code/your-repo  <span class="t"># 1. any Git repo</span>
+<span class="k">coop</span> login claude    <span class="t"># 2. sign in once</span>
+<span class="k">coop</span> init            <span class="t"># 3. set up the project</span>
+<span class="k">coop</span> claude          <span class="t"># 4. an agent in the box, secrets hidden</span></pre>
+        <p>That's the everyday flow. For a bigger or riskier change, hand the work to a fork instead, and review the result like a pull request. Before you start the fork, fill in the generated <code>task.md</code>: the problem, what done means, the approach and the subtasks.</p>
+        <pre class="code">
+<span class="k">coop</span> tasks add <span class="s">"Add --json"</span>      <span class="t"># 1. queue the work as a task</span>
+<span class="k">coop</span> fork feature claude --loop  <span class="t"># 2. a fork works on it</span>
+<span class="k">coop</span> fork review feature         <span class="t"># 3. review it like a PR</span>
+<span class="k">coop</span> fork merge feature          <span class="t"># 4. merge it into your branch</span></pre>
+        <p>Arguments after the agent's name go to the agent, so <code>coop claude --continue</code> resumes your last session, still in the box. co:op keeps its own options, like <code>--peer</code> and <code>--egress</code>; put them after <code>--</code> to pass them to the agent instead. The rest of this guide goes feature by feature.</p>
+      </section>
 
-                <section class="doc-section" id="idea">
-                    <h2>The idea</h2>
-                    <p class="section-lead">
-                        Coding agents are at their best with the guardrails off
-                        — free to edit any file and run any command without
-                        stopping to ask. That's also exactly when you don't want
-                        one running loose on your laptop.
-                    </p>
-                    <p>
-                        In a terminal or loop run, Coop runs the agent inside a
-                        disposable container that can only see the one repo
-                        you're working on. Your home directory, SSH keys, cloud
-                        credentials, and every other project aren't mounted
-                        there. The repo's own secrets — <code>.env</code> files,
-                        private keys, a <code>secrets/</code> folder — are
-                        blanked out before the agent ever starts.
-                    </p>
-                    <div class="why">
-                        <span class="why-label">Why it's built this way</span>
-                        <p>
-                            For terminal and loop runs, the container limits
-                            the agent's direct filesystem access to its mounted
-                            repo. An ACP editor session also forwards requests
-                            for host-side file and terminal operations; read the
-                            <a href="#editors">editor security caveat</a> before
-                            using that integration.
-                        </p>
-                    </div>
-                    <p>
-                        That box powers interactive runs, forks, unattended
-                        loops, and specialist roles. Editor-host permissions are
-                        a separate boundary when you use ACP.
-                    </p>
-                </section>
+      <section class="doc-section" id="sandbox">
+        <h2>The sandbox</h2>
+        <p class="section-lead">What's inside the box, what's left out on purpose, and why that line is the whole security model.</p>
+        <p>In a normal run, your repo is mounted into the container at the <em>same path</em> it has on your machine. The agent edits your real files, so you see changes land live in your editor, and absolute paths match between co:op, the loop and your IDE. Apart from the agent's own sign-in folder and a shared cache for dependencies, nothing else from your disk is in the container.</p>
+        <h3>Your Git identity, not the box's</h3>
+        <p>The container has no <code>~/.gitconfig</code> of its own, so co:op mounts a trimmed one: your name and email (commits are authored as <em>you</em>), your global gitignore, and <code>commit.gpgsign=false</code>. Your signing key never enters the box, so commits made in it are <em>authored</em> by you but <em>unsigned</em>.</p>
+        <p>If you sign your commits (<code>commit.gpgsign=true</code> in your global Git config), co:op signs the box's commits on your computer, where your key lives: when an interactive run exits, after each <code>coop loop</code> cycle, and when <code>coop fork merge</code> merges a fork. Commits from an editor session aren't signed for you; <code>coop sign</code> signs the current branch's unpushed commits. Your history ends up signed by <em>you</em>, so a protected <code>main</code> that requires signatures accepts an agent's work. <a href="#forks">More on forks below.</a></p>
+      </section>
 
-                <section class="doc-section" id="install">
-                    <h2>Install</h2>
-                    <p class="section-lead">
-                        One binary, no Go toolchain, no clone. A container
-                        runtime plus standard download and SHA-256 tools are the
-                        only requirements.
-                    </p>
-                    <pre
-                        class="code"
-                    ><span class="k">curl</span> -fsSL https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh | sh</pre>
-                    <p>
-                        This drops <code>coop</code> into
-                        <code>~/.local/bin</code>, and — if a container runtime
-                        is already installed — builds the sandbox image and runs
-                        <code>coop doctor</code> for you. If no runtime was
-                        found, do that one step yourself once a runtime is in
-                        place:
-                    </p>
-                    <pre
-                        class="code"
-                    ><span class="k">coop</span> build <span class="t">&amp;&amp;</span> <span class="k">coop</span> doctor</pre>
-                    <p>
-                        Docker is the fully qualified default runtime. Apple
-                        <a
-                            href="https://github.com/apple/container"
-                            target="_blank"
-                            rel="noopener"
-                            >container</a
-                        >
-                        (macOS 26+) can be selected, but its full Coop feature
-                        set is not yet qualified. Coop auto-detects both and
-                        prefers Docker. The <code>coop</code> binary itself is
-                        fully static with no other dependencies.
-                    </p>
-                    <div class="note">
-                        The one-line command trusts GitHub and the repository's
-                        mutable <code>main</code> branch because it executes the
-                        downloaded script first. That script always requires a
-                        release checksum and a local SHA-256 tool; missing
-                        verification stops the install. With
-                        <a
-                            href="https://github.com/sigstore/cosign"
-                            target="_blank"
-                            rel="noopener"
-                            >cosign</a
-                        >
-                        on your <code>PATH</code> it also authenticates the
-                        checksum to the exact release workflow and tag. For
-                        pre-execution artifact verification, follow the
-                        <a
-                            href="https://github.com/AndrewDryga/coop#verifying-a-download"
-                            target="_blank"
-                            rel="noopener"
-                            >manual steps</a
-                        >. Prefer to build from source?
-                        <code
-                            >git clone https://github.com/AndrewDryga/coop &amp;&amp; cd coop &amp;&amp; make install</code
-                        >
-                        works too.
-                    </div>
-                </section>
+      <section class="doc-section" id="secrets">
+        <h2>Secrets stay out</h2>
+        <p class="section-lead">Files that look like secrets are hidden from the agent by name. Secrets inside ordinary files aren't, so <code>coop check-secrets</code> finds them for you to move out.</p>
+        <p>Files and folders that look like secrets, such as <code>.env</code>, <code>*.pem</code>, <code>*.tfvars</code>, <code>secrets/</code>, <code>.ssh</code> and a long list of well-known names, are <strong>shadowed</strong>: an empty read-only folder covers each secret folder, and an empty read-only file covers each secret file. The agent sees that the file exists, but it's empty and can't be written. Templates (<code>*.example</code>, <code>*.sample</code>, <code>*.template</code>) stay visible on purpose, so the agent still learns the <em>shape</em> of your config.</p>
+        <p class="callout callout-warn"><strong>The boundary you control is <code>.coopignore</code>, not <code>.gitignore</code>.</strong> A normal run mounts your <em>whole working tree</em>, so a secret Git ignores but that is still on disk (a real <code>serviceAccount.json</code>, say) is visible to the agent. Ignoring it in Git does <em>not</em> hide it. Anything that must live in the tree but stay secret belongs in <code>.coopignore</code>.</p>
+        <p>The built-in list can't know <em>your</em> repo keeps live keys in <code>config/stripe.live.json</code>. Add a <code>.coopignore</code> at the repo root, one pattern per line, and those paths are hidden everywhere in the box. Comments go on their own lines:</p>
+        <pre class="code">
+<span class="t whole"># a file name, hidden at any depth</span>
+prod.yml
+<span class="t whole"># a path from the repo root</span>
+config/stripe.live.json
+<span class="t whole"># a folder, hidden whole</span>
+vault/</pre>
+        <p>That covers secrets you can name. But a token can also sit <em>inside</em> an ordinary file, where the box can read it. <code>coop check-secrets</code> scans the files you'd commit for known provider token formats and long random-looking values assigned to secret-named keys, and reports each as <code>file:line</code>. Add <code>--include-ignored</code> to scan the files Git ignores too, which the box can still read. It exits non-zero when it finds something, so it works as a pre-flight or CI check; a false positive you've reviewed goes in <code>.coopsecretsignore</code>.</p>
+        <!-- gen_site: check-secrets --><figure class="window" aria-label="coop check-secrets finds an OpenAI API key in a source file, says how to remove it, and how to mark a false positive"><p class="window-bar" aria-hidden="true"><span class="window-dots"><i></i><i></i><i></i></span>coop check-secrets</p><pre><code><span class="line cmdline"><span class="path">~/code/shop</span> <span class="prompt">$ </span>coop check-secrets</span><span class="line"><span class="fail">✗</span> 1 possible secret found</span><span class="line"></span><span class="line">  config/client.go:12</span><span class="line">    OpenAI API key</span><span class="line"></span><span class="line">Remove real secrets from files you intend to commit.</span><span class="line">If this is a false positive, add this entry to .coopsecretsignore and replace &lt;reason&gt; with an explanation:</span><span class="line"></span><span class="line">  <span class="dim"># config/client.go — OpenAI API key</span></span><span class="line">  fp-v1:b2758b3a796f81888b6f896f9c420ee855608fdcb828dfc2b83f736768171a6c <span class="dim"># &lt;reason&gt;</span></span></code></pre></figure><!-- /gen_site -->
+      </section>
 
-                <section class="doc-section" id="quickstart">
-                    <h2>Quickstart</h2>
-                    <p class="section-lead">
-                        The shortest path from nothing to a sandboxed agent that
-                        lands reviewed work.
-                    </p>
-                    <pre
-                        class="code"
-                    ><span class="k">cd</span> ~/code/your-repo          <span class="t"># 1. any git repo</span>
-<span class="k">coop</span> doctor                  <span class="t"># 2. prove the isolation holds</span>
-<span class="k">coop</span> login claude            <span class="t"># 3. sign in once — paste a code, no browser</span>
-<span class="k">coop</span> claude                  <span class="t"># 4. a sandboxed agent, brakes off, secrets hidden</span></pre>
-                    <p>
-                        That's the whole everyday flow. When you'd rather not
-                        work in your live checkout — for a bigger or riskier
-                        change — hand it to a fork instead and review the result
-                        like a PR:
-                    </p>
-                    <p>
-                        Before starting the fork, complete the generated
-                        <code>task.md</code> with the problem, completion criteria,
-                        approach, and checkable subtasks.
-                    </p>
-                    <pre
-                        class="code"
-                    ><span class="k">coop</span> tasks add "wire up --json" <span class="t"># 1. queue the work as a task</span>
-<span class="k">coop</span> fork feature claude --loop <span class="t"># 2. a fork works the queue in its own clone…</span>
-<span class="k">coop</span> fork review feature        <span class="t"># 3. …you read the diff like a PR…</span>
-<span class="k">coop</span> fork merge feature         <span class="t"># 4. …and land it on your branch</span></pre>
-                    <p>
-                        Anything you type after the agent's name is passed
-                        straight through to it, so
-                        <code>coop claude --continue</code> resumes the last
-                        session, still sandboxed. From here, the rest of this
-                        guide goes feature by feature — but you already know
-                        enough to be useful.
-                    </p>
-                </section>
+      <section class="doc-section" id="networking">
+        <h2>Networking</h2>
+        <p class="section-lead">A filtered box reaches its AI provider and the destinations you approve. Everything else is blocked, for every tool in the box.</p>
+        <p><code>coop init</code> sets a new project to filtered networking (<code>egress: filtered</code> in <code>.agent/project.yaml</code>). The box then reaches its provider's own endpoints, like <code>api.anthropic.com</code> for Claude, and the destinations your project asks for once you approve them. The block works on the network itself, not through a proxy setting, so <code>curl</code>, an SDK and any subprocess hit the same wall.</p>
+        <p>To let the box reach more, add a rule under <code>box.egress_rules</code> in <code>.agent/project.yaml</code>, then approve it:</p>
+        <pre class="code">
+box:
+  egress: filtered
+  egress_rules:
+    - to: {domain: "docs.example.com"}
+      protocol: tls
+      ports: [443]</pre>
+        <pre class="code">
+<span class="k">coop</span> approve              <span class="t"># review and approve requests</span>
+<span class="k">coop</span> net                  <span class="t"># what a new run here can reach</span>
+<span class="k">coop</span> net inspect          <span class="t"># a run's connections and blocks</span>
+<span class="k">coop</span> net blocked &lt;host&gt;   <span class="t"># how to allow a blocked destination</span></pre>
+        <p>A rule takes effect only after you approve it in your terminal, so an agent can't widen its own access by editing the file. The other settings are <code>open</code> (everything) and <code>offline</code> (no network); <code>open</code> needs your approval too. With an API key, filtered networking also keeps the real key outside the box: the agent gets a stand-in that works only for that run.</p>
+        <p>The first filtered run on a computer checks once that the host can enforce the rules; <code>coop net setup</code> does it ahead of time. The <a href="https://github.com/AndrewDryga/coop/blob/main/docs/networking.md">networking guide</a> lists every kind of rule and what each provider can reach.</p>
+      </section>
 
-                <section class="doc-section" id="sandbox">
-                    <h2>The sandbox</h2>
-                    <p class="section-lead">
-                        What's inside the box, what's deliberately left out, and
-                        why that line is the entire security model.
-                    </p>
-                    <p>
-                        In a normal run, your repo is bind-mounted into the container at the
-                        <em>same path</em> it has on your machine. That matters
-                        for two reasons: the agent edits your real files (you
-                        watch the changes land live in your editor), and
-                        absolute paths line up between coop, the loop, and your
-                        IDE. Everything outside that one directory — the rest of
-                        your disk — is just not present in the container.
-                    </p>
-                    <h3>Your git identity, not the box's</h3>
-                    <p>
-                        The container has no <code>~/.gitconfig</code> of its
-                        own, so coop mounts a curated one: your name and email
-                        (commits are authored as <em>you</em>), your global
-                        gitignore, and <code>commit.gpgsign=false</code>. Your
-                        signing key never enters the box — so commits made inside
-                        it are <em>authored</em> as you but left <em>unsigned</em>.
-                    </p>
-                    <p>
-                        If you sign your commits
-                        (<code>commit.gpgsign=true</code> in your global git
-                        config), coop closes that gap on the host, where your key
-                        lives: it re-signs the box's commits with your key on
-                        every path that produces them — when an interactive or
-                        editor box exits, after each <code>coop loop</code> cycle,
-                        and as a fork lands through <code>coop fork merge</code>.
-                        You can also re-sign the current branch's unpushed range
-                        yourself with <code>coop sign</code>. Your history ends up
-                        signed by <em>you</em>, exactly as if you'd typed the
-                        commits — so a protected <code>main</code> that requires
-                        signatures accepts work an agent did in a box.
-                        <a href="#forks">More on forks below.</a>
-                    </p>
-                </section>
+      <section class="doc-section" id="doctor">
+        <h2>Prove it</h2>
+        <p class="section-lead">Security you can't verify is just a promise. <code>coop doctor</code> attacks its own box and shows you, check by check, that it holds.</p>
+        <p>Run it any time, and especially after you change your config or update co:op. It builds a throwaway project with test secrets, starts the box and tries to break out. It checks that the secrets read as empty and can't be written, that the box has no way into your computer and no root privileges, that offline mode is really offline, that tasks and credentials stay scoped to the run, and that a fork carries neither the secrets nor anywhere to push to. Your own files and credentials are never the test data. If a check fails, it tells you what to fix.</p>
+        <!-- gen_site: doctor --><figure class="window scene-replay scene-doctor" data-scene="doctor" aria-label="coop doctor tries to break out of its own box: secrets, host access, the network, tasks, credentials and the fork handoff, and all 35 checks pass"><p class="window-bar" aria-hidden="true"><span class="window-dots"><i></i><i></i><i></i></span>coop doctor</p><pre><code><span class="line cmdline" data-beat="0"><span class="path">~/code/shop</span> <span class="prompt">$ </span>coop doctor</span><span class="line" data-beat="1">Checking the Coop box on the Docker runtime</span><span class="line" data-beat="2"></span><span class="line strong" data-beat="2">Protecting secrets</span><span class="line" data-beat="2">  <span class="ok">✓</span> .env is hidden</span><span class="line" data-beat="2">  <span class="ok">✓</span> .envrc is hidden</span><span class="line" data-beat="2">  <span class="ok">✓</span> Terraform variable files are hidden</span><span class="line" data-beat="2">  <span class="ok">✓</span> Private keys are hidden</span><span class="line" data-beat="2">  <span class="ok">✓</span> Custom .coopignore paths are hidden</span><span class="line" data-beat="2">  <span class="ok">✓</span> Secret directories are empty</span><span class="line" data-beat="2">  <span class="ok">✓</span> Links cannot reveal hidden secrets</span><span class="line" data-beat="2">  <span class="ok">✓</span> Hidden secret files cannot be written</span><span class="line" data-beat="2">  <span class="ok">✓</span> Environment templates stay readable</span><span class="line" data-beat="2">  <span class="ok">✓</span> Source files stay readable</span><span class="line" data-beat="2">  <span class="ok">✓</span> The test secret cannot be read</span><span class="line" data-beat="3"></span><span class="line strong" data-beat="3">Host access and privileges</span><span class="line" data-beat="3">  <span class="ok">✓</span> The host Coop CLI is absent</span><span class="line" data-beat="3">  <span class="ok">✓</span> The host Docker socket is absent</span><span class="line" data-beat="3">  <span class="ok">✓</span> The box runs as a non-root user</span><span class="line" data-beat="3">  <span class="ok">✓</span> Linux capabilities are removed</span><span class="line" data-beat="3">  <span class="ok">✓</span> The process limit is enforced (4096)</span><span class="line" data-beat="4"></span><span class="line strong" data-beat="4">Offline access</span><span class="line" data-beat="4">  <span class="ok">✓</span> Offline mode leaves only the loopback interface</span><span class="line" data-beat="5"></span><span class="line strong" data-beat="5">Task access</span><span class="line" data-beat="5">  <span class="ok">✓</span> The task channel exposes only its 8 task tools</span><span class="line" data-beat="5">  <span class="ok">✓</span> Calls outside the task tools are refused</span><span class="line" data-beat="5">  <span class="ok">✓</span> Changes to a task held by another process are refused</span><span class="line" data-beat="5">  <span class="ok">✓</span> The assigned task can be updated</span><span class="line" data-beat="6"></span><span class="line strong" data-beat="6">Credentials and settings</span><span class="line" data-beat="6">  <span class="ok">✓</span> Claude's credential home is available</span><span class="line" data-beat="6">  <span class="ok">✓</span> Codex's credential home is hidden from Claude</span><span class="line" data-beat="6">  <span class="ok">✓</span> Gemini's credential home is hidden from Claude</span><span class="line" data-beat="6">  <span class="ok">✓</span> Claude's saved login takes priority over its environment key</span><span class="line" data-beat="6">  <span class="ok">✓</span> Codex's environment key is hidden from Claude</span><span class="line" data-beat="6">  <span class="ok">✓</span> Gemini's environment key is hidden from Claude</span><span class="line" data-beat="6">  <span class="ok">✓</span> The box can write its settings directory</span><span class="line" data-beat="7"></span><span class="line strong" data-beat="7">Fork handoff</span><span class="line" data-beat="7">  <span class="ok">✓</span> .env is absent from the clone</span><span class="line" data-beat="7">  <span class="ok">✓</span> .envrc is absent from the clone</span><span class="line" data-beat="7">  <span class="ok">✓</span> Secret directories are absent from the clone</span><span class="line" data-beat="7">  <span class="ok">✓</span> Private keys are absent from the clone</span><span class="line" data-beat="7">  <span class="ok">✓</span> Tracked source files are present in the clone</span><span class="line" data-beat="7">  <span class="ok">✓</span> The test secret is absent from the clone</span><span class="line" data-beat="7">  <span class="ok">✓</span> The clone's origin is a local path</span><span class="line" data-beat="8"></span><span class="line" data-beat="8"><span class="ok">✓</span> All 35 checks passed</span></code></pre></figure><!-- /gen_site -->
+      </section>
 
-                <section class="doc-section" id="secrets">
-                    <h2>Secrets stay out</h2>
-                    <p class="section-lead">
-                        Two layers keep credentials away from the agent: secrets
-                        are hidden by name, and a content scan catches the ones
-                        hiding inside ordinary files.
-                    </p>
-                    <p>
-                        Files and folders that look like secrets —
-                        <code>.env</code>, <code>*.pem</code>,
-                        <code>*.tfvars</code>, <code>secrets/</code>,
-                        <code>.ssh</code>, and a long list of well-known names —
-                        are <strong>shadowed</strong>: an empty in-memory
-                        filesystem covers secret directories, and a blank
-                        read-only file covers secret files. The agent sees that
-                        the file exists, but it's empty and can't be written.
-                        Templates (<code>*.example</code>,
-                        <code>*.sample</code>, <code>*.template</code>) stay
-                        visible on purpose, so the agent can still learn the
-                        <em>shape</em> of your config.
-                    </p>
-                    <div class="note warn">
-                        <b
-                            >The boundary you control is
-                            <code>.coopignore</code>, not
-                            <code>.gitignore</code>.</b
-                        >
-                        A normal run mounts your <em>whole working tree</em>, so
-                        a secret that's gitignored-but-still-on-disk (a real
-                        <code>serviceAccount.json</code>, say) is fully visible
-                        to the agent — gitignoring it does <em>not</em> hide it.
-                        Anything that must live in the tree but stay secret
-                        belongs in <code>.coopignore</code>.
-                    </div>
-                    <p>
-                        The built-in list can't know <em>your</em> repo holds a
-                        <code>config/credentials.yaml</code>. Drop a
-                        <code>.coopignore</code> at the repo root — one pattern
-                        per line — and those paths are hidden everywhere the box
-                        can see:
-                    </p>
-                    <pre
-                        class="code"
-                    >prod.yml                 <span class="t"># basename — matched at any depth</span>
-config/credentials.yaml  <span class="t"># a slash makes it a repo-relative path</span>
-vault/                   <span class="t"># a directory — hidden whole</span></pre>
-                    <p>
-                        That handles secrets identified by their name. But a
-                        token can also hide <em>inside</em> an ordinary file.
-                        <code>coop check-secrets</code> reads your files looking
-                        for secret-shaped content — known provider token formats
-                        and high-entropy strings — and reports each as
-                        <code>file:line</code>, exiting non-zero on a hit so it
-                        doubles as a pre-flight or CI gate. The same scan runs
-                        automatically every time you merge a fork.
-                    </p>
-                    <figure class="cast-figure">
-                        <div class="term">
-                            <div class="term-bar">
-                                <span class="dot r"></span
-                                ><span class="dot y"></span
-                                ><span class="dot g"></span
-                                ><span class="title">coop check-secrets</span>
-                            </div>
-                            <div class="term-body">
-                                <div
-                                    class="cast"
-                                    data-cast="casts/secrets.cast"
-                                ></div>
-                            </div>
-                        </div>
-                    </figure>
-                </section>
+      <section class="doc-section" id="run">
+        <h2>Run an agent</h2>
+        <p class="section-lead">The everyday command: an agent in your repo, in the box, with no permission prompts.</p>
+        <pre class="code">
+<span class="k">coop</span> claude           <span class="t"># Claude Code, no permission prompts</span>
+<span class="k">coop</span> codex            <span class="t"># the same box, with Codex</span>
+<span class="k">coop</span> gemini           <span class="t"># or Gemini</span>
+<span class="k">coop</span> grok             <span class="t"># or Grok</span>
+<span class="k">coop</span> shell            <span class="t"># a shell in the box, to look around</span>
+<span class="k">coop</span> run -- npm test  <span class="t"># run one command in the box</span></pre>
+        <div class="why">
+          <span class="why-label">Why skipping the prompts is safe here</span>
+          <p>Each agent starts with its most autonomous flags on purpose. Outside a sandbox that's reckless; inside one it's the point. The agent doesn't stop to ask at every step, and the box keeps it away from anything that matters.</p>
+        </div>
+        <!-- gen_site: claude --><figure class="window" aria-label="coop claude hides two secret paths, connects your account, allows only Anthropic's endpoints, then starts Claude Code"><p class="window-bar" aria-hidden="true"><span class="window-dots"><i></i><i></i><i></i></span>coop claude</p><pre><code><span class="line cmdline"><span class="path">~/code/shop</span> <span class="prompt">$ </span>coop claude</span><span class="line strong">Protecting secrets</span><span class="line">  <span class="ok">✓</span> 2 secret paths hidden from the box</span><span class="line"></span><span class="line strong">Connecting account</span><span class="line">  <span class="ok">✓</span> Claude (default) · Signed in</span><span class="line"></span><span class="line strong">Configuring network access</span><span class="line">  <span class="ok">✓</span> Anthropic endpoints allowed</span><span class="line">  <span class="ok">✓</span> Everything else blocked</span><span class="line"></span><span class="line strong">Starting Claude Code</span></code></pre></figure><!-- /gen_site -->
+      </section>
 
-                <section class="doc-section" id="doctor">
-                    <h2>Prove it</h2>
-                    <p class="section-lead">
-                        Security you can't verify is just a promise.
-                        <code>coop doctor</code> attacks its own box and shows
-                        you, check by check, that it holds.
-                    </p>
-                    <p>
-                        Run it any time — and especially after you change
-                        config. <code>doctor</code> plants a decoy secret in
-                        your repo, launches the box, and then tries to break in:
-                        from <em>inside</em> the container it confirms the
-                        secret is unreadable and unwritable while ordinary
-                        source stays readable, and on the <em>host</em> it
-                        confirms a fork carries neither the secret nor anywhere
-                        to push to. If anything fails, it tells you exactly
-                        what.
-                    </p>
-                    <figure class="cast-figure">
-                        <div class="term">
-                            <div class="term-bar">
-                                <span class="dot r"></span
-                                ><span class="dot y"></span
-                                ><span class="dot g"></span
-                                ><span class="title">coop doctor</span>
-                            </div>
-                            <div class="term-body">
-                                <div
-                                    class="cast"
-                                    data-cast="casts/doctor.cast"
-                                ></div>
-                            </div>
-                        </div>
-                    </figure>
-                </section>
+      <section class="doc-section" id="forks">
+        <h2>Forks</h2>
+        <p class="section-lead">Hand work to an agent the way you'd hand it to a contractor: it works in its own copy, you review the change like a pull request, and you decide what gets merged.</p>
+        <p>A fork is a disposable local clone of your repo, handed to the agent instead of your working tree. Its <code>origin</code> is a local path, so the agent has nowhere to push. A clone carries only committed files, so the secrets Git ignores never come along.</p>
+        <div class="why">
+          <span class="why-label">When to reach for a fork</span>
+          <p>Use one for anything bigger or riskier than a quick edit, or to run several attempts at once. The agent never touches your checkout, so you keep working while it does, and only you merge anything.</p>
+        </div>
+        <p>It works like a pull request: <strong>open, work, review, merge</strong>. <code>coop fork review</code> shows the fork's commits and changed files; read the diff in your terminal or your IDE. Merging rebases the fork onto your current branch, for a linear history. The rebase runs on your computer, where your key lives, so the commits can be <em>signed</em> even though the box made them unsigned.</p>
+        <p>Set your project's checks with <code>gate:</code> in <code>.agent/project.yaml</code> (like <code>gate: make check</code>; <code>coop init</code> leaves the line there, commented out). The merge runs them in the box on the rebased code, before your branch moves. If they fail, nothing is merged and your branch is untouched; <code>coop fork review --gate</code> runs them early.</p>
+        <p>The merge also stops on anything risky coming in: secret-shaped content, files over 5 MB, and files that run on your computer, like Git hooks, <code>.envrc</code>, editor and agent settings, Compose files, Dockerfiles, CI config and new npm install scripts. Review them, then merge with <code>--force</code>; the checks still run.</p>
+        <p>A fork's loop works tasks from your project's <code>.agent/tasks/</code> queue, one at a time. They stay in progress while you review the fork, and merging it completes them. <code>coop tasks watch</code> follows progress across your project and its forks.</p>
+        <!-- gen_site: fork --><figure class="window scene-replay scene-fork" data-scene="fork" aria-label="coop fork: a fork works in the background, shows as ready to merge, is reviewed like a pull request and merged after the project checks"><p class="window-bar" aria-hidden="true"><span class="window-dots"><i></i><i></i><i></i></span>coop fork</p><pre><code><span class="line cmdline" data-beat="0"><span class="path">~/code/shop</span> <span class="prompt">$ </span>coop fork api codex --loop -d</span><span class="line" data-beat="1">Creating fork: api</span><span class="line" data-beat="1"></span><span class="line" data-beat="1">  /Users/you/code/shop-forks/api</span><span class="line" data-beat="2"><span class="ok">✓</span> Started fork api in the background</span><span class="line" data-beat="2"></span><span class="line" data-beat="2">  Agent: codex</span><span class="line" data-beat="2">  Logs:  coop fork logs api --follow</span><span class="line" data-beat="2">  Stop:  coop fork stop api</span><span class="line" data-beat="3"></span><span class="line cmdline" data-beat="3"><span class="path">~/code/shop</span> <span class="prompt">$ </span>coop fork ls</span><span class="line" data-beat="4">Forks</span><span class="line" data-beat="4"></span><span class="line" data-beat="4">  <span class="strong">api</span> · ready to merge · updated 4 minutes ago</span><span class="line" data-beat="4">    Agent: codex</span><span class="line" data-beat="4">    Branch: api</span><span class="line" data-beat="4">    Tasks: 1 ready to merge</span><span class="line" data-beat="4">    Changes: +88 −6</span><span class="line" data-beat="4"></span><span class="line" data-beat="4">Review a fork: coop fork review &lt;name&gt;</span><span class="line" data-beat="5"></span><span class="line cmdline" data-beat="5"><span class="path">~/code/shop</span> <span class="prompt">$ </span>coop fork review api --stat</span><span class="line" data-beat="6">Changes in fork api</span><span class="line" data-beat="6">  Into: main</span><span class="line" data-beat="6">  2 commits · 3 files · +88 −6</span><span class="line" data-beat="6"></span><span class="line" data-beat="6">Commits</span><span class="line" data-beat="6">  9c41e2a webhook: verify Stripe signatures</span><span class="line" data-beat="6">  3a7f0db webhook: dedupe replayed events by id</span><span class="line" data-beat="6"></span><span class="line" data-beat="6">Files</span><span class="line" data-beat="6">  code:</span><span class="line" data-beat="6">    M  src/webhook/handler.ts  +40 -6</span><span class="line" data-beat="6">    A  src/webhook/verify.ts  +24 -0</span><span class="line" data-beat="6">  tests:</span><span class="line" data-beat="6">    A  tests/webhook.test.ts  +24 -0</span><span class="line" data-beat="6"></span><span class="line" data-beat="6">Project checks will run when you merge.</span><span class="line" data-beat="7"></span><span class="line cmdline" data-beat="7"><span class="path">~/code/shop</span> <span class="prompt">$ </span>coop fork merge api</span><span class="line" data-beat="8">Merge fork api into main</span><span class="line" data-beat="8">  2 commits · +88 −6</span><span class="line" data-beat="8"></span><span class="line" data-beat="8">Merge these commits? [Y/n] y</span><span class="line" data-beat="9">Rebasing onto main</span><span class="line" data-beat="9">Running project checks</span><span class="line" data-beat="9">  Running: npm test</span><span class="line" data-beat="10"></span><span class="line" data-beat="10"><span class="ok">✓</span> Merged fork api into main</span></code></pre></figure><!-- /gen_site -->
+      </section>
 
-                <section class="doc-section" id="run">
-                    <h2>Run an agent</h2>
-                    <p class="section-lead">
-                        The everyday command: a sandboxed agent in your repo,
-                        brakes off.
-                    </p>
-                    <pre
-                        class="code"
-                    ><span class="k">coop</span> claude           <span class="t"># Claude — no permission prompts, secrets hidden</span>
-<span class="k">coop</span> codex            <span class="t"># the same box, Codex instead</span>
-<span class="k">coop</span> gemini           <span class="t"># …or Gemini</span>
-<span class="k">coop</span> grok             <span class="t"># …or Grok (xAI)</span>
-<span class="k">coop</span> shell            <span class="t"># just a shell in the box, to look around</span>
-<span class="k">coop</span> run -- npm test  <span class="t"># run one command in the box and exit</span></pre>
-                    <div class="why">
-                        <span class="why-label"
-                            >Why brakes-off is fine here</span
-                        >
-                        <p>
-                            Each agent launches with its most autonomous flags
-                            on purpose. Outside a sandbox that's reckless;
-                            inside one it's the whole point — you get an agent
-                            that doesn't nag you for permission on every step,
-                            and the box makes sure it can't reach anything that
-                            matters.
-                        </p>
-                    </div>
-                    <figure class="cast-figure">
-                        <div class="term">
-                            <div class="term-bar">
-                                <span class="dot r"></span
-                                ><span class="dot y"></span
-                                ><span class="dot g"></span
-                                ><span class="title">coop claude</span>
-                            </div>
-                            <div class="term-body">
-                                <div
-                                    class="cast"
-                                    data-cast="casts/claude.cast"
-                                ></div>
-                            </div>
-                        </div>
-                    </figure>
-                </section>
+      <section class="doc-section" id="peers">
+        <h2>Second opinions</h2>
+        <p class="section-lead">For the hard calls, the lead can ask a model with different blind spots, while one agent stays in charge of the code.</p>
+        <p>Add <code>--peer &lt;agent&gt;</code> to an interactive run, a loop, a fork's loop or an ACP entry. A peer is a target: you can pin its model and effort, but not its account. Only those peers' credentials are mounted. <code>coop-consult</code> runs them read-only; the lead still decides, edits, runs the checks and commits. A preset's consult roles use the same wrapper, with role names, model ladders and personas.</p>
+        <div class="why">
+          <span class="why-label">Why it stays simple</span>
+          <p>There's no extra service or protocol. Asking a peer is optional, kept for hard or risky calls, and only the lead can do it, so a peer never asks another peer or writes to the repo.</p>
+        </div>
+        <pre class="code">
+<span class="k">coop</span> claude --peer codex --peer gemini  <span class="t"># second opinions</span>
+<span class="k">coop</span> acp claude --peer codex            <span class="t"># the same, in an editor</span></pre>
+      </section>
 
-                <section class="doc-section" id="forks">
-                    <h2>Forks — hand off work like a PR</h2>
-                    <p class="section-lead">
-                        Give a task to an agent the way you'd give it to a
-                        contractor: it works in its own copy, you review the
-                        diff, and you decide what lands.
-                    </p>
-                    <p>
-                        A fork is a throwaway local clone of your repo, handed
-                        to the agent instead of your live working tree. Because
-                        its <code>origin</code> is a local path, the agent has
-                        nowhere to push — and since a clone only carries
-                        committed content, gitignored secrets never even come
-                        along.
-                    </p>
-                    <div class="why">
-                        <span class="why-label">When to reach for a fork</span>
-                        <p>
-                            Use it for anything bigger or riskier than a quick
-                            edit, and any time you want to run several attempts
-                            at once. The agent never touches your checkout, so
-                            you can keep working while it does — and you stay
-                            the only person who lands anything.
-                        </p>
-                    </div>
-                    <p>
-                        The lifecycle mirrors a pull request:
-                        <strong>open → work → review → land</strong>. You review
-                        the diff in your terminal (a brief, then the changes) or
-                        in your IDE. Landing rebases the fork onto your current
-                        branch for linear history — and because that rebase runs
-                        on the host where your key lives, the commits can be
-                        <em>signed</em> even though the box committed them
-                        unsigned.
-                    </p>
-                    <p>
-                        Set a gate and every landing earns its place:
-                        <code>COOP_GATE="make check"</code> re-runs your tests
-                        in the box on the rebased tree and rolls back if they go
-                        red. A content scan also flags any secret-shaped or
-                        oversized files on the way in.
-                    </p>
-                    <p>
-                        A fork loop works assigned tasks from the project's
-                        canonical <code>.agent/tasks/</code> queue, one at a
-                        time. Tasks stay in progress while the fork is reviewed;
-                        a successful reviewed merge completes the exact tasks
-                        included in its approved result. No manual task removal
-                        is needed. Use <code>coop tasks watch</code> to follow
-                        progress across the parent and its forks.
-                    </p>
-                    <figure class="cast-figure">
-                        <div class="term">
-                            <div class="term-bar">
-                                <span class="dot r"></span
-                                ><span class="dot y"></span
-                                ><span class="dot g"></span
-                                ><span class="title"
-                                    >coop fork — review &amp; land</span
-                                >
-                            </div>
-                            <div class="term-body">
-                                <div
-                                    class="cast"
-                                    data-cast="casts/fork.cast"
-                                ></div>
-                            </div>
-                        </div>
-                    </figure>
-                </section>
+      <section class="doc-section" id="credentials">
+        <h2>Credentials and failover</h2>
+        <p class="section-lead">Sign in to more than one account, so a long run never stalls on a usage limit.</p>
+        <p>Sign in to several subscriptions as named <strong>credentials</strong>. When a loop hits a limit on one, it moves to another and keeps going. It waits only when <em>every</em> account is at its limit.</p>
+        <pre class="code">
+<span class="k">coop</span> login claude@work      <span class="t"># sign in to a work account</span>
+<span class="k">coop</span> login claude@personal  <span class="t"># and a personal one</span>
+<span class="k">coop</span> credentials            <span class="t"># list accounts and sign-ins</span></pre>
+        <p>To use an API key instead, put <code>ANTHROPIC_API_KEY</code> (Claude), <code>OPENAI_API_KEY</code> (Codex) or <code>GEMINI_API_KEY</code> (Gemini) in <code>~/.config/coop/agents/env</code>. Keys need filtered networking (<code>--egress filtered</code>): co:op keeps the real key outside the box and gives the agent a stand-in. Other Claude and Codex token variables, Vertex's <code>GOOGLE_API_KEY</code> and Grok's <code>XAI_API_KEY</code> are refused. The <a href="https://github.com/AndrewDryga/coop#authentication">credential reference</a> lists every supported way to sign in.</p>
+        <p>co:op treats a key in that file as the provider's default credential. A bare <code>KEY</code> line copies the value from your shell, and is skipped when it's unset; a later line wins over an earlier one. The key stands for one default account, not extra ones: when a named account you signed in to runs, co:op leaves the key out so it can't override that account, even if it's the default.</p>
+        <p>There's no pool to set up: a loop rotates through whatever its lead's <a href="#presets">target ladder</a> expands to. A bare <code>provider:model</code> step fans out across <em>every</em> signed-in account (the default first), so a loop uses all your accounts with no setup; a pinned <code>provider:model@account</code> runs on just one. Limits are tracked per model and account, so <code>claude:opus@personal</code> stays usable while <code>claude:opus@work</code> waits for its reset. Choose the account a plain <code>coop &lt;agent&gt;</code> uses with <code>coop credentials &lt;agent&gt; &lt;name&gt; default</code>.</p>
+        <p>Each provider uses only its selected account, and API keys stay outside the box. When a loop switches accounts, its progress carries over in the queue and the repo, since each iteration starts a fresh run anyway.</p>
+        <h3>Check limits and usage</h3>
+        <p><code>coop usage</code> shows each credential's current limits and reset times, and what its last 30 days of tokens would cost at API prices. <code>coop usage codex@work</code> shows one credential without changing your default. The estimate includes subscription use but isn't a bill. It marks partial history, missing prices and editor history it can't tie to a credential; use on the web, on phones, on other machines and charges that aren't tokens are left out. Reading a Gemini sign-in's quota needs Docker and the current co:op base image; it reads the saved sign-in and sends no prompt.</p>
+      </section>
 
-                <section class="doc-section" id="peers">
-                    <h2>Second opinions — named, read-only peers</h2>
-                    <p class="section-lead">
-                        Give the lead a different model's blind spots for the hard calls,
-                        while keeping one writer in charge of the worktree.
-                    </p>
-                    <p>
-                        Add <code>--peer &lt;agent&gt;</code> to an interactive run,
-                        loop, fork, or ACP entry. Only those peers' credentials mount;
-                        <code>coop-consult</code> runs them read-only, and the lead remains
-                        responsible for deciding, editing, gating, and committing. A preset's
-                        consult roles use the same wrapper with stable role names, model ladders,
-                        and personas.
-                    </p>
-                    <div class="why">
-                        <span class="why-label"
-                            >Why it stays simple</span
-                        >
-                        <p>
-                            There's no extra service or protocol. Consultation is optional,
-                            reserved for genuinely hard or risky calls, and scoped to the lead
-                            so a peer never recurses or writes to the repository.
-                        </p>
-                    </div>
-                    <pre
-                        class="code"
-                    ><span class="k">coop</span> claude --peer codex --peer gemini <span class="t"># optional second opinions on hard calls</span>
-<span class="k">coop</span> acp claude --peer codex           <span class="t"># the same pattern from an editor</span></pre>
-                </section>
+      <section class="doc-section" id="models">
+        <h2>Pick the model</h2>
+        <p class="section-lead">The model is its own choice: pick it per run in the target (<code>claude:opus</code>), or keep it in a preset. A credential is just an account; models don't belong to it.</p>
+        <pre class="code">
+<span class="k">coop</span> claude:opus        <span class="t"># one run on the big model</span>
+<span class="k">coop</span> claude:opus/xhigh  <span class="t"># at extra-high reasoning effort</span>
+<span class="k">coop</span> claude:opus@work   <span class="t"># on a specific account</span>
+<span class="k">coop</span> frontier           <span class="t"># a lead and its roles, from a preset</span>
+<span class="k">coop</span> models             <span class="t"># the models each agent offers</span></pre>
+        <p>The most specific choice wins: the model in the <strong>target</strong> (<code>claude:opus</code>), then the current <a href="#presets">ladder</a> step's model (a loop stepping through a preset), then <code>COOP_&lt;AGENT&gt;_MODEL</code>, then a model inside <code>COOP_&lt;AGENT&gt;_CMD</code>, then the agent CLI's own default. co:op never validates a model name: whatever the agent's CLI accepts works, and a wrong one fails with the agent's own error. New models work the day they ship.</p>
+        <p><strong>Reasoning effort</strong> works the same way: add <code>/effort</code> to the target (<code>claude:opus/xhigh</code>, <code>codex/high</code>), one of <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code> or <code>max</code>. co:op passes it straight to the agent's CLI (Claude's <code>--effort</code>, Codex's <code>model_reasoning_effort</code>, Grok's <code>--reasoning-effort</code>) without validating it. Gemini has no effort flag, so co:op sets its thinking instead and checks the level first: <code>low</code> or <code>high</code>, on the models it can map (a thinking setting you pin for a model in your own Gemini settings still wins). Effort follows the same order as the model. Targets, the ladders in presets and <code>.agent/loop.yaml</code>, and <code>COOP_&lt;AGENT&gt;_MODEL</code> all accept <code>model/effort</code> (like <code>opus/high</code>); there's no separate effort variable.</p>
+        <p>That makes the <strong>orchestrator pattern</strong> cheap. <code>coop init</code> installs the workflow skills but commits no starter subagents; put named roles in a <a href="#presets">preset</a> and co:op generates each role's wrapper inside the box. A lead on a bigger model spends its tokens on planning and on putting the results together, while each delegated turn bills at the role's model. Add <code>--peer codex --peer gemini</code> and the lead can also ask those agents for read-only second opinions, with no plugins.</p>
+      </section>
 
-                <section class="doc-section" id="credentials">
-                    <h2>Credentials &amp; failover</h2>
-                    <p class="section-lead">
-                        Hold more than one account for an agent so a long run
-                        never has to park on a rate limit.
-                    </p>
-                    <p>
-                        Sign in to several subscriptions as named
-                        <strong>credentials</strong>. When a loop hits a limit
-                        on one, it rotates to another that's still fresh and
-                        keeps going — only ever waiting once
-                        <em>every</em> account is capped.
-                    </p>
-                    <pre
-                        class="code"
-                    ><span class="k">coop</span> login claude@work       <span class="t"># a second account…</span>
-<span class="k">coop</span> login claude@personal   <span class="t"># …and a third</span>
-<span class="k">coop</span> credentials             <span class="t"># list them + which are signed in</span></pre>
-                    <p>
-                        API-key users can put <code>ANTHROPIC_API_KEY</code>
-                        for Claude, <code>OPENAI_API_KEY</code> for Codex, or
-                        <code>GEMINI_API_KEY</code> for Gemini in
-                        <code>~/.config/coop/agents/env</code>. These keys require
-                        <code>--egress filtered</code>: Coop keeps the reusable
-                        key outside the box and gives the agent a substitute.
-                        Alternate Claude and Codex token variables, Vertex
-                        <code>GOOGLE_API_KEY</code>, and Grok's
-                        <code>XAI_API_KEY</code> are refused. See the
-                        <a href="https://github.com/AndrewDryga/coop#authentication">credential reference</a>
-                        for supported sign-in and API-key paths.
-                    </p>
-                    <p>
-                        Coop recognizes an env-only login as the provider's
-                        default credential. A bare key imports an existing
-                        ambient value; if it is
-                        unset, the entry is omitted. A present import or later
-                        assignment wins over earlier entries. The env token is
-                        one effective default credential, not a substitute for
-                        additional named-account logins; Coop removes those env
-                        keys when a file-backed named account runs so the global
-                        token cannot override it, including when that account is
-                        marked as the default.
-                    </p>
-                    <p>
-                        There's no pool to configure: a loop rotates whatever
-                        its lead's <a href="#presets">target ladder</a> expands
-                        to. A bare <code>provider:model</code> rung in that ladder
-                        fans out across <em>every</em>
-                        signed-in account (the marked default first), so with no
-                        setup a loop already uses all your accounts; a pinned
-                        <code>provider:model@account</code> runs just one. Limits
-                        are tracked per (model, account), so
-                        <code>claude:opus@personal</code> stays usable while
-                        <code>claude:opus@work</code> cools down. Mark which account a
-                        plain <code>coop &lt;agent&gt;</code> uses with
-                        <code
-                            >coop credentials &lt;agent&gt; &lt;name&gt;
-                            default</code
-                        >.
-                    </p>
-                    <p>
-                        Each provider uses only its selected account; brokered
-                        API keys remain outside the box. A loop carries progress
-                        through its queue and repository when it rotates accounts:
-                        each iteration starts a fresh run.
-                    </p>
-                    <h3>Inspect limits and token value</h3>
-                    <p>
-                        <code>coop usage</code> shows current limits and reset times,
-                        plus the recorded 30-day API token value for each credential.
-                        Use <code>coop usage codex@work</code> for one credential;
-                        this does not switch your default. The estimate includes
-                        subscription activity but is not billing. Partial history,
-                        missing prices and shared ACP history with unknown credential
-                        attribution are labeled; web/mobile use, other machines and
-                        non-token charges are outside the estimate. Gemini OAuth quota
-                        reads need Docker and the current Coop base image, using the
-                        original plain-file login without a model prompt.
-                    </p>
-                </section>
-
-                <section class="doc-section" id="models">
-                    <h2>Pick the model</h2>
-                    <p class="section-lead">
-                        The model is its own axis — pick it per run in the
-                        target (<code>claude:opus</code>), or as a standing
-                        recipe in a preset. A credential is just an account;
-                        models don't live on it.
-                    </p>
-                    <pre
-                        class="code"
-                    ><span class="k">coop</span> claude:opus            <span class="t"># one run on the big model</span>
-<span class="k">coop</span> claude:opus/xhigh      <span class="t"># …at max reasoning effort (low·medium·high·xhigh·max)</span>
-<span class="k">coop</span> claude:opus@work       <span class="t"># …pinned to a specific account</span>
-<span class="k">coop</span> frontier               <span class="t"># a standing lead model + roles, from a preset</span>
-<span class="k">coop</span> models                 <span class="t"># the model menu per agent</span></pre>
-                    <p>
-                        Precedence is most-specific-first: the model in the
-                        <strong>target</strong> (<code>claude:opus</code>), then
-                        the active <a href="#presets">ladder</a> entry's model (a
-                        loop stepping through a preset), then
-                        <code>COOP_&lt;AGENT&gt;_MODEL</code>, then a model baked
-                        into <code>COOP_&lt;AGENT&gt;_CMD</code>, then the agent
-                        CLI's own default. Coop never
-                        validates a model id — whatever the agent's own CLI
-                        accepts works, and a bad one fails loudly in the agent's
-                        own error, so new models work the day they ship.
-                    </p>
-                    <p>
-                        <strong>Reasoning effort</strong> is a sibling axis — add
-                        <code>/effort</code> to the same target
-                        (<code>claude:opus/xhigh</code>, <code>codex/high</code>):
-                        <code>low</code> · <code>medium</code> ·
-                        <code>high</code> · <code>xhigh</code> ·
-                        <code>max</code>. Coop passes the level straight to the
-                        agent's CLI (Claude's <code>--effort</code>, Codex's
-                        <code>model_reasoning_effort</code>, Grok's
-                        <code>--reasoning-effort</code>) and never validates it.
-                        Gemini has no effort flag, so Coop sets its thinking
-                        instead and checks the level up front: <code>low</code>
-                        or <code>high</code>, on the models Coop can map (a
-                        thinking setting you pin on one model in your own Gemini
-                        settings still wins). It mirrors the model's precedence. Targets, preset and
-                        <code>.agent/loop.yaml</code> <code>agent:</code>
-                        ladders, and <code>COOP_&lt;AGENT&gt;_MODEL</code> all
-                        accept <code>model/effort</code> (e.g.
-                        <code>opus/high</code>) — no separate effort var.
-                    </p>
-                    <p>
-                        This is what makes the
-                        <strong>orchestrator pattern</strong> cheap to run.
-                        <code>coop init</code> installs the workflow skills but
-                        commits no starter subagents. Put named roles in a
-                        <a href="#presets">preset</a>; Coop generates each
-                        role's wrapper inside the box. A lead on a bigger model
-                        spends its tokens on planning and synthesis while each
-                        delegated turn bills at the role's chosen model. Add
-                        <code>--peer codex --peer gemini</code> — naming
-                        each peer — and the lead can also ask them
-                        read-only — peer engineers with different blind spots,
-                        no plugins required.
-                    </p>
-                </section>
-
-                <section class="doc-section" id="presets">
-                    <h2>Presets — the whole arrangement in one file</h2>
-                    <p class="section-lead">
-                        A lead model, its fallback ladder, and the roles it
-                        routes work to — declared once as a file, instead of
-                        assembled from flags every time.
-                    </p>
-                    <p>
-                        The orchestrator pattern above can be wired up by hand — a model here, a
-                        <code>--peer codex</code> there. A <strong>preset</strong>
-                        captures the whole recipe in
-                        <code>.agent/presets/&lt;name&gt;/preset.yaml</code>:
-                        who leads, on which models, and the named roles it can
-                        hand work to. Run it by naming it in the who-runs slot —
-                        <code>coop &lt;name&gt;</code>, <code>coop loop &lt;name&gt;</code>,
-                        <code>coop acp &lt;name&gt;</code>, or a fork.
-                    </p>
-                    <pre
-                        class="code"
-                    ><span class="k">coop</span> presets init  <span class="t"># scaffold the documented "frontier" recipe</span>
-<span class="k">coop</span> presets       <span class="t"># list every preset (a broken one shows its error)</span>
-<span class="k">coop</span> loop frontier <span class="t"># run the loop under it</span></pre>
-                    <p>
-                        The lead's <code>agent:</code> holds one target or a
-                        fallback ladder of them — the same ladder a loop rotates
-                        (a bare <code>provider:model</code> fans across every
-                        account; <code>provider:model@account</code> pins one).
-                        Each role sets a <strong>mode</strong> that decides how
-                        the lead reaches it:
-                    </p>
-                    <div class="table-scroll" role="region" aria-label="Preset role modes" tabindex="0">
-                    <table class="ref">
-                        <tr>
-                            <th>Mode</th>
-                            <th>What it is</th>
-                        </tr>
-                        <tr>
-                            <td><code>native</code></td>
-                            <td>
-                                a subagent that runs inside the lead's own
-                                session — no separate box. coop generates it
-                                (<code>coop-&lt;role&gt;</code>, from the role's
-                                model + prompt) in the box, in that client's own
-                                subagent format — Claude, Codex, Gemini or Grok —
-                                or set <code>subagent:</code> to reuse an existing
-                                one. Because it runs in the lead's session, every
-                                lead the preset lists must use the role's
-                                provider; otherwise coop stops before it starts
-                                and names the role to change
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>consult</code></td>
-                            <td>
-                                a read-only peer, asked as
-                                <code>coop-consult &lt;role&gt;</code> — runs the
-                                role's target or fallback ladder, with the role's
-                                prompt as the peer's persona; it can't edit files
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>delegate</code></td>
-                            <td>
-                                a write-capable worker via
-                                <code>coop-delegate</code>: it may edit the
-                                worktree but never commits — fallback requires
-                                an unchanged clean worktree; the lead reviews the
-                                diff, runs the gate, and commits
-                            </td>
-                        </tr>
-                    </table>
-                    </div>
-                    <pre
-                        class="code"
-                    ><span class="t"># Example preset.yaml (edit targets for your accounts)</span>
+      <section class="doc-section" id="presets">
+        <h2>Presets</h2>
+        <p class="section-lead">A lead model, its fallback ladder and the roles it hands work to, written once in a file instead of rebuilt from flags every time.</p>
+        <p>You can wire up the orchestrator pattern by hand: a model here, a <code>--peer codex</code> there. A <strong>preset</strong> keeps the whole recipe in <code>.agent/presets/&lt;name&gt;/preset.yaml</code>: who leads, on which models, and the named roles it can hand work to. Run it by name wherever you'd name an agent: <code>coop &lt;name&gt;</code>, <code>coop loop &lt;name&gt;</code>, <code>coop acp &lt;name&gt;</code> or a fork.</p>
+        <pre class="code">
+<span class="k">coop</span> presets init   <span class="t"># write the starter "frontier" preset</span>
+<span class="k">coop</span> presets        <span class="t"># list presets (a broken one shows its error)</span>
+<span class="k">coop</span> loop frontier  <span class="t"># run the loop with it</span></pre>
+        <p>The lead's <code>agent:</code> holds one target or a fallback ladder of them, the same ladder a loop rotates through (a bare <code>provider:model</code> fans out across every account; <code>provider:model@account</code> pins one). Each role sets a <strong>mode</strong> that decides how the lead reaches it:</p>
+        <div class="table-scroll" role="region" aria-label="Preset role modes" tabindex="0">
+          <table class="ref">
+            <tr>
+              <th>Mode</th>
+              <th>What it is</th>
+            </tr>
+            <tr>
+              <td><code>native</code></td>
+              <td>A subagent inside the lead's own session, with no separate box. co:op generates it in the box (<code>coop-&lt;role&gt;</code>, from the role's model and prompt) in that agent's own subagent format, or set <code>subagent:</code> to reuse one you have. Because it runs in the lead's session, every lead in the preset must use the role's provider; if one doesn't, co:op stops before starting and names the role to change.</td>
+            </tr>
+            <tr>
+              <td><code>consult</code></td>
+              <td>A read-only peer, asked with <code>coop-consult &lt;role&gt;</code>. It runs the role's target or ladder, with the role's prompt as its persona, and can't edit files.</td>
+            </tr>
+            <tr>
+              <td><code>delegate</code></td>
+              <td>A worker that can write, run with <code>coop-delegate</code>. It may edit the working tree but never commits; the lead reviews the diff, runs the checks and commits. It falls back to the next model only while the tree is unchanged.</td>
+            </tr>
+          </table>
+        </div>
+        <pre class="code">
+<span class="t whole"># An example preset.yaml, with a role in each mode</span>
 lead:
   agent: [claude:claude-fable-5, claude:claude-opus-4-8@work]
 roles:
-  thinker:                        <span class="t"># deep thinking, in the lead's session</span>
+  thinker:                        <span class="t"># thinks in the lead's session</span>
     mode: native
-    agent: claude:claude-opus-4-8 <span class="t"># coop generates a coop-thinker subagent from this</span>
+    agent: claude:claude-opus-4-8 <span class="t"># a coop-thinker subagent</span>
     prompt: roles/thinker.md
   critic:                         <span class="t"># read-only cross-vendor review</span>
     mode: consult
     agent: [codex:gpt-5.6-sol, grok:grok-4.5]
-  fast:                           <span class="t"># cheap, write-capable mechanical work</span>
+  fast:                           <span class="t"># cheap work that edits files</span>
     mode: delegate
     agent: [gemini:gemini-3.5-flash, codex:gpt-5.4-mini]</pre>
-                    <div class="why">
-                        <span class="why-label"
-                            >What coop generates from it</span
-                        >
-                        <p>
-                            coop turns the YAML into the lead's routing contract
-                            — each role, when to use it, and the exact
-                            invocation — and mounts the
-                            <code>coop-consult</code> /
-                            <code>coop-delegate</code> wrappers. A native role
-                            generates its subagent
-                            (<code>coop-&lt;role&gt;</code>) in the box from the
-                            role's model + prompt, never written to your repo.
-                            <code>coop presets init</code> scaffolds the starter
-                            prompt files under <code>roles/</code>; an explicit
-                            target on the command line
-                            (<code>claude:opus@work</code>) still overrides the
-                            recipe.
-                        </p>
-                        <p>
-                            Consult and delegate ladders skip providers without
-                            mounted credentials. Every available rung's credential
-                            home is mounted in the lead box. Consult fallback replays
-                            its saved transcript; delegate fallback requires every
-                            file and Git history to remain unchanged.
-                        </p>
-                    </div>
-                </section>
+        <div class="why">
+          <span class="why-label">What co:op generates from it</span>
+          <p>co:op turns the YAML into instructions for the lead (each role, when to use it, and the exact command) and mounts the <code>coop-consult</code> and <code>coop-delegate</code> wrappers. A native role's subagent (<code>coop-&lt;role&gt;</code>) is generated in the box from the role's model and prompt, never written to your repo. <code>coop presets init</code> writes starter prompt files under <code>roles/</code>; a target you give on the command line (<code>claude:opus@work</code>) still overrides the recipe.</p>
+          <p>Consult and delegate ladders skip providers you haven't signed in to; every usable step's credentials are mounted in the lead's box. A consult that falls back replays its saved conversation; a delegate falls back only if every file and the Git history are unchanged.</p>
+        </div>
+      </section>
 
-                <section class="doc-section" id="evals">
-                    <h2>Evaluations — did the change help?</h2>
-                    <p class="section-lead">
-                        Compare models, presets, loop recipes or Coop builds on repeatable
-                        tasks. An independent verifier grades the finished work; the model
-                        does not grade itself.
-                    </p>
-                    <h3>Start with a free preview</h3>
-                    <p>The shipped <code>core</code> suite has three small coding tasks.
-                        This command launches no container or provider and spends nothing:</p>
-                    <pre class="code"><span class="k">coop</span> eval run core codex --timeout 35m --dry-run</pre>
-                    <p>For a real run, sign in with <code>coop login codex</code> and have
-                        a working container runtime and current Coop box image. If the image
-                        is missing, run <code>coop build --egress open</code> from a directory
-                        without a project Dockerfile. Building may download dependencies.</p>
-                    <pre class="code"><span class="k">coop</span> eval run core codex --timeout 35m
+      <section class="doc-section" id="evals">
+        <h2>Evaluations</h2>
+        <p class="section-lead">Compare models, presets, loop recipes or co:op builds on repeatable tasks. A separate verifier grades the finished work; the model doesn't grade itself.</p>
+        <h3>Start with a free preview</h3>
+        <p>The shipped <code>core</code> suite has three small coding tasks. This command launches no container or provider and spends nothing:</p>
+        <pre class="code">
+<span class="k">coop</span> eval run core codex --timeout 35m --dry-run</pre>
+        <p>For a real run, sign in with <code>coop login codex</code>, and have a working container runtime and a current co:op box image. If the image is missing, run <code>coop build --egress open</code> from a folder without a project Dockerfile. Building may download dependencies.</p>
+        <pre class="code">
+<span class="k">coop</span> eval run core codex --timeout 35m
 <span class="k">coop</span> eval inspect</pre>
-                    <p>A real run uses your provider account and may spend credits.
-                        A preview validates the plan, not credentials or runtime readiness.
-                        <code>--timeout</code> is a total time limit, not a money cap; each case
-                        also has its own timeout. More configurations or repetitions mean
-                        more paid work.</p>
-                    <h3>Compare before and after</h3>
-                    <ol>
-                        <li>Run a suite and inspect the result.</li>
-                        <li>Change your model, preset, loop recipe or Coop build, then run the
-                            same suite with the same number of repetitions.</li>
-                        <li>Use <code>coop eval runs</code> to find the two run IDs, then
-                            <code>coop eval compare &lt;before-id&gt; &lt;after-id&gt;</code>.
-                            The argument order decides which run is the baseline. Inspect and compare
-                            show each configuration's short fingerprint and Coop build.</li>
-                    </ol>
-                    <h3>Choose a suite</h3>
-                    <ul>
-                        <li><code>core</code>: three single-agent tasks. Use provider targets,
-                            such as <code>codex:gpt-5.6/xhigh</code>, not presets.</li>
-                        <li><code>queue</code>: ten tasks through the real loop, including review
-                            and signoff. Use targets or presets; allow hours, not minutes.
-                            For your existing <code>frontier</code> preset, try
-                            <code>coop eval run queue frontier --timeout 2h</code>. Add
-                            <code>--loop-config .agent/loop.yaml</code> to test your recipe.</li>
-                        <li>Custom: <code>coop eval init ./evals/my-suite</code> creates a working
-                            example. Edit <code>suite.yaml</code>, <code>files/greeting/</code>
-                            and the separate <code>verifiers/greeting/verify.sh</code>.
-                            The verifier's README explains grading.</li>
-                        <li>Source-tree example: <code>examples/evals/maintenance/</code> has three
-                            independent shell, Python and Node maintenance loops and unpaid
-                            grader controls. It is not an official benchmark score or a shipped starter.</li>
-                    </ul>
-                    <p>Each target after the suite is a separate configuration, not a fallback.
-                        <code>--repeat 3</code> repeats every case three times;
-                        <code>--jobs 2</code> allows two agent trials at once. Each loop trial
-                        works its tasks in sequence. See <code>coop help eval run</code> for all options.</p>
-                    <h3>Understand failures before spending again</h3>
-                    <p><code>coop eval inspect</code> reads the latest run; add a run ID to read
-                        an older one. It shows non-passing trials, their recorded causes, and
-                        where to find saved diagnostics and retained workspaces.</p>
-                    <ul>
-                        <li><code>failed</code>: the independent verifier rejected the work.</li>
-                        <li><code>error</code>: execution or grading could not produce a verdict.
-                            A provider quota refusal is not a model-quality failure.</li>
-                        <li><code>timed_out</code> or <code>pending</code>: the trial ran out of
-                            budget or did not start. Grading remains incomplete.</li>
-                    </ul>
-                    <p>An incomplete comparison has no definitive winner. For sign-in or quota
-                        refusals, check <code>coop credentials &lt;agent&gt;</code>. For timeouts,
-                        check the case's <code>suite.yaml</code> budget as well as
-                        <code>--timeout</code>. A run without a final summary may be running or
-                        interrupted: you can inspect it, but cannot compare or resume it.
-                        Rerunning is an explicit new paid invocation. Review recorded provider
-                        output for private data before sharing it.</p>
-                    <p>Each trial gets a private workspace without source Git history. The
-                        hidden verifier is kept outside model mounts and runs afterwards in a
-                        separate container without credentials or network. Operator MCP servers
-                        are not exposed to trials. Normal native search/fetch are disabled,
-                        including Coop-managed peers and delegates; terminal and file tools remain
-                        available. This is a trusted-client control, not an authenticated-request
-                        firewall. Regular Coop runs are unchanged. Results describe this workload, not general
-                        provider parity; code size is a review signal, not a quality score.</p>
-                    <h3>Compare matching evidence</h3>
-                    <p><code>compare</code> keeps the full requested denominator, including missing
-                        records. Duplicate or out-of-matrix records are damaged evidence. Paired
-                        effects require two distinct runs with one configuration each, the same
-                        nonempty workload identity, case set and repetition count. Otherwise the
-                        results remain separate; configuration correspondence is not guessed.</p>
-                    <p>A case's change needs every repeat graded; the aggregate change and 95%
-                        bound need all requested pairs graded. The bound measures repeat uncertainty
-                        on this fixed suite, assuming independent trial executions. It uses
-                        <code>sqrt(log(40)/(cases*repeats))</code> around the pass-rate difference,
-                        clipped to the possible −100 to +100 percentage-point range. Repeats are
-                        not new independent tasks and do not establish unseen-task performance.</p>
-                    <p>A decision campaign needs at least three repeats per case and a preregistered
-                        useful-effect threshold and decision rule. Retained runs do not record that
-                        rule, so the report stays descriptive and inconclusive, with no definitive winner.</p>
-                </section>
+        <p>A real run uses your provider account and may spend credits. A preview checks the plan, not your credentials or whether the runtime is ready. <code>--timeout</code> is a total time limit, not a money cap; each case also has its own timeout. More configurations or repetitions mean more paid work.</p>
+        <h3>Compare before and after</h3>
+        <ol>
+          <li>Run a suite and inspect the result.</li>
+          <li>Change your model, preset, loop recipe or co:op build, then run the same suite with the same number of repetitions.</li>
+          <li>Use <code>coop eval runs</code> to find the two run IDs, then <code>coop eval compare &lt;before-id&gt; &lt;after-id&gt;</code>. The argument order decides which run is the baseline. Inspect and compare show each configuration's short fingerprint and co:op build.</li>
+        </ol>
+        <h3>Choose a suite</h3>
+        <ul>
+          <li><code>core</code>: three single-agent tasks. Use provider targets, such as <code>codex:gpt-5.6/xhigh</code>, not presets.</li>
+          <li><code>queue</code>: ten tasks through the real loop, including review and signoff. Use targets or presets, and allow hours, not minutes. For your <code>frontier</code> preset, try <code>coop eval run queue frontier --timeout 2h</code>. Add <code>--loop-config .agent/loop.yaml</code> to test your recipe.</li>
+          <li>Your own: <code>coop eval init ./evals/my-suite</code> creates a working example. Edit <code>suite.yaml</code>, <code>files/greeting/</code> and the separate <code>verifiers/greeting/verify.sh</code>. The verifier's README explains grading.</li>
+          <li>An example in the source tree: <code>examples/evals/maintenance/</code> has three independent shell, Python and Node maintenance loops and unpaid grader controls. It isn't an official benchmark or a shipped starter.</li>
+        </ul>
+        <p>Each target after the suite is a separate configuration, not a fallback. <code>--repeat 3</code> runs every case three times; <code>--jobs 2</code> allows two agent trials at once. Each loop trial works its tasks in order. <code>coop help eval run</code> lists every option.</p>
+        <h3>Understand failures before spending again</h3>
+        <p><code>coop eval inspect</code> reads the latest run; add a run ID to read an older one. It shows the trials that didn't pass, their recorded causes, and where to find saved diagnostics and kept workspaces.</p>
+        <ul>
+          <li><code>failed</code>: the independent verifier rejected the work.</li>
+          <li><code>error</code>: running or grading couldn't produce a verdict. A provider's quota refusal is not a model-quality failure.</li>
+          <li><code>timed_out</code> or <code>pending</code>: the trial ran out of time or didn't start. Grading is incomplete.</li>
+        </ul>
+        <p>An incomplete comparison has no definitive winner. For sign-in or quota refusals, check <code>coop credentials &lt;agent&gt;</code>. For timeouts, check the case's <code>suite.yaml</code> budget as well as <code>--timeout</code>. A run without a final summary may be running or interrupted: you can inspect it, but you can't compare or resume it. Running again is a new paid run. Check the recorded provider output for private data before you share it.</p>
+        <p>Each trial gets a private workspace without the source's Git history. The hidden verifier is kept out of the model's mounts and runs afterwards in a separate container with no credentials or network. Your own MCP servers aren't exposed to trials. The agents' built-in web search and fetch are off, including for co:op's peers and delegates; terminal and file tools stay available. This is a control the trusted client applies, not a firewall that checks each request. Regular co:op runs are unchanged. Results describe this workload, not how providers compare in general; code size is a review signal, not a quality score.</p>
+        <h3>Compare matching evidence</h3>
+        <p><code>compare</code> keeps the full requested denominator, including missing records. Duplicate records, or records outside the requested matrix, count as damaged evidence. Paired effects need two distinct runs with one configuration each, the same nonempty workload identity, case set and repetition count. Otherwise the results stay separate; co:op doesn't guess which configurations correspond.</p>
+        <p>A case's change needs every repeat graded; the aggregate change and its 95% bound need every requested pair graded. The bound measures repeat uncertainty on this fixed suite, assuming independent trials. It uses <code>sqrt(log(40)/(cases*repeats))</code> around the pass-rate difference, clipped to the possible −100 to +100 percentage-point range. Repeats are not new independent tasks and don't establish performance on tasks the suite hasn't seen.</p>
+        <p>A decision campaign needs at least three repeats per case, plus a useful-effect threshold and a decision rule set in advance. Kept runs don't record that rule, so the report stays descriptive and inconclusive, with no definitive winner.</p>
+      </section>
 
-                <section class="doc-section" id="loop">
-                    <h2>The loop — work the queue while you sleep</h2>
-                    <p class="section-lead">
-                        Give the agent a checklist and let it work the list on
-                        its own — through the night, through rate limits,
-                        without your hand on the wheel.
-                    </p>
-                    <div class="why">
-                        <span class="why-label">The problem it solves</span>
-                        <p>
-                            Most real agent work isn't one big task — it's a
-                            queue of small, well-defined ones. Driving the agent
-                            through them by hand, one at a time, is the
-                            bottleneck. And a single marathon session quietly
-                            degrades: the context window fills with old work,
-                            the agent loses the plot, and quality slides. The
-                            loop sidesteps both.
-                        </p>
-                    </div>
-                    <p>
-                        You write each task as a folder under
-                        <code>.agent/tasks/</code> (its state is its directory).
-                        <code>coop loop</code> then starts a
-                        <strong>fresh agent for each one</strong> — so every
-                        task begins with a clean head, no leftover context to
-                        rot. The agent claims a task, does it, runs your gate,
-                        commits the result, and moves to the next. It won't stop
-                        while any task remains in <code>00_todo/</code> or
-                        <code>10_in_progress/</code>. A monorepo? List the
-                        members under <code>subprojects:</code> in a committed
-                        <code>.agent/project.yaml</code> and one loop drains
-                        every component's queue — no configuration beyond that.
-                        Complete each generated <code>task.md</code> before
-                        starting, so the agent knows what done means.
-                    </p>
-                    <pre
-                        class="code"
-                    ><span class="k">coop</span> init                                    <span class="t"># scaffold AGENTS.md, the .agent/ folder, and the hooks</span>
-<span class="k">coop</span> tasks add <span class="s">"…"</span>                           <span class="t"># a folder per task under .agent/tasks/</span>
-<span class="k">coop</span> loop claude                             <span class="t"># disposable agents drain the queue, then review</span>
-<span class="k">coop</span> loop claude:claude-fable-5 --peer codex <span class="t"># pin its model; let it ask a peer</span></pre>
-                    <p>
-                        <strong>It reviews its own work.</strong> When the list
-                        is empty, coop runs a review pass — a senior reviewer's
-                        bar re-reads every task marked done, confirms the git
-                        history backs it up, and reopens anything that falls
-                        short. If a pass reopened work, the loop drains and
-                        reviews again, repeating until a pass reopens nothing — so
-                        "done" ends up meaning <em>verified</em>, not just
-                        claimed. Tighten the bar with your own checks under
-                        <code>signoff.prompt</code> in
-                        <code>.agent/loop.yaml</code> — a task that fails one
-                        (changelog updated, docs regenerated, no stray TODOs)
-                        gets reopened.
-                    </p>
-                    <p>
-                        <strong>It survives the daily cap.</strong> Long runs
-                        hit subscription rate limits. Rather than failing, the
-                        loop reads the reset time from the agent's own output
-                        and waits it out — or, if you've added a second account,
-                        switches to it and keeps going. An overnight run rides
-                        straight through the limit instead of dying on it.
-                    </p>
-                    <p>
-                        <strong
-                            >It parks a decision instead of guessing.</strong
-                        >
-                        On a one-way-door call it shouldn't make alone, the
-                        agent moves the task to <code>50_blocked/</code> and
-                        writes a <code>decision.md</code> (the question,
-                        options, its recommendation) rather than picking blind.
-                        When nothing else is actionable the loop stops and exits
-                        <code>3</code>, so cron/CI can tell "stalled on a
-                        decision" from "done." Answer them with
-                        <code>coop tasks decisions -i</code> — it walks each
-                        open decision, records your answer, and unblocks the
-                        task — then re-run <code>coop loop</code> (or start it
-                        with <code>--preflight</code> to unblock
-                        already-answered ones first).
-                        <code>coop tasks watch</code> shows the live board — the
-                        queue plus any running forks, deduped — while it works.
-                        For an at-a-glance status in your shell prompt or tmux,
-                        <code>coop prompt</code> prints this repo's state on one
-                        line (task counts and fork/loop activity, non-zero
-                        segments only) — read-only and cheap, safe on every
-                        redraw.
-                    </p>
-                    <div class="why">
-                        <span class="why-label">Good fits</span>
-                        <p>
-                            A backlog of small refactors. Migrating one pattern
-                            across dozens of files. Working down a test-coverage
-                            or lint list. A "Friday cleanup" queue you'd never
-                            get to by hand. Anything that's many small,
-                            checkable steps.
-                        </p>
-                    </div>
-                    <figure class="cast-figure">
-                        <div class="term">
-                            <div class="term-bar">
-                                <span class="dot r"></span
-                                ><span class="dot y"></span
-                                ><span class="dot g"></span
-                                ><span class="title">coop loop</span>
-                            </div>
-                            <div class="term-body">
-                                <div
-                                    class="cast"
-                                    data-cast="casts/loop.cast"
-                                ></div>
-                            </div>
-                        </div>
-                        <figcaption>
-                            Each iteration shows the model it's on; a rate limit
-                            triggers failover, then the run continues.
-                        </figcaption>
-                    </figure>
-                    <h3>The <code>.agent/</code> folder</h3>
-                    <p>
-                        <code>coop init</code> creates a small, tool-neutral
-                        folder the agent reads back on every start (and after
-                        each compaction). The work queue —
-                        <code>tasks/</code> and the backlog — is local,
-                        git-ignored working state; the knowledge and config
-                        beside it are committed with the repo, so they travel
-                        with the project.
-                    </p>
-                    <div class="table-scroll" role="region" aria-label="Agent folder reference" tabindex="0">
-                    <table class="ref">
-                        <tr>
-                            <th>Path</th>
-                            <th>What it's for</th>
-                        </tr>
-                        <tr>
-                            <td><code>tasks/</code></td>
-                            <td>
-                                the work queue — a folder per task under
-                                <code>00_todo/</code>,
-                                <code>10_in_progress/</code>,
-                                <code>50_blocked/</code>, <code>99_done/</code>;
-                                its state is its directory (the numeric prefix
-                                sorts <code>ls</code> in lifecycle order;
-                                <code>coop tasks</code> shows the clean names).
-                                Local working state
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>the backlog</td>
-                            <td>
-                                unscheduled ideas — work, chores, ideas — as task
-                                folders in the <code>tasks/xx_backlog/</code> drawer
-                                (<code>coop backlog</code>); outside the lifecycle, so
-                                never auto-worked, and
-                                <code>coop backlog promote &lt;id&gt;</code> moves one
-                                into <code>00_todo/</code> when it's ready
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>kb/</code></td>
-                            <td>
-                                the descriptive knowledge base — subsystem maps,
-                                cross-cutting traps, and gotchas the code doesn't
-                                carry; a self-improving wiki the agents keep
-                                current as they work
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>kb/rules/</code></td>
-                            <td>
-                                the taste knowledge base (normative) — a
-                                correction becomes a "do X, not Y" rule in this
-                                normative subtree
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>skills/</code></td>
-                            <td>
-                                the workflow skills (<code>spec</code>,
-                                <code>work</code>, <code>sweep</code>,
-                                <code>investigate</code>,
-                                <code>review-board</code>,
-                                <code>verify-api</code>, <code>release</code>);
-                                each agent's dir symlinks to them
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>presets/</code></td>
-                            <td>
-                                orchestration recipes — a lead plus roles
-                                (thinker, critic, fast); see
-                                <a href="#presets">Presets</a>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>project.yaml</code></td>
-                            <td>
-                                per-project config: a monorepo's members, the
-                                dev-server ports coop publishes, the box posture,
-                                and the fork-merge gate
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>loop.yaml</code></td>
-                            <td>
-                                configures <code>coop loop</code>'s stages —
-                                preflight, work, between, signoff — each with its
-                                own model ladder and prompt
-                            </td>
-                        </tr>
-                    </table>
-                    </div>
-                </section>
+      <section class="doc-section" id="loop">
+        <h2>The loop</h2>
+        <p class="section-lead">Give the agents a list of tasks and let them work through it on their own: through the night, through usage limits, without you at the wheel.</p>
+        <div class="why">
+          <span class="why-label">The problem it solves</span>
+          <p>Most real agent work isn't one big task but a queue of small, well-defined ones. Walking an agent through them by hand, one at a time, is the bottleneck. And one marathon session slowly degrades: the context fills with old work, the agent loses the plot, and quality slides. The loop avoids both.</p>
+        </div>
+        <p>Each task is a folder under <code>.agent/tasks/</code>, and the folder it sits in is its state. <code>coop loop</code> picks the next task and starts a <strong>fresh agent for it</strong>, so every task begins with a clean context. The agent does the work, runs your checks, commits the result and marks the task done. The loop keeps going until no task it can take is left, or until <code>--max-tasks</code> is reached. In a monorepo, list the members under <code>subprojects:</code> in a committed <code>.agent/project.yaml</code>, and one loop works every member's queue. Fill in each generated <code>task.md</code> before you start, so the agent knows what done means.</p>
+        <pre class="code">
+<span class="k">coop</span> init                      <span class="t"># AGENTS.md, .agent/ and the hooks</span>
+<span class="k">coop</span> tasks add <span class="s">"…"</span>             <span class="t"># one folder per task</span>
+<span class="k">coop</span> loop claude               <span class="t"># work the queue, then review it</span>
+<span class="k">coop</span> loop claude --peer codex  <span class="t"># and let it ask a peer</span></pre>
+        <p><strong>It reviews its own work.</strong> When the queue is empty, a final review re-reads the tasks this run completed, checks that the Git history backs them up, and reopens anything that falls short. If it reopens work, the loop works the queue and reviews again, so done means <em>checked</em>, not just claimed. After three to five rounds, depending on how much the run did, a task that still falls short is blocked for your decision. Add your own checks under <code>signoff.prompt</code> in <code>.agent/loop.yaml</code>: a task that fails one (changelog updated, docs regenerated, no stray TODOs) is reopened.</p>
+        <p><strong>It survives usage limits.</strong> Long runs hit subscription limits. Instead of failing, the loop reads the reset time from the agent's output and waits, or, if you've added another account, switches to it and keeps going. An overnight run rides through the limit instead of stopping.</p>
+        <p><strong>It asks instead of guessing.</strong> For a call it shouldn't make alone, the agent blocks the task, which moves it to <code>50_blocked/</code>, and writes a <code>decision.md</code> (the question, the options and its recommendation). The loop moves on to the other tasks. When nothing else can move, the loop stops and exits with status <code>3</code>, so cron or CI can tell "waiting on a decision" from "done". <code>coop tasks decisions -i</code> walks you through each open decision, records your answer and unblocks the task; then run <code>coop loop</code> again, or start it with <code>--preflight</code> to unblock answered tasks first.</p>
+        <p><code>coop tasks watch</code> shows the live board, including any running forks, while the loop works. For a status line in your shell prompt or tmux, <code>coop prompt</code> prints the repo's state on one line (task counts, and fork or loop activity); it only reads, so it's safe on every redraw.</p>
+        <div class="why">
+          <span class="why-label">Good fits</span>
+          <p>A backlog of small refactors. Moving one pattern across dozens of files. Working down a test-coverage or lint list. A Friday cleanup queue you'd never get to by hand. Anything that's many small, checkable steps.</p>
+        </div>
+        <!-- gen_site: loop --><figure class="window scene-replay scene-loop" data-scene="loop" aria-label="coop loop working through three tasks: a fresh agent on each, a final review that reopens one, and the run passing review"><p class="window-bar" aria-hidden="true"><span class="window-dots"><i></i><i></i><i></i></span>coop loop frontier</p><pre><code><span class="line cmdline" data-beat="0"><span class="path">~/code/shop</span> <span class="prompt">$ </span>coop loop frontier</span><span class="line" data-beat="1" data-bar="0,1,Make POST /checkout idempotent"></span><span class="line rule" data-beat="1">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span><span class="line dim" data-beat="1"> Task 1 - Attempt 1</span><span class="line" data-beat="1"></span><span class="line" data-beat="1"> Make POST /checkout idempotent</span><span class="line" data-beat="1"></span><span class="line" data-beat="1"> Agent  claude:claude-fable-5/xhigh@work</span><span class="line" data-beat="1"> Queue  0 completed · 1 active · 2 pending · 0 blocked</span><span class="line rule" data-beat="1">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span><span class="line" data-beat="1"></span><span class="line strong" data-beat="1">Starting claude:claude-fable-5/xhigh@work</span><span class="line" data-beat="2">✦ A retried checkout charges twice. I’ll key each order on its Idempotency-Key, so a replay returns the first charge.</span><span class="line" data-beat="3">✎ Edit src/payments/checkout.ts</span><span class="line" data-beat="4">⚙ Bash npm test</span><span class="line" data-beat="5" data-bar="1,1,Cache the /health DB probe"></span><span class="line" data-beat="5"><span class="ok">✓</span> Task completed: Make POST /checkout idempotent</span><span class="line" data-beat="6"></span><span class="line rule" data-beat="6">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span><span class="line dim" data-beat="6"> Task 2 - Attempt 1</span><span class="line" data-beat="6"></span><span class="line" data-beat="6"> Cache the /health DB probe</span><span class="line" data-beat="6"></span><span class="line" data-beat="6"> Agent  claude:claude-fable-5/xhigh@work</span><span class="line" data-beat="6"> Queue  1 completed · 1 active · 1 pending · 0 blocked</span><span class="line rule" data-beat="6">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span><span class="line" data-beat="6"></span><span class="line strong" data-beat="6">Starting claude:claude-fable-5/xhigh@work</span><span class="line" data-beat="7">✦ The probe counts orders on every call. Caching it for five seconds takes that load off the database.</span><span class="line" data-beat="8">✎ Edit src/health.ts</span><span class="line" data-beat="9" data-bar="2,1,Rate-limit the public API"></span><span class="line" data-beat="9"><span class="ok">✓</span> Task completed: Cache the /health DB probe</span><span class="line" data-beat="10"></span><span class="line rule" data-beat="10">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span><span class="line dim" data-beat="10"> Task 3 - Attempt 1</span><span class="line" data-beat="10"></span><span class="line" data-beat="10"> Rate-limit the public API</span><span class="line" data-beat="10"></span><span class="line" data-beat="10"> Agent  claude:claude-fable-5/xhigh@work</span><span class="line" data-beat="10"> Queue  2 completed · 1 active · 0 pending · 0 blocked</span><span class="line rule" data-beat="10">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span><span class="line" data-beat="10"></span><span class="line strong" data-beat="10">Starting claude:claude-fable-5/xhigh@work</span><span class="line" data-beat="11">✎ Edit src/middleware/rate-limit.ts</span><span class="line" data-beat="12">⚙ Bash npm test</span><span class="line" data-beat="13" data-bar="3,0,signoff: make-checkout-idempotent +2"></span><span class="line" data-beat="13"><span class="ok">✓</span> Task completed: Rate-limit the public API</span><span class="line" data-beat="14"></span><span class="line rule" data-beat="14">────────────────────────────────────────────────────────────────</span><span class="line" data-beat="14"> Final review · Round 1 of 3</span><span class="line" data-beat="14"></span><span class="line" data-beat="14"> Agent  claude:claude-fable-5/xhigh@work</span><span class="line" data-beat="14"> Tasks  3 completed</span><span class="line rule" data-beat="14">────────────────────────────────────────────────────────────────</span><span class="line" data-beat="15" data-bar="2,1,Rate-limit the public API"></span><span class="line rule" data-beat="15">────────────────────────────────────────────────────────────────</span><span class="line" data-beat="15"> Final review · <span class="warn">1 task needs more work</span></span><span class="line" data-beat="15"></span><span class="line" data-beat="15">  Rate-limit the public API</span><span class="line" data-beat="15"></span><span class="line dim" data-beat="15"> Continuing the task queue</span><span class="line rule" data-beat="15">────────────────────────────────────────────────────────────────</span><span class="line" data-beat="16"></span><span class="line rule" data-beat="16">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span><span class="line dim" data-beat="16"> Task 3 - Attempt 2</span><span class="line" data-beat="16"></span><span class="line" data-beat="16"> Rate-limit the public API</span><span class="line" data-beat="16"></span><span class="line" data-beat="16"> Agent  claude:claude-fable-5/xhigh@work</span><span class="line" data-beat="16"> Queue  2 completed · 1 active · 0 pending · 0 blocked</span><span class="line rule" data-beat="16">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span><span class="line" data-beat="16"></span><span class="line strong" data-beat="16">Starting claude:claude-fable-5/xhigh@work</span><span class="line" data-beat="17">✦ Internal callers were throttled too. The limit now applies only to public routes.</span><span class="line" data-beat="18">✎ Edit src/middleware/rate-limit.ts</span><span class="line" data-beat="19" data-bar="3,0,signoff: rate-limit-the-public-api"></span><span class="line" data-beat="19"><span class="ok">✓</span> Task completed: Rate-limit the public API</span><span class="line" data-beat="20"></span><span class="line rule" data-beat="20">────────────────────────────────────────────────────────────────</span><span class="line" data-beat="20"> Final review · Round 2 of 3</span><span class="line" data-beat="20"></span><span class="line" data-beat="20"> Agent  claude:claude-fable-5/xhigh@work</span><span class="line" data-beat="20"> Tasks  1 completed</span><span class="line rule" data-beat="20">────────────────────────────────────────────────────────────────</span><span class="line" data-beat="21"></span><span class="line" data-beat="21"><span class="ok">✓</span> All tasks passed <span class="nowrap">final review · 3/3 done</span></span><span class="line live-bar" aria-hidden="true"></span></code></pre></figure><!-- /gen_site -->
+        <h3>The <code>.agent/</code> folder</h3>
+        <p><code>coop init</code> creates a small folder, the same for every agent, that the agent reads on every start and after each compaction. The work queue (<code>tasks/</code> and the backlog) is local working state that Git ignores; the knowledge and settings beside it are committed, so they travel with the project.</p>
+        <div class="table-scroll" role="region" aria-label="What the .agent folder holds" tabindex="0">
+          <table class="ref">
+            <tr>
+              <th>Path</th>
+              <th>What it's for</th>
+            </tr>
+            <tr>
+              <td><code>tasks/</code></td>
+              <td>The work queue: a folder per task under <code>00_todo/</code>, <code>10_in_progress/</code>, <code>50_blocked/</code> and <code>99_done/</code>. The folder a task sits in is its state; the numbers sort <code>ls</code> in order, and <code>coop tasks</code> shows the plain names. Local working state.</td>
+            </tr>
+            <tr>
+              <td>the backlog</td>
+              <td>Work for later, as task folders in <code>tasks/xx_backlog/</code> (<code>coop backlog</code>). Loops never pick it up; <code>coop backlog promote &lt;id&gt;</code> moves an item into <code>00_todo/</code> when it's ready.</td>
+            </tr>
+            <tr>
+              <td><code>kb/</code></td>
+              <td>The knowledge base: maps of each part of the code, and the traps and gotchas the code doesn't show. Agents keep it current as they work.</td>
+            </tr>
+            <tr>
+              <td><code>kb/rules/</code></td>
+              <td>Your taste, as rules: each correction becomes a "do X, not Y" card.</td>
+            </tr>
+            <tr>
+              <td><code>skills/</code></td>
+              <td>The workflow skills (<code>spec</code>, <code>work</code>, <code>sweep</code>, <code>investigate</code>, <code>review-board</code>, <code>verify-api</code>); each agent's own folder links to them.</td>
+            </tr>
+            <tr>
+              <td><code>presets/</code></td>
+              <td>Team recipes: a lead and its roles, like thinker, critic and fast. See <a href="#presets">Presets</a>.</td>
+            </tr>
+            <tr>
+              <td><code>project.yaml</code></td>
+              <td>Project settings: a monorepo's members, the dev server ports co:op publishes, the box's network setting, and the checks a fork must pass to merge.</td>
+            </tr>
+            <tr>
+              <td><code>loop.yaml</code></td>
+              <td>The stages of <code>coop loop</code> (preflight, work, between, verify and signoff), and the models and prompts they use.</td>
+            </tr>
+          </table>
+        </div>
+      </section>
 
-                <section class="doc-section" id="parallel-forks">
-                    <h2>Parallel forks — many agents at once</h2>
-                    <p class="section-lead">
-                        One loop is one agent working one queue. Direct detached
-                        forks let several models work the same queue at the same
-                        time, one canonical task each.
-                    </p>
-                    <p>
-                        Start one detached fork loop per model. The host assigns
-                        each fork one canonical task at a time from the shared
-                        <code>.agent/tasks</code> queue, so forks never duplicate
-                        work. Use <code>coop tasks watch</code> for the merged
-                        task view, <code>coop fork ls</code> for fork state and
-                        cost, and <code>coop fork logs -f</code> for their output.
-                    </p>
-                    <pre
-                        class="code"
-                    ><span class="k">coop</span> fork api frontier --loop -d   <span class="t"># each fork claims the next canonical task</span>
+      <section class="doc-section" id="parallel-forks">
+        <h2>Parallel forks</h2>
+        <p class="section-lead">One loop is one agent working one queue. Forks running in the background let several agents work the same queue at once, one task each.</p>
+        <p>Start one fork per agent, with <code>--loop -d</code> so it works the queue in the background. co:op hands each fork one task at a time from the shared <code>.agent/tasks/</code> queue, so no two forks do the same work. <code>coop tasks watch</code> shows the tasks across every fork, <code>coop fork ls</code> each fork's state, and <code>coop fork logs &lt;name&gt; -f</code> its output.</p>
+        <pre class="code">
+<span class="k">coop</span> fork api frontier --loop -d  <span class="t"># each fork takes the next task</span>
 <span class="k">coop</span> fork web codex@work --loop -d
 <span class="k">coop</span> fork deps gemini --loop -d
-<span class="k">coop</span> tasks watch                   <span class="t"># merged task progress across the forks</span>
-<span class="k">coop</span> fork merge --all              <span class="t"># land all forks through a revalidating rebase</span></pre>
-                    <p>
-                        The positional who-runs value can be a
-                        <a href="#models">target</a>
-                        (<code>provider:model@account</code>; give simultaneous
-                        direct targets different accounts so they don't contend)
-                        or a <a href="#presets">preset</a> name, whose lead
-                        ladder the fork's loop rotates.
-                    </p>
-                    <div class="why">
-                        <span class="why-label">Why run parallel forks</span>
-                        <p>
-                            Once generating code is cheap, <em>reviewing</em> it
-                            becomes the bottleneck — so the move is to
-                            parallelize generation and batch the review. Add
-                            agents until your review queue, not the agents, is
-                            what's keeping you busy.
-                        </p>
-                    </div>
-                </section>
+<span class="k">coop</span> tasks watch                  <span class="t"># tasks across every fork</span>
+<span class="k">coop</span> fork merge --all             <span class="t"># merge all, checks first</span></pre>
+        <p>Name a <a href="#models">target</a> (<code>provider:model@account</code>; give forks that run at once different accounts, so they don't share one limit) or a <a href="#presets">preset</a>, whose lead ladder the fork's loop rotates through.</p>
+        <div class="why">
+          <span class="why-label">Why run parallel forks</span>
+          <p>Once writing code is cheap, <em>reviewing</em> it is the bottleneck. So run the writing in parallel and review in batches. Add agents until your review queue, not the agents, is what keeps you busy.</p>
+        </div>
+      </section>
 
-                <section class="doc-section" id="editors">
-                    <h2>Editors</h2>
-                    <p class="section-lead">
-                        Prefer your editor to a terminal? coop serves the
-                        sandboxed agent over ACP, so any editor that speaks the
-                        protocol can drive it. The agent runs in the box;
-                        editor-side file and terminal requests use the editor's
-                        own permissions.
-                    </p>
-                    <p>
-                        <a
-                            href="https://agentclientprotocol.com"
-                            target="_blank"
-                            rel="noopener"
-                            >ACP</a
-                        >
-                        (the Agent Client Protocol) is an open, editor-agnostic
-                        standard. <code>coop acp &lt;target|preset&gt;</code> speaks it over
-                        stdio, so you register coop as a custom agent in any
-                        editor that supports ACP and steer it from there. Zed
-                        ships ACP today and others are adding it; the setup is the
-                        same anywhere — point one entry at each target or preset you use. In
-                        Zed's <code>settings.json</code>, for example:
-                    </p>
-                    <pre class="code">{
+      <section class="doc-section" id="editors">
+        <h2>Editors</h2>
+        <p class="section-lead">Prefer your editor to a terminal? co:op serves the sandboxed agent over ACP, so any editor that speaks the protocol can drive it. The agent runs in the box; its file and terminal requests to the editor follow the editor's own permissions.</p>
+        <p><a href="https://agentclientprotocol.com">ACP</a> (the Agent Client Protocol) is an open standard any editor can adopt. <code>coop acp [target|preset]</code> speaks it over stdio, so you add co:op as a custom agent in an editor that supports ACP and steer it from there. Zed supports ACP today, and others are adding it. The setup is the same everywhere: one entry for each target or preset you use. In Zed's <code>settings.json</code>, for example:</p>
+        <pre class="code">
+{
   <span class="s">"agent_servers"</span>: {
     <span class="s">"coop"</span>: {
       <span class="s">"type"</span>: <span class="s">"custom"</span>,
       <span class="s">"command"</span>: <span class="s">"coop"</span>,
-      <span class="s">"args"</span>: [<span class="s">"acp"</span>, <span class="s">"claude"</span>]                      <span class="t">// one target; pin it: "claude:opus/xhigh@work"</span>
+      <span class="t whole">// one target; pin it like "claude:opus/xhigh@work"</span>
+      <span class="s">"args"</span>: [<span class="s">"acp"</span>, <span class="s">"claude"</span>]
     },
     <span class="s">"coop · second opinion"</span>: {
       <span class="s">"type"</span>: <span class="s">"custom"</span>,
       <span class="s">"command"</span>: <span class="s">"coop"</span>,
-      <span class="s">"args"</span>: [<span class="s">"acp"</span>, <span class="s">"claude:opus/xhigh"</span>, <span class="s">"--peer"</span>, <span class="s">"codex"</span>] <span class="t">// named peer; the lead's model/effort ride the target</span>
+      <span class="t whole">// a named peer; the target pins the lead's model</span>
+      <span class="s">"args"</span>: [<span class="s">"acp"</span>, <span class="s">"claude:opus/xhigh"</span>, <span class="s">"--peer"</span>, <span class="s">"codex"</span>]
     }
   }
 }</pre>
-                    <p>
-                        Pin the model, reasoning effort, and account in coop's
-                        target inside <code>args</code> —
-                        <code>provider[:model][/effort][@account]</code> — not
-                        the editor's per-option defaults; the toolbar dropdowns
-                        come up reflecting it and stay switchable, and coop always
-                        runs yolo whatever the editor's permission-mode setting.
-                    </p>
-                    <p>
-                        Because the repo mounts at its real path, sessions line
-                        up across tools — a thread you started with
-                        <code>coop loop</code> is right there to resume in your
-                        editor.
-                    </p>
-                    <p>
-                        coop's proxy owns the editor session. A plain session's toolbar exposes
-                        Preset, Provider, and Account selectors; an active preset keeps the Preset
-                        selector. Account and same-provider switches preserve the conversation;
-                        a provider switch re-creates the session and carries message text plus
-                        one-line tool narration approximately and best-effort, without tool payloads.
-                        Agent-side permission prompts are disabled; editor-side
-                        file and terminal requests still follow the editor's
-                        permissions (see below).
-                        A rate limit is handled for you: coop rotates to your
-                        next signed-in account and re-sends your prompt — or,
-                        with every account cooling, waits out the nearest reset
-                        and sends then. And a box restart
-                        (<code>coop build</code> / <code>coop update</code>, an
-                        OOM) replays the handshake, so your editor never
-                        disconnects.
-                    </p>
-                    <div class="note">
-                        ACP can ask the editor to read or write host files and
-                        run host terminal commands. Coop forwards those
-                        requests; the editor's own permissions, not the box,
-                        limit them. For a box-only boundary, use a terminal or
-                        loop run. See the
-                        <a
-                            href="https://github.com/AndrewDryga/coop/blob/main/README.md#drive-it-from-zed-acp"
-                            target="_blank"
-                            rel="noopener"
-                            >ACP security caveat</a
-                        >.
-                    </div>
-                    <p>
-                        Building a website? List the dev server's port under
-                        <code>serve:</code> in a committed
-                        <code>.agent/project.yaml</code> and the thread
-                        announces the stable
-                        <code>http://localhost:&lt;port&gt;</code> URL the
-                        box publishes it at (bind the server to
-                        <code>0.0.0.0</code> inside the box).
-                    </p>
-                    <div class="note">
-                        GUI apps don't always inherit your shell's
-                        <code>PATH</code>. If your editor can't find
-                        <code>coop</code>, use the absolute path from
-                        <code>command -v coop</code> as the
-                        <code>command</code>.
-                    </div>
-                </section>
+        <p>Pin the model, reasoning effort and account in co:op's target inside <code>args</code> (<code>provider[:model][/effort][@account]</code>), not in the editor's own options. The toolbar menus start on that target, and you can still switch them. co:op always runs the agent without permission prompts, whatever the editor's permission setting.</p>
+        <p>co:op sits between the editor and the agent. A plain session's toolbar has Preset, Provider and Account menus; a session running a preset keeps the Preset menu. Switching accounts, or between models of one provider, keeps the conversation. Switching providers starts a new session and carries over the messages and a one-line note for each tool call, as closely as it can. The agent's own permission prompts are off; its file and terminal requests to the editor still follow the editor's permissions (see below). A usage limit is handled for you: co:op moves to your next signed-in account and sends your prompt again, or, if every account is at its limit, waits for the nearest reset. A box restart (<code>coop build</code>, <code>coop update</code> or running out of memory) replays the handshake, so your editor stays connected.</p>
+        <p class="callout">Over ACP, the agent can ask the editor to read or write files on your computer and run commands in its terminal. co:op passes those requests on, and the editor's permissions, not the box, limit them. For a boundary that is only the box, use a terminal or loop run. See the <a href="https://github.com/AndrewDryga/coop/blob/main/README.md#drive-it-from-zed-acp">ACP security note</a>.</p>
+        <p>Building a website? List the dev server's port under <code>serve:</code> in a committed <code>.agent/project.yaml</code>, and the thread shows the <code>http://localhost:&lt;port&gt;</code> address the box publishes it on. Bind the server to <code>0.0.0.0</code> inside the box.</p>
+        <p class="callout">Desktop apps don't always get your shell's <code>PATH</code>. If your editor can't find <code>coop</code>, use the full path from <code>command -v coop</code> as the <code>command</code>.</p>
+      </section>
 
-                <section class="doc-section" id="toolchain">
-                    <h2>Toolchain &amp; services</h2>
-                    <p class="section-lead">
-                        Real projects need a language toolchain and a database.
-                        Declare them once, instead of having the agent reinstall
-                        them on every run.
-                    </p>
-                    <p>
-                        If your repo pins versions in a
-                        <code>.tool-versions</code> (asdf), the box provisions
-                        that toolchain the first time and caches it — so a repo
-                        with nothing but a <code>.tool-versions</code> just
-                        works. For a fully reproducible image,
-                        <code>coop init --stack asdf</code> bakes the same
-                        versions into a <code>.agent/Dockerfile</code> at build
-                        time.
-                    </p>
-                    <p>
-                        Need a Postgres or Redis alongside? They're opt-in —
-                        <code>coop init</code> asks, or pass
-                        <code>--services postgres,redis</code> — and run as
-                        their own throwaway containers the box can reach by
-                        name:
-                    </p>
-                    <pre
-                        class="code"
-                    ><span class="k">coop</span> up                    <span class="t"># start services and wait until healthy</span>
-<span class="k">coop</span> claude                <span class="t"># reach services by their Compose names</span>
+      <section class="doc-section" id="toolchain">
+        <h2>Toolchain and services</h2>
+        <p class="section-lead">Real projects need a language toolchain and a database. Declare them once, instead of having the agent install them on every run.</p>
+        <p>If your repo pins versions in a <code>.tool-versions</code> file (asdf), <code>coop init</code> writes a <code>.agent/Dockerfile</code> that builds them into the box's image, so the agent never reinstalls them. <code>coop init --stack asdf</code> writes it even without the file.</p>
+        <p>Need Postgres or Redis alongside? They're opt-in (<code>coop init</code> asks, or pass <code>--services postgres,redis</code>), and they run in their own disposable containers that the box reaches by name:</p>
+        <pre class="code">
+<span class="k">coop</span> up                    <span class="t"># start services, wait until healthy</span>
+<span class="k">coop</span> claude                <span class="t"># reach them by their Compose names</span>
 <span class="k">coop</span> down                  <span class="t"># stop services and keep their data</span>
-<span class="k">coop</span> down --delete-volumes <span class="t"># ask to permanently delete service volumes</span></pre>
-                    <p>
-                        Agents can change data in services they can reach, so
-                        use disposable development databases. Deleting service
-                        volumes requires confirmation and cannot be undone.
-                    </p>
-                    <p>
-                        The final <code>coop up</code> status names the exact non-empty services
-                        resolved by Compose, in Compose order. If resolution fails, Coop stops
-                        before startup and tells you to fix the reported cause and retry
-                        <code>coop up</code>.
-                    </p>
-                    <p>
-                        To refresh the base image underneath,
-                        <code>coop update</code> rebuilds the box fresh;
-                        <code>coop build</code> is the stable, pinned rebuild.
-                        Both use the agent-client versions pinned by your Coop release.
-                    </p>
-                </section>
+<span class="k">coop</span> down --delete-volumes <span class="t"># delete their volumes, after asking</span></pre>
+        <p>Agents can change data in any service they can reach, so use disposable development databases. Deleting service volumes asks you to confirm, and can't be undone.</p>
+        <p>When <code>coop up</code> finishes, it names the services Compose resolved, in Compose order. If Compose can't resolve them, co:op stops before starting anything and tells you what to fix.</p>
+        <p><code>coop update</code> updates co:op itself, then rebuilds the box on fresh packages; <code>coop update --box-only</code> rebuilds just the box. <code>coop build</code> is the stable, pinned rebuild (<code>coop build --egress filtered</code> for a project with filtered networking). Each installs the agent versions your co:op release pins.</p>
+      </section>
 
-                <section class="doc-section" id="mcp-remote">
-                    <h2>MCP &amp; remote sessions</h2>
-                    <p class="section-lead">
-                        Share tool servers across agents, or connect a machine
-                        to a separate session controller.
-                    </p>
-                    <p>
-                        Define MCP servers once outside your repository. Coop
-                        makes the configured servers available to supported
-                        agent runs, subject to network mode, and brokers eligible
-                        HTTP tokens outside the box. The
-                        <a
-                            href="https://github.com/AndrewDryga/coop/blob/main/README.md#mcp-servers-defined-once"
-                            target="_blank"
-                            rel="noopener"
-                            >MCP guide</a
-                        >
-                        covers local commands, remote HTTP servers, tokens,
-                        and network modes.
-                    </p>
-                    <p>
-                        A remote worker connects outbound over TLS to a
-                        compatible controller. The controller supplies each
-                        job's repository source, model targets, network access,
-                        and limits; Coop fetches the working tree and runs the
-                        model. The worker keeps private state and model
-                        credentials locally, and needs Git, Git LFS, and a
-                        supported container runtime. See the
-                        <a
-                            href="https://github.com/AndrewDryga/coop/blob/main/docs/session-api.md#connect"
-                            target="_blank"
-                            rel="noopener"
-                            >worker connector guide</a
-                        >.
-                    </p>
-                </section>
+      <section class="doc-section" id="mcp-remote">
+        <h2>MCP and remote sessions</h2>
+        <p class="section-lead">Share tool servers across agents, or connect a machine to a separate session controller.</p>
+        <p>Define MCP servers once, outside your repo. co:op makes them available to supported agents, within the network setting, and keeps eligible HTTP tokens outside the box. The <a href="https://github.com/AndrewDryga/coop/blob/main/README.md#mcp-servers-defined-once">MCP guide</a> covers local commands, remote HTTP servers, tokens and network settings.</p>
+        <p>A remote worker connects out over TLS to a compatible controller, with <code>coop sessions connect --controller &lt;url&gt; --token-file &lt;path&gt;</code>. The controller supplies each job's repository, model targets, network access and limits; co:op fetches the code and runs the model. The worker keeps its private state and model credentials on its own machine, and needs Git, Git LFS and a supported container runtime. See the <a href="https://github.com/AndrewDryga/coop/blob/main/docs/session-api.md#connect">worker connector guide</a>.</p>
+      </section>
 
-                <section class="doc-section" id="config">
-                    <h2>Configuration</h2>
-                    <p class="section-lead">
-                        Sensible defaults out of the box; a handful of knobs for
-                        when you need them.
-                    </p>
-                    <p>
-                        Set these as environment variables or in
-                        <code>~/.config/coop/coop.conf</code>. The ones you're
-                        most likely to touch:
-                    </p>
-                    <div class="table-scroll" role="region" aria-label="Configuration variables" tabindex="0">
-                    <table class="ref">
-                        <tr>
-                            <th>Variable</th>
-                            <th>What it does</th>
-                        </tr>
-                        <tr>
-                            <td><code>COOP_GATE</code></td>
-                            <td>
-                                a command re-run in the box before a fork merge
-                                lands (e.g. <code>make check</code>)
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>COOP_EGRESS</code></td>
-                            <td>
-                                <code>none</code> cuts the box off the network
-                                entirely (loopback only). An agent can't reach
-                                its model API this way, so it isn't a working
-                                mode — it's for forensics: quarantine a box you
-                                think is compromised, then exec in to see what it
-                                did. The default is <code>open</code>.
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>COOP_RUNTIME</code></td>
-                            <td>
-                                force <code>docker</code> /
-                                <code>container</code> instead of auto-detect
-                                (which prefers Docker)
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>
-                                <code>COOP_MEMORY</code> ·
-                                <code>COOP_CPUS</code>
-                            </td>
-                            <td>
-                                cap the box's resources (e.g. <code>4g</code>,
-                                <code>2</code>)
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>COOP_&lt;AGENT&gt;_MODEL</code></td>
-                            <td>
-                                an agent's default model everywhere it runs
-                                (e.g. <code>COOP_CLAUDE_MODEL=opus</code>)
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>COOP_CAFFEINATE</code></td>
-                            <td>
-                                on by default: while a loop runs, hold a sleep
-                                inhibitor (macOS <code>caffeinate</code>) so the
-                                machine doesn't idle-sleep mid-drain; set
-                                <code>0</code> to disable
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>COOP_SPINNER</code></td>
-                            <td><code>1</code></td>
-                            <td>Animate Coop's live-view spinners: five-column Box Run beside progress bars and one-column Corner Run (<code>◰ ◳ ◲ ◱</code>) in dense task rows. Set to <code>0</code> or <code>false</code> to freeze them and suppress the loop's fast repaint ticker while debugging or recording.</td>
-                        </tr>
-                        <tr>
-                            <td><code>COOP_HOMES</code></td>
-                            <td>
-                                on by default: mount your per-agent home dirs
-                                into the box; <code>COOP_HOMES=0</code> keeps
-                                them out so an agent can't read your host agent
-                                configs
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>COOP_CONF</code></td>
-                            <td>
-                                relocate the <code>coop.conf</code> file coop
-                                reads its <code>COOP_*</code> defaults from
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>NO_COLOR</code></td>
-                            <td>
-                                present at any value disables ANSI color
-                                everywhere (<a
-                                    href="https://no-color.org"
-                                    target="_blank"
-                                    rel="noopener"
-                                    >no-color.org</a
-                                >)
-                            </td>
-                        </tr>
-                    </table>
-                    </div>
-                    <p>
-                        On Docker the box additionally runs with
-                        every Linux capability dropped, no-new-privileges, and a
-                        process cap. The complete list of variables lives in the
-                        <a
-                            href="https://github.com/AndrewDryga/coop#configuration"
-                            target="_blank"
-                            rel="noopener"
-                            >README reference</a
-                        >.
-                    </p>
-                </section>
-
-                <section class="doc-section" id="troubleshooting">
-                    <h2>Troubleshooting</h2>
-                    <p class="section-lead">
-                        The handful of things that trip people up, and the
-                        quickest fix for each.
-                    </p>
-                    <div class="table-scroll" role="region" aria-label="Troubleshooting" tabindex="0">
-                    <table class="ref">
-                        <tr>
-                            <th>Symptom</th>
-                            <th>Fix</th>
-                        </tr>
-                        <tr>
-                            <td>"no container runtime found"</td>
-                            <td>
-                                Install Docker or Apple
-                                <code>container</code>, then
-                                <code>coop build --egress open &amp;&amp; coop doctor</code>.
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>"image isn't built"</td>
-                            <td>Run <code>coop build --egress open</code> once from a directory without a project Dockerfile.</td>
-                        </tr>
-                        <tr>
-                            <td>Login hangs / "usage limit reached"</td>
-                            <td>
-                                Re-run <code>coop login &lt;agent&gt;</code>. A
-                                subscription cap resets on a schedule — a loop
-                                waits it out on its own.
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>A detached loop won't quit</td>
-                            <td>
-                                <code>coop fork logs &lt;name&gt; -f</code> to
-                                watch it;
-                                <code>coop fork stop &lt;name&gt;</code> to stop
-                                it.
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>A secret is still visible</td>
-                            <td>
-                                Run <code>coop doctor</code> to see what's
-                                shadowed, then add the path to
-                                <code>.coopignore</code>.
-                            </td>
-                        </tr>
-                    </table>
-                    </div>
-                    <p>
-                        The full troubleshooting guide and every command's flags
-                        are in the
-                        <a
-                            href="https://github.com/AndrewDryga/coop#troubleshooting"
-                            target="_blank"
-                            rel="noopener"
-                            >README</a
-                        >
-                        — or run <code>coop help</code> (and
-                        <code>coop &lt;command&gt; --help</code>) for the live
-                        reference.
-                    </p>
-                    <p class="doc-next">
-                        Stuck on something not here?
-                        <a
-                            href="https://github.com/AndrewDryga/coop/issues"
-                            target="_blank"
-                            rel="noopener"
-                            >Open an issue</a
-                        >.
-                    </p>
-                </section>
-            </main>
+      <section class="doc-section" id="config">
+        <h2>Configuration</h2>
+        <p class="section-lead">Sensible defaults, and a few settings for when you need them.</p>
+        <p>Set these as environment variables or in <code>~/.config/coop/coop.conf</code>; the last three work only as environment variables. The ones you're most likely to change:</p>
+        <div class="table-scroll" role="region" aria-label="Configuration variables" tabindex="0">
+          <table class="ref">
+            <tr>
+              <th>Variable</th>
+              <th>What it does</th>
+            </tr>
+            <tr>
+              <td><code>COOP_GATE</code></td>
+              <td>Overrides the project's <code>gate:</code> checks on this computer, like <code>make check</code>.</td>
+            </tr>
+            <tr>
+              <td><code>COOP_EGRESS</code></td>
+              <td><code>filtered</code> lets the box reach only its AI provider and the destinations you approve; <code>coop init</code> sets it for the project. <code>open</code>, the built-in default, leaves the network open. <code>none</code> cuts the box off entirely: the agent can't reach its model, so use it to quarantine a box you suspect, then look inside.</td>
+            </tr>
+            <tr>
+              <td><code>COOP_RUNTIME</code></td>
+              <td>Force <code>docker</code> or <code>container</code> instead of detecting one (detection prefers Docker).</td>
+            </tr>
+            <tr>
+              <td><code>COOP_MEMORY</code>, <code>COOP_CPUS</code></td>
+              <td>Cap the box's memory and CPUs, like <code>4g</code> and <code>2</code>.</td>
+            </tr>
+            <tr>
+              <td><code>COOP_&lt;AGENT&gt;_MODEL</code></td>
+              <td>An agent's default model everywhere it runs, like <code>COOP_CLAUDE_MODEL=opus</code>.</td>
+            </tr>
+            <tr>
+              <td><code>COOP_CAFFEINATE</code></td>
+              <td>On by default: while a loop runs, macOS <code>caffeinate</code> keeps the machine from sleeping. Set <code>0</code> to turn it off.</td>
+            </tr>
+            <tr>
+              <td><code>COOP_HOMES</code></td>
+              <td>On by default: each agent's home folder is mounted into the box. <code>COOP_HOMES=0</code> keeps them out, so an agent can't read your agents' settings; presets and peers need them, so those runs stop with an error.</td>
+            </tr>
+            <tr>
+              <td><code>COOP_SPINNER</code></td>
+              <td>On by default: the live spinners animate. Set <code>0</code> or <code>false</code> to freeze them, and the loop's fast redraws, while debugging or recording.</td>
+            </tr>
+            <tr>
+              <td><code>COOP_CONF</code></td>
+              <td>Moves the <code>coop.conf</code> file co:op reads its <code>COOP_*</code> defaults from.</td>
+            </tr>
+            <tr>
+              <td><code>NO_COLOR</code></td>
+              <td>Set to any value to turn off color everywhere (<a href="https://no-color.org">no-color.org</a>).</td>
+            </tr>
+          </table>
         </div>
+        <p>On Docker, the box also runs with every Linux capability dropped, no-new-privileges and a process limit. The <a href="https://github.com/AndrewDryga/coop#configuration">README reference</a> lists every variable.</p>
+      </section>
 
-        <footer class="footer">
-            <div class="container footer-inner">
-                <a class="brand" href="./"
-                    ><span class="wordmark"
-                        >co<span class="colon">:</span>op</span
-                    ></a
-                >
-                <div>
-                    <a href="docs.html">Docs</a> ·
-                    <a
-                        href="https://github.com/AndrewDryga/coop"
-                        target="_blank"
-                        rel="noopener"
-                        >GitHub</a
-                    >
-                    ·
-                    <a
-                        href="https://github.com/AndrewDryga/coop/releases"
-                        target="_blank"
-                        rel="noopener"
-                        >Releases</a
-                    >
-                    ·
-                    <a
-                        href="https://dryga.com/blog/untrusted-ai-coding-agent/"
-                        target="_blank"
-                        rel="noopener"
-                        >The write-up</a
-                    >
-                </div>
-                <span class="muted"
-                    >Made by
-                    <a href="https://dryga.com" target="_blank" rel="noopener"
-                        >Andrew Dryga</a
-                    ></span
-                >
-            </div>
-        </footer>
+      <section class="doc-section" id="troubleshooting">
+        <h2>Troubleshooting</h2>
+        <p class="section-lead">What trips people up, and the quickest fix for each.</p>
+        <div class="table-scroll" role="region" aria-label="Troubleshooting" tabindex="0">
+          <table class="ref">
+            <tr>
+              <th>Symptom</th>
+              <th>Fix</th>
+            </tr>
+            <tr>
+              <td>"no container runtime found"</td>
+              <td>Install Docker or Apple <code>container</code>, then run <code>coop build --egress open &amp;&amp; coop doctor</code>.</td>
+            </tr>
+            <tr>
+              <td>"image … not built"</td>
+              <td>Run the <code>coop build</code> command the message names: <code>--egress open</code>, or <code>--egress filtered</code> for a project with filtered networking.</td>
+            </tr>
+            <tr>
+              <td>Sign-in hangs, or "usage limit reached"</td>
+              <td>Run <code>coop login &lt;agent&gt;</code> again. A subscription limit resets on a schedule, and a loop waits for it on its own.</td>
+            </tr>
+            <tr>
+              <td>A background loop won't stop</td>
+              <td>Watch it with <code>coop fork logs &lt;name&gt; -f</code>, and stop it with <code>coop fork stop &lt;name&gt;</code>.</td>
+            </tr>
+            <tr>
+              <td>A secret is still visible</td>
+              <td>Add its path to <code>.coopignore</code>. <code>coop check-secrets</code> finds secrets hiding inside files.</td>
+            </tr>
+          </table>
+        </div>
+        <p>The <a href="https://github.com/AndrewDryga/coop#troubleshooting">README</a> has the full troubleshooting guide and every command's flags, and <code>coop help</code> (or <code>coop &lt;command&gt; --help</code>) is the live reference.</p>
+        <p>Stuck on something that isn't here? <a href="https://github.com/AndrewDryga/coop/issues">Open an issue</a>.</p>
+      </section>
+    </main>
+  </div>
 
-        <script src="assets/js/analytics.js"></script>
-        <script src="assets/vendor/asciinema-player.min.js"></script>
-        <script src="assets/js/site.js?v=20260926"></script>
-    </body>
+  <footer class="wrap footer">
+    <a class="brand brand-small" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="24" height="24" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav aria-label="Footer">
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/AndrewDryga/coop">GitHub</a>
+      <a href="https://emisar.dev">Emisar</a>
+    </nav>
+    <p>A Protectorate product. MIT licensed.</p>
+  </footer>
+</body>
 </html>

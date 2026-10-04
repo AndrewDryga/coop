@@ -17,15 +17,15 @@
     debug: /^(localhost|127\.0\.0\.1)$/.test(location.hostname),
   });
 
-  // --- install command copied ----------------------------------------------
+  // --- a setup command copied ---------------------------------------------
   // The page's clearest intent signal. Autocapture would only see a generic
   // click on a "Copy" button; a named event carrying the command is worth more.
   function wireInstallCopy() {
     document.querySelectorAll("[data-copy]").forEach(function (btn) {
       btn.addEventListener("click", function () {
-        var target = document.querySelector(btn.getAttribute("data-copy"));
+        var source = btn.parentElement.querySelector("[data-copy-source]");
         mixpanel.track("install_command_copied", {
-          command: target ? target.textContent.trim() : null,
+          command: source ? source.textContent.replace(/^\$\s*/, "").trim() : null,
           page: location.pathname,
         });
       });

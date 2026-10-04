@@ -85,7 +85,8 @@ signoff:
     - `make check` is the gate (gofmt + go vet + tests + docs-check); it must pass across the whole repo.
     - `make align` passes (trailing-comment alignment) — reopen the task if it doesn't.
     - If internal/cli/help.go changed, the generated docs were regenerated (`make docs`) and committed.
-    - A user-visible CLI change updated the site casts/docs and added a CHANGELOG Unreleased entry.
+    - A user-visible CLI change updated the docs and any website terminal scene that shows that
+      output (tools/gen_site.py, then regenerate), and added a CHANGELOG Unreleased entry.
     - No new Go dependency without a one-line justification in the commit message.
     - A correction from the human during the task became a rule in .agent/kb/rules/ — flag any that
       were applied once and not recorded.

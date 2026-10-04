@@ -1,1 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="coop"><defs><linearGradient id="tile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1d232c"/><stop offset="1" stop-color="#0e1116"/></linearGradient><linearGradient id="wood" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f1b56a"/><stop offset="1" stop-color="#d0903f"/></linearGradient></defs><rect width="32" height="32" rx="7.2" fill="url(#tile)"/><rect x="0.5" y="0.5" width="31" height="31" rx="6.7" fill="none" stroke="#ffffff" stroke-opacity="0.06"/><path d="M16 4.4 L27 13.2 a1 1 0 0 1 0.4 0.8 L27.4 25 a2.2 2.2 0 0 1-2.2 2.2 L6.8 27.2 a2.2 2.2 0 0 1-2.2-2.2 L4.6 14 a1 1 0 0 1 0.4-0.8 Z" fill="url(#wood)"/><circle cx="16" cy="18.6" r="4.7" fill="#0e1116"/><circle cx="16" cy="18.6" r="4.7" fill="none" stroke="#62d3f0" stroke-width="3"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-labelledby="title">
+  <title id="title">co:op</title>
+  <rect width="32" height="32" rx="7.2" fill="#111315"/>
+  <path d="M15.44 4.58Q16 4.1 16.56 4.58L26.88 13.18Q27.4 13.62 27.4 14.3V24.92Q27.4 27.1 25.22 27.1H6.78Q4.6 27.1 4.6 24.92V14.3Q4.6 13.62 5.12 13.18Z" fill="#E6A95C"/>
+  <circle cx="16" cy="18.3" r="4.9" fill="#111315" stroke="#62D3F0" stroke-width="1.85"/>
+</svg>

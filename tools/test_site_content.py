@@ -1,5 +1,6 @@
 import re
 import subprocess
+import sys
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
@@ -12,26 +13,34 @@ class Page(HTMLParser):
     def __init__(self, path):
         super().__init__()
         self.elements = []
-        self.codes = {}
+        self.copy_sources = []  # the text of each command a Copy button copies
+        self.main_nav = []  # the links in the main navigation
         self.text = []
-        self.code_id = None
+        self.copying = False
+        self.in_main_nav = False
         self.feed(path.read_text(encoding="utf-8"))
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         self.elements.append((tag, attrs))
-        if tag == "code" and "id" in attrs:
-            self.code_id = attrs["id"]
-            self.codes[self.code_id] = ""
+        if tag == "code" and "data-copy-source" in attrs:
+            self.copying = True
+            self.copy_sources.append("")
+        if tag == "nav" and attrs.get("aria-label") == "Main":
+            self.in_main_nav = True
+        if tag == "a" and self.in_main_nav:
+            self.main_nav.append(attrs.get("href"))
 
     def handle_endtag(self, tag):
         if tag == "code":
-            self.code_id = None
+            self.copying = False
+        if tag == "nav":
+            self.in_main_nav = False
 
     def handle_data(self, data):
         self.text.append(data)
-        if self.code_id:
-            self.codes[self.code_id] += data
+        if self.copying:
+            self.copy_sources[-1] += data
 
 
 class SiteContentTest(unittest.TestCase):
@@ -54,30 +63,36 @@ class SiteContentTest(unittest.TestCase):
                 self.assertEqual(re.findall(r"\bcoop down (?:-v|--volumes)\b", text), [])
                 self.assertTrue("coop down --delete-volumes" in text, "missing supported volume-deletion command")
 
-    def test_installer_copy_targets_are_executable_one_liners(self):
+    def test_setup_commands_copy_as_runnable_shell(self):
         page = Page(SITE / "index.html")
-        targets = [attrs["data-copy"] for _, attrs in page.elements if "data-copy" in attrs]
-        self.assertEqual(len(targets), 2)
-        expected = "curl -fsSL https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh | sh"
-        for target in targets:
-            with self.subTest(target=target):
-                copied = page.codes[target.removeprefix("#")].strip()
-                parsed = subprocess.run(["sh", "-n"], input=copied, text=True, capture_output=True, check=False)
+        buttons = [attrs for tag, attrs in page.elements if tag == "button" and "data-copy" in attrs]
+        # what site.js copies: the command's text without its "$ " prompt
+        commands = [re.sub(r"^\$\s*", "", text).strip() for text in page.copy_sources]
+        self.assertEqual(len(buttons), len(commands))
+        self.assertEqual(commands, [
+            "curl -fsSL https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh | sh",
+            "coop login claude",
+            "cd your-project && coop init",
+            "coop claude",
+        ])
+        for command in commands:
+            with self.subTest(command=command):
+                parsed = subprocess.run(["sh", "-n"], input=command, text=True, capture_output=True, check=False)
                 self.assertEqual(parsed.returncode, 0, parsed.stderr)
-                self.assertEqual(copied, expected)
 
-    def test_mobile_menus_name_their_controlled_navigation(self):
-        for path in (SITE / "index.html", SITE / "docs.html"):
+    def test_pages_share_the_main_navigation(self):
+        for path, install in ((SITE / "index.html", "#start"), (SITE / "docs.html", "./#start")):
             with self.subTest(page=path.name):
                 page = Page(path)
-                toggles = [attrs for tag, attrs in page.elements if tag == "button" and "data-nav-toggle" in attrs]
-                navs = [attrs for tag, attrs in page.elements if tag == "nav" and "data-nav" in attrs]
-                self.assertEqual(len(toggles), 1)
-                self.assertEqual(len(navs), 1)
-                self.assertEqual(toggles[0].get("aria-expanded"), "false")
-                self.assertTrue(navs[0].get("id"))
-                self.assertEqual(toggles[0].get("aria-controls"), navs[0]["id"])
-                self.assertTrue(toggles[0].get("aria-label"))
+                for href in ("docs.html", "https://github.com/AndrewDryga/coop", install):
+                    self.assertIn(href, page.main_nav)
+                self.assertTrue(any(tag == "a" and attrs.get("href") == "#main" for tag, attrs in page.elements), "missing skip link")
+                self.assertTrue(any(attrs.get("id") == "main" for _, attrs in page.elements), "missing #main")
+
+    def test_built_pages_match_their_generator(self):
+        generator = SITE.parent / "tools" / "gen_site.py"
+        checked = subprocess.run([sys.executable, str(generator), "--check"], capture_output=True, text=True, check=False)
+        self.assertEqual(checked.returncode, 0, checked.stderr)
 
 
 if __name__ == "__main__":

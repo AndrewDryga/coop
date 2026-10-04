@@ -1,7 +1,7 @@
 name: pages
 
-# Deploy the static site in site/ to GitHub Pages. No build step — the site is
-# hand-written HTML/CSS/JS with a vendored asciinema-player; this job just uploads it.
+# Deploy the static site in site/ to GitHub Pages. No build step: the site is static
+# HTML/CSS/JS, and its generated pages are committed (tools/gen_site.py); this job just uploads it.
 # One-time setup: repo Settings → Pages → Source: "GitHub Actions".
 
 on:

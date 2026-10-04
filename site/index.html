@@ -1,702 +1,248 @@
 <!doctype html>
 <html lang="en">
-    <head>
-        <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>coop — run agent loops in a box they can't escape</title>
-        <meta
-            name="description"
-            content="Run agent loops on your real repos — in a disposable box they can't escape, with your secrets shadowed, draining your task queue all night. One binary drives Claude, Codex, Gemini, and Grok."
-        />
-        <link rel="canonical" href="https://coop.dryga.com/" />
-        <meta name="theme-color" content="#0e1014" />
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1014">
+  <title>co:op · Sandbox for Claude Code, Codex and AI coding agents</title>
+  <meta name="description" content="Run Claude Code, Codex, Gemini and Grok in a sandbox that only sees your project. Secrets are replaced with empty files and networking is restricted. Free and open source.">
+  <link rel="canonical" href="https://coop.dryga.com/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="co:op">
+  <meta property="og:url" content="https://coop.dryga.com/">
+  <meta property="og:title" content="co:op · You need a sandbox">
+  <meta property="og:description" content="Run Claude Code, Codex, Gemini and Grok in a sandbox that only sees your project. Secrets are replaced with empty files and networking is restricted. Free and open source.">
+  <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="You need a sandbox: a home folder where only the project sits inside the sandbox, secrets read as empty, and only the AI provider is reachable.">
+  <meta name="twitter:card" content="summary_large_image">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"co:op","description":"Run Claude Code, Codex, Gemini and Grok in a sandbox that only sees your project. Secrets are replaced with empty files and networking is restricted. Free and open source.","url":"https://coop.dryga.com/","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://github.com/AndrewDryga/coop/blob/main/LICENSE","softwareHelp":"https://coop.dryga.com/docs.html","sameAs":["https://github.com/AndrewDryga/coop"],"publisher":{"@type":"Organization","name":"Protectorate"}}</script>
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/img/favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="manifest" href="site.webmanifest">
+  <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/site.css?v=20261004">
+  <script>if (matchMedia("(min-width: 1024px)").matches && "IntersectionObserver" in window) { document.documentElement.classList.add("js-story"); setTimeout(() => document.documentElement.classList.contains("story-ready") || document.documentElement.classList.remove("js-story"), 3000); }</script>
+  <script src="assets/js/site.js?v=20261004" defer></script>
+  <script src="assets/js/analytics.js?v=20261004" defer></script>
+  <noscript><style>.copy, .agents { display: none; }</style></noscript>
+</head>
+<body>
+  <svg class="sprite" aria-hidden="true"><symbol id="mark-claude" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z"/></symbol><symbol id="mark-openai" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M9.205 8.658v-2.26c0-.19.072-.333.238-.428l4.543-2.616c.619-.357 1.356-.523 2.117-.523 2.854 0 4.662 2.212 4.662 4.566 0 .167 0 .357-.024.547l-4.71-2.759a.797.797 0 00-.856 0l-5.97 3.473zm10.609 8.8V12.06c0-.333-.143-.57-.429-.737l-5.97-3.473 1.95-1.118a.433.433 0 01.476 0l4.543 2.617c1.309.76 2.189 2.378 2.189 3.948 0 1.808-1.07 3.473-2.76 4.163zM7.802 12.703l-1.95-1.142c-.167-.095-.239-.238-.239-.428V5.899c0-2.545 1.95-4.472 4.591-4.472 1 0 1.927.333 2.712.928L8.23 5.067c-.285.166-.428.404-.428.737v6.898zM12 15.128l-2.795-1.57v-3.33L12 8.658l2.795 1.57v3.33L12 15.128zm1.796 7.23c-1 0-1.927-.332-2.712-.927l4.686-2.712c.285-.166.428-.404.428-.737v-6.898l1.974 1.142c.167.095.238.238.238.428v5.233c0 2.545-1.974 4.472-4.614 4.472zm-5.637-5.303l-4.544-2.617c-1.308-.761-2.188-2.378-2.188-3.948A4.482 4.482 0 014.21 6.327v5.423c0 .333.143.571.428.738l5.947 3.449-1.95 1.118a.432.432 0 01-.476 0zm-.262 3.9c-2.688 0-4.662-2.021-4.662-4.519 0-.19.024-.38.047-.57l4.686 2.71c.286.167.571.167.856 0l5.97-3.448v2.26c0 .19-.07.333-.237.428l-4.543 2.616c-.619.357-1.356.523-2.117.523zm5.899 2.83a5.947 5.947 0 005.827-4.756C22.287 18.339 24 15.84 24 13.296c0-1.665-.713-3.282-1.998-4.448.119-.5.19-.999.19-1.498 0-3.401-2.759-5.947-5.946-5.947-.642 0-1.26.095-1.88.31A5.962 5.962 0 0010.205 0a5.947 5.947 0 00-5.827 4.757C1.713 5.447 0 7.945 0 10.49c0 1.666.713 3.283 1.998 4.448-.119.5-.19 1-.19 1.499 0 3.401 2.759 5.946 5.946 5.946.642 0 1.26-.095 1.88-.309a5.96 5.96 0 004.162 1.713z"/></symbol><symbol id="mark-gemini" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M20.616 10.835a14.147 14.147 0 01-4.45-3.001 14.111 14.111 0 01-3.678-6.452.503.503 0 00-.975 0 14.134 14.134 0 01-3.679 6.452 14.155 14.155 0 01-4.45 3.001c-.65.28-1.318.505-2.002.678a.502.502 0 000 .975c.684.172 1.35.397 2.002.677a14.147 14.147 0 014.45 3.001 14.112 14.112 0 013.679 6.453.502.502 0 00.975 0c.172-.685.397-1.351.677-2.003a14.145 14.145 0 013.001-4.45 14.113 14.113 0 016.453-3.678.503.503 0 000-.975 13.245 13.245 0 01-2.003-.678z"/></symbol><symbol id="mark-grok" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M9.27 15.29l7.978-5.897c.391-.29.95-.177 1.137.272.98 2.369.542 5.215-1.41 7.169-1.951 1.954-4.667 2.382-7.149 1.406l-2.711 1.257c3.889 2.661 8.611 2.003 11.562-.953 2.341-2.344 3.066-5.539 2.388-8.42l.006.007c-.983-4.232.242-5.924 2.75-9.383.06-.082.12-.164.179-.248l-3.301 3.305v-.01L9.267 15.292M7.623 16.723c-2.792-2.67-2.31-6.801.071-9.184 1.761-1.763 4.647-2.483 7.166-1.425l2.705-1.25a7.808 7.808 0 00-1.829-1A8.975 8.975 0 005.984 5.83c-2.533 2.536-3.33 6.436-1.962 9.764 1.022 2.487-.653 4.246-2.34 6.022-.599.63-1.199 1.259-1.682 1.925l7.62-6.815"/></symbol></svg>
+  <a class="skip" href="#main">Skip to content</a>
 
-        <!-- icons + PWA manifest -->
-        <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml" />
-        <link rel="icon" href="assets/img/favicon.ico" sizes="32x32" />
-        <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png" />
-        <link rel="manifest" href="site.webmanifest" />
+  <header class="wrap nav">
+    <a class="brand" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="32" height="32" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-optional" href="#sandbox">Sandbox</a>
+      <a class="nav-optional" href="#features">Features</a>
+      <a href="docs.html">Docs</a>
+      <a class="nav-optional" href="https://github.com/AndrewDryga/coop">GitHub</a>
+      <a class="button button-small" href="#start">Install</a>
+    </nav>
+  </header>
 
-        <!-- Open Graph (Facebook, LinkedIn, Slack, Discord, iMessage…) -->
-        <meta property="og:type" content="website" />
-        <meta property="og:site_name" content="coop" />
-        <meta property="og:url" content="https://coop.dryga.com/" />
-        <meta property="og:title" content="coop — run agent loops in a box they can't escape" />
-        <meta property="og:description" content="A sandboxed home for untrusted coding agents: secrets shadowed, the container as the cage, and an unattended loop that drains your task queue overnight." />
-        <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png" />
-        <meta property="og:image:type" content="image/png" />
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta property="og:image:alt" content="The coop wordmark and tagline — run agent loops all night, in a box they can't escape — beside a terminal draining an overnight task queue." />
-        <meta property="og:locale" content="en_US" />
-
-        <!-- Twitter / X -->
-        <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:title" content="coop — run agent loops in a box they can't escape" />
-        <meta name="twitter:description" content="A sandboxed home for untrusted coding agents: secrets shadowed, the container as the cage, and an unattended loop that drains your task queue overnight." />
-        <meta name="twitter:image" content="https://coop.dryga.com/assets/img/og-image.png" />
-        <meta name="twitter:image:alt" content="The coop wordmark and tagline beside a terminal draining an overnight task queue." />
-
-        <link rel="stylesheet" href="assets/vendor/asciinema-player.css" />
-        <link rel="stylesheet" href="assets/css/site.css" />
-
-        <script type="application/ld+json">
-            {
-                "@context": "https://schema.org",
-                "@type": "SoftwareApplication",
-                "name": "coop",
-                "applicationCategory": "DeveloperApplication",
-                "operatingSystem": "macOS, Linux",
-                "description": "Run agent loops on your real repos — in a disposable box they can't escape, with your secrets shadowed, draining your task queue all night. One binary drives Claude, Codex, Gemini, and Grok.",
-                "url": "https://coop.dryga.com/",
-                "downloadUrl": "https://github.com/AndrewDryga/coop",
-                "license": "https://github.com/AndrewDryga/coop/blob/main/LICENSE",
-                "author": { "@type": "Person", "name": "Andrew Dryga" },
-                "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
-            }
-        </script>
-    </head>
-    <body>
-        <header class="nav">
-            <div class="container nav-inner">
-                <a class="brand" href="./"
-                    ><span class="wordmark"
-                        >co<span class="colon">:</span>op</span
-                    ></a
-                >
-                <button class="nav-toggle" aria-label="Menu" aria-expanded="false" aria-controls="primary-nav" data-nav-toggle>
-                    ☰
-                </button>
-                <nav class="nav-links" id="primary-nav" data-nav>
-                    <a href="#features">Features</a>
-                    <a href="#security">Security</a>
-                    <a href="docs.html">Docs</a>
-                    <a href="#install">Install</a>
-                    <a
-                        class="gh"
-                        href="https://github.com/AndrewDryga/coop"
-                        target="_blank"
-                        rel="noopener"
-                        >GitHub ↗</a
-                    >
-                    <a class="nav-cta" href="docs.html#quickstart"
-                        >Get started</a
-                    >
-                </nav>
+  <main id="main" tabindex="-1">
+    <section class="wrap story" aria-labelledby="hero-title">
+      <div class="story-lead">
+        <h1 id="hero-title">You need a sandbox</h1>
+        <p class="hero-lead">Coding agents do their best work unleashed, but that’s a gamble with your secrets and intellectual property.</p>
+        <div class="actions">
+          <a class="button button-primary" href="#start">Install co:op</a>
+          <a class="button" href="https://github.com/AndrewDryga/coop">View on GitHub</a>
+        </div>
+        <ul class="providers" role="list" aria-label="Agents co:op runs"><li><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#mark-claude"/></svg>Claude Code</li><li><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#mark-openai"/></svg>Codex</li><li><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#mark-gemini"/></svg>Gemini</li><li><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#mark-grok"/></svg>Grok</li></ul>
+      </div>
+      <figure class="stage" aria-label="Your project and everything its agent can reach: the rest of your machine, the internet and your Git remote">
+        <div class="scene"><div class="box"><p class="agent"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#mark-claude"/></svg>Claude Code</p><ul class="tree" role="list"><li><span class="row"><span class="name home">~</span></span><ul role="list"><li class="out" style="--i: 0" data-hit="ssh"><span class="row"><span class="name">.ssh/</span><svg class="icon lock" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3"/></svg><span class="sr-only">, out of reach</span><span class="probe" data-for="ssh" style="--down: 4.5" aria-hidden="true"><svg class="icon cut" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></span></span></li><li class="out" style="--i: 1" data-hit="aws"><span class="row"><span class="name">.aws/</span><svg class="icon lock" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3"/></svg><span class="sr-only">, out of reach</span><span class="probe" data-for="aws" style="--down: 3.5" aria-hidden="true"><svg class="icon cut" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></span></span></li><li class="out" style="--i: 2" data-hit="docs"><span class="row"><span class="name">Documents/</span><svg class="icon lock" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3"/></svg><span class="sr-only">, out of reach</span><span class="probe" data-for="docs" style="--down: 2.5" aria-hidden="true"><svg class="icon cut" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></span></span></li><li class="via"><span class="row"><span class="name">code/</span></span><ul role="list"><li class="out" style="--i: 3" data-hit="billing"><span class="row"><span class="name">billing/</span><svg class="icon lock" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3"/></svg><span class="sr-only">, out of reach</span><span class="probe" data-for="billing" style="--down: 0.5" aria-hidden="true"><svg class="icon cut" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></span></span></li><li class="zone-node"><div class="zone"><svg class="wall" aria-hidden="true"><rect x="0" y="0" width="100%" height="100%" rx="10" pathLength="1"/></svg><span class="zone-tag">Sandbox</span><span class="row"><span class="name">shop/</span></span><ul role="list"><li><span class="row"><span class="name">src/</span></span></li><li><span class="row"><span class="name">tests/</span></span></li><li class="pkg"><span class="row"><span class="name">package.json</span></span></li><li class="secret"><span class="row"><span class="name">.env</span><span class="secret-value" aria-hidden="true">sk-••••••</span><span class="sr-only">, empty inside the box</span></span></li></ul><div class="remote git"><span class="wire" aria-hidden="true"><svg class="icon lock" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3"/></svg></span><span class="label"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7" cy="6" r="2.25"/><circle cx="7" cy="18" r="2.25"/><circle cx="17" cy="8" r="2.25"/><path d="M7 8.25v7.5M17 10.25c0 4.5-10 2.5-10 5.5"/></svg>origin</span><span class="sr-only">, your Git remote: the agent cannot push to it</span></div></div></li></ul></li></ul></li></ul></div><ul class="bus" role="list"><li class="hop pass" style="--i: 0"><span class="wire" aria-hidden="true"><span class="port"></span></span><span class="label">api.anthropic.com</span><span class="sr-only">: reachable</span></li><li class="hop stop" style="--i: 1"><span class="wire" aria-hidden="true"><svg class="icon cut" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></span><span class="label">any other site</span><span class="sr-only">: blocked</span></li><li class="hop git" style="--i: 2"><span class="wire" aria-hidden="true"><svg class="icon lock" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3"/></svg></span><span class="label"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7" cy="6" r="2.25"/><circle cx="7" cy="18" r="2.25"/><circle cx="17" cy="8" r="2.25"/><path d="M7 8.25v7.5M17 10.25c0 4.5-10 2.5-10 5.5"/></svg>origin</span><span class="sr-only">, your Git remote: the agent cannot push to it</span></li></ul></div>
+      </figure>
+      <ol class="story-steps" id="sandbox" role="list">
+        <li class="step">
+          <h2>co:op builds a box around your project</h2>
+          <p>The agent runs in a container that sees one folder: your project, at its real path.</p>
+          <p>Your SSH keys, cloud logins and other repos aren’t in it.</p>
+        </li>
+        <li class="step">
+          <h2>Secrets are replaced</h2>
+          <p>Files like .env stay where they are, but inside the box they’re replaced with empty files.</p>
+          <p><code>coop check-secrets</code> finds secrets hiding inside your other files.</p>
+          <p>Hide more paths with <code>.coopignore</code>.</p>
+        </li>
+        <li class="step">
+          <h2>Networking is restricted</h2>
+          <p>The box reaches your AI provider and the domains you approve.</p>
+          <p>Everything else is blocked, so your code can’t go anywhere you haven’t approved.</p>
+        </li>
+        <li class="step">
+          <h2>You push, not the agent</h2>
+          <p>There are no Git credentials inside.</p>
+          <p>The agent commits in your name, and you decide what leaves your machine.</p>
+        </li>
+        <li class="step-group" id="why" style="--items: 4">
+          <div class="group-panel">
+            <h2>But why?</h2>
+            <p>Agents do what they read in code, docs and issues, even when an attacker wrote it.</p>
+            <p class="evidence"><strong>1 in 3</strong> <span>companies faced prompt injection attacks on their AI apps within a year, <a href="https://www.gartner.com/en/newsroom/press-releases/2025-09-22-gartner-survey-reveals-generative-artificial-intelligence-attacks-are-on-the-rise">Gartner found</a>.</span></p>
+            <div class="attack-rail">
+              <div class="ticks" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+              <ol class="attacks" role="list">
+                <li class="attack" data-attack="ssh">
+                  <p class="threat">A comment hidden in a README tells your agent to post your SSH key in an issue.</p>
+                  <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Your SSH keys aren’t in the box, so there’s nothing to post.</span></p>
+                </li>
+                <li class="attack" data-attack="issue">
+                  <p class="threat">An issue on a public repo tells your agent to publish your private code.</p>
+                  <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>The box has no GitHub credentials, and your other repos aren’t in it.</span></p>
+                  <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Nor can it upload your code anywhere else.</span></p>
+                </li>
+                <li class="attack" data-attack="key">
+                  <p class="threat">Hidden text in a setup guide tells your agent to send its Anthropic API key to an attacker.</p>
+                  <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>The box holds only a stand-in key that works for this run alone. The real key stays outside.</span></p>
+                </li>
+                <li class="attack" data-attack="env">
+                  <p class="threat">A package your agent installs sends your <code>.env</code> to a stranger’s server.</p>
+                  <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>In the box <code>.env</code> is empty, and that server can’t be reached.</span></p>
+                </li>
+              </ol>
             </div>
-        </header>
-
-        <main>
-            <section class="hero">
-                <div class="container">
-                    <div class="hero-text">
-                        <p class="hero-kicker">
-                            Keep your agents busy while you sleep
-                        </p>
-                        <h1>
-                            Run agent loops <span class="hl">all night</span> —
-                            in a box they <span class="hl">can't escape</span>.
-                        </h1>
-                        <p class="lead">
-                            Coding agents earn their keep with the brakes off
-                            and nobody watching — exactly when you don't want
-                            them loose on your laptop. Point coop's loop at your
-                            task queue and it works the night through, rides
-                            through rate limits, and reviews its own work to a
-                            demanding bar — all
-                            inside a disposable container that mounts only your
-                            repo, shadows its secrets, and can't reach your home
-                            dir, keys, or other projects. The cage is what lets
-                            you walk away.
-                        </p>
-                        <div class="cmd">
-                            <span class="prompt">$</span>
-                            <code id="install-cmd"
-                                >curl -fsSL https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh | sh</code
-                            >
-                            <button class="copy" data-copy="#install-cmd">
-                                Copy
-                            </button>
-                        </div>
-                        <div class="hero-cta">
-                            <a
-                                class="btn btn-primary"
-                                href="docs.html#quickstart"
-                                >Get started →</a
-                            >
-                            <a
-                                class="btn btn-ghost"
-                                href="https://github.com/AndrewDryga/coop"
-                                target="_blank"
-                                rel="noopener"
-                                >★ Star on GitHub</a
-                            >
-                        </div>
-                    </div>
-                    <div class="hero-cast">
-                        <div class="term">
-                            <div class="term-bar">
-                                <span class="dot r"></span
-                                ><span class="dot y"></span
-                                ><span class="dot g"></span
-                                ><span class="title"
-                                    >coop loop — drain the queue overnight</span
-                                >
-                            </div>
-                            <div class="term-body">
-                                <div
-                                    class="cast"
-                                    data-cast="casts/loop.cast"
-                                    data-autoplay="true"
-                                    data-loop="true"
-                                ></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <section id="why">
-                <div class="container">
-                    <div class="cards">
-                        <div class="card">
-                            <span class="ic">🔒</span>
-                            <h3>The cage, not the leash</h3>
-                            <p>
-                                The container <em>is</em> the boundary. The
-                                agent runs
-                                <code>--dangerously-skip-permissions</code> and
-                                the worst it can do is trash one repo you can
-                                restore from git.
-                            </p>
-                        </div>
-                        <div class="card">
-                            <span class="ic">🙈</span>
-                            <h3>Secrets never enter</h3>
-                            <p>
-                                <code>.env</code>, <code>*.pem</code>,
-                                <code>secrets/</code> and friends are shadowed —
-                                empty <code>tmpfs</code> over dirs, a blank
-                                read-only file over files. Templates stay
-                                visible.
-                            </p>
-                        </div>
-                        <div class="card">
-                            <span class="ic">🌙</span>
-                            <h3>A whip for all-nighters</h3>
-                            <p>
-                                A fresh agent per iteration drains the
-                                <code>.agent/tasks/</code> queue, rides through rate
-                                limits with credential failover, and reviews its own
-                                work to a demanding bar each iteration.
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <section id="features">
-                <div class="container">
-                    <div class="section-head">
-                        <span class="kicker">What it does</span>
-                        <h2>One binary. Every workflow.</h2>
-                        <p>
-                            Point it at any git repo and go. The same box drives
-                            parallel fork loops, a PR-style handoff, or a set of
-                            specialist roles — each agent runs in a container.
-                        </p>
-                    </div>
-
-                    <!-- loop -->
-                    <div class="feature">
-                        <div class="feature-text">
-                            <span class="kicker">The loop</span>
-                            <h3>Drain the queue while you sleep</h3>
-                            <p>
-                                Add tasks with <code>coop tasks add</code> (or
-                                just ask your agent to add them) — one folder per
-                                task under <code>.agent/tasks/</code>. Fill in
-                                each generated task file before you walk away.
-                                A fresh agent per iteration (no context rot)
-                                claims each one, commits behind your gate, and
-                                won't quit while work remains.
-                            </p>
-                            <ul>
-                                <li>
-                                    Each iteration prints
-                                    <b>which model is working</b>, live.
-                                </li>
-                                <li>
-                                    A rate limit triggers
-                                    <b>credential failover</b>, not a stall — it
-                                    switches accounts and keeps going.
-                                </li>
-                                <li>
-                                    When the queue empties, a fresh
-                                    <b>reviewer</b> holds every shipped
-                                    task to a senior reviewer's bar —
-                                    reopening anything short of done,
-                                    then draining and reviewing again
-                                    until the review is clean.
-                                </li>
-                                <li>
-                                    It closes with a <b>cost receipt</b> —
-                                    what shipped, the spend per task, and a
-                                    by-model breakdown of the run's tokens and
-                                    dollars.
-                                </li>
-                            </ul>
-                        </div>
-                        <div class="term">
-                            <div class="term-bar">
-                                <span class="dot r"></span
-                                ><span class="dot y"></span
-                                ><span class="dot g"></span
-                                ><span class="title">coop loop</span>
-                            </div>
-                            <div class="term-body">
-                                <div
-                                    class="cast"
-                                    data-cast="casts/loop.cast"
-                                ></div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- forks -->
-                    <div class="feature">
-                        <div class="feature-text">
-                            <span class="kicker">Forks</span>
-                            <h3>Hand off work like a PR</h3>
-                            <p>
-                                A fork is a throwaway local clone handed to an
-                                agent instead of your working tree. Its
-                                <code>origin</code> is a local path, so the
-                                agent has nowhere to push — and you stay the
-                                only one who lands anything.
-                            </p>
-                            <ul>
-                                <li>
-                                    <b>Open → work → review → land</b>, the
-                                    lifecycle of a contractor's PR.
-                                </li>
-                                <li>
-                                    Review the diff in your terminal or your
-                                    IDE; merge rebases onto your branch.
-                                </li>
-                                <li>
-                                    Set <code>COOP_GATE</code> and every merge
-                                    re-runs your tests on the rebased tree.
-                                </li>
-                            </ul>
-                        </div>
-                        <div class="term">
-                            <div class="term-bar">
-                                <span class="dot r"></span
-                                ><span class="dot y"></span
-                                ><span class="dot g"></span
-                                ><span class="title"
-                                    >coop fork — review &amp; land</span
-                                >
-                            </div>
-                            <div class="term-body">
-                                <div
-                                    class="cast"
-                                    data-cast="casts/fork.cast"
-                                ></div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- presets -->
-                    <div class="feature">
-                        <div class="feature-text">
-                            <span class="kicker">Presets</span>
-                            <h3>Many models, one recipe</h3>
-                            <p>
-                                Put your strongest model in charge and let it
-                                spend the cheap tokens: a lead plus the roles it
-                                routes work to — cross-vendor, each on its own
-                                model — captured once as a file and reused on any
-                                run.
-                            </p>
-                            <ul>
-                                <li>
-                                    The lead's <b>target ladder</b> fans across
-                                    your accounts and falls back rung → rung on
-                                    a rate limit.
-                                </li>
-                                <li>
-                                    Roles in three modes: an in-session
-                                    <b>native</b> subagent, a read-only
-                                    cross-vendor <b>consult</b>, and a
-                                    write-capable <b>delegate</b>.
-                                </li>
-                                <li>
-                                    <code>coop presets init</code> scaffolds one;
-                                    name it in the who-runs slot to run it —
-                                    <code>coop &lt;preset&gt;</code>, the loop, ACP, or a fork.
-                                    <a href="docs.html#presets">Details ↗</a>
-                                </li>
-                            </ul>
-                        </div>
-                        <div class="term">
-                            <div class="term-bar">
-                                <span class="dot r"></span
-                                ><span class="dot y"></span
-                                ><span class="dot g"></span
-                                ><span class="title"
-                                    >Example: preset.yaml</span
-                                >
-                            </div>
-                            <div class="term-body">
-                                <pre
-                                    class="term-code"
-                                >lead:
-  agent: [claude:claude-fable-5/xhigh, codex:gpt-5.6-sol/xhigh]
-roles:
-  thinker:       <span class="t"># deep thinking, read-only</span>
-    mode: consult
-    agent: claude:claude-opus-4-8/xhigh
-  critic:        <span class="t"># read-only, another vendor</span>
-    mode: consult
-    agent: codex:gpt-5.6-sol/xhigh
-  fast:          <span class="t"># cheap, write-capable</span>
-    mode: delegate
-    agent: gemini:gemini-3.5-flash</pre>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="feature flip">
-                        <div class="feature-text">
-                            <span class="kicker">Editors</span>
-                            <h3>Your editor is the cockpit</h3>
-                            <p>
-                                Register coop as an
-                                <a
-                                    href="https://agentclientprotocol.com"
-                                    target="_blank"
-                                    rel="noopener"
-                                    >ACP</a
-                                >
-                                agent (Zed today) and steer the sandboxed agent
-                                from the editor — while coop quietly runs the
-                                session for you.
-                            </p>
-                            <ul>
-                                <li>
-                                    A <b>coop dropdown</b> in the toolbar
-                                    switches the credential or preset
-                                    mid-thread — the conversation survives the
-                                    switch.
-                                </li>
-                                <li>
-                                    A rate-limited turn <b>rotates to your next
-                                    account and re-sends itself</b>; with every
-                                    account cooling, it waits out the nearest
-                                    reset and sends then.
-                                </li>
-                                <li>
-                                    Box restarts replay the handshake — the
-                                    editor never disconnects — and a dev server
-                                    in the box shows up at a stable
-                                    <code>localhost</code> URL.
-                                    <a href="docs.html#editors">Details ↗</a>
-                                </li>
-                            </ul>
-                        </div>
-                        <div class="term">
-                            <div class="term-bar">
-                                <span class="dot r"></span
-                                ><span class="dot y"></span
-                                ><span class="dot g"></span
-                                ><span class="title">Zed · settings.json</span>
-                            </div>
-                            <div class="term-body">
-                                <pre
-                                    class="term-code"
-                                >{
-  "agent_servers": {
-    "coop": {
-      "command": "coop",
-      "args": ["acp", "claude"]  <span class="t">// or codex/gemini/grok</span>
-    }
-  }
-}</pre>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <section id="security" class="band">
-                <div class="container">
-                    <div class="section-head">
-                        <span class="kicker">Defense in depth</span>
-                        <h2>Secrets stay out of the box</h2>
-                        <p>
-                            Out of the box, coop shadows the usual suspects by
-                            name — no setup. <code>.coopignore</code> adds your
-                            repo's own; <code>coop check-secrets</code> catches
-                            tokens hiding <em>inside</em> files; and
-                            <code>coop doctor</code> proves the whole thing
-                            holds.
-                        </p>
-                    </div>
-
-                    <div class="shadow-defaults">
-                        <div class="sd-card sd-hidden">
-                            <span class="sd-label">🙈 Shadowed by default</span>
-                            <p class="sd-note">
-                                A blank <code>tmpfs</code> covers secret folders
-                                and an empty read-only file covers secret files
-                                — applied before the agent starts, so a
-                                well-known credential name is never readable or
-                                writable.
-                            </p>
-                            <div class="sd-chips">
-                                <code>.env</code><code>.env.*</code
-                                ><code>*.pem</code><code>*.key</code
-                                ><code>*.p12</code><code>*.tfvars</code
-                                ><code>*.tfstate</code><code>id_rsa</code
-                                ><code>.ssh/</code><code>.aws/</code
-                                ><code>.kube/</code><code>.gnupg/</code
-                                ><code>.npmrc</code><code>.netrc</code
-                                ><code>.git-credentials</code
-                                ><code>secrets/</code
-                                ><code>credentials.json</code
-                                ><code>service_account.json</code
-                                ><code>kubeconfig</code><code>database.yml</code
-                                ><span class="sd-more">+ more</span>
-                            </div>
-                        </div>
-                        <div class="sd-card sd-visible">
-                            <span class="sd-label">👁 Kept visible</span>
-                            <p class="sd-note">
-                                Templates and public CA bundles stay readable,
-                                so the agent can still see the shape of your
-                                config and TLS keeps working.
-                            </p>
-                            <div class="sd-chips">
-                                <code>*.example</code><code>*.sample</code
-                                ><code>*.template</code><code>cacerts.pem</code
-                                ><code>ca-bundle.crt</code>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- .coopignore / check-secrets -->
-                    <div class="feature">
-                        <div class="feature-text">
-                            <span class="kicker">.coopignore</span>
-                            <h3>Your final say on what's hidden</h3>
-                            <p>
-                                The defaults above can't know <em>your</em> repo
-                                holds a <code>config/credentials.yaml</code> or
-                                a committed <code>prod.yml</code>. Add a
-                                <code>.coopignore</code> — one pattern per line
-                                — and it's shadowed everywhere the box can see.
-                            </p>
-                            <ul>
-                                <li>
-                                    <b
-                                        >The boundary is
-                                        <code>.coopignore</code>, not
-                                        <code>.gitignore</code></b
-                                    >
-                                    — a normal run mounts your whole tree.
-                                </li>
-                                <li>
-                                    A content scan also
-                                    <b
-                                        >gates every
-                                        <code>coop fork merge</code></b
-                                    >, so a token in an innocuous file is caught
-                                    on the way in.
-                                </li>
-                                <li>
-                                    <b
-                                        >The box keeps <em>your</em> git
-                                        identity</b
-                                    >
-                                    — commits are authored as you, your key
-                                    never enters.
-                                </li>
-                            </ul>
-                        </div>
-                        <div class="term">
-                            <div class="term-bar">
-                                <span class="dot r"></span
-                                ><span class="dot y"></span
-                                ><span class="dot g"></span
-                                ><span class="title">coop check-secrets</span>
-                            </div>
-                            <div class="term-body">
-                                <div
-                                    class="cast"
-                                    data-cast="casts/secrets.cast"
-                                ></div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- doctor (last) -->
-                    <div class="feature flip">
-                        <div class="feature-text">
-                            <span class="kicker">Prove it</span>
-                            <h3>
-                                <code>coop doctor</code> attacks the box for you
-                            </h3>
-                            <p>
-                                Don't take the isolation on faith.
-                                <code>doctor</code> plants a decoy secret,
-                                launches the box, and checks from
-                                <em>inside</em> that the secret is unreadable
-                                and unwritable — then checks on the host that a
-                                fork carries neither the secret nor a pushable
-                                remote.
-                            </p>
-                            <ul>
-                                <li>
-                                    <b>Inside the sandbox:</b> secrets shadowed,
-                                    decoy unwritable, source still readable.
-                                </li>
-                                <li>
-                                    <b>On the host:</b> gitignored secrets never
-                                    enter a clone; origin is a dead-end local
-                                    path.
-                                </li>
-                                <li>
-                                    <b>Run it anytime</b> — especially after
-                                    changing config.
-                                </li>
-                            </ul>
-                        </div>
-                        <div class="term">
-                            <div class="term-bar">
-                                <span class="dot r"></span
-                                ><span class="dot y"></span
-                                ><span class="dot g"></span
-                                ><span class="title">coop doctor</span>
-                            </div>
-                            <div class="term-body">
-                                <div
-                                    class="cast"
-                                    data-cast="casts/doctor.cast"
-                                ></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <section id="install">
-                <div class="container">
-                    <div class="section-head">
-                        <span class="kicker">Install</span>
-                        <h2>From nothing to a sandboxed agent</h2>
-                        <p>
-                            One binary, no Go, no clone. The installer needs
-                            curl, tar, and a SHA-256 tool. Docker is the
-                            fully qualified runtime; Apple
-                            <code>container</code> is not yet fully qualified.
-                        </p>
-                    </div>
-                    <div class="steps">
-                        <div class="step">
-                            <span class="n">01</span>
-                            <h4>Install the binary</h4>
-                            <p>
-                                Drops <code>coop</code> into
-                                <code>~/.local/bin</code> and builds the box if
-                                a runtime is present.
-                            </p>
-                            <div class="cmd">
-                                <span class="prompt">$</span>
-                                <code id="install-cmd2"
-                                    >curl -fsSL https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh | sh</code
-                                >
-                                <button class="copy" data-copy="#install-cmd2">
-                                    Copy
-                                </button>
-                            </div>
-                        </div>
-                        <div class="step">
-                            <span class="n">02</span>
-                            <h4>Authenticate once</h4>
-                            <p>
-                                The token persists in the config dir —
-                                paste-code, no browser needed.
-                            </p>
-                            <pre
-                                class="code"
-                            ><span class="k">coop</span> doctor <span class="t"># prove isolation</span>
-<span class="k">coop</span> login claude
-<span class="k">coop</span> claude <span class="t"># go</span></pre>
-                        </div>
-                        <div class="step">
-                            <span class="n">03</span>
-                            <h4>Or run it all night</h4>
-                            <p>
-                                Scaffold a queue, add a task per folder,
-                                complete its task file, then let the loop drain it.
-                            </p>
-                            <pre class="code"><span class="k">coop</span> init
-<span class="k">coop</span> tasks add <span class="s">"…"</span>
-<span class="k">coop</span> loop</pre>
-                        </div>
-                    </div>
-                    <p class="center" style="margin-top: 28px">
-                        <a class="btn btn-primary" href="docs.html"
-                            >Read the docs →</a
-                        >
-                    </p>
-                </div>
-            </section>
-        </main>
-
-        <footer class="footer">
-            <div class="container footer-inner">
-                <a class="brand" href="./"
-                    ><span class="wordmark"
-                        >co<span class="colon">:</span>op</span
-                    ></a
-                >
-                <div>
-                    <a href="docs.html">Docs</a> ·
-                    <a
-                        href="https://github.com/AndrewDryga/coop"
-                        target="_blank"
-                        rel="noopener"
-                        >GitHub</a
-                    >
-                    ·
-                    <a
-                        href="https://github.com/AndrewDryga/coop/releases"
-                        target="_blank"
-                        rel="noopener"
-                        >Releases</a
-                    >
-                    ·
-                    <a
-                        href="https://dryga.com/blog/untrusted-ai-coding-agent/"
-                        target="_blank"
-                        rel="noopener"
-                        >The write-up</a
-                    >
-                </div>
-                <span class="muted"
-                    >Made by
-                    <a href="https://dryga.com" target="_blank" rel="noopener"
-                        >Andrew Dryga</a
-                    ></span
-                >
+          </div>
+        </li>
+        <li class="step-group" id="mistakes" style="--items: 3">
+          <div class="group-panel">
+            <h2>And sometimes agents just get it wrong</h2>
+            <p>A wrong path, an unexpected shell expansion, the wrong server.</p>
+            <p class="evidence"><strong>56%</strong> <span>of coding-agent runs on vague DevOps tasks went beyond what was asked, <a href="https://arxiv.org/abs/2607.02294">a 2026 study found</a>.</span></p>
+            <div class="attack-rail">
+              <div class="ticks" aria-hidden="true"><span></span><span></span><span></span></div>
+              <ol class="attacks" role="list">
+                <li class="attack" data-attack="wipe">
+                  <p class="threat">An agent cleaning up runs <code>rm -rf tests/ plan/ ~/</code></p>
+                  <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>In the box, that <code>~/</code> isn’t your home folder. Your files aren’t there.</span></p>
+                </li>
+                <li class="attack" data-attack="prod">
+                  <p class="threat">An agent uses your cloud CLI to SSH into production and drops the database.</p>
+                  <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>The box has no cloud logins or SSH keys, and it can’t reach your servers.</span></p>
+                </li>
+                <li class="attack" data-attack="push">
+                  <p class="threat">A confused agent force-pushes over your team’s main branch.</p>
+                  <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>The box has no Git credentials, so only you can push.</span></p>
+                </li>
+              </ol>
             </div>
-        </footer>
+          </div>
+        </li>
+        <li class="step step-chapter" data-attack="supply" id="supply-chain">
+          <h2>Not just for agents</h2>
+          <p>Supply chain attacks don’t need an agent. One poisoned package can read your keys the moment you install it.</p>
+          <p class="evidence"><strong>1,200+</strong> <span>new malicious packages a day in 2025, <a href="https://www.sonatype.com/state-of-the-software-supply-chain/2026/open-source-malware">Sonatype found</a>.</span></p>
+          <p>Run your installs, tests and dev servers in the same box.</p>
+          <div class="snippet"><pre><code><span class="line"><span class="note"># start your services</span></span><span class="line cmd"><span class="prompt">$ </span>coop up</span><span class="line"><span class="note"># and open a shell in the same box</span></span><span class="line cmd"><span class="prompt">$ </span>coop shell</span></code></pre></div>
+        </li>
+      </ol>
+    </section>
 
-        <script src="assets/js/analytics.js"></script>
-        <script src="assets/vendor/asciinema-player.min.js"></script>
-        <script src="assets/js/site.js"></script>
-    </body>
+    <section class="wrap section platform" id="features" aria-labelledby="features-title">
+      <h2 class="statement" id="features-title">The sandbox is the foundation. <span>co:op builds everything else on top of it.</span></h2>
+      <ol class="feature-rows" role="list">
+        <li class="feature-row">
+          <div class="feature-copy">
+            <h3>Task queue</h3>
+            <p>Each task is a folder in your project. An agent picks one up, does the work and commits it.</p>
+            <p class="evidence"><strong>878</strong> <span>commits to co:op, written by agents in its own task queue.</span></p>
+          </div>
+          <figure class="window scene-watch" data-scene="watch" aria-label="coop tasks watch: the queue's progress, the task in progress with its subtasks, the ones up next, and one waiting for your decision"><p class="window-bar" aria-hidden="true"><span class="window-dots"><i></i><i></i><i></i></span>coop tasks watch</p><pre><code><span class="line">[<span class="s-done">████████</span><span class="s-doing">███</span><span class="s-blocked">███</span>░░░░░░░░]  <span class="s-todo">3 todo</span><span class="dim"> · </span><span class="s-doing">1 in_progress</span><span class="dim"> · </span><span class="s-blocked">1 blocked</span><span class="dim"> · </span><span class="s-done">3 done</span></span><span class="line"></span><span class="line">  <span class="s-doing spin">◰</span> Cache the /health DB probe<span class="dim"> (1/2) · busy claude</span></span><span class="line">  <span class="s-todo">○</span> Rate-limit the public API</span><span class="line">  <span class="s-todo">○</span> Backfill tests for the parser</span><span class="line">  <span class="s-todo">○</span> Document the config file</span><span class="line">  <span class="s-blocked">⚑</span> Choose how long sessions last</span></code></pre><template><span class="line">[<span class="s-done">██████</span><span class="s-doing">███</span><span class="s-blocked">███</span>░░░░░░░░░░]  <span class="s-todo">4 todo</span><span class="dim"> · </span><span class="s-doing">1 in_progress</span><span class="dim"> · </span><span class="s-blocked">1 blocked</span><span class="dim"> · </span><span class="s-done">2 done</span></span><span class="line"></span><span class="line">  <span class="s-doing spin">◰</span> Make POST /checkout idempotent<span class="dim"> (1/3) · busy claude</span></span><span class="line">  <span class="s-todo">○</span> Cache the /health DB probe</span><span class="line">  <span class="s-todo">○</span> Rate-limit the public API</span><span class="line">  <span class="s-todo">○</span> Backfill tests for the parser</span><span class="line">  <span class="s-todo">○</span> Document the config file</span><span class="line">  <span class="s-blocked">⚑</span> Choose how long sessions last</span></template><template><span class="line">[<span class="s-done">██████</span><span class="s-doing">███</span><span class="s-blocked">███</span>░░░░░░░░░░]  <span class="s-todo">4 todo</span><span class="dim"> · </span><span class="s-doing">1 in_progress</span><span class="dim"> · </span><span class="s-blocked">1 blocked</span><span class="dim"> · </span><span class="s-done">2 done</span></span><span class="line"></span><span class="line">  <span class="s-doing spin">◰</span> Make POST /checkout idempotent<span class="dim"> (2/3) · busy claude</span></span><span class="line">  <span class="s-todo">○</span> Cache the /health DB probe</span><span class="line">  <span class="s-todo">○</span> Rate-limit the public API</span><span class="line">  <span class="s-todo">○</span> Backfill tests for the parser</span><span class="line">  <span class="s-todo">○</span> Document the config file</span><span class="line">  <span class="s-blocked">⚑</span> Choose how long sessions last</span></template><template><span class="line">[<span class="s-done">██████</span><span class="s-doing">███</span><span class="s-blocked">███</span>░░░░░░░░░░]  <span class="s-todo">4 todo</span><span class="dim"> · </span><span class="s-doing">1 in_progress</span><span class="dim"> · </span><span class="s-blocked">1 blocked</span><span class="dim"> · </span><span class="s-done">2 done</span></span><span class="line"></span><span class="line">  <span class="s-doing spin">◰</span> Make POST /checkout idempotent<span class="dim"> (3/3) · busy claude</span></span><span class="line">  <span class="s-todo">○</span> Cache the /health DB probe</span><span class="line">  <span class="s-todo">○</span> Rate-limit the public API</span><span class="line">  <span class="s-todo">○</span> Backfill tests for the parser</span><span class="line">  <span class="s-todo">○</span> Document the config file</span><span class="line">  <span class="s-blocked">⚑</span> Choose how long sessions last</span></template><template><span class="line">[<span class="s-done">████████</span><span class="s-doing">███</span><span class="s-blocked">███</span>░░░░░░░░]  <span class="s-todo">3 todo</span><span class="dim"> · </span><span class="s-doing">1 in_progress</span><span class="dim"> · </span><span class="s-blocked">1 blocked</span><span class="dim"> · </span><span class="s-done">3 done</span></span><span class="line"></span><span class="line">  <span class="s-doing spin">◰</span> Cache the /health DB probe<span class="dim"> (0/2) · busy claude</span></span><span class="line">  <span class="s-todo">○</span> Rate-limit the public API</span><span class="line">  <span class="s-todo">○</span> Backfill tests for the parser</span><span class="line">  <span class="s-todo">○</span> Document the config file</span><span class="line">  <span class="s-blocked">⚑</span> Choose how long sessions last</span></template><template><span class="line">[<span class="s-done">████████</span><span class="s-doing">███</span><span class="s-blocked">███</span>░░░░░░░░]  <span class="s-todo">3 todo</span><span class="dim"> · </span><span class="s-doing">1 in_progress</span><span class="dim"> · </span><span class="s-blocked">1 blocked</span><span class="dim"> · </span><span class="s-done">3 done</span></span><span class="line"></span><span class="line">  <span class="s-doing spin">◰</span> Cache the /health DB probe<span class="dim"> (1/2) · busy claude</span></span><span class="line">  <span class="s-todo">○</span> Rate-limit the public API</span><span class="line">  <span class="s-todo">○</span> Backfill tests for the parser</span><span class="line">  <span class="s-todo">○</span> Document the config file</span><span class="line">  <span class="s-blocked">⚑</span> Choose how long sessions last</span></template><template><span class="line">[<span class="s-done">████████</span><span class="s-doing">███</span><span class="s-blocked">███</span>░░░░░░░░]  <span class="s-todo">3 todo</span><span class="dim"> · </span><span class="s-doing">1 in_progress</span><span class="dim"> · </span><span class="s-blocked">1 blocked</span><span class="dim"> · </span><span class="s-done">3 done</span></span><span class="line"></span><span class="line">  <span class="s-doing spin">◰</span> Cache the /health DB probe<span class="dim"> (2/2) · busy claude</span></span><span class="line">  <span class="s-todo">○</span> Rate-limit the public API</span><span class="line">  <span class="s-todo">○</span> Backfill tests for the parser</span><span class="line">  <span class="s-todo">○</span> Document the config file</span><span class="line">  <span class="s-blocked">⚑</span> Choose how long sessions last</span></template><template><span class="line">[<span class="s-done">███████████</span><span class="s-doing">███</span><span class="s-blocked">███</span>░░░░░]  <span class="s-todo">2 todo</span><span class="dim"> · </span><span class="s-doing">1 in_progress</span><span class="dim"> · </span><span class="s-blocked">1 blocked</span><span class="dim"> · </span><span class="s-done">4 done</span></span><span class="line"></span><span class="line">  <span class="s-doing spin">◰</span> Rate-limit the public API<span class="dim"> (0/2) · busy claude</span></span><span class="line">  <span class="s-todo">○</span> Backfill tests for the parser</span><span class="line">  <span class="s-todo">○</span> Document the config file</span><span class="line">  <span class="s-blocked">⚑</span> Choose how long sessions last</span></template><template><span class="line">[<span class="s-done">███████████</span><span class="s-doing">███</span><span class="s-blocked">███</span>░░░░░]  <span class="s-todo">2 todo</span><span class="dim"> · </span><span class="s-doing">1 in_progress</span><span class="dim"> · </span><span class="s-blocked">1 blocked</span><span class="dim"> · </span><span class="s-done">4 done</span></span><span class="line"></span><span class="line">  <span class="s-doing spin">◰</span> Rate-limit the public API<span class="dim"> (1/2) · busy claude</span></span><span class="line">  <span class="s-todo">○</span> Backfill tests for the parser</span><span class="line">  <span class="s-todo">○</span> Document the config file</span><span class="line">  <span class="s-blocked">⚑</span> Choose how long sessions last</span></template><template><span class="line">[<span class="s-done">███████████</span><span class="s-doing">███</span><span class="s-blocked">███</span>░░░░░]  <span class="s-todo">2 todo</span><span class="dim"> · </span><span class="s-doing">1 in_progress</span><span class="dim"> · </span><span class="s-blocked">1 blocked</span><span class="dim"> · </span><span class="s-done">4 done</span></span><span class="line"></span><span class="line">  <span class="s-doing spin">◰</span> Rate-limit the public API<span class="dim"> (2/2) · busy claude</span></span><span class="line">  <span class="s-todo">○</span> Backfill tests for the parser</span><span class="line">  <span class="s-todo">○</span> Document the config file</span><span class="line">  <span class="s-blocked">⚑</span> Choose how long sessions last</span></template><template><span class="line">[<span class="s-done">██████████████</span><span class="s-doing">███</span><span class="s-blocked">███</span>░░]  <span class="s-todo">1 todo</span><span class="dim"> · </span><span class="s-doing">1 in_progress</span><span class="dim"> · </span><span class="s-blocked">1 blocked</span><span class="dim"> · </span><span class="s-done">5 done</span></span><span class="line"></span><span class="line">  <span class="s-doing spin">◰</span> Backfill tests for the parser<span class="dim"> (0/1) · busy claude</span></span><span class="line">  <span class="s-todo">○</span> Document the config file</span><span class="line">  <span class="s-blocked">⚑</span> Choose how long sessions last</span></template></figure>
+        </li>
+        <li class="feature-row">
+          <div class="feature-copy">
+            <h3>Loops</h3>
+            <p><code>coop loop</code> works through the queue on its own, with a fresh agent for every task.</p>
+            <p>A final review reopens unfinished work. A task that needs your decision waits for you, and the loop moves on.</p>
+          </div>
+          <figure class="window scene-replay scene-loop" data-scene="loop" aria-label="coop loop working through three tasks: a fresh agent on each, a final review that reopens one, and the run passing review"><p class="window-bar" aria-hidden="true"><span class="window-dots"><i></i><i></i><i></i></span>coop loop frontier</p><pre><code><span class="line cmdline" data-beat="0"><span class="path">~/code/shop</span> <span class="prompt">$ </span>coop loop frontier</span><span class="line" data-beat="1" data-bar="0,1,Make POST /checkout idempotent"></span><span class="line rule" data-beat="1">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span><span class="line dim" data-beat="1"> Task 1 - Attempt 1</span><span class="line" data-beat="1"></span><span class="line" data-beat="1"> Make POST /checkout idempotent</span><span class="line" data-beat="1"></span><span class="line" data-beat="1"> Agent  claude:claude-fable-5/xhigh@work</span><span class="line" data-beat="1"> Queue  0 completed · 1 active · 2 pending · 0 blocked</span><span class="line rule" data-beat="1">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span><span class="line" data-beat="1"></span><span class="line strong" data-beat="1">Starting claude:claude-fable-5/xhigh@work</span><span class="line" data-beat="2">✦ A retried checkout charges twice. I’ll key each order on its Idempotency-Key, so a replay returns the first charge.</span><span class="line" data-beat="3">✎ Edit src/payments/checkout.ts</span><span class="line" data-beat="4">⚙ Bash npm test</span><span class="line" data-beat="5" data-bar="1,1,Cache the /health DB probe"></span><span class="line" data-beat="5"><span class="ok">✓</span> Task completed: Make POST /checkout idempotent</span><span class="line" data-beat="6"></span><span class="line rule" data-beat="6">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span><span class="line dim" data-beat="6"> Task 2 - Attempt 1</span><span class="line" data-beat="6"></span><span class="line" data-beat="6"> Cache the /health DB probe</span><span class="line" data-beat="6"></span><span class="line" data-beat="6"> Agent  claude:claude-fable-5/xhigh@work</span><span class="line" data-beat="6"> Queue  1 completed · 1 active · 1 pending · 0 blocked</span><span class="line rule" data-beat="6">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span><span class="line" data-beat="6"></span><span class="line strong" data-beat="6">Starting claude:claude-fable-5/xhigh@work</span><span class="line" data-beat="7">✦ The probe counts orders on every call. Caching it for five seconds takes that load off the database.</span><span class="line" data-beat="8">✎ Edit src/health.ts</span><span class="line" data-beat="9" data-bar="2,1,Rate-limit the public API"></span><span class="line" data-beat="9"><span class="ok">✓</span> Task completed: Cache the /health DB probe</span><span class="line" data-beat="10"></span><span class="line rule" data-beat="10">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span><span class="line dim" data-beat="10"> Task 3 - Attempt 1</span><span class="line" data-beat="10"></span><span class="line" data-beat="10"> Rate-limit the public API</span><span class="line" data-beat="10"></span><span class="line" data-beat="10"> Agent  claude:claude-fable-5/xhigh@work</span><span class="line" data-beat="10"> Queue  2 completed · 1 active · 0 pending · 0 blocked</span><span class="line rule" data-beat="10">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span><span class="line" data-beat="10"></span><span class="line strong" data-beat="10">Starting claude:claude-fable-5/xhigh@work</span><span class="line" data-beat="11">✎ Edit src/middleware/rate-limit.ts</span><span class="line" data-beat="12">⚙ Bash npm test</span><span class="line" data-beat="13" data-bar="3,0,signoff: make-checkout-idempotent +2"></span><span class="line" data-beat="13"><span class="ok">✓</span> Task completed: Rate-limit the public API</span><span class="line" data-beat="14"></span><span class="line rule" data-beat="14">────────────────────────────────────────────────────────────────</span><span class="line" data-beat="14"> Final review · Round 1 of 3</span><span class="line" data-beat="14"></span><span class="line" data-beat="14"> Agent  claude:claude-fable-5/xhigh@work</span><span class="line" data-beat="14"> Tasks  3 completed</span><span class="line rule" data-beat="14">────────────────────────────────────────────────────────────────</span><span class="line" data-beat="15" data-bar="2,1,Rate-limit the public API"></span><span class="line rule" data-beat="15">────────────────────────────────────────────────────────────────</span><span class="line" data-beat="15"> Final review · <span class="warn">1 task needs more work</span></span><span class="line" data-beat="15"></span><span class="line" data-beat="15">  Rate-limit the public API</span><span class="line" data-beat="15"></span><span class="line dim" data-beat="15"> Continuing the task queue</span><span class="line rule" data-beat="15">────────────────────────────────────────────────────────────────</span><span class="line" data-beat="16"></span><span class="line rule" data-beat="16">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span><span class="line dim" data-beat="16"> Task 3 - Attempt 2</span><span class="line" data-beat="16"></span><span class="line" data-beat="16"> Rate-limit the public API</span><span class="line" data-beat="16"></span><span class="line" data-beat="16"> Agent  claude:claude-fable-5/xhigh@work</span><span class="line" data-beat="16"> Queue  2 completed · 1 active · 0 pending · 0 blocked</span><span class="line rule" data-beat="16">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span><span class="line" data-beat="16"></span><span class="line strong" data-beat="16">Starting claude:claude-fable-5/xhigh@work</span><span class="line" data-beat="17">✦ Internal callers were throttled too. The limit now applies only to public routes.</span><span class="line" data-beat="18">✎ Edit src/middleware/rate-limit.ts</span><span class="line" data-beat="19" data-bar="3,0,signoff: rate-limit-the-public-api"></span><span class="line" data-beat="19"><span class="ok">✓</span> Task completed: Rate-limit the public API</span><span class="line" data-beat="20"></span><span class="line rule" data-beat="20">────────────────────────────────────────────────────────────────</span><span class="line" data-beat="20"> Final review · Round 2 of 3</span><span class="line" data-beat="20"></span><span class="line" data-beat="20"> Agent  claude:claude-fable-5/xhigh@work</span><span class="line" data-beat="20"> Tasks  1 completed</span><span class="line rule" data-beat="20">────────────────────────────────────────────────────────────────</span><span class="line" data-beat="21"></span><span class="line" data-beat="21"><span class="ok">✓</span> All tasks passed <span class="nowrap">final review · 3/3 done</span></span><span class="line live-bar" aria-hidden="true"></span></code></pre></figure>
+        </li>
+        <li class="feature-row">
+          <div class="feature-copy">
+            <h3>Forks</h3>
+            <p>Hand work to agents, each in its own copy of your project, and keep working in yours.</p>
+            <p>Review a fork like a pull request, then merge it. co:op rebases it onto your branch and runs your checks first.</p>
+          </div>
+          <figure class="window scene-replay scene-fork" data-scene="fork" aria-label="coop fork: a fork works in the background, shows as ready to merge, is reviewed like a pull request and merged after the project checks"><p class="window-bar" aria-hidden="true"><span class="window-dots"><i></i><i></i><i></i></span>coop fork</p><pre><code><span class="line cmdline" data-beat="0"><span class="path">~/code/shop</span> <span class="prompt">$ </span>coop fork api codex --loop -d</span><span class="line" data-beat="1">Creating fork: api</span><span class="line" data-beat="1"></span><span class="line" data-beat="1">  /Users/you/code/shop-forks/api</span><span class="line" data-beat="2"><span class="ok">✓</span> Started fork api in the background</span><span class="line" data-beat="2"></span><span class="line" data-beat="2">  Agent: codex</span><span class="line" data-beat="2">  Logs:  coop fork logs api --follow</span><span class="line" data-beat="2">  Stop:  coop fork stop api</span><span class="line" data-beat="3"></span><span class="line cmdline" data-beat="3"><span class="path">~/code/shop</span> <span class="prompt">$ </span>coop fork ls</span><span class="line" data-beat="4">Forks</span><span class="line" data-beat="4"></span><span class="line" data-beat="4">  <span class="strong">api</span> · ready to merge · updated 4 minutes ago</span><span class="line" data-beat="4">    Agent: codex</span><span class="line" data-beat="4">    Branch: api</span><span class="line" data-beat="4">    Tasks: 1 ready to merge</span><span class="line" data-beat="4">    Changes: +88 −6</span><span class="line" data-beat="4"></span><span class="line" data-beat="4">Review a fork: coop fork review &lt;name&gt;</span><span class="line" data-beat="5"></span><span class="line cmdline" data-beat="5"><span class="path">~/code/shop</span> <span class="prompt">$ </span>coop fork review api --stat</span><span class="line" data-beat="6">Changes in fork api</span><span class="line" data-beat="6">  Into: main</span><span class="line" data-beat="6">  2 commits · 3 files · +88 −6</span><span class="line" data-beat="6"></span><span class="line" data-beat="6">Commits</span><span class="line" data-beat="6">  9c41e2a webhook: verify Stripe signatures</span><span class="line" data-beat="6">  3a7f0db webhook: dedupe replayed events by id</span><span class="line" data-beat="6"></span><span class="line" data-beat="6">Files</span><span class="line" data-beat="6">  code:</span><span class="line" data-beat="6">    M  src/webhook/handler.ts  +40 -6</span><span class="line" data-beat="6">    A  src/webhook/verify.ts  +24 -0</span><span class="line" data-beat="6">  tests:</span><span class="line" data-beat="6">    A  tests/webhook.test.ts  +24 -0</span><span class="line" data-beat="6"></span><span class="line" data-beat="6">Project checks will run when you merge.</span><span class="line" data-beat="7"></span><span class="line cmdline" data-beat="7"><span class="path">~/code/shop</span> <span class="prompt">$ </span>coop fork merge api</span><span class="line" data-beat="8">Merge fork api into main</span><span class="line" data-beat="8">  2 commits · +88 −6</span><span class="line" data-beat="8"></span><span class="line" data-beat="8">Merge these commits? [Y/n] y</span><span class="line" data-beat="9">Rebasing onto main</span><span class="line" data-beat="9">Running project checks</span><span class="line" data-beat="9">  Running: npm test</span><span class="line" data-beat="10"></span><span class="line" data-beat="10"><span class="ok">✓</span> Merged fork api into main</span></code></pre></figure>
+        </li>
+        <li class="feature-row">
+          <div class="feature-copy">
+            <h3>Rotate providers, accounts and models</h3>
+            <p>You choose the accounts, models and providers to fall back on, in order. When one hits its usage limit, the loop moves to the next and keeps going.</p>
+            <p>Editor sessions switch the same way.</p>
+          </div>
+          <figure class="scene-card rotate" data-scene="rotate" aria-label="The loop's targets with their usage: the work account reached its limit, so the same model runs on the home account; Codex on two accounts waits its turn"><ol class="slots" role="list"><li class="slot spent" data-used="100"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#mark-claude"/></svg><span class="target">claude:opus@work</span><span class="usage"><span class="meter" aria-hidden="true"><span class="meter-used full">██████████</span></span><span class="pct">100%</span></span><span class="state">limit reached</span></li><li class="slot live" data-used="40"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#mark-claude"/></svg><span class="target">claude:opus@home</span><span class="usage"><span class="meter" aria-hidden="true"><span class="meter-used ok">████</span>░░░░░░</span><span class="pct">40%</span></span><span class="state">running</span></li><li class="slot" data-used="0"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#mark-openai"/></svg><span class="target">codex:gpt-5.6-sol@work</span><span class="usage"><span class="meter" aria-hidden="true"><span class="meter-used ok"></span>░░░░░░░░░░</span><span class="pct">0%</span></span><span class="state"></span></li><li class="slot" data-used="0"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#mark-openai"/></svg><span class="target">codex:gpt-5.6-sol@home</span><span class="usage"><span class="meter" aria-hidden="true"><span class="meter-used ok"></span>░░░░░░░░░░</span><span class="pct">0%</span></span><span class="state"></span></li></ol></figure>
+        </li>
+        <li class="feature-row">
+          <div class="feature-copy">
+            <h3>Presets</h3>
+            <p>A preset is a team of models: one lead, and as many roles as you need. The lead consults them or hands them work.</p>
+            <p><code>coop presets init</code> writes a starter team you can change.</p>
+          </div>
+          <figure class="scene-card team" data-scene="team" aria-label="The starter preset: a lead model and the three it hands work to, two advisers and an editor, from three providers"><p class="card-title"><span class="prompt">$ </span>coop frontier</p><div class="org"><div class="seat lead" data-role="lead"><span class="seat-head"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#mark-claude"/></svg><span class="role">lead</span></span><span class="model">Fable 5</span></div><ul class="org-roles" role="list"><li class="seat" data-role="thinker"><span class="seat-head"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#mark-claude"/></svg><span class="role">thinker</span></span><span class="model">Opus 4.8</span><span class="kind">adviser</span></li><li class="seat" data-role="critic"><span class="seat-head"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#mark-openai"/></svg><span class="role">critic</span></span><span class="model">GPT-5.6 Sol</span><span class="kind">adviser</span></li><li class="seat" data-role="fast"><span class="seat-head"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#mark-gemini"/></svg><span class="role">fast</span></span><span class="model">Gemini 3.5 Flash</span><span class="kind">editor</span></li></ul></div></figure>
+        </li>
+        <li class="feature-row">
+          <div class="feature-copy">
+            <h3>Project services</h3>
+            <p>Postgres, Redis and anything else in your Compose file run next to the box, on a private network.</p>
+          </div>
+          <figure class="scene-card services" data-scene="services" aria-label="coop up starts a database and Redis next to the sandbox, on a private network"><p class="card-title"><span class="prompt">$ </span>coop up</p><div class="svc-map"><div class="svc-box"><svg class="wall" aria-hidden="true"><rect x="0" y="0" width="100%" height="100%" rx="10" pathLength="1"/></svg><span class="zone-tag">Sandbox</span><p class="svc-agent"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#mark-claude"/></svg>Claude Code</p><p class="svc-project">shop/</p></div><ul class="svc-list" role="list"><li class="svc" data-svc="db"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6.5" rx="7" ry="2.5"/><path d="M5 6.5v11c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-11M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg><span class="svc-name">db</span><span class="svc-dot"></span></li><li class="svc" data-svc="redis"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5l8 4-8 4-8-4z"/><path d="M4 12.5l8 4 8-4M4 16.5l8 4 8-4"/></svg><span class="svc-name">redis</span><span class="svc-dot"></span></li></ul></div></figure>
+        </li>
+        <li class="feature-row">
+          <div class="feature-copy">
+            <h3>Integrations</h3>
+            <p>Steer the sandboxed agent from Zed, or any editor that speaks ACP, with account rotation built in.</p>
+            <p>Or connect co:op workers to your own platform, which hands out the jobs. Models never see your GitHub credentials.</p>
+          </div>
+          <div class="integrations"><figure class="scene-card zed" data-scene="zed" aria-label="Zed's agent panel with co:op as the agent: you pick the preset and account there, and the agent works in the box"><p class="window-bar" aria-hidden="true"><span class="window-dots"><i></i><i></i><i></i></span>Zed</p><div class="zed-body"><ul class="zed-files" role="list" aria-hidden="true"><li>shop/</li><li>src/</li><li>tests/</li></ul><div class="zed-agent"><p class="zed-head"><img src="assets/img/favicon.svg" width="18" height="18" alt="">co:op</p><p class="zed-pills"><span>frontier</span><span>claude@work</span></p><p class="zed-ask">Add a /health endpoint</p><p class="zed-busy" aria-hidden="true"><i></i><i></i><i></i></p></div></div></figure><figure class="window scene-worker" data-scene="worker" aria-label="What coop sessions connect prints as a worker joins your platform"><p class="window-bar" aria-hidden="true"><span class="window-dots"><i></i><i></i><i></i></span>coop sessions connect</p><pre><code><span class="line cmdline"><span class="path">~</span> <span class="prompt">$ </span>coop sessions connect <span class="nowrap">--controller</span> https://jobs.example.com</span><span class="line">  <span class="ok">✓</span> Local session service ready</span><span class="line">Connecting to https://jobs.example.com…</span><span class="line">  <span class="ok">✓</span> Worker identity ready: <span class="nowrap">w-7c1e</span></span></code></pre></figure></div>
+        </li>
+      </ol>
+    </section>
+
+    <section class="wrap section start" id="start" aria-labelledby="start-title">
+      <h2 id="start-title">Get started</h2>
+      <p class="start-lead">Free and open source. Runs on macOS and Linux with Docker.</p>
+      <div class="window setup">
+        <div class="window-bar setup-bar">
+          <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <div class="agents" role="radiogroup" aria-label="Your agent">
+            <button type="button" role="radio" data-agent="claude" aria-checked="true">Claude</button>
+            <button type="button" role="radio" data-agent="codex" aria-checked="false" tabindex="-1">Codex</button>
+            <button type="button" role="radio" data-agent="gemini" aria-checked="false" tabindex="-1">Gemini</button>
+            <button type="button" role="radio" data-agent="grok" aria-checked="false" tabindex="-1">Grok</button>
+          </div>
+        </div>
+        <div class="setup-commands">
+          <div class="command"><span class="command-label">Install</span><code data-copy-source><span class="prompt" aria-hidden="true">$ </span>curl -fsSL https://raw.<wbr>githubusercontent.com/<wbr>AndrewDryga/coop/<wbr>main/<wbr><span class="nowrap">install.sh | sh</span></code><button class="copy" type="button" data-copy aria-label="Copy the install command"><svg class="icon copy-idle" viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></svg><svg class="icon copy-done" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button><span class="copy-status" role="status" data-copy-status></span></div>
+          <div class="command"><span class="command-label">Sign in</span><code data-copy-source><span class="prompt" aria-hidden="true">$ </span><span data-cmd="login">coop login claude</span></code><button class="copy" type="button" data-copy aria-label="Copy the sign-in command"><svg class="icon copy-idle" viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></svg><svg class="icon copy-done" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button><span class="copy-status" role="status" data-copy-status></span></div>
+          <div class="command"><span class="command-label">Set up</span><code data-copy-source><span class="prompt" aria-hidden="true">$ </span>cd <span class="nowrap">your-project</span> &amp;&amp; coop init</code><button class="copy" type="button" data-copy aria-label="Copy the project setup command"><svg class="icon copy-idle" viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></svg><svg class="icon copy-done" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button><span class="copy-status" role="status" data-copy-status></span></div>
+          <div class="command"><span class="command-label">Start</span><code data-copy-source><span class="prompt" aria-hidden="true">$ </span><span data-cmd="run">coop claude</span></code><button class="copy" type="button" data-copy aria-label="Copy the start command"><svg class="icon copy-idle" viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></svg><svg class="icon copy-done" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button><span class="copy-status" role="status" data-copy-status></span></div>
+        </div>
+      </div>
+      <p class="more"><a href="docs.html">Read the docs<span class="go" aria-hidden="true">→</span></a></p>
+    </section>
+  </main>
+
+  <footer class="wrap footer">
+    <a class="brand brand-small" href="./" aria-label="co:op home">
+      <img src="assets/img/favicon.svg" width="24" height="24" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav aria-label="Footer">
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/AndrewDryga/coop">GitHub</a>
+      <a href="https://emisar.dev">Emisar</a>
+    </nav>
+    <p>A Protectorate product. MIT licensed.</p>
+  </footer>
+</body>
 </html>

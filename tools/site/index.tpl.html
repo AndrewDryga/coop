@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1014">
+  <title>co:op · Sandbox for Claude Code, Codex and AI coding agents</title>
+  <meta name="description" content="Run Claude Code, Codex, Gemini and Grok in a sandbox that only sees your project. Secrets are replaced with empty files and networking is restricted. Free and open source.">
+  <link rel="canonical" href="https://coop.dryga.com/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="co:op">
+  <meta property="og:url" content="https://coop.dryga.com/">
+  <meta property="og:title" content="co:op · You need a sandbox">
+  <meta property="og:description" content="Run Claude Code, Codex, Gemini and Grok in a sandbox that only sees your project. Secrets are replaced with empty files and networking is restricted. Free and open source.">
+  <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="You need a sandbox: a home folder where only the project sits inside the sandbox, secrets read as empty, and only the AI provider is reachable.">
+  <meta name="twitter:card" content="summary_large_image">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"co:op","description":"Run Claude Code, Codex, Gemini and Grok in a sandbox that only sees your project. Secrets are replaced with empty files and networking is restricted. Free and open source.","url":"https://coop.dryga.com/","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://github.com/AndrewDryga/coop/blob/main/LICENSE","softwareHelp":"https://coop.dryga.com/docs.html","sameAs":["https://github.com/AndrewDryga/coop"],"publisher":{"@type":"Organization","name":"Protectorate"}}</script>
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/img/favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="manifest" href="site.webmanifest">
+  <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/site.css?v=20261004">
+  <script>if (matchMedia("(min-width: 1024px)").matches && "IntersectionObserver" in window) { document.documentElement.classList.add("js-story"); setTimeout(() => document.documentElement.classList.contains("story-ready") || document.documentElement.classList.remove("js-story"), 3000); }</script>
+  <script src="assets/js/site.js?v=20261004" defer></script>
+  <script src="assets/js/analytics.js?v=20261004" defer></script>
+  <noscript><style>.copy, .agents { display: none; }</style></noscript>
+</head>
+<body>
+  {{sprite}}
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="wrap nav">
+    <a class="brand" href="./" aria-label="co:op home">
+      <img src="{{mark}}" width="32" height="32" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-optional" href="#sandbox">Sandbox</a>
+      <a class="nav-optional" href="#features">Features</a>
+      <a href="docs.html">Docs</a>
+      <a class="nav-optional" href="https://github.com/AndrewDryga/coop">GitHub</a>
+      <a class="button button-small" href="#start">Install</a>
+    </nav>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <section class="wrap story" aria-labelledby="hero-title">
+      <div class="story-lead">
+        <h1 id="hero-title">You need a sandbox</h1>
+        <p class="hero-lead">Coding agents do their best work unleashed, but that's a gamble with your secrets and intellectual property.</p>
+        <div class="actions">
+          <a class="button button-primary" href="#start">Install co:op</a>
+          <a class="button" href="https://github.com/AndrewDryga/coop">View on GitHub</a>
+        </div>
+        {{providers}}
+      </div>
+      <figure class="stage" aria-label="Your project and everything its agent can reach: the rest of your machine, the internet and your Git remote">
+        <div class="scene">{{scene}}</div>
+      </figure>
+      <ol class="story-steps" id="sandbox" role="list">
+        <li class="step">
+          <h2>co:op builds a box around your project</h2>
+          <p>The agent runs in a container that sees one folder: your project, at its real path.</p>
+          <p>Your SSH keys, cloud logins and other repos aren't in it.</p>
+        </li>
+        <li class="step">
+          <h2>Secrets are replaced</h2>
+          <p>Files like .env stay where they are, but inside the box they're replaced with empty files.</p>
+          <p><code>coop check-secrets</code> finds secrets hiding inside your other files.</p>
+          <p>Hide more paths with <code>.coopignore</code>.</p>
+        </li>
+        <li class="step">
+          <h2>Networking is restricted</h2>
+          <p>The box reaches your AI provider and the domains you approve.</p>
+          <p>Everything else is blocked, so your code can't go anywhere you haven't approved.</p>
+        </li>
+        <li class="step">
+          <h2>You push, not the agent</h2>
+          <p>There are no Git credentials inside.</p>
+          <p>The agent commits in your name, and you decide what leaves your machine.</p>
+        </li>
+        <li class="step-group" id="why" style="--items: 4">
+          <div class="group-panel">
+            <h2>But why?</h2>
+            <p>Agents do what they read in code, docs and issues, even when an attacker wrote it.</p>
+            <p class="evidence"><strong>1 in 3</strong> <span>companies faced prompt injection attacks on their AI apps within a year, <a href="https://www.gartner.com/en/newsroom/press-releases/2025-09-22-gartner-survey-reveals-generative-artificial-intelligence-attacks-are-on-the-rise">Gartner found</a>.</span></p>
+            <div class="attack-rail">
+              <div class="ticks" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+              <ol class="attacks" role="list">
+                <li class="attack" data-attack="ssh">
+                  <p class="threat">A comment hidden in a README tells your agent to post your SSH key in an issue.</p>
+                  <p class="stopped">{{check}}<span>Your SSH keys aren't in the box, so there's nothing to post.</span></p>
+                </li>
+                <li class="attack" data-attack="issue">
+                  <p class="threat">An issue on a public repo tells your agent to publish your private code.</p>
+                  <p class="stopped">{{check}}<span>The box has no GitHub credentials, and your other repos aren't in it.</span></p>
+                  <p class="stopped">{{check}}<span>Nor can it upload your code anywhere else.</span></p>
+                </li>
+                <li class="attack" data-attack="key">
+                  <p class="threat">Hidden text in a setup guide tells your agent to send its Anthropic API key to an attacker.</p>
+                  <p class="stopped">{{check}}<span>The box holds only a stand-in key that works for this run alone. The real key stays outside.</span></p>
+                </li>
+                <li class="attack" data-attack="env">
+                  <p class="threat">A package your agent installs sends your <code>.env</code> to a stranger's server.</p>
+                  <p class="stopped">{{check}}<span>In the box <code>.env</code> is empty, and that server can't be reached.</span></p>
+                </li>
+              </ol>
+            </div>
+          </div>
+        </li>
+        <li class="step-group" id="mistakes" style="--items: 3">
+          <div class="group-panel">
+            <h2>And sometimes agents just get it wrong</h2>
+            <p>A wrong path, an unexpected shell expansion, the wrong server.</p>
+            <p class="evidence"><strong>56%</strong> <span>of coding-agent runs on vague DevOps tasks went beyond what was asked, <a href="https://arxiv.org/abs/2607.02294">a 2026 study found</a>.</span></p>
+            <div class="attack-rail">
+              <div class="ticks" aria-hidden="true"><span></span><span></span><span></span></div>
+              <ol class="attacks" role="list">
+                <li class="attack" data-attack="wipe">
+                  <p class="threat">An agent cleaning up runs <code>rm -rf tests/ plan/ ~/</code></p>
+                  <p class="stopped">{{check}}<span>In the box, that <code>~/</code> isn't your home folder. Your files aren't there.</span></p>
+                </li>
+                <li class="attack" data-attack="prod">
+                  <p class="threat">An agent uses your cloud CLI to SSH into production and drops the database.</p>
+                  <p class="stopped">{{check}}<span>The box has no cloud logins or SSH keys, and it can't reach your servers.</span></p>
+                </li>
+                <li class="attack" data-attack="push">
+                  <p class="threat">A confused agent force-pushes over your team's main branch.</p>
+                  <p class="stopped">{{check}}<span>The box has no Git credentials, so only you can push.</span></p>
+                </li>
+              </ol>
+            </div>
+          </div>
+        </li>
+        <li class="step step-chapter" data-attack="supply" id="supply-chain">
+          <h2>Not just for agents</h2>
+          <p>Supply chain attacks don't need an agent. One poisoned package can read your keys the moment you install it.</p>
+          <p class="evidence"><strong>1,200+</strong> <span>new malicious packages a day in 2025, <a href="https://www.sonatype.com/state-of-the-software-supply-chain/2026/open-source-malware">Sonatype found</a>.</span></p>
+          <p>Run your installs, tests and dev servers in the same box.</p>
+          <div class="snippet">{{own_runs}}</div>
+        </li>
+      </ol>
+    </section>
+
+    <section class="wrap section platform" id="features" aria-labelledby="features-title">
+      <h2 class="statement" id="features-title">The sandbox is the foundation. <span>co:op builds everything else on top of it.</span></h2>
+      <ol class="feature-rows" role="list">
+        <li class="feature-row">
+          <div class="feature-copy">
+            <h3>Task queue</h3>
+            <p>Each task is a folder in your project. An agent picks one up, does the work and commits it.</p>
+            <p class="evidence"><strong>{{proof_count}}</strong> <span>commits to co:op, written by agents in its own task queue.</span></p>
+          </div>
+          {{queue}}
+        </li>
+        <li class="feature-row">
+          <div class="feature-copy">
+            <h3>Loops</h3>
+            <p><code>coop loop</code> works through the queue on its own, with a fresh agent for every task.</p>
+            <p>A final review reopens unfinished work. A task that needs your decision waits for you, and the loop moves on.</p>
+          </div>
+          {{loop}}
+        </li>
+        <li class="feature-row">
+          <div class="feature-copy">
+            <h3>Forks</h3>
+            <p>Hand work to agents, each in its own copy of your project, and keep working in yours.</p>
+            <p>Review a fork like a pull request, then merge it. co:op rebases it onto your branch and runs your checks first.</p>
+          </div>
+          {{fork}}
+        </li>
+        <li class="feature-row">
+          <div class="feature-copy">
+            <h3>Rotate providers, accounts and models</h3>
+            <p>You choose the accounts, models and providers to fall back on, in order. When one hits its usage limit, the loop moves to the next and keeps going.</p>
+            <p>Editor sessions switch the same way.</p>
+          </div>
+          {{rotate}}
+        </li>
+        <li class="feature-row">
+          <div class="feature-copy">
+            <h3>Presets</h3>
+            <p>A preset is a team of models: one lead, and as many roles as you need. The lead consults them or hands them work.</p>
+            <p><code>coop presets init</code> writes a starter team you can change.</p>
+          </div>
+          {{team}}
+        </li>
+        <li class="feature-row">
+          <div class="feature-copy">
+            <h3>Project services</h3>
+            <p>Postgres, Redis and anything else in your Compose file run next to the box, on a private network.</p>
+          </div>
+          {{services}}
+        </li>
+        <li class="feature-row">
+          <div class="feature-copy">
+            <h3>Integrations</h3>
+            <p>Steer the sandboxed agent from Zed, or any editor that speaks ACP, with account rotation built in.</p>
+            <p>Or connect co:op workers to your own platform, which hands out the jobs. Models never see your GitHub credentials.</p>
+          </div>
+          {{integrations}}
+        </li>
+      </ol>
+    </section>
+
+    <section class="wrap section start" id="start" aria-labelledby="start-title">
+      <h2 id="start-title">Get started</h2>
+      <p class="start-lead">Free and open source. Runs on macOS and Linux with Docker.</p>
+      <div class="window setup">
+        <div class="window-bar setup-bar">
+          <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <div class="agents" role="radiogroup" aria-label="Your agent">
+            <button type="button" role="radio" data-agent="claude" aria-checked="true">Claude</button>
+            <button type="button" role="radio" data-agent="codex" aria-checked="false" tabindex="-1">Codex</button>
+            <button type="button" role="radio" data-agent="gemini" aria-checked="false" tabindex="-1">Gemini</button>
+            <button type="button" role="radio" data-agent="grok" aria-checked="false" tabindex="-1">Grok</button>
+          </div>
+        </div>
+        <div class="setup-commands">
+          {{install}}
+          {{cmd_login}}
+          {{cmd_init}}
+          {{cmd_run}}
+        </div>
+      </div>
+      <p class="more"><a href="docs.html">Read the docs<span class="go" aria-hidden="true">→</span></a></p>
+    </section>
+  </main>
+
+  <footer class="wrap footer">
+    <a class="brand brand-small" href="./" aria-label="co:op home">
+      <img src="{{mark}}" width="24" height="24" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav aria-label="Footer">
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/AndrewDryga/coop">GitHub</a>
+      <a href="https://emisar.dev">Emisar</a>
+    </nav>
+    <p>A Protectorate product. MIT licensed.</p>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,3 @@
+Provider marks from LobeHub Icons (@lobehub/icons-static-svg 1.95.1, MIT licence,
+https://github.com/lobehub/lobe-icons). The marks are trademarks of Anthropic, OpenAI, Google
+and xAI, used here to say which agents co:op runs. Fetched 2026-10-03 from unpkg.
