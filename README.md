@@ -1377,7 +1377,7 @@ Under the hood `coop acp [<target|preset>]` runs the selected provider's matchin
 `grok agent stdio`)
 inside the box over stdio. In normal writable sessions, the repo mounts at its real host path — the same path
 `coop` and `coop loop` use — so Zed's absolute paths resolve. Editor threads keep their own
-history (`~/.config/coop/<agent>/acp-sessions/`), shared by all your accounts for that agent so a
+history (`~/.config/coop/agents/<agent>/acp-sessions/`), shared by all your accounts for that agent so a
 switch mid-thread keeps the conversation; sessions from `coop <agent>` or `coop loop` aren't in it.
 
 coop's proxy sits between the editor and the box and owns the session:
