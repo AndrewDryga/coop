@@ -8,6 +8,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	containerruntime "github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 func TestReapACPChildBoxesUsesExactExecutionAuthority(t *testing.T) {
@@ -38,7 +39,7 @@ func TestReapACPChildBoxesUsesExactExecutionAuthority(t *testing.T) {
 	defer forkspace.EndExecution(repo, unrelated)
 
 	a := &app{rt: containerruntime.Runtime{Name: runtimeCLI}, rtSet: true}
-	if !a.reapACPChildBoxes(repo, owned.SourceID, owned.PID) {
+	if !a.reapACPChildBoxes(repo, owned.SourceID, owned.PID, wait.Deadline) { // a shell-script runtime under load, not the switch path's speed
 		t.Fatal("exact ACP child cleanup was not proven")
 	}
 	data, err := os.ReadFile(trace)

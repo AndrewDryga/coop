@@ -2,8 +2,8 @@
 name: test-fixture-guards-vs-timing-bounds
 description: a test wait that guards a broken fixture is generous (testutil/wait, 60 s); a tight wall-clock bound is reserved for timing that IS the behavior under test, and then attributes its phases
 subsystem: testing
-sources: [Makefile, internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/consult/instructions_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go]
-updated: 2026-09-30
+sources: [Makefile, internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/forkctl/supervise.go, internal/cli/acp_cmd.go, internal/cli/acp_execution_test.go, internal/acpproxy/scripted_matrix_e2e_test.go, internal/consult/instructions_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go]
+updated: 2026-10-04
 ---
 
 Two kinds of waits look alike in a test and fail alike on a loaded host, but mean opposite things.
@@ -49,6 +49,14 @@ is monotonic arithmetic that holds under any load), keep the real Git transfer f
 (the object arrived), and model slow startup with a PATH shim (`sleep 0.3; exec git`) to show the
 old test fails and the new one does not (`internal/sessionsvc/source_test.go`).
 
+**Production liveness bounds meet the same load.** A production deadline that only guards a
+wedged runtime is not a speed requirement, and a fake runtime that is a shell script makes a test
+race it. Fork stop's exact-label reap had 3 s, and under make check a busy daemon (and the test's
+shell runtime) missed it, so `coop fork stop` failed with "fix the container runtime". It is now
+30 s, like the temp reap. Where the bound sits on a latency path, keep it and inject the test's
+slack instead: `reapACPChildBoxes` takes its timeout, the provider switch passes 5 s, and its
+test passes `wait.Deadline`.
+
 **A terminal result is not a pending fixture.** Session tests use `sessionOperationReached` to
 report an unexpected failed/uncertain operation with its id, error code and detail immediately.
 The generous wait still guards reserved/running operations; extending it cannot repair a recorded
@@ -69,6 +77,11 @@ the capture (`TestSessionServiceLogsSanitizedOperationFailureWithCorrelationID`)
 alone would still permit an empty-log assertion. Keep correlation and redaction assertions intact.
 
 ## Changelog
+- 2026-10-04 — four load flakes from the 2026-10-02/04 gates, classified and fixed (task
+  2026-10-02-stop-three-tests-timing-out-under-full-gate-load). forkctl and cli fork stop: the
+  production reap's 3 s is a wedged-runtime guard, now 30 s. The ACP child reap test: the 5 s
+  stays on the switch path, and the test injects wait.Deadline. The scripted ACP rate-limit
+  case: its 10 s whole-fixture context is a fixture guard, now wait.Deadline.
 - 2026-09-30 — ACP hang cancellation now arms on a logged prompt, not the log's
   creation before initialization. Controlled interrupted-write and delayed-reader
   regressions both failed old production: delivered prompts missed cancellation,

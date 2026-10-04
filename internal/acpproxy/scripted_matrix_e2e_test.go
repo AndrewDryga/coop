@@ -13,6 +13,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 type matrixPlan struct {
@@ -716,7 +717,7 @@ func TestScriptedACPRateLimitDenials(t *testing.T) {
 			steps = append(steps, prompt)
 			planPath := writeMatrixPlan(t, tmp, matrixPlan{Providers: map[string][][]matrixStep{"claude": {steps}}})
 			proc := startScriptedACP(t, coopBin, fixtureBin, repo, tmp, planPath, "claude", "claude")
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline) // a fixture guard: 10 s failed under make check
 			defer cancel()
 			if _, err := proc.client.req(ctx, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}}); err != nil {
 				t.Fatal(err)

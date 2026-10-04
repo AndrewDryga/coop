@@ -23,7 +23,10 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-const forkStopReapTimeout = 3 * time.Second
+// forkStopReapTimeout bounds each exact-label box removal in fork stop. It guards a wedged runtime,
+// not speed: a busy Docker answers ps and rm in seconds (3 s failed under make check, 2026-10-02),
+// and a timeout here fails the stop with "fix the container runtime", which a slow daemon isn't.
+const forkStopReapTimeout = 30 * time.Second
 
 // ForkContainerOwner scopes runtime cleanup to one parent repo, fork name, and—on every new
 // launch—the immutable workspace generation. The variadic form keeps the pre-generation value

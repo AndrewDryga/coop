@@ -1096,7 +1096,7 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 			// process is gone it is the exact fallback cleanup authority. Never use the shared ACP
 			// supervisor label here: a provider swap may already have published its replacement box.
 			if groupGone && !runtimeGone && activityRepo != "" {
-				runtimeGone = a.reapACPChildBoxes(activityRepo, superID, pid)
+				runtimeGone = a.reapACPChildBoxes(activityRepo, superID, pid, acpCleanupTimeout)
 			}
 			if groupGone && runtimeGone && activityRepo != "" {
 				_ = forkspace.RemoveDeadExecutionsBySource(activityRepo, superID)
@@ -1122,7 +1122,9 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 // reapACPChildBoxes removes only containers carrying the execution IDs published by one stopped
 // inner ACP process. An empty, readable set is proof that the child never reached runtime launch or
 // already completed cleanup; an unreadable registry remains cleanup-pending for the final sweep.
-func (a *app) reapACPChildBoxes(repo, superID string, pid int) bool {
+// timeout bounds each removal: the provider-switch path passes acpCleanupTimeout, and a test whose
+// runtime is a shell script passes a fixture guard's slack.
+func (a *app) reapACPChildBoxes(repo, superID string, pid int, timeout time.Duration) bool {
 	observations, problems := forkspace.Executions(repo)
 	if len(problems) > 0 {
 		return false
@@ -1131,7 +1133,7 @@ func (a *app) reapACPChildBoxes(repo, superID string, pid int) bool {
 		if observation.Record.PID != pid || observation.Record.SourceID != superID {
 			continue
 		}
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), acpCleanupTimeout)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), timeout)
 		_, err := a.rt.RemoveByLabel(cleanupCtx, box.LabelExecution, observation.Record.ID)
 		cancel()
 		if err != nil {
