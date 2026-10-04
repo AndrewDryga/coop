@@ -355,11 +355,16 @@ func TestRunSummary(t *testing.T) {
 	for _, want := range []string{
 		"Completed this run", "  Add a --json flag · 3/4 subtasks", "    2026-09-11-task-json · internal/cli",
 		"Usage", "claude:fable-5", "$2.50 · 100,000 in · 4,000 out", "codex:gpt-5.6-terra",
-		"Worth a look", "Add a --json flag was reopened 1 times by the review.",
+		"Worth a look", "Add a --json flag was reopened once by the review.",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("run summary missing %q:\n%s", want, got)
 		}
+	}
+	// A second reopen counts them.
+	h.noteReopen([]string{"2026-09-11-task-json"})
+	if got := captureStderr(t, func() { printRunSummary(completed, cost, h) }); !strings.Contains(got, "Add a --json flag was reopened 2 times by the review.") {
+		t.Errorf("two reopens = %q", got)
 	}
 	if strings.Contains(got, "Shipped") {
 		t.Errorf("a local commit is not a shipped change:\n%s", got)

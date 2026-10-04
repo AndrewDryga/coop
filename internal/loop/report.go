@@ -608,7 +608,9 @@ func printFlagged(completed []taskLine, h *loopHealth) {
 			continue
 		}
 		switch {
-		case th.reopens > 0:
+		case th.reopens == 1:
+			lines = append(lines, fmt.Sprintf("%s was reopened once by the review.", cleanDiagnosticLine(t.title)))
+		case th.reopens > 1:
 			lines = append(lines, fmt.Sprintf("%s was reopened %d times by the review.", cleanDiagnosticLine(t.title), th.reopens))
 		default:
 			lines = append(lines, fmt.Sprintf("%s changed the project checks that judge it.", cleanDiagnosticLine(t.title)))

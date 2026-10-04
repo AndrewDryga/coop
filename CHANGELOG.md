@@ -23,6 +23,9 @@
   fork was created with, so an editor entry needs only the fork's name; choose the model and
   effort in your editor. A target such as `claude:opus` still picks the agent.
 
+- **Loop report grammar.** A task the final review reopened once reads "was reopened once by the
+  review", not "was reopened 1 times".
+
 ## 10.1.2
 
 Changes since v8.1.0 include provider-client updates, `coop usage`, and the new controller-worker
