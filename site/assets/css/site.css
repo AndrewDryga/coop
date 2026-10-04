@@ -421,7 +421,8 @@ main:focus { outline: none; }
 
 /* Docs: the contents beside one reading column, about 68 characters a line.
    One type scale, each size with one job: the title, section headings (36px), subheadings (24px),
-   leads (20px), prose (18px on 32px lines) and, at 16px, code, tables and the interface.
+   every paragraph (18px on 32px lines, a section's opening one included) and, at 16px, code,
+   tables and the interface.
    One spacing scale on 8px: prose 24px apart; every block (code, command lists, files, terminals,
    boxes, callouts, tables) 32px clear of what's around it; a subheading 48px under the text above
    it and 16px over its own. */
@@ -444,7 +445,6 @@ main:focus { outline: none; }
 .docs-main { width: 100%; max-width: 42rem; min-width: 0; margin-inline: auto; padding-top: 32px; font-size: 1.125rem; line-height: 1.7778; }
 .docs-main > h1 { font-size: clamp(2.5rem, 1.9rem + 2vw, 3.25rem); }
 .docs-main > .lead { margin-top: var(--flow); }
-.docs-main > .lead, .section-lead { font-size: 1.25rem; line-height: 1.6; }
 .doc-section { margin-top: 64px; padding-top: 64px; border-top: 1px solid var(--divider); }
 .doc-section h2 { font-size: clamp(1.75rem, 1.3rem + 1.2vw, 2.25rem); line-height: 1.2; letter-spacing: -0.03em; }
 .doc-section h3 { font-size: 1.5rem; line-height: 1.3333; letter-spacing: -0.015em; }

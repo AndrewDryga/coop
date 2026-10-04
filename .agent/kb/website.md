@@ -48,7 +48,8 @@ read, until you open another by its name. Without the script every group stays o
 expanded contents under a 1280x700 window when adding sections or groups.
 
 **The docs' type and rhythm** are one scale in the Docs block of `site.css`: prose 18px on 32px
-lines in a 42rem column (about 68 characters a line); leads 20px; subheadings 24px; code, tables
+lines in a 42rem column (about 68 characters a line), a section's opening paragraph included (the
+owner rejected a larger lead as "larger, smaller, larger"); subheadings 24px; code, tables
 and the interface 16px. Spacing comes from flow rules on `.doc-section > *`: 24px between prose,
 32px around every block, 48px over and 16px under a subheading. A new kind of block joins the
 `:where(...)` list there, or it sits 24px from its neighbours like prose; components set their own
