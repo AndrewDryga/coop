@@ -59,7 +59,10 @@ and the interface 16px. Spacing comes from flow rules on `.doc-section > *`: 24p
 sentence that links its source and claims only what the source says. A figure about one attack or
 mistake sits inside that case's `.attack`, between the threat and its stopped lines, so the pinned
 chapters change figures as the cases change while you scroll, and the phone list shows each one with
-its case. Never put figures on a timer. A case with no source that fits it gets no figure.
+its case. Never put figures on a timer. A case with no source that fits it gets no figure. The
+"3 s" start in the first story step is our own number: `make lifecycle-bench` (filtered_start, 10
+samples) on a clean clone, linked to `tools/lifecycle_bench.py`. Measure again on an idle machine
+before changing it, and never in a checkout with heavy local state, which starts slower.
 
 **Tests pin docs wording.** Rewording `site/docs.html` can fail Go tests far from the site:
 `internal/cli/help_test.go` TestCurrentDocsDoNotAdvertiseRetiredContracts needs "commits no starter
@@ -84,3 +87,4 @@ nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 - 2026-10-04 — the asciinema casts, player and cast tools are gone (task 2026-10-04-retire-the-asciinema-cast-pipeline-the-old-websi).
 - 2026-10-04 — asset links carry a content hash instead of a hand-bumped date (task 2026-10-04-bust-the-browser-cache-whenever-the-site-s-css-o).
 - 2026-10-04 — each homepage case carries its own sourced figure (task 2026-10-04-give-each-homepage-case-its-own-sourced-figure-a).
+- 2026-10-04 — the measured warm start in story step 1 (task 2026-10-04-show-how-fast-a-warm-box-starts-on-the-homepage).
