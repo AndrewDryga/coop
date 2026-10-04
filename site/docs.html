@@ -115,7 +115,7 @@
         <ul class="cmds" role="list">
           <li><code data-copy-source><span class="k">coop</span> build --egress open <span class="o">&amp;&amp;</span> <span class="k">coop</span> doctor</code></li>
         </ul>
-        <p>Docker is the default and fully supported runtime. You can also choose Apple <a href="https://github.com/apple/container">container</a> (macOS 26+), though not every co:op feature is qualified on it yet; co:op detects both and prefers Docker.</p>
+        <p>Docker is the default and fully supported runtime. You can also use Apple <a href="https://github.com/apple/container">container</a> (macOS 26+), but some features need Docker, including the filtered networking that <code>coop init</code> turns on. co:op detects both and prefers Docker.</p>
         <p class="callout">The one-line install trusts GitHub and the repository's <code>main</code> branch, since it runs the script it downloads. The script then checks the release checksum with a local SHA-256 tool and stops if it can't; with <a href="https://github.com/sigstore/cosign">cosign</a> on your <code>PATH</code>, it also checks that the checksum came from the exact release workflow and tag. To verify the download before running anything, follow the <a href="https://github.com/AndrewDryga/coop#verifying-a-download">manual steps</a>.</p>
         <p>You can also build co:op from source:</p>
         <ul class="cmds" role="list">

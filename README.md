@@ -69,7 +69,8 @@ coop build --egress open && coop doctor
 `shasum`. Running Coop needs a container runtime — Docker or Apple
 [`container`](https://github.com/apple/container) (macOS 26+) — which Coop
 auto-detects, preferring Docker because every Coop feature is qualified on it.
-The installed `coop` binary itself is static.
+Filtered networking, which `coop init` turns on, needs Docker; on Apple `container`,
+`coop init` says so and you run with `--egress open`. The installed `coop` binary itself is static.
 
 **Staying current:** [`coop update`](#keeping-the-box-current) self-updates the binary
 *and* rebuilds the box image on a newer base. Each Coop release carries the agent CLIs and

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/scaffold"
 )
 
@@ -194,6 +195,40 @@ func snapshotInitTree(t *testing.T, root string) map[string]initTreeEntry {
 		t.Fatal(err)
 	}
 	return entries
+}
+
+// On Apple container a filtered project is refused at its first run (checkFilteredRuntime), so
+// init says so up front and names both ways forward. The committed policy stays filtered: a
+// teammate on Docker keeps it. On Docker, init says nothing extra.
+func TestInitWarnsWhenTheRuntimeCannotFilter(t *testing.T) {
+	for _, tc := range []struct {
+		runtime string
+		warns   bool
+	}{{"container", true}, {"docker", false}} {
+		t.Run(tc.runtime, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			dir, cfgDir := t.TempDir(), t.TempDir()
+			a := &app{cfg: &config.Config{RepoOverride: dir, ConfigDir: cfgDir, MCPFile: filepath.Join(cfgDir, "mcp.json")},
+				rt: runtime.Runtime{Name: tc.runtime}, rtSet: true}
+			out := captureStderr(t, func() {
+				if code, err := a.cmdInit([]string{"--services", "none", "--agents", "claude"}); code != 0 || err != nil {
+					t.Fatalf("cmdInit = (%d, %v)", code, err)
+				}
+			})
+			warning := []string{"Apple container can't filter network access",
+				"This project filters network access, which needs Docker.",
+				"Start or install Docker, or run with open networking: coop claude --egress open"}
+			for _, line := range warning {
+				if strings.Contains(out, line) != tc.warns {
+					t.Errorf("on %s, init output has %q = %t, want %t:\n%s", tc.runtime, line, !tc.warns, tc.warns, out)
+				}
+			}
+			data, err := os.ReadFile(filepath.Join(dir, ".agent", "project.yaml"))
+			if err != nil || !strings.Contains(string(data), "\n  egress: filtered\n") {
+				t.Errorf("the committed policy must stay filtered on %s: %v\n%s", tc.runtime, err, data)
+			}
+		})
+	}
 }
 
 func TestInitStackPreflightPreservesTree(t *testing.T) {

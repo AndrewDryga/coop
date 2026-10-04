@@ -33,6 +33,11 @@
   its pattern (`prod.yml  # note`): only a line that starts with `#` is a comment, so such an entry
   is one pattern that hides nothing. The README example puts its comments on their own lines.
 
+- **`coop init` warns on Apple container.** Filtered networking, which `coop init` turns on,
+  needs Docker. On Apple `container`, init now says so up front and names both ways forward:
+  start or install Docker, or run with `--egress open`. The project file stays filtered, so
+  teammates on Docker keep the filter.
+
 - **Agent help lists the network options.** `coop help claude` (and codex, gemini, grok) now
   shows `--egress`, `--allow-domain` and `--egress-rules`, which every launch accepts, so you can
   find how to let one run reach a package registry.
