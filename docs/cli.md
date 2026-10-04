@@ -171,6 +171,11 @@ OPTIONS
 
   --readonly and --bare cannot be combined or used with peers.
 
+NETWORK OPTIONS
+  --egress <mode>        internet access: filtered, open or none
+  --allow-domain <name>  allow this exact domain over TLS on port 443; repeatable
+  --egress-rules <file>  add this file's network rules for the run
+
 MODELS AND ACCOUNTS
   coop models claude       list Claude models
   coop credentials claude  list Claude accounts
@@ -195,6 +200,11 @@ EXAMPLES
 OPTIONS
   --peer <target>  start with a read-only peer agent; repeat to add more
   --               pass all remaining arguments directly to Codex
+
+NETWORK OPTIONS
+  --egress <mode>        internet access: filtered, open or none
+  --allow-domain <name>  allow this exact domain over TLS on port 443; repeatable
+  --egress-rules <file>  add this file's network rules for the run
 
 MODELS AND ACCOUNTS
   coop models codex       list Codex models
@@ -221,6 +231,11 @@ OPTIONS
   --peer <target>  start with a read-only peer agent; repeat to add more
   --               pass all remaining arguments directly to Gemini
 
+NETWORK OPTIONS
+  --egress <mode>        internet access: filtered, open or none
+  --allow-domain <name>  allow this exact domain over TLS on port 443; repeatable
+  --egress-rules <file>  add this file's network rules for the run
+
 MODELS AND ACCOUNTS
   coop models gemini       list Gemini models
   coop credentials gemini  list Gemini accounts
@@ -245,6 +260,11 @@ EXAMPLES
 OPTIONS
   --peer <target>  start with a read-only peer agent; repeat to add more
   --               pass all remaining arguments directly to Grok
+
+NETWORK OPTIONS
+  --egress <mode>        internet access: filtered, open or none
+  --allow-domain <name>  allow this exact domain over TLS on port 443; repeatable
+  --egress-rules <file>  add this file's network rules for the run
 
 MODELS AND ACCOUNTS
   coop models grok       list Grok models

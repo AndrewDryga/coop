@@ -367,6 +367,13 @@ func agentHelp(name string) string {
 		b.WriteString("\n  --readonly and --bare cannot be combined or used with peers.\n")
 	}
 
+	b.WriteString("\nNETWORK OPTIONS\n")
+	b.WriteString(helpRows([][2]string{
+		{"--egress <mode>", "internet access: filtered, open or none"},
+		{"--allow-domain <name>", "allow this exact domain over TLS on port 443; repeatable"},
+		{"--egress-rules <file>", "add this file's network rules for the run"},
+	}, 2))
+
 	b.WriteString("\nMODELS AND ACCOUNTS\n")
 	b.WriteString(helpRows([][2]string{
 		{"coop models " + name, "list " + title + " models"},

@@ -33,6 +33,10 @@
   its pattern (`prod.yml  # note`): only a line that starts with `#` is a comment, so such an entry
   is one pattern that hides nothing. The README example puts its comments on their own lines.
 
+- **Agent help lists the network options.** `coop help claude` (and codex, gemini, grok) now
+  shows `--egress`, `--allow-domain` and `--egress-rules`, which every launch accepts, so you can
+  find how to let one run reach a package registry.
+
 - **Filtered boxes tell agents where toolchains come from.** The note an agent gets inside a
   filtered box no longer promises that `.tool-versions` is installed on start, which only open
   boxes do. It says a pinned toolchain comes from the project's `.agent/Dockerfile`, which
