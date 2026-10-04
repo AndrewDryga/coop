@@ -292,7 +292,7 @@ your home dir, SSH keys, the rest of the disk — simply isn't in the container.
 `.env`, `*.tfvars`, `*.pem`, `secrets/`, `.ssh`, and friends are shadowed: a read-only empty
 directory over secret directories, a read-only empty file over secret files. Templates
 (`*.example`, `*.sample`, `*.template`) stay visible. The defaults are compiled in
-(`internal/box/secrets.go`); add a `.coopignore` at the repo root for your own:
+(`internal/shadowpath/shadowpath.go`); add a `.coopignore` at the repo root for your own:
 
 ```gitignore
 # a file name, matched at any depth
