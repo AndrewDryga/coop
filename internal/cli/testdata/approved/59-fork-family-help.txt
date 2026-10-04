@@ -45,7 +45,7 @@ LOOP OPTIONS
   project queue when you merge the reviewed work. Stopping keeps it resumable.
 
 EDITOR INTEGRATION
-  coop fork <name> acp <target>  use an existing fork from an ACP editor
+  coop fork <name> acp  use an existing fork from an ACP editor
   See coop help fork <name> acp for its options.
 
   Model and account syntax: coop help models

@@ -83,25 +83,23 @@ func TestCLIConformance(t *testing.T) {
 		_, forkUsageErr := parseForkCreate(nil)
 		_, forkPeerErr := parseForkCreate([]string{"work", "codex", "--loop", "--peer"})
 		_, forkACPUsageErr := newApp().forkACP("work", []string{"not-a-target"})
-		_, forkACPTargetErr := newApp().forkACP("work", nil)
 		_, acpUsageErr := newApp().cmdACP([]string{"codex", "extra"})
 		_, _, _, _, _, _, _, loopUsageErr := parseLoopArgs([]string{"claude", "extra"}, false)
 		_, _, peerUsageErr := extractPeer("coop run", []string{"--peer"})
 
 		surfaces := map[string]string{
-			"top-level help":        renderHelp(newApp().cfg, true),
-			"agent help":            agentHelp("claude"),
-			"ACP help":              commandHelp["acp"],
-			"ACP usage error":       errText("extra ACP argument", acpUsageErr),
-			"loop help":             commandHelp["loop"],
-			"fork help":             forkHelpText(""),
-			"fork usage error":      errText("empty fork", forkUsageErr),
-			"fork peer error":       errText("valueless fork peer", forkPeerErr),
-			"fork ACP usage error":  errText("invalid fork ACP target", forkACPUsageErr),
-			"fork ACP target error": errText("missing fork ACP target", forkACPTargetErr),
-			"loop usage error":      errText("extra loop argument", loopUsageErr),
-			"peer usage error":      errText("valueless peer", peerUsageErr),
-			"no-provider error":     errText("missing loop target", noProviderErr("loop")),
+			"top-level help":       renderHelp(newApp().cfg, true),
+			"agent help":           agentHelp("claude"),
+			"ACP help":             commandHelp["acp"],
+			"ACP usage error":      errText("extra ACP argument", acpUsageErr),
+			"loop help":            commandHelp["loop"],
+			"fork help":            forkHelpText(""),
+			"fork usage error":     errText("empty fork", forkUsageErr),
+			"fork peer error":      errText("valueless fork peer", forkPeerErr),
+			"fork ACP usage error": errText("invalid fork ACP target", forkACPUsageErr),
+			"loop usage error":     errText("extra loop argument", loopUsageErr),
+			"peer usage error":     errText("valueless peer", peerUsageErr),
+			"no-provider error":    errText("missing loop target", noProviderErr("loop")),
 		}
 		for name, surface := range surfaces {
 			if name == "top-level help" {
@@ -125,19 +123,18 @@ func TestCLIConformance(t *testing.T) {
 			}
 		}
 		for name, want := range map[string]string{
-			"top-level help":        "coop <target> --peer <target>...",
-			"agent help":            "coop claude[:<model>][/<effort>][@<account>]",
-			"ACP help":              "coop acp [<agent|preset>] [options]",
-			"ACP usage error":       "coop acp [<target|preset>] [--peer <target>...]",
-			"loop help":             "coop loop [<target|preset>]",
-			"fork help":             "coop fork <name> [<target|preset>]",
-			"fork usage error":      "coop fork <name> [<target|preset>]",
-			"fork peer error":       "--peer <target>",
-			"fork ACP usage error":  "coop fork work acp <target> [--readonly] [--peer <target>...]",
-			"fork ACP target error": "coop fork work acp <target>",
-			"loop usage error":      "coop loop [<target|preset>]",
-			"peer usage error":      "--peer <target>",
-			"no-provider error":     "coop loop <target|preset>",
+			"top-level help":       "coop <target> --peer <target>...",
+			"agent help":           "coop claude[:<model>][/<effort>][@<account>]",
+			"ACP help":             "coop acp [<agent|preset>] [options]",
+			"ACP usage error":      "coop acp [<target|preset>] [--peer <target>...]",
+			"loop help":            "coop loop [<target|preset>]",
+			"fork help":            "coop fork <name> [<target|preset>]",
+			"fork usage error":     "coop fork <name> [<target|preset>]",
+			"fork peer error":      "--peer <target>",
+			"fork ACP usage error": "coop fork work acp [<target>] [--readonly] [--peer <target>...]",
+			"loop usage error":     "coop loop [<target|preset>]",
+			"peer usage error":     "--peer <target>",
+			"no-provider error":    "coop loop <target|preset>",
 		} {
 			if !strings.Contains(surfaces[name], want) {
 				t.Errorf("%s missing canonical form %q", name, want)

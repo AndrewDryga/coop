@@ -620,12 +620,13 @@ func TestForkFreshRefusesReplacementAfterConfirmation(t *testing.T) {
 	}
 }
 
-// Fork ACP accepts one positional target after peer extraction. Invalid account selection reaches
-// credential validation, while a retired flag, junk, or second target fails before run config changes.
+// Fork ACP accepts at most one positional target after peer extraction. Invalid account selection
+// reaches credential validation, while a retired flag, junk, or second target fails before run
+// config changes.
 func TestForkACPValidatesTargetArgumentsBeforeRun(t *testing.T) {
-	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	if code, err := a.forkACP("myfork", nil); code != 2 || err == nil || strings.Contains(err.Error(), "preset") {
-		t.Errorf("fork acp without a target = (%d, %v), want provider-only guidance", code, err)
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}}
+	if code, err := a.forkACP("myfork", nil); code != 1 || err == nil || !strings.Contains(err.Error(), "no such fork: myfork") {
+		t.Errorf("fork acp for a missing fork = (%d, %v), want (1, no such fork)", code, err)
 	}
 	code, err := a.forkACP("myfork", []string{"claude@ghost"})
 	if code != 2 || err == nil || !strings.Contains(err.Error(), "ghost") {
@@ -639,7 +640,7 @@ func TestForkACPValidatesTargetArgumentsBeforeRun(t *testing.T) {
 		t.Errorf("fork ACP with repeatable peers = (%d, %v), want target account validation after peer extraction", code, err)
 	}
 	code, err = a.forkACP("myfork", []string{"claude", "--credential", "ghost"})
-	wantUsage := "usage: coop fork myfork acp <target> [--readonly] [--peer <target>...] [--egress <mode>]"
+	wantUsage := "usage: coop fork myfork acp [<target>] [--readonly] [--peer <target>...] [--egress <mode>]"
 	if code != 2 || err == nil || err.Error() != wantUsage {
 		t.Errorf("fork acp --credential = (%d, %v), want (2, %q)", code, err, wantUsage)
 	}
@@ -657,6 +658,72 @@ func TestForkACPValidatesTargetArgumentsBeforeRun(t *testing.T) {
 	}
 	if got := a.cfg.ActiveModel("codex"); got != "" {
 		t.Errorf("rejected fork ACP arguments selected codex model %q", got)
+	}
+}
+
+// Without a target, fork ACP starts the agent the fork was created with, so an editor connects and
+// its own selectors choose the model. A fork with no saved agent starts the first signed-in
+// provider, as plain `coop acp` does; with none signed in, the editor's log gets the sign-in steps.
+func TestForkACPWithoutTargetStartsTheForksAgent(t *testing.T) {
+	t.Setenv("COOP_SESSION_RUN_ID", "")
+	t.Setenv("COOP_ACP_INNER", "1") // inspect the box itself; the supervisor hands its child this target
+	for _, tc := range []struct {
+		name, saved string
+		signedIn    []string
+		want        string // the provider whose adapter runs; "" expects the sign-in failure
+	}{
+		{name: "saved agent", saved: "codex", signedIn: []string{"claude"}, want: "codex"},
+		{name: "no saved agent", signedIn: []string{"gemini", "codex"}, want: "codex"},
+		{name: "nothing signed in"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			repo := filepath.Join(root, "repo")
+			ws := forkspace.Workspace(repo, "myfork")
+			for _, dir := range []string{repo, ws} {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.saved != "" {
+				if err := forkctl.SaveForkAgent(ws, tc.saved); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg := &config.Config{
+				RepoOverride: repo, ConfigDir: filepath.Join(root, "config"),
+				BoxHome: filepath.Join(root, "box"), HomeInBox: "/home/node",
+				ImageOverride: "test-image", Egress: "none",
+			}
+			for _, provider := range tc.signedIn {
+				signInCred(t, cfg, provider, "default")
+			}
+			recorder := filepath.Join(root, "runtime-args")
+			a := &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
+			code, err := a.forkACP("myfork", nil)
+			if tc.want == "" {
+				if code != 1 || err == nil || !strings.Contains(err.Error(), "coop login") {
+					t.Fatalf("fork acp with nothing signed in = (%d, %v), want sign-in guidance", code, err)
+				}
+				if _, statErr := os.Stat(recorder); !os.IsNotExist(statErr) {
+					t.Fatalf("fork acp with nothing signed in reached the runtime: %v", statErr)
+				}
+				return
+			}
+			if code != 0 || err != nil {
+				t.Fatalf("fork acp without a target = (%d, %v)", code, err)
+			}
+			args, err := os.ReadFile(recorder)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if adapter := strings.Join(acpCommand(cfg, tc.want), " "); !strings.Contains(string(args), "test-image "+adapter) {
+				t.Fatalf("fork acp did not start %s's adapter %q:\n%s", tc.want, adapter, args)
+			}
+		})
 	}
 }
 

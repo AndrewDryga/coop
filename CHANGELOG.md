@@ -19,6 +19,10 @@
 - **Clearer fork examples.** Fork help calls its example fork `myfork`, so
   `coop fork myfork claude` no longer reads like a sign-in command.
 
+- **Fork editor sessions start without a target.** `coop fork myfork acp` starts the agent the
+  fork was created with, so an editor entry needs only the fork's name; choose the model and
+  effort in your editor. A target such as `claude:opus` still picks the agent.
+
 ## 10.1.2
 
 Changes since v8.1.0 include provider-client updates, `coop usage`, and the new controller-worker

@@ -7,6 +7,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/forkctl"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
 func TestScriptedACPAutomaticStartup(t *testing.T) {
@@ -79,5 +82,51 @@ func TestScriptedACPAutomaticStartup(t *testing.T) {
 				t.Fatalf("reload lost selected provider: target=%q, error=%v", target, err)
 			}
 		})
+	}
+}
+
+// An editor entry of ["fork", "myfork", "acp"] connects the fork's own agent. Claude is signed in
+// and first in registry order, but the fork was created with Codex, so Codex answers.
+func TestScriptedForkACPStartsWithoutTarget(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	buildDir := t.TempDir()
+	coopBin, fixtureBin := filepath.Join(buildDir, "coop"), filepath.Join(buildDir, "acpfixture")
+	buildTestBinary(t, root, coopBin, ".")
+	buildTestBinary(t, root, fixtureBin, "./internal/acpproxy/testdata/acpfixture")
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(tmp, "repo")
+	ws := forkspace.Workspace(repo, "myfork")
+	for _, dir := range []string{filepath.Join(repo, ".agent"), ws} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := forkctl.SaveForkAgent(ws, "codex"); err != nil {
+		t.Fatal(err)
+	}
+	plan := writeMatrixPlan(t, tmp, matrixPlan{Providers: map[string][][]matrixStep{
+		"codex": {matrixGeneration("codex", "forked", ws, "fork answer")},
+	}})
+	proc := startScriptedACPArgs(t, coopBin, fixtureBin, repo, tmp, plan, []string{"fork", "myfork", "acp"}, nil, "claude", "codex")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := proc.client.req(ctx, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}}); err != nil {
+		t.Fatalf("fork initialize: %v\nstderr:\n%s", err, proc.stderr.String())
+	}
+	// The editor opens the parent project; Coop maps that cwd to the fork.
+	response, err := proc.client.req(ctx, "session/new", map[string]any{"cwd": repo, "mcpServers": []any{}})
+	if err != nil {
+		t.Fatalf("fork session/new: %v\nstderr:\n%s", err, proc.stderr.String())
+	}
+	state := filepath.Join(tmp, "fixture-state")
+	promptMatrix(t, ctx, proc, filepath.Join(state, "codex-0", "wire.jsonl"), responseSessionID(response), "first question", "fork answer")
+	if _, err := os.Stat(filepath.Join(state, "claude-0")); !os.IsNotExist(err) {
+		t.Fatalf("fork ACP started the first signed-in provider instead of the fork's agent: %v", err)
 	}
 }

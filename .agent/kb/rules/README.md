@@ -92,7 +92,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [bare-subcommand-shows-help](bare-subcommand-shows-help.md) — a bare group prints help or its default view, never an empty-token error
 - [bare-flag-routes-to-default-view](bare-flag-routes-to-default-view.md) — a leading flag where a subcommand goes routes to the group's default listing
 - [menus-offer-only-accepted-tokens](menus-offer-only-accepted-tokens.md) — an interactive menu shows only the tokens the parser accepts, and names an unknown answer instead of dropping it
-- [acp-connects-before-selection](acp-connects-before-selection.md) — plain coop acp connects automatically so the editor can expose its live selectors
+- [acp-connects-before-selection](acp-connects-before-selection.md) — coop acp and coop fork <name> acp connect without a target so the editor can expose its live selectors
 
 **CLI output** — what the terminal shows
 - [installer-output-is-spaced-and-actionable](installer-output-is-spaced-and-actionable.md) — installer progress and shell instructions use readable blocks, with separate start/help examples

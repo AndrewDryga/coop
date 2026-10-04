@@ -1218,7 +1218,7 @@ EXAMPLE
 
 	"fork acp": `coop fork <name> acp — use an existing fork from an ACP editor
 
-Usage: coop fork <name> acp <target> [<options>]
+Usage: coop fork <name> acp [<target>] [<options>]
 
 OPTIONS
   --readonly             mount the fork read-only
@@ -1227,12 +1227,16 @@ OPTIONS
   --allow-domain <name>  allow exact TLS access on port 443; repeatable
   --egress-rules <file>  add this file's network rules for the session
 
+  Without a target, Coop starts the fork's agent with its default model and
+  account; choose another model or effort in your editor.
+
   Read-only mode has no peer agents, project hooks or MCP servers.
   For a writable local session, open the parent project in your editor; Coop maps
   its working directory to the fork. The fork, provider and account stay fixed;
   any native model and effort choices remain available. With --readonly, open the fork.
 
-EXAMPLE
+EXAMPLES
+  coop fork myfork acp
   coop fork myfork acp claude:opus
 
   Create the fork first: coop fork myfork claude

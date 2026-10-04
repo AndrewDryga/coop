@@ -149,7 +149,7 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		if len(prev) == 2 { // coop fork <name> <target|preset>
 			return appendCompletionCandidates(a.targetCandidates(cur, true, true), a.presetCandidates(), []string{"acp", "--loop"})
 		}
-		if len(prev) == 3 && prev[2] == "acp" { // coop fork <name> acp <target>
+		if len(prev) == 3 && prev[2] == "acp" { // coop fork <name> acp [<target>]
 			return appendCompletionCandidates(a.targetCandidates(cur, true, true), []string{"--peer"})
 		}
 		if len(prev) > 3 && prev[2] == "acp" && prev[len(prev)-1] == "--peer" {

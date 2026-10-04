@@ -69,6 +69,18 @@ func acpCommand(cfg *config.Config, tool string) []string {
 	return nil
 }
 
+// firstSignedInAgent is the provider an editor session starts when nothing names one: the first
+// signed-in provider in registry order. Its failure tells the editor's log how to sign in.
+func (a *app) firstSignedInAgent() (string, error) {
+	authed := box.AuthedAgents(a.cfg)
+	if len(authed) == 0 {
+		return "", ui.CommandFailed("Could not start the editor agent", "No providers are signed in.",
+			[2]string{"Sign in:", "coop login <agent>"},
+			[2]string{"", "Then reconnect your editor."})
+	}
+	return authed[0], nil
+}
+
 // cmdACP runs the box as an ACP agent over stdio: the repo mounts at its real
 // host path (so the editor's absolute paths resolve, and the session history
 // matches `coop`/`coop loop` — see resolveWorkdir) and no tty is allocated. The
@@ -96,7 +108,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		return 2, err
 	}
 	if a.mode == agents.ModeReadOnly {
-		return 2, errors.New("coop acp does not take --readonly — front a fork read-only with 'coop fork <name> acp <target> --readonly', or investigate with 'coop <target> --readonly'")
+		return 2, errors.New("coop acp does not take --readonly — front a fork read-only with 'coop fork <name> acp --readonly', or investigate with 'coop <target> --readonly'")
 	}
 	peerVals, args, err := extractPeer("coop acp", args)
 	if err != nil {
@@ -195,13 +207,9 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if tool == "" {
 		// The editor cannot select a provider until ACP has started. Keep this choice
 		// automatic so the live toolbar and account recovery still own the selection.
-		authed := box.AuthedAgents(a.cfg)
-		if len(authed) == 0 {
-			return 1, ui.CommandFailed("Could not start the editor agent", "No providers are signed in.",
-				[2]string{"Sign in:", "coop login <agent>"},
-				[2]string{"", "Then reconnect your editor."})
+		if tool, err = a.firstSignedInAgent(); err != nil {
+			return 1, err
 		}
-		tool = authed[0]
 	}
 	if !agents.Valid(tool) {
 		return 2, noProviderErr("acp")

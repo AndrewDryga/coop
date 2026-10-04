@@ -799,6 +799,16 @@ func startScriptedACP(t *testing.T, coopBin, fixtureBin, repo, tmp, plan, target
 // off, among them).
 func startScriptedACPEnv(t *testing.T, coopBin, fixtureBin, repo, tmp, plan, target string, env map[string]string, providers ...string) *scriptedACP {
 	t.Helper()
+	args := []string{"acp"}
+	if target != "" {
+		args = append(args, target)
+	}
+	return startScriptedACPArgs(t, coopBin, fixtureBin, repo, tmp, plan, args, env, providers...)
+}
+
+// startScriptedACPArgs starts Coop with an editor entry's exact arguments, such as a fork's.
+func startScriptedACPArgs(t *testing.T, coopBin, fixtureBin, repo, tmp, plan string, args []string, env map[string]string, providers ...string) *scriptedACP {
+	t.Helper()
 	for _, provider := range providers {
 		signInScriptedProfile(t, tmp, provider, "default")
 	}
@@ -806,10 +816,6 @@ func startScriptedACPEnv(t *testing.T, coopBin, fixtureBin, repo, tmp, plan, tar
 	conf := filepath.Join(tmp, "coop.conf")
 	if err := os.WriteFile(conf, nil, 0o600); err != nil {
 		t.Fatal(err)
-	}
-	args := []string{"acp"}
-	if target != "" {
-		args = append(args, target)
 	}
 	cmd := exec.Command(coopBin, args...)
 	values := map[string]string{

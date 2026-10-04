@@ -111,7 +111,7 @@ LOOP OPTIONS
   project queue when you merge the reviewed work. Stopping keeps it resumable.
 
 EDITOR INTEGRATION
-  coop fork <name> acp <target>  use an existing fork from an ACP editor
+  coop fork <name> acp  use an existing fork from an ACP editor
   See coop help fork <name> acp for its options.
 
   Model and account syntax: coop help models
@@ -183,7 +183,7 @@ func (a *app) cmdFork(args []string) (int, error) {
 	case "stop":
 		return fc.ForkStop(args[1:])
 	default:
-		// `coop fork <name> acp <target>` — front the fork as an ACP agent (for Zed).
+		// `coop fork <name> acp [<target>]` — front the fork as an ACP agent (for Zed).
 		if len(args) >= 2 && args[1] == "acp" {
 			return a.forkACP(args[0], args[2:])
 		}
@@ -913,17 +913,19 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if a.mode.Restricted() && len(peerVals) > 0 {
 		return 2, fmt.Errorf("a %s run consults no peers — drop --peer", a.mode)
 	}
-	usage := fmt.Sprintf("usage: coop fork %s acp <target> [--readonly] [--peer <target>...] [--egress <mode>]", name)
-	if len(rest) == 0 {
-		return 2, fmt.Errorf("name the target — coop fork %s acp <target>; sign in with 'coop login <agent>' or see 'coop credentials'", name)
-	}
-	if len(rest) != 1 || !isTargetHead(rest[0]) {
+	usage := fmt.Sprintf("usage: coop fork %s acp [<target>] [--readonly] [--peer <target>...] [--egress <mode>]", name)
+	if len(rest) > 1 || (len(rest) == 1 && !isTargetHead(rest[0])) {
 		return 2, errors.New(usage)
 	}
 	// --model/--credential are retired — name the fork's ACP session in the positional target
-	// (coop fork <name> acp claude:opus@work), like plain `coop acp`.
-	t, err := agents.ParseTarget(rest[0])
-	if err != nil {
+	// (coop fork <name> acp claude:opus@work), like plain `coop acp`. Without one, the fork's own
+	// agent starts and the editor's model and effort selectors choose from there.
+	var t agents.Target
+	if len(rest) == 0 {
+		if t.Provider, err = a.forkACPAgent(name); err != nil {
+			return 1, err
+		}
+	} else if t, err = agents.ParseTarget(rest[0]); err != nil {
 		return 2, err
 	}
 	agent, model, profile, effort := t.Provider, "", "", t.Effort
@@ -1093,6 +1095,23 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		return a.superviseForkACP(repo, ws, name, t, peers, capture)
 	}
 	return a.runBox(spec)
+}
+
+// forkACPAgent is the agent a target-less `coop fork <name> acp` starts: the one the fork was
+// created with, as `coop fork <name>` resumes it, else the first signed-in provider.
+func (a *app) forkACPAgent(name string) (string, error) {
+	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	if err != nil {
+		return "", err
+	}
+	ws := forkspace.Workspace(repo, name)
+	if !pathExists(ws) {
+		return "", fmt.Errorf("no such fork: %s (open it first: coop fork %s)", name, name)
+	}
+	if agent := forkctl.ReadForkAgent(ws); agent != "" {
+		return agent, nil
+	}
+	return a.firstSignedInAgent()
 }
 
 func readOnlySessionOutputMountArgs(workspace, workdir string) ([]string, string, error) {

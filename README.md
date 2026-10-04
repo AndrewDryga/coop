@@ -212,7 +212,7 @@ spelled out here (there's room to render them).
 | `coop fork rm <name> [--force] [--yes]` | discard a fork — confirms first; `--force` may stop its detached worker and return/discard Git plus canonical task authority |
 | `coop fork open <name>` · `path <name>` | open the fork in your editor · print its filesystem path |
 | `coop fork <name> <target|preset> --loop [--tasks <path>] [-d]` | claim canonical project tasks one at a time in an isolated fork (`--tasks` selects one queue; `-d` detaches) |
-| `coop fork <name> acp <target>` | drive the fork's [sandboxed agent from Zed](#drive-it-from-zed-acp) over ACP |
+| `coop fork <name> acp [<target>]` | drive the fork's [sandboxed agent from Zed](#drive-it-from-zed-acp) over ACP |
 
 **Unattended** ([details](#run-it-unattended))
 
@@ -1400,8 +1400,10 @@ coop's proxy sits between the editor and the box and owns the session:
   [Troubleshooting](#troubleshooting).
 
 To steer a [**fork**](#forks-hand-off-work-like-a-pr) from Zed instead of your working tree,
-point the adapter at it: `coop fork <name> acp <target>` — the ACP editor flow, but the agent works the
+point the adapter at it: `coop fork <name> acp` — the ACP editor flow, but the agent works the
 throwaway clone (nothing to push, secrets never came along), and you still review and land it.
+It starts the agent the fork was created with; name a target (`coop fork <name> acp claude:opus`)
+to start another.
 For a writable local session, configure that command while the parent project is open in Zed.
 Coop maps the editor's project directory to the fork inside the box. The fork, provider and account
 stay fixed, without the plain ACP provider/preset toolbar; any model and effort choices offered
