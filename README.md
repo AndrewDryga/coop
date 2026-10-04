@@ -288,8 +288,8 @@ your home dir, SSH keys, the rest of the disk — simply isn't in the container.
 
 ### Secrets never enter the box
 
-`.env`, `*.tfvars`, `*.pem`, `secrets/`, `.ssh`, and friends are shadowed: an empty
-`tmpfs` over secret directories, a read-only empty file over secret files. Templates
+`.env`, `*.tfvars`, `*.pem`, `secrets/`, `.ssh`, and friends are shadowed: a read-only empty
+directory over secret directories, a read-only empty file over secret files. Templates
 (`*.example`, `*.sample`, `*.template`) stay visible. The defaults are compiled in
 (`internal/box/secrets.go`); add a `.coopignore` at the repo root for your own:
 
