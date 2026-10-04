@@ -47,7 +47,7 @@ def command(label, text, name):
             '<span class="copy-status" role="status" data-copy-status></span></div>')
 
 
-INSTALL_CMD = 'curl -fsSL https://raw.<wbr>githubusercontent.com/<wbr>AndrewDryga/coop/<wbr>main/<wbr><span class="nowrap">install.sh | sh</span>'
+INSTALL_CMD = 'curl -fsSL https://coop.dryga.com/<wbr><span class="nowrap">install.sh | sh</span>'
 
 
 def line(text, cls=""):

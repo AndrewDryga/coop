@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 # Install the prebuilt `coop` binary — no Go, no clone:
-#   curl -fsSL https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh | sh
+#   curl -fsSL https://coop.dryga.com/install.sh | sh
 # Env: COOP_VERSION (pin a release tag), COOP_BIN_DIR (default ~/.local/bin),
 #      COOP_NO_BUILD=1 (skip building the box image).
 set -eu

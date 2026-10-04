@@ -54,7 +54,7 @@ It's the working tooling behind two write-ups:
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh | sh
+curl -fsSL https://coop.dryga.com/install.sh | sh
 ```
 
 Downloads the prebuilt `coop` binary for your OS/arch into `~/.local/bin` — no Go, no
@@ -86,8 +86,10 @@ git clone https://github.com/AndrewDryga/coop && cd coop && make install   # fro
 <a name="verifying-a-download"></a>
 <details><summary><b>Verifying a download</b></summary>
 
-The one-line command executes the mutable `main/install.sh` first, so that bootstrap
-trusts GitHub and the repository's current `main` branch. The script then requires the
+The one-line command executes the mutable `main/install.sh` first, served by GitHub Pages at
+coop.dryga.com, so that bootstrap trusts GitHub, that domain and the repository's current `main`
+branch. To trust GitHub alone, fetch the same script from
+`https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh`. The script then requires the
 release's `checksums.txt` and verifies the downloaded archive with `sha256sum` or
 `shasum`; it aborts if either the metadata or tool is missing. When
 [cosign](https://github.com/sigstore/cosign) is installed, it also authenticates the
@@ -122,7 +124,7 @@ From nothing to an agent at work in the box. The same steps as the
 [website](https://coop.dryga.com/#start) and the [docs](https://coop.dryga.com/docs.html#quickstart):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh | sh
+curl -fsSL https://coop.dryga.com/install.sh | sh
 # ^ installs the binary, and (if a runtime is present) builds the box + runs coop doctor
 
 coop login claude          # 1. sign in, once per account

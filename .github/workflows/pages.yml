@@ -1,13 +1,14 @@
 name: pages
 
 # Deploy the static site in site/ to GitHub Pages. No build step: the site is static
-# HTML/CSS/JS, and its generated pages are committed (tools/gen_site.py); this job just uploads it.
+# HTML/CSS/JS, and its generated pages are committed (tools/gen_site.py); this job just uploads it,
+# with the repo's install.sh beside it so coop.dryga.com/install.sh is always the script at main.
 # One-time setup: repo Settings → Pages → Source: "GitHub Actions".
 
 on:
   push:
     branches: [main]
-    paths: ['site/**', '.github/workflows/pages.yml']
+    paths: ['site/**', 'install.sh', '.github/workflows/pages.yml']
   workflow_dispatch:
 
 permissions:
@@ -33,6 +34,10 @@ jobs:
       # actions/upload-artifact, which this repo's "every action SHA-pinned" policy
       # rejects. Replicate it inline: its exact tar, then a SHA-pinned upload-artifact.
       # The artifact MUST be named "github-pages" so deploy-pages picks it up.
+      # Copied at deploy time, never committed under site/, so the published installer can't drift
+      # from the one in the repo (tools/test_site_content.py checks both).
+      - name: Publish install.sh with the site
+        run: cp install.sh site/install.sh
       - name: Archive the site into a Pages artifact
         run: |
           tar \

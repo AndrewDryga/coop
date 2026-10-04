@@ -90,7 +90,7 @@ class SiteContentTest(unittest.TestCase):
         commands = [re.sub(r"^\$\s*", "", text).strip() for text in page.copy_sources]
         self.assertEqual(len(buttons), len(commands))
         self.assertEqual(commands, [
-            "curl -fsSL https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh | sh",
+            "curl -fsSL https://coop.dryga.com/install.sh | sh",
             "coop login claude",
             "cd your-project && coop init",
             "coop claude",
@@ -99,6 +99,15 @@ class SiteContentTest(unittest.TestCase):
             with self.subTest(command=command):
                 parsed = subprocess.run(["sh", "-n"], input=command, text=True, capture_output=True, check=False)
                 self.assertEqual(parsed.returncode, 0, parsed.stderr)
+
+    def test_install_script_is_published_from_the_repo_not_copied(self):
+        # coop.dryga.com/install.sh is the repo's install.sh, copied in by the Pages job at deploy.
+        # A committed site/install.sh would drift from it, and a deploy that skipped install.sh
+        # changes would serve a stale installer.
+        self.assertFalse((SITE / "install.sh").exists(), "site/install.sh must not be committed")
+        workflow = (SITE.parent / ".github" / "workflows" / "pages.yml").read_text(encoding="utf-8")
+        self.assertIn("run: cp install.sh site/install.sh", workflow)
+        self.assertIn("'install.sh'", workflow, "an install.sh change must redeploy the site")
 
     def test_pages_share_the_main_navigation(self):
         for path, install in ((SITE / "index.html", "#start"), (SITE / "docs.html", "./#start")):
