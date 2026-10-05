@@ -643,6 +643,9 @@ func (h *sessionHTTPHandler) serveSessionPath(w http.ResponseWriter, r *http.Req
 }
 
 func (h *sessionHTTPHandler) checkpointWorkspace(w http.ResponseWriter, r *http.Request, sessionID string) {
+	if !h.requirePost(w, r) {
+		return
+	}
 	var body struct {
 		SessionRef          string `json:"session_ref"`
 		ExpectedRevision    int64  `json:"expected_revision"`
@@ -720,6 +723,9 @@ func (h *sessionHTTPHandler) restoreWorkspaceCheckpoint(w http.ResponseWriter, r
 }
 
 func (h *sessionHTTPHandler) ensureWorkspaceTask(w http.ResponseWriter, r *http.Request, sessionID string) {
+	if !h.requirePost(w, r) {
+		return
+	}
 	var body struct {
 		ExpectedRevision int64                     `json:"expected_revision"`
 		Task             tasks.ControllerTaskDraft `json:"task"`

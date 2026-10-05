@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Session workspace and checkpoint calls check their headers.** `POST /v1/sessions/{id}/workspace`
+  and `/checkpoint` now answer `400` to a query string, a Content-Type other than
+  `application/json` or a repeated `Idempotency-Key`, like every other session mutation. Before,
+  such a request reached the service. Workers already send these headers.
+
 - **Park a decision for later.** `coop tasks park <id> ["<reason>"]` answers a blocked task with
   "not now": it moves to the backlog with its decision still open, so `coop loop --preflight` never
   re-queues it. Press `:b` in `coop tasks decisions -i` to do the same. `coop backlog promote`

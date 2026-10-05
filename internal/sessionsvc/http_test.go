@@ -340,6 +340,44 @@ func TestSessionHTTPPublishRequiresMutationHeadersAndNoQuery(t *testing.T) {
 	}
 }
 
+// The workspace and checkpoint mutations get the same preflight as every other JSON mutation: one
+// Idempotency-Key, an application/json body and no query string. The restore route is not here;
+// its body is the checkpoint bundle and it checks that media type itself.
+func TestSessionHTTPWorkspaceAndCheckpointRequireMutationHeadersAndNoQuery(t *testing.T) {
+	service, _ := newHTTPTestSessionService(t)
+	defer service.Stop()
+	handler := NewHTTPHandler(service.Service)
+	for _, route := range []struct{ path, body string }{
+		{"/v1/sessions/missing/workspace", `{"expected_revision":1,"task":{"offer_ref":"record:task_offer:preflight","title":"Preflight","prompt":"Check the headers.","success_checks":["headers checked"],"authority_limits":[],"source_refs":[]}}`},
+		{"/v1/sessions/missing/checkpoint", `{"session_ref":"missing","expected_revision":1,"placement_generation":1,"repository_ref":"repository"}`},
+	} {
+		for _, tc := range []struct{ name, path, contentType, want string }{
+			{"unexpected query", route.path + "?unexpected=1", "application/json", "unknown query parameter"},
+			{"wrong media type", route.path, "text/plain", "Content-Type must be application/json"},
+		} {
+			t.Run(route.path+" "+tc.name, func(t *testing.T) {
+				response := sessionHTTPTestRequest(t, handler, http.MethodPost, tc.path, route.body, "preflight", tc.contentType)
+				if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), tc.want) {
+					t.Fatalf("preflight = %d %s, want 400 %q", response.Code, response.Body.String(), tc.want)
+				}
+			})
+		}
+		request := httptest.NewRequest(http.MethodPost, route.path, strings.NewReader(route.body))
+		request.Header.Add("Idempotency-Key", "first")
+		request.Header.Add("Idempotency-Key", "second")
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "Idempotency-Key must be specified once") {
+			t.Fatalf("%s duplicate key = %d %s", route.path, response.Code, response.Body.String())
+		}
+		valid := sessionHTTPTestRequest(t, handler, http.MethodPost, route.path, route.body, "preflight-valid", "application/json")
+		if valid.Code == http.StatusBadRequest {
+			t.Fatalf("%s valid headers were rejected before session lookup: %d %s", route.path, valid.Code, valid.Body.String())
+		}
+	}
+}
+
 // Responder records remote mutation intent before the socket send. If Stop
 // wins in that gap, the owner-only fence must occupy the exact Coop operation
 // key without creating the session or model turn it is trying to stop.
