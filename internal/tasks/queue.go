@@ -367,7 +367,7 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 			return tasksLintAll(repo, rels)
 		case "decisions":
 			return tasksDecisionsAll(repo, rels, rest[1:])
-		case "claim", "release", "lease", "block", "unblock", "done", "path", "rm":
+		case "claim", "release", "lease", "block", "unblock", "park", "done", "path", "rm":
 			return tasksAcrossQueues(repo, rels, sub, rest)
 		case "":
 			return tasksListAll(repo, rels, nil)

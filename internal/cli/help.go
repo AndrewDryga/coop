@@ -240,7 +240,7 @@ var manualOrder = append(append([]string{"run", "shell"}, agents.Names()...),
 	"login", "credentials", "credentials default", "credentials rm", "credentials account",
 	"models", "usage", "presets init", "presets",
 	"tasks", "tasks ls", "tasks add", "tasks claim", "tasks release", "tasks lease",
-	"tasks block", "tasks unblock", "tasks done", "tasks path", "tasks queues",
+	"tasks block", "tasks unblock", "tasks park", "tasks done", "tasks path", "tasks queues",
 	"tasks decisions", "tasks lint", "tasks rm", "tasks watch",
 	"backlog", "backlog ls", "backlog add", "backlog promote", "backlog rm",
 	"context", "loop",
@@ -885,6 +885,7 @@ WORK
   release <id>   return a task to todo with its handoff notes
   block <id>     ask for a decision before continuing
   unblock <id> ["<answer>"] record a decision and return the task to todo
+  park <id> ["<reason>"]   keep a blocked task in the backlog for later
   done <id>                move completed work to the archive
 
 REVIEW
@@ -1068,6 +1069,20 @@ EXAMPLE
 
   Questions waiting for you: coop tasks decisions -i`,
 
+	"tasks park": `coop tasks park — keep a blocked task in the backlog for later
+
+Usage: coop tasks park <id> ["<reason>"] [--tasks <path>]...
+
+  Answers a decision with "not now". The task moves to the backlog with its
+  folder, log and decision, so nothing returns it to todo on its own.
+  Your reason is saved in the task's log.
+  coop backlog promote brings it back, blocked while its decision is open.
+
+EXAMPLE
+  coop tasks park choose-storage "Not this quarter."
+
+  Questions waiting for you: coop tasks decisions -i`,
+
 	"tasks done": `coop tasks done — move completed work to the archive
 
 Usage: coop tasks done <id> [--tasks <path>]...
@@ -1207,6 +1222,7 @@ Usage: coop backlog promote <id> [--tasks <path>]...
 
   Fill in its problem, completion criteria and approach before promoting it.
   The task becomes todo, where an agent or loop can pick it up.
+  A parked task with an open decision comes back blocked, with its question.
 
 EXAMPLE
   coop backlog promote account-permissions`,

@@ -197,8 +197,26 @@ func backlogFolderPromote(root string, args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	if err := MoveTaskDir(root, t, StateTodo); err != nil {
+	// A parked task (coop tasks park) comes back with its question: an open decision returns it to
+	// blocked, since a todo task with an unanswered decision.md is what lint rejects.
+	dest := StateTodo
+	if t.HasDecision {
+		resolved, err := decisionResolved(filepath.Join(t.Dir, "decision.md"))
+		if err != nil {
+			return -1, err
+		}
+		if !resolved {
+			dest = StateBlocked
+		}
+	}
+	if err := MoveTaskDir(root, t, dest); err != nil {
 		return -1, err
+	}
+	if dest == StateBlocked {
+		ui.OK("Moved to blocked: %s", t.Title)
+		ui.Note("")
+		ui.Note("  Its decision is still open: coop tasks decisions -i")
+		return 0, nil
 	}
 	ui.OK("Moved to todo: %s", t.Title)
 	ui.Note("")

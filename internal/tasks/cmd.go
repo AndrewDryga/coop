@@ -139,6 +139,8 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 		return tasksFolderBlock(root, args)
 	case "unblock":
 		return tasksFolderUnblock(root, args)
+	case "park":
+		return tasksFolderPark(root, args)
 	case "done":
 		return tasksFolderMoveWith(root, args, StateDone, "done", "done", claimOptions{
 			actor: captureClaimActor(realClaimActorProbe, os.Getppid(), ui.IsTerminal(os.Stdin), ClaimActor{}),
@@ -157,7 +159,7 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 // tasksVerbs are the canonical `coop tasks` subcommands (primary spellings, no aliases): the single
 // source for the unknown-subcommand suggester and isTasksSubcommand, so the two can't drift. `watch`
 // belongs here even though cmdTasks (not cmdTasksFolder) handles it — a mistype of it should suggest it.
-var TasksVerbs = []string{"ls", "lint", "add", "claim", "release", "lease", "block", "unblock", "done", "watch", "queues", "path", "rm", "decisions"}
+var TasksVerbs = []string{"ls", "lint", "add", "claim", "release", "lease", "block", "unblock", "park", "done", "watch", "queues", "path", "rm", "decisions"}
 
 // isTasksSubcommand reports whether s names a `coop tasks` subcommand. cmdTasks uses it to catch
 // `coop tasks --tasks <sub>`, where --tasks swallows the subcommand as a queue path. v3 keeps no
@@ -909,6 +911,80 @@ func parseTaskUnblockArgs(args []string) (id, answer string, err error) {
 		}
 	}
 	return args[0], strings.TrimSpace(strings.Join(args[1:], " ")), nil
+}
+
+func parseTaskParkArgs(args []string) (id, reason string, err error) {
+	if len(args) < 1 {
+		return "", "", ui.MissingArgument("task ID", "coop tasks park", `coop tasks park <task-id> ["<reason>"]`)
+	}
+	for _, arg := range args[1:] {
+		if arg != "-" && strings.HasPrefix(arg, "-") {
+			return "", "", unknownOptionErr(arg, "coop tasks park", nil)
+		}
+	}
+	return args[0], strings.TrimSpace(strings.Join(args[1:], " ")), nil
+}
+
+// tasksFolderPark answers a blocked task's decision with "not now": the folder moves to the backlog
+// drawer with its log and decision.md, so no preflight can re-queue it (the drawer is never scanned),
+// and `coop backlog promote` later brings it back blocked, with the question still open.
+func tasksFolderPark(root string, args []string) (int, error) {
+	id, reason, err := parseTaskParkArgs(args)
+	if err != nil {
+		return 2, err
+	}
+	t, err := FindTask(root, id)
+	if err != nil {
+		return 1, err
+	}
+	if err := parkTask(root, t, reason); err != nil {
+		var refusal *parkRefusal
+		if errors.As(err, &refusal) {
+			return 1, err
+		}
+		return -1, err
+	}
+	ui.OK("Parked: %s", t.Title)
+	ui.Note("\n  It's in the backlog now, and its decision stays open.")
+	ui.Note("  Bring it back: coop backlog promote %s", t.ID)
+	return 0, nil
+}
+
+// parkRefusal is a task that can't be parked as it stands; the message says what to do instead.
+type parkRefusal struct{ msg string }
+
+func (r *parkRefusal) Error() string { return r.msg }
+
+// parkTask moves a blocked task into the backlog, holding its owner record's lock so a concurrent
+// claim can't land mid-move. It refuses a task with audit authority (only an explicit unblock may
+// spend that) or a live claim, and records the owner's reason in log.md before the move.
+func parkTask(root string, t Item, reason string) error {
+	if t.State != StateBlocked {
+		return &parkRefusal{fmt.Sprintf("%s is %s, not blocked: only a task waiting on a decision can be parked", t.ID, StateLabel(t.State))}
+	}
+	if _, audited, err := ReadAuditReopenRecord(root, t.ID); err != nil {
+		return fmt.Errorf("inspect audit authority for %s: %w", t.ID, err)
+	} else if audited {
+		return &parkRefusal{fmt.Sprintf("%s was reopened by an audit and carries its authority: answer it with coop tasks unblock %s instead", t.ID, t.ID)}
+	}
+	owner, err := lockTaskOwner(root, t.ID)
+	if err != nil {
+		return err
+	}
+	defer owner.Close()
+	if _, claimed, err := owner.Read(); err != nil {
+		return err
+	} else if claimed {
+		return &parkRefusal{fmt.Sprintf("%s is claimed: release it first with coop tasks release %s", t.ID, t.ID)}
+	}
+	note := "Parked in the backlog by the owner; the decision stays open."
+	if reason != "" {
+		note = "Parked in the backlog by the owner: " + reason
+	}
+	if err := AppendTaskLogStrict(t.Dir, note); err != nil {
+		return fmt.Errorf("record the park in %s's log: %w", t.ID, err)
+	}
+	return MoveTaskDir(root, t, StateBacklog)
 }
 
 // tasksFolderUnblock moves a task out of 50_blocked/ back to 00_todo/ — but only if it's
@@ -2463,7 +2539,7 @@ func decisionsInteractive(root string, decisions []Item) (int, error) {
 func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, error) {
 	p := ui.For(os.Stdout)
 	sc := bufio.NewScanner(in)
-	answered, deleted := 0, 0
+	answered, parked, deleted := 0, 0, 0
 	for i := 0; i >= 0; {
 		ref := refs[i]
 		t, err := FindTask(ref.root, ref.id)
@@ -2495,9 +2571,10 @@ func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, e
 			prompt = "Your answer (Enter to keep it):"
 		}
 		key := func(k string) string { return p.Cyan(k) }
-		fmt.Fprintf(out, "\n%s\n  %s%s%s%s%s%s%s\n%s ",
+		fmt.Fprintf(out, "\n%s\n  %s%s%s%s%s%s%s%s%s\n%s ",
 			prompt,
 			key(":n"), p.Dim(" next · "), key(":p"), p.Dim(" previous · "),
+			key(":b"), p.Dim(" park in backlog · "),
 			key(":d"), p.Dim(" delete task · "), key(":q")+p.Dim(" quit"), p.Dim(">"))
 		if !sc.Scan() {
 			break // EOF / ^D ends the session
@@ -2540,6 +2617,24 @@ func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, e
 			}
 			continue
 		}
+		// :b parks the task in the backlog with its decision still open (coop tasks park), so a
+		// "not now" answer doesn't re-queue it. A refused park says why and stays on this decision.
+		if line == ":b" {
+			if err := parkTask(ref.root, t, ""); err != nil {
+				var refusal *parkRefusal
+				if !errors.As(err, &refusal) {
+					return -1, err
+				}
+				fmt.Fprintf(out, "  %s\n", refusal.msg)
+				continue
+			}
+			parked++
+			refs = append(refs[:i], refs[i+1:]...)
+			if i >= len(refs) {
+				i = -1
+			}
+			continue
+		}
 		switch line {
 		case ":q", ":quit":
 			i = -1
@@ -2568,19 +2663,24 @@ func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, e
 			i = -1 // past the last decision → done
 		}
 	}
-	// Answers and deletions are counted separately: they are different outcomes, and a session that
-	// did both must not report either as the whole story.
-	switch {
-	case answered > 0 && deleted > 0:
-		ui.OK("Answered %s — %s returned to todo · deleted %s",
-			ui.Count(answered, "question"), pluralTasks(answered), ui.Count(deleted, "task"))
-	case answered > 0:
-		ui.OK("Answered %s — %s returned to todo", ui.Count(answered, "question"), pluralTasks(answered))
-	case deleted > 0:
-		ui.OK("Deleted %s", ui.Count(deleted, "task"))
-	default:
-		ui.Note("No answers saved. Tasks are still blocked.")
+	// Answers, parks and deletions are counted separately: they are different outcomes, and a session
+	// that did several must not report any one of them as the whole story.
+	var outcomes []string
+	if answered > 0 {
+		outcomes = append(outcomes, fmt.Sprintf("answered %s — %s returned to todo", ui.Count(answered, "question"), pluralTasks(answered)))
 	}
+	if parked > 0 {
+		outcomes = append(outcomes, "parked "+ui.Count(parked, "task")+" in the backlog")
+	}
+	if deleted > 0 {
+		outcomes = append(outcomes, "deleted "+ui.Count(deleted, "task"))
+	}
+	if len(outcomes) == 0 {
+		ui.Note("No answers saved. Tasks are still blocked.")
+		return 0, nil
+	}
+	summary := strings.Join(outcomes, " · ")
+	ui.OK("%s", strings.ToUpper(summary[:1])+summary[1:])
 	return 0, nil
 }
 

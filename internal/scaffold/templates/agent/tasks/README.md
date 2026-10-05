@@ -178,6 +178,8 @@ A task goes to `50_blocked/` when it hits a choice that's expensive to undo and 
 recommendation; **the human resolves it — write the Resolution and run `coop tasks unblock <id>`,
 or do both at once with `coop tasks unblock <id> "<answer>"`.**
 `coop tasks decisions` lists every open one with its full recommendation.
+To answer "not now", run `coop tasks park <id> ["<reason>"]`: the task moves to the backlog with
+its decision still open, so no preflight re-queues it, and `coop backlog promote <id>` brings it back.
 
 **Template:**
 

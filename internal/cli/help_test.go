@@ -325,7 +325,7 @@ var wantManualOrder = []string{
 	"login", "credentials", "credentials default", "credentials rm", "credentials account",
 	"models", "usage", "presets init", "presets",
 	"tasks", "tasks ls", "tasks add", "tasks claim", "tasks release", "tasks lease",
-	"tasks block", "tasks unblock", "tasks done", "tasks path", "tasks queues",
+	"tasks block", "tasks unblock", "tasks park", "tasks done", "tasks path", "tasks queues",
 	"tasks decisions", "tasks lint", "tasks rm", "tasks watch",
 	"backlog", "backlog ls", "backlog add", "backlog promote", "backlog rm",
 	"context", "loop",

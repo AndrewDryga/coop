@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Park a decision for later.** `coop tasks park <id> ["<reason>"]` answers a blocked task with
+  "not now": it moves to the backlog with its decision still open, so `coop loop --preflight` never
+  re-queues it. Press `:b` in `coop tasks decisions -i` to do the same. `coop backlog promote`
+  brings a parked task back blocked, with its question.
+
 - **Docs in plain words.** The README is now a short introduction with the install, a quickstart and
   a tour of each feature. The detail it used to carry moved to reference pages under `docs/`:
   the box, agents and accounts, forks, the loop, editors and MCP, evaluations and configuration.

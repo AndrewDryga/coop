@@ -4,6 +4,7 @@ Usage: coop backlog promote <id> [--tasks <path>]...
 
   Fill in its problem, completion criteria and approach before promoting it.
   The task becomes todo, where an agent or loop can pick it up.
+  A parked task with an open decision comes back blocked, with its question.
 
 EXAMPLE
   coop backlog promote account-permissions

@@ -17,7 +17,7 @@ Name the agent (`claude`, `codex`, `gemini` or `grok`), or a preset whose lead s
 
 If the model hits a rate or usage limit mid-run, the loop doesn't count it as a failure. It reads the reset time from the agent's own output, waits it out with a countdown, and resumes the same item once the limit clears. An overnight run rides through the daily cap and doesn't burn retries against it.
 
-Add `--preflight` to run one cleanup pass before the loop starts working. It unblocks any `50_blocked/` task whose `decision.md` now has an answer, so a fresh run starts from a tidy queue. It works no task and makes no commits. It mirrors the final review at the other end of the run. Preflight is off by default.
+Add `--preflight` to run one cleanup pass before the loop starts working. It unblocks any `50_blocked/` task whose `decision.md` now has an answer, so a fresh run starts from a tidy queue. A task you parked with `coop tasks park` waits in the backlog, so preflight leaves it alone. It works no task and makes no commits. It mirrors the final review at the other end of the run. Preflight is off by default.
 
 ## Exit codes
 

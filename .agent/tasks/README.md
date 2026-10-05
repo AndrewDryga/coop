@@ -173,6 +173,8 @@ A task goes to `50_blocked/` when it hits a choice that's expensive to undo and 
 `coop tasks block <id>` creates this file; the agent fills the question, options, and a
 recommendation; **the human writes the Resolution and runs `coop tasks unblock <id>`.**
 `coop tasks decisions` lists every open one with its recommendation.
+To answer "not now", run `coop tasks park <id> ["<reason>"]`: the task moves to the backlog with
+its decision still open, so no preflight re-queues it, and `coop backlog promote <id>` brings it back.
 
 **Template:**
 

@@ -9,6 +9,7 @@ WORK
   release <id>   return a task to todo with its handoff notes
   block <id>     ask for a decision before continuing
   unblock <id> ["<answer>"] record a decision and return the task to todo
+  park <id> ["<reason>"]   keep a blocked task in the backlog for later
   done <id>                move completed work to the archive
 
 REVIEW
