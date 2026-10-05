@@ -102,6 +102,19 @@ class SiteContentTest(unittest.TestCase):
                 parsed = subprocess.run(["sh", "-n"], input=command, text=True, capture_output=True, check=False)
                 self.assertEqual(parsed.returncode, 0, parsed.stderr)
 
+    def test_case_figures_sit_outside_their_case_block(self):
+        # A case's block is its threat and how the box stops it. The owner rejected a figure set
+        # inside it (2026-10-05): a figure goes above or below the block, never between those lines.
+        source = (SITE / "index.html").read_text(encoding="utf-8")
+        cases = re.findall(r'<li class="attack" data-attack="([\w-]+)">(.*?)</li>', source, re.S)
+        self.assertGreaterEqual(len(cases), 7)
+        for name, case in cases:
+            with self.subTest(case=name):
+                block = re.search(r'<div class="case">(.*?)</div>', case, re.S)
+                self.assertIsNotNone(block, "a case without its .case block")
+                self.assertIn('class="threat"', block.group(1))
+                self.assertNotIn('class="evidence"', block.group(1), "a figure inside the case's block")
+
     def test_install_script_is_published_from_the_repo_not_copied(self):
         # coop.dryga.com/install.sh is the repo's install.sh, copied in by the Pages job at deploy.
         # A committed site/install.sh would drift from it, and a deploy that skipped install.sh
