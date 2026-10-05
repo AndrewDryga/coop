@@ -50,3 +50,4 @@ See also [[help-output-style]], [[no-color-in-width-fields]], [[tag-exceptions-n
 - 2026-07-14 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged
 - 2026-10-05 — the README became a short landing page and its detail moved to docs (task 2026-10-05-rewrite-the-readme-and-markdown-docs-in-the-webs); sources follow it.
+- 2026-10-05 — `make align` measures a markdown fence as written, so a placeholder like `<id>` counts (it used to be stripped as an HTML tag and hid a 4-column misalignment in docs/configuration.md, fixed here); HTML still drops markup. Pinned by tools/test_align_comments.py.

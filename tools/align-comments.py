@@ -32,7 +32,11 @@ TAG = re.compile(r"<[^>]+>")
 OUTLIER_GAP = 28
 
 
-def vis(s):  # visual width: drop HTML tags, resolve entities, drop <pre>'s '>' artifact
+def vis(s, markup=True):
+    """Visual width. In HTML, drop tags, resolve entities and drop <pre>'s '>' artifact. A
+    markdown fence shows its text as written, so a placeholder like <id> counts there."""
+    if not markup:
+        return len(s)
     return len(html.unescape(re.sub(r"^\s*>", "", TAG.sub("", s))))
 
 
@@ -74,7 +78,9 @@ def in_code_flags(lines, path):
     return flags
 
 
-def is_blank(raw):
+def is_blank(raw, markup=True):
+    if not markup:
+        return raw.strip() == ""
     return html.unescape(TAG.sub("", raw)).strip() in ("", ">")
 
 
@@ -94,11 +100,11 @@ def blocks(lines, path):
         yield cur
 
 
-def stanzas(block, lines):
+def stanzas(block, lines, markup=True):
     """Split a block's comments where a blank line falls between two of them."""
     out, cur, prev = [], [], None
     for item in block:
-        if prev is not None and any(is_blank(lines[j]) for j in range(prev + 1, item[0])):
+        if prev is not None and any(is_blank(lines[j], markup) for j in range(prev + 1, item[0])):
             out.append(cur)
             cur = []
         cur.append(item)
@@ -108,26 +114,27 @@ def stanzas(block, lines):
 
 def process(path, write):
     lines = open(path).read().split("\n")
+    markup = path.endswith(".html")
     offenders, dirty = [], False
     for block in blocks(lines, path):
         if len(block) < 2:
             continue
-        span = [vis(pre) for _, pre, _ in block]
+        span = [vis(pre, markup) for _, pre, _ in block]
         # One column for the whole example only when its lines are comparable in width;
         # else align each blank-separated stanza on its own, so two disparate command
         # lists aren't dragged into a single far-right column.
-        for grp in [block] if max(span) - min(span) <= OUTLIER_GAP else stanzas(block, lines):
+        for grp in [block] if max(span) - min(span) <= OUTLIER_GAP else stanzas(block, lines, markup):
             if len(grp) < 2:
                 continue
-            w = sorted((vis(pre) for _, pre, _ in grp), reverse=True)
+            w = sorted((vis(pre, markup) for _, pre, _ in grp), reverse=True)
             if w[0] - w[1] > OUTLIER_GAP:  # a lone over-long line — leave it standalone
                 continue
-            if len({vis(lines[i][: lines[i].find(cm)]) for i, _, cm in grp}) == 1:
+            if len({vis(lines[i][: lines[i].find(cm)], markup) for i, _, cm in grp}) == 1:
                 continue  # already one column — keep the author's gap, don't churn it
             offenders += [(i + 1, lines[i].rstrip()) for i, _, _ in grp]
             if write:
                 for i, pre, comment in grp:
-                    new = pre + " " * (w[0] + 1 - vis(pre)) + comment
+                    new = pre + " " * (w[0] + 1 - vis(pre, markup)) + comment
                     if new != lines[i]:
                         lines[i], dirty = new, True
     if write and dirty:

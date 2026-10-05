@@ -142,7 +142,7 @@ context:
 
 ```bash
 coop context --changed            # scope = the paths git reports changed
-coop context --task <id>              # scope = a task's declared `paths:` frontmatter
+coop context --task <id>          # scope = a task's declared `paths:` frontmatter
 coop context portal/lib/user.ex   # scope = explicit repo-relative paths
 coop context --changed --json     # same, as data (files + the route that selected each)
 coop context --changed --rendered # the compiled content itself, canonical first
