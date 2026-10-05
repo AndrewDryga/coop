@@ -408,7 +408,9 @@ func (a *app) removeProfile(agent, name string, yes bool) (int, error) {
 	}
 	secretErr := box.RemoveHostCredential(a.cfg, ag, name)
 	profileErr := os.RemoveAll(dir)
-	if err := errors.Join(secretErr, profileErr); err != nil {
+	// Its per-repository session history lives beside the profile, not in it (box/history.go).
+	historyErr := os.RemoveAll(box.HistoryAccountRoot(a.cfg, agent, name))
+	if err := errors.Join(secretErr, profileErr, historyErr); err != nil {
 		// A partial delete is durable: never claim nothing was removed unless that is proved.
 		return -1, fmt.Errorf("could not finish removing %s account %q: %w", title, name, err)
 	}

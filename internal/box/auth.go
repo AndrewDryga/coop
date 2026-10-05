@@ -59,14 +59,22 @@ func nestedAgentCommand(spec RunSpec, name string) bool {
 // roots) build from mountedWritables, so a new kind of mount can't skip a guard.
 type mountedWritable struct {
 	Host, Box string
-	Kind      string // "<agent> credential home" or "<agent> ACP session store", for messages
+	Kind      string // "<agent> credential home", "<agent> session history" or "<agent> ACP session store"
 	acp       bool
+	history   bool // a per-repository history overlay inside a home (history.go)
+	file      bool // a single file, bound with --mount so a missing source fails instead of becoming a dir
 }
 
 func mountedWritables(cfg *config.Config, spec RunSpec) []mountedWritable {
 	var out []mountedWritable
-	for _, name := range credentialScope(cfg, spec) {
+	scope := credentialScope(cfg, spec)
+	for _, name := range scope {
 		out = append(out, mountedWritable{Host: cfg.AgentDir(name), Box: cfg.HomeInBox + "/." + name, Kind: name + " credential home"})
+	}
+	for _, name := range scope {
+		if store := spec.historyStores[name]; store != "" {
+			out = append(out, historyOverlays(cfg, spec, name, store)...)
+		}
 	}
 	if primary := runPrimary(spec); spec.ShareACPSessions && primary != "" {
 		if ag, ok := agents.Get(primary); ok {

@@ -157,6 +157,19 @@ type EffortSpec struct {
 	Validate func(model, effort string) error
 }
 
+// HistoryLayout is where a provider keeps its session history inside its home: directories of
+// per-project or per-session records, and files it only ever appends to (prompt history). Coop
+// gives each repository its own copy of these paths, so a box sees only its repository's history.
+type HistoryLayout struct {
+	Dirs    []string // home-relative directories
+	Appends []string // home-relative files the provider only appends to, never replaces
+}
+
+// HistoryKeeper is implemented by a provider whose history Coop keeps per repository.
+type HistoryKeeper interface {
+	HistoryLayout() HistoryLayout
+}
+
 // CachePrivateDirs is implemented by an agent that writes per-project data under ~/.cache. Every
 // box shares ~/.cache through one cache volume, across repositories and accounts, so each named
 // subdirectory is covered by an empty directory private to the run.

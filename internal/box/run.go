@@ -243,6 +243,9 @@ type RunSpec struct {
 	// cachePrivate maps each cache subdirectory a scoped agent keeps per-project data in to this
 	// run's empty stand-in for it (cachePrivateDirs); Run creates them.
 	cachePrivate map[string]string
+	// historyStores maps each scoped agent to the per-repository history store Run prepared for it
+	// (history.go); empty for a provider with no layout, a remote session or a box without a repo.
+	historyStores map[string]string
 
 	// Peers is the EXPLICIT peer set for this run — the targets named by repeatable
 	// --peer (a normal run, ACP, or a loop run), each provider[:model] (no
@@ -680,6 +683,13 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		return -1, err
 	}
 	defer releaseCredentials()
+	// Before any guard reads the mount plan (MCP isolation, the composition preflight), so each
+	// one sees the history stores too.
+	if !spec.Login {
+		if err := prepareHistoryStores(cfg, &spec, ""); err != nil {
+			return -1, err
+		}
+	}
 	if spec.Review && !spec.FormatCorrection {
 		if p.Review.Compose != "" {
 			composeFile = ComposeFileAt(spec.Repo, p.Review.Compose)
@@ -901,6 +911,23 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 		mounts = append(mounts, protected...)
 		tmpDirs = append(tmpDirs, snapshots...)
+	}
+	if spec.Login { // its stand-in stores live in the run's artifacts, created only now
+		if err := prepareHistoryStores(cfg, &spec, artifacts.parent); err != nil {
+			return -1, err
+		}
+		for _, m := range mountedWritables(cfg, spec) { // generated sources, removed after the run
+			switch {
+			case !m.history:
+			case m.file:
+				tmpFiles = append(tmpFiles, m.Host)
+			default:
+				tmpDirs = append(tmpDirs, m.Host)
+			}
+		}
+		for _, store := range spec.historyStores {
+			tmpDirs = append(tmpDirs, store)
+		}
 	}
 	if spec.Cache {
 		for _, dir := range cachePrivateDirs(cfg, spec) {
@@ -3088,7 +3115,11 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 		scope := credentialScope(cfg, spec)
 		writables := mountedWritables(cfg, spec)
 		for _, m := range writables {
-			if !m.acp {
+			switch {
+			case m.acp:
+			case m.file:
+				args = append(args, "--mount", "type=bind,source="+m.Host+",target="+m.Box)
+			default:
 				args = append(args, "-v", m.Host+":"+m.Box)
 			}
 		}

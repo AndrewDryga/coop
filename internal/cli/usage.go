@@ -195,7 +195,9 @@ func (a *app) usageCredentials(names []string, state string) ([]usageCredential,
 	partial := false
 	for _, name := range names {
 		for _, account := range box.EffectiveProfiles(a.cfg, name) {
-			rows = append(rows, usageCredential{provider: name, account: account, paths: []string{a.cfg.AgentProfileDir(name, account)}})
+			// The profile, then every repository's history store of that account (box/history.go).
+			paths := append([]string{a.cfg.AgentProfileDir(name, account)}, box.HistoryStores(a.cfg, name, account)...)
+			rows = append(rows, usageCredential{provider: name, account: account, paths: paths})
 		}
 	}
 	// Private session paths freeze the selected account; shared editor paths do not.
