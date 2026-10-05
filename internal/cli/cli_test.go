@@ -240,7 +240,7 @@ func TestRuntimeDetectIsLazy(t *testing.T) {
 }
 
 // The exit-code contract is coop's machine interface (CI/scripts branch on it): 0 success · 1 failure
-// or findings · 2 usage. Pin representative cases so it can't drift silently (documented in README).
+// or findings · 2 usage. Pin representative cases so it can't drift silently (documented in docs/configuration.md).
 func TestExitCodeContract(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}}
 	// 2 — usage: an unknown command, and bad arguments.

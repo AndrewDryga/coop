@@ -1,12 +1,12 @@
 # co:op website identity
 
-The handoff for the next co:op website: dark throughout, recognizably part of
-Protectorate, and related to Emisar without becoming an amber version of it.
-This directory is not published by the current GitHub Pages workflow.
+This folder is the brand handoff the co:op website at coop.dryga.com was built from. The site is
+dark throughout and recognizably part of Protectorate. It's related to Emisar without becoming an amber version
+of it. The current GitHub Pages workflow doesn't publish this folder.
 
-Start with the [design guide](DESIGN.md), then open the
-[visual reference](index.html) in a browser. The reference is a design specimen,
-not a proposed replacement homepage or an actual product screen.
+Start with the [design guide](DESIGN.md), then open the [visual reference](index.html) in a
+browser. The reference is a design specimen. It isn't a proposed replacement homepage or a
+real product screen.
 
 ## Files
 
@@ -23,22 +23,24 @@ not a proposed replacement homepage or an actual product screen.
 | [assets/fonts/InterVariable.woff2](assets/fonts/InterVariable.woff2) | Same unmodified variable font as Emisar |
 | [assets/fonts/LICENSE.txt](assets/fonts/LICENSE.txt) | Inter's SIL Open Font License |
 
-The SVG translates the approved silhouette into solid fills and real transparent
-corners. The raster reference includes simulated lighting and a baked checkerboard;
-neither is part of the production direction. The README chicken illustration is a
-separate asset and stays unchanged.
+The SVG turns the approved silhouette into solid fills with truly transparent corners. The
+raster reference has simulated lighting and a baked-in checkerboard. Neither is part of the
+production direction. The chicken illustration in the README is a separate asset, and it
+stays unchanged.
 
 ## Implementation handoff
 
 > Read `brand/DESIGN.md` and inspect `brand/index.html` before editing `site/`.
-> Use the dark-only tokens and geometric website mark. Keep the README illustration
-> unchanged. Preserve the existing static HTML/CSS/JS architecture, useful content
-> and URLs. Build co:op's workspace-and-task story, not a recolored Emisar page.
-> Verify the actual supported behavior before writing claims or terminal examples.
+> Use the dark-only tokens and the geometric website mark. Keep the README illustration
+> unchanged. Keep the existing static HTML/CSS/JS architecture, the useful content and the
+> URLs. Build co:op's workspace-and-task story. Don't make a recolored Emisar page.
+> Verify the product's real, supported behavior before you write claims or terminal examples.
 > Complete the guide's acceptance checklist before publication.
 
-Font provenance: copied unchanged from Emisar's
-`portal/apps/emisar_web/priv/static/fonts/InterVariable.woff2`; upstream project
-[Inter](https://github.com/rsms/inter), with its
-[license](https://github.com/rsms/inter/blob/master/LICENSE.txt) included here.
-No external font request or sibling-repository path is needed at runtime.
+## Font
+
+The font is copied unchanged from Emisar's
+`portal/apps/emisar_web/priv/static/fonts/InterVariable.woff2`. The upstream project is
+[Inter](https://github.com/rsms/inter), and its
+[license](https://github.com/rsms/inter/blob/master/LICENSE.txt) is included here. Nothing
+at runtime needs an external font request or a path into a sibling repository.

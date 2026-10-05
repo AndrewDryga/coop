@@ -2,9 +2,9 @@
 name: workers-run-tests-reviewers-request
 description: loop workers execute verification once; reviewers inspect the handoff and request missing checks through rework
 scope: loop
-sources: [internal/loop/prompts.go, internal/loop/review_packet.go, internal/loop/loop.go, README.md]
+sources: [internal/loop/prompts.go, internal/loop/review_packet.go, internal/loop/loop.go, README.md, docs/loop.md]
 check: go test ./internal/loop -run 'TestLoopPreflightAndReviewFolder|TestReviewPromptForbidsTestExecution|TestReviewPacketCarriesWorkerReportedVerification'
-updated: 2026-09-15
+updated: 2026-10-05
 ---
 
 # Let workers run tests and make reviewers request missing evidence
@@ -30,3 +30,4 @@ that needs new runtime evidence reopens the task through the existing findings f
 - 2026-09-15 — created after sweeping all three loop review stages, the shared review footer,
   worker prompt, compact packet, public loop docs, and Frontier role prompts. Removed the one
   automatic review-gate implementation; no other loop reviewer execution path remains.
+- 2026-10-05 — the README became a short landing page and its detail moved to docs/loop.md (task 2026-10-05-rewrite-the-readme-and-markdown-docs-in-the-webs); sources follow it.

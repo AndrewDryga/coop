@@ -2,9 +2,9 @@
 name: docs-bold-sparingly
 description: "bold marks structure, never mid-sentence emphasis, never inline code"
 scope: docs
-sources: [README.md]
+sources: [README.md, docs, CONTRIBUTING.md, MIGRATING.md]
 check: "none"
-updated: 2026-08-09
+updated: 2026-10-05
 ---
 
 # Docs: bold is for structure, not emphasis
@@ -54,3 +54,4 @@ aid. (The README had grown to ~100 bold spans, most of them inline emphasis.)
   reworded instead per the card's own guidance — "must never commit", so the prohibition still
   lands on a word that's hard to skim past, without the markup crutch. None were already resolved.
   Smell check now `grep -oE '\*\*[^*]+\*\*' README.md | wc -l` = 77 (100 − 23). `make align` green.
+- 2026-10-05 — the README became a short landing page and its detail moved to docs (task 2026-10-05-rewrite-the-readme-and-markdown-docs-in-the-webs); sources follow it.

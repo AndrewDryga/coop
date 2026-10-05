@@ -6,9 +6,8 @@
 // catches a help.go edit that wasn't regenerated. Without -check it writes the files. stdlib +
 // internal/cli only.
 //
-// The README's command tables are intentionally NOT generated here: they're hand-curated (links +
-// prose richer than help.go's terse rows), so regenerating them would clobber that. If a generated
-// command index is ever wanted, add it in its own marker-bounded block — don't overwrite the tables.
+// The README carries no command tables: it links to docs/cli.md, which this tool writes. If a
+// generated command index is ever wanted elsewhere, add it in its own marker-bounded block.
 package main
 
 import (

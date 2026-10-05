@@ -2,9 +2,9 @@
 name: align-trailing-comments
 description: "trailing `#` comments in an example line up in one column"
 scope: docs
-sources: [internal/cli/help.go, tools/align-comments.py, README.md]
+sources: [internal/cli/help.go, tools/align-comments.py, README.md, docs, CONTRIBUTING.md, MIGRATING.md]
 check: "make align"
-updated: 2026-08-25
+updated: 2026-10-05
 ---
 
 # Trailing `#` comments in an example line up in one column
@@ -49,3 +49,4 @@ See also [[help-output-style]], [[no-color-in-width-fields]], [[tag-exceptions-n
 - 2026-07-10 — created
 - 2026-07-14 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged
+- 2026-10-05 — the README became a short landing page and its detail moved to docs (task 2026-10-05-rewrite-the-readme-and-markdown-docs-in-the-webs); sources follow it.

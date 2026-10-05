@@ -165,7 +165,7 @@ def snippet(*pairs):
                                     for note, command in pairs) + "</code></pre>"
 
 
-# Your own work in the same box (README "Services": coop up; docs/cli.md: coop shell opens in your
+# Your own work in the same box (docs/box.md "Project services": coop up; docs/cli.md: coop shell opens in your
 # project inside the box).
 OWN_RUNS = snippet(("start your services", "coop up"), ("and open a shell in the same box", "coop shell"))
 
@@ -225,7 +225,7 @@ def watch_frame(done, doing, todo, blocked):
 
 CHECKOUT, HEALTH, LIMITS, SESSIONS = ("Make POST /checkout idempotent", "Cache the /health DB probe",
                                       "Rate-limit the public API", "Choose how long sessions last")
-LATER = ("Backfill tests for the parser", "Document the config file")  # the README's own examples
+LATER = ("Backfill tests for the parser", "Document the config file")  # example task titles
 # The board as the loop works: subtasks tick, a task lands in done, the next one starts. It rests
 # on the last frame, which is also what shows without the script.
 TESTS, DOCS = LATER
@@ -551,7 +551,7 @@ SERVICES = ('<figure class="scene-card services" data-scene="services" aria-labe
             f'<p class="svc-agent">{mark("claude")}Claude Code</p><p class="svc-project">shop/</p></div>'
             '<ul class="svc-list" role="list">' + service("db", DATABASE) + service("redis", LAYERS) + "</ul></div></figure>")
 
-# Integrations: a real Zed window running co:op (README "Drive it from Zed"), its provider menu open
+# Integrations: a real Zed window running co:op (docs/integrations.md "Zed and other ACP editors"), its provider menu open
 # beside co:op's preset and account menus, and a worker connecting to your own platform, with what
 # `coop sessions connect` prints (internal/cli/session_connect.go). The screenshot is the window
 # inside its border, cut from a retina capture at 1178x694, with its two rounded window corners

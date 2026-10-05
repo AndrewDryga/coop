@@ -2,9 +2,9 @@
 name: design-for-shared-checkout-not-forks
 description: "the primary workflow is outside agents and `coop loop` sharing one checkout; forks are an optional isolation tool, never the precondition a design or recommendation assumes"
 scope: architecture
-sources: [AGENTS.md, README.md, internal/cli/help.go, internal/box/repo.go, internal/box/run.go, .agent/kb/task-authority-model.md]
+sources: [AGENTS.md, README.md, internal/cli/help.go, internal/box/repo.go, internal/box/run.go, .agent/kb/task-authority-model.md, docs/forks.md, docs/loop.md]
 check: "none"
-updated: 2026-09-15
+updated: 2026-10-05
 ---
 
 # Design for outside agents and `coop loop` sharing one checkout; forks are optional
@@ -40,3 +40,4 @@ have to be mitigated there too, not delegated to a workflow the human does not r
   README, site, and help: forks appear as an option (the parallel-forks sections, `coop fork … --loop`)
   and nothing presumes them; the violation was the audit's own recommendation text, and the two
   coordination tasks queued that day are framed for the shared checkout.
+- 2026-10-05 — the README became a short landing page and its detail moved to docs/forks.md, docs/loop.md (task 2026-10-05-rewrite-the-readme-and-markdown-docs-in-the-webs); sources follow it.

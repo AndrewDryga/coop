@@ -44,7 +44,7 @@ func groupHelp(cmd string) (int, error) {
 
 // helpText renders the top-level command reference: one command per line, grouped, with a
 // pointer to per-command help. Flags, sub-verbs, and examples live in `coop <cmd> --help`
-// and the README, so this stays a clean, scannable overview.
+// and docs/cli.md, so this stays a clean, scannable overview.
 func helpText(cfg *config.Config) string { return renderHelp(cfg, false) }
 
 // renderHelp renders the top-level command menu. ref=true is the DETERMINISTIC reference form for
@@ -278,7 +278,7 @@ var manualSeparator = strings.Repeat("=", 78)
 // docs, and the offline reference are provably identical (tools/gendocs -check enforces it). Plain
 // (ui.Palette{}) and state-free, so its bytes never depend on the terminal, this project's Compose
 // file, the config paths, or which accounts are signed in. Contributor build/test guidance is NOT
-// here: it lives in README.md, where a contributor looks, not in the user's command reference.
+// here: it lives in CONTRIBUTING.md, where a contributor looks, not in the user's command reference.
 func RenderManual(cfg *config.Config) string {
 	var b strings.Builder
 	b.WriteString(renderHelp(cfg, true))
@@ -1649,7 +1649,7 @@ CUSTOM RUNTIME PROFILES
   Fixed limits: 1 CPU, 2 GiB memory, 128 PIDs; provider-only filtered candidate
   networking and offline grading. Declared 10 GiB storage is unenforced and
   unmeasured: this is a Coop-adapted workload, not official benchmark parity.
-  Dry-run image/platform identity is provisional. See README for profile setup.
+  Dry-run image/platform identity is provisional. See docs/evals.md for profile setup.
 
 EXAMPLES
   coop eval run core codex --timeout 35m --dry-run

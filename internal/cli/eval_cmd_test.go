@@ -212,7 +212,7 @@ func TestEvalDiscoveryAndFocusedHelp(t *testing.T) {
 			t.Errorf("leaf help did not route to %s", page)
 		}
 	}
-	for _, path := range []string{"README.md", "site/docs.html"} {
+	for _, path := range []string{"docs/evals.md", "site/docs.html"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", path))
 		if err != nil {
 			t.Fatal(err)

@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Docs in plain words.** The README is now a short introduction with the install, a quickstart and
+  a tour of each feature. The detail it used to carry moved to reference pages under `docs/`:
+  the box, agents and accounts, forks, the loop, editors and MCP, evaluations and configuration.
+  Contributor guidance moved to `CONTRIBUTING.md`, and the guide's troubleshooting table now has
+  every row.
+
 - **Current models in the starter preset.** `coop presets init` now writes Opus 5.5 at xhigh as
   the lead, falling back to GPT-6 Astra; Fable 5.1 at max effort as the thinker; GPT-6 Astra as the
   critic; and Gemini 3.8 Flash for fast edits. Help, docs and the `coop models` examples name

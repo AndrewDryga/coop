@@ -2,9 +2,9 @@
 name: acp-connects-before-selection
 description: coop acp and coop fork <name> acp connect without a target so the editor can expose its live selectors
 scope: cli-grammar
-sources: [internal/cli/acp_cmd.go, internal/cli/fork_cmd.go, internal/cli/acp_startup_test.go, internal/cli/fork_cmd_test.go, internal/acpproxy/scripted_startup_e2e_test.go, internal/cli/help.go, README.md, MIGRATING.md]
+sources: [internal/cli/acp_cmd.go, internal/cli/fork_cmd.go, internal/cli/acp_startup_test.go, internal/cli/fork_cmd_test.go, internal/acpproxy/scripted_startup_e2e_test.go, internal/cli/help.go, README.md, MIGRATING.md, docs/integrations.md]
 check: go test ./internal/cli -run 'TestACPAutomaticStartup|TestForkACPWithoutTargetStartsTheForksAgent'
-updated: 2026-10-04
+updated: 2026-10-05
 ---
 
 # Connect ACP before asking the editor to select a provider
@@ -37,3 +37,4 @@ still governs which providers can run; automatic startup must never silently wid
 - 2026-09-12 — restored startup and swept the six listed source/test/doc surfaces. Removed the
   obsolete required-target regression and migration instructions; explicit targets and `--bare`
   keep their existing contracts. CLI regressions and literal startup/switch/reload scripts pass.
+- 2026-10-05 — the README became a short landing page and its detail moved to docs/integrations.md (task 2026-10-05-rewrite-the-readme-and-markdown-docs-in-the-webs); sources follow it.

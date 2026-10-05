@@ -2,9 +2,9 @@
 name: credentials-not-profiles
 description: "a stored account is publicly a \"credential\"; \"profile\" is retired, not aliased"
 scope: cli-grammar
-sources: [internal/cli/profiles.go, internal/cli/help.go, internal/cli/cli_test.go, README.md, site/docs.html, MIGRATING.md]
+sources: [internal/cli/profiles.go, internal/cli/help.go, internal/cli/cli_test.go, README.md, site/docs.html, MIGRATING.md, docs/agents.md]
 check: "none"
-updated: 2026-08-26
+updated: 2026-10-05
 ---
 
 # The account concept is publicly named "credentials", never "profiles"
@@ -52,3 +52,4 @@ identifiers and tests, never current help, errors, or hints.
 - 2026-08-09 — drift repair from the backfill sweep's findings: claim corrected — coop profiles is a plain unknown command, no tombstone hint (TestV3RetiredForms).
 - 2026-08-26 — removed retired-command history from current help and README guidance; kept the
   historical migration mapping and exempt internal storage terminology.
+- 2026-10-05 — the README became a short landing page and its detail moved to docs/agents.md (task 2026-10-05-rewrite-the-readme-and-markdown-docs-in-the-webs); sources follow it.

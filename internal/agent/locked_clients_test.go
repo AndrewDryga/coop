@@ -272,10 +272,10 @@ func TestQualifiedClientsAreTheSameOnEveryPlatform(t *testing.T) {
 	}
 }
 
-// The README's own-base Dockerfile examples pin the clients by hand; they must name exactly the npm
-// clients this Coop qualifies, so a bump that forgets them fails here rather than in a user's box.
-func TestReadmeExamplesPinTheQualifiedClients(t *testing.T) {
-	data, err := os.ReadFile("../../README.md")
+// The own-base Dockerfile examples in docs/box.md pin the clients by hand; they must name exactly the
+// npm clients this Coop qualifies, so a bump that forgets them fails here rather than in a user's box.
+func TestDocsExamplesPinTheQualifiedClients(t *testing.T) {
+	data, err := os.ReadFile("../../docs/box.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,11 +304,11 @@ func TestReadmeExamplesPinTheQualifiedClients(t *testing.T) {
 		}
 		slices.Sort(got)
 		if !slices.Equal(got, want) {
-			t.Errorf("README.md:%d installs %v, want the qualified %v", i+1, got, want)
+			t.Errorf("docs/box.md:%d installs %v, want the qualified %v", i+1, got, want)
 		}
 		examples++
 	}
 	if examples == 0 {
-		t.Fatal("found no npm install -g example in README.md")
+		t.Fatal("found no npm install -g example in docs/box.md")
 	}
 }

@@ -2,8 +2,8 @@
 name: loop-rotation-advance-triggers
 description: the loop rotation advances on rate limits (time-keyed, self-healing) and auth failures (sticky for the run); known-invalid credentials never become rungs
 subsystem: loop
-sources: [internal/ladder/ladder.go, internal/ladder/limit.go, internal/ladder/acp.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/loop/streamjson_providers.go, internal/acpctl/control.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/grok.go, internal/agent/ratelimit.go, internal/agent/role_health.go, internal/agent/testdata/login-failures/README.md, internal/box/auth.go, internal/box/profiles.go]
-updated: 2026-10-01
+sources: [internal/ladder/ladder.go, internal/ladder/limit.go, internal/ladder/acp.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/loop/streamjson_providers.go, internal/acpctl/control.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/grok.go, internal/agent/ratelimit.go, internal/agent/role_health.go, internal/agent/testdata/login-failures/README.md, internal/box/auth.go, internal/box/profiles.go, docs/agents.md, docs/loop.md]
+updated: 2026-10-05
 ---
 A loop's rotation starts from credential presence and then applies
 `box.ProfileCredentialReady`. A native marker that its adapter classifies as
@@ -88,3 +88,4 @@ the loop decoder says `authentication required`, the ACP auth check reads a stru
   EXPANSION (`expandLadder`/`accountsFor`/`buildRotation`, the credential-presence half this card
   opens with) stays in `internal/cli/rotation.go`, while APPLYING a target and rotating on a limit
   (`applyTarget`/`rotateOnLimit`) moved to `internal/loop/rotation.go`. Advance triggers unchanged.
+- 2026-10-05 — the README's detail moved to docs/agents.md, docs/loop.md (task 2026-10-05-rewrite-the-readme-and-markdown-docs-in-the-webs); sources follow it.

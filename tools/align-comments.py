@@ -21,7 +21,10 @@ import html
 import re
 import sys
 
-DEFAULT_FILES = ["README.md", "site/index.html", "site/docs.html", "docs/cli.md"]
+DEFAULT_FILES = ["README.md", "CONTRIBUTING.md", "MIGRATING.md", "site/index.html", "site/docs.html",
+                 "docs/agents.md", "docs/box.md", "docs/cli.md", "docs/configuration.md", "docs/evals.md",
+                 "docs/forks.md", "docs/integrations.md", "docs/loop.md", "docs/networking.md",
+                 "docs/session-api.md"]
 TAG = re.compile(r"<[^>]+>")
 # A lone line this many runes longer than the next-widest is a standalone example,
 # not part of the column — don't drag every comment out to it (mirrors help-output-style's

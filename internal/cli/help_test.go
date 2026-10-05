@@ -269,7 +269,7 @@ func TestRenderManual(t *testing.T) {
 	if RenderManual(&config.Config{}) != m {
 		t.Error("RenderManual must be cfg-independent (deterministic across machines)")
 	}
-	// Contributor build/test guidance belongs in README.md, where a contributor looks — not
+	// Contributor build/test guidance belongs in CONTRIBUTING.md, where a contributor looks — not
 	// appended to the user's command reference.
 	if strings.Contains(m, "SOURCE-TREE CONFORMANCE") || strings.Contains(m, "make provider-scripted-e2e") {
 		t.Error("the user manual must not carry contributor build/test guidance")
