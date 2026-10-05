@@ -594,14 +594,14 @@ def published_count():
 
 
 def typographic(page):
-    """Curly apostrophes in the prose (don’t, team’s); code, commands, scripts and attribute values
-    keep straight ones, since people copy those."""
+    """Curly apostrophes in the prose (don’t, team’s, developers’); code, commands, scripts and
+    attribute values keep straight ones, since people copy those."""
     out, inside = [], 0
     for part in re.split(r"(<[^>]+>)", page):
         tag = re.match(r"</?(pre|code|script|style)\b", part)
         if tag:
             inside += -1 if part.startswith("</") else 1
-        out.append(part if part.startswith("<") or inside else re.sub(r"(?<=\w)'(?=\w)", "’", part))
+        out.append(part if part.startswith("<") or inside else re.sub(r"(?<=\w)'(?=\w)|(?<=s)'(?=[\s.,;:!?)])", "’", part))
     return "".join(out)
 
 
