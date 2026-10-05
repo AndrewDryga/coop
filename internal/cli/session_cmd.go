@@ -118,6 +118,14 @@ func parseSessionCompactFlags(args []string) (state, backup string, err error) {
 // unknown-subcommand correction, the help router and shell completion all read.
 var sessionCommands = []string{"connect", "doctor", "compact"}
 
+// sessionFlags are each subcommand's flags as its parser accepts them; shell completion reads them,
+// and TestSessionsCompletionMatchesTheParsers holds the two together.
+var sessionFlags = map[string][]string{
+	"connect": {"--controller", "--token-file", "--state", "--ca-file"},
+	"doctor":  {"--socket", "--json"},
+	"compact": {"--state", "--backup"},
+}
+
 func (a *app) cmdSessions(args []string) (int, error) {
 	if len(args) == 0 {
 		return groupHelp("sessions")

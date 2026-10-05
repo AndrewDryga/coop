@@ -245,18 +245,7 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		if len(prev) == 1 {
 			return sessionCommands
 		}
-		if len(prev) > 1 && prev[1] == "serve" {
-			return []string{"--state", "--policies", "--socket"}
-		}
-		if len(prev) > 1 && prev[1] == "doctor" {
-			return []string{"--socket", "--json"}
-		}
-		if len(prev) > 1 && prev[1] == "policies" {
-			return []string{"--policies", "--json"}
-		}
-		if len(prev) > 1 && prev[1] == "compact" {
-			return []string{"--state", "--backup"}
-		}
+		return sessionFlags[prev[1]]
 	}
 	return nil
 }

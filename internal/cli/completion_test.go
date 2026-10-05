@@ -454,3 +454,42 @@ func TestCompletionTaskIDs(t *testing.T) {
 		t.Error("tasks lint takes no id — should not offer task ids")
 	}
 }
+
+// Completion offers each sessions subcommand's flags exactly as its parser accepts them, and nothing
+// for a subcommand that doesn't exist (serve and policies once lingered here after they were gone).
+func TestSessionsCompletionMatchesTheParsers(t *testing.T) {
+	a := &app{}
+	parse := map[string]func([]string) error{
+		"connect": func(args []string) error { _, err := parseSessionConnectFlags(args); return err },
+		"doctor":  func(args []string) error { _, _, err := parseSessionDoctorFlags(args); return err },
+		"compact": func(args []string) error { _, _, err := parseSessionCompactFlags(args); return err },
+	}
+	unknown := func(err error) bool { return err != nil && strings.Contains(strings.ToLower(err.Error()), "unknown") }
+	for _, sub := range sessionCommands {
+		check, ok := parse[sub]
+		if !ok {
+			t.Fatalf("no parser registered for sessions %s", sub)
+		}
+		if !unknown(check([]string{"--bogus"})) {
+			t.Fatalf("sessions %s accepted --bogus, so this test cannot tell a stale flag", sub)
+		}
+		flags := a.completionCandidates([]string{"sessions", sub})
+		if len(flags) == 0 {
+			t.Errorf("sessions %s completes no flags", sub)
+		}
+		for _, flag := range flags {
+			args := []string{flag}
+			if flag != "--json" {
+				args = append(args, "/tmp/value")
+			}
+			if err := check(args); unknown(err) {
+				t.Errorf("completion offers sessions %s %s, which its parser rejects: %v", sub, flag, err)
+			}
+		}
+	}
+	for _, gone := range []string{"serve", "policies"} {
+		if c := a.completionCandidates([]string{"sessions", gone}); len(c) != 0 {
+			t.Errorf("completion offers flags for sessions %s, which doesn't exist: %v", gone, c)
+		}
+	}
+}
