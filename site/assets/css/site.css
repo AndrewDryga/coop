@@ -363,13 +363,11 @@ main:focus { outline: none; }
   .svc.is-pending::before { border-left-style: dashed; }
 }
 
-/* integrations: a real Zed window running co:op, and a worker joining your platform. The screenshot
-   sits on the card at its own size (2x pixels, never stretched); the 12px radius clips the window's
-   rounded corners, which still hold desktop pixels. */
+/* integrations: a real Zed window running co:op, as wide as the terminal under it, and a worker
+   joining your platform */
 .integrations { display: grid; gap: 16px; min-width: 0; }
-/* the same margin on all four sides: whatever the width leaves beside the screenshot, at least 32px */
-.zed { display: grid; place-items: center; padding: max(32px, (100% - 589px) / 2); }
-.zed-shot { width: 100%; max-width: 589px; height: auto; border-radius: 12px; box-shadow: 0 0 0 1px var(--line), 0 24px 48px -24px rgb(0 0 0 / 60%); }
+.zed { margin: 0; }
+.zed-shot { display: block; width: 100%; height: auto; border-radius: 12px; }
 .scene-worker .line.is-pending { visibility: hidden; }
 
 /* Get started: one small terminal with the four commands in order, centred under the heading. Its
@@ -602,7 +600,6 @@ main:focus { outline: none; }
   .zone { padding-right: 40px; }
   .attack-rail { margin-top: 32px; }
   .attack .case { padding-left: 18px; }
-  .zed { padding: 16px; }
   .attacks { gap: 32px; }
   .attack .threat { font-size: 1.25rem; }
   :is(.step, .group-panel, .feature-copy, .attack) > .evidence { flex-direction: column; align-items: flex-start; gap: 8px; }

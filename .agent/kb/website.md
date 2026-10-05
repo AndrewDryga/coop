@@ -75,10 +75,10 @@ samples) on a clean clone, linked to `tools/lifecycle_bench.py`. Measure again o
 before changing it, and never in a checkout with heavy local state, which starts slower.
 
 **The Zed card is a real screenshot** (`site/assets/img/zed-coop.png`): the window inside its 1px
-border, cut from a retina capture (`magick … txt:-` finds the border rows and columns) at even
-dimensions, so it shows at exactly half its pixel size and is never stretched. It sits on a surface
-card whose padding is the same on all four sides, and the 12px radius hides the window's rounded
-corners, which still hold desktop pixels. A new capture follows the same rule.
+border, cut from a retina capture (`magick … txt:-` finds the border rows and columns). Its two
+rounded window corners are repainted in the bar color, so no desktop pixels show however the page
+rounds it. It fills the Integrations column, as wide as the terminal under it, with no frame or
+outline (the owner found the framed version ugly). A new capture follows the same rule.
 
 **Tests pin docs wording.** Rewording `site/docs.html` can fail Go tests far from the site:
 `internal/cli/help_test.go` TestCurrentDocsDoNotAdvertiseRetiredContracts needs "commits no starter

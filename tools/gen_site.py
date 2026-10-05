@@ -554,9 +554,10 @@ SERVICES = ('<figure class="scene-card services" data-scene="services" aria-labe
 # Integrations: a real Zed window running co:op (README "Drive it from Zed"), its provider menu open
 # beside co:op's preset and account menus, and a worker connecting to your own platform, with what
 # `coop sessions connect` prints (internal/cli/session_connect.go). The screenshot is the window
-# inside its border, cut from a retina capture at 1178x694, so it shows at exactly 2x.
+# inside its border, cut from a retina capture at 1178x694, with its two rounded window corners
+# repainted in the bar color, so the page can round them at any size.
 INTEGRATIONS = ('<div class="integrations">'
-                '<figure class="scene-card zed"><img class="zed-shot" src="assets/img/zed-coop.png" width="589" height="347" '
+                '<figure class="zed"><img class="zed-shot" src="assets/img/zed-coop.png" width="589" height="347" '
                 'alt="Zed\'s agent panel running co:op, its provider menu open on Claude Code, Codex, Gemini CLI and Grok, '
                 'beside menus for the preset, account, model and effort"></figure>'
                 '<figure class="window scene-worker" data-scene="worker" aria-label="What coop sessions connect prints as a worker joins your platform">'
