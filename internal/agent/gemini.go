@@ -302,8 +302,8 @@ func (a geminiAgent) StartSession(cfg *config.Config, id string) []string {
 // Resume pins the coop-owned session id rather than "latest" — a loop or consult in the same
 // cwd could be the latest, but resuming an explicit uuid is immune. Metadata is matched across
 // every project bucket because Gemini's bucket naming has changed between releases.
-func (a geminiAgent) Resume(cfg *config.Config, ws, id string) ([]string, bool) {
-	if ValidSessionID(id) && geminiHasSession(cfg, ws, id) {
+func (a geminiAgent) Resume(cfg *config.Config, home, ws, id string) ([]string, bool) {
+	if ValidSessionID(id) && geminiHasSession(home, ws, id) {
 		return append(a.base(cfg), "--resume", id), true
 	}
 	return a.Interactive(cfg), false
@@ -316,9 +316,9 @@ const (
 
 // geminiHasSession matches both the Coop-owned id and Gemini's native sha256(cwd) projectHash.
 // Bucket names vary between Gemini releases, so scan every bucket whose .project_root owns ws.
-func geminiHasSession(cfg *config.Config, ws, id string) bool {
+func geminiHasSession(home, ws, id string) bool {
 	wantProject := fmt.Sprintf("%x", sha256.Sum256([]byte(ws)))
-	root, err := openSessionRoot(filepath.Join(cfg.AgentDir("gemini"), "tmp"))
+	root, err := openSessionRoot(filepath.Join(home, "tmp"))
 	if err != nil {
 		return false
 	}

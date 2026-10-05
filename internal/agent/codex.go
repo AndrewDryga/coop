@@ -413,9 +413,9 @@ func (a codexAgent) StartSession(cfg *config.Config, _ string) []string {
 	return a.Interactive(cfg)
 }
 
-func (a codexAgent) Resume(cfg *config.Config, ws, id string) ([]string, bool) {
+func (a codexAgent) Resume(cfg *config.Config, home, ws, id string) ([]string, bool) {
 	// `codex resume --last` is global, so accept only a persisted exact native ID.
-	if id = findCodexSession(cfg.AgentDir("codex"), ws, id); id != "" {
+	if id = findCodexSession(home, ws, id); id != "" {
 		b := a.base(cfg)
 		return append([]string{b[0], "resume", id}, b[1:]...), true
 	}
@@ -428,8 +428,8 @@ func (codexAgent) ProducesSession(args []string) bool {
 	return len(args) == 0 || args[0] != "exec"
 }
 
-func (codexAgent) SessionIDs(cfg *config.Config, cwd string) []string {
-	return codexSessionIDs(cfg.AgentDir("codex"), cwd)
+func (codexAgent) SessionIDs(home, cwd string) []string {
+	return codexSessionIDs(home, cwd)
 }
 
 func (codexAgent) LoginConfig(cfg *config.Config) (MCPConfig, error) {

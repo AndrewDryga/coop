@@ -727,7 +727,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 			defer release()
 
 			hint := forkctl.ReadForkSession(ws, fa.agent, account)
-			snapshot := discoverer.SessionIDs(a.cfg, sessionCWD)
+			snapshot := discoverer.SessionIDs(a.cfg.AgentDir(ag.Name()), sessionCWD)
 			captureNewSession = fa.newSession || hint == "" || !slices.Contains(snapshot, hint)
 			if captureNewSession {
 				sessionsBefore = snapshot
@@ -820,7 +820,7 @@ func (a *app) forkLaunchCmd(fa forkArgs, ws string, existed bool, rememberedAgen
 	if (existed && !fa.fresh && !fa.newSession) || fa.cont {
 		// The continuation row is printed only where continuity is PROVEN: a path that falls back
 		// to a fresh run must never promise a resumed conversation.
-		if rc, resumed := ag.Resume(a.cfg, sessionCWD, id); resumed {
+		if rc, resumed := ag.Resume(a.cfg, a.cfg.AgentDir(ag.Name()), sessionCWD, id); resumed {
 			if existed && !fa.fresh {
 				printForkHeader("Opening fork", fa.name, ws, append(rows, "Continuing the last "+titleName(fa.agent)+" session"))
 			}
@@ -840,7 +840,7 @@ func (a *app) rememberNewDiscoveredForkSession(ws, provider string, discoverer a
 	if discoverer == nil {
 		return nil
 	}
-	id := uniquelyNewSessionID(before, discoverer.SessionIDs(a.cfg, box.Workdir(a.cfg, ws)))
+	id := uniquelyNewSessionID(before, discoverer.SessionIDs(a.cfg.AgentDir(provider), box.Workdir(a.cfg, ws)))
 	if agents.ValidSessionID(id) {
 		if err := forkctl.SaveForkSession(ws, provider, a.cfg.ActiveProfile(provider), id); err != nil {
 			return fmt.Errorf("%s run finished and its work remains in fork %s, but Coop could not save the exact session for re-entry: %w — fix ownership or permissions of %s before re-entering", provider, filepath.Base(ws), err, filepath.Join(ws, ".coop"))

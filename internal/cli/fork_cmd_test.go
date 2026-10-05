@@ -1449,7 +1449,7 @@ func TestForkLaunchCmd(t *testing.T) {
 
 type fixedSessionDiscoverer []string
 
-func (d fixedSessionDiscoverer) SessionIDs(*config.Config, string) []string { return d }
+func (d fixedSessionDiscoverer) SessionIDs(string, string) []string { return d }
 func (fixedSessionDiscoverer) ProducesSession([]string) bool                { return true }
 
 func TestForkLaunchRequiresWritableSessionMetadata(t *testing.T) {

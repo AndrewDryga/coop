@@ -47,7 +47,7 @@ func TestSessionLookupLargeHistory(t *testing.T) {
 			assertLargeHistoryResume(t, ag, cfg, ws, largeHistoryPersonalID, false)
 
 			if discoverer, ok := ag.(SessionDiscoverer); ok {
-				if got := discoverer.SessionIDs(cfg, ws); !slices.Equal(got, []string{largeHistoryHitID}) {
+				if got := discoverer.SessionIDs(cfg.AgentDir(ag.Name()), ws); !slices.Equal(got, []string{largeHistoryHitID}) {
 					t.Fatalf("SessionIDs = %v, want only exact CLI/cwd/account session", got)
 				}
 			}
@@ -58,7 +58,7 @@ func TestSessionLookupLargeHistory(t *testing.T) {
 				if i%2 == 1 {
 					id = largeHistoryMissingID
 				}
-				_, _ = ag.Resume(cfg, ws, id)
+				_, _ = ag.Resume(cfg, cfg.AgentDir(ag.Name()), ws, id)
 			}
 			if fdAfter := openSessionFDCount(); fdBefore >= 0 && fdAfter > fdBefore {
 				t.Fatalf("repeated lookups leaked descriptors: before=%d after=%d", fdBefore, fdAfter)
@@ -128,7 +128,7 @@ func BenchmarkSessionLookupLargeHistory(b *testing.B) {
 				b.Run(tc.name, func(b *testing.B) {
 					b.ReportAllocs()
 					for b.Loop() {
-						sessionBenchmarkCommand, sessionBenchmarkResumed = ag.Resume(cfg, ws, tc.id)
+						sessionBenchmarkCommand, sessionBenchmarkResumed = ag.Resume(cfg, cfg.AgentDir(ag.Name()), ws, tc.id)
 					}
 				})
 			}
@@ -143,7 +143,7 @@ var (
 
 func assertLargeHistoryResume(t *testing.T, ag Agent, cfg *config.Config, ws, id string, want bool) {
 	t.Helper()
-	cmd, got := ag.Resume(cfg, ws, id)
+	cmd, got := ag.Resume(cfg, cfg.AgentDir(ag.Name()), ws, id)
 	if got != want {
 		t.Fatalf("Resume(%q, %q) = (%v, %v), want resumed=%v", ws, id, cmd, got, want)
 	}

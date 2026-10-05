@@ -272,7 +272,7 @@ func providerResumeLiveCommand(ag agents.Agent, cfg *config.Config, stage, sessi
 			command = ag.StartSession(cfg, sessionID)
 		} else {
 			var found bool
-			command, found = ag.Resume(cfg, box.Workdir(cfg, cfg.RepoOverride), sessionID)
+			command, found = ag.Resume(cfg, cfg.AgentDir(ag.Name()), box.Workdir(cfg, cfg.RepoOverride), sessionID)
 			if !found {
 				return nil, false
 			}

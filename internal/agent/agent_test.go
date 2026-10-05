@@ -527,7 +527,7 @@ func TestResume(t *testing.T) {
 	// No session yet → fresh command, resumed=false (for every agent).
 	for _, name := range Names() {
 		a, _ := Get(name)
-		if cmd, resumed := a.Resume(cfg, ws, id); resumed {
+		if cmd, resumed := a.Resume(cfg, cfg.AgentDir(a.Name()), ws, id); resumed {
 			t.Errorf("Resume(%s) resumed with no session: %v", name, cmd)
 		}
 	}
@@ -535,12 +535,12 @@ func TestResume(t *testing.T) {
 	// claude resumes the exact coop-owned id (projects/<cwd>/<id>.jsonl), not --continue.
 	claude, _ := Get("claude")
 	mustWrite(t, filepath.Join(cfg.AgentDir("claude"), "projects", ClaudeProjectKey(ws), id+".jsonl"), "{}")
-	if cmd, ok := claude.Resume(cfg, ws, id); !ok ||
+	if cmd, ok := claude.Resume(cfg, cfg.AgentDir("claude"), ws, id); !ok ||
 		!slices.Equal(cmd, []string{"claude", "--dangerously-skip-permissions", "--resume", id}) {
 		t.Errorf("claude Resume = (%v, %v)", cmd, ok)
 	}
 	// A different id (no session file) must not resume.
-	if cmd, ok := claude.Resume(cfg, ws, "99999999-2222-4333-8444-555555555555"); ok {
+	if cmd, ok := claude.Resume(cfg, cfg.AgentDir("claude"), ws, "99999999-2222-4333-8444-555555555555"); ok {
 		t.Errorf("claude Resume matched an id with no session file: %v", cmd)
 	}
 	linkedClaudeID := "22222222-2222-4333-8444-555555555555"
@@ -549,14 +549,14 @@ func TestResume(t *testing.T) {
 	if err := os.Symlink(outsideClaude, filepath.Join(cfg.AgentDir("claude"), "projects", ClaudeProjectKey(ws), linkedClaudeID+".jsonl")); err != nil {
 		t.Fatal(err)
 	}
-	if cmd, ok := claude.Resume(cfg, ws, linkedClaudeID); ok {
+	if cmd, ok := claude.Resume(cfg, cfg.AgentDir("claude"), ws, linkedClaudeID); ok {
 		t.Errorf("claude Resume followed a session symlink: %v", cmd)
 	}
 	directoryClaudeID := "33333333-2222-4333-8444-555555555555"
 	if err := os.Mkdir(filepath.Join(cfg.AgentDir("claude"), "projects", ClaudeProjectKey(ws), directoryClaudeID+".jsonl"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if cmd, ok := claude.Resume(cfg, ws, directoryClaudeID); ok {
+	if cmd, ok := claude.Resume(cfg, cfg.AgentDir("claude"), ws, directoryClaudeID); ok {
 		t.Errorf("claude Resume accepted a session directory: %v", cmd)
 	}
 
@@ -565,7 +565,7 @@ func TestResume(t *testing.T) {
 	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "demo", ".project_root"), ws+"\n")
 	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "demo", "chats", "session-x.jsonl"),
 		fmt.Sprintf(`{"sessionId":%q,"projectHash":"%x"}`, id, sha256.Sum256([]byte(ws))))
-	if cmd, ok := gemini.Resume(cfg, ws, id); !ok ||
+	if cmd, ok := gemini.Resume(cfg, cfg.AgentDir("gemini"), ws, id); !ok ||
 		!slices.Equal(cmd, []string{"gemini", "--yolo", "--resume", id}) {
 		t.Errorf("gemini Resume = (%v, %v)", cmd, ok)
 	}
@@ -576,7 +576,7 @@ func TestResume(t *testing.T) {
 	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "my-cool-repo", ".project_root"), slugWs+"\n")
 	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "my-cool-repo", "chats", "s.jsonl"),
 		fmt.Sprintf(`{"sessionId":%q,"projectHash":"%x"}`, id, sha256.Sum256([]byte(slugWs))))
-	if _, ok := gemini.Resume(cfg, slugWs, id); !ok {
+	if _, ok := gemini.Resume(cfg, cfg.AgentDir("gemini"), slugWs, id); !ok {
 		t.Error("gemini Resume must match a session in a slug-named bucket, not only the raw basename")
 	}
 	// gemini 0.46+ also writes 64-char-hash buckets alongside slug ones (seen on real hosts). A
@@ -588,24 +588,24 @@ func TestResume(t *testing.T) {
 	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", hashBucket, ".project_root"), hashWs+"\n")
 	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", hashBucket, "chats", "h.jsonl"),
 		fmt.Sprintf(`{"sessionId":%q,"projectHash":"%x"}`, hashID, sha256.Sum256([]byte(hashWs))))
-	if _, ok := gemini.Resume(cfg, hashWs, hashID); !ok {
+	if _, ok := gemini.Resume(cfg, cfg.AgentDir("gemini"), hashWs, hashID); !ok {
 		t.Error("gemini Resume must match a session in a 64-char-hash bucket (the gemini 0.46+ scheme)")
 	}
-	if cmd, ok := gemini.Resume(cfg, filepath.Join(t.TempDir(), "wrong-cwd"), id); ok {
+	if cmd, ok := gemini.Resume(cfg, cfg.AgentDir("gemini"), filepath.Join(t.TempDir(), "wrong-cwd"), id); ok {
 		t.Errorf("gemini Resume matched the same id under another cwd: %v", cmd)
 	}
 	unsupportedGeminiWS := filepath.Join(t.TempDir(), "unsupported-gemini")
 	markerlessID := "66666666-2222-4333-8444-555555555555"
 	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "markerless", "chats", "session.jsonl"),
 		fmt.Sprintf(`{"sessionId":%q,"projectHash":"%x"}`, markerlessID, sha256.Sum256([]byte(unsupportedGeminiWS))))
-	if cmd, ok := gemini.Resume(cfg, unsupportedGeminiWS, markerlessID); ok {
+	if cmd, ok := gemini.Resume(cfg, cfg.AgentDir("gemini"), unsupportedGeminiWS, markerlessID); ok {
 		t.Errorf("gemini Resume accepted a markerless bucket: %v", cmd)
 	}
 	wholeFileID := "33333333-2222-4333-8444-555555555555"
 	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "whole-file", ".project_root"), unsupportedGeminiWS+"\n")
 	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "whole-file", "chats", "session.json"),
 		fmt.Sprintf(`{"sessionId":%q,"projectHash":"%x"}`, wholeFileID, sha256.Sum256([]byte(unsupportedGeminiWS))))
-	if cmd, ok := gemini.Resume(cfg, unsupportedGeminiWS, wholeFileID); ok {
+	if cmd, ok := gemini.Resume(cfg, cfg.AgentDir("gemini"), unsupportedGeminiWS, wholeFileID); ok {
 		t.Errorf("gemini Resume accepted a whole-file JSON session: %v", cmd)
 	}
 	symlinkID := "22222222-2222-4333-8444-555555555555"
@@ -619,22 +619,22 @@ func TestResume(t *testing.T) {
 	if err := os.Symlink(outside, symlink); err != nil {
 		t.Fatal(err)
 	}
-	if cmd, ok := gemini.Resume(cfg, unsupportedGeminiWS, symlinkID); ok {
+	if cmd, ok := gemini.Resume(cfg, cfg.AgentDir("gemini"), unsupportedGeminiWS, symlinkID); ok {
 		t.Errorf("gemini Resume followed a provider-created session symlink: %v", cmd)
 	}
 
 	// grok resumes the exact coop-owned id in the matching cwd bucket.
 	grok, _ := Get("grok")
 	mustWrite(t, filepath.Join(cfg.AgentDir("grok"), "sessions", url.PathEscape(ws), id, "summary.json"), `{}`)
-	if cmd, ok := grok.Resume(cfg, ws, id); !ok ||
+	if cmd, ok := grok.Resume(cfg, cfg.AgentDir("grok"), ws, id); !ok ||
 		!slices.Equal(cmd, []string{"grok", "--permission-mode", "bypassPermissions", "--resume", id}) {
 		t.Errorf("grok Resume = (%v, %v)", cmd, ok)
 	}
 	// A different id (no matching session) must not resume.
-	if cmd, ok := grok.Resume(cfg, ws, "88888888-2222-4333-8444-555555555555"); ok {
+	if cmd, ok := grok.Resume(cfg, cfg.AgentDir("grok"), ws, "88888888-2222-4333-8444-555555555555"); ok {
 		t.Errorf("grok Resume matched an id with no session: %v", cmd)
 	}
-	if cmd, ok := grok.Resume(cfg, filepath.Join(t.TempDir(), "wrong-cwd"), id); ok {
+	if cmd, ok := grok.Resume(cfg, cfg.AgentDir("grok"), filepath.Join(t.TempDir(), "wrong-cwd"), id); ok {
 		t.Errorf("grok Resume matched the same id under another cwd: %v", cmd)
 	}
 	// Overlong encoded cwd names use a slug/hash bucket plus a bounded .cwd marker.
@@ -643,7 +643,7 @@ func TestResume(t *testing.T) {
 	longBucket := filepath.Join(cfg.AgentDir("grok"), "sessions", "repo-deadbeef")
 	mustWrite(t, filepath.Join(longBucket, ".cwd"), longGrokWS+"\n")
 	mustWrite(t, filepath.Join(longBucket, longGrokID, "summary.json"), `{}`)
-	if _, ok := grok.Resume(cfg, longGrokWS, longGrokID); !ok {
+	if _, ok := grok.Resume(cfg, cfg.AgentDir("grok"), longGrokWS, longGrokID); !ok {
 		t.Error("grok Resume must match a long-cwd .cwd bucket")
 	}
 	duplicateGrokWS := "/" + strings.Repeat("duplicate-directory/", 24) + "repo"
@@ -653,14 +653,14 @@ func TestResume(t *testing.T) {
 	mustWrite(t, filepath.Join(staleGrokBucket, ".cwd"), duplicateGrokWS+"\n")
 	mustWrite(t, filepath.Join(validGrokBucket, ".cwd"), duplicateGrokWS+"\n")
 	mustWrite(t, filepath.Join(validGrokBucket, duplicateGrokID, "summary.json"), `{}`)
-	if _, ok := grok.Resume(cfg, duplicateGrokWS, duplicateGrokID); !ok {
+	if _, ok := grok.Resume(cfg, cfg.AgentDir("grok"), duplicateGrokWS, duplicateGrokID); !ok {
 		t.Error("grok Resume let a stale matching cwd bucket mask a later valid bucket")
 	}
 	emptyGrokID := "44444444-2222-4333-8444-555555555555"
 	if err := os.MkdirAll(filepath.Join(longBucket, emptyGrokID), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if cmd, ok := grok.Resume(cfg, longGrokWS, emptyGrokID); ok {
+	if cmd, ok := grok.Resume(cfg, cfg.AgentDir("grok"), longGrokWS, emptyGrokID); ok {
 		t.Errorf("grok Resume accepted an empty session directory: %v", cmd)
 	}
 
@@ -683,17 +683,17 @@ func TestResume(t *testing.T) {
 		`{"type":"session_meta","payload":{"id":"--help","cwd":"`+ws+`","source":"cli"}}`+"\n")
 	mustWrite(t, filepath.Join(sess, "21", "rollout-wrong-type.jsonl"),
 		`{"type":"response_item","payload":{"id":"019f6a64-b39f-7e33-a811-92f64cf17553","cwd":"`+ws+`","source":"cli"}}`+"\n")
-	if cmd, ok := codex.Resume(cfg, ws, ""); ok {
+	if cmd, ok := codex.Resume(cfg, cfg.AgentDir("codex"), ws, ""); ok {
 		t.Errorf("codex Resume(empty) selected global history: %v", cmd)
 	}
-	if cmd, ok := codex.Resume(cfg, ws, interactiveCodexID); !ok || !slices.Contains(cmd, interactiveCodexID) {
+	if cmd, ok := codex.Resume(cfg, cfg.AgentDir("codex"), ws, interactiveCodexID); !ok || !slices.Contains(cmd, interactiveCodexID) {
 		t.Errorf("codex Resume(exact id) = (%v, %v)", cmd, ok)
 	}
-	if cmd, ok := codex.Resume(cfg, ws, "missing-id"); ok {
+	if cmd, ok := codex.Resume(cfg, cfg.AgentDir("codex"), ws, "missing-id"); ok {
 		t.Errorf("codex Resume accepted another native id: %v", cmd)
 	}
 	discoverer := codex.(SessionDiscoverer)
-	if got := discoverer.SessionIDs(cfg, ws); !slices.Equal(got, []string{interactiveCodexID}) {
+	if got := discoverer.SessionIDs(cfg.AgentDir("codex"), ws); !slices.Equal(got, []string{interactiveCodexID}) {
 		t.Errorf("codex CLI session IDs = %v, want only %q", got, interactiveCodexID)
 	}
 	// An interactive (or resume) launch produces a discoverable session needing the lock; a
@@ -710,25 +710,25 @@ func TestResume(t *testing.T) {
 	if err := os.Symlink(outsideCodex, filepath.Join(sess, "symlink.jsonl")); err != nil {
 		t.Fatal(err)
 	}
-	if cmd, ok := codex.Resume(cfg, ws, unsafeCodexID); ok {
+	if cmd, ok := codex.Resume(cfg, cfg.AgentDir("codex"), ws, unsafeCodexID); ok {
 		t.Errorf("codex Resume followed a provider-created rollout symlink: %v", cmd)
 	}
 	oversizeCodexID := "019f6a63-8f6e-7440-a55e-9df3ff5b77dd"
 	mustWrite(t, filepath.Join(sess, "oversize.jsonl"), strings.Repeat(" ", codexSessionMetadataLimit+1)+
 		`{"type":"session_meta","payload":{"id":"`+oversizeCodexID+`","cwd":"`+ws+`","source":"cli"}}`)
-	if cmd, ok := codex.Resume(cfg, ws, oversizeCodexID); ok {
+	if cmd, ok := codex.Resume(cfg, cfg.AgentDir("codex"), ws, oversizeCodexID); ok {
 		t.Errorf("codex Resume accepted oversized first-line metadata: %v", cmd)
 	}
 	if err := os.Mkdir(filepath.Join(sess, "special.jsonl"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	// A session recorded for a DIFFERENT cwd must not match.
-	if cmd, ok := codex.Resume(cfg, "/work/myrepo-forks/other", id); ok {
+	if cmd, ok := codex.Resume(cfg, cfg.AgentDir("codex"), "/work/myrepo-forks/other", id); ok {
 		t.Errorf("codex Resume(other fork) wrongly matched: %v", cmd)
 	}
 	for _, name := range Names() {
 		ag, _ := Get(name)
-		if cmd, ok := ag.Resume(cfg, ws, "--help"); ok {
+		if cmd, ok := ag.Resume(cfg, cfg.AgentDir(ag.Name()), ws, "--help"); ok {
 			t.Errorf("%s Resume accepted a non-UUID session id: %v", name, cmd)
 		}
 	}
@@ -784,7 +784,7 @@ func TestResumeRejectsSymlinkedSessionRoots(t *testing.T) {
 				t.Fatal(err)
 			}
 			ag, _ := Get(provider)
-			if cmd, ok := ag.Resume(cfg, ws, id); ok {
+			if cmd, ok := ag.Resume(cfg, cfg.AgentDir(ag.Name()), ws, id); ok {
 				t.Errorf("Resume followed symlinked %s history root: %v", provider, cmd)
 			}
 		})

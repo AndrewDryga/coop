@@ -316,8 +316,8 @@ func (a grokAgent) StartSession(cfg *config.Config, id string) []string {
 
 // Resume re-enters the coop-owned session id in Grok's cwd-scoped native store. No exact
 // cwd/id match means fresh, so another fork, loop, or consult session cannot be selected.
-func (a grokAgent) Resume(cfg *config.Config, ws, id string) ([]string, bool) {
-	if ValidSessionID(id) && grokHasSession(cfg, ws, id) {
+func (a grokAgent) Resume(cfg *config.Config, home, ws, id string) ([]string, bool) {
+	if ValidSessionID(id) && grokHasSession(home, ws, id) {
 		return append(a.base(cfg), "--resume", id), true
 	}
 	return a.Interactive(cfg), false
@@ -325,8 +325,8 @@ func (a grokAgent) Resume(cfg *config.Config, ws, id string) ([]string, bool) {
 
 // grokHasSession matches Grok's native sessions/<cwd-bucket>/<session-id> layout. Ordinary
 // buckets URL-encode cwd; overlong names record it in a bounded .cwd file instead.
-func grokHasSession(cfg *config.Config, ws, id string) bool {
-	root, err := openSessionRoot(filepath.Join(cfg.AgentDir("grok"), "sessions"))
+func grokHasSession(home, ws, id string) bool {
+	root, err := openSessionRoot(filepath.Join(home, "sessions"))
 	if err != nil {
 		return false
 	}

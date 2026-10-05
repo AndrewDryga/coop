@@ -380,11 +380,11 @@ func (a claudeAgent) StartSession(cfg *config.Config, id string) []string {
 // projects/<cwd>/<id>.jsonl — so re-entry lands on exactly that conversation, never a
 // loop or consult session that merely shares the cwd (which `--continue` would pick).
 // No file for id yet → it was never created; the caller starts it fresh under that id.
-func (a claudeAgent) Resume(cfg *config.Config, ws, id string) ([]string, bool) {
+func (a claudeAgent) Resume(cfg *config.Config, home, ws, id string) ([]string, bool) {
 	if !ValidSessionID(id) {
 		return a.Interactive(cfg), false
 	}
-	root, err := openSessionRoot(filepath.Join(cfg.AgentDir("claude"), "projects"))
+	root, err := openSessionRoot(filepath.Join(home, "projects"))
 	if err != nil {
 		return a.Interactive(cfg), false
 	}

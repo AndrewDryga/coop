@@ -167,7 +167,7 @@ type CachePrivateDirs interface {
 // SessionDiscoverer is the optional capability for an adapter that cannot choose its new
 // session ID but can discover the native ID after a run. Forks persist it and resume exactly it.
 type SessionDiscoverer interface {
-	SessionIDs(cfg *config.Config, cwd string) []string
+	SessionIDs(home, cwd string) []string
 	// ProducesSession reports whether launching the agent with these args creates a
 	// discoverable interactive session a concurrent producer could collide with — so it
 	// needs the interactive-session lock. Codex's `exec` subcommand writes source:"exec"
@@ -563,8 +563,9 @@ type Agent interface {
 	// whether a session was found (else the caller starts fresh via StartSession). id
 	// is the persisted session id for this (fork, agent, account): preset-id agents resume the
 	// coop-owned id; codex resumes its previously recorded native id. Every adapter accepts only
-	// this exact persisted id.
-	Resume(cfg *config.Config, ws, id string) ([]string, bool)
+	// this exact persisted id. home is the provider home whose history is searched (today the
+	// account's profile, cfg.AgentDir), never derived here, so a caller decides which store counts.
+	Resume(cfg *config.Config, home, ws, id string) ([]string, bool)
 	// StartSession is the fresh interactive command under the coop-chosen session id:
 	// claude/gemini/grok stamp it via --session-id so a later Resume can pin exactly it;
 	// codex ignores id and mints its own. An empty id falls back to Interactive.
