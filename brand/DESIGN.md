@@ -142,9 +142,15 @@ technical.
 
 | Role | Desktop | Mobile | Weight / line height / tracking |
 | --- | --- | --- | --- |
-| Hero | 72px | 40px | 700 / 1.05 / −0.035em |
+| Homepage hero | 60px | 40px | 700 / 1.05 / −0.035em |
+| Page title (any other h1) | 64px | 40px | 700 / 1.05 / −0.035em |
+| Docs title | 52px | 40px | 700 / 1.05 / −0.035em |
+| Statement (opens the homepage features) | 80px | 40px | 700 / 1.04 / −0.04em |
 | Section title | 48px | 32px | 650 / 1.12 / −0.03em |
-| Subsection | 24px | 22px | 600 / 1.25 / −0.02em |
+| Story step and docs section heading | 36px | 28px | 650 / 1.15 (docs 1.2) / −0.03em |
+| Feature heading | 28px | 24px | 600 / 1.2 / −0.02em |
+| Docs subheading | 24px | 24px | 600 / 1.33 / −0.015em |
+| Subsection | 20px | 20px | 600 / 1.4 / −0.015em |
 | Lead | 20px | 18px | 400 / 1.6 / normal |
 | Body | 16px | 16px | 400 / 1.7 / normal |
 | Control / supporting text | 14px | 14px | 500 / 1.5 / normal |
