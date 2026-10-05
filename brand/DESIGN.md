@@ -152,10 +152,11 @@ technical.
 | Docs subheading | 24px | 24px | 600 / 1.33 / −0.015em |
 | Subsection | 20px | 20px | 600 / 1.4 / −0.015em |
 | Lead | 20px | 18px | 400 / 1.6 / normal |
-| Body | 16px | 16px | 400 / 1.7 / normal |
-| Control / supporting text | 14px | 14px | 500 / 1.5 / normal |
-| Eyebrow | 12px | 12px | 600 / 1.4 / 0.08em; uppercase |
-| Terminal / code | 14px | 14px | 400 / 1.7 / normal |
+| Body | 16px | 16px | 400 / 1.6 / normal |
+| Docs prose | 18px | 18px | 400 / 1.78 (32px lines) / normal |
+| Control (buttons, navigation) | 16px | 16px | 500, buttons 600 / 1.6 / normal |
+| Supporting label | 14px | 14px | 500 / 1.5 / normal |
+| Terminal / code | 16px | 16px | 400 / 1.7 (scene cards 1.5) / normal |
 
 Use the fluid heading tokens to scale between the endpoints. Keep one H1 per page. Aim for
 14–20ch hero headings, 25ch section titles and 60–68ch body columns. Avoid manual `<br>`
