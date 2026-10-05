@@ -44,8 +44,10 @@ use whatever subagent types your runtime actually offers for the same split — 
 mechanical — and skip peers. The single-writer rule above still holds: advisors and peers
 think; you edit, gate, and commit.
 
-## The gate (adapt to this repo)
-`<format-check> && <build --warnings-as-errors> && <tests>`
+## The gate
+`make check`: lint, ShellCheck, the builds, the vulnerability scan, comment alignment, generated
+docs, tool tests, rule cards, the tests, the scripted provider suite, live process control and the
+race detector. CI runs the same target.
 
 ## The contract
 - A task is a **folder**, and its state is which directory it sits in under `.agent/tasks/`: `00_todo/` · `10_in_progress/` · `50_blocked/` · `99_done/` (the numeric prefix just sorts `ls` in lifecycle order; `coop tasks` prints the clean names). Moving the folder IS the state change: on the host use `coop tasks` (never a manual `mv`); inside the box — where `coop` isn't installed — move the folder yourself. There is no status field and no fifth state.
