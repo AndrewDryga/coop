@@ -195,15 +195,15 @@ main:focus { outline: none; }
 .wire .cut { box-sizing: content-box; width: 14px; height: 14px; padding: 3px; border-radius: 50%; background: var(--surface); color: var(--muted); stroke-width: 2; }
 .wire .lock { box-sizing: content-box; padding: 3px; border-radius: 6px; background: var(--surface); color: var(--muted); }
 
-/* The story's second chapter, "But why?": attacks on the finished sandbox. They hang off the chapter
-   on a rail, a level below it. On wide screens the chapter's text stays pinned while the attacks take
-   turns under it, each rising in as the one before it leaves upwards, and the ticks count them off;
-   the scroll marks (.beat, added by site.js) say whose turn it is. The mistakes chapter works the
-   same way. */
-.attack-rail { position: relative; margin-top: 48px; padding-left: 24px; }
-/* the rail runs the length of the attack on screen (--rail, set by site.js); without the script, of the whole list */
-.attack-rail::before { content: ""; position: absolute; top: 0; left: 0; height: var(--rail, 100%); border-left: 1px solid var(--line); transform-origin: top; }
+/* The story's second chapter, "But why?": attacks on the finished sandbox. They hang off the chapter,
+   a level below it, each case a block on its own line. On wide screens the chapter's text stays pinned
+   while the attacks take turns under it on one rail, each rising in as the one before it leaves
+   upwards, and the ticks count them off; the scroll marks (.beat, added by site.js) say whose turn it
+   is. The mistakes chapter works the same way. */
+.attack-rail { position: relative; margin-top: 48px; }
 .attacks { display: grid; gap: 48px; }
+/* a case's block: the threat and how the box stops it */
+.attack .case { padding-left: 24px; border-left: 1px solid var(--line); }
 .attack p { max-width: 28rem; font-size: 1.125rem; line-height: 1.6; text-wrap: balance; }
 /* the attack itself, in one sentence: it is the item's headline */
 .attack .threat { max-width: 28rem; color: var(--text); font-size: 1.375rem; font-weight: 500; line-height: 1.45; letter-spacing: -0.01em; }
@@ -215,17 +215,26 @@ main:focus { outline: none; }
 :is(.step, .group-panel, .feature-copy) > .evidence { display: flex; align-items: center; gap: 24px; max-width: 32rem; margin-top: 32px; font-size: 1rem; line-height: 1.5; }
 :is(.step, .group-panel, .feature-copy) > .evidence + p { margin-top: 32px; }
 .evidence strong { flex: none; color: var(--text); font-size: 2.75rem; font-weight: 700; line-height: 1; letter-spacing: -0.04em; font-feature-settings: var(--display), "tnum" 1; white-space: nowrap; }
-/* a case's own figure: under the threat it proves, before how the box stops it */
-.attack > .evidence { display: flex; align-items: center; gap: 20px; max-width: 30rem; margin-top: 16px; color: var(--body); font-size: 1rem; line-height: 1.5; text-wrap: pretty; }
+/* a case's own figure sits above the case's block, never inside it: listed, it heads its case;
+   pinned, site.js shows the active case's figure above the rail instead */
+.attack > .evidence { display: flex; align-items: center; gap: 20px; max-width: 30rem; margin-bottom: 16px; color: var(--body); font-size: 1rem; line-height: 1.5; text-wrap: pretty; }
 .attack > .evidence strong { font-size: 2.25rem; }
+.case-figures { display: none; }
+.js-story .case-figures { display: grid; margin-top: 32px; }
+.js-story .case-figures > .evidence { grid-area: 1 / 1; display: flex; align-items: center; gap: 24px; max-width: 32rem; margin: 0; font-size: 1rem; line-height: 1.5; opacity: 0; }
+.js-story .case-figures > .is-active { opacity: 1; }
+.js-story .attack > .evidence { display: none; }
 .ticks, .beat { display: none; }
 .ticks span { width: 28px; height: 2px; border-radius: 1px; background: var(--line); }
 .js-story .step-group { --lead-in: 10vh; --beat: 40vh; position: relative; height: calc(100vh + var(--lead-in) + var(--items) * var(--beat)); }
 .js-story .group-panel { position: sticky; top: 0; display: grid; align-content: center; height: 100vh; }
 .js-story .ticks { display: flex; gap: 6px; margin-bottom: 24px; }
-/* the rail draws itself down from the chapter as the first attack arrives */
-.js-story .attack-rail::before { scale: 1 0; }
+/* pinned, the cases share one rail: it runs the length of the case on screen (--rail, set by
+   site.js), and draws itself down from the chapter as the first case arrives */
+.js-story .attack-rail { padding-left: 24px; }
+.js-story .attack-rail::before { content: ""; position: absolute; top: 0; left: 0; height: var(--rail, 100%); border-left: 1px solid var(--line); transform-origin: top; scale: 1 0; }
 .js-story .step-group:not([data-at="0"]) .attack-rail::before { scale: none; }
+.js-story .attack .case { padding-left: 0; border-left: 0; }
 .js-story .attack { grid-area: 1 / 1; align-self: start; opacity: 0; translate: 0 24px; }
 .js-story .attack.is-past { translate: 0 -24px; }
 .js-story .attack.is-active { opacity: 1; translate: none; }
@@ -555,6 +564,8 @@ main:focus { outline: none; }
   .zed-busy i:nth-child(2) { animation-delay: 0.2s; }
   .zed-busy i:nth-child(3) { animation-delay: 0.4s; }
   .attack.is-active { transition-delay: 150ms; }
+  .case-figures > .evidence { transition: opacity 250ms var(--ease); }
+  .case-figures > .is-active { transition-delay: 150ms; }
   .ticks span { transition: background-color 300ms var(--ease); }
   .attack-rail::before { transition: scale 500ms var(--ease), height 450ms var(--ease); }
   .hop .label, .remote .label { transition: color 400ms var(--ease) 300ms; }
@@ -604,7 +615,8 @@ main:focus { outline: none; }
   .window pre { padding: 20px 16px; }
   .scene { --row: 2rem; --indent: 1.375rem; --pad: 18px; --hop: 2rem; --step: 34px; --x0: 20px; --tail: 18px; font-size: 1rem; }
   .zone { padding-right: 40px; }
-  .attack-rail { margin-top: 32px; padding-left: 18px; }
+  .attack-rail { margin-top: 32px; }
+  .attack .case { padding-left: 18px; }
   .attacks { gap: 32px; }
   .attack .threat { font-size: 1.25rem; }
   :is(.step, .group-panel, .feature-copy, .attack) > .evidence { flex-direction: column; align-items: flex-start; gap: 8px; }

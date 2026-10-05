@@ -3,7 +3,7 @@ name: website
 description: site/ is static and partly generated; tools/gen_site.py owns index.html and the docs' terminal regions, which copy real CLI output; the code-block, cache-bust and social-card traps
 subsystem: website
 sources: [tools/gen_site.py, tools/site/index.tpl.html, site/index.html, site/docs.html, site/assets/css/site.css, site/assets/js/site.js, tools/gen_seo_assets.py, tools/test_site_content.py, tools/align-comments.py, internal/cli/help_test.go, internal/cli/eval_cmd_test.go]
-updated: 2026-10-04
+updated: 2026-10-05
 ---
 
 The homepage and docs are static files in `site/`, published by `.github/workflows/pages.yml` on
@@ -61,9 +61,12 @@ and the interface 16px. Spacing comes from flow rules on `.doc-section > *`: 24p
 
 **Figures.** Every number on the homepage is an `.evidence` line: the figure in `<strong>`, then one
 sentence that links its source and claims only what the source says. A figure about one attack or
-mistake sits inside that case's `.attack`, between the threat and its stopped lines, so the pinned
-chapters change figures as the cases change while you scroll, and the phone list shows each one with
-its case. Never put figures on a timer. A case with no source that fits it gets no figure. The
+mistake is the first child of that case's `.attack`, above its `.case` block (the threat and its
+stopped lines), never inside it: the owner rejected a figure between a threat and its stopped lines.
+Listed (below 1024px or without the script), each figure heads its case over a block with its own
+line. Pinned, site.js copies the figures into a `.case-figures` slot above the rail and shows the one
+for the case on screen; a case with no figure leaves the slot empty, so the rail does not jump.
+Never put figures on a timer. A case with no source that fits it gets no figure. The
 "3 s" start in the first story step is our own number: `make lifecycle-bench` (filtered_start, 10
 samples) on a clean clone, linked to `tools/lifecycle_bench.py`. Measure again on an idle machine
 before changing it, and never in a checkout with heavy local state, which starts slower.
@@ -93,3 +96,4 @@ nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 - 2026-10-04 — each homepage case carries its own sourced figure (task 2026-10-04-give-each-homepage-case-its-own-sourced-figure-a).
 - 2026-10-04 — the measured warm start in story step 1 (task 2026-10-04-show-how-fast-a-warm-box-starts-on-the-homepage).
 - 2026-10-04 — terminals are checked against their CLI sources (task 2026-10-02-fail-the-docs-check-when-a-site-output-snippet-d).
+- 2026-10-05 — case figures sit above their case's block, never inside it (task 2026-10-05-keep-each-homepage-figure-above-its-case-block-n).

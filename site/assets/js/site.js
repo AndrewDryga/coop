@@ -97,6 +97,17 @@ if (stage && "IntersectionObserver" in window) {
   // spread over the chapter say whose turn it is; mark 0 is the chapter's opening, before the first.
   const chapters = [...document.querySelectorAll(".step-group")].map((group) => {
     const items = [...group.querySelectorAll(".attack")];
+    // Each case's figure sits above the rail while its case is on screen, never inside the case's
+    // block; a case without one leaves the slot empty. The cases keep their own copies for the list.
+    const figures = items.map((item) => {
+      const own = item.querySelector(":scope > .evidence");
+      return own ? own.cloneNode(true) : Object.assign(document.createElement("p"), { className: "evidence" });
+    });
+    if (items.some((item) => item.querySelector(":scope > .evidence"))) {
+      const slot = Object.assign(document.createElement("div"), { className: "case-figures" });
+      slot.append(...figures);
+      group.querySelector(".attack-rail").before(slot);
+    }
     const beats = [null, ...items].map((item, turn) => {
       const beat = document.createElement("span");
       beat.className = "beat";
@@ -106,7 +117,7 @@ if (stage && "IntersectionObserver" in window) {
       beat.setAttribute("aria-hidden", "true");
       return group.appendChild(beat);
     });
-    return { group, items, beats };
+    return { group, items, beats, figures };
   });
   const parts = [document.querySelector(".story-lead"), ...document.querySelectorAll(".step, .beat")];
   for (const chapter of chapters) [chapter.first, chapter.last] = [parts.indexOf(chapter.beats[0]), parts.indexOf(chapter.beats.at(-1))];
@@ -114,7 +125,7 @@ if (stage && "IntersectionObserver" in window) {
   const show = (step) => {
     for (let i = 1; i <= 4; i++) stage.classList.toggle(`s${i}`, i <= step);
     stage.dataset.attack = parts[step].dataset.attack ?? "";
-    for (const { group, items, first, last } of chapters) {
+    for (const { group, items, figures, first, last } of chapters) {
       // before a chapter nothing has played; past it, its last attack stays and scrolls away with it
       const turn = step < first ? 0 : step > last ? items.length : Number(parts[step].dataset.turn);
       group.dataset.at = turn;
@@ -122,6 +133,8 @@ if (stage && "IntersectionObserver" in window) {
         item.classList.toggle("is-active", i + 1 === turn);
         item.classList.toggle("is-past", i + 1 < turn);
       });
+      // the chapter opens on its first case's figure, as the rail opens on its first case
+      figures.forEach((figure, i) => figure.classList.toggle("is-active", i + 1 === Math.max(turn, 1)));
       // the rail runs the length of the attack on screen
       const shown = items[Math.max(turn, 1) - 1];
       group.querySelector(".attack-rail").style.setProperty("--rail", `${shown.offsetTop + shown.offsetHeight}px`);
@@ -136,11 +149,7 @@ if (stage && "IntersectionObserver" in window) {
   const follow = () => {
     document.documentElement.classList.toggle("js-story", wide.matches);
     if (wide.matches) parts.forEach((part) => watch.observe(part));
-    else {
-      watch.disconnect();
-      // the plain list keeps one rail down all of its attacks
-      for (const { group } of chapters) group.querySelector(".attack-rail").style.removeProperty("--rail");
-    }
+    else watch.disconnect();
   };
   wide.addEventListener("change", follow);
   follow();
