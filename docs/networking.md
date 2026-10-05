@@ -136,8 +136,8 @@ alternate token variables, Gemini's Vertex `GOOGLE_API_KEY` and Codex's alternat
 access-token variables are refused too, instead of entering a box.
 
 A direct Claude run with `--readonly --egress filtered` can broker `ANTHROPIC_API_KEY` too. That
-doesn't qualify other providers' restricted modes, and controller jobs using restricted modes still
-reject filtered networking. These stop before launch:
+doesn't qualify other providers' read-only or bare modes. A controller job in read-only or bare
+mode still can't use filtered networking. These stop before launch:
 
 - an API-key run in login or bare mode, or with open or offline networking;
 - a configured custom provider base URL;
@@ -152,8 +152,7 @@ private host-side config. It removes the key after each turn and when the sessio
 
 A brokered client's own public downloads go through co:op too. A client sometimes fetches something
 on its own that isn't the model API and that no login grants. Codex's curated plugin store is one:
-an API-key run looks it up on every start (chatgpt.com, github.com and api.github.com, 16 refused
-lookups a run).
+an API-key run fetches it from chatgpt.com and github.com on every start.
 
 co:op brokers those fetches on a `download` route. No credential is sent, and any credential the box
 offers is refused. The route forwards only the exact request lines the adapter declared, query
@@ -279,16 +278,20 @@ Allowed and blocked external requests appear in `coop net watch`, `inspect`, `bl
 views, with the name of the Compose service they came from. Direct traffic between services stays on
 the internal network and isn't reported as external traffic.
 
-In filtered mode, `box.network: true` alone is refused: name the sidecar you need. The proxy belongs
-to one box execution, so a second filtered box using project services is refused until the first
-stops.
+In filtered mode, `box.network: true` alone is refused: name the sidecar you need. A filtered box
+that uses project services waits until no other box in this project is running, so a second one
+waits for the first to stop. Then it starts its services. A loop run and an editor session each get
+their own Compose project, network and volumes. A run you start directly uses the project's
+development stack.
 
 The approval covers the definition a human reviewed, along with the service's name. `coop approve`
 records a digest of that service's Compose stanza, and a launch recomputes it from the file it's
 about to run. Rewriting `db:` into something else (a proxy image with ordinary egress, say) is a
 pending change like any other. A launch refuses with
-`the Compose service "db" changed since it was approved` and the review command, and `coop net`
-shows it the same way. Editing an unrelated service changes nothing.
+`the Compose service "db" changed since it was approved` and the review command. `coop net` shows
+it under `⚠ New runs need your approval` as
+`The Compose service "db" changed after its network access was approved.` Editing an unrelated
+service changes nothing.
 
 ## TLS ports and localhost
 
@@ -369,7 +372,9 @@ repository instructions.
 | a runtime other than Docker | `restricted networking needs docker; <runtime> cannot serve the qualified gateway — run this with --egress open or none, or set COOP_RUNTIME=docker` |
 | `box.network: true` with no `service:` grant | `a filtered box does not join the shared services network — ask for the one sidecar you need with a to: {service: <name>} rule …` |
 | `-v /var/run:/x` (or any mount of `/run`, `/proc`, `/sys`, `/dev`, `/`, or the Docker socket's directory) | `a filtered box cannot mount …: it is or holds …, which reaches Docker or the kernel` |
-| a project file that asks for access nobody approved (a rule, a change to one, or `open`) | `<Agent> cannot start because this project asks for network access that has not been approved` · `Review it: coop approve` |
+| a project file with a rule nobody approved, or a changed rule or mode | `<Agent> cannot start because this project asks for network access that has not been approved` · `Review it: coop approve` |
+| `open`, in a project with no approval yet | `<Agent> cannot start because this project asks for unrestricted internet access, which has not been approved` · `Review it: coop approve` |
+| an approved Compose service whose definition changed | `<Agent> cannot start because the Compose service "db" changed since it was approved` · `Review it: coop approve` |
 | an approved project directory replaced by another at the same path | `<Agent> cannot start because the project directory at <path> was replaced since it was approved` · `Review it: coop approve` |
 
 A refused rule fails the launch itself, before any approval is written or any container is created.
@@ -426,7 +431,8 @@ and the configured MCP servers before `✓ Everything else blocked`, then `Start
 
 - TLS flows are observed. The gateway sees each connection, so a destination row is the name the
   workload asked for, the address it resolved to, and the bytes that crossed. A blocked name becomes
-  a retained event. `coop net blocked <host>` opens the newest one for that host in this project.
+  a retained event. `coop net blocked <host>` finds the newest run in this project that blocked that
+  host. It groups that run's refusals of the host by cause and counts the repeats.
   `--run <run>` pins one run, and with `--run` an exact event ID replaces the host.
 - Raw transports are counted. Every address grant has its own kernel counter, reported per grant as
   packets and bytes (`Raw traffic` in `coop net inspect`, `address_grants` in `--json`). No host
@@ -492,8 +498,8 @@ While the file and the approval differ, the request is pending:
 - `coop init` ends with `⚠ New runs need your approval`, the reason, and
   `Review changes: coop approve`.
 - Bare `coop net` shows the same diff under the same `⚠ New runs need your approval` line.
-- Every launch refuses before any box or main process starts. It says it cannot start because this
-  project asks for network access that has not been approved, followed by `Review it: coop approve`.
+- Every launch refuses before any box or main process starts. It says it cannot start and names the
+  cause, followed by `Review it: coop approve`.
   That covers `coop run`, a named agent, `coop acp`, `coop loop`, an interactive fork, fork ACP, and
   a fork review or merge gate.
 
@@ -555,13 +561,16 @@ started it. If that process is killed (`SIGKILL`, a crash, a reboot), the run st
 - So does every filtered launch, before its own box starts.
 
 A successful recovery needs nothing from you. Only something external is reported: Docker stopped, a
-different daemon at the recorded endpoint, a removal that failed. It shows as
+different daemon at the recorded endpoint, a removal that failed. `coop net inspect` shows it as
 `⚠ Cleanup incomplete — <the blocker>` with what to do about it, and co:op retries on its own.
 
 To settle runs now:
 
     coop net recover           # settle every pending run now
     coop net recover <run>     # settle one run now
+
+When `coop net recover` can't finish a run, it prints `⚠ Cleanup incomplete for network run <run>`,
+then the causes and the next step.
 
 Recovery removes exactly the resources that run recorded, by id and ownership labels. It never
 matches by name prefix and never prunes. It seals a final receipt marked `partial` with workload

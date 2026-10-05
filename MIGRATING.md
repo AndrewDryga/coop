@@ -228,6 +228,9 @@ Removal and privacy flags now have explicit names. Replace these commands and fl
 `coop tasks split` is gone. Parallel forks share the canonical queue, as
 [Canonical tasks across isolated forks](#canonical-tasks-across-isolated-forks) above explains.
 
+`coop tasks flags` is gone too, with no replacement. No tagged release shipped it. A `flags.json`
+that an untagged build left in a task folder does nothing now, and co:op leaves it in place.
+
 Automatic runtime detection now prefers Docker. On a machine with both Docker and Apple
 `container` installed, co:op picks Docker. Before, `container` won on name order. Your box image
 must exist on the runtime you end up on, so if your images lived on the other one, run
@@ -336,6 +339,24 @@ If an untagged developer build left a v1/v2 record, reconcile that task with the
 it before you upgrade. Current co:op leaves the record intact and refuses to lease, complete or
 unblock the task. Don't delete raw task-authority registry files to get around that refusal.
 
+## v7: the box Dockerfile moves into `.agent/`
+
+v7.0.0 moved the box Dockerfile out of the repository root. co:op builds the box from
+`.agent/Dockerfile` and no longer reads a root `Dockerfile.agent`. A repo that still has one gets
+the standard box, without your toolchain, so move the file and rebuild:
+
+```sh
+mkdir -p .agent
+git mv Dockerfile.agent .agent/Dockerfile
+coop build
+```
+
+To keep the file where it is, set `box.dockerfile` in `.agent/project.yaml` to `Dockerfile.agent`
+instead. That key takes any regular file inside the repository, such as your app's own `Dockerfile`.
+
+The v7 box image also gained `socat`. It lets the box reach a sidecar's exposed port at
+`localhost:<port>`. Run `coop build` or `coop update` once to rebuild the box with it.
+
 ## v4: the target grammar, one way to name a run
 
 A target names who runs: `provider[:model][/effort][@account]`. For example: `claude`,
@@ -343,8 +364,8 @@ A target names who runs: `provider[:model][/effort][@account]`. For example: `cl
 
 A target must name the provider. The model, the account and a reasoning `/effort` are optional. The
 effort (`low`/`medium`/`high`/`xhigh`/`max`) is passed straight to the agent's CLI. At v4 Gemini had
-none and rejected it; it now takes `low` or `high`. `--model`, `--credential` and the boolean `--consult` retire, and you name peers
-explicitly.
+none and rejected it; since v10.1.2 it takes `low` or `high`. `--model`, `--credential` and the
+boolean `--consult` retire, and you name peers explicitly.
 
 | Retired | Use |
 | --- | --- |
@@ -352,22 +373,23 @@ explicitly.
 | `coop <agent> --credential <acct>` | `coop <agent>@<acct>`: for example `coop claude@work` |
 | `coop login <agent> --credential <acct>` | `coop login <agent>@<acct>` |
 | `coop loop --model m@work` | `coop loop <agent>:m@work` (account ladder: `<agent>@work,personal`) |
-| bare `coop` / `coop loop` (defaulted to claude) | name the target: `coop claude`, `coop loop claude` (or positional `coop loop <preset>`, whose lead supplies it) |
-| `coop <agent> --consult` (boolean) | `coop <target> --peer <target>...`: name each peer (repeatable): `--peer codex:gpt-6-astra --peer gemini` |
-| `coop fusion <target>` (consulted every signed-in agent) | `coop <target> --peer <target>...`: name only the peers this run may consult |
+| bare `coop` / `coop loop` (defaulted to claude) | name the target: `coop claude`, `coop loop claude` (or, since v5.0.0, positional `coop loop <preset>`, whose lead supplies it) |
+| `coop <agent> --consult` (boolean) | `coop <target> --peer <target>...`: name each peer (repeatable): `--peer codex:gpt-6-astra --peer gemini`. v4 named peers with `--consult <peer>`, and v5.0.0 renamed it `--peer` |
+| `coop fusion <target>` (consulted every signed-in agent) | `coop <target> --peer <target>...`: name only the peers this run may consult (v10.1.2 removed `coop fusion`) |
 
 The target grammar applies on every current launch surface: `coop <target>`, `loop`, `acp`,
 `fork <name> [acp]` and `login`. A Zed `agent_servers` entry can name a target as one token,
-`["acp","claude:opus@work"]`, or use `["acp"]` for automatic startup and live selection.
+`["acp","claude:opus@work"]`, or, since v5.0.0, use `["acp"]` for automatic startup and live
+selection.
 
 A peer takes part only when you name it. The old "every signed-in agent is a peer" policy is gone.
 A named peer's credentials are the only ones mounted for consultation, and the box's
 `coop-consult` refuses any other. So an overnight run can't hand your Codex login to a Claude lead
 that you never asked to consult it.
 
-Name a preset in the positional who-runs slot, as in `coop <preset>` or `coop loop <preset>`,
-instead of with a flag. A preset is a separate axis (role wiring), and not another spelling of the
-target.
+Since v5.0.0, name a preset in the positional who-runs slot, as in `coop <preset>` or
+`coop loop <preset>`, instead of with `--preset`. A preset is a separate axis (role wiring), and
+not another spelling of the target.
 
 Presets follow the same grammar. `agent:` holds a target or a target ladder, and native roles
 remain one Claude target. The separate `model:`/`models:` keys retire:
@@ -378,16 +400,16 @@ remain one Claude target. The separate `model:`/`models:` keys retire:
 | a role's `agent: codex` + `model: gpt-6-astra` | `agent: codex:gpt-6-astra`: the model rides `agent:` (a role runs its default account; no `@account`) |
 
 A lead ladder can be cross-provider, as in `agent: [claude:opus, codex:gpt-6-astra]`. On a rate
-limit, the loop rotates across vendors and runs each rung's agent. An ACP session rotates too: it
-re-creates the session on the new provider, and carries the conversation over best-effort as a
-labeled plain-text preamble. The lead is the first rung's provider. It's the default agent, and
-the one a single run uses.
+limit, the loop rotates across vendors and runs each rung's agent. Since v5.0.0, an ACP session
+rotates too: it re-creates the session on the new provider, and carries the conversation over
+best-effort as a labeled plain-text preamble. The lead is the first rung's provider. It's the
+default agent, and the one a single run uses.
 
-Consult and delegate role ladders fail over inside their wrappers after a proven non-zero
-rate-limit response. Native roles remain one target, because subagent frontmatter has no runtime
-fallback hook. Role rungs always use each provider's default account, and `@account` remains
-lead-only. co:op skips providers you haven't signed in to, and mounts every available rung's
-credential home in the lead box.
+Since v5.3.0, consult and delegate role ladders fail over inside their wrappers after a proven
+non-zero rate-limit response. Native roles remain one target, because subagent frontmatter has no
+runtime fallback hook. Role rungs always use each provider's default account, and `@account`
+remains lead-only. co:op skips providers you haven't signed in to, and mounts every available
+rung's credential home in the lead box.
 
 ## v3: retired command aliases
 
