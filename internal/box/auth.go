@@ -3,6 +3,7 @@ package box
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -50,6 +51,32 @@ func nestedAgentCommand(spec RunSpec, name string) bool {
 		}
 	}
 	return spec.Preset != nil && slices.Contains(spec.Preset.RunnableRoleAgents(), name)
+}
+
+// mountedWritable is a host directory a box gets read-write beyond the repository: an account's
+// provider home, or a directory of the ACP session store. The mount plan and every guard on mount
+// sources (the authority allowlist, MCP isolation, the composition, network and filtered exposure
+// roots) build from mountedWritables, so a new kind of mount can't skip a guard.
+type mountedWritable struct {
+	Host, Box string
+	Kind      string // "<agent> credential home" or "<agent> ACP session store", for messages
+	acp       bool
+}
+
+func mountedWritables(cfg *config.Config, spec RunSpec) []mountedWritable {
+	var out []mountedWritable
+	for _, name := range credentialScope(cfg, spec) {
+		out = append(out, mountedWritable{Host: cfg.AgentDir(name), Box: cfg.HomeInBox + "/." + name, Kind: name + " credential home"})
+	}
+	if primary := runPrimary(spec); spec.ShareACPSessions && primary != "" {
+		if ag, ok := agents.Get(primary); ok {
+			for _, dir := range ag.ACPSessionDirs() {
+				out = append(out, mountedWritable{Host: filepath.Join(acpSharedDir(cfg, primary), dir),
+					Box: cfg.HomeInBox + "/." + primary + "/" + dir, Kind: primary + " ACP session store", acp: true})
+			}
+		}
+	}
+	return out
 }
 
 // credentialScope is the set of agents whose credential home (~/.<name>) and env-file API key a

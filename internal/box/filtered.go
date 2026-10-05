@@ -235,8 +235,8 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	for _, companion := range spec.CompanionRepositories {
 		exposed = append(exposed, companion.HostPath)
 	}
-	for _, name := range credentialScope(cfg, spec) {
-		exposed = append(exposed, cfg.AgentDir(name))
+	for _, m := range mountedWritables(cfg, spec) {
+		exposed = append(exposed, m.Host)
 	}
 	if err := capture.Store.CheckExposure(exposed); err != nil {
 		return nil, err
@@ -399,8 +399,8 @@ func filteredWritableRoots(cfg *config.Config, spec RunSpec) []string {
 			}
 		}
 	}
-	for _, name := range credentialScope(cfg, spec) {
-		roots = append(roots, cfg.AgentDir(name))
+	for _, m := range mountedWritables(cfg, spec) {
+		roots = append(roots, m.Host)
 	}
 	return roots
 }

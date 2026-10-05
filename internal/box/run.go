@@ -420,8 +420,8 @@ func compositionArtifactExposureRoots(cfg *config.Config, spec RunSpec) []string
 			roots = append(roots, root)
 		}
 	}
-	for _, agent := range credentialScope(cfg, spec) {
-		roots = append(roots, cfg.AgentDir(agent))
+	for _, m := range mountedWritables(cfg, spec) {
+		roots = append(roots, m.Host)
 	}
 	return roots
 }
@@ -1693,12 +1693,14 @@ func validateMCPSourceIsolation(cfg *config.Config, spec RunSpec) (string, error
 	for _, companion := range spec.CompanionRepositories {
 		roots = append(roots, MCPSourceRoot{Kind: "mounted companion repository", Path: companion.HostPath})
 	}
-	for _, name := range credentialScope(cfg, spec) {
-		roots = append(roots, MCPSourceRoot{Kind: "mounted " + name + " credential home", Path: cfg.AgentDir(name)})
-	}
-	if spec.ShareACPSessions {
-		if primary := runPrimary(spec); primary != "" {
-			roots = append(roots, MCPSourceRoot{Kind: "mounted " + primary + " ACP session store", Path: acpSharedDir(cfg, primary)})
+	acpStore := ""
+	for _, m := range mountedWritables(cfg, spec) {
+		switch {
+		case !m.acp:
+			roots = append(roots, MCPSourceRoot{Kind: "mounted " + m.Kind, Path: m.Host})
+		case acpStore == "": // the whole store, not only the directories a box mounts
+			acpStore = filepath.Dir(m.Host)
+			roots = append(roots, MCPSourceRoot{Kind: "mounted " + m.Kind, Path: acpStore})
 		}
 	}
 	return ResolveMCPSource(cfg.MCPFile, roots)
@@ -3084,8 +3086,11 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 			args = append(args, "-e", "COOP_EVAL_DISABLE_WEB_TOOLS=1")
 		}
 		scope := credentialScope(cfg, spec)
-		for _, agent := range scope {
-			args = append(args, "-v", cfg.AgentDir(agent)+":"+cfg.HomeInBox+"/."+agent)
+		writables := mountedWritables(cfg, spec)
+		for _, m := range writables {
+			if !m.acp {
+				args = append(args, "-v", m.Host+":"+m.Box)
+			}
 		}
 		// Synthesized skills: mounted READ-WRITE (a copy, so the host stays clean) so a CLI that
 		// installs system skills into its skills dir isn't broken by a :ro mount.
@@ -3095,13 +3100,9 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 		// An ACP box shares the LEAD's session transcripts across credentials, so
 		// switching account/preset mid-session doesn't lose the conversation — session/load still finds
 		// the transcript. The shared dir is credential-independent and shadows the profile's own copy.
-		if spec.ShareACPSessions {
-			primary := runPrimary(spec)
-			if ag, ok := agents.Get(primary); ok {
-				for _, name := range ag.ACPSessionDirs() {
-					host := filepath.Join(acpSharedDir(cfg, primary), name)
-					args = append(args, "-v", host+":"+cfg.HomeInBox+"/."+primary+"/"+name)
-				}
+		for _, m := range writables {
+			if m.acp {
+				args = append(args, "-v", m.Host+":"+m.Box)
 			}
 		}
 		args = append(args, modelEnvArgs(cfg, spec, scope)...)

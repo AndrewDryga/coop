@@ -11,7 +11,6 @@ import (
 	"strings"
 	"syscall"
 
-	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/networkstate"
@@ -56,17 +55,8 @@ func protectRunPrivateState(cfg *config.Config, spec RunSpec, allow authorityMou
 		if cfg.MCPFile != "" {
 			allow.privateRoots = appendUniqueAuthorityPath(allow.privateRoots, cfg.MCPFile)
 		}
-		for _, name := range credentialScope(cfg, spec) {
-			allow.sources[cfg.AgentDir(name)] = true
-		}
-		if spec.ShareACPSessions {
-			if primary := runPrimary(spec); primary != "" {
-				if agent, ok := agents.Get(primary); ok {
-					for _, name := range agent.ACPSessionDirs() {
-						allow.sources[filepath.Join(acpSharedDir(cfg, primary), name)] = true
-					}
-				}
-			}
+		for _, m := range mountedWritables(cfg, spec) {
+			allow.sources[m.Host] = true
 		}
 		if stateRoot := remoteSessionStateRoot(cfg, spec); stateRoot != "" {
 			allow.privateRoots = appendUniqueAuthorityPath(allow.privateRoots, stateRoot)
