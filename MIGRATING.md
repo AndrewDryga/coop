@@ -284,7 +284,7 @@ none and rejects it), and the account are all optional. `--model`, `--credential
 | `coop login <agent> --credential <acct>` | `coop login <agent>@<acct>` |
 | `coop loop --model m@work` | `coop loop <agent>:m@work` (account ladder: `<agent>@work,personal`) |
 | bare `coop` / `coop loop` (defaulted to claude) | name the target — `coop claude`, `coop loop claude` (or positional `coop loop <preset>`, whose lead supplies it) |
-| `coop <agent> --consult` (boolean) | `coop <target> --peer <target>...` — name each peer (repeatable): `--peer codex:gpt-5.5 --peer gemini` |
+| `coop <agent> --consult` (boolean) | `coop <target> --peer <target>...` — name each peer (repeatable): `--peer codex:gpt-6-astra --peer gemini` |
 | `coop fusion <target>` (consulted every signed-in agent) | `coop <target> --peer <target>...` — name only the peers this run may consult |
 
 The target grammar applies on every current launch surface — `coop <target>`, `loop`, `acp`,
@@ -306,9 +306,9 @@ remain one Claude target); the separate `model:`/`models:` keys retire:
 | Retired preset shape | Use |
 | --- | --- |
 | `lead: {agent: claude, models: [fable, opus@work]}` | `lead: {agent: [claude:fable, claude:opus@work]}` — one `agent:` ladder (each entry a target) |
-| a role's `agent: codex` + `model: gpt-5.5` | `agent: codex:gpt-5.5` — the model rides `agent:` (a role runs its default account; no `@account`) |
+| a role's `agent: codex` + `model: gpt-6-astra` | `agent: codex:gpt-6-astra` — the model rides `agent:` (a role runs its default account; no `@account`) |
 
-A lead ladder MAY be cross-provider (`agent: [claude:opus, codex:gpt-5.5]`) — the loop rotates
+A lead ladder MAY be cross-provider (`agent: [claude:opus, codex:gpt-6-astra]`) — the loop rotates
 across vendors on a rate limit, running each rung's agent, and an ACP session does too (it
 re-creates the session on the new provider and carries the conversation best-effort as a labeled
 plain-text preamble). The lead (the default agent, and what a single run uses) is the first rung's

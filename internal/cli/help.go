@@ -117,7 +117,7 @@ func renderMenu(p ui.Palette, cfg *config.Config, ref bool) string {
 	row("coop <target> --peer <target>...", "start with read-only peer agents")
 	// A newcomer meets the word "target" here, in three rows that all use it. Saying what it can be
 	// once, with one example of the longest form, is shorter than three rows that each explain it.
-	note("A target names an agent, a preset, or a model: codex:gpt-5.6-luna/xhigh")
+	note("A target names an agent, a preset, or a model: codex:gpt-6-astra/xhigh")
 
 	group("ACCOUNTS, MODELS & PRESETS", "choose the accounts and models your agents use")
 	row("coop login <agent>", "sign in to an agent")
@@ -1653,7 +1653,7 @@ CUSTOM RUNTIME PROFILES
 
 EXAMPLES
   coop eval run core codex --timeout 35m --dry-run
-  coop eval run core codex:gpt-5.6 codex:gpt-5.6/xhigh --timeout 70m
+  coop eval run core codex:gpt-6.1-sol codex:gpt-6.1-sol/xhigh --timeout 70m
   coop eval run queue frontier --timeout 2h
   coop eval run queue frontier --loop-config .agent/loop.yaml --timeout 2h --dry-run
   coop eval run ./evals/my-suite/suite.yaml codex --repeat 3 --timeout 60m

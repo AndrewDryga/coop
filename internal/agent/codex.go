@@ -474,18 +474,19 @@ func (codexAgent) UpdateControls() UpdateControls {
 // Models are common codex model ids. Illustrative — any id the CLI accepts works.
 func (codexAgent) Models() []string {
 	return []string{
+		"gpt-6.1-sol",
+		"gpt-6-astra",
+		"gpt-6-sol",
+		"gpt-6-luna",
 		"gpt-5.6-sol",
 		"gpt-5.6-terra",
 		"gpt-5.6-luna",
 		"gpt-5.5",
-		"gpt-5.4",
-		"gpt-5.4-mini",
-		"gpt-5.3-codex-spark",
 	}
 }
 
 // ExampleModel: the frontier id, and the one this repo's own preset leads with.
-func (codexAgent) ExampleModel() string { return "gpt-5.6-sol" }
+func (codexAgent) ExampleModel() string { return "gpt-6-astra" }
 
 // ModelEnv: codex reads no model env var (its default lives in config.toml), so the
 // flag in base() is the only coop-driven path.

@@ -97,7 +97,7 @@ func TestModelsIsACompactMenu(t *testing.T) {
 		}
 	})
 	for _, want := range []string{
-		"Claude\n", "fable", "gpt-5", "gemini-2.5-pro",
+		"Claude\n", "fable", "gpt-6", "gemini-3.1-pro-preview",
 		"Start Claude with a model\n  → coop claude:fable\n",
 		"Set models for presets and loops\n  → coop help models\n",
 	} {
@@ -200,7 +200,7 @@ func TestModelsMenuHasFrontierIDs(t *testing.T) {
 			t.Errorf("cmdModels = (%d, %v)", code, err)
 		}
 	})
-	for _, want := range []string{"claude-fable-5", "claude-opus-4-8", "gpt-5.5", "gemini-3.5-flash"} {
+	for _, want := range []string{"claude-fable-5-1", "claude-opus-5-5", "gpt-6-astra", "gemini-3.8-flash"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("menu missing the recipe id %q:\n%s", want, out)
 		}

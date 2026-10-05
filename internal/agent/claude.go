@@ -488,7 +488,7 @@ func (claudeAgent) UpdateControls() UpdateControls {
 // Models are the stable Claude Code aliases (each resolves to that family's current
 // model), plus full ids as examples. Illustrative — any id the CLI accepts works.
 func (claudeAgent) Models() []string {
-	return []string{"fable", "opus", "sonnet", "haiku", "claude-fable-5", "claude-opus-4-8", "claude-sonnet-5"}
+	return []string{"fable", "opus", "sonnet", "haiku", "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"}
 }
 
 // ExampleModel: the alias people recognize, and the one coop's examples have always used.

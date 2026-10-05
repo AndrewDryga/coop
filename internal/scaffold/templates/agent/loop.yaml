@@ -23,7 +23,7 @@ preflight:
 work:
   # Agent or preset choices, tried in order when a usage limit is reached.
   # Default: the agent or preset supplied on the command line.
-  #agent: [frontier, claude:opus, codex:gpt-5.6-luna]
+  #agent: [frontier, claude:opus, codex:gpt-6-luna]
 
   # Advanced: run a custom command instead of the built-in agent workflow.
   # This disables agent preflight, between-task review, signoff and verify.
@@ -58,7 +58,7 @@ signoff:
   #rounds: 5
 
   # Default: the work agent.
-  #agent: [codex:gpt-5.6-sol/xhigh, claude:fable]
+  #agent: [codex:gpt-6-astra/xhigh, claude:fable]
 
   # Extra checks added to the built-in final review.
   #prompt: |
@@ -74,7 +74,7 @@ verify:
   #writes: repo
 
   # Default: the signoff agent.
-  #agent: [codex:gpt-5.6-sol/xhigh]
+  #agent: [codex:gpt-6-astra/xhigh]
 
   # Required when enabled. Coop supplies the affected tasks and files.
   #prompt: |

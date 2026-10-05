@@ -5,8 +5,8 @@ Usage:
 
 EXAMPLES
   coop codex
-  coop codex:gpt-5.6-sol
-  coop codex:gpt-5.6-sol/high@work
+  coop codex:gpt-6-astra
+  coop codex:gpt-6-astra/high@work
   coop codex -- --help
 
 OPTIONS

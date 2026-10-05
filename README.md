@@ -421,7 +421,7 @@ coop fork rm perf        # or discard it (confirms first; inspect task/Git impac
 ```
 
 `coop fork <name>` opens a new fork or re-enters an existing one. Name the agent as a
-target — `coop fork perf codex` (or `codex:gpt-5.5@work` to pick its model + account) —
+target — `coop fork perf codex` (or `codex:gpt-6-astra@work` to pick its model + account) —
 or name a preset in that same slot (`coop fork perf frontier`), whose lead runs it. A fork inherits your git identity, signing key, and global gitignore from
 the parent — so the agent can commit *as you* and ignores the same noise you do.
 
@@ -702,8 +702,8 @@ prompt, move the toolbar dropdown; or wait for the nearest reset when every acco
 cooling. There is no persistent pool to configure: the rotation *is* the model-first
 `agent:` ladder of the loop's lead. With no preset it rotates the agent's default model across every signed-in
 account; a bare model in a ladder does the same, while a pinned `model@account` runs just
-one. Limits are tracked per (model, account), so `claude-opus-4-8@personal` stays usable
-while `claude-opus-4-8@work` cools down. A ladder gives you fallbacks in the order you
+one. Limits are tracked per (model, account), so `claude-opus-5-5@personal` stays usable
+while `claude-opus-5-5@work` cools down. A ladder gives you fallbacks in the order you
 write them — step to a cheaper model, another account, or both. For example,
 after `coop presets init my-ladder`, edit that preset's lead:
 
@@ -711,7 +711,7 @@ after `coop presets init my-ladder`, edit that preset's lead:
 # .agent/presets/my-ladder/preset.yaml (lead excerpt)
 lead:
   # Opus on all accounts, then Fable on work.
-  agent: [claude:claude-opus-4-8, claude:claude-fable-5@work]
+  agent: [claude:claude-opus-5-5, claude:claude-fable-5-1@work]
 ```
 
 ```bash
@@ -770,7 +770,7 @@ stronger final reviewer over the cheaper work loop. Give each fork its own targe
 `COOP_<AGENT>_CMD` › the agent CLI's own default.
 
 **Reasoning effort** is a sibling axis on the same target — `/effort` after the provider or
-optional model: `coop codex/high`, `coop codex:gpt-5.6-sol/high`, `coop claude:opus/xhigh`,
+optional model: `coop codex/high`, `coop codex:gpt-6-astra/high`, `coop claude:opus/xhigh`,
 `coop loop claude:opus/low`. Levels are
 `low` · `medium` · `high` · `xhigh` · `max`; coop passes the level straight to the agent's CLI
 (Claude's `--effort`, Codex's `model_reasoning_effort`, Grok's `--reasoning-effort`), so a bad one
@@ -795,7 +795,7 @@ decomposes, and synthesizes, while pinned subagents execute and cross-vendor pee
 independent opinions. Everything below composes from pieces coop already has — no plugins.
 
 ```bash
-coop claude:claude-fable-5 --peer codex --peer gemini   # run it; --peer mounts the named peers
+coop claude:claude-fable-5-1 --peer codex --peer gemini # run it; --peer mounts the named peers
 ```
 
 For a *standing* arrangement (a lead model + its roles you don't retype), put it in a
@@ -813,7 +813,7 @@ For a *standing* arrangement (a lead model + its roles you don't retype), put it
 - **High-stakes calls** — task a native subagent *and* a peer on the same problem in
   parallel, without showing either the other's answer, then synthesize.
 
-The same arrangement runs unattended: `coop loop claude:claude-fable-5 --peer codex --peer gemini`
+The same arrangement runs unattended: `coop loop claude:claude-fable-5-1 --peer codex --peer gemini`
 makes every iteration orchestrate this way — the pinned subagents ride along in the
 repo, and `--peer` mounts the named peers into each iteration's box (fork loops take it
 too: `coop fork <name> claude --loop --peer codex --peer gemini`). Prefer
@@ -836,24 +836,24 @@ lead:
   # provider:model runs on EVERY signed-in account (rotating on rate limit); @account pins
   # one. On a loop it rotates top-to-bottom (running each rung's agent); a single run uses
   # the first. models:/model:/credentials: are retired — the model+account ride agent:.
-  agent: [claude:claude-fable-5/xhigh, codex:gpt-5.6-sol/xhigh]
+  agent: [claude:claude-opus-5-5/xhigh, codex:gpt-6-astra/xhigh]
   prompt: roles/lead.md           # optional Markdown, appended to the generated contract
 
 roles:
   thinker:                              # deep thinking + review, read-only
     mode: consult                       # native would run it in the lead's session: every lead must be claude
-    agent: claude:claude-opus-4-8/xhigh # model + effort ride agent:
+    agent: claude:claude-fable-5-1/max  # model + effort ride agent:
     when: [architecture, debugging, code-review, before-commit]
     prompt: roles/thinker.md            # the persona it answers as
 
   critic:                          # independent critique from another vendor, read-only
     mode: consult
-    agent: [codex:gpt-5.6-sol/xhigh, grok:grok-4.5/high]
+    agent: [codex:gpt-6-astra/xhigh, grok:grok-4.5/high]
     when: [plan-review, security, tradeoffs]
 
   fast:                           # cheap mechanical work, write-capable
     mode: delegate
-    agent: [gemini:gemini-3.5-flash, codex:gpt-5.4-mini]
+    agent: [gemini:gemini-3.8-flash, codex:gpt-6-luna]
     when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]
     commit: never                 # it edits; the LEAD reviews the diff, gates, commits
     concurrent: never             # delegate runs are serialized
@@ -1097,7 +1097,7 @@ the same before and after your change, then compare the recorded results.
 ### Choose what to evaluate
 
 - `core`: three small single-agent coding tasks with independent checks and deliberate near
-  misses. Use provider targets, such as `codex:gpt-5.6/xhigh`, not presets.
+  misses. Use provider targets, such as `codex:gpt-6.1-sol/xhigh`, not presets.
 - `queue`: ten tasks worked by the real `coop loop`, including review and signoff. Use it to
   compare presets or loop recipes; each trial works its tasks in sequence and can take hours.
   For example,
@@ -1111,7 +1111,7 @@ the same before and after your change, then compare the recorded results.
   example, not an official benchmark score or a shipped `coop eval ls` starter.
 
 Each target or preset after the suite is a separate configuration, not a fallback. For example,
-`coop eval run core codex:gpt-5.6 codex:gpt-5.6/xhigh --timeout 70m --dry-run` previews both.
+`coop eval run core codex:gpt-6.1-sol codex:gpt-6.1-sol/xhigh --timeout 70m --dry-run` previews both.
 
 ### Trusted runtime profiles for custom agent cases
 

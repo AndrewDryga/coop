@@ -431,7 +431,7 @@ func TestRefreshFallsBackToExamples(t *testing.T) {
 		t.Error("a failed refresh must not write a catalog")
 	}
 	want := "  ⚠ Could not refresh — showing example models\n\n      Codex is unavailable on this host.\n"
-	if !strings.Contains(out, "gpt-5.6-sol") || !strings.Contains(out, "gpt-5.3-codex-spark") ||
+	if !strings.Contains(out, "gpt-6.1-sol") || !strings.Contains(out, "gpt-5.5") ||
 		!strings.Contains(out, want) {
 		t.Errorf("after a failed refresh the codex block should show examples and %q:\n%s", want, out)
 	}

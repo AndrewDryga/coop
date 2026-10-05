@@ -131,8 +131,8 @@ func TestCompletionCandidates(t *testing.T) {
 		t.Errorf("effort-prefix completion missing grok:grok-4.5/high: %v", got)
 	}
 	// Gemini thinks at low or high only; completion offers exactly what the target would accept.
-	if got := a.completionCandidatesFor([]string{"loop"}, "gemini:gemini-3.5-flash/"); !hasCand(got, "gemini:gemini-3.5-flash/high") ||
-		!hasCand(got, "gemini:gemini-3.5-flash/low") || hasCand(got, "gemini:gemini-3.5-flash/medium") || hasCand(got, "gemini/xhigh") {
+	if got := a.completionCandidatesFor([]string{"loop"}, "gemini:gemini-3.8-flash/"); !hasCand(got, "gemini:gemini-3.8-flash/high") ||
+		!hasCand(got, "gemini:gemini-3.8-flash/low") || hasCand(got, "gemini:gemini-3.8-flash/medium") || hasCand(got, "gemini/xhigh") {
 		t.Errorf("gemini completion must offer exactly its expressible effort levels: %v", got)
 	}
 

@@ -11,13 +11,14 @@ import (
 
 func TestCodexModelsMenu(t *testing.T) {
 	want := []string{
+		"gpt-6.1-sol",
+		"gpt-6-astra",
+		"gpt-6-sol",
+		"gpt-6-luna",
 		"gpt-5.6-sol",
 		"gpt-5.6-terra",
 		"gpt-5.6-luna",
 		"gpt-5.5",
-		"gpt-5.4",
-		"gpt-5.4-mini",
-		"gpt-5.3-codex-spark",
 	}
 	if got := (codexAgent{}).Models(); !slices.Equal(got, want) {
 		t.Fatalf("codex Models() = %v, want current list-visible catalog %v", got, want)

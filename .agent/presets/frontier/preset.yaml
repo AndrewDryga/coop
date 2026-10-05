@@ -33,7 +33,7 @@ roles:
     mode: consult
     # agent — a target or fallback list: provider[:model][/effort].
     # Route reasoning-heavy work here before the lead makes the final decision.
-    agent: claude:claude-fable-5/xhigh
+    agent: claude:claude-fable-5-1/xhigh
     # when — OPTIONAL routing hints; the lead's cue for what to route here.
     when: [architecture, debugging, security, code-review, before-commit]
     # prompt — Markdown appended to the role's generated contract.
@@ -46,7 +46,7 @@ roles:
     # agent — a target or fallback list: provider[:model][/effort].
     # A second critical opinion on the plan and its tradeoffs. The configured
     # target determines whether that opinion also comes from another provider.
-    agent: codex:gpt-6-sol/xhigh
+    agent: codex:gpt-6.1-sol/xhigh
     # when — OPTIONAL routing hints.
     when: [plan-review, tradeoffs]
     # prompt — Markdown appended to the role's generated contract.
@@ -59,7 +59,7 @@ roles:
     # agent — a target or fallback list: provider[:model][/effort].
     # Mechanical, fully specified work; a fallback runs only if a limited rung
     # left every file and Git history unchanged.
-    agent: codex:gpt-5.6-luna/xhigh
+    agent: codex:gpt-6-luna/xhigh
     # when — OPTIONAL routing hints.
     when: [boilerplate, bulk-edits, test-scaffolding, repository-surveys]
     # commit — delegate-only; only "never" (the delegate never commits).

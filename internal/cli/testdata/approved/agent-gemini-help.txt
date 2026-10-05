@@ -5,8 +5,8 @@ Usage:
 
 EXAMPLES
   coop gemini
-  coop gemini:gemini-3.5-flash
-  coop gemini:gemini-3.5-flash/high@work
+  coop gemini:gemini-3.8-flash
+  coop gemini:gemini-3.8-flash/high@work
   coop gemini -- --help
 
 OPTIONS

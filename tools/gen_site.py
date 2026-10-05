@@ -250,7 +250,7 @@ QUEUE = ('<figure class="window scene-watch" data-scene="watch" aria-label="coop
 # plays it a beat at a time, slow enough to read; a beat can move the live bar (done, active, what it
 # is on). The window shows the newest rows, as a terminal does; without the script it shows how the
 # run ended.
-AGENT = "claude:claude-fable-5/xhigh@work"
+AGENT = "claude:claude-opus-5-5/xhigh@work"
 RULE, THIN = "━" * 64, "─" * 64
 
 
@@ -515,7 +515,7 @@ ROTATE = ('<figure class="scene-card rotate" data-scene="rotate" aria-label="The
           'the work account reached its limit, so the same model runs on the home account; Codex on two accounts '
           'waits its turn"><ol class="slots" role="list">'
           + slot("claude", "claude:opus@work", 100, "spent") + slot("claude", "claude:opus@home", 40, "live")
-          + slot("openai", "codex:gpt-5.6-sol@work", 0) + slot("openai", "codex:gpt-5.6-sol@home", 0)
+          + slot("openai", "codex:gpt-6-astra@work", 0) + slot("openai", "codex:gpt-6-astra@home", 0)
           + "</ol></figure>")
 
 
@@ -531,9 +531,9 @@ def seat(slug, role, model, kind="", cls=""):
 TEAM = ('<figure class="scene-card team" data-scene="team" aria-label="The starter preset: a lead model and '
         'the three it hands work to, two advisers and an editor, from three providers">'
         '<p class="card-title"><span class="prompt">$ </span>coop frontier</p><div class="org">'
-        + seat("claude", "lead", "Fable 5", cls="lead") + '<ul class="org-roles" role="list">'
-        + seat("claude", "thinker", "Opus 4.8", "adviser") + seat("openai", "critic", "GPT-5.6 Sol", "adviser")
-        + seat("gemini", "fast", "Gemini 3.5 Flash", "editor") + "</ul></div></figure>")
+        + seat("claude", "lead", "Opus 5.5", cls="lead") + '<ul class="org-roles" role="list">'
+        + seat("claude", "thinker", "Fable 5.1", "adviser") + seat("openai", "critic", "GPT-6 Astra", "adviser")
+        + seat("gemini", "fast", "Gemini 3.8 Flash", "editor") + "</ul></div></figure>")
 
 
 # Project services: the sandbox and, beside it, the containers `coop up` starts, all inside the

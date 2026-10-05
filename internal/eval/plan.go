@@ -21,7 +21,7 @@ const (
 // Freezing later records its content and build identity for comparison across runs.
 type Configuration struct {
 	Kind  ConfigKind
-	Label string // resolved name, e.g. "codex:gpt-5.6/xhigh" or "frontier"
+	Label string // resolved name, e.g. "codex:gpt-6.1-sol/xhigh" or "frontier"
 }
 
 func (c Configuration) String() string { return c.Label }

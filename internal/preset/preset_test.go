@@ -308,10 +308,10 @@ func TestScaffold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the scaffolded template must load cleanly: %v", err)
 	}
-	if p.Lead().Provider != "claude" || p.Lead().Model != "claude-fable-5" {
+	if p.Lead().Provider != "claude" || p.Lead().Model != "claude-opus-5-5" {
 		t.Errorf("template lead = %s/%s", p.Lead().Provider, p.Lead().Model)
 	}
-	wantLadder := []string{"claude:claude-fable-5/xhigh", "codex:gpt-5.6-sol/xhigh"}
+	wantLadder := []string{"claude:claude-opus-5-5/xhigh", "codex:gpt-6-astra/xhigh"}
 	if len(p.LeadTargets) != len(wantLadder) {
 		t.Fatalf("template lead targets = %v, want %v", p.LeadTargets, wantLadder)
 	}
@@ -326,9 +326,9 @@ func TestScaffold(t *testing.T) {
 		t.Errorf("template should carry two consult roles and a delegate: %+v", p.Roles)
 	}
 	wantRoles := map[string]struct{ agent, model, effort string }{
-		"thinker": {"claude", "claude-opus-4-8", "xhigh"},
-		"critic":  {"codex", "gpt-5.6-sol", "xhigh"},
-		"fast":    {"gemini", "gemini-3.5-flash", ""},
+		"thinker": {"claude", "claude-fable-5-1", "max"},
+		"critic":  {"codex", "gpt-6-astra", "xhigh"},
+		"fast":    {"gemini", "gemini-3.8-flash", ""},
 	}
 	for _, role := range p.Roles {
 		want, ok := wantRoles[role.Name]

@@ -158,7 +158,7 @@ func (a *app) resolvePeers(command string, vals []string) ([]agents.Target, erro
 
 // resolvePeerTargets validates each --peer value against one already-taken list of signed-in
 // providers. A refusal quotes the peer AS TYPED, model and all: "codex" when the user wrote
-// "codex:gpt-5.6-sol" sends them looking for a peer they did not name.
+// "codex:gpt-6-astra" sends them looking for a peer they did not name.
 func resolvePeerTargets(command string, vals, authed []string) ([]agents.Target, error) {
 	var peers []agents.Target
 	for _, v := range vals {

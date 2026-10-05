@@ -16,7 +16,7 @@ lead:
   # The lead owns the session and combines the roles' work.
   # A list tries agents in order where automatic rotation is supported.
   # Model, effort and account syntax: coop help models
-  agent: [claude:claude-fable-5/xhigh, codex:gpt-5.6-sol/xhigh]
+  agent: [claude:claude-opus-5-5/xhigh, codex:gpt-6-astra/xhigh]
 
   # Extra instructions for the lead. Omit this field when not needed.
   prompt: roles/lead.md
@@ -27,7 +27,7 @@ roles:
     # mode: native would run this role inside the lead's own session instead,
     # which needs every lead above to be the role's provider.
     mode: consult
-    agent: claude:claude-opus-4-8/xhigh
+    agent: claude:claude-fable-5-1/max
     when: [architecture, debugging, code-review, before-commit]
     prompt: roles/thinker.md
 
@@ -36,14 +36,14 @@ roles:
     mode: consult
     # Roles use the provider's default account; do not add @account.
     # Consult and delegate agents may also be a fallback list.
-    agent: codex:gpt-5.6-sol/xhigh
+    agent: codex:gpt-6-astra/xhigh
     when: [plan-review, security, tradeoffs]
     prompt: roles/critic.md
 
   fast:
     # Delegates edit files. The lead reviews, checks and commits their work.
     mode: delegate
-    agent: gemini:gemini-3.5-flash
+    agent: gemini:gemini-3.8-flash
     when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]
     # These delegate settings only accept never.
     commit: never

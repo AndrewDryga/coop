@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Current models in the starter preset.** `coop presets init` now writes Opus 5.5 at xhigh as
+  the lead, falling back to GPT-6 Astra; Fable 5.1 at max effort as the thinker; GPT-6 Astra as the
+  critic; and Gemini 3.8 Flash for fast edits. Help, docs and the `coop models` examples name
+  current models too. Presets you already have keep their models.
+
 - **Simpler usage output.** Keep progress bars and show limits before the 30-day API estimate,
   without default tags or repetitive footnotes. Bars align across accounts, shared editor usage
   has a clearer label, and each provider's columns fit its own labels. Percentages right-align so
