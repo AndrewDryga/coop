@@ -74,6 +74,12 @@ figures on a timer, and never a figure whose sentence claims more than its sourc
 samples) on a clean clone, linked to `tools/lifecycle_bench.py`. Measure again on an idle machine
 before changing it, and never in a checkout with heavy local state, which starts slower.
 
+**The Zed card is a real screenshot** (`site/assets/img/zed-coop.png`): the window inside its 1px
+border, cut from a retina capture (`magick … txt:-` finds the border rows and columns) at even
+dimensions, so it shows at exactly half its pixel size and is never stretched. It sits on a surface
+card whose padding is the same on all four sides, and the 12px radius hides the window's rounded
+corners, which still hold desktop pixels. A new capture follows the same rule.
+
 **Tests pin docs wording.** Rewording `site/docs.html` can fail Go tests far from the site:
 `internal/cli/help_test.go` TestCurrentDocsDoNotAdvertiseRetiredContracts needs "commits no starter
 subagents" and rejects retired config names; `internal/cli/eval_cmd_test.go` needs the eval commands
@@ -101,3 +107,4 @@ nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 - 2026-10-04 — terminals are checked against their CLI sources (task 2026-10-02-fail-the-docs-check-when-a-site-output-snippet-d).
 - 2026-10-05 — case figures sit above their case's block, never inside it (task 2026-10-05-keep-each-homepage-figure-above-its-case-block-n).
 - 2026-10-05 — every case in a chapter has a figure or none; Presets carries a figure (task 2026-10-05-give-the-push-case-a-figure-and-presets-a-multi).
+- 2026-10-05 — the Zed card is a real screenshot (task 2026-10-05-show-a-real-zed-screenshot-in-integrations).

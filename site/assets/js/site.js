@@ -318,10 +318,6 @@ const SCENES = {
       }
     },
   },
-  zed: {
-    reset(card) { card.classList.add("is-pending"); },
-    async play(card) { await sleep(700); card.classList.remove("is-pending"); },
-  },
   worker: {
     reset(card) {
       for (const line of card.querySelectorAll(".line:not(.cmdline)")) line.classList.add("is-pending");

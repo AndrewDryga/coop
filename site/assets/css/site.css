@@ -363,25 +363,14 @@ main:focus { outline: none; }
   .svc.is-pending::before { border-left-style: dashed; }
 }
 
-/* integrations: Zed's agent panel driving the box, and a worker joining your platform */
+/* integrations: a real Zed window running co:op, and a worker joining your platform. The screenshot
+   sits on the card at its own size (2x pixels, never stretched); the 12px radius clips the window's
+   rounded corners, which still hold desktop pixels. */
 .integrations { display: grid; gap: 16px; min-width: 0; }
-.zed { container-type: inline-size; padding: 0; overflow: hidden; }
-.zed-body { display: grid; grid-template-columns: 9rem minmax(0, 1fr); }
-.zed-files { padding: 14px; border-right: 1px solid var(--divider); color: var(--dim); }
-.zed-files li + li { margin-top: 6px; padding-left: 1.25rem; }
-.zed-agent { display: grid; gap: 12px; padding: 14px 16px 18px; }
-.zed-head { display: flex; align-items: center; gap: 10px; font-family: var(--sans); font-weight: 600; }
-.zed-pills { display: flex; flex-wrap: wrap; gap: 8px; }
-.zed-pills span { padding: 2px 10px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--edge); color: var(--body); }
-.zed-ask { justify-self: end; max-width: 85%; padding: 8px 12px; border-radius: 12px 12px 4px 12px; background: var(--raised); font-family: var(--sans); }
-.zed-busy { display: flex; gap: 6px; height: 1.5rem; align-items: center; }
-.zed-busy i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
-.zed.is-pending :is(.zed-ask, .zed-busy) { visibility: hidden; }
+/* the same margin on all four sides: whatever the width leaves beside the screenshot, at least 32px */
+.zed { display: grid; place-items: center; padding: max(32px, (100% - 589px) / 2); }
+.zed-shot { width: 100%; max-width: 589px; height: auto; border-radius: 12px; box-shadow: 0 0 0 1px var(--line), 0 24px 48px -24px rgb(0 0 0 / 60%); }
 .scene-worker .line.is-pending { visibility: hidden; }
-@container (max-width: 420px) {
-  .zed-body { grid-template-columns: minmax(0, 1fr); }
-  .zed-files { display: none; }
-}
 
 /* Get started: one small terminal with the four commands in order, centred under the heading. Its
    tabs, in the title bar, pick your agent; each command has a small Copy button. */
@@ -540,7 +529,6 @@ main:focus { outline: none; }
 .js-story .stage:is([data-attack="env"], [data-attack="key"], [data-attack="issue"], [data-attack="prod"], [data-attack="supply"]) .hop.stop :is(.label, .cut),
 .js-story .stage:is([data-attack="push"], [data-attack="issue"]) .git :is(.label, .lock) { color: var(--danger); }
 
-@keyframes busy { 50% { opacity: 0.25; } }
 @keyframes drift { from { transform: translateY(32px); } to { transform: translateY(-32px); } }
 @media screen and (prefers-reduced-motion: no-preference) {
   html { scroll-behavior: smooth; }
@@ -560,9 +548,6 @@ main:focus { outline: none; }
   .secret-value::after { transition: transform 450ms cubic-bezier(0.65, 0, 0.35, 1) 250ms; }
   .attack { transition: opacity 250ms var(--ease), translate 500ms var(--ease); }
   .seat, .seat::before, .seat::after, .org-roles::before, .org-roles::after, .svc-dot { transition: background-color 300ms var(--ease), border-color 300ms var(--ease); }
-  .zed-busy i { animation: busy 1.2s ease-in-out infinite; }
-  .zed-busy i:nth-child(2) { animation-delay: 0.2s; }
-  .zed-busy i:nth-child(3) { animation-delay: 0.4s; }
   .attack.is-active { transition-delay: 150ms; }
   .case-figures > .evidence { transition: opacity 250ms var(--ease); }
   .case-figures > .is-active { transition-delay: 150ms; }
@@ -617,6 +602,7 @@ main:focus { outline: none; }
   .zone { padding-right: 40px; }
   .attack-rail { margin-top: 32px; }
   .attack .case { padding-left: 18px; }
+  .zed { padding: 16px; }
   .attacks { gap: 32px; }
   .attack .threat { font-size: 1.25rem; }
   :is(.step, .group-panel, .feature-copy, .attack) > .evidence { flex-direction: column; align-items: flex-start; gap: 8px; }

@@ -24,7 +24,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "tools" / "site"
 OUT = ROOT / "site" / "index.html"
 DOCS_PAGE = ROOT / "site" / "docs.html"
-MARK = "assets/img/favicon.svg"  # co:op's mark, as the nav, footer and Zed's panel show it
+MARK = "assets/img/favicon.svg"  # co:op's mark, as the nav and footer show it
 
 OK = '<span class="ok">✓</span>'
 
@@ -551,18 +551,14 @@ SERVICES = ('<figure class="scene-card services" data-scene="services" aria-labe
             f'<p class="svc-agent">{mark("claude")}Claude Code</p><p class="svc-project">shop/</p></div>'
             '<ul class="svc-list" role="list">' + service("db", DATABASE) + service("redis", LAYERS) + "</ul></div></figure>")
 
-# Integrations: Zed's agent panel driving the box over ACP, with co:op's preset and account
-# selectors (README "Drive it from Zed"), and a worker connecting to your own platform, with what
-# `coop sessions connect` prints (internal/cli/session_connect.go).
+# Integrations: a real Zed window running co:op (README "Drive it from Zed"), its provider menu open
+# beside co:op's preset and account menus, and a worker connecting to your own platform, with what
+# `coop sessions connect` prints (internal/cli/session_connect.go). The screenshot is the window
+# inside its border, cut from a retina capture at 1178x694, so it shows at exactly 2x.
 INTEGRATIONS = ('<div class="integrations">'
-                '<figure class="scene-card zed" data-scene="zed" aria-label="Zed\'s agent panel with co:op as the agent: '
-                'you pick the preset and account there, and the agent works in the box">'
-                + window_bar("Zed") +
-                '<div class="zed-body"><ul class="zed-files" role="list" aria-hidden="true"><li>shop/</li><li>src/</li><li>tests/</li></ul>'
-                f'<div class="zed-agent"><p class="zed-head"><img src="{MARK}" width="18" height="18" alt="">co:op</p>'
-                '<p class="zed-pills"><span>frontier</span><span>claude@work</span></p>'
-                '<p class="zed-ask">Add a /health endpoint</p>'
-                '<p class="zed-busy" aria-hidden="true"><i></i><i></i><i></i></p></div></div></figure>'
+                '<figure class="scene-card zed"><img class="zed-shot" src="assets/img/zed-coop.png" width="589" height="347" '
+                'alt="Zed\'s agent panel running co:op, its provider menu open on Claude Code, Codex, Gemini CLI and Grok, '
+                'beside menus for the preset, account, model and effort"></figure>'
                 '<figure class="window scene-worker" data-scene="worker" aria-label="What coop sessions connect prints as a worker joins your platform">'
                 + window_bar("coop sessions connect") + term(at_prompt("coop sessions connect " + NOWRAP("--controller") + " https://jobs.example.com", "~"),
                        line(f"  {OK} Local session service ready"),
