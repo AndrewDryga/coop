@@ -12,8 +12,10 @@ every push to main. Two parts are generated and committed:
 - **`site/index.html`** is rendered by `tools/gen_site.py` from `tools/site/index.tpl.html` (icons,
   provider marks from `tools/site/logos/`, terminal scenes, the commands you copy). Never edit it by
   hand: `make tools-test` runs `gen_site.py --check` (`tools/test_site_content.py`) and fails on
-  drift. The task-commit count comes from `git log origin/main` when you regenerate; `--check`
-  reuses the count already in the page, so CI needs no history.
+  drift. The task-commit count adds up the Coop-Task commits on `origin/main` of co:op, Emisar
+  (`../emisar`) and Ryker (`../responder`) when you regenerate, so fetch all three first; a missing
+  checkout stops the generator. `--check` reuses the count already in the page, so CI needs no
+  history.
 - **The docs' terminal windows** fill `site/docs.html` between `<!-- gen_site: NAME -->` and
   `<!-- /gen_site -->` (`DOCS_SCENES`: check-secrets, doctor, claude, loop, fork). The rest of
   docs.html is hand-written; `--check` catches an edited or stale region, not prose edits.

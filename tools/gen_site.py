@@ -571,12 +571,21 @@ INTEGRATIONS = ('<div class="integrations">'
                 + "</figure></div>")
 
 
+# The homepage counts what agents wrote through task queues across Protectorate's products: co:op,
+# and Emisar and Ryker checked out beside it (Ryker's checkout is named responder).
+PROOF_REPOS = (ROOT, ROOT.parent / "emisar", ROOT.parent / "responder")
+
+
 def proof_count():
-    """Commits on the published main branch that carry a Coop-Task trailer, minus 'none'."""
-    log = subprocess.run(["git", "-C", str(ROOT), "log", "origin/main", "--format=%B"],
-                         capture_output=True, text=True, check=True).stdout
-    lines = [l for l in log.splitlines() if l.startswith("Coop-Task:")]
-    return f"{sum(1 for l in lines if l.split(':', 1)[1].strip() != 'none'):,}"
+    """Commits on each product's published main branch that carry a Coop-Task trailer, minus 'none'."""
+    total = 0
+    for repo in PROOF_REPOS:
+        if not (repo / ".git").exists():
+            sys.exit(f"the commit count needs every product checked out beside co:op; {repo} is missing")
+        log = subprocess.run(["git", "-C", str(repo), "log", "origin/main", "--format=%B"],
+                             capture_output=True, text=True, check=True).stdout
+        total += sum(1 for l in log.splitlines() if l.startswith("Coop-Task:") and l.split(":", 1)[1].strip() != "none")
+    return f"{total:,}"
 
 
 def published_count():
