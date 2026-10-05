@@ -14,7 +14,7 @@ type sessionCapabilities struct {
 	ControllerToolsVersions            []int `json:"controller_tools_versions"`
 	RepositoryFreshnessReceiptVersions []int `json:"repository_freshness_receipt_versions"`
 	// SessionEvidenceVersions proves the daemon serves the session evidence read this connector
-	// maps get_session_evidence onto. Omitted by an older daemon, which then advertises nothing.
+	// forwards an api_request GET to. Omitted by an older daemon, which then advertises nothing.
 	SessionEvidenceVersions []int `json:"session_evidence_versions,omitempty"`
 }
 

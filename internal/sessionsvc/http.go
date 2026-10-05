@@ -867,7 +867,7 @@ func (h *sessionHTTPHandler) getSession(w http.ResponseWriter, r *http.Request, 
 // getNetwork and getNetworkReceipt are READS. They project retained evidence and never probe a
 // gateway, so a denial storm cannot make them slow, and they cannot grant, approve, or widen
 // anything — the session API has no path to network authority at all, by design.
-// getSessionEvidence is the one read behind the worker's get_session_evidence command. It is a
+// getSessionEvidence is the one read a controller reaches through an api_request GET. It is a
 // GET with no query and no body: nothing about the session can be selected, widened or probed
 // from here, and the daemon alone decides what the object discloses.
 func (h *sessionHTTPHandler) getSessionEvidence(w http.ResponseWriter, r *http.Request, sessionID string) {

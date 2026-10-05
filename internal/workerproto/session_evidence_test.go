@@ -292,7 +292,7 @@ func TestWorkerProtocolAdmitsTheSessionEvidenceCommand(t *testing.T) {
 		IdempotencyKey: "responder:evidence:1",
 	}
 	if err := command.Validate(); err != nil {
-		t.Fatalf("get_session_evidence rejected by the protocol: %v", err)
+		t.Fatalf("the evidence api_request was rejected by the protocol: %v", err)
 	}
 	encoded, err := json.Marshal(sampleSessionEvidence())
 	if err != nil {

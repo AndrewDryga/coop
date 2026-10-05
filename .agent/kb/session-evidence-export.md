@@ -3,11 +3,11 @@ name: session-evidence-export
 description: one bounded versioned read exports a session's network posture, observation, receipt and bound task to a fleet controller, with every section stating its own availability and unknown never collapsing into zero
 subsystem: worker
 sources: [internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/http.go, internal/workerconnector/executor.go, internal/workerconnector/capabilities.go, internal/workerconnector/event_streams.go, internal/tasks/dir.go, docs/session-api.md]
-updated: 2026-09-11
+updated: 2026-10-05
 ---
 
 `GET /v1/sessions/{id}/evidence` is the daemon's own account of one session for a control plane's
-inspection page, fetched by the `get_session_evidence` worker command and forwarded verbatim. Five
+inspection page, fetched by an ordinary `api_request` GET and forwarded verbatim. Five
 things about it are not obvious from the code.
 
 **Every section fails on its own.** The posture (`mode`, `fingerprint`) comes from the immutable
@@ -58,3 +58,4 @@ control plane on this protocol needs the same before a worker carrying this buil
 ## Changelog
 - 2026-09-11 — created with the evidence read, its connector command, the `session-evidence`
   capability proof and the `network` session event's outbound export.
+- 2026-10-05 — the read is an ordinary api_request GET; the get_session_evidence command name is gone from code and docs (task 2026-10-05-drop-get-session-evidence-from-code-comments).
