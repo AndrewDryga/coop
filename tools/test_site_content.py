@@ -115,6 +115,18 @@ class SiteContentTest(unittest.TestCase):
                 self.assertIn('class="threat"', block.group(1))
                 self.assertNotIn('class="evidence"', block.group(1), "a figure inside the case's block")
 
+    def test_a_chapter_gives_every_case_a_figure_or_none(self):
+        # Pinned, the figure of the case on screen shows above the rail. A case without one left that
+        # space empty, and the owner rejected the gap (2026-10-05).
+        source = (SITE / "index.html").read_text(encoding="utf-8")
+        chapters = re.findall(r'<ol class="attacks"[^>]*>(.*?)</ol>', source, re.S)
+        self.assertGreaterEqual(len(chapters), 2)
+        for chapter in chapters:
+            cases = re.findall(r'<li class="attack" data-attack="([\w-]+)">(.*?)</li>', chapter, re.S)
+            bare = [name for name, case in cases if 'class="evidence"' not in case]
+            with self.subTest(cases=[name for name, _ in cases]):
+                self.assertIn(len(bare), (0, len(cases)), f"only some cases have a figure; missing: {bare}")
+
     def test_install_script_is_published_from_the_repo_not_copied(self):
         # coop.dryga.com/install.sh is the repo's install.sh, copied in by the Pages job at deploy.
         # A committed site/install.sh would drift from it, and a deploy that skipped install.sh

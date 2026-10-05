@@ -24,10 +24,10 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
   <link rel="manifest" href="site.webmanifest">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=a4431e1581">
+  <link rel="stylesheet" href="assets/css/site.css?v=10bca541e1">
   <script>if (matchMedia("(min-width: 1024px)").matches && "IntersectionObserver" in window) { document.documentElement.classList.add("js-story"); setTimeout(() => document.documentElement.classList.contains("story-ready") || document.documentElement.classList.remove("js-story"), 3000); }</script>
-  <script src="assets/js/site.js?v=a4431e1581" defer></script>
-  <script src="assets/js/analytics.js?v=a4431e1581" defer></script>
+  <script src="assets/js/site.js?v=10bca541e1" defer></script>
+  <script src="assets/js/analytics.js?v=10bca541e1" defer></script>
   <noscript><style>.copy, .agents { display: none; }</style></noscript>
 </head>
 <body>
@@ -147,6 +147,7 @@
                   </div>
                 </li>
                 <li class="attack" data-attack="push">
+                  <p class="evidence"><strong>35%</strong> <span>of the time, even the best of five recent models changed code that needed no change, <a href="https://arxiv.org/abs/2605.07769">a 2026 study found</a>.</span></p>
                   <div class="case">
                     <p class="threat">A confused agent force-pushes over your team’s main branch.</p>
                     <p class="stopped"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>The box has no Git credentials, so only you can push.</span></p>
@@ -206,6 +207,7 @@
             <h3>Presets</h3>
             <p>A preset is a team of models: one lead, and as many roles as you need. The lead consults them or hands them work.</p>
             <p><code>coop presets init</code> writes a starter team you can change.</p>
+            <p class="evidence"><strong>6</strong> <span>open models from five labs, answering as one team, outscored GPT-4o alone, 65.1% to 57.5%, <a href="https://www.together.ai/blog/together-moa">Together AI found</a>.</span></p>
           </div>
           <figure class="scene-card team" data-scene="team" aria-label="The starter preset: a lead model and the three it hands work to, two advisers and an editor, from three providers"><p class="card-title"><span class="prompt">$ </span>coop frontier</p><div class="org"><div class="seat lead" data-role="lead"><span class="seat-head"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#mark-claude"/></svg><span class="role">lead</span></span><span class="model">Opus 5.5</span></div><ul class="org-roles" role="list"><li class="seat" data-role="thinker"><span class="seat-head"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#mark-claude"/></svg><span class="role">thinker</span></span><span class="model">Fable 5.1</span><span class="kind">adviser</span></li><li class="seat" data-role="critic"><span class="seat-head"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#mark-openai"/></svg><span class="role">critic</span></span><span class="model">GPT-6 Astra</span><span class="kind">adviser</span></li><li class="seat" data-role="fast"><span class="seat-head"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><use href="#mark-gemini"/></svg><span class="role">fast</span></span><span class="model">Gemini 3.8 Flash</span><span class="kind">editor</span></li></ul></div></figure>
         </li>

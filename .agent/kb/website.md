@@ -65,8 +65,9 @@ mistake is the first child of that case's `.attack`, above its `.case` block (th
 stopped lines), never inside it: the owner rejected a figure between a threat and its stopped lines.
 Listed (below 1024px or without the script), each figure heads its case over a block with its own
 line. Pinned, site.js copies the figures into a `.case-figures` slot above the rail and shows the one
-for the case on screen; a case with no figure leaves the slot empty, so the rail does not jump.
-Never put figures on a timer. A case with no source that fits it gets no figure. The
+for the case on screen. A chapter gives every case a figure or none (site.js builds the slot only
+then, and a site test checks it): the owner rejected the empty gap a figureless case left. Never put
+figures on a timer, and never a figure whose sentence claims more than its source. The
 "3 s" start in the first story step is our own number: `make lifecycle-bench` (filtered_start, 10
 samples) on a clean clone, linked to `tools/lifecycle_bench.py`. Measure again on an idle machine
 before changing it, and never in a checkout with heavy local state, which starts slower.
@@ -97,3 +98,4 @@ nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 - 2026-10-04 — the measured warm start in story step 1 (task 2026-10-04-show-how-fast-a-warm-box-starts-on-the-homepage).
 - 2026-10-04 — terminals are checked against their CLI sources (task 2026-10-02-fail-the-docs-check-when-a-site-output-snippet-d).
 - 2026-10-05 — case figures sit above their case's block, never inside it (task 2026-10-05-keep-each-homepage-figure-above-its-case-block-n).
+- 2026-10-05 — every case in a chapter has a figure or none; Presets carries a figure (task 2026-10-05-give-the-push-case-a-figure-and-presets-a-multi).

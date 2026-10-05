@@ -116,7 +116,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [public-release-notes-are-product-focused](public-release-notes-are-product-focused.md) — record actual published releases, product changes and user actions, not failed attempts or internal decisions
 - [align-trailing-comments](align-trailing-comments.md) — trailing `#` comments in an example line up in one column
 - [docs-bold-sparingly](docs-bold-sparingly.md) — bold marks structure, never mid-sentence emphasis, never inline code
-- [case-figures-outside-case-blocks](case-figures-outside-case-blocks.md) — a homepage figure sits above or below its case's block, never inside it
+- [case-figures-outside-case-blocks](case-figures-outside-case-blocks.md) — a homepage figure sits above or below its case's block, never inside it; a chapter gives every case a figure or none
 
 **The box**
 - [box-logins-device-code](box-logins-device-code.md) — boxed agent logins use device-code/paste flows; browser OAuth hangs in a container

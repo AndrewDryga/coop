@@ -98,12 +98,11 @@ if (stage && "IntersectionObserver" in window) {
   const chapters = [...document.querySelectorAll(".step-group")].map((group) => {
     const items = [...group.querySelectorAll(".attack")];
     // Each case's figure sits above the rail while its case is on screen, never inside the case's
-    // block; a case without one leaves the slot empty. The cases keep their own copies for the list.
-    const figures = items.map((item) => {
-      const own = item.querySelector(":scope > .evidence");
-      return own ? own.cloneNode(true) : Object.assign(document.createElement("p"), { className: "evidence" });
-    });
-    if (items.some((item) => item.querySelector(":scope > .evidence"))) {
+    // block. A chapter gives every case a figure or none, since a case without one would leave the
+    // space empty. The cases keep their own copies for the list.
+    const own = items.map((item) => item.querySelector(":scope > .evidence"));
+    const figures = own.every(Boolean) ? own.map((figure) => figure.cloneNode(true)) : [];
+    if (figures.length) {
       const slot = Object.assign(document.createElement("div"), { className: "case-figures" });
       slot.append(...figures);
       group.querySelector(".attack-rail").before(slot);
