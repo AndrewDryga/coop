@@ -11,7 +11,7 @@ import (
 // The title and input cross now (activity_narration.go), without the root.
 func TestPublicActivityKeepsBoundedPathFactsWithoutRawHostContext(t *testing.T) {
 	for _, kind := range []string{"tool.started", "tool.completed"} {
-		raw := json.RawMessage(`{"kind":"read","status":"completed","title":"Read /host/checkout/lib/a.go","input":{"path":"/host/checkout/lib/a.go"},"path_context":{"basis":"lexical","root":"/host/checkout","paths":[{"source":"/locations/0/path","scope":"project","path":"lib/a.go","secret":"do not export"},{"source":"/input/path","scope":"outside","path":"/host/secret"}]}}`)
+		raw := json.RawMessage(`{"kind":"read","status":"completed","title":"Read /host/checkout/lib/a.go","input":{"path":"/host/checkout/lib/a.go"},"checkout_root":"/host/checkout","path_context":{"basis":"lexical","paths":[{"source":"/locations/0/path","scope":"project","path":"lib/a.go","secret":"do not export"},{"source":"/input/path","scope":"outside","path":"/host/secret"}]}}`)
 		payload, ok := publicActivityPayload(kind, raw)
 		if !ok {
 			t.Fatal("rejected a valid tool event")

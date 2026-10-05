@@ -2,6 +2,8 @@ package workerconnector
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -114,4 +116,39 @@ func decodeNarration(t *testing.T, kind, raw string) map[string]any {
 		t.Fatal(err)
 	}
 	return value
+}
+
+// The daemon's real narrated events (sessionsvc/testdata/narrated_activity.json, which the daemon's
+// own test pins) name the checkout by its absolute path in a thought, a plan step, a read's title,
+// input and location, and a command and its output. The controller gets each of them relative to
+// the checkout, and never the root itself.
+func TestDaemonActivityCrossesWithoutTheCheckoutRoot(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "sessionsvc", "testdata", "narrated_activity.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []struct {
+		Type    string          `json:"type"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &events); err != nil || len(events) == 0 {
+		t.Fatalf("decode the daemon's events: %v", err)
+	}
+	crossed := []string{}
+	for _, event := range events {
+		payload, ok := publicActivityPayload(event.Type, event.Payload)
+		if !ok {
+			t.Fatalf("rejected the daemon's %s event", event.Type)
+		}
+		if strings.Contains(string(payload), "/home/dev") {
+			t.Errorf("%s carried the checkout root to the controller: %s", event.Type, payload)
+		}
+		crossed = append(crossed, string(payload))
+	}
+	all := strings.Join(crossed, "\n")
+	for _, relative := range []string{"The failing test is lib/a_test.go.", "Fix lib/a.go", "Read lib/a.go", "go test lib", "FAIL: lib/a_test.go:12"} {
+		if !strings.Contains(all, relative) {
+			t.Errorf("lost %q; it should cross relative to the checkout:\n%s", relative, all)
+		}
+	}
 }

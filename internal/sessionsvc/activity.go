@@ -477,11 +477,27 @@ func (a *sessionActivity) enqueueLocked(eventType session.EventType, payload map
 	// work is not quiet.
 	a.narratedAt = a.now()
 	a.budget--
+	// Only this daemon knows the checkout root, and the worker takes it out of everything it
+	// narrates to its controller (workerconnector/activity_narration.go), so every narrated event
+	// carries it. The local API keeps the absolute paths.
+	if a.workspace != "" && narratedActivity(eventType) {
+		payload["checkout_root"] = a.workspace
+	}
 	a.pending = append(a.pending, a.request(eventType, payload))
 	select {
 	case a.wake <- struct{}{}:
 	default:
 	}
+}
+
+// narratedActivity is an event whose text a worker narrates to its controller.
+func narratedActivity(eventType session.EventType) bool {
+	switch eventType {
+	case session.EventToolStarted, session.EventToolCompleted, session.EventModelThought,
+		session.EventModelProgress, session.EventModelPlan, session.EventPermission:
+		return true
+	}
+	return false
 }
 
 func (a *sessionActivity) request(eventType session.EventType, payload map[string]any) session.AppendEventRequest {

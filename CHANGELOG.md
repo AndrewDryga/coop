@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Workers keep the checkout path to themselves.** What a worker tells its controller about a
+  turn (tool titles, commands and their output, thoughts, plans) still named the session's checkout
+  by its absolute path, though the docs said the worker removes it: the worker looked for the path
+  in a field the session service never filled. The service now sends it with every narrated
+  event, so the controller sees `lib/a.go` where it used to see `/Users/you/…/lib/a.go`.
+
 - **Session workspace and checkpoint calls check their headers.** `POST /v1/sessions/{id}/workspace`
   and `/checkpoint` now answer `400` to a query string, a Content-Type other than
   `application/json` or a repeated `Idempotency-Key`, like every other session mutation. Before,

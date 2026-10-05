@@ -38,12 +38,12 @@ type narration struct {
 	withheld map[string]any
 }
 
+// The daemon puts the session's checkout root on every narrated event (sessionsvc/activity.go); it
+// is read here and never copied out.
 func newNarration(public map[string]any, value map[string]any) *narration {
 	root := ""
-	if context, ok := value["path_context"].(map[string]any); ok {
-		if text, ok := context["root"].(string); ok && len(text) > 1 {
-			root = strings.TrimRight(text, "/")
-		}
+	if text, ok := value["checkout_root"].(string); ok && len(text) > 1 {
+		root = strings.TrimRight(text, "/")
 	}
 	return &narration{public: public, root: root, withheld: map[string]any{}}
 }

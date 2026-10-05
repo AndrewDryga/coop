@@ -1,9 +1,12 @@
 package sessionsvc
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -135,5 +138,46 @@ func TestActivityPathMetadataIsBoundedAndMissingRootsStayUnknown(t *testing.T) {
 	got = activityPathContext("", "read", json.RawMessage(`{"file_path":"lib/a.go"}`), nil, nil)
 	if len(got.Paths) != 1 || got.Paths[0].Scope != "unknown" {
 		t.Fatalf("guessed missing root: %+v", got)
+	}
+}
+
+// The worker takes the checkout root out of everything it narrates to its controller
+// (workerconnector/activity_narration.go), and only the daemon knows that root. These are the
+// daemon's real events for a turn that thinks, plans, reads a file and runs a command, each naming
+// the checkout by its absolute path. The worker's own test projects this same file, so the two
+// sides can't drift apart: the worker once read the root from a field the daemon never wrote, and
+// every absolute path reached the controller.
+func TestNarratedActivityMatchesTheWorkerFixture(t *testing.T) {
+	store, sess := newActivityTestStore(t)
+	sess.Workspace = "/home/dev/shop"
+	activity := newSessionActivity(store, sess, "turn-root")
+	for _, update := range []map[string]any{
+		{"sessionUpdate": "agent_thought_chunk", "content": map[string]any{"type": "text", "text": "The failing test is /home/dev/shop/lib/a_test.go."}},
+		{"sessionUpdate": "plan", "entries": []map[string]any{{"content": "Fix /home/dev/shop/lib/a.go", "status": "pending", "priority": "high"}}},
+		{"sessionUpdate": "tool_call", "toolCallId": "read-1", "title": "Read /home/dev/shop/lib/a.go", "kind": "read", "status": "in_progress",
+			"rawInput": map[string]any{"path": "/home/dev/shop/lib/a.go"}},
+		{"sessionUpdate": "tool_call_update", "toolCallId": "read-1", "status": "completed", "locations": []map[string]any{{"path": "/home/dev/shop/lib/a.go", "line": 4}}},
+		{"sessionUpdate": "tool_call", "toolCallId": "run-1", "title": "Run go test /home/dev/shop/lib", "kind": "execute", "status": "in_progress",
+			"rawInput": map[string]any{"command": "go test /home/dev/shop/lib"}},
+		{"sessionUpdate": "tool_call_update", "toolCallId": "run-1", "status": "failed", "rawOutput": map[string]any{"stdout": "--- FAIL: /home/dev/shop/lib/a_test.go:12"}},
+	} {
+		frame, err := json.Marshal(map[string]any{"update": update})
+		if err != nil {
+			t.Fatal(err)
+		}
+		activity.observe(frame)
+	}
+	activity.close(context.Background())
+	lines := []string{}
+	for _, event := range activityEvents(t, store, sess.ID) {
+		lines = append(lines, fmt.Sprintf(`{"type":%q,"payload":%s}`, event.Type, bytes.TrimSpace(event.Payload)))
+	}
+	got := "[\n" + strings.Join(lines, ",\n") + "\n]\n"
+	want, err := os.ReadFile(filepath.Join("testdata", "narrated_activity.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != string(want) {
+		t.Fatalf("the daemon's narrated events changed; update testdata/narrated_activity.json and run the worker's test against it:\n%s", got)
 	}
 }

@@ -1,0 +1,8 @@
+[
+{"type":"model.thought","payload":{"checkout_root":"/home/dev/shop","text":"The failing test is /home/dev/shop/lib/a_test.go."}},
+{"type":"model.plan","payload":{"checkout_root":"/home/dev/shop","entries":[{"content":"Fix /home/dev/shop/lib/a.go","priority":"high","status":"pending"}]}},
+{"type":"tool.started","payload":{"checkout_root":"/home/dev/shop","input":{"path":"/home/dev/shop/lib/a.go"},"kind":"read","path_context":{"basis":"lexical","paths":[{"source":"/input/path","path":"lib/a.go","scope":"project"}]},"title":"Read /home/dev/shop/lib/a.go","tool_call_id":"read-1"}},
+{"type":"tool.completed","payload":{"checkout_root":"/home/dev/shop","content":null,"input":{"path":"/home/dev/shop/lib/a.go"},"kind":"read","locations":[{"line":4,"path":"/home/dev/shop/lib/a.go"}],"output":null,"path_context":{"basis":"lexical","paths":[{"source":"/input/path","path":"lib/a.go","scope":"project"},{"source":"/locations/0/path","path":"lib/a.go","scope":"project"}]},"status":"completed","title":"Read /home/dev/shop/lib/a.go","tool_call_id":"read-1"}},
+{"type":"tool.started","payload":{"checkout_root":"/home/dev/shop","input":{"command":"go test /home/dev/shop/lib"},"kind":"execute","title":"Run go test /home/dev/shop/lib","tool_call_id":"run-1"}},
+{"type":"tool.completed","payload":{"checkout_root":"/home/dev/shop","content":null,"input":{"command":"go test /home/dev/shop/lib"},"kind":"execute","locations":null,"output":{"stdout":"--- FAIL: /home/dev/shop/lib/a_test.go:12"},"status":"failed","title":"Run go test /home/dev/shop/lib","tool_call_id":"run-1"}}
+]

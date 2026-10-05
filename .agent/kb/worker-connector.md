@@ -2,8 +2,8 @@
 name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, streams large API bodies under the same command identity, and never falls back to local execution
 subsystem: worker
-sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/first_download_waits.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go]
-updated: 2026-10-04
+sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/first_download_waits.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go, internal/sessionsvc/activity.go, internal/workerconnector/activity_narration.go]
+updated: 2026-10-05
 ---
 
 `coop sessions connect --controller <https-url> --token-file <path>` connects this machine to a fleet controller. Its
@@ -111,14 +111,22 @@ The traps the code does not make obvious:
   reads a shared filesystem when the daemon is unreachable — the error is reported and the
   controller redelivers.
 - **Activity has two privacy boundaries.** The owner-private events API retains bounded tool
-  evidence, but outbound `publicActivityPayload` deliberately strips free-form fields. Adding
-  local narration alone does not make it visible to a fleet controller. Tool `path_context`
-  crosses only after independent validation: up to 16 lexical project-relative paths, outside
-  or unknown warnings without absolute paths, no checkout root. This is display metadata, not
-  symlink containment authority. Late path evidence belongs to the completion, not a rewritten
-  start event. The reconnect/ACK regression proves this metadata survives durable delivery.
+  evidence with absolute paths. Outbound `publicActivityPayload` narrates a tool's title, input
+  and result, thoughts, progress and plan, each bounded, secret-scanned and with the checkout
+  root replaced (`activity_narration.go`). Only the daemon knows that root: it writes
+  `checkout_root` on every narrated event (`sessionsvc/activity.go` `narratedActivity`), and the
+  worker reads it and never copies it out. The worker once read the root from
+  `path_context.root`, which the daemon never wrote, so every absolute path reached the
+  controller; `sessionsvc/testdata/narrated_activity.json` now pins the daemon's real events and
+  both packages' tests use it. Tool `path_context` crosses only after independent validation: up
+  to 16 lexical project-relative paths, outside or unknown warnings without absolute paths. This
+  is display metadata, not symlink containment authority. Late path evidence belongs to the
+  completion, not a rewritten start event. The reconnect/ACK regression proves this metadata
+  survives durable delivery.
 
 ## Changelog
+- 2026-10-05 — the checkout root never reached the worker's narration; the daemon now writes
+  `checkout_root` on narrated events (task 2026-10-05-check-whether-worker-activity-events-leak-the-ch).
 - 2026-10-04 — documented the first-download hold (d019c807) and its once-per-wait report
   (task 2026-10-04-a-create-waiting-on-a-repository-s-first-downloa), verified against connector.go.
 - 2026-10-01 — Go1.27's default JSONv2 leaves JavaScript escaping enabled when

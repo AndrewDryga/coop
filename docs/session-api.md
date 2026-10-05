@@ -722,7 +722,9 @@ Persist the last sequence you processed, and request `after=<sequence>` after a 
 
 Owner-private events contain identity, sequence, turn ID, type, version, timestamp and the event's
 own payload. Bounded raw tool evidence can include filesystem paths, arguments, results and
-diffs.
+diffs. Every narrated event (a tool's start and completion, a thought, progress, a plan, a
+permission answer) also carries `checkout_root`, the session's checkout path, so the worker can
+take it out of what it sends.
 
 The separate outbound worker projection carries what the model did to its controller: a tool's
 title, input and result, and the model's thoughts, progress and plan. The session's checkout root
