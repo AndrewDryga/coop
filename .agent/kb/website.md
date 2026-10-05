@@ -71,7 +71,9 @@ for the case on screen. A chapter gives every case a figure or none (site.js bui
 then, and a site test checks it): the owner rejected the empty gap a figureless case left. Never put
 figures on a timer, and never a figure whose sentence claims more than its source. The Zed
 figure (Integrations) comes from zed.dev/agent-metrics, a live 30-day page: read it again
-before you touch that line, and use today's number. The
+before you touch that line, and use today's number. The Loops figure (120 tasks in one
+9-hour run) is the owner's own number from a run this machine's git and loop telemetry don't hold;
+ask the owner before you change it. The
 "3 s" start in the first story step is our own number: `make lifecycle-bench` (filtered_start, 10
 samples) on a clean clone, linked to `tools/lifecycle_bench.py`. Measure again on an idle machine
 before changing it, and never in a checkout with heavy local state, which starts slower.
@@ -111,3 +113,4 @@ nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 - 2026-10-05 — every case in a chapter has a figure or none; Presets carries a figure (task 2026-10-05-give-the-push-case-a-figure-and-presets-a-multi).
 - 2026-10-05 — the Zed card is a real screenshot (task 2026-10-05-show-a-real-zed-screenshot-in-integrations).
 - 2026-10-05 — Forks, Rotate and Integrations carry sourced figures; the Zed one is live (task 2026-10-05-add-sourced-figures-to-forks-rotation-and-integr).
+- 2026-10-05 — Loops carries the owner's 120-task, 9-hour run (task 2026-10-05-add-the-owner-s-loops-figure-to-the-homepage).
