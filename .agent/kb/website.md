@@ -72,8 +72,8 @@ then, and a site test checks it): the owner rejected the empty gap a figureless 
 figures on a timer, and never a figure whose sentence claims more than its source. The Zed
 figure (Integrations) comes from zed.dev/agent-metrics, a live 30-day page: read it again
 before you touch that line, and use today's number. The Loops figure (120 tasks in one
-9-hour run) is the owner's own number from a run this machine's git and loop telemetry don't hold;
-ask the owner before you change it. The
+9-hour run during our normal work, as the owner asked it to say) is the owner's own number from a
+run this machine's git and loop telemetry don't hold; ask the owner before you change it. The
 "3 s" start in the first story step is our own number: `make lifecycle-bench` (filtered_start, 10
 samples) on a clean clone, linked to `tools/lifecycle_bench.py`. Measure again on an idle machine
 before changing it, and never in a checkout with heavy local state, which starts slower.
@@ -81,8 +81,13 @@ before changing it, and never in a checkout with heavy local state, which starts
 **The Zed card is a real screenshot** (`site/assets/img/zed-coop.png`): the window inside its 1px
 border, cut from a retina capture (`magick … txt:-` finds the border rows and columns). Its two
 rounded window corners are repainted in the bar color, so no desktop pixels show however the page
-rounds it. It fills the Integrations column, as wide as the terminal under it, with no frame or
-outline (the owner found the framed version ugly). A new capture follows the same rule.
+rounds it. It fills the Integrations column alone, with no frame or outline (the owner found the
+framed version ugly, and had the `coop sessions connect` terminal under it removed). A new capture
+follows the same rule.
+
+**The Get started commands** each put their label (Install, Sign in…) above the command in the 14px
+supporting size, with the Copy button level with the command. The label spans the row
+(`grid-column: 1 / -1`); without that, the grid places the command beside the label, not under it.
 
 **Tests pin docs wording.** Rewording `site/docs.html` can fail Go tests far from the site:
 `internal/cli/help_test.go` TestCurrentDocsDoNotAdvertiseRetiredContracts needs "commits no starter
@@ -114,3 +119,4 @@ nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 - 2026-10-05 — the Zed card is a real screenshot (task 2026-10-05-show-a-real-zed-screenshot-in-integrations).
 - 2026-10-05 — Forks, Rotate and Integrations carry sourced figures; the Zed one is live (task 2026-10-05-add-sourced-figures-to-forks-rotation-and-integr).
 - 2026-10-05 — Loops carries the owner's 120-task, 9-hour run (task 2026-10-05-add-the-owner-s-loops-figure-to-the-homepage).
+- 2026-10-05 — setup labels above their commands, the worker terminal gone, Loops says normal work (task 2026-10-05-homepage-polish-setup-labels-above-the-commands).

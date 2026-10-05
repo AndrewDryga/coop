@@ -154,11 +154,6 @@ PROVIDERS = ('<ul class="providers" role="list" aria-label="Agents co:op runs">'
              + provider("openai", "Codex") + provider("gemini", "Gemini") + provider("grok", "Grok") + "</ul>")
 
 
-def NOWRAP(text):
-    """Keeps a flag with its value, so a narrow screen never breaks inside --controller."""
-    return f'<span class="nowrap">{text}</span>'
-
-
 def snippet(*pairs):
     """Commands, each under a note saying what it does."""
     return "<pre><code>" + "".join(line(f'<span class="note"># {note}</span>') + line(f'<span class="prompt">$ </span>{command}', "cmd")
@@ -434,8 +429,6 @@ TERMINAL_SOURCES = {
         shape("Merge fork {} into {}"), shape("{} · +{} −{}", '"  %s · +%d −%d"'),
         shape("Merge these commits? [Y/n] {}", '"Merge these commits?"', '"Y/n"'), shape("Rebasing onto {}"),
         shape("Running project checks"), shape("Running: {}"), shape("Merged fork {} into {}")]},
-    "worker": {"go": ["internal/cli/session_connect.go"], "examples": [], "shapes": [
-        shape("Local session service ready"), shape("Connecting to {}…"), shape("Worker identity ready: {}")]},
     "watch": {"go": ["internal/tasks/watch.go", "internal/tasks/lease.go", "internal/taskstate/taskstate.go", "internal/ui/live.go"],
               "examples": [], "shapes": [
         shape("[{}]  {} todo · {} in_progress · {} blocked · {} done", '"%d %s"', '"10_in_progress"', '"░"'),
@@ -551,21 +544,13 @@ SERVICES = ('<figure class="scene-card services" data-scene="services" aria-labe
             f'<p class="svc-agent">{mark("claude")}Claude Code</p><p class="svc-project">shop/</p></div>'
             '<ul class="svc-list" role="list">' + service("db", DATABASE) + service("redis", LAYERS) + "</ul></div></figure>")
 
-# Integrations: a real Zed window running co:op (docs/integrations.md "Zed and other ACP editors"), its provider menu open
-# beside co:op's preset and account menus, and a worker connecting to your own platform, with what
-# `coop sessions connect` prints (internal/cli/session_connect.go). The screenshot is the window
-# inside its border, cut from a retina capture at 1178x694, with its two rounded window corners
-# repainted in the bar color, so the page can round them at any size.
-INTEGRATIONS = ('<div class="integrations">'
-                '<figure class="zed"><img class="zed-shot" src="assets/img/zed-coop.png" width="589" height="347" '
+# Integrations: a real Zed window running co:op (docs/integrations.md "Zed and other ACP editors"), its
+# provider menu open beside co:op's preset and account menus. The screenshot is the window inside its
+# border, cut from a retina capture at 1178x694, with its two rounded window corners repainted in the
+# bar color, so the page can round them at any size.
+INTEGRATIONS = ('<figure class="zed"><img class="zed-shot" src="assets/img/zed-coop.png" width="589" height="347" '
                 'alt="Zed\'s agent panel running co:op, its provider menu open on Claude Code, Codex, Gemini CLI and Grok, '
-                'beside menus for the preset, account, model and effort"></figure>'
-                '<figure class="window scene-worker" data-scene="worker" aria-label="What coop sessions connect prints as a worker joins your platform">'
-                + window_bar("coop sessions connect") + term(at_prompt("coop sessions connect " + NOWRAP("--controller") + " https://jobs.example.com", "~"),
-                       line(f"  {OK} Local session service ready"),
-                       line("Connecting to https://jobs.example.com…"),
-                       line(f"  {OK} Worker identity ready: " + NOWRAP("w-7c1e")))
-                + "</figure></div>")
+                'beside menus for the preset, account, model and effort"></figure>')
 
 
 # The homepage counts what agents wrote through task queues across Protectorate's products: co:op,

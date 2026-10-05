@@ -318,14 +318,6 @@ const SCENES = {
       }
     },
   },
-  worker: {
-    reset(card) {
-      for (const line of card.querySelectorAll(".line:not(.cmdline)")) line.classList.add("is-pending");
-    },
-    async play(card) {
-      for (const line of card.querySelectorAll(".line.is-pending")) { await sleep(650); line.classList.remove("is-pending"); }
-    },
-  },
 };
 
 SCENES.fork = SCENES.doctor = SCENES.loop; // the same replay, without a live bar
