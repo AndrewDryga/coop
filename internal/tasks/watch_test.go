@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -601,5 +602,66 @@ func TestTasksWatchExitsNonzeroOnAnUnreadableQueue(t *testing.T) {
 	}
 	if code, err := TasksWatch(Host{}, repo, []string{root}); code != 1 || err == nil {
 		t.Fatalf("unreadable piped watch = (%d, %v); want exit 1", code, err)
+	}
+}
+
+// A live board re-reads only when something it lists changed on disk, or after watchRefresh: one
+// full read opens every task's records, and re-reading every 400 ms tick kept a third of a CPU busy
+// on a 650-task queue that wasn't changing.
+func TestBoardCacheRereadsOnlyWhenTheBoardCouldChange(t *testing.T) {
+	t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+	root := t.TempDir()
+	todo := taskForLease(t, root, StateTodo, "listed")
+	done := taskForLease(t, root, StateDone, "finished")
+	if err := os.MkdirAll(filepath.Join(root, StateBlocked), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	cache := &boardCache{roots: []string{root}, read: func() boardRead {
+		reads++
+		var merged []mergedTask
+		for _, item := range mustReadTaskTree(t, root) {
+			merged = append(merged, mergedTask{Item: item})
+		}
+		return boardRead{merged: merged}
+	}}
+	now := time.Now()
+	// the first read finds the tasks the stamps then cover; the next settles on them
+	cache.get(now)
+	cache.get(now)
+	settled := reads
+	tick := func(what string, want int) {
+		t.Helper()
+		now = now.Add(time.Second)
+		before := reads
+		cache.get(now)
+		if reads-before != want {
+			t.Errorf("%s: %d reads, want %d", what, reads-before, want)
+		}
+	}
+	tick("nothing changed", 0)
+	later := time.Now().Add(time.Hour)
+	if err := os.Chtimes(filepath.Join(todo.Dir, "task.md"), later, later); err != nil {
+		t.Fatal(err)
+	}
+	tick("a listed task's file changed", 1)
+	tick("nothing changed since", 0)
+	if err := os.Chtimes(filepath.Join(done.Dir, "task.md"), later, later); err != nil {
+		t.Fatal(err)
+	}
+	tick("a done task's file changed", 0)
+	if err := os.Rename(todo.Dir, filepath.Join(root, StateBlocked, "listed")); err != nil {
+		t.Fatal(err)
+	}
+	tick("a task moved to another state", 1)
+	cache.get(now)
+	now = now.Add(watchRefresh)
+	before := reads
+	cache.get(now)
+	if reads != before+1 {
+		t.Errorf("no read after %s of nothing changing; a fork or run could have", watchRefresh)
+	}
+	if settled > 3 {
+		t.Errorf("a new board took %d reads to settle", settled)
 	}
 }

@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop tasks watch` sits idle quietly.** The board re-read every task's records, done ones
+  included, on each 400 ms tick: on a 650-task queue that kept a fifth of a CPU busy while nothing
+  changed. It now reads again only when a task folder or a listed task's files change, and at
+  least every 10 seconds; leases are still checked every tick. Measured on this repo: 21% CPU
+  before, about 1% after.
+
 - **Workers keep the checkout path to themselves.** What a worker tells its controller about a
   turn (tool titles, commands and their output, thoughts, plans) still named the session's checkout
   by its absolute path, though the docs said the worker removes it: the worker looked for the path

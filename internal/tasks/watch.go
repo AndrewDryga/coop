@@ -46,7 +46,7 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 			roots[i] = filepath.Join(repo, rel)
 		}
 	}
-	read := func() (ProjectSnapshot, []watchSource, []mergedTask, int, bool) {
+	read := func() boardRead {
 		snapshot := ReadProjectSnapshot(repo, roots)
 		var sources []watchSource
 		for _, queue := range snapshot.Queues {
@@ -83,14 +83,14 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 			}
 			starting = starting || fork.Starting
 		}
-		return snapshot, sources, merged, running, starting
+		return boardRead{snapshot: snapshot, sources: sources, merged: merged, running: running, starting: starting}
 	}
 
 	// An unreadable queue is unknown work, never a drained one: every view still shows what it
 	// could read (the snapshot names the failure), then exits 1 instead of reporting a drain.
 	// ReadTaskTree already retries a torn read, so a failure here is durable, not a race.
 	if len(jsonOutput) > 0 && jsonOutput[0] {
-		snapshot, _, _, _, _ := read()
+		snapshot := read().snapshot
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(snapshot); err != nil {
@@ -104,19 +104,19 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 
 	if !ui.IsTerminal(os.Stdout) || !ui.IsTerminal(os.Stderr) {
 		// Pipe output is the same snapshot and renderer as the live view, sampled once.
-		snapshot, sources, merged, _, _ := read()
-		for _, line := range tasksWatchFrameWithSnapshot(sources, merged, snapshot, 0, 120) {
+		board := read()
+		for _, line := range tasksWatchFrameWithSnapshot(board.sources, board.merged, board.snapshot, 0, 120) {
 			fmt.Println(line)
 		}
-		if err := snapshot.QueueError(); err != nil {
+		if err := board.snapshot.QueueError(); err != nil {
 			return 1, err
 		}
 		return 0, nil
 	}
-	if snapshot, _, merged, _, _ := read(); len(merged) == 0 && !snapshotHasVisibleActivity(snapshot) {
+	if board := read(); len(board.merged) == 0 && !snapshotHasVisibleActivity(board.snapshot) {
 		ui.Note("no tasks yet — add one with 'coop tasks add \"<title>\"'")
 		return 0, nil
-	} else if err := snapshot.QueueError(); err != nil {
+	} else if err := board.snapshot.QueueError(); err != nil {
 		return 1, err
 	}
 
@@ -124,8 +124,10 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 	screen := ui.NewAltScreen(os.Stdout, width)
 	sawActive, sawFork := false, false // concurrent-fork startup guard — see tasksWatchSettling
 	var queueErr error                 // a queue that turned unreadable mid-watch ends the board with exit 1
+	cache := &boardCache{roots: roots, read: read}
 	tick := func(spin int) ([]string, bool) {
-		snapshot, sources, merged, running, starting := read()
+		board := cache.get(time.Now())
+		snapshot, sources, merged, running, starting := board.snapshot, board.sources, board.merged, board.running, board.starting
 		c := mergedCounts(merged)
 		// The Ctrl-C footer belongs to the LIVE view only: a pipe or --json has no keyboard, and a
 		// captured snapshot must not carry an instruction nobody can follow.
@@ -153,6 +155,80 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 		return 1, queueErr
 	}
 	return code, err
+}
+
+// boardRead is one full read of what a board shows.
+type boardRead struct {
+	snapshot ProjectSnapshot
+	sources  []watchSource
+	merged   []mergedTask
+	running  int
+	starting bool
+}
+
+// watchRefresh bounds how stale a live board may get about what changes without a file changing:
+// a fork starting or a run ending.
+const watchRefresh = 10 * time.Second
+
+// boardCache serves a live board's ticks. One full read opens every task's records, done tasks
+// included: about 70 ms for a 650-task queue, so a board that re-read on every 400 ms tick spent a
+// third of a CPU showing nothing new. A tick re-reads only when something the board lists changed
+// on disk, or after watchRefresh. A held lease turns stalled by its heartbeat's age alone, so the
+// lease of each task in progress is still looked at every tick.
+type boardCache struct {
+	roots  []string
+	read   func() boardRead
+	at     time.Time
+	stamps string
+	board  boardRead
+}
+
+func (c *boardCache) get(now time.Time) boardRead {
+	stamps := watchFingerprint(c.roots, c.board)
+	if c.at.IsZero() || stamps != c.stamps || now.Sub(c.at) >= watchRefresh {
+		// the stamps are taken before the read, so a change during it is seen next tick
+		c.board, c.at, c.stamps = c.read(), now, stamps
+		return c.board
+	}
+	for i, m := range c.board.merged {
+		if m.State == StateInProgress && m.fork == "" {
+			c.board.merged[i].lease = observeTaskLease(m.Item, now)
+		}
+	}
+	return c.board
+}
+
+// watchFingerprint changes when something a board lists could have: a task folder arriving in or
+// leaving a state, or a listed task's folder or files changing. Claims and releases move a folder,
+// so they show here too. Done tasks only add to a count, so their folders are left alone.
+func watchFingerprint(roots []string, board boardRead) string {
+	var b strings.Builder
+	stamp := func(path string) {
+		if info, err := os.Stat(path); err == nil {
+			fmt.Fprintf(&b, "%s %d %d\n", path, info.ModTime().UnixNano(), info.Size())
+		} else {
+			fmt.Fprintf(&b, "%s -\n", path)
+		}
+	}
+	queues := append([]string(nil), roots...)
+	for _, queue := range board.snapshot.Queues {
+		queues = append(queues, queue.Root)
+	}
+	for _, root := range queues {
+		for _, state := range []string{"", StateTodo, StateInProgress, StateBlocked, StateDone} {
+			stamp(filepath.Join(root, state))
+		}
+	}
+	for _, m := range board.merged {
+		if m.State == StateDone {
+			continue
+		}
+		stamp(m.Dir)
+		for _, name := range []string{"task.md", "state.md", "decision.md"} {
+			stamp(filepath.Join(m.Dir, name))
+		}
+	}
+	return b.String()
 }
 
 func snapshotHasVisibleActivity(snapshot ProjectSnapshot) bool {
