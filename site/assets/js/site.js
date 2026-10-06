@@ -145,12 +145,109 @@ if (stage && "IntersectionObserver" in window) {
   }, { rootMargin: "-50% 0px -50% 0px" });
   // a new width rewraps the attacks: measure the rail again
   addEventListener("resize", () => wide.matches && show(current));
+
+  // Small screens: the story as a deck (the stylesheet's .js-deck block). Its cards are the steps,
+  // each chapter's opening and the attacks; the card on screen is the last one whose top has reached
+  // the picture's floor. The picture takes that card's state, and a camera frames what the card is
+  // about: the whole picture, the project, the wires, or the entry an attack goes for and the wall
+  // that stops it. A screen too short for both keeps the plain page.
+  const roomy = matchMedia("(max-width: 1023px) and (min-height: 500px)");
+  const scene = stage.querySelector(".scene");
+  const SHOTS = {
+    all: [".box", ".bus"], box: [".box"], zone: [".zone"], wires: [".secret", ".bus"],
+    ssh: ['[data-hit="ssh"] > .row', ".zone > .row"], docs: ['[data-hit="docs"] > .row', ".zone > .row"],
+    billing: ['[data-hit="billing"] > .row', ".bus"], aws: ['[data-hit="aws"] > .row', ".bus"],
+  };
+  const STEP_SHOTS = ["box", "box", "zone", "wires", "wires"];
+  const ATTACK_SHOTS = { ssh: "ssh", issue: "billing", key: "wires", env: "wires", wipe: "docs", prod: "aws", push: "wires", supply: "aws" };
+  const steps = [...document.querySelectorAll(".story-steps > .step:not(.step-chapter)")];
+  // where a row of the picture sits in the scene, untouched by the camera's transform
+  const place = (el) => {
+    let [x, y] = [0, 0];
+    for (let node = el; node && node !== scene; node = node.offsetParent) [x, y] = [x + node.offsetLeft, y + node.offsetTop];
+    return [x, y, x + el.offsetWidth, y + el.offsetHeight];
+  };
+  const aim = (shot) => {
+    const boxes = SHOTS[shot].map((selector) => place(scene.querySelector(selector)));
+    const [x0, y0, x1, y1] = boxes.reduce((a, b) => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])]);
+    const [w, h, pad] = [stage.clientWidth, stage.clientHeight, 16];
+    // a phone's frame zooms in a little; a tablet's, more
+    const s = Math.min(Math.max(1.2, Math.min(1.6, w / 500)), (w - 2 * pad) / (x1 - x0), (h - 2 * pad) / (y1 - y0));
+    scene.style.transform = `translate(${(w - (x1 - x0) * s) / 2 - x0 * s}px, ${(h - (y1 - y0) * s) / 2 - y0 * s}px) scale(${s})`;
+  };
+  let cards = [], intros = [], onCard = null, queued = false;
+  const turn = () => {
+    queued = false;
+    // until the picture pins, the sandbox stays open: the first card sits right under it
+    const { top, bottom } = stage.getBoundingClientRect();
+    const k = top > 1 ? -1 : cards.findLastIndex((card) => card.getBoundingClientRect().top <= bottom + 1);
+    if (k === onCard) return;
+    onCard = k;
+    const card = cards[k];
+    for (let i = 1; i <= 4; i++) stage.classList.toggle(`s${i}`, i <= (card?.deck.layers ?? 0));
+    stage.dataset.attack = card?.dataset.attack ?? "";
+    aim(card?.deck.shot ?? STEP_SHOTS[0]);
+  };
+  const onScroll = () => queued || (queued = requestAnimationFrame(turn));
+  // the camera's frame and each card's height (where a tall card stops) change with the screen
+  const fit = () => {
+    for (const card of cards) card.style.setProperty("--h", `${card.offsetHeight}px`);
+    onCard = null;
+    turn();
+  };
+  const deck = (on) => {
+    document.documentElement.classList.toggle("js-deck", on);
+    if (on && !cards.length) {
+      // a chapter's heading and opening line make one card
+      for (const heading of document.querySelectorAll(".group-panel > h2")) {
+        const intro = Object.assign(document.createElement("div"), { className: "deck-intro" });
+        const line = heading.nextElementSibling;
+        heading.before(intro);
+        intro.append(heading, line);
+        intros.push(intro);
+      }
+      // an attack is one of its chapter's cases: ticks count which, as the rail does on wide screens
+      for (const list of document.querySelectorAll(".story-steps .attacks")) {
+        const cases = [...list.children];
+        cases.forEach((item, i) => {
+          const ticks = Object.assign(document.createElement("div"), { className: "deck-ticks" });
+          ticks.setAttribute("aria-hidden", "true");
+          ticks.append(...cases.map((_, k) => Object.assign(document.createElement("span"), { className: k <= i ? "on" : "" })));
+          item.prepend(ticks);
+        });
+      }
+      cards = [...document.querySelectorAll(".story-steps .step, .deck-intro, .story-steps .attack")];
+      for (const card of cards) {
+        const step = steps.indexOf(card) + 1;
+        card.deck = { layers: step || 4, shot: step ? STEP_SHOTS[step] : ATTACK_SHOTS[card.dataset.attack] ?? "all" };
+      }
+      // the first frame is placed, not flown to
+      scene.style.transition = "none";
+      fit();
+      void scene.offsetWidth;
+      scene.style.transition = "";
+      addEventListener("scroll", onScroll, { passive: true });
+      addEventListener("resize", fit);
+      document.fonts?.ready.then(() => cards.length && fit());
+    } else if (!on && cards.length) {
+      removeEventListener("scroll", onScroll);
+      removeEventListener("resize", fit);
+      for (const intro of intros) intro.replaceWith(...intro.childNodes);
+      for (const ticks of document.querySelectorAll(".deck-ticks")) ticks.remove();
+      for (const card of cards) card.style.removeProperty("--h");
+      [cards, intros, onCard] = [[], [], null];
+      scene.style.transform = "";
+    }
+  };
+
   const follow = () => {
     document.documentElement.classList.toggle("js-story", wide.matches);
     if (wide.matches) parts.forEach((part) => watch.observe(part));
     else watch.disconnect();
+    deck(!wide.matches && roomy.matches);
   };
   wide.addEventListener("change", follow);
+  roomy.addEventListener("change", follow);
   follow();
   document.documentElement.classList.add("story-ready");
 }
@@ -185,7 +282,7 @@ const SCENES = {
   watch: {
     // the board redraws as the loop works: subtasks tick, task after task lands in done; then the
     // finished tasks come back and it starts over. It runs only while it is on screen.
-    fits: (card) => card.clientWidth >= 540,
+    fits: (card) => card.clientWidth >= 280,
     reset(card) {
       card.querySelector("code").innerHTML = card.querySelector("template").innerHTML;
     },
@@ -206,7 +303,7 @@ const SCENES = {
     },
   },
   loop: {
-    fits: (card) => card.clientWidth >= 540,
+    fits: (card) => card.clientWidth >= 280,
     reset(card) {
       for (const line of card.querySelectorAll(".line[data-beat]")) {
         line.classList.toggle("is-pending", line.dataset.beat !== "0");
@@ -216,14 +313,19 @@ const SCENES = {
           line.lastChild.textContent = "";
         }
       }
+      card.querySelector("code").scrollTop = 0;
     },
     async play(card) {
       const bar = card.querySelector(".live-bar"); // only the loop has one
+      // as in a terminal, output fills the window from the top, then scrolls to keep the newest line
+      const code = card.querySelector("code");
+      const follow = () => { code.scrollTop = code.scrollHeight; };
       const beats = [];
       for (const line of card.querySelectorAll(".line[data-beat]")) (beats[line.dataset.beat] ??= []).push(line);
       let state = null, spin = 0, seconds = 0;
       // like the CLI, the bar fits the terminal's width by shortening what it is on
       card.classList.add("is-playing");
+      follow();
       let columns = 0;
       if (bar) {
         const probe = Object.assign(document.createElement("span"), { textContent: "0".repeat(40) });
@@ -235,9 +337,10 @@ const SCENES = {
         if (!bar || !state) return;
         const [done, doing, on] = state;
         const time = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+        // with no room left for it, the CLI drops what it is on rather than show a letter of it
         const room = columns - `.[  ] [${"░".repeat(20)}] ${done}/3 done ·  · ${time}`.length;
-        const fit = on.length > room ? `${on.slice(0, Math.max(room - 1, 1))}…` : on;
-        bar.innerHTML = `${SPIN[spin % SPIN.length]} [${barCells(done, doing, 3)}] ${done}/3 done · ${fit} · ${time}`;
+        const fit = room < 2 ? "" : on.length > room ? `${on.slice(0, room - 1)}… · ` : `${on} · `;
+        bar.innerHTML = `${SPIN[spin % SPIN.length]} [${barCells(done, doing, 3)}] ${done}/3 done · ${fit}${time}`;
       };
       const ticker = setInterval(() => { spin++; seconds += 2; draw(); }, 110);
       // paced to be read: a command types out, its output scrolls in a line at a time, and each beat
@@ -253,9 +356,10 @@ const SCENES = {
         let read = 0;
         for (const line of lines) {
           line.classList.remove("is-pending");
+          follow();
           if (line.dataset.command) {
             await sleep(500);
-            for (const char of line.dataset.command) { line.lastChild.textContent += char; await sleep(35); }
+            for (const char of line.dataset.command) { line.lastChild.textContent += char; follow(); await sleep(35); }
           } else {
             if (!line.classList.contains("rule")) read += line.textContent.length;
             await sleep(60);
@@ -266,6 +370,7 @@ const SCENES = {
       await sleep(600);
       clearInterval(ticker);
       card.classList.remove("is-playing");
+      follow();
     },
   },
   rotate: {

@@ -156,7 +156,7 @@ main:focus { outline: none; }
    down to the sandbox's top wall, stopped there on an x; shown only on its step. The run across never
    drops below 40px, so the longest name still gets a visible bend. */
 .probe { position: relative; display: none; flex: 1 0 40px; align-self: center; height: 0; margin: 0 120px 0 6px; opacity: 0; }
-.js-story .probe { display: block; }
+:is(.js-story, .js-deck) .probe { display: block; }
 .probe::after { content: ""; position: absolute; top: 0; left: 0; right: 0; height: calc(var(--down) * var(--row) + 6px); border: 0 dashed var(--danger); border-width: 1px 1px 0 0; border-top-right-radius: 8px; }
 .probe .cut { position: absolute; top: calc(var(--down) * var(--row) + 6px); right: 0; z-index: 1; box-sizing: content-box; width: 14px; height: 14px; padding: 3px; border-radius: 50%; background: var(--surface); color: var(--danger); stroke-width: 2; translate: 50% -50%; }
 /* the sandbox: a wall around the project, inside the home folder */
@@ -290,6 +290,8 @@ main:focus { outline: none; }
 /* replays (coop loop, coop fork): a terminal 15 rows tall showing the newest rows; the loop's live
    bar runs under the last one while it plays */
 .scene-replay code { display: flex; flex-direction: column; justify-content: flex-end; height: calc(15 * 1.7em); overflow: hidden; }
+/* staged to play, it fills from the top like a terminal; site.js scrolls it once it is full */
+.scene-replay[data-staged] code { justify-content: flex-start; }
 .scene-replay .line { flex: none; }
 .scene-replay .rule { overflow: hidden; color: var(--dim); white-space: pre; }
 .scene-replay .line.is-pending, .live-bar:empty { display: none; }
@@ -490,41 +492,42 @@ main:focus { outline: none; }
 .ref tr:last-child td { border-bottom: 0; }
 .ref td > code:only-child { white-space: nowrap; }
 
-/* Motion. On wide screens with the script running (.js-story), the picture starts unleashed: no
-   sandbox, every file in reach, every wire whole and live. Each step then does one thing: the wall
-   closes around the project and everything else locks (1), the secret empties (2), the internet
-   narrows to the AI provider (3), the push is cut (4). Without the script, below 1024px or in
-   print, the picture is simply finished. */
-.js-story .wall rect { stroke-dasharray: 1; }
-.js-story .stage:not(.s1) .wall rect { stroke-dashoffset: 1; }
-.js-story .stage:not(.s1) .zone-tag, .js-story .stage:not(.s1) .out .lock { opacity: 0; }
-.js-story .stage:not(.s1) .out > .row > .name, .js-story .stage:not(.s1) .via > .row > .name { color: var(--text); }
-.js-story .stage:not(.s1) .out .lock path { transform: translateY(-5px); }
-.js-story .stage:not(.s2) .secret-value { color: var(--warning); }
-.js-story .stage:not(.s2) .secret-value::after { transform: scaleX(0); }
-.js-story .stage:not(.s3) .hop.stop .label, .js-story .stage:not(.s4) .git .label { color: var(--text); }
-.js-story .stage:not(.s3) .hop.stop .wire::before, .js-story .stage:not(.s4) .git .wire::before { opacity: 1; }
-.js-story .stage:not(.s3) .hop.stop .wire::after, .js-story .stage:not(.s4) .git .wire::after { opacity: 0; }
-.js-story .stage:not(.s3) .hop.pass .wire::before { border-color: var(--live); }
-.js-story .stage:not(.s3) .hop.pass .wire > *, .js-story .stage:not(.s3) .hop.stop .wire > *, .js-story .stage:not(.s4) .git .wire > * { opacity: 0; scale: 0.4; }
-.js-story .stage:not(.s4) .git .lock path { transform: translateY(-5px); }
+/* Motion. With the script running, pinned beside the text on wide screens (.js-story) or as the
+   deck on small ones (.js-deck), the picture starts unleashed: no sandbox, every file in reach,
+   every wire whole and live. Each step then does one thing: the wall closes around the project and
+   everything else locks (1), the secret empties (2), the internet narrows to the AI provider (3),
+   the push is cut (4). Without the script, on a short screen or in print, the picture is simply
+   finished. */
+:is(.js-story, .js-deck) .wall rect { stroke-dasharray: 1; }
+:is(.js-story, .js-deck) .stage:not(.s1) .wall rect { stroke-dashoffset: 1; }
+:is(.js-story, .js-deck) .stage:not(.s1) .zone-tag, :is(.js-story, .js-deck) .stage:not(.s1) .out .lock { opacity: 0; }
+:is(.js-story, .js-deck) .stage:not(.s1) .out > .row > .name, :is(.js-story, .js-deck) .stage:not(.s1) .via > .row > .name { color: var(--text); }
+:is(.js-story, .js-deck) .stage:not(.s1) .out .lock path { transform: translateY(-5px); }
+:is(.js-story, .js-deck) .stage:not(.s2) .secret-value { color: var(--warning); }
+:is(.js-story, .js-deck) .stage:not(.s2) .secret-value::after { transform: scaleX(0); }
+:is(.js-story, .js-deck) .stage:not(.s3) .hop.stop .label, :is(.js-story, .js-deck) .stage:not(.s4) .git .label { color: var(--text); }
+:is(.js-story, .js-deck) .stage:not(.s3) .hop.stop .wire::before, :is(.js-story, .js-deck) .stage:not(.s4) .git .wire::before { opacity: 1; }
+:is(.js-story, .js-deck) .stage:not(.s3) .hop.stop .wire::after, :is(.js-story, .js-deck) .stage:not(.s4) .git .wire::after { opacity: 0; }
+:is(.js-story, .js-deck) .stage:not(.s3) .hop.pass .wire::before { border-color: var(--live); }
+:is(.js-story, .js-deck) .stage:not(.s3) .hop.pass .wire > *, :is(.js-story, .js-deck) .stage:not(.s3) .hop.stop .wire > *, :is(.js-story, .js-deck) .stage:not(.s4) .git .wire > * { opacity: 0; scale: 0.4; }
+:is(.js-story, .js-deck) .stage:not(.s4) .git .lock path { transform: translateY(-5px); }
 /* The attack chapters: every layer stays on; each attack lights up what it goes for, in red, and
    where the sandbox stops it. ssh: the README's key grab; issue: the issue after your private code;
    key: the setup guide after the agent's own API key; env: the package's leak; wipe: rm -rf; prod:
    the cloud CLI; push: the force-push; supply: a poisoned package. */
 @keyframes hit { 40% { scale: 1.45; } }
-.js-story .stage[data-attack="ssh"] .probe[data-for="ssh"], .js-story .stage[data-attack="wipe"] .probe[data-for="docs"],
-.js-story .stage[data-attack="issue"] .probe[data-for="billing"],
-.js-story .stage:is([data-attack="prod"], [data-attack="supply"]) .probe[data-for="aws"] { opacity: 1; }
-.js-story .stage[data-attack="ssh"] [data-hit="ssh"] > .row > :is(.name, .lock), .js-story .stage[data-attack="wipe"] [data-hit="docs"] > .row > :is(.name, .lock),
-.js-story .stage[data-attack="issue"] [data-hit="billing"] > .row > :is(.name, .lock),
-.js-story .stage:is([data-attack="prod"], [data-attack="supply"]) [data-hit="aws"] > .row > :is(.name, .lock),
-.js-story .stage[data-attack="supply"] .pkg > .row > .name { color: var(--danger); }
-.js-story .stage[data-attack="env"] .secret-value::after { box-shadow: 0 0 0 1.5px var(--danger); }
-.js-story .stage:is([data-attack="env"], [data-attack="key"], [data-attack="issue"], [data-attack="prod"], [data-attack="supply"]) .hop.stop .wire::after,
-.js-story .stage:is([data-attack="push"], [data-attack="issue"]) .git .wire::after { border-color: var(--danger); }
-.js-story .stage:is([data-attack="env"], [data-attack="key"], [data-attack="issue"], [data-attack="prod"], [data-attack="supply"]) .hop.stop :is(.label, .cut),
-.js-story .stage:is([data-attack="push"], [data-attack="issue"]) .git :is(.label, .lock) { color: var(--danger); }
+:is(.js-story, .js-deck) .stage[data-attack="ssh"] .probe[data-for="ssh"], :is(.js-story, .js-deck) .stage[data-attack="wipe"] .probe[data-for="docs"],
+:is(.js-story, .js-deck) .stage[data-attack="issue"] .probe[data-for="billing"],
+:is(.js-story, .js-deck) .stage:is([data-attack="prod"], [data-attack="supply"]) .probe[data-for="aws"] { opacity: 1; }
+:is(.js-story, .js-deck) .stage[data-attack="ssh"] [data-hit="ssh"] > .row > :is(.name, .lock), :is(.js-story, .js-deck) .stage[data-attack="wipe"] [data-hit="docs"] > .row > :is(.name, .lock),
+:is(.js-story, .js-deck) .stage[data-attack="issue"] [data-hit="billing"] > .row > :is(.name, .lock),
+:is(.js-story, .js-deck) .stage:is([data-attack="prod"], [data-attack="supply"]) [data-hit="aws"] > .row > :is(.name, .lock),
+:is(.js-story, .js-deck) .stage[data-attack="supply"] .pkg > .row > .name { color: var(--danger); }
+:is(.js-story, .js-deck) .stage[data-attack="env"] .secret-value::after { box-shadow: 0 0 0 1.5px var(--danger); }
+:is(.js-story, .js-deck) .stage:is([data-attack="env"], [data-attack="key"], [data-attack="issue"], [data-attack="prod"], [data-attack="supply"]) .hop.stop .wire::after,
+:is(.js-story, .js-deck) .stage:is([data-attack="push"], [data-attack="issue"]) .git .wire::after { border-color: var(--danger); }
+:is(.js-story, .js-deck) .stage:is([data-attack="env"], [data-attack="key"], [data-attack="issue"], [data-attack="prod"], [data-attack="supply"]) .hop.stop :is(.label, .cut),
+:is(.js-story, .js-deck) .stage:is([data-attack="push"], [data-attack="issue"]) .git :is(.label, .lock) { color: var(--danger); }
 
 @keyframes drift { from { transform: translateY(32px); } to { transform: translateY(-32px); } }
 @media screen and (prefers-reduced-motion: no-preference) {
@@ -537,13 +540,14 @@ main:focus { outline: none; }
   .secret-value { transition: color 200ms linear 550ms; }
   .probe { transition: opacity 300ms var(--ease) 150ms; }
   .probe .cut { animation: none; }
-  .js-story .stage[data-attack="ssh"] .probe[data-for="ssh"] .cut, .js-story .stage[data-attack="wipe"] .probe[data-for="docs"] .cut,
-  .js-story .stage[data-attack="issue"] .probe[data-for="billing"] .cut,
-  .js-story .stage:is([data-attack="prod"], [data-attack="supply"]) .probe[data-for="aws"] .cut, .js-story .stage[data-attack="key"] .hop.pass .port,
-  .js-story .stage:is([data-attack="env"], [data-attack="key"], [data-attack="issue"], [data-attack="prod"], [data-attack="supply"]) .hop.stop .cut,
-  .js-story .stage:is([data-attack="push"], [data-attack="issue"]) .git .lock { animation: hit 450ms var(--ease) 450ms; }
+  :is(.js-story, .js-deck) .stage[data-attack="ssh"] .probe[data-for="ssh"] .cut, :is(.js-story, .js-deck) .stage[data-attack="wipe"] .probe[data-for="docs"] .cut,
+  :is(.js-story, .js-deck) .stage[data-attack="issue"] .probe[data-for="billing"] .cut,
+  :is(.js-story, .js-deck) .stage:is([data-attack="prod"], [data-attack="supply"]) .probe[data-for="aws"] .cut, :is(.js-story, .js-deck) .stage[data-attack="key"] .hop.pass .port,
+  :is(.js-story, .js-deck) .stage:is([data-attack="env"], [data-attack="key"], [data-attack="issue"], [data-attack="prod"], [data-attack="supply"]) .hop.stop .cut,
+  :is(.js-story, .js-deck) .stage:is([data-attack="push"], [data-attack="issue"]) .git .lock { animation: hit 450ms var(--ease) 450ms; }
   .secret-value::after { transition: transform 450ms cubic-bezier(0.65, 0, 0.35, 1) 250ms; }
   .attack { transition: opacity 250ms var(--ease), translate 500ms var(--ease); }
+  .js-deck .scene { transition: transform 700ms var(--ease); }
   .seat, .seat::before, .seat::after, .org-roles::before, .org-roles::after, .svc-dot { transition: background-color 300ms var(--ease), border-color 300ms var(--ease); }
   .attack.is-active { transition-delay: 150ms; }
   .case-figures > .evidence { transition: opacity 250ms var(--ease); }
@@ -579,6 +583,47 @@ main:focus { outline: none; }
   .feature-row { grid-template-columns: minmax(0, 1fr); gap: 32px; }
   .feature-row > :last-child { width: 100%; max-width: 46rem; }
 }
+/* Small screens with the script (.js-deck): the story as a deck. The picture sticks to the top of
+   the screen and each step, chapter opening and attack is a card that slides up over the one before,
+   under it. site.js keeps the picture on the state of the card on screen and points a camera (a
+   transform on the scene) at the rows that card is about. A card taller than its space stops once
+   its last line is on screen (site.js measures each card into --h), so it is read whole and the next
+   card still slides over it. Below 500px of height (a phone on its side) there is no room for both,
+   and the page stays plain. */
+@media (max-width: 1023px) {
+  .js-deck .story { --screen: 100vh; --frame: 42vh; --card: calc(var(--screen) - var(--frame)); }
+  .js-deck .stage { position: sticky; top: 0; z-index: 2; display: block; height: var(--frame); margin-inline: calc(-1 * var(--gutter)); overflow: hidden; border-bottom: 1px solid var(--divider); background: var(--bg); }
+  .js-deck .scene { --row: 1.625rem; --hop: 1.625rem; --gap: 24px; position: absolute; top: 0; left: 0; font-size: 0.9375rem; transform-origin: 0 0; }
+  .js-deck :is(.step-group, .group-panel, .attack-rail, .attacks) { display: contents; }
+  .js-deck :is(.step, .deck-intro, .attack) { position: sticky; top: min(var(--frame), calc(var(--screen) - var(--h, 0px))); align-content: start; min-height: calc(var(--card) - 56px); margin-inline: calc(-1 * var(--gutter)); padding: 24px var(--gutter) 32px; border-top: 1px solid var(--line); border-radius: 20px 20px 0 0; background: var(--bg); box-shadow: 0 -12px 32px rgb(0 0 0 / 45%); }
+  /* a link focused in a card under the stack comes to the top */
+  .js-deck :is(.step, .deck-intro, .attack):focus-within { z-index: 1; }
+  .js-deck :is(.step h2, .deck-intro h2) { font-size: 1.5rem; }
+  .js-deck :is(.step p, .deck-intro > p) { max-width: 36rem; margin-top: 12px; font-size: 1.0625rem; line-height: 1.55; }
+  .js-deck :is(.step, .deck-intro) p + p { margin-top: 6px; }
+  .js-deck :is(.step, .attack) > .evidence { flex-direction: row; align-items: center; gap: 16px; margin-top: 20px; }
+  .js-deck .attack > .evidence { margin: 0 0 16px; }
+  .js-deck .evidence strong { font-size: 2.25rem; }
+  .js-deck .attack .threat { font-size: 1.1875rem; }
+  /* a step or a chapter's opening is a sheet across the screen; an attack is a case inside its
+     chapter: a raised card set in from the edges, over the chapter's sheet, its ticks counting which
+     case it is. Those ticks are the deck's only progress marks, as the rail's are on wide screens. */
+  .js-deck .attack { margin-inline: calc(12px - var(--gutter)); padding-inline: 20px; border: 1px solid var(--edge); border-radius: 16px; background: var(--surface); }
+  .deck-ticks { display: flex; gap: 6px; margin-bottom: 18px; }
+  .deck-ticks span { width: 28px; height: 2px; border-radius: 1px; background: var(--line); }
+  .deck-ticks .on { background: var(--text); }
+  .js-deck .attack .stopped { margin-top: 12px; }
+  /* the picture fades into its floor, where the next card peeks in below */
+  .js-deck .stage::after { content: ""; position: absolute; right: 0; bottom: 0; left: 0; height: 40px; background: linear-gradient(transparent, var(--bg)); pointer-events: none; }
+}
+@media (min-width: 641px) and (max-width: 1023px) { .js-deck .story { --frame: 50vh; } }
+@media (max-width: 1023px) and (max-height: 700px) { .js-deck .story { --frame: 36vh; } }
+/* the small viewport, so a card still fits with the browser's bars showing */
+@supports (height: 1svh) {
+  @media (max-width: 1023px) { .js-deck .story { --screen: 100svh; --frame: 42svh; } }
+  @media (min-width: 641px) and (max-width: 1023px) { .js-deck .story { --frame: 50svh; } }
+  @media (max-width: 1023px) and (max-height: 700px) { .js-deck .story { --frame: 36svh; } }
+}
 @media (max-width: 640px) {
   .nav-links > a.nav-optional { display: none; }
   .nav-links { gap: 24px; }
@@ -595,6 +640,8 @@ main:focus { outline: none; }
   .section-head p { font-size: 1.125rem; }
   .window { border-radius: 14px; }
   .window pre { padding: 20px 16px; }
+  /* a phone's terminals: about 40 columns, long lines wrap under their indent */
+  :is(.scene-replay, .scene-watch) pre { font-size: 0.8125rem; }
   .scene { --row: 2rem; --indent: 1.375rem; --pad: 18px; --hop: 2rem; --step: 34px; --x0: 20px; --tail: 18px; font-size: 1rem; }
   .zone { padding-right: 40px; }
   .attack-rail { margin-top: 32px; }

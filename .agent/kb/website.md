@@ -29,11 +29,30 @@ example values such as task titles are listed. `terminal_drift` checks both page
 wording change fails make check until the scene is updated, and so does a scene line the CLI never
 prints. A new terminal needs an entry, or the check names it.
 
-**Replays** (`SCENES.loop` in site.js; fork and doctor reuse it) are bottom-anchored 15-row windows:
-commands type out, a beat's lines arrive one at a time, and each beat dwells by reading time (500ms
+**Replays** (`SCENES.loop` in site.js; fork and doctor reuse it) are 15-row windows that fill from
+the top once staged and then scroll to keep the newest line, as a terminal does (the owner found
+a window that filled from the bottom unnatural); drawn finished, they show the last 15 rows.
+Commands type out, a beat's lines arrive one at a time, and each beat dwells by reading time (500ms
 + 20ms a character, at most 3s, +0.9s after a ✓). Every scene is drawn finished; site.js resets it
 half a screen before it arrives and plays it once on view. Reduced motion, or a card too narrow for
 its `fits` check, leaves it finished.
+
+**Small screens play the story as a deck** (`.js-deck`, set by the head script and site.js below
+1024px when the window is at least 500px tall). The stage sticks to the top (`--frame`: 42svh on a
+phone, 50svh on a tablet, 36svh on a short screen), and every step, chapter opening (site.js wraps
+its h2 and first p in `.deck-intro`, only in this mode) and attack is a sticky card under it; the
+last card whose top has reached the stage's floor sets the stage state, through the same
+`:is(.js-story, .js-deck) .stage…` rules as desktop. A camera (`aim()` in site.js) transforms the
+scene to frame the rows a card is about, measured with offsetLeft/offsetTop so the transform does
+not skew them. Every card is sticky at `min(--frame, --screen - --h)`, `--h` being its measured
+height: a card that fits stops under the stage, and a taller one stops once its last line is on
+screen, so the deck never has a card that just scrolls by (the owner saw that as broken).
+Steps and chapter openings are full-width sheets; an attack is a raised card set in from the edges,
+so it reads as part of its chapter (the owner found equal-looking cards hid which was the section).
+Its `.deck-ticks` (added by site.js in this mode) count which case it is: the deck's only progress
+marks, as the rail's ticks are on wide screens (an overall strip under the picture was one too many).
+Desktop's layout rules stay `.js-story`-only: a deck change must leave 1024px and up pixel-identical
+(diff against `git archive HEAD site` with the commit count matched).
 
 **Docs commands and files.** A shell command a reader copies is a row in a command list:
 `<ul class="cmds" role="list"><li><code data-copy-source>…</code><span class="cmd-note"># …</span></li>`.
@@ -119,4 +138,5 @@ nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 - 2026-10-05 — the Zed card is a real screenshot (task 2026-10-05-show-a-real-zed-screenshot-in-integrations).
 - 2026-10-05 — Forks, Rotate and Integrations carry sourced figures; the Zed one is live (task 2026-10-05-add-sourced-figures-to-forks-rotation-and-integr).
 - 2026-10-05 — Loops carries the owner's 120-task, 9-hour run (task 2026-10-05-add-the-owner-s-loops-figure-to-the-homepage).
+- 2026-10-05 — small screens play the story as a deck with a camera on the picture; terminals replay on phones (task 2026-10-05-make-the-homepage-as-good-on-phones-as-on-deskto).
 - 2026-10-05 — setup labels above their commands, the worker terminal gone, Loops says normal work (task 2026-10-05-homepage-polish-setup-labels-above-the-commands).
