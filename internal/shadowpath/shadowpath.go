@@ -283,8 +283,11 @@ func RepoCommentedEntries(repo string) []string {
 // NewDecider returns the one visibility predicate for a repository-relative slash path. A launch
 // asks it about every path in the repository, so it remembers each directory's verdict, ancestors
 // included: a path then costs its own check plus one lookup. Re-deciding every ancestor for every
-// path took 4 s in a checkout whose task folders held 41,000 files (2026-10-04). The answers are
-// shadowed's, which stays the reference (TestDeciderMatchesShadowed).
+// path took 4 s in a checkout whose task folders held 41,000 files (2026-10-04). Its own check is
+// shadowedHere's, made cheap: the built-in patterns are compiled once (see globSet), and only the
+// directories above the path whose .coopignore has rules are consulted, instead of every level
+// (0.4 s of a 0.6 s walk over 40,000 paths on 2026-10-06). The answers are shadowed's, which stays
+// the reference (TestDeciderMatchesShadowed).
 func NewDecider(repo string) func(string) bool {
 	canonical, err := filepath.EvalSymlinks(repo)
 	if err != nil {
@@ -317,20 +320,100 @@ func NewDecider(repo string) func(string) bool {
 		cache[dirRel] = g
 		return g
 	}
+	// The directories at and above dirRel whose .coopignore has rules, root first. Almost every
+	// chain is empty; a directory without rules can never match, so skipping it changes nothing.
+	type policy struct {
+		dir   string
+		globs UserGlobs
+	}
+	chains := map[string][]policy{}
+	var policies func(string) []policy
+	policies = func(dirRel string) []policy {
+		if chain, ok := chains[dirRel]; ok {
+			return chain
+		}
+		var chain []policy
+		if dirRel != "" {
+			chain = policies(parentSlash(dirRel))
+		}
+		if g := loadDir(dirRel); len(g.Base) > 0 || len(g.Path) > 0 {
+			chain = append(chain[:len(chain):len(chain)], policy{dirRel, g}) // never extend a shared chain
+		}
+		chains[dirRel] = chain
+		return chain
+	}
+	secret, allow := compileGlobs(SecretGlobs), compileGlobs(AllowGlobs)
+	template, hard := compileGlobs(allowTemplateGlobs), compileGlobs(hardSecretGlobs)
+	here := func(relSlash string) bool { // shadowedHere, with the same answers
+		name := relSlash[strings.LastIndexByte(relSlash, '/')+1:]
+		lname := strings.ToLower(name)
+		if secret.matches(lname) && !(allow.matches(lname) || template.matches(lname) && !hard.matches(lname)) {
+			return true
+		}
+		for _, p := range policies(parentSlash(relSlash)) {
+			remaining := relSlash
+			if p.dir != "" {
+				remaining = relSlash[len(p.dir)+1:]
+			}
+			if MatchesAny(name, p.globs.Base) || MatchesPath(remaining, p.globs.Path) {
+				return true
+			}
+		}
+		return false
+	}
 	dirs := map[string]bool{"": false} // the repository root is never hidden
 	var dirShadowed func(string) bool
 	dirShadowed = func(dirRel string) bool {
 		if hidden, ok := dirs[dirRel]; ok {
 			return hidden
 		}
-		hidden := dirShadowed(parentSlash(dirRel)) || shadowedHere(dirRel, loadDir)
+		hidden := dirShadowed(parentSlash(dirRel)) || here(dirRel)
 		dirs[dirRel] = hidden
 		return hidden
 	}
 	return func(relSlash string) bool {
 		relSlash = cleanSlash(relSlash)
-		return dirShadowed(parentSlash(relSlash)) || shadowedHere(relSlash, loadDir)
+		return dirShadowed(parentSlash(relSlash)) || here(relSlash)
 	}
+}
+
+// globSet is MatchesAny over a fixed list of patterns, for a caller that asks about many names.
+// A name can match a pattern only if it starts with the text before the pattern's first wildcard
+// and ends with the text after its last one, and almost no name passes both string comparisons;
+// filepath.Match still decides every name that does. Matching 40,000 names against SecretGlobs
+// with filepath.Match alone took 0.31 s (2026-10-06).
+type globSet []compiledGlob
+
+type compiledGlob struct {
+	pattern, prefix, suffix string
+}
+
+// wildcards are the bytes filepath.Match treats specially, escapes and classes included; the
+// literal text is what lies outside them.
+const wildcards = `*?[]\`
+
+func compileGlobs(globs []string) globSet {
+	set := make(globSet, len(globs))
+	for i, glob := range globs {
+		prefix, suffix := glob, ""
+		if first := strings.IndexAny(glob, wildcards); first >= 0 {
+			prefix, suffix = glob[:first], glob[strings.LastIndexAny(glob, wildcards)+1:]
+		}
+		set[i] = compiledGlob{pattern: glob, prefix: prefix, suffix: suffix}
+	}
+	return set
+}
+
+func (set globSet) matches(name string) bool {
+	for _, glob := range set {
+		if !strings.HasPrefix(name, glob.prefix) || !strings.HasSuffix(name, glob.suffix) {
+			continue
+		}
+		if ok, _ := filepath.Match(glob.pattern, name); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // parentSlash is the directory holding a cleaned slash path, "" at the top.

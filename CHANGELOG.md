@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Boxes start faster in a cluttered checkout.** Before every start, co:op checks each path in
+  the checkout, gitignored task folders included, against 64 secret-file patterns, so it can hide
+  the matches. With 40,000 paths that took about half a second. Two string comparisons now rule out
+  almost every name before the full pattern match, with the same answers, so the check takes about
+  70 ms. In co:op's own checkout, a filtered start went from 3.18 s to 2.62 s, against 2.30 s for
+  a clean clone.
+
 - **Filtered boxes start faster.** A filtered launch checks about 74 times that Docker is still
   the daemon it bound to. Each check started a `docker info` process (about 40 ms on a busy Mac);
   co:op now sends that one request over the same socket itself (about 4 ms), and still checks

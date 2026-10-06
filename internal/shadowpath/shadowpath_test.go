@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"slices"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -125,10 +126,14 @@ func TestDeciderMatchesShadowed(t *testing.T) {
 		"vault/deep/x/y.txt":             "",
 		"secrets/a/b/c.txt":              "",
 		"db/backup.dump":                 "",
-		"pkg/.coopignore":                "local/\nsettings.json\n",
+		"pkg/.coopignore":                "local/\nsettings.json\nconf/*.yml\n",
 		"pkg/local/notes.md":             "",
 		"pkg/settings.json":              "",
 		"pkg/sub/settings.json":          "",
+		"pkg/conf/a.yml":                 "",
+		"pkg/x/conf/a.yml":               "",
+		"pkg/deep/er/settings.json":      "",
+		"pkg/deep/er/conf/b.yml":         "",
 		"pkg/sub/.coopignore":            "*\n",
 		"pkg/sub/anything.go":            "",
 		"tasks/t1/tmp/clone/.env":        "",
@@ -202,5 +207,65 @@ func TestDeciderMatchesShadowed(t *testing.T) {
 	}
 	if hidden == 0 || hidden == len(paths) {
 		t.Fatalf("the tree should mix hidden and visible paths, got %d of %d hidden", hidden, len(paths))
+	}
+}
+
+// A globSet skips filepath.Match for names that lack a pattern's literal start or end, so it must
+// never skip one that matches. Every built-in list, plus patterns with escapes, classes, a literal
+// "]" and malformed ones, is asked about names made from the patterns themselves (wildcards filled
+// in, cut short, extended, upper-cased) and random names over the patterns' own bytes.
+func TestGlobSetMatchesFilepathMatch(t *testing.T) {
+	tricky := []string{`a\*b`, `\*.pem`, `*\[x`, `x[a-c]y`, `[!.]env`, `a]b`, `*.[kp]e[my]`, `id_??a*`, `[`, `a[b`, `*\`, `?`, `*`, ``}
+	lists := map[string][]string{
+		"secret": SecretGlobs, "allow": AllowGlobs, "template": allowTemplateGlobs, "hard": hardSecretGlobs, "tricky": tricky,
+	}
+	var names []string
+	alphabet := ""
+	for _, globs := range lists {
+		for _, glob := range globs {
+			alphabet += glob
+			for _, fill := range []string{"", "x", "a.b", "pem"} {
+				filled := []byte{}
+				for i := 0; i < len(glob); i++ {
+					switch glob[i] {
+					case '*':
+						filled = append(filled, fill...)
+					case '?':
+						filled = append(filled, 'q')
+					default:
+						filled = append(filled, glob[i])
+					}
+				}
+				names = append(names, string(filled), "x"+string(filled), string(filled)+".bak", string(filled)+"x")
+			}
+			for i := 0; i <= len(glob); i++ {
+				names = append(names, glob[:i], glob[i:])
+			}
+			names = append(names, glob, strings.ToUpper(glob))
+		}
+	}
+	random := rand.New(rand.NewPCG(3, 4))
+	for range 20000 {
+		name := make([]byte, random.IntN(14))
+		for i := range name {
+			name[i] = alphabet[random.IntN(len(alphabet))]
+		}
+		names = append(names, string(name))
+	}
+	matched := 0
+	for list, globs := range lists {
+		set := compileGlobs(globs)
+		for _, name := range names {
+			want := MatchesAny(name, globs)
+			if got := set.matches(name); got != want {
+				t.Errorf("%s patterns, name %q: globSet says %t, filepath.Match says %t", list, name, got, want)
+			}
+			if want {
+				matched++
+			}
+		}
+	}
+	if matched < 1000 {
+		t.Fatalf("only %d matching names: the corpus no longer exercises the patterns", matched)
 	}
 }
