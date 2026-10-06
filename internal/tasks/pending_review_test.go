@@ -3,6 +3,7 @@ package tasks
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -64,6 +65,47 @@ func TestPendingReviewEnrollmentSurvivesRestart(t *testing.T) {
 	got := cohort.Subjects[0]
 	if got.Task.Ref.ID != "review-me" || got.Phase != PendingReviewSignoff || got.Prepared || got.Fingerprint.Receipt == "" {
 		t.Fatalf("pending subject = %+v", got)
+	}
+}
+
+// The lease registry is host-wide: another queue's review records, however many, must not fail
+// this queue's load (tests once left 2,236 of them in a real registry, on course for the bound),
+// while this queue's own records still count toward it.
+func TestLoadPendingReviewsBoundsOnlyTheSelectedQueues(t *testing.T) {
+	registry := t.TempDir()
+	t.Setenv(TestLeaseAuthorityRootEnv, registry)
+	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+		t.Fatal(err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	foreign := strings.Repeat("f", 64) + "-"
+	for i := range pendingReviewScanLimit + 1 {
+		writeTaskFile(t, filepath.Join(registry, fmt.Sprintf("%s%064x%s", foreign, i, pendingReviewFileSuffix)), "{}")
+	}
+	cohort, err := LoadPendingReviews(repo, []string{root})
+	if err != nil {
+		t.Fatalf("another queue's records failed the load: %v", err)
+	}
+	if len(cohort.Subjects) != 1 || cohort.Subjects[0].Task.Ref.ID != "review-me" {
+		t.Fatalf("cohort = %+v, want this queue's one subject", cohort)
+	}
+
+	canonical, err := canonicalTaskRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	own, err := pendingReviewRecordPrefix(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range pendingReviewScanLimit + 1 {
+		writeTaskFile(t, filepath.Join(registry, fmt.Sprintf("%s%064x%s", own, i, pendingReviewFileSuffix)), "{}")
+	}
+	if _, err := LoadPendingReviews(repo, []string{root}); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("err = %v, want this queue's own records still bounded", err)
 	}
 }
 

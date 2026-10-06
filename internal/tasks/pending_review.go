@@ -1102,6 +1102,24 @@ func pendingReviewPlanMatches(repo string, hosts []string, plan PendingReviewPla
 // LoadPendingReviews discovers host-private records, validates their exact accepted generations,
 // and returns at most one coherent cohort. Multiple review contracts never get silently mixed.
 func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error) {
+	workspace, err := canonicalPendingReviewWorkspace(repo)
+	if err != nil {
+		return PendingReviewCohort{}, err
+	}
+	wantedRoots := map[string]bool{}
+	var wantedPrefixes []string
+	for _, host := range hosts {
+		root, err := canonicalTaskRoot(host)
+		if err != nil {
+			return PendingReviewCohort{}, err
+		}
+		wantedRoots[root] = true
+		prefix, err := pendingReviewRecordPrefix(root)
+		if err != nil {
+			return PendingReviewCohort{}, err
+		}
+		wantedPrefixes = append(wantedPrefixes, prefix)
+	}
 	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
 		return PendingReviewCohort{}, err
@@ -1115,7 +1133,11 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 	for {
 		batch, readErr := directory.ReadDir(256)
 		for _, entry := range batch {
-			if !strings.HasSuffix(entry.Name(), pendingReviewFileSuffix) {
+			// The registry is host-wide: only the selected queues' records count toward the bound, so
+			// other queues' records cannot fail this load, however many there are.
+			name := entry.Name()
+			if !strings.HasSuffix(name, pendingReviewFileSuffix) ||
+				!slices.ContainsFunc(wantedPrefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) }) {
 				continue
 			}
 			entries = append(entries, entry)
@@ -1136,39 +1158,8 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 	}
 	directory.Close()
 	registry.Close()
-	workspace, err := canonicalPendingReviewWorkspace(repo)
-	if err != nil {
-		return PendingReviewCohort{}, err
-	}
-	wantedRoots := map[string]bool{}
-	wantedPrefixes := map[string]bool{}
-	for _, host := range hosts {
-		root, err := canonicalTaskRoot(host)
-		if err != nil {
-			return PendingReviewCohort{}, err
-		}
-		wantedRoots[root] = true
-		prefix, err := pendingReviewRecordPrefix(root)
-		if err != nil {
-			return PendingReviewCohort{}, err
-		}
-		wantedPrefixes[prefix] = true
-	}
 	var cohort PendingReviewCohort
 	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), pendingReviewFileSuffix) {
-			continue
-		}
-		belongs := false
-		for prefix := range wantedPrefixes {
-			if strings.HasPrefix(entry.Name(), prefix) {
-				belongs = true
-				break
-			}
-		}
-		if !belongs {
-			continue
-		}
 		// The root and task id are inside the strict record. Records for other workspaces are
 		// ignored; records claiming this workspace must validate against this invocation.
 		registry, openErr := OpenLeaseAuthorityRoot()

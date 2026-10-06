@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Final review counts only its own pending reviews.** `coop loop` refuses to load more than
+  4,096 pending final-review records, and it counted every repository's records on the machine,
+  not just the queues it was loading, so enough of them elsewhere would have stopped every final
+  review. It now counts only the selected queues' records.
+
 - **Boxes start faster in a cluttered checkout.** Before every start, co:op checks each path in
   the checkout, gitignored task folders included, against 64 secret-file patterns, so it can hide
   the matches. With 40,000 paths that took about half a second. Two string comparisons now rule out
