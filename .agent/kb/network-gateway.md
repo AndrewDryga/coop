@@ -3,7 +3,7 @@ name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
 sources: [internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/gatewayimage/image.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/forkctl/host.go]
-updated: 2026-09-25
+updated: 2026-10-06
 ---
 
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
@@ -201,8 +201,13 @@ guard probed and stopped, final observation taken — and only independent steps
 removal beside the controller's stop, and the two volumes; store writes stay serialized under `f.mu`.
 Measured 2026-09-19: SIGINT→exit 1.87 s → ~1.03 s.
 
-**Start latency.** A filtered launch (`box/filtered_launch.go`, `launch`) is ~180 Docker CLI calls of
-~20–25 ms, each preceded by a `docker info` daemon-identity check that is custody, not overhead. Only
+**Start latency.** A filtered launch (`box/filtered_launch.go`, `launch`) is ~110 Docker CLI calls of
+~20–40 ms, with ~74 daemon-identity checks around them that are custody, not overhead: none may be
+skipped (a review rejected skipping a read's check when nothing ran since the last one, because it
+moves the check away from the start it guards). Each check is GET /info over the bound socket
+(`runtime/docker.go` `readInfo`, ~4 ms) instead of a `docker info` process (~40 ms); the socket path
+is the endpoint's literal bytes, and `validDockerEndpoint` refuses `%` and surrounding whitespace so
+the CLI and the request cannot reach different sockets. Only
 independent steps overlap, through `together`, which waits for EVERY step so a failing one never
 strands its sibling's request mid-flight, and raises a step's panic again on the launch goroutine so
 the run's deferred teardown still runs: the two volumes, and the guard's creation beside the
@@ -218,6 +223,7 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-10-06 — identity checks are a socket request, not a CLI process (task 2026-10-05-cut-the-filtered-start-below-3-s-fewer-serial-do).
 - 2026-09-25 — rechecked the owner-private launch configuration, nft rules and socket collector:
   the host now supplies the agent UID explicitly; zero and gateway UID 65532 are refused. Regenerated
   the embedded helper source after the source change (an unregenerated live smoke failed closed).

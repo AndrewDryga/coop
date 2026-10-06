@@ -17,7 +17,7 @@ func TestDockerCreationDistinguishesNoSubmissionFromUnknownOutcome(t *testing.T)
 				fixture.Volume = &DockerVolume{Name: "coop-test", Driver: "local", Scope: "local", CreatedAt: "fixture-time", Labels: dockerFixtureRef().Labels}
 			}
 			rt, _ := fixtureDocker(t, fixture)
-			d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+			d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -55,7 +55,7 @@ func TestDockerOutputCancelledBeforeSpawnIsNotSubmitted(t *testing.T) {
 
 func TestDockerStartupRetriesTransientObservation(t *testing.T) {
 	rt, file := fixtureDocker(t, dockerFixture{Mode: "transient-start", Container: dockerFixtureContainer()})
-	d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+	d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestDockerStartupRetriesTransientObservation(t *testing.T) {
 func TestDockerFastExitSupersedesOnlyTransientStartupFailure(t *testing.T) {
 	for _, failCallback := range []bool{false, true} {
 		rt, file := fixtureDocker(t, dockerFixture{Mode: "transient-fast-exit", Container: dockerFixtureContainer()})
-		d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+		d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
 		if err != nil {
 			t.Fatal(err)
 		}

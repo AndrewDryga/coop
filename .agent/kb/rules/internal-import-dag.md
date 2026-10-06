@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-10-01
+updated: 2026-10-05
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -46,6 +46,8 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-10-05 — added the `testutil/dockersock` leaf: test fakes serve the daemon identity request
+  (GET /info) that `runtime` now sends over the bound socket itself.
 - 2026-10-01 — added `cli -> session` for the read-only retained usage metadata snapshot.
   The usage command must not open/migrate the service store or invent a second schema in CLI.
   Session remains presentation-neutral; the full production import scan verifies the edge.

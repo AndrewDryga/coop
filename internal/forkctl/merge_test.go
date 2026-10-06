@@ -25,6 +25,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
 	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
 	"github.com/AndrewDryga/coop/internal/ui"
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
@@ -1946,13 +1947,14 @@ func TestControllerJobReviewStartsTheCandidatesReviewStack(t *testing.T) {
 	// Named docker, since only Docker can enforce a job's resource limits; the fixture endpoint
 	// keeps a real Docker daemon from being asked for its identity.
 	t.Setenv("DOCKER_CONTEXT", "")
-	t.Setenv("DOCKER_HOST", "unix:///fixture.sock")
+	t.Setenv("DOCKER_HOST", dockersock.Serve(t, func() (dockersock.Info, error) {
+		return dockersock.Info{ID: "daemon-one", OSType: "linux", Architecture: "amd64", ServerVersion: "29", KernelVersion: "fixture", SecurityOptions: []string{}}, nil
+	}))
 	runtimePath := filepath.Join(t.TempDir(), "docker")
 	callsPath := filepath.Join(t.TempDir(), "calls")
 	argsPath := filepath.Join(t.TempDir(), "args")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$COOP_TEST_CALLS\"\n" +
-		"case \"$*\" in\n  *\"config --services\"*) printf 'db\\n' ;;\n" +
-		"  *\"info --format\"*) printf '{\"ID\":\"daemon-one\",\"OSType\":\"linux\",\"Architecture\":\"amd64\",\"ServerVersion\":\"29\",\"KernelVersion\":\"fixture\",\"SecurityOptions\":[]}\\n' ;;\nesac\n" +
+		"case \"$*\" in\n  *\"config --services\"*) printf 'db\\n' ;;\nesac\n" +
 		"case \"$1\" in\nrun) printf '%s\\n' \"$@\" > \"$COOP_TEST_ARGS\" ;;\nesac\nexit 0\n"
 	if err := os.WriteFile(runtimePath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)

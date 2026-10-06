@@ -10,17 +10,20 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"text/template"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/processidentity"
+	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
 )
 
 func TestDockerImageTemplateAcceptsOmittedLabels(t *testing.T) {
@@ -60,6 +63,7 @@ func fixtureDocker(t *testing.T, value dockerFixture) (Runtime, string) {
 	file := filepath.Join(root, "fixture.json")
 	writeDockerFixture(t, file, value)
 	t.Setenv("COOP_DOCKER_FIXTURE", file)
+	t.Setenv("COOP_DOCKER_FIXTURE_ENDPOINT", dockersock.Serve(t, func() (dockersock.Info, error) { return fixtureDaemonInfo(file) }))
 	t.Setenv("COOP_DOCKER_TEST_BINARY", os.Args[0])
 	// Each fixture CLI is this race-instrumented test executable. Remove only
 	// the race runtime's one-second exit sleep; otherwise two completed fake
@@ -73,6 +77,38 @@ func fixtureDocker(t *testing.T, value dockerFixture) (Runtime, string) {
 		t.Fatal(err)
 	}
 	return Runtime{Name: binary}, file
+}
+
+// fixtureSock is the fixture daemon's socket, served by fixtureDocker.
+func fixtureSock() string { return os.Getenv("COOP_DOCKER_FIXTURE_ENDPOINT") }
+
+// fixtureDaemonInfo is the fixture daemon's answer to GET /info, read from its file at each request
+// so a test can replace the daemon mid-run. A transient start fails its first probe once.
+func fixtureDaemonInfo(file string) (dockersock.Info, error) {
+	var fixture dockerFixture
+	data, err := os.ReadFile(file)
+	if err != nil || json.Unmarshal(data, &fixture) != nil {
+		return dockersock.Info{}, dockersock.ErrUnavailable
+	}
+	if (fixture.Mode == "transient-start" || fixture.Mode == "transient-fast-exit") && fixture.ClientPID != 0 {
+		marker, err := os.OpenFile(file+".probe-failed", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err == nil {
+			_ = marker.Close()
+			return dockersock.Info{}, dockersock.ErrUnavailable
+		}
+	}
+	id, kernel := fixture.ID, fixture.Kernel
+	if id == "" {
+		id = "fixture-daemon"
+	}
+	if kernel == "" {
+		kernel = "fixture-kernel"
+	}
+	info := dockersock.Info{ID: id, OSType: "linux", Architecture: "amd64", ServerVersion: "29.4.0", KernelVersion: kernel}
+	if fixture.Mode == "rootless" {
+		info.SecurityOptions = []string{"name=rootless"}
+	}
+	return info, nil
 }
 
 func writeDockerFixture(t *testing.T, file string, value dockerFixture) {
@@ -122,7 +158,7 @@ func TestDockerFixtureProcess(t *testing.T) {
 	}
 	bound := len(args) >= 2 && args[0] == "--host"
 	if bound {
-		if args[1] != "unix:///fixture.sock" {
+		if args[1] != fixtureSock() {
 			os.Exit(93)
 		}
 		for _, key := range []string{"DOCKER_CONTEXT", "DOCKER_HOST", "DOCKER_API_VERSION", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH"} {
@@ -160,28 +196,8 @@ func TestDockerFixtureProcess(t *testing.T) {
 			if fixture.Context != "" && args[len(args)-1] != fixture.Context {
 				os.Exit(97)
 			}
-			emit(map[string]any{"Host": "unix:///fixture.sock", "SkipTLSVerify": false})
+			emit(map[string]any{"Host": fixtureSock(), "SkipTLSVerify": false})
 		}
-	case "info":
-		if (fixture.Mode == "transient-start" || fixture.Mode == "transient-fast-exit") && fixture.ClientPID != 0 {
-			marker, err := os.OpenFile(file+".probe-failed", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-			if err == nil {
-				_ = marker.Close()
-				os.Exit(1)
-			}
-		}
-		id, kernel := fixture.ID, fixture.Kernel
-		if id == "" {
-			id = "fixture-daemon"
-		}
-		if kernel == "" {
-			kernel = "fixture-kernel"
-		}
-		info := DockerInfo{ID: id, OSType: "linux", Architecture: "amd64", ServerVersion: "29.4.0", KernelVersion: kernel}
-		if fixture.Mode == "rootless" {
-			info.SecurityOptions = []string{"name=rootless"}
-		}
-		emit(info)
 	case "container":
 		switch args[1] {
 		case "create":
@@ -347,7 +363,7 @@ func TestDockerBindingFreezesEndpointEnvironmentAndFencesDaemon(t *testing.T) {
 	t.Setenv("DOCKER_TLS_VERIFY", "1")
 	t.Setenv("DOCKER_API_VERSION", "invalid")
 	d, err := BindDocker(context.Background(), rt, "", "")
-	if err != nil || d.Endpoint() != "unix:///fixture.sock" {
+	if err != nil || d.Endpoint() != fixtureSock() {
 		t.Fatal("explicit context was not captured", err)
 	}
 	defer d.Close()
@@ -355,17 +371,70 @@ func TestDockerBindingFreezesEndpointEnvironmentAndFencesDaemon(t *testing.T) {
 	if err := d.Verify(context.Background()); err != nil {
 		t.Fatal("ambient mutation changed bound endpoint", err)
 	}
+	if _, _, err := d.InspectContainer(context.Background(), dockerFixtureRef()); err != nil {
+		t.Fatal("ambient mutation changed the endpoint the Docker CLI uses", err)
+	}
 	writeDockerFixture(t, file, dockerFixture{ID: "another-daemon"})
 	if err := d.Verify(context.Background()); err == nil {
 		t.Fatal("replacement daemon retained custody")
 	}
 }
 
+// The daemon's identity is GET /info on the bound socket, not a docker process. A daemon that
+// cannot say who it is, or answers with something that is not an identity, binds nothing.
+func TestDockerIdentityRequestRefusesBadAnswers(t *testing.T) {
+	rt, _ := fixtureDocker(t, dockerFixture{})
+	// each answer is a valid identity but for the one thing wrong with it
+	const valid = `{"ID":"daemon","OSType":"linux","Architecture":"amd64","ServerVersion":"29","KernelVersion":"k","SecurityOptions":[]`
+	write := func(body string) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, body) }
+	}
+	for name, bad := range map[string]struct {
+		answer http.HandlerFunc
+		want   string
+	}{
+		"unavailable": {func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "down", http.StatusInternalServerError) }, "observation failed"},
+		"not JSON":    {write(valid), "observation is invalid"},
+		"no identity": {write(strings.Replace(valid, `"ID":"daemon",`, "", 1) + "}"), "observation is invalid"},
+		"over bound":  {write(valid + `,"Pad":"` + strings.Repeat("x", 1<<20) + `"}`), "exceeded its bound"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d, err := BindDocker(context.Background(), rt, dockersock.ServeHandler(t, bad.answer), "")
+			if err == nil {
+				d.Close()
+				t.Fatal("bound a daemon that did not say who it is")
+			}
+			if !strings.Contains(err.Error(), bad.want) {
+				t.Fatalf("refused for the wrong reason: %v, want %q", err, bad.want)
+			}
+		})
+	}
+	// a redirect is refused, not followed: its target would have answered with a valid identity
+	t.Run("redirected", func(t *testing.T) {
+		var followed atomic.Bool
+		endpoint := dockersock.ServeHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/elsewhere" {
+				followed.Store(true)
+				_, _ = io.WriteString(w, valid+"}")
+				return
+			}
+			http.Redirect(w, r, "/elsewhere", http.StatusTemporaryRedirect)
+		}))
+		if d, err := BindDocker(context.Background(), rt, endpoint, ""); err == nil {
+			d.Close()
+			t.Fatal("bound the daemon a redirect pointed at")
+		}
+		if followed.Load() {
+			t.Fatal("the identity request followed a redirect")
+		}
+	})
+}
+
 func TestDockerSharedVolumeInventoryUsesBoundEndpointAndNeverCreates(t *testing.T) {
 	definition := &volumeDefinition{Name: "coop-cache", Driver: "local", Scope: "local", Mountpoint: t.TempDir()}
 	fixture := dockerFixture{Mode: "shared-volume", SharedVolume: definition}
 	rt, file := fixtureDocker(t, fixture)
-	docker, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+	docker, err := BindDocker(context.Background(), rt, fixtureSock(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +468,7 @@ func TestDockerSharedVolumeInventoryUsesBoundEndpointAndNeverCreates(t *testing.
 }
 
 func TestDockerEndpointAndCreationGrammarRefuseEscapes(t *testing.T) {
-	for _, endpoint := range []string{"", "tcp://localhost:2375", "ssh://host", "unix://host/path", "unix:relative", "unix:///", "unix:///a/../socket", "unix:///socket?", "unix:///socket#x"} {
+	for _, endpoint := range []string{"", "tcp://localhost:2375", "ssh://host", "unix://host/path", "unix:relative", "unix:///", "unix:///a/../socket", "unix:///socket?", "unix:///socket#x", "unix:///tmp/dock%65r.sock", "unix:///tmp/docker.sock ", "unix:///tmp/docker.sock\u00a0"} {
 		if validDockerEndpoint(endpoint) {
 			t.Fatalf("unsafe endpoint accepted: %q", endpoint)
 		}
@@ -416,7 +485,7 @@ func TestDockerEndpointAndCreationGrammarRefuseEscapes(t *testing.T) {
 
 func TestDockerRebindUsesCapturedBinaryAndEndpoint(t *testing.T) {
 	rt, _ := fixtureDocker(t, dockerFixture{})
-	d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+	d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,6 +506,10 @@ func TestDockerRebindUsesCapturedBinaryAndEndpoint(t *testing.T) {
 	defer replayed.Close()
 	if !replayed.launchAllowed || replayed.Endpoint() != endpoint {
 		t.Fatal("exact admitted replay lost launch capability")
+	}
+	// the identity check is a socket request; a container read proves the captured CLI still runs
+	if _, _, err := replayed.InspectContainer(context.Background(), dockerFixtureRef()); err != nil {
+		t.Fatal("replay's Docker operations depended on the ambient executable or context", err)
 	}
 }
 
@@ -459,7 +532,7 @@ func TestDockerInspectionNeverConfusesFailureWithAbsence(t *testing.T) {
 				fixture.Container.Labels["coop.network.run"] = "foreign"
 			}
 			rt, _ := fixtureDocker(t, fixture)
-			d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+			d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -479,7 +552,7 @@ func TestDockerAttachedStartCapturesFirstOutputAndDaemonOutcome(t *testing.T) {
 			// waits out its whole budget before failing closed — shrink it so the test does not.
 			defer swapConfirmExitBudget(200 * time.Millisecond)()
 			rt, _ := fixtureDocker(t, dockerFixture{Mode: mode, Container: dockerFixtureContainer()})
-			d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+			d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -505,7 +578,7 @@ func TestDockerAttachedStartCapturesFirstOutputAndDaemonOutcome(t *testing.T) {
 
 func TestDockerRecoveryCanCleanAfterQualificationDriftButCannotLaunch(t *testing.T) {
 	rt, file := fixtureDocker(t, dockerFixture{Container: dockerFixtureContainer()})
-	d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "fixture-daemon")
+	d, err := BindDocker(context.Background(), rt, fixtureSock(), "fixture-daemon")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -521,7 +594,7 @@ func TestDockerRecoveryCanCleanAfterQualificationDriftButCannotLaunch(t *testing
 
 func TestDockerCancelledAttachmentDoesNotAssertWorkloadDeath(t *testing.T) {
 	rt, _ := fixtureDocker(t, dockerFixture{Mode: "hold", Container: dockerFixtureContainer()})
-	d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+	d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -543,7 +616,7 @@ func TestDockerCancelledAttachmentDoesNotAssertWorkloadDeath(t *testing.T) {
 
 func TestDockerCancellationAfterQueuedClientSuccessHasUnknownExit(t *testing.T) {
 	rt, file := fixtureDocker(t, dockerFixture{Mode: "queued-cancel", Container: dockerFixtureContainer()})
-	d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+	d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -588,7 +661,7 @@ func TestInspectDockerHasNoLaunchAuthority(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer d.Close()
-			if d.Endpoint() != "unix:///fixture.sock" || d.Info().ID != "fixture-daemon" || d.launchAllowed {
+			if d.Endpoint() != fixtureSock() || d.Info().ID != "fixture-daemon" || d.launchAllowed {
 				t.Fatal("inspection binding changed authority")
 			}
 			if err := d.Verify(t.Context()); err != nil {
@@ -615,7 +688,7 @@ func TestInspectDockerHasNoLaunchAuthority(t *testing.T) {
 
 func TestDockerClientFailureWithoutStartIsNotProviderExit(t *testing.T) {
 	rt, _ := fixtureDocker(t, dockerFixture{Mode: "no-start", Container: dockerFixtureContainer()})
-	d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+	d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -639,7 +712,7 @@ func TestDockerVolumeOwnershipAndPrivateConfigLifetime(t *testing.T) {
 			}
 			rt, file := fixtureDocker(t, dockerFixture{Volume: volume})
 			t.Setenv("DOCKER_CONFIG", "/a/private/operator/config")
-			d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+			d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -677,7 +750,7 @@ func TestDockerLateWorkloadStartIsReportedNotFailed(t *testing.T) {
 	slowStartupAfter = 20 * time.Millisecond
 	t.Cleanup(func() { slowStartupAfter = previous })
 	rt, _ := fixtureDocker(t, dockerFixture{Mode: "late-start", Container: dockerFixtureContainer()})
-	d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+	d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -739,7 +812,7 @@ func TestDockerImageLayersRefusesAnUnprovableChain(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			rt, _ := fixtureDocker(t, dockerFixture{Layers: layers})
-			d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+			d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -757,7 +830,7 @@ func TestDockerImageLayersRefusesAnUnprovableChain(t *testing.T) {
 		})
 	}
 	rt, _ := fixtureDocker(t, dockerFixture{Layers: good})
-	d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+	d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -796,7 +869,7 @@ func TestDockerFileDigestIdentifiesOneRegularFile(t *testing.T) {
 				container.State = DockerContainerState{Status: "running", Running: true, StartedAt: time.Now()}
 			}
 			rt, _ := fixtureDocker(t, dockerFixture{Container: container, Copy: test.mode, CopyBody: body})
-			d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+			d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -823,7 +896,7 @@ func TestDockerTreeDigestChangesWithTheArchivedTree(t *testing.T) {
 			container.State = DockerContainerState{Status: "running", Running: true, StartedAt: time.Now()}
 		}
 		rt, _ := fixtureDocker(t, dockerFixture{Container: container, Copy: mode, CopyBody: "module.exports = 1\n"})
-		d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+		d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
 		if err != nil {
 			return DockerTree{}, err
 		}
@@ -872,7 +945,7 @@ func TestAttachedClientJoinsCoopsGroupOnlyWhenItDrivesTheTerminal(t *testing.T) 
 			attachedToTerminal = func(...any) bool { return terminal }
 			t.Cleanup(func() { attachedToTerminal = previous })
 			rt, _ := fixtureDocker(t, dockerFixture{Mode: "pgid", Container: dockerFixtureContainer()})
-			d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+			d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
 			if err != nil {
 				t.Fatal(err)
 			}

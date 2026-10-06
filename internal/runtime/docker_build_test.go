@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
 )
 
 const buildFixtureID = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -23,13 +25,21 @@ func buildFixture(t *testing.T, mode string) (*Docker, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// the daemon reports a new identity once a daemon-change build has run
+	endpoint := dockersock.Serve(t, func() (dockersock.Info, error) {
+		id := "fixture-daemon"
+		if _, err := os.Stat(filepath.Join(root, "built")); err == nil && mode == "daemon-change" {
+			id = "changed-daemon"
+		}
+		return dockersock.Info{ID: id, OSType: "linux", Architecture: "amd64", ServerVersion: "29.4.0", KernelVersion: "fixture-kernel"}, nil
+	})
 	binary := filepath.Join(root, "docker")
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
-	script := "#!/bin/sh\nexport GORACE='atexit_sleep_ms=0'\nexec " + quote(os.Args[0]) + " -test.run=^TestDockerBuildFixtureProcess$ -- " + quote(root) + " " + quote(mode) + " \"$@\"\n"
+	script := "#!/bin/sh\nexport GORACE='atexit_sleep_ms=0'\nexec " + quote(os.Args[0]) + " -test.run=^TestDockerBuildFixtureProcess$ -- " + quote(root) + " " + quote(mode) + " " + quote(endpoint) + " \"$@\"\n"
 	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
-	d, err := BindDocker(context.Background(), Runtime{Name: binary}, "unix:///fixture.sock", "")
+	d, err := BindDocker(context.Background(), Runtime{Name: binary}, endpoint, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,9 +56,9 @@ func TestDockerBuildFixtureProcess(t *testing.T) {
 	if i < 0 {
 		return
 	}
-	root, mode := os.Args[i+1], os.Args[i+2]
-	args := os.Args[i+3:]
-	if len(args) < 5 || args[0] != "--config" || args[2] != "--host" || args[3] != "unix:///fixture.sock" {
+	root, mode, endpoint := os.Args[i+1], os.Args[i+2], os.Args[i+3]
+	args := os.Args[i+4:]
+	if len(args) < 5 || args[0] != "--config" || args[2] != "--host" || args[3] != endpoint {
 		os.Exit(91)
 	}
 	clientConfig := args[1]
@@ -78,11 +88,7 @@ func TestDockerBuildFixtureProcess(t *testing.T) {
 			emit([]map[string]string{{"Name": "buildx", "Path": filepath.Join(root, "docker")}})
 			break
 		}
-		id := "fixture-daemon"
-		if _, err := os.Stat(filepath.Join(root, "built")); err == nil && mode == "daemon-change" {
-			id = "changed-daemon"
-		}
-		emit(DockerInfo{ID: id, OSType: "linux", Architecture: "amd64", ServerVersion: "29.4.0", KernelVersion: "fixture-kernel"})
+		os.Exit(94) // the identity is read from the socket, never through the CLI
 	case "build":
 		if !slices.Equal(args[:7], []string{"build", "--builder", "default", "--platform", "linux/amd64", "--progress", "plain"}) || args[len(args)-1] != "-" {
 			os.Exit(93)

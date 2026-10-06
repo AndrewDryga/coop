@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Filtered boxes start faster.** A filtered launch checks about 74 times that Docker is still
+  the daemon it bound to. Each check started a `docker info` process (about 40 ms on a busy Mac);
+  co:op now sends that one request over the same socket itself (about 4 ms), and still checks
+  every time. On a busy Mac (load 9 to 15), the median filtered start went from 3.75 s to 2.89 s.
+
 - **`coop tasks watch` sits idle quietly.** The board re-read every task's records, done ones
   included, on each 400 ms tick: on a 650-task queue that kept a fifth of a CPU busy while nothing
   changed. It now reads again only when a task folder or a listed task's files change, and at

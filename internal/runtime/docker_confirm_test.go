@@ -151,7 +151,7 @@ func TestConfirmWorkloadExitFailsClosedWhenNeverTerminalWithinTheBudget(t *testi
 func TestDockerSettlingWorkloadIsConfirmedNotFailed(t *testing.T) {
 	defer swapConfirmExitBudget(2 * time.Second)()
 	rt, _ := fixtureDocker(t, dockerFixture{Mode: "settling", Container: dockerFixtureContainer()})
-	d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+	d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
 	if err != nil {
 		t.Fatal(err)
 	}

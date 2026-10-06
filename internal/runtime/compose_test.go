@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	coopconfig "github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
 )
 
 func TestComposeRegistryConfigStaysUnderProtectedCoopHome(t *testing.T) {
@@ -34,12 +35,12 @@ func TestComposeUsesProxyFreeConfigAndFrozenDaemon(t *testing.T) {
 	t.Setenv("DOCKER_CONFIG", config)
 	t.Setenv("DOCKER_AUTH_CONFIG", `{"auths":{"registry-env.example":{"auth":"Zml4dHVyZTpwYXNz"}}}`)
 	t.Setenv("DOCKER_CONTEXT", "")
-	t.Setenv("DOCKER_HOST", "unix:///fixture.sock")
+	endpoint := composeFixtureDaemon(t)
+	t.Setenv("DOCKER_HOST", endpoint)
 	recorder := filepath.Join(t.TempDir(), "observed")
 	path := filepath.Join(t.TempDir(), "docker")
 	script := "#!/bin/sh\n" +
 		"case \"$*\" in\n" +
-		"  *\"info --format\"*) printf '{\"ID\":\"%s\",\"OSType\":\"linux\",\"Architecture\":\"amd64\",\"ServerVersion\":\"29\",\"KernelVersion\":\"fixture\",\"SecurityOptions\":[]}\\n' \"${COOP_TEST_DAEMON:-daemon-one}\" ;;\n" +
 		"  *\"compose config --services\"*) printf '%s\\n' \"$*\" >> " + strconv.Quote(recorder) + "; cat \"$2/config.json\" >> " + strconv.Quote(recorder) + "; printf '%s\\n' \"$DOCKER_AUTH_CONFIG\" >> " + strconv.Quote(recorder) + " ;;\n" +
 		"esac\n"
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
@@ -55,7 +56,7 @@ func TestComposeUsesProxyFreeConfigAndFrozenDaemon(t *testing.T) {
 		t.Fatalf("bound Compose command = (%d, %v)", code, err)
 	}
 	observed, err := os.ReadFile(recorder)
-	if err != nil || !strings.Contains(string(observed), "--host unix:///fixture.sock") || !strings.Contains(string(observed), "fixture-auth") || !strings.Contains(string(observed), "registry-env.example") || strings.Contains(string(observed), "secret@proxy") || strings.Contains(string(observed), "proxies") {
+	if err != nil || !strings.Contains(string(observed), "--host "+endpoint) || !strings.Contains(string(observed), "fixture-auth") || !strings.Contains(string(observed), "registry-env.example") || strings.Contains(string(observed), "secret@proxy") || strings.Contains(string(observed), "proxies") {
 		t.Fatalf("Compose received unsafe client configuration: %v\n%s", err, observed)
 	}
 	if original, err := os.ReadFile(filepath.Join(config, "config.json")); err != nil || !strings.Contains(string(original), "secret@proxy") {
@@ -84,13 +85,13 @@ func TestComposeAuthEnvironmentRejectsNonAuthData(t *testing.T) {
 
 func TestFrozenComposeInventoriesWritersOnSameDaemon(t *testing.T) {
 	t.Setenv("DOCKER_CONTEXT", "")
-	t.Setenv("DOCKER_HOST", "unix:///fixture.sock")
+	endpoint := composeFixtureDaemon(t)
+	t.Setenv("DOCKER_HOST", endpoint)
 	recorder := filepath.Join(t.TempDir(), "commands")
 	path := filepath.Join(t.TempDir(), "docker")
 	script := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$*\" >> " + strconv.Quote(recorder) + "\n" +
 		"case \"$*\" in\n" +
-		"  *\"info --format\"*) printf '{\"ID\":\"%s\",\"OSType\":\"linux\",\"Architecture\":\"amd64\",\"ServerVersion\":\"29\",\"KernelVersion\":\"fixture\",\"SecurityOptions\":[]}\\n' \"${COOP_TEST_DAEMON:-daemon-one}\" ;;\n" +
 		"  *\"ps -q\"*) printf 'fixture-container\\n' ;;\n" +
 		"  *\"inspect --format\"*) printf '[{\"Type\":\"bind\",\"Source\":\"/fixture/source\",\"RW\":true}]\\n' ;;\n" +
 		"esac\n"
@@ -111,7 +112,7 @@ func TestFrozenComposeInventoriesWritersOnSameDaemon(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, line := range strings.Split(strings.TrimSpace(string(observed)), "\n") {
-		if !strings.Contains(line, "--host unix:///fixture.sock") || strings.Contains(line, "unix:///other.sock") {
+		if !strings.Contains(line, "--host "+endpoint) || strings.Contains(line, "unix:///other.sock") {
 			t.Fatalf("inventory followed ambient context: %s", line)
 		}
 	}
@@ -119,4 +120,17 @@ func TestFrozenComposeInventoriesWritersOnSameDaemon(t *testing.T) {
 	if _, err := rt.RunningWritableBindSourcesByLabels(t.Context(), map[string]string{"com.docker.compose.project": ""}); err == nil {
 		t.Fatal("inventory followed a replaced Docker daemon")
 	}
+}
+
+// composeFixtureDaemon serves the fixture daemon's identity, daemon-one unless COOP_TEST_DAEMON
+// names a replacement.
+func composeFixtureDaemon(t *testing.T) string {
+	t.Helper()
+	return dockersock.Serve(t, func() (dockersock.Info, error) {
+		id := os.Getenv("COOP_TEST_DAEMON")
+		if id == "" {
+			id = "daemon-one"
+		}
+		return dockersock.Info{ID: id, OSType: "linux", Architecture: "amd64", ServerVersion: "29", KernelVersion: "fixture", SecurityOptions: []string{}}, nil
+	})
 }

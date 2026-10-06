@@ -12,20 +12,38 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
 )
+
+// serviceFixtureDaemon serves the fixture daemon's identity on a new socket: fixture-daemon,
+// unless COOP_TEST_DAEMON names a replacement.
+func serviceFixtureDaemon(t *testing.T) string {
+	t.Helper()
+	return dockersock.Serve(t, func() (dockersock.Info, error) {
+		id := os.Getenv("COOP_TEST_DAEMON")
+		if id == "" {
+			id = "fixture-daemon"
+		}
+		return dockersock.Info{ID: id, OSType: "linux", Architecture: "amd64", ServerVersion: "29.1", KernelVersion: "fixture", SecurityOptions: []string{}}, nil
+	})
+}
 
 func serviceReviewRuntime(t *testing.T, recorder string) runtime.Runtime {
 	t.Helper()
 	t.Setenv("DOCKER_CONTEXT", "")
-	t.Setenv("DOCKER_HOST", "unix:///fixture.sock")
+	t.Setenv("DOCKER_HOST", serviceFixtureDaemon(t))
 	path := filepath.Join(t.TempDir(), "docker")
 	script := "#!/bin/sh\n"
 	if recorder != "" {
+		// the identity check is a socket request, so a review that runs no docker command
+		// leaves an empty record rather than none
+		if err := os.WriteFile(recorder, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
 		script += "echo \"$@\" >> " + strconv.Quote(recorder) + "\n"
 	}
 	script += `for last; do :; done
 case "$*" in
-  *"info --format"*) printf '{"ID":"%s","OSType":"linux","Architecture":"amd64","ServerVersion":"29.1","KernelVersion":"fixture","SecurityOptions":[]}\n' "${COOP_TEST_DAEMON:-fixture-daemon}" ;;
   *"image inspect --format"*)
     if [ "$last" = "$COOP_TEST_MISSING_IMAGE" ] || { [ "$COOP_TEST_MISSING_TAG" = 1 ] && [ "${last#sha256:}" = "$last" ]; } || { [ -n "$COOP_TEST_IMAGE_STATE" ] && [ ! -f "$COOP_TEST_IMAGE_STATE" ] && [ "${last#sha256:}" = "$last" ]; }; then exit 1; fi
     id="${COOP_TEST_IMAGE_ID:-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
@@ -577,7 +595,7 @@ func TestVolumeApprovalRefusesChangedDaemonOrVolumeObject(t *testing.T) {
 			}
 			switch change {
 			case "endpoint":
-				t.Setenv("DOCKER_HOST", "unix:///different.sock")
+				t.Setenv("DOCKER_HOST", serviceFixtureDaemon(t))
 			case "daemon":
 				t.Setenv("COOP_TEST_DAEMON", "different-daemon")
 			case "created-at":

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -36,8 +38,6 @@ type DockerInfo struct {
 	ID, OSType, Architecture, ServerVersion, KernelVersion string
 	SecurityOptions                                        []string
 }
-
-const dockerInfoFormat = `{"ID":{{json .ID}},"OSType":{{json .OSType}},"Architecture":{{json .Architecture}},"ServerVersion":{{json .ServerVersion}},"KernelVersion":{{json .KernelVersion}},"SecurityOptions":{{json .SecurityOptions}}}`
 
 var errDockerCommandNotStarted = errors.New("Docker client command was not started")
 
@@ -234,7 +234,9 @@ func discoverDockerEndpoint(ctx context.Context, binary string, env []string) (s
 }
 
 func validDockerEndpoint(value string) bool {
-	if len(value) > 4096 {
+	// %-escapes would let the decoded path checked here differ from the literal one dialed, and the
+	// docker CLI trims surrounding whitespace that the identity request would keep
+	if len(value) > 4096 || strings.Contains(value, "%") || strings.TrimSpace(value) != value {
 		return false
 	}
 	u, err := url.Parse(value)
@@ -362,10 +364,57 @@ func (d *Docker) read(ctx context.Context, timeout time.Duration, consume func(i
 	return nil
 }
 
+// readInfo asks the daemon who it is: GET /info on the bound socket, the request the docker CLI
+// would send there for `docker info`. A filtered launch asks 74 times, and a CLI process for each
+// cost about 40 ms where the request itself takes 4.
 func (d *Docker) readInfo(ctx context.Context) (DockerInfo, error) {
-	data, err := d.output(ctx, 8192, "info", "--format", dockerInfoFormat)
+	if d.closed.Load() {
+		return DockerInfo{}, errors.Join(errDockerCommandNotStarted, errors.New("Docker lifecycle binding is closed"))
+	}
+	if ctx == nil {
+		return DockerInfo{}, errors.Join(errDockerCommandNotStarted, errors.New("invalid bounded Docker operation"))
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	// The socket is the endpoint's literal bytes after unix://, as the docker CLI reads it for every
+	// other operation: a URL-decoded path could name a different socket, and so another daemon.
+	socket, ok := strings.CutPrefix(d.endpoint, "unix://")
+	if !ok || !validDockerEndpoint(d.endpoint) {
+		return DockerInfo{}, errors.Join(errDockerCommandNotStarted, errors.New("Docker endpoint is not a local socket"))
+	}
+	client := http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				var dialer net.Dialer
+				return dialer.DialContext(ctx, "unix", socket)
+			},
+			DisableKeepAlives: true,
+		},
+		// the Docker client follows no redirect, and neither does this
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker/info", nil)
 	if err != nil {
-		return DockerInfo{}, err
+		return DockerInfo{}, errors.Join(errDockerCommandNotStarted, err)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		if ctx.Err() != nil {
+			return DockerInfo{}, ctx.Err()
+		}
+		return DockerInfo{}, errors.New("Docker daemon observation failed")
+	}
+	defer response.Body.Close()
+	// a daemon's whole /info runs to tens of KiB; its plugins and registries are not read
+	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20+1))
+	if err != nil && ctx.Err() != nil {
+		return DockerInfo{}, ctx.Err()
+	}
+	if err != nil || response.StatusCode != http.StatusOK {
+		return DockerInfo{}, errors.New("Docker daemon observation failed")
+	}
+	if len(data) > 1<<20 {
+		return DockerInfo{}, errors.New("Docker observation exceeded its bound; outcome unknown")
 	}
 	var info DockerInfo
 	if json.Unmarshal(data, &info) != nil || !dockerToken(info.ID, 128) || !dockerToken(info.ServerVersion, 128) || !dockerToken(info.KernelVersion, 128) || len(info.SecurityOptions) > 32 {
