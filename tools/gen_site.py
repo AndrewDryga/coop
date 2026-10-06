@@ -7,7 +7,8 @@ The site is plain static HTML; this script only saves hand-typing what repeats: 
 provider marks (tools/site/logos/), the terminal lines and the commands you copy. Edit the template
 or the scenes here, then regenerate; never edit site/index.html by hand. site/docs.html is written
 by hand, except between its <!-- gen_site: NAME --> and <!-- /gen_site --> markers, which this
-script fills with the scene NAME.
+script fills with the scene NAME. On both pages it marks every link off the site to open in a new
+tab with rel="nofollow noopener", so a link written without them fails --check until regenerated.
 
 Usage:  python3 tools/gen_site.py           # rewrite site/index.html and the docs' terminals
         python3 tools/gen_site.py --check   # fail if either is out of date
@@ -19,6 +20,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import urllib.parse
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "tools" / "site"
@@ -590,6 +592,32 @@ def typographic(page):
     return "".join(out)
 
 
+SITE_HOST = "coop.dryga.com"
+
+
+def external_links(page):
+    """Every link off the site opens in a new tab with rel="nofollow noopener": the site does not
+    pass search ranking to the many pages it cites, and the new tab cannot reach back into this
+    one. Relative links, anchors and coop.dryga.com stay as they are; a rel already on a link keeps
+    its other words. Running it again changes nothing, so --check catches a link that lacks it."""
+    def mark(found):
+        tag = found.group(0)
+        href = re.search(r"""\shref=(["'])(https?://[^"']*)\1""", tag)
+        if not href or urllib.parse.urlsplit(href.group(2)).hostname == SITE_HOST:
+            return tag
+        if re.search(r"\starget=", tag):
+            tag = re.sub(r"""(\starget=)(["'])[^"']*\2""", r'\1"_blank"', tag)
+        else:
+            tag = tag[:-1] + ' target="_blank">'
+        rel = re.search(r"""\srel=(["'])([^"']*)\1""", tag)
+        words = rel.group(2).split() if rel else []
+        words += [word for word in ("nofollow", "noopener") if word not in words]
+        if rel:
+            return f'{tag[:rel.start()]} rel="{" ".join(words)}"{tag[rel.end():]}'
+        return f'{tag[:-1]} rel="{" ".join(words)}">'
+    return re.sub(r"<a\b[^>]*>", mark, page)
+
+
 def render(count):
     blocks = {
         "sprite": SPRITE,
@@ -616,7 +644,7 @@ def render(count):
         page = page.replace("{{" + name + "}}", value)
     left = re.findall(r"\{\{\w+\}\}", page)
     assert not left, left
-    return stamp_assets(typographic(page))
+    return stamp_assets(external_links(typographic(page)))
 
 
 ASSETS = ("assets/css/site.css", "assets/js/site.js", "assets/js/analytics.js")
@@ -637,12 +665,13 @@ def stamp_assets(page):
 
 
 def fill_docs(docs):
-    """The docs with each marked region holding its scene, and their asset links stamped."""
+    """The docs with each marked region holding its scene, their external links marked, and their
+    asset links stamped."""
     def scene(found):
         return f"{found.group(1)}{DOCS_SCENES[found.group(2)]}{found.group(3)}"
     filled, regions = re.subn(r"(<!-- gen_site: ([\w-]+) -->)(?s:.*?)(<!-- /gen_site -->)", scene, docs)
     assert regions == len(DOCS_SCENES), f"site/docs.html marks {regions} scenes, expected {len(DOCS_SCENES)}"
-    return stamp_assets(filled)
+    return stamp_assets(external_links(filled))
 
 
 def main():

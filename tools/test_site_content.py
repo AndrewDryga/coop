@@ -169,6 +169,38 @@ class SiteContentTest(unittest.TestCase):
                 self.assertTrue(any(tag == "a" and attrs.get("href") == "#main" for tag, attrs in page.elements), "missing skip link")
                 self.assertTrue(any(attrs.get("id") == "main" for _, attrs in page.elements), "missing #main")
 
+    def test_links_off_the_site_open_in_a_new_tab_with_nofollow(self):
+        for path in (SITE / "index.html", SITE / "docs.html"):
+            links = [attrs for tag, attrs in Page(path).elements if tag == "a" and attrs.get("href")]
+            external = [a for a in links if re.match(r"https?://(?!coop\.dryga\.com[/:]|coop\.dryga\.com$)", a["href"])]
+            with self.subTest(page=path.name):
+                self.assertTrue(external, "the page should cite something")
+                for attrs in external:
+                    rel = (attrs.get("rel") or "").split()
+                    self.assertEqual(attrs.get("target"), "_blank", attrs["href"])
+                    self.assertTrue({"nofollow", "noopener"} <= set(rel), attrs["href"])
+                for attrs in links:
+                    if attrs not in external:
+                        self.assertNotIn("target", attrs, attrs["href"])
+
+    def test_external_link_marking_keeps_rel_and_settles(self):
+        page = "\n".join([
+            '<a href="https://github.com/x">a</a>',
+            '<a class="c" rel="me" target="_self" href="http://example.org/">b</a>',
+            "<a href='https://example.com/q?a=1'>c</a>",
+            '<a href="https://coop.dryga.com/docs.html">d</a>',
+            '<a href="docs.html#loop">e</a> <a href="#main">f</a> <abbr title="https://x.org">g</abbr>',
+        ])
+        marked = gen_site.external_links(page)
+        self.assertEqual(marked.splitlines(), [
+            '<a href="https://github.com/x" target="_blank" rel="nofollow noopener">a</a>',
+            '<a class="c" rel="me nofollow noopener" target="_blank" href="http://example.org/">b</a>',
+            "<a href='https://example.com/q?a=1' target=\"_blank\" rel=\"nofollow noopener\">c</a>",
+            '<a href="https://coop.dryga.com/docs.html">d</a>',
+            '<a href="docs.html#loop">e</a> <a href="#main">f</a> <abbr title="https://x.org">g</abbr>',
+        ])
+        self.assertEqual(gen_site.external_links(marked), marked)
+
     def test_built_pages_match_their_generator(self):
         generator = SITE.parent / "tools" / "gen_site.py"
         checked = subprocess.run([sys.executable, str(generator), "--check"], capture_output=True, text=True, check=False)

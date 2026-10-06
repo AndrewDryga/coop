@@ -39,7 +39,7 @@
       <a class="nav-optional" href="./#sandbox">Sandbox</a>
       <a class="nav-optional" href="./#features">Features</a>
       <a href="docs.html" aria-current="page">Docs</a>
-      <a class="nav-optional" href="https://github.com/AndrewDryga/coop">GitHub</a>
+      <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
       <a class="button button-small" href="./#start">Install</a>
     </nav>
   </header>
@@ -115,8 +115,8 @@
         <ul class="cmds" role="list">
           <li><code data-copy-source><span class="k">coop</span> build --egress open <span class="o">&amp;&amp;</span> <span class="k">coop</span> doctor</code></li>
         </ul>
-        <p>Docker is the default and fully supported runtime. You can also use Apple <a href="https://github.com/apple/container">container</a> (macOS 26+), but some features need Docker, including the filtered networking that <code>coop init</code> turns on. co:op detects both and prefers Docker.</p>
-        <p class="callout">The one-line install trusts coop.dryga.com, which GitHub Pages serves from the repository's <code>main</code> branch, since it runs the script it downloads. The script then checks the release checksum with a local SHA-256 tool and stops if it can't; with <a href="https://github.com/sigstore/cosign">cosign</a> on your <code>PATH</code>, it also checks that the checksum came from the exact release workflow and tag. To verify the download before running anything, follow the <a href="https://github.com/AndrewDryga/coop#verifying-a-download">manual steps</a>.</p>
+        <p>Docker is the default and fully supported runtime. You can also use Apple <a href="https://github.com/apple/container" target="_blank" rel="nofollow noopener">container</a> (macOS 26+), but some features need Docker, including the filtered networking that <code>coop init</code> turns on. co:op detects both and prefers Docker.</p>
+        <p class="callout">The one-line install trusts coop.dryga.com, which GitHub Pages serves from the repository's <code>main</code> branch, since it runs the script it downloads. The script then checks the release checksum with a local SHA-256 tool and stops if it can't; with <a href="https://github.com/sigstore/cosign" target="_blank" rel="nofollow noopener">cosign</a> on your <code>PATH</code>, it also checks that the checksum came from the exact release workflow and tag. To verify the download before running anything, follow the <a href="https://github.com/AndrewDryga/coop#verifying-a-download" target="_blank" rel="nofollow noopener">manual steps</a>.</p>
         <p>You can also build co:op from source:</p>
         <ul class="cmds" role="list">
           <li><code data-copy-source><span class="k">git</span> clone https://github.com/AndrewDryga/coop <span class="o">&amp;&amp;</span> <span class="k">cd</span> coop <span class="o">&amp;&amp;</span> <span class="k">make</span> install</code></li>
@@ -216,7 +216,7 @@ box:
           <li><code data-copy-source><span class="k">coop</span> net blocked &lt;host&gt;</code><span class="cmd-note"># how to allow a blocked host</span></li>
         </ul>
         <p>Besides <code>filtered</code>, a project can be <code>open</code> (everything) or <code>offline</code> (no network), and <code>open</code> needs your approval too. Filtering also protects API keys: if you sign in with one, the real key stays outside the box and the agent gets a stand-in that works only for that run.</p>
-        <p>The first filtered run on a computer checks once that the host can enforce the rules, and <code>coop net setup</code> does that ahead of time. The <a href="https://github.com/AndrewDryga/coop/blob/main/docs/networking.md">networking guide</a> lists every kind of rule and what each provider can reach.</p>
+        <p>The first filtered run on a computer checks once that the host can enforce the rules, and <code>coop net setup</code> does that ahead of time. The <a href="https://github.com/AndrewDryga/coop/blob/main/docs/networking.md" target="_blank" rel="nofollow noopener">networking guide</a> lists every kind of rule and what each provider can reach.</p>
       </section>
 
       <section class="doc-section" id="doctor">
@@ -255,7 +255,7 @@ box:
         <p>When a loop hits a limit on one account, it moves to another and keeps going, and waits only when <em>every</em> account is at its limit. Limits are tracked per model and account, so <code>claude:opus@personal</code> stays usable while <code>claude:opus@work</code> waits for its reset. Switching loses no work, because the loop keeps its progress in the task queue and the repo.</p>
         <p>A loop uses all your signed-in accounts without any setup: a bare <code>provider:model</code> step in its <a href="#presets">target ladder</a> covers <em>every</em> account, the default first. A pinned <code>provider:model@account</code> runs on just that one, and <code>coop credentials &lt;agent&gt; &lt;name&gt; default</code> chooses the account a plain <code>coop &lt;agent&gt;</code> uses.</p>
         <h3>API keys</h3>
-        <p>To use an API key instead of a subscription, put <code>ANTHROPIC_API_KEY</code> (Claude), <code>OPENAI_API_KEY</code> (Codex) or <code>GEMINI_API_KEY</code> (Gemini) in <code>~/.config/coop/agents/env</code>. Keys need <a href="#networking">filtered networking</a>, which keeps the real key outside the box and gives the agent a stand-in. Other Claude and Codex token variables, Vertex's <code>GOOGLE_API_KEY</code> and Grok's <code>XAI_API_KEY</code> are refused; the <a href="https://github.com/AndrewDryga/coop/blob/main/docs/agents.md#authentication">credential reference</a> lists every supported way to sign in.</p>
+        <p>To use an API key instead of a subscription, put <code>ANTHROPIC_API_KEY</code> (Claude), <code>OPENAI_API_KEY</code> (Codex) or <code>GEMINI_API_KEY</code> (Gemini) in <code>~/.config/coop/agents/env</code>. Keys need <a href="#networking">filtered networking</a>, which keeps the real key outside the box and gives the agent a stand-in. Other Claude and Codex token variables, Vertex's <code>GOOGLE_API_KEY</code> and Grok's <code>XAI_API_KEY</code> are refused; the <a href="https://github.com/AndrewDryga/coop/blob/main/docs/agents.md#authentication" target="_blank" rel="nofollow noopener">credential reference</a> lists every supported way to sign in.</p>
         <p>A key in that file counts as the provider's default credential. A bare <code>KEY</code> line copies the value from your shell, and is skipped when it's unset; a later line wins over an earlier one. The key stands for one default account, so when a named account you signed in to runs, co:op leaves the key out to keep it from overriding that account, even if that account is the default.</p>
         <h3>Check limits and usage</h3>
         <p><code>coop usage</code> shows each account's current limits and reset times, and what its last 30 days of tokens would cost at API prices. <code>coop usage codex@work</code> shows one account without changing your default. The estimate includes subscription use, but it isn't a bill: it marks partial history, missing prices and editor history it can't tie to an account, and it leaves out use on the web, on phones, on other machines and charges that aren't tokens. Reading a Gemini sign-in's quota needs Docker and the current co:op base image; it reads the saved sign-in and sends no prompt.</p>
@@ -271,7 +271,7 @@ box:
           <li><code data-copy-source><span class="k">coop</span> frontier</code><span class="cmd-note"># a preset's lead and roles</span></li>
           <li><code data-copy-source><span class="k">coop</span> models</code><span class="cmd-note"># the models each agent offers</span></li>
         </ul>
-        <p>The model in the <strong>target</strong> wins over every default; the README lists <a href="https://github.com/AndrewDryga/coop/blob/main/docs/agents.md#picking-models">the full order</a>. co:op never validates a model name. Whatever the agent's CLI accepts works, a wrong name fails with the agent's own error, and new models work the day they ship.</p>
+        <p>The model in the <strong>target</strong> wins over every default; the README lists <a href="https://github.com/AndrewDryga/coop/blob/main/docs/agents.md#picking-models" target="_blank" rel="nofollow noopener">the full order</a>. co:op never validates a model name. Whatever the agent's CLI accepts works, a wrong name fails with the agent's own error, and new models work the day they ship.</p>
         <p>To set <strong>reasoning effort</strong>, add it to the target after a slash: <code>claude:opus/xhigh</code> or <code>codex/high</code>, with one of <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code> or <code>max</code>. co:op passes it straight to the agent's CLI (Claude's <code>--effort</code>, Codex's <code>model_reasoning_effort</code>, Grok's <code>--reasoning-effort</code>) without validating it. Gemini has no effort flag, so co:op turns <code>low</code> or <code>high</code> into Gemini's thinking setting, on the models it can map; a thinking setting you pin in your own Gemini settings still wins. Targets, the ladders in presets and <code>.agent/loop.yaml</code>, and <code>COOP_&lt;AGENT&gt;_MODEL</code> all accept <code>model/effort</code>, like <code>opus/high</code>.</p>
       </section>
 
@@ -483,13 +483,13 @@ roles:
         <p>An incomplete comparison has no definitive winner. For sign-in or quota refusals, check <code>coop credentials &lt;agent&gt;</code>; for timeouts, check the case's <code>suite.yaml</code> budget as well as <code>--timeout</code>. A run without a final summary may be running or interrupted: you can inspect it, but you can't compare or resume it, and running it again is a new paid run. Check the recorded provider output for private data before you share it.</p>
         <p>The trials themselves are isolated. Each gets a private workspace without the source's Git history, and the hidden verifier is kept out of the model's mounts and runs afterwards in a separate container with no credentials or network. Your own MCP servers aren't exposed to trials, and the agents' built-in web search and fetch are off, including for co:op's peers and delegates; terminal and file tools stay available. This is a control the trusted client applies, not a firewall that checks each request, and regular co:op runs are unchanged. Results describe this workload, not how providers compare in general, and code size is a review signal, not a quality score.</p>
         <h3>Compare matching evidence</h3>
-        <p><code>compare</code> pairs only runs with the same suite, cases and number of repeats, and it reports missing or damaged records instead of guessing. Its report describes the difference between the runs and never names a winner. The README explains <a href="https://github.com/AndrewDryga/coop/blob/main/docs/evals.md#understand-a-result">how the results are compared</a>.</p>
+        <p><code>compare</code> pairs only runs with the same suite, cases and number of repeats, and it reports missing or damaged records instead of guessing. Its report describes the difference between the runs and never names a winner. The README explains <a href="https://github.com/AndrewDryga/coop/blob/main/docs/evals.md#understand-a-result" target="_blank" rel="nofollow noopener">how the results are compared</a>.</p>
       </section>
 
       <section class="doc-section" id="editors">
         <h2>Editors</h2>
         <p class="section-lead">To steer the agent from your editor instead of a terminal, co:op serves it over ACP, the Agent Client Protocol. Any editor that supports ACP can then drive the agent in the box.</p>
-        <p><code>coop acp [target|preset]</code> speaks <a href="https://agentclientprotocol.com">ACP</a> over stdio, so you add co:op as a custom agent in an editor that supports the protocol. Zed supports it today, and others are adding it. The setup is the same everywhere, with one entry for each target or preset you use; in Zed's <code>settings.json</code>, for example:</p>
+        <p><code>coop acp [target|preset]</code> speaks <a href="https://agentclientprotocol.com" target="_blank" rel="nofollow noopener">ACP</a> over stdio, so you add co:op as a custom agent in an editor that supports the protocol. Zed supports it today, and others are adding it. The setup is the same everywhere, with one entry for each target or preset you use; in Zed's <code>settings.json</code>, for example:</p>
         <div class="code-file">
           <p class="code-file-name">Zed settings.json</p>
           <pre class="code" data-copy-source>
@@ -518,7 +518,7 @@ roles:
           <li>At a usage limit, co:op moves to your next signed-in account and sends your prompt again, or waits for the nearest reset if every account is at its limit.</li>
           <li>A box restart (<code>coop build</code>, <code>coop update</code> or running out of memory) replays the handshake, so your editor stays connected.</li>
         </ul>
-        <p class="callout callout-warn">The agent's own permission prompts stay off, as in the terminal. But over ACP the agent can also ask the editor to read or write files on your computer and run commands in its terminal; co:op passes those requests on, and the editor's permissions, not the box, limit them. For a boundary that is only the box, use a terminal or loop run. See the <a href="https://github.com/AndrewDryga/coop/blob/main/docs/integrations.md#files-and-terminals-on-your-computer">ACP security note</a>.</p>
+        <p class="callout callout-warn">The agent's own permission prompts stay off, as in the terminal. But over ACP the agent can also ask the editor to read or write files on your computer and run commands in its terminal; co:op passes those requests on, and the editor's permissions, not the box, limit them. For a boundary that is only the box, use a terminal or loop run. See the <a href="https://github.com/AndrewDryga/coop/blob/main/docs/integrations.md#files-and-terminals-on-your-computer" target="_blank" rel="nofollow noopener">ACP security note</a>.</p>
         <p>To open a dev server from the box in your browser, list its port under <code>serve:</code> in a committed <code>.agent/project.yaml</code> and bind the server to <code>0.0.0.0</code> inside the box. The thread then shows the address the box publishes it on, <code>http://localhost:&lt;port&gt;</code>.</p>
         <p class="callout">Desktop apps don't always get your shell's <code>PATH</code>. If your editor can't find <code>coop</code>, use the full path from <code>command -v coop</code> as the <code>command</code>.</p>
       </section>
@@ -526,12 +526,12 @@ roles:
       <section class="doc-section" id="mcp-remote">
         <h2>MCP and remote sessions</h2>
         <p class="section-lead">Agents also use MCP servers, and co:op itself can run as a worker for another system.</p>
-        <p>Define MCP servers once, outside your repo, and co:op makes them available to supported agents, within the project's network setting, while keeping eligible HTTP tokens outside the box. The <a href="https://github.com/AndrewDryga/coop/blob/main/docs/integrations.md#mcp-servers">MCP guide</a> covers local commands, remote HTTP servers, tokens and network settings.</p>
+        <p>Define MCP servers once, outside your repo, and co:op makes them available to supported agents, within the project's network setting, while keeping eligible HTTP tokens outside the box. The <a href="https://github.com/AndrewDryga/coop/blob/main/docs/integrations.md#mcp-servers" target="_blank" rel="nofollow noopener">MCP guide</a> covers local commands, remote HTTP servers, tokens and network settings.</p>
         <p>As a remote worker, co:op connects out over TLS to a compatible controller, which supplies each job's repository, model targets, network access and limits; co:op fetches the code and runs the model. The worker keeps its private state and model credentials on its own machine, and needs Git, Git LFS and a supported container runtime:</p>
         <ul class="cmds" role="list">
           <li><code data-copy-source><span class="k">coop</span> sessions connect --controller &lt;url&gt; --token-file &lt;path&gt;</code></li>
         </ul>
-        <p>The <a href="https://github.com/AndrewDryga/coop/blob/main/docs/session-api.md#connect">worker connector guide</a> has the details.</p>
+        <p>The <a href="https://github.com/AndrewDryga/coop/blob/main/docs/session-api.md#connect" target="_blank" rel="nofollow noopener">worker connector guide</a> has the details.</p>
       </section>
 
       <section class="doc-section" id="config">
@@ -582,11 +582,11 @@ roles:
             </tr>
             <tr>
               <td><code>NO_COLOR</code></td>
-              <td>Set to any value to turn off color everywhere (<a href="https://no-color.org">no-color.org</a>).</td>
+              <td>Set to any value to turn off color everywhere (<a href="https://no-color.org" target="_blank" rel="nofollow noopener">no-color.org</a>).</td>
             </tr>
           </table>
         </div>
-        <p>On Docker, the box also runs with every Linux capability dropped, no-new-privileges and a process limit. The <a href="https://github.com/AndrewDryga/coop/blob/main/docs/configuration.md#environment-variables">configuration reference</a> lists every variable.</p>
+        <p>On Docker, the box also runs with every Linux capability dropped, no-new-privileges and a process limit. The <a href="https://github.com/AndrewDryga/coop/blob/main/docs/configuration.md#environment-variables" target="_blank" rel="nofollow noopener">configuration reference</a> lists every variable.</p>
       </section>
 
       <section class="doc-section" id="troubleshooting">
@@ -660,7 +660,7 @@ roles:
             </tr>
           </table>
         </div>
-        <p>The <a href="https://github.com/AndrewDryga/coop/blob/main/docs/cli.md">command reference</a> lists every command's flags, and <code>coop help</code> (or <code>coop &lt;command&gt; --help</code>) is the live reference. Stuck on something that isn't covered? <a href="https://github.com/AndrewDryga/coop/issues">Open an issue</a>.</p>
+        <p>The <a href="https://github.com/AndrewDryga/coop/blob/main/docs/cli.md" target="_blank" rel="nofollow noopener">command reference</a> lists every command's flags, and <code>coop help</code> (or <code>coop &lt;command&gt; --help</code>) is the live reference. Stuck on something that isn't covered? <a href="https://github.com/AndrewDryga/coop/issues" target="_blank" rel="nofollow noopener">Open an issue</a>.</p>
       </section>
     </main>
   </div>
@@ -672,11 +672,11 @@ roles:
     </a>
     <nav aria-label="Footer">
       <a href="docs.html">Docs</a>
-      <a href="https://github.com/AndrewDryga/coop">GitHub</a>
-      <a href="https://emisar.dev">Emisar</a>
-      <a href="https://github.com/AndrewDryga/responder">Ryker</a>
+      <a href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a href="https://emisar.dev" target="_blank" rel="nofollow noopener">Emisar</a>
+      <a href="https://github.com/AndrewDryga/responder" target="_blank" rel="nofollow noopener">Ryker</a>
     </nav>
-    <p>By <a href="https://github.com/ProtectorateHQ">Protectorate</a></p>
+    <p>By <a href="https://github.com/ProtectorateHQ" target="_blank" rel="nofollow noopener">Protectorate</a></p>
   </footer>
 </body>
 </html>

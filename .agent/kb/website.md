@@ -3,7 +3,7 @@ name: website
 description: site/ is static and partly generated; tools/gen_site.py owns index.html and the docs' terminal regions, which copy real CLI output; the code-block, cache-bust and social-card traps
 subsystem: website
 sources: [tools/gen_site.py, tools/site/index.tpl.html, site/index.html, site/docs.html, site/assets/css/site.css, site/assets/js/site.js, tools/gen_seo_assets.py, tools/test_site_content.py, tools/align-comments.py, internal/cli/help_test.go, internal/cli/eval_cmd_test.go]
-updated: 2026-10-05
+updated: 2026-10-06
 ---
 
 The homepage and docs are static files in `site/`, published by `.github/workflows/pages.yml` on
@@ -118,6 +118,11 @@ Run `go test ./internal/cli/` after a docs copy pass, not only `make tools-test`
 three>`, written by `tools/gen_site.py`, so `--check` fails after any CSS or JS edit until you
 regenerate. (A fixed date once left the owner looking at a stale stylesheet all afternoon.)
 
+**Links off the site** open in a new tab with `rel="nofollow noopener"`: `external_links()` in
+`gen_site.py` marks both pages on every run (the owner wants no search ranking passed to the pages
+the site cites), so write a link plainly; a bare one fails `--check`.
+See [[site-external-links-nofollow]].
+
 **The social card** (`tools/gen_seo_assets.py og`) is the homepage's own hero, rendered from a copy
 with every `<script>` stripped so the sandbox picture is finished. Headless Chrome runs scripts even
 with `--disable-javascript`, and `--blink-settings=scriptEnabled=false` makes `--screenshot` write
@@ -140,3 +145,4 @@ nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 - 2026-10-05 — Loops carries the owner's 120-task, 9-hour run (task 2026-10-05-add-the-owner-s-loops-figure-to-the-homepage).
 - 2026-10-05 — small screens play the story as a deck with a camera on the picture; terminals replay on phones (task 2026-10-05-make-the-homepage-as-good-on-phones-as-on-deskto).
 - 2026-10-05 — setup labels above their commands, the worker terminal gone, Loops says normal work (task 2026-10-05-homepage-polish-setup-labels-above-the-commands).
+- 2026-10-06 — external links get target="_blank" and rel="nofollow noopener" from the generator (task 2026-10-06-external-links-on-the-website-open-in-a-new-tab).
