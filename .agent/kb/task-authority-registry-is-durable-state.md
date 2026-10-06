@@ -2,8 +2,8 @@
 name: task-authority-registry-is-durable-state
 description: host-global task ownership and completion trust live in ~/.local/state/coop/task-leases; every authority flock rechecks its inode
 subsystem: tasks
-sources: [internal/tasks/lease.go, internal/tasks/completion.go, internal/tasks/audit.go, internal/tasks/owner.go, internal/tasks/assignment_registry.go, internal/sessionsvc/http.go]
-updated: 2026-09-03
+sources: [internal/tasks/lease.go, internal/tasks/completion.go, internal/tasks/audit.go, internal/tasks/owner.go, internal/tasks/assignment_registry.go, internal/tasks/main_test.go, internal/sessionsvc/http.go]
+updated: 2026-10-06
 ---
 Everything that decides whether a task is *really* finished lives OUTSIDE the repo, in one
 host-global registry: the `<sha>.lock` files whose kernel flock makes one controller the single
@@ -37,7 +37,25 @@ INODE, never to a name; without the recheck a deleted-underfoot lock is silently
 `openLeaseAuthority` survives for unlocked reads and tests only. See [[task-state-is-the-folder]]
 for the repo-local queue, which did NOT move.
 
+**Tests never touch the real registry.** A test binary must set `COOP_TEST_LEASE_AUTHORITY_ROOT`
+(a `TestMain` like `internal/tasks/main_test.go`), and `leaseAuthorityRoot` returns an error when
+it doesn't. Before that refusal, `internal/loop` had no `TestMain`, and each `make check` left
+about 250 files in the developer's registry: on 2026-10-06 the owner's held 121,966 files (180 MB),
+2,236 of its 2,248 pending-review records naming deleted `/var/folders` test workspaces.
+
+**Cleaning the registry is not free space.** Of those 180 MB, 75,613 empty `.lock` files took
+0 bytes; the space was one 4 KB block per small record (`.windows.json` alone 94 MB). Unlinking a
+lock is compatible with the recheck above, but a cleaner must not take `LOCK_EX` on a done task's
+lock: `inspectTaskCompletionReceipt` probes it with `LOCK_SH|LOCK_NB`, and a busy probe makes the
+completion-window scan treat that task as changed, which can move it out of done. Two opener
+races also turn fatal once anything unlinks locks: a lock unlinked between open and fstat fails
+the single-link check, and an `O_EXCL` collision followed by an unlink fails the reopen. Both must
+retry first. The two design reviews of 2026-10-06 are in the archived task
+2026-10-05-task-lease-authority-keeps-every-lock-file-it-ev.
+
 ## Changelog
+- 2026-10-06 — test binaries must name their own registry (internal/loop leaked ~250 files per
+  make check); recorded where the registry's space goes and what a lock cleaner must not do.
 - 2026-09-03 — removed the retired cache-root detector and migration procedure after inventory
   confirmed the current durable registry is authoritative; re-verified current-root creation,
   path-shape rejection, concurrent opening, and post-flock inode guards against the listed sources.

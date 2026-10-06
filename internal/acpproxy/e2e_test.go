@@ -31,6 +31,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/liveprovider"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
@@ -63,6 +64,14 @@ func runLiveACPTests(m *testing.M) int {
 		return 1
 	}
 	defer os.RemoveAll(dir)
+	// The package's own task-lease registry; without one, its tests wrote the developer's real
+	// ~/.local/state/coop/task-leases. A child this binary starts for itself keeps its parent's.
+	if os.Getenv(tasks.TestLeaseAuthorityRootEnv) == "" {
+		if err := os.Setenv(tasks.TestLeaseAuthorityRootEnv, filepath.Join(dir, "task-leases")); err != nil {
+			fmt.Fprintln(os.Stderr, "ACP E2E setup failed: phase=task_leases error_class=harness")
+			return 1
+		}
+	}
 	coopE2ELayout, err = procharness.NewLayout(dir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "ACP E2E setup failed: phase=layout error_class=harness")

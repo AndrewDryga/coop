@@ -1026,8 +1026,7 @@ func TestTaskLeaseProcessRaces(t *testing.T) {
 func TestLeaseAuthorityRootIsDurableState(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv(TestLeaseAuthorityRootEnv, "")
-	dir, err := leaseAuthorityRoot()
+	dir, err := durableLeaseAuthorityRoot()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1041,6 +1040,19 @@ func TestLeaseAuthorityRootIsDurableState(t *testing.T) {
 	}
 	if got, session := filepath.Dir(filepath.Dir(dir)), filepath.Dir(sessions); got != session {
 		t.Fatalf("authority state family = %q, session store uses %q", got, session)
+	}
+}
+
+// A test binary that forgot to name its own registry must fail, never fall back to the developer's
+// real one under HOME: that fallback let one package's tests leave 120,000 records there.
+func TestLeaseAuthorityRootRefusesATestBinaryWithoutItsOwnRoot(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv(TestLeaseAuthorityRootEnv, "")
+	if dir, err := leaseAuthorityRoot(); err == nil || !strings.Contains(err.Error(), TestLeaseAuthorityRootEnv) {
+		t.Fatalf("leaseAuthorityRoot = %q, %v; want a refusal naming %s", dir, err, TestLeaseAuthorityRootEnv)
+	}
+	if _, err := OpenLeaseAuthorityRoot(); err == nil {
+		t.Fatal("OpenLeaseAuthorityRoot opened a registry without the test root")
 	}
 }
 

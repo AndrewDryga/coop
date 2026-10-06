@@ -226,12 +226,21 @@ func LeaseAuthorityKey(root, id string) (string, error) {
 // records, and the completion-window journal — is durable trust state, so it lives with the session
 // store's state root (see defaultSessionStateRoot in internal/sessionsvc/http.go). Losing this
 // directory could split lock authority and erase the receipts used by crash recovery.
+//
+// A test binary must name its own root: falling back to HOME let one package's tests leave 120,000
+// records in a developer's real registry (2026-10-06), so a package that forgets fails instead.
 func leaseAuthorityRoot() (string, error) {
 	if strings.HasSuffix(filepath.Base(os.Args[0]), ".test") {
 		if root := os.Getenv(TestLeaseAuthorityRootEnv); root != "" {
 			return root, nil
 		}
+		return "", fmt.Errorf("a test binary must set %s (see internal/tasks/main_test.go); without it, tests write the real task-lease registry", TestLeaseAuthorityRootEnv)
 	}
+	return durableLeaseAuthorityRoot()
+}
+
+// durableLeaseAuthorityRoot is where every real coop process keeps the registry.
+func durableLeaseAuthorityRoot() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
