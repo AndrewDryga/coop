@@ -27,7 +27,13 @@ short: a provider's argv can carry its whole prompt). Known intermittent, unexpl
 pair has twice stalled after its final grok resume exited 0 (codex_to_grok, gemini_to_grok): no
 resumed reply, stderr ending `Terminated: 15` (a foreground child killed at the deadline). 180 pair
 runs under CPU load and a full suite under compile load did not reproduce it; read the deadline rows
-of the next one. Separately, under heavy compile load the overflow cases of
+of the next one. On 2026-10-07 `TestProviderScriptedConsultFailureMatrix/gemini` stalled the same
+way once (normally 2.5-4 s; stuck 19 s in one capture of its stderr-only call, stderr ending
+`Terminated: 15`); 80 runs at load 66-89 passed. Consult and delegate peers here run under the
+fixture's `setsid`/`timeout` aliases (the suite sets `COOP_CONSULT_TIMEOUT=2`), in their own session,
+so the group listing never showed them; since then a deadline also lists the run's descendants that
+left its group (`processTable.departed`), so the next such stall names any peer still alive.
+Separately, under heavy compile load the overflow cases of
 `TestProviderScriptedConsultTimeoutAndOverflowMatrix` outrun their 20 s budget; the run examined was
 a slow drain, not a hang — `bounded_capture` spawns about five processes per 64 KiB block. Size a
 loop-review budget by its launched attempts: about 3.4 s each under gate load, so the six-attempt
@@ -148,6 +154,8 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-10-07 — a deadline also lists descendants that left the run's group; recorded the consult
+  failure-matrix stall.
 - 2026-10-07 — the two six-attempt loop-review subtests have 40 s, sized by launched attempts.
 - 2026-09-22 — split completion recovery's stale clean-only expectation into unchanged inherited
   untracked/staged positives and a worker-created dirty denial, including cleanup on the denial path.

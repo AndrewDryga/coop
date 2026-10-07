@@ -167,6 +167,68 @@ func TestRunDeadlineNamesWhatWasStillRunning(t *testing.T) {
 	}
 }
 
+// A provider started under setsid leaves the run's process group, and a stalled step can be waiting
+// on exactly it (a pipe it still holds open). The deadline report names the run's descendants in
+// other groups too, and nothing outside the run.
+func TestDescribeGroupNamesDescendantsThatLeftTheGroup(t *testing.T) {
+	if os.Getenv("PROCHARNESS_OWN_GROUP") == "1" { // the helper: leave the group, then wait to be listed
+		if err := syscall.Setpgid(0, 0); err != nil {
+			os.Exit(2)
+		}
+		time.Sleep(time.Minute)
+		os.Exit(0)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := filepath.Join(t.TempDir(), "child")
+	leader := exec.Command("/bin/sh", "-c", `"$1" -test.run='^TestDescribeGroupNamesDescendantsThatLeftTheGroup$' & printf '%s\n' "$!" > "$2"; wait`,
+		"sh", self, ready)
+	leader.Env = append(os.Environ(), "PROCHARNESS_OWN_GROUP=1")
+	leader.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := leader.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pid := leader.Process.Pid
+	child, err := strconv.Atoi(strings.TrimSpace(awaitFileContent(t, ready)))
+	if err != nil || child <= 0 || child == pid {
+		t.Fatalf("invalid helper PID %d (%v)", child, err)
+	}
+	defer func() {
+		_ = syscall.Kill(-child, syscall.SIGKILL)
+		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		_, _ = leader.Process.Wait()
+	}()
+	const heading = "still running"
+	listed := func(report string, p int) bool {
+		for _, row := range strings.Split(report, "\n") {
+			if fields := strings.Fields(row); len(fields) > 0 && fields[0] == strconv.Itoa(p) {
+				return true
+			}
+		}
+		return false
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		group, err := syscall.Getpgid(child)
+		if err == nil && group == child {
+			break // the helper has left the leader's group
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the helper never left the group: pgid %d, %v", group, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	report := describeGroup(pid, heading)
+	if !listed(report, pid) || !listed(report, child) {
+		t.Fatalf("report = %q, want the leader %d and its departed child %d", report, pid, child)
+	}
+	if listed(report, os.Getpid()) {
+		t.Fatalf("report = %q names the test process, which is not part of the run", report)
+	}
+}
+
 func TestRunDeadlineCallsBeforeCancelBeforeFirstSignal(t *testing.T) {
 	layout, err := NewLayout(t.TempDir())
 	if err != nil {

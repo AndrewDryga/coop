@@ -438,16 +438,19 @@ func cancelProcessGroup(pid int, done <-chan error, grace time.Duration) error {
 // describeGroup names who is still in pid's group, before the kill that would erase the evidence.
 // "The group survived" is a symptom nobody can act on: the survivor's identity, parent and state
 // are the finding — a reparented process in a sleeping state is one whose owner exited without
-// taking it along, which is a different bug from one that is merely slow to leave.
+// taking it along, which is a different bug from one that is merely slow to leave. It also names the
+// run's descendants that left the group: a provider started under setsid has its own group and
+// session, and can be exactly what a stalled step is waiting on (a pipe it still holds open).
 //
 // Bounded three ways: one `ps`, on a deadline so a wedged process table cannot hang the test
 // instead of failing it; at most a handful of rows; and each row cut short, since a provider's
 // argv can carry a whole prompt. A failure adds evidence rather than a page of process table.
 func describeGroup(pid int, heading string) string {
-	rows, err := listGroup(pid, true)
+	table, err := readProcesses()
 	if err != nil {
 		return fmt.Sprintf(" (the process table could not be read: %v)", err)
 	}
+	rows := boundedRows(append(table.group(pid, true), table.departed(pid)...))
 	if len(rows) == 0 {
 		return " (nothing was left in the group by the time it was listed)"
 	}
@@ -464,36 +467,97 @@ func describeGroup(pid int, heading string) string {
 // mid-exit satisfied the first and vanished before the second, producing the self-contradiction
 // "process group N survived leader exit (nothing was left in the group by the time it was listed)".
 func listGroup(pid int, includeLeader bool) ([]string, error) {
+	table, err := readProcesses()
+	if err != nil {
+		return nil, err
+	}
+	return boundedRows(table.group(pid, includeLeader)), nil
+}
+
+// processRow is one line of the process table, with the three numbers the listings select by.
+type processRow struct {
+	pid, ppid, pgid int
+	line            string
+}
+
+type processTable []processRow
+
+func readProcesses() (processTable, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), describeGroupTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "ps", "-A", "-o", "pid=,ppid=,pgid=,stat=,etime=,command=").Output()
 	if err != nil {
 		return nil, err
 	}
-	group := strconv.Itoa(pid)
-	leader := strconv.Itoa(pid)
-	var rows []string
+	var table processTable
 	for line := range strings.SplitSeq(string(out), "\n") {
 		// pid, ppid, pgid, stat and etime never contain spaces and all precede the command, so the
-		// group is the third field whatever the command's argv or the column padding looks like.
+		// numbers are the first three fields whatever the command's argv or the column padding.
 		fields := strings.Fields(line)
-		if len(fields) < 5 || fields[2] != group {
+		if len(fields) < 5 {
 			continue
 		}
-		if !includeLeader && fields[0] == leader {
-			continue // the leader is in its own group; only its descendants are survivors
+		pid, pidErr := strconv.Atoi(fields[0])
+		ppid, ppidErr := strconv.Atoi(fields[1])
+		pgid, pgidErr := strconv.Atoi(fields[2])
+		if pidErr != nil || ppidErr != nil || pgidErr != nil {
+			continue
 		}
-		if len(rows) == describeGroupLimit {
-			rows = append(rows, "…")
-			break
-		}
-		row := strings.TrimSpace(line)
-		if len(row) > describeGroupRowBytes {
-			row = strings.ToValidUTF8(row[:describeGroupRowBytes], "") + "…"
-		}
-		rows = append(rows, row)
+		table = append(table, processRow{pid: pid, ppid: ppid, pgid: pgid, line: strings.TrimSpace(line)})
 	}
-	return rows, nil
+	return table, nil
+}
+
+// group is pid's process group, the leader left out unless includeLeader.
+func (t processTable) group(pid int, includeLeader bool) []string {
+	var rows []string
+	for _, p := range t {
+		if p.pgid == pid && (includeLeader || p.pid != pid) {
+			rows = append(rows, p.line)
+		}
+	}
+	return rows
+}
+
+// departed is every descendant of pid, by parent links, that is in some other group.
+func (t processTable) departed(pid int) []string {
+	children := map[int][]processRow{}
+	for _, p := range t {
+		children[p.ppid] = append(children[p.ppid], p)
+	}
+	var rows []string
+	queue := []int{pid}
+	seen := map[int]bool{pid: true}
+	for len(queue) > 0 {
+		parent := queue[0]
+		queue = queue[1:]
+		for _, child := range children[parent] {
+			if seen[child.pid] {
+				continue
+			}
+			seen[child.pid] = true
+			queue = append(queue, child.pid)
+			if child.pgid != pid {
+				rows = append(rows, child.line)
+			}
+		}
+	}
+	return rows
+}
+
+// boundedRows keeps at most describeGroupLimit rows, each cut to describeGroupRowBytes.
+func boundedRows(lines []string) []string {
+	var rows []string
+	for _, line := range lines {
+		if len(rows) == describeGroupLimit {
+			return append(rows, "…")
+		}
+		if len(line) > describeGroupRowBytes {
+			line = strings.ToValidUTF8(line[:describeGroupRowBytes], "") + "…"
+		}
+		rows = append(rows, line)
+	}
+	return rows
 }
 
 // describeGroupLimit keeps a failure's evidence bounded. One straggler is the usual case and the
