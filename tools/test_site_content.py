@@ -211,6 +211,16 @@ class SiteContentTest(unittest.TestCase):
         ])
         self.assertEqual(gen_site.external_links(marked), marked)
 
+    def test_the_generator_runs_on_python_older_than_3_12(self):
+        # A backslash inside an f-string's {} parses only from Python 3.12; the Makefile asks only for python3.
+        import ast
+        source = (SITE.parent / "tools" / "gen_site.py").read_text()
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.FormattedValue):
+                segment = ast.get_source_segment(source, node.value) or ""
+                with self.subTest(line=node.lineno):
+                    self.assertNotIn("\\", segment)
+
     def test_sitemap_lists_every_page(self):
         listed = set(re.findall(r"<loc>https://coop\.dryga\.com/([^<]*)</loc>", (SITE / "sitemap.xml").read_text()))
         for path in sorted(SITE.glob("*.html")):

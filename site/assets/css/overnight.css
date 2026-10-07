@@ -144,8 +144,6 @@
 .night-sandbox.armed:not(.s3) .hop.pass .wire::before { border-color: var(--live); }
 .night-sandbox.armed:not(.s3) :is(.hop.pass, .hop.stop) .wire > *, .night-sandbox.armed:not(.s4) .git .wire > * { opacity: 0; scale: 0.4; }
 .night-sandbox.armed:not(.s4) .git .lock path { transform: translateY(-5px); }
-.night-safe.armed .night-safe-list li { opacity: 0.4; transition: opacity 450ms var(--ease); }
-.night-safe.armed .night-safe-list li.is-on { opacity: 1; }
 .night-safe.armed .night-safe-list .icon path { stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset 450ms var(--ease) 250ms; }
 .night-safe.armed .night-safe-list li.is-on .icon path { stroke-dashoffset: 0; }
 

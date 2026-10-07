@@ -9,9 +9,12 @@
   const root = document.documentElement;
   const stage = document.querySelector(".night-stage");
   const data = document.getElementById("night-timeline");
-  const deck = root.classList.contains("night-deck");
-  if (!stage || !data || !(deck || root.classList.contains("night-story"))) return;
+  let deck = root.classList.contains("night-deck");
+  // the head script picked the mode (none on a short screen, which shows the board at morning);
+  // without IntersectionObserver it picked none and the page stays plain for good
+  if (!stage || !data || !("IntersectionObserver" in window)) return;
   root.classList.add("night-ready");
+  const playing = () => root.classList.contains("night-story") || root.classList.contains("night-deck");
   const { n, per, titles, commits, states } = JSON.parse(data.textContent);
   const board = stage.querySelector(".board");
   const lanes = Object.fromEntries(["now", "waiting", "next", "done"].map((name) => [name, board.querySelector(`.lane.${name}`)]));
@@ -381,6 +384,7 @@
   let queued = false;
   const update = () => {
     queued = false;
+    if (!playing()) return;
     const frame = stage.getBoundingClientRect();
     const line = deck ? frame.bottom + 32 : innerHeight * 0.55;
     let part = 0;
@@ -390,6 +394,22 @@
   };
   addEventListener("scroll", () => { if (!queued) { queued = true; requestAnimationFrame(update); } }, { passive: true });
   addEventListener("resize", update);
+  // The layout follows the screen, as the homepage's does: a wide screen pins the board beside the
+  // story, a narrow one that is tall enough sticks it to the top, and a short one shows the plain
+  // page. Crossing either line switches the mode and redraws the step on screen, without motion.
+  const wide = matchMedia("(min-width: 1024px)"), tall = matchMedia("(min-height: 500px)");
+  const relayout = () => {
+    const mode = wide.matches ? "night-story" : tall.matches ? "night-deck" : "";
+    root.classList.toggle("night-story", mode === "night-story");
+    root.classList.toggle("night-deck", mode === "night-deck");
+    deck = mode === "night-deck";
+    epoch++;
+    shown = -1;
+    if (mode) update();
+    else render(states.at(-1), states.length - 1, false, false);
+  };
+  wide.addEventListener("change", relayout);
+  tall.addEventListener("change", relayout);
   update();
   // the queue arrives when the night opens on it: the dots one by one, then its first tasks
   if (shown === 0 && !still.matches) {

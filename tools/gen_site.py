@@ -642,8 +642,9 @@ NIGHT_AGENT = (f'<span class="agent">{mark("claude")}<span class="model">{NIGHT_
 def night_row(i, state=""):
     options = ""
     if i == NIGHT_WAITING:
+        pick = ' class="pick"'
         options = '<ol class="options">' + "".join(
-            f'<li{" class=\"pick\"" if key == NIGHT_RECOMMENDED else ""}><span class="key">{key}</span>{html.escape(text)}'
+            f'<li{pick if key == NIGHT_RECOMMENDED else ""}><span class="key">{key}</span>{html.escape(text)}'
             + ('<span class="rec">recommended</span>' if key == NIGHT_RECOMMENDED else "") + "</li>"
             for key, text in NIGHT_OPTIONS) + "</ol>"
     title = html.escape(NIGHT_TITLES[i]) if i is not None else ""
