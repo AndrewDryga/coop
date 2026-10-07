@@ -3,7 +3,7 @@ name: lifecycle-latency-measurement
 description: how to measure a box/editor start or stop change without fooling yourself — pair the two builds and alternate them, never bisect a noisy metric single-shot, build the comparison binary where its version stamp is honest, and know why an old binary cannot run in an approved project
 subsystem: testing
 sources: [tools/lifecycle_bench.py, tools/test_lifecycle_bench.py, Makefile, internal/cli/acp_cmd.go, internal/cli/cli.go, internal/runtime/docker_lifecycle.go]
-updated: 2026-09-20
+updated: 2026-10-07
 ---
 
 `make lifecycle-bench` (`tools/lifecycle_bench.py`) is the instrument for every start/stop claim in
@@ -15,6 +15,11 @@ output is a measurement to compare against, not a threshold to fail on. Cases:
 control that separates what filtering costs from what the tree costs. What the stop boundary
 covers — gateway containers AND volumes, both label families — is pinned by `OwnershipTest` in
 `tools/test_lifecycle_bench.py`, because a stop number is only as honest as that question.
+
+Sampling-loop unit tests use deterministic environment metadata and do not need Docker. Production
+metadata is best-effort: an absent or timed-out runtime info query leaves `runtime_daemon` unknown,
+so metadata collection can still retain the samples. This does not relax the real cases' runtime
+requirements; `EnvironmentTest` covers the metadata failure paths separately.
 
 ## Pair the builds and alternate them; do not subtract a stored baseline
 
@@ -96,6 +101,8 @@ an approved project is unobtainable at acceptable cost — use the bare control 
 until 2026-09-20's paired A/B put a number against it. Both now state the number.
 
 ## Changelog
+- 2026-10-07 — traced missing-Docker sampling test errors to the unguarded daemon metadata query;
+  documented isolated sampling fixtures and best-effort metadata failure handling.
 - 2026-09-20 — the "healthy run reported failed" trap is fixed (classifyTerminal + confirmWorkloadExit
   poll the terminal state within a budget); restated as fixed, not open.
 - 2026-09-20 — created while proving the agent-lifecycle batch

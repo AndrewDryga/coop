@@ -760,11 +760,14 @@ def collect_environment(coop: str, runtime: str) -> dict:
     except (OSError, ValueError, IndexError):
         pass
     daemon = "unknown"
-    info = run([runtime, "info", "--format",
-                "{{.OperatingSystem}} / {{.ServerVersion}} / {{.NCPU}} cpus / {{.MemTotal}} bytes"],
-               timeout=60)
-    if info.returncode == 0 and info.stdout.strip():
-        daemon = redact(info.stdout.strip().splitlines()[0])
+    try:
+        info = run([runtime, "info", "--format",
+                    "{{.OperatingSystem}} / {{.ServerVersion}} / {{.NCPU}} cpus / {{.MemTotal}} bytes"],
+                   timeout=60)
+        if info.returncode == 0 and info.stdout.strip():
+            daemon = redact(info.stdout.strip().splitlines()[0])
+    except (OSError, subprocess.TimeoutExpired):
+        pass
     return {
         "coop_version": version,
         "binary_provenance": ("built from a tree with uncommitted changes — cite the commit it became"

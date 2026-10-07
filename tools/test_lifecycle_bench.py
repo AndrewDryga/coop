@@ -10,6 +10,7 @@ import json
 import subprocess
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import lifecycle_bench as bench
 
@@ -104,17 +105,72 @@ class ReportTest(unittest.TestCase):
         self.assertIn("--repo /tmp/workspace", report)
 
 
+class EnvironmentTest(unittest.TestCase):
+    def collect(self, info, version="runtime v1"):
+        def fake_run(cmd, timeout):
+            if cmd == ["coop", "version"]:
+                return subprocess.CompletedProcess(cmd, 0, stdout="coop v1", stderr="")
+            if cmd[:3] == ["runtime", "info", "--format"]:
+                self.assertEqual(timeout, 60)
+                if isinstance(info, Exception):
+                    raise info
+                return info
+            if cmd == ["runtime", "--version"]:
+                if isinstance(version, Exception):
+                    raise version
+                return subprocess.CompletedProcess(cmd, 0, stdout=version, stderr="")
+            if cmd == ["sysctl", "-n", "hw.memsize"]:
+                return subprocess.CompletedProcess(cmd, 0, stdout=str(8 << 30), stderr="")
+            self.fail(f"unexpected metadata command: {cmd}")
+
+        with patch.object(bench, "run", side_effect=fake_run):
+            return bench.collect_environment("coop", "runtime")
+
+    def test_missing_runtime_keeps_metadata_available(self):
+        environment = self.collect(FileNotFoundError("runtime absent"),
+                                   version=FileNotFoundError("runtime absent"))
+        self.assertEqual(environment["runtime_daemon"], "unknown")
+        self.assertEqual(environment["runtime_version"], "unavailable")
+        self.assertEqual(environment["coop_version"], "coop v1")
+        self.assertEqual(environment["runtime"], "runtime")
+
+    def test_daemon_timeout_keeps_runtime_version(self):
+        environment = self.collect(subprocess.TimeoutExpired("runtime info", 60))
+        self.assertEqual(environment["runtime_daemon"], "unknown")
+        self.assertEqual(environment["runtime_version"], "runtime v1")
+
+    def test_failed_or_empty_daemon_info_is_unknown(self):
+        for code, output in [(1, "daemon failed"), (0, "")]:
+            with self.subTest(code=code, output=output):
+                environment = self.collect(subprocess.CompletedProcess(
+                    [], code, stdout=output, stderr=""))
+                self.assertEqual(environment["runtime_daemon"], "unknown")
+
+    def test_successful_daemon_info_retains_redacted_first_line(self):
+        environment = self.collect(subprocess.CompletedProcess(
+            [], 0, stdout=f"daemon at {bench.HOME}/runtime\nextra line\n", stderr=""))
+        self.assertEqual(environment["runtime_daemon"], "daemon at ~/runtime")
+
+
 class SamplingLoopTest(unittest.TestCase):
     """The loop around the cases: it must record a failure as a failure and still write its output."""
 
     def setUp(self):
-        self.original = dict(bench.CASES)
-        self.addCleanup(lambda: bench.CASES.update(self.original))
+        cases = patch.dict(bench.CASES)
+        cases.start()
+        self.addCleanup(cases.stop)
+        environment = patch.object(bench, "collect_environment", return_value={
+            "coop_version": "fixture v1", "runtime": "fixture", "runtime_daemon": "fixture daemon",
+        })
+        self.environment = environment.start()
+        self.addCleanup(environment.stop)
 
     def _run(self, case_function, samples=2):
         import tempfile
         bench.CASES["fake"] = ("a fake case", "start", case_function, [])
-        out = tempfile.mkdtemp()
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        out = directory.name
         argv = ["lifecycle_bench.py", "--samples", str(samples), "--cases", "fake",
                 "--coop", "/bin/sh", "--repo", ".", "--out", out]
         import contextlib
@@ -145,6 +201,7 @@ class SamplingLoopTest(unittest.TestCase):
         samples = json.loads((out / "samples.json").read_text())
         self.assertIn("workspace", samples)
         self.assertIn("tracked_files", samples["workspace"])
+        self.assertEqual(samples["environment"], self.environment.return_value)
         self.assertIn("--repo", (out / "report.md").read_text())
 
     def test_an_interrupted_run_still_writes_what_it_collected(self):
