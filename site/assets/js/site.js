@@ -260,12 +260,13 @@ if (stage && "IntersectionObserver" in window) {
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 // The loop's live bar (internal/loop/bar.go): spinner, 20 cells (done cyan, active yellow), counts,
-// what it is on, and the attempt's elapsed time.
+// what it is on, and the attempt's elapsed time. A window narrower than any terminal the CLI draws in
+// (a phone) gets fewer cells.
 const SPIN = [".[  ]", ">[  ]", "[.  ]", "[ * ]", "[  .]", "[  ]>", "[  ]."];
 const CORNER = ["◰", "◳", "◲", "◱"]; // the one-column spinner coop tasks watch uses
-const barCells = (done, doing, total) => {
-  const d = Math.round((20 * done) / total), a = Math.round((20 * (done + doing)) / total) - d;
-  return `<span class="bar-done">${"█".repeat(d)}</span><span class="bar-doing">${"█".repeat(a)}</span>${"░".repeat(20 - d - a)}`;
+const barCells = (done, doing, total, cells = 20) => {
+  const d = Math.round((cells * done) / total), a = Math.round((cells * (done + doing)) / total) - d;
+  return `<span class="bar-done">${"█".repeat(d)}</span><span class="bar-doing">${"█".repeat(a)}</span>${"░".repeat(cells - d - a)}`;
 };
 
 // A usage meter as `coop usage` draws it: 10 cells, cyan, yellow from 80%, red at 100%.
@@ -339,10 +340,12 @@ const SCENES = {
         if (!bar || !state) return;
         const [done, doing, on] = state;
         const time = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
-        // with no room left for it, the CLI drops what it is on rather than show a letter of it
-        const room = columns - `.[  ] [${"░".repeat(20)}] ${done}/3 done ·  · ${time}`.length;
+        // with no room left for it, the CLI drops what it is on rather than show a letter of it; still
+        // too narrow, the bar takes fewer cells, so the line never runs past the window
+        const fixed = `.[  ] [] ${done}/3 done · ${time}`.length, cells = Math.max(4, Math.min(20, columns - fixed));
+        const room = columns - fixed - cells - 3;
         const fit = room < 2 ? "" : on.length > room ? `${on.slice(0, room - 1)}… · ` : `${on} · `;
-        bar.innerHTML = `${SPIN[spin % SPIN.length]} [${barCells(done, doing, 3)}] ${done}/3 done · ${fit}${time}`;
+        bar.innerHTML = `${SPIN[spin % SPIN.length]} [${barCells(done, doing, 3, cells)}] ${done}/3 done · ${fit}${time}`;
       };
       const ticker = setInterval(() => { spin++; seconds += 2; draw(); }, 110);
       // paced to be read: a command types out, its output scrolls in a line at a time, and each beat
