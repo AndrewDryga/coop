@@ -184,7 +184,9 @@ func TestApprovedServiceDefinitionChangeRefusesTheLaunch(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `Compose service "db" changed since it was approved`) {
 		t.Fatalf("a rewritten service kept its grant: %v", err)
 	}
-	// The same refusal is what a launch gets, before anything is started.
+	// The same refusal is what a launch gets, before anything is started or even asked of Docker:
+	// with no Docker on PATH at all, the launch still names the changed service.
+	t.Setenv("PATH", t.TempDir())
 	_, _, _, _, launchErr := resolveServiceBindings(context.Background(), nil, runtime.Runtime{Name: "docker"}, RunSpec{Repo: repo}, compose, approval, serviceGrants(servicePolicy(t, "db")), nil, nil)
 	if launchErr == nil || !strings.Contains(launchErr.Error(), "changed since it was approved") {
 		t.Fatalf("the launch ran a rewritten service: %v", launchErr)

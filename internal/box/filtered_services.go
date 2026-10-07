@@ -147,6 +147,20 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 		return "", nil, nil, nil, fmt.Errorf("wait for a safe service launch: %w", err)
 	}
 	defer unlockLaunch()
+	// Review the exact validated bytes that every Compose invocation below uses, before anything
+	// reaches the daemon: a service changed since its approval is refused without binding, querying
+	// or starting anything.
+	data, err := readValidatedCompose(composeFile, spec.Repo, spec.RepoReadOnly)
+	if err != nil {
+		return "", nil, nil, nil, err
+	}
+	if err := checkApprovedServicesData(approval, data); err != nil {
+		if sections != nil && sections.loop {
+			sections.servicesRefused(err.Error())
+			return "", nil, nil, nil, ui.Reported(err)
+		}
+		return "", nil, nil, nil, err
+	}
 	bound, err := rt.FreezeCompose(ctx)
 	if err != nil {
 		return "", nil, nil, nil, fmt.Errorf("bind filtered services to Docker daemon: %w", err)
@@ -168,19 +182,7 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 		}
 	}
 	slices.Sort(selected)
-	data, err := readValidatedCompose(composeFile, spec.Repo, spec.RepoReadOnly)
-	if err != nil {
-		return "", nil, nil, nil, err
-	}
 	if err := refuseRunningServiceWriters(ctx, rt, spec.Repo); err != nil {
-		return "", nil, nil, nil, err
-	}
-	// Review the exact validated bytes that every Compose invocation below uses.
-	if err := checkApprovedServicesData(approval, data); err != nil {
-		if sections != nil && sections.loop {
-			sections.servicesRefused(err.Error())
-			return "", nil, nil, nil, ui.Reported(err)
-		}
 		return "", nil, nil, nil, err
 	}
 	var doc composeDoc
