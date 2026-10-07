@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 
@@ -154,22 +155,127 @@ func TestLeaseHoldStopsWhenCancelledOrWhenTheTaskMoves(t *testing.T) {
 	}
 
 	item = inProgressTask(t, root, "moved")
-	done = make(chan struct{})
+	outputPath := filepath.Join(t.TempDir(), "holder.log")
+	output, err := os.Create(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer output.Close()
+	holder := exec.Command(os.Args[0], "-test.run=^TestDoneStopsTheCallersOwnLeaseHolderOnly$", "-test.v")
+	holder.Env = append(os.Environ(),
+		"COOP_LEASE_HELPER=1", TestLeaseAuthorityRootEnv+"="+os.Getenv(TestLeaseAuthorityRootEnv),
+		"COOP_TEST_LEASE_HOLDER_ROOT="+root, "COOP_TEST_LEASE_HOLDER_TASK=moved",
+		"COOP_TEST_LEASE_HOLDER_ACTOR_PID=0", "COOP_TEST_LEASE_HOLDER_ACTOR_START=")
+	holder.Stdout, holder.Stderr = output, output
+	if err := holder.Start(); err != nil {
+		t.Fatal(err)
+	}
+	heldDone := make(chan struct{})
+	var holderErr error
 	go func() {
-		defer close(done)
-		code, err = holdTaskLease(context.Background(), root, leaseRequest{id: "moved"}, 20*time.Millisecond)
+		defer close(heldDone)
+		holderErr = holder.Wait()
 	}()
-	waitLease(t, item, leaseBusy)
+	t.Cleanup(func() {
+		_ = holder.Process.Kill()
+		select {
+		case <-heldDone:
+		case <-time.After(wait.Deadline):
+			t.Error("lease holder did not exit after cleanup")
+		}
+	})
+	readOutput := func() string {
+		body, err := os.ReadFile(outputPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+	// Metadata precedes the final acquisition check. The CLI announces its held lease only
+	// after that check returns, so moving on this line tests a holder, not a stale candidate.
+	wait.For(t, "holder completed lease acquisition", func() bool {
+		if strings.Contains(readOutput(), "leased moved as codex — holding until") {
+			return true
+		}
+		select {
+		case <-heldDone:
+			t.Fatalf("holder exited before acquiring its lease: %v\n%s", holderErr, readOutput())
+		default:
+		}
+		return false
+	})
+	if observed := observeTaskLease(item, time.Now()); observed.State != leaseBusy || observed.Provider != "codex" {
+		t.Fatalf("ready holder lease = %+v, want busy codex", observed)
+	}
 	if err := MoveTaskDir(root, item, StateBlocked); err != nil {
 		t.Fatalf("move the leased task: %v", err)
 	}
 	select {
-	case <-done:
+	case <-heldDone:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the holder did not notice the task leaving in_progress")
 	}
-	if err != nil || code != 0 {
-		t.Fatalf("holder after the task moved = %d, %v", code, err)
+	if holderErr != nil || !strings.Contains(readOutput(), "HOLDER_EXIT code=0 err=<nil>") {
+		t.Fatalf("holder after the task moved: %v\n%s", holderErr, readOutput())
+	}
+	if observed := observeTaskLease(item, time.Now()); observed.State != leaseUnleased {
+		t.Fatalf("lease after the holder exited = %+v, want released", observed)
+	}
+	if leaseAuthorityMetadataExists(root, item.ID) {
+		t.Fatal("holder left its lease metadata after releasing")
+	}
+}
+
+func TestLeaseRejectsATaskMovedDuringAcquisition(t *testing.T) {
+	root := t.TempDir()
+	item := inProgressTask(t, root, "acquiring")
+	entered, resume := make(chan struct{}), make(chan struct{})
+	var pause, release sync.Once
+	owner := testLeaseOwner()
+	owner.Now = func() time.Time {
+		pause.Do(func() { close(entered); <-resume })
+		return time.Now()
+	}
+	done := make(chan struct{})
+	var lease *TaskLease
+	var err error
+	go func() {
+		defer close(done)
+		lease, _, err = TryTaskLease(root, item, owner)
+	}()
+	t.Cleanup(func() {
+		release.Do(func() { close(resume) })
+		select {
+		case <-done:
+			if lease != nil {
+				_ = lease.Release()
+			}
+		case <-time.After(wait.Deadline):
+			t.Error("lease acquisition did not finish after cleanup")
+		}
+	})
+	select {
+	case <-entered:
+	case <-time.After(wait.Deadline):
+		t.Fatal("lease acquisition did not reach its clock")
+	}
+	if err := MoveTaskDir(root, item, StateBlocked); err != nil {
+		t.Fatal(err)
+	}
+	release.Do(func() { close(resume) })
+	select {
+	case <-done:
+	case <-time.After(wait.Deadline):
+		t.Fatal("lease acquisition did not finish after the move")
+	}
+	if lease != nil || !errors.Is(err, errLeaseCandidateGone) {
+		t.Fatalf("lease after an acquisition-time move = %v, %v; want a stale-candidate refusal", lease, err)
+	}
+	if observed := observeTaskLease(item, time.Now()); observed.State != leaseUnleased {
+		t.Fatalf("rejected candidate left a held lease: %+v", observed)
+	}
+	if leaseAuthorityMetadataExists(root, item.ID) {
+		t.Fatal("rejected candidate left lease metadata")
 	}
 }
 
