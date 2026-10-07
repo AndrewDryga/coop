@@ -16,7 +16,8 @@ every push to main. Two parts are generated and committed:
   several counts once) on `origin/main` of co:op, Emisar
   (`../emisar`) and Ryker (`../responder`) when you regenerate, so fetch all three first; a missing
   checkout stops the generator. `--check` reuses the count already in the page, so CI needs no
-  history.
+  history. A change that is not about the count (copy, layout) restores `site/index.html` after
+  regenerating: a new count is its own commit, made after fetching all three.
 - **The docs' terminal windows** fill `site/docs.html` between `<!-- gen_site: NAME -->` and
   `<!-- /gen_site -->` (`DOCS_SCENES`: check-secrets, doctor, claude, loop, fork). The rest of
   docs.html is hand-written; `--check` catches an edited or stale region, not prose edits.
@@ -186,3 +187,5 @@ nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 - 2026-10-07 — the overnight page, its night board and the shared Overnight menu link (task 2026-10-07-second-landing-page-for-teams-that-keep-agents-w).
 - 2026-10-07 — the overnight Project services row carries our measured 6.5 s (task
   2026-10-07-measure-the-warm-start-with-services-for-the-ove).
+- 2026-10-07 — a copy change keeps the published commit count (task
+  2026-10-07-overnight-page-tasks-come-from-any-acp-editor-no).
