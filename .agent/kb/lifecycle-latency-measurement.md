@@ -2,7 +2,7 @@
 name: lifecycle-latency-measurement
 description: how to measure a box/editor start or stop change without fooling yourself — pair the two builds and alternate them, never bisect a noisy metric single-shot, build the comparison binary where its version stamp is honest, and know why an old binary cannot run in an approved project
 subsystem: testing
-sources: [tools/lifecycle_bench.py, tools/test_lifecycle_bench.py, Makefile, internal/cli/acp_cmd.go, internal/cli/cli.go, internal/runtime/docker_lifecycle.go]
+sources: [tools/lifecycle_bench.py, tools/test_lifecycle_bench.py, tools/services_bench.py, tools/test_services_bench.py, Makefile, internal/cli/acp_cmd.go, internal/cli/cli.go, internal/runtime/docker_lifecycle.go]
 updated: 2026-10-07
 ---
 
@@ -33,6 +33,21 @@ and left alone. Until 2026-10-07 the cleanup force-removed every coop-labelled c
 that appeared during a sample, so a loop or editor session starting meanwhile would have lost its box
 and its service volumes. `OtherRunsTest` pins the rules; `EveryCaseCleansOnlyItsOwnTest` drives each
 case with a stand-in coop and another run's resources appearing mid-sample.
+
+## A start with services: tools/services_bench.py
+
+`tools/services_bench.py` times a warm start in a project with Compose services, the overnight
+page's Project services figure. Same boundary as the start cases (launch to the box's command
+running, seen as a marker file on the host), two cases taken in turns after one warm-up each:
+`stopped` (`coop down` first, so the launch starts the services) and `running` (`coop up` first).
+It removes nothing itself; between samples it runs `coop up`/`coop down` in its own project, so it
+is safe beside other runs, and it stops rather than file samples under the wrong case when either
+fails. On 2026-10-07 (coop v10.1.2-107-g9bfb4478, a throwaway filtered project from `coop init` with
+Postgres 18 and Redis 8, images pulled, load 3.8-6.7 at sample start), 7 samples each:
+`stopped` p50 6.48 s (6.38-6.78), `running` p50 6.88 s (6.66-7.38). The page says 6.5 s, the
+`stopped` case. A start after `coop up` is the slower one in a filtered project: the launch stops
+the running services and recreates them on the filtered network. Samples are in the artifacts of
+task 2026-10-07-measure-the-warm-start-with-services-for-the-ove.
 
 ## Pair the builds and alternate them; do not subtract a stored baseline
 
@@ -114,6 +129,8 @@ an approved project is unobtainable at acceptable cost — use the bare control 
 until 2026-09-20's paired A/B put a number against it. Both now state the number.
 
 ## Changelog
+- 2026-10-07 — added tools/services_bench.py and its first numbers (task
+  2026-10-07-measure-the-warm-start-with-services-for-the-ove).
 - 2026-10-07 — every case (failed starts, cancellation, ACP included) cleans up through the sample's
   label and network runs, and a stop waits only for its own resources (task
   2026-10-07-every-lifecycle-bench-case-cleans-up-only-its-ow).

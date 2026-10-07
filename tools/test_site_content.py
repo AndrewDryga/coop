@@ -233,6 +233,17 @@ class SiteContentTest(unittest.TestCase):
         self.assertIsNotNone(row, "the homepage lost its Task queue feature")
         self.assertIn('href="overnight.html"', row.group(0))
 
+    def test_the_services_figure_links_the_tool_that_measured_it(self):
+        # our own number: the reader can rerun the measurement, so the tool it links must exist
+        page = (SITE / "overnight.html").read_text()
+        row = re.search(r"<h3>Project services</h3>(?s:.*?)</li>", page)
+        self.assertIsNotNone(row, "the overnight page lost its Project services feature")
+        figure = re.search(r'<p class="evidence"><strong>[^<]+</strong>(?s:.*?)</p>', row.group(0))
+        self.assertIsNotNone(figure, "the Project services row has no figure")
+        tool = re.search(r"github\.com/AndrewDryga/coop/blob/main/(tools/[\w.]+)", figure.group(0))
+        self.assertIsNotNone(tool, "the services figure does not link the tool that measured it")
+        self.assertTrue((SITE.parent / tool.group(1)).is_file(), f"{tool.group(1)} does not exist")
+
     def test_every_start_command_follows_the_agent_picker(self):
         script = (SITE / "assets" / "js" / "site.js").read_text()
         handled = set(re.findall(r'\["(\w+)", `coop', script))

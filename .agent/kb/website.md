@@ -2,7 +2,7 @@
 name: website
 description: site/ is static and partly generated; tools/gen_site.py owns index.html, overnight.html and the docs' terminal regions, which copy real CLI output; the night board, code-block, cache-bust and social-card traps
 subsystem: website
-sources: [tools/gen_site.py, tools/site/index.tpl.html, tools/site/overnight.tpl.html, site/index.html, site/overnight.html, site/docs.html, site/assets/css/site.css, site/assets/css/overnight.css, site/assets/js/site.js, site/assets/js/overnight.js, tools/gen_seo_assets.py, tools/test_site_content.py, tools/align-comments.py, internal/cli/help_test.go, internal/cli/eval_cmd_test.go]
+sources: [tools/gen_site.py, tools/services_bench.py, tools/site/index.tpl.html, tools/site/overnight.tpl.html, site/index.html, site/overnight.html, site/docs.html, site/assets/css/site.css, site/assets/css/overnight.css, site/assets/js/site.js, site/assets/js/overnight.js, tools/gen_seo_assets.py, tools/test_site_content.py, tools/align-comments.py, internal/cli/help_test.go, internal/cli/eval_cmd_test.go]
 updated: 2026-10-07
 ---
 
@@ -35,8 +35,9 @@ new scroll cancels the beats still to come. Owner rules from its rounds: its fig
 the homepage's and each is re-checked in its primary source; the decision is one line except on
 its own step and the morning; both accounts stay in view side by side; one row of dots, each three
 tasks; the phone board keeps one fixed height, so measure the natural heights at 360-414 px and on
-a tablet before adding content. Its Project services row waits for a warm-start-with-services figure
-measured on an idle machine (task 2026-10-07-measure-the-warm-start-with-services-for-the-ove).
+a tablet before adding content. Its Project services figure (6.5 s) is our own number:
+`tools/services_bench.py`, the launch that starts Postgres and Redis (see
+[[lifecycle-latency-measurement]]); measure again on a quiet machine before changing it.
 Traps: Chrome drops a row's computed style when it moves between lists, so CSS transitions never
 fire there and state changes are drawn with the Web Animations API; a multi-step keyframe sequence
 must run on a linear clock with the easing on each keyframe (an expo-out effect easing squeezed the
@@ -183,3 +184,5 @@ nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 - 2026-10-06 — external links get target="_blank" and rel="nofollow noopener" from the generator (task 2026-10-06-external-links-on-the-website-open-in-a-new-tab).
 - 2026-10-07 — faded case figures are hidden too, so they stop taking the visible figure's clicks (task 2026-10-07-homepage-citation-links-do-nothing-on-desktop).
 - 2026-10-07 — the overnight page, its night board and the shared Overnight menu link (task 2026-10-07-second-landing-page-for-teams-that-keep-agents-w).
+- 2026-10-07 — the overnight Project services row carries our measured 6.5 s (task
+  2026-10-07-measure-the-warm-start-with-services-for-the-ove).
