@@ -33,6 +33,7 @@ echo $$ > "@LOG@.pid"
 [ -n "$STAND_IN_CHATTY" ] && head -c 1000000 /dev/zero | tr '\\0' x
 shift 2
 "$@"
+[ -n "$STAND_IN_STUBBORN" ] && sh -c 'trap "" TERM; echo $$ >> "@LOG@.child"; exec sleep 30' &
 [ -n "$STAND_IN_HANG" ] && exec sleep 30
 exit 0
 """
@@ -85,6 +86,17 @@ class OwnProjectOnlyTest(unittest.TestCase):
             os.kill(int(Path(str(self.log) + ".pid").read_text()), 0)
         self.assertEqual(self.calls()[-1][1], "down")
 
+    def test_a_child_that_ignores_term_is_stopped_too(self):
+        # the launch leaves on TERM, its child does not: the stop goes on until the session is empty
+        with patch.dict(os.environ, {"STAND_IN_HANG": "1", "STAND_IN_STUBBORN": "1"}), \
+                patch.object(services_bench, "TIMEOUT", 1), patch.object(services_bench, "STOP_GRACE", 0.5):
+            self.bench(samples=1)
+        children = [int(pid) for pid in Path(str(self.log) + ".child").read_text().split()]
+        self.assertTrue(children)
+        for child in children:
+            with self.subTest(child=child), self.assertRaises(ProcessLookupError, msg="a child outlived its launch"):
+                os.kill(child, 0)
+
     def test_a_chatty_launch_does_not_stall_before_its_marker(self):
         # a megabyte of output is more than a pipe holds: unread, it would block the launch
         with patch.dict(os.environ, {"STAND_IN_CHATTY": "1"}), patch.object(services_bench, "TIMEOUT", 20):
@@ -92,18 +104,21 @@ class OwnProjectOnlyTest(unittest.TestCase):
         self.assertEqual((summary["stopped"]["failed"], summary["running"]["failed"]), (0, 0))
 
     def test_an_interrupted_bench_still_stops_the_services(self):
-        real_sleep = time.sleep
-        def interrupt(seconds):  # Ctrl-C while waiting for the first launch's marker
+        # Ctrl-C once the first launch is running. time.sleep is also what subprocess polls with, so
+        # the interrupt comes once and every later sleep, the stop's own included, is a real one.
+        real_sleep, started = time.sleep, Path(str(self.log) + ".pid")
+        interrupted = []
+        def sleep(seconds):
             real_sleep(seconds)
-            raise KeyboardInterrupt
-        with patch.dict(os.environ, {"STAND_IN_HANG": "1"}), patch.object(services_bench.time, "sleep", interrupt), \
+            if started.exists() and not interrupted:
+                interrupted.append(True)
+                raise KeyboardInterrupt
+        with patch.dict(os.environ, {"STAND_IN_HANG": "1"}), patch.object(services_bench.time, "sleep", sleep), \
                 self.assertRaises(KeyboardInterrupt):
             self.bench(samples=1)
         self.assertEqual(self.calls()[-1][1], "down")
-        pid = Path(str(self.log) + ".pid")
-        if pid.exists():
-            with self.assertRaises(ProcessLookupError, msg="the interrupted launch was left running"):
-                os.kill(int(pid.read_text()), 0)
+        with self.assertRaises(ProcessLookupError, msg="the interrupted launch was left running"):
+            os.kill(int(started.read_text()), 0)
 
     def test_a_failed_up_stops_the_bench_instead_of_mislabeling_samples(self):
         with patch.dict(os.environ, {"STAND_IN_UP_FAILS": "1"}), self.assertRaises(SystemExit) as stopped:

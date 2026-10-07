@@ -36,6 +36,7 @@ import time
 MARK = ".coop-services-ready"
 CASES = ("stopped", "running")
 TIMEOUT = 300
+STOP_GRACE = 10.0  # how long a launch's session gets to leave after each signal
 
 
 def coop_env(repo: str) -> dict:
@@ -54,20 +55,33 @@ def coop_step(coop: str, repo: str, *args: str, strict: bool = True) -> None:
                          f"{(done.stderr or done.stdout).strip()[-300:]}")
 
 
+def group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        pass
+    return True
+
+
 def stop(process: subprocess.Popen) -> None:
-    """End a launch and everything in its session, escalating if it refuses, and reap it."""
-    for sig, grace in ((signal.SIGTERM, 10.0), (signal.SIGKILL, 5.0)):
-        if process.poll() is not None:
-            return
+    """End a launch and everything in its session, escalating while anything is left, and reap it.
+    The launch itself leaving is not enough: a child of it that ignores TERM would outlive it."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        process.poll()  # reap an exited leader, which would otherwise keep the group alive as a zombie
+        if not group_alive(process.pid):
+            break
         try:
             os.killpg(process.pid, sig)
         except (ProcessLookupError, PermissionError):
             break
-        try:
-            process.wait(timeout=grace)
-            return
-        except subprocess.TimeoutExpired:
-            continue
+        deadline = time.time() + STOP_GRACE
+        while time.time() < deadline:
+            process.poll()
+            if not group_alive(process.pid):
+                break
+            time.sleep(0.05)
     process.wait()
 
 

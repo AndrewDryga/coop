@@ -171,11 +171,16 @@ func TestRunDeadlineNamesWhatWasStillRunning(t *testing.T) {
 // on exactly it (a pipe it still holds open). The deadline report names the run's descendants in
 // other groups too, and nothing outside the run.
 func TestDescribeGroupNamesDescendantsThatLeftTheGroup(t *testing.T) {
-	if os.Getenv("PROCHARNESS_OWN_GROUP") == "1" { // the helper: leave the group, then wait to be listed
+	if os.Getenv("PROCHARNESS_OWN_GROUP") == "1" {
+		// The helper: leave the group, then wait to be listed. Outside the group no kill aimed at it
+		// reaches it, so it leaves when its parent does: a test that fails early leaks nothing.
+		parent := os.Getppid()
 		if err := syscall.Setpgid(0, 0); err != nil {
 			os.Exit(2)
 		}
-		time.Sleep(time.Minute)
+		for end := time.Now().Add(time.Minute); time.Now().Before(end) && os.Getppid() == parent; {
+			time.Sleep(20 * time.Millisecond)
+		}
 		os.Exit(0)
 	}
 	self, err := os.Executable()
@@ -190,16 +195,18 @@ func TestDescribeGroupNamesDescendantsThatLeftTheGroup(t *testing.T) {
 	if err := leader.Start(); err != nil {
 		t.Fatal(err)
 	}
-	pid := leader.Process.Pid
-	child, err := strconv.Atoi(strings.TrimSpace(awaitFileContent(t, ready)))
+	pid, child := leader.Process.Pid, 0
+	t.Cleanup(func() {
+		if child > 0 {
+			_ = syscall.Kill(-child, syscall.SIGKILL)
+		}
+		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		_, _ = leader.Process.Wait()
+	})
+	child, err = strconv.Atoi(strings.TrimSpace(awaitFileContent(t, ready)))
 	if err != nil || child <= 0 || child == pid {
 		t.Fatalf("invalid helper PID %d (%v)", child, err)
 	}
-	defer func() {
-		_ = syscall.Kill(-child, syscall.SIGKILL)
-		_ = syscall.Kill(-pid, syscall.SIGKILL)
-		_, _ = leader.Process.Wait()
-	}()
 	const heading = "still running"
 	listed := func(report string, p int) bool {
 		for _, row := range strings.Split(report, "\n") {
