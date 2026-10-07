@@ -1163,7 +1163,9 @@ func readOnlySessionOutputMountArgs(workspace, workdir string) ([]string, string
 		pathsOverlap(workspaceRoot, sourceRoot) {
 		return nil, "", errors.New("read-only session output root is unsafe")
 	}
-	return []string{"-v", sourceRoot + ":" + filepath.Join(workdir, ".coop-output") + ":rw"}, sourceRoot, nil
+	// Docker's default is writable; keep the canonical form that filtered
+	// admission and post-create mount verification both understand.
+	return []string{"-v", sourceRoot + ":" + filepath.Join(workdir, ".coop-output")}, sourceRoot, nil
 }
 
 func pathsOverlap(left, right string) bool {

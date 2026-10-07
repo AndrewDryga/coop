@@ -200,6 +200,18 @@ func TestDockerFixtureProcess(t *testing.T) {
 		}
 	case "container":
 		switch args[1] {
+		case "stop":
+			if !bound || len(args) != 5 || args[2] != "-t" || !slices.Contains([]string{"0", "10"}, args[3]) || args[4] != dockerFixtureRef().ID {
+				os.Exit(109)
+			}
+			if fixture.Mode == "stop-fail" || fixture.Container == nil {
+				os.Exit(1)
+			}
+			fixture.Mutations++
+			if fixture.Mode != "stop-ineffective" {
+				fixture.Container.State = DockerContainerState{Status: "exited", FinishedAt: time.Now().UTC()}
+			}
+			store()
 		case "create":
 			if fixture.Mode == "create-fail" {
 				os.Exit(1)
@@ -354,6 +366,50 @@ func TestDockerFixtureProcess(t *testing.T) {
 		os.Exit(101)
 	}
 	os.Exit(0)
+}
+
+func TestDockerStopUsesPortableTimeoutAndConfirmsTerminalState(t *testing.T) {
+	for _, grace := range []int{0, 10} {
+		t.Run(strconv.Itoa(grace), func(t *testing.T) {
+			container := dockerFixtureContainer()
+			container.State = DockerContainerState{Status: "running", Running: true}
+			rt, _ := fixtureDocker(t, dockerFixture{Container: container})
+			d, err := BindDocker(t.Context(), rt, fixtureSock(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			if err := d.StopContainer(t.Context(), dockerFixtureRef(), grace); err != nil {
+				t.Fatal("portable exact stop failed", err)
+			}
+			value, present, err := d.InspectContainer(t.Context(), dockerFixtureRef())
+			if err != nil || !present || value.State.Running || value.State.Status != "exited" {
+				t.Fatal("stop returned without a confirmed terminal state", value, present, err)
+			}
+		})
+	}
+}
+
+func TestDockerStopRefusesUnconfirmedCleanup(t *testing.T) {
+	for _, mode := range []string{"stop-fail", "stop-ineffective"} {
+		t.Run(mode, func(t *testing.T) {
+			container := dockerFixtureContainer()
+			container.State = DockerContainerState{Status: "running", Running: true}
+			rt, _ := fixtureDocker(t, dockerFixture{Mode: mode, Container: container})
+			d, err := BindDocker(t.Context(), rt, fixtureSock(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			if err := d.StopContainer(t.Context(), dockerFixtureRef(), 0); err == nil || !strings.Contains(err.Error(), "stop remains unconfirmed") {
+				t.Fatal("unconfirmed stop claimed cleanup", err)
+			}
+			value, present, err := d.InspectContainer(t.Context(), dockerFixtureRef())
+			if err != nil || !present || !value.State.Running {
+				t.Fatal("failure fixture no longer represents a running workload", value, present, err)
+			}
+		})
+	}
 }
 
 func TestDockerBindingFreezesEndpointEnvironmentAndFencesDaemon(t *testing.T) {

@@ -894,7 +894,8 @@ func TestForkACPPhysicallyMountsAReadOnlySessionRepositoryReadOnly(t *testing.T)
 		!strings.Contains(string(args), "-w "+box.BareWorkdir) {
 		t.Fatalf("read-only session repository was writable:\n%s", args)
 	}
-	if !strings.Contains(string(args), hostOutputRoot+":"+filepath.Join(box.BareWorkdir, ".coop-output")+":rw") {
+	outputMount := hostOutputRoot + ":" + filepath.Join(box.BareWorkdir, ".coop-output")
+	if !strings.Contains(string(args), "-v "+outputMount+" ") || strings.Contains(string(args), outputMount+":") {
 		t.Fatalf("read-only session output root was not writable:\n%s", args)
 	}
 }
@@ -1099,6 +1100,23 @@ func TestLocalForkACPReadOnlyRefusesScratchWorkspaceBeforeRuntime(t *testing.T) 
 	}
 	if _, err := os.Stat(recorder); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("local scratch fork ACP reached runtime: %v", err)
+	}
+}
+
+func TestReadOnlySessionOutputMountUsesCanonicalWritableForm(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.Mkdir(filepath.Join(workspace, ".coop-output"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	source, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(sessionsvc.SessionOutputRootEnv, source)
+	args, root, err := readOnlySessionOutputMountArgs(workspace, box.BareWorkdir)
+	want := source + ":" + filepath.Join(box.BareWorkdir, ".coop-output")
+	if err != nil || root != source || len(args) != 2 || args[0] != "-v" || args[1] != want {
+		t.Fatalf("output mount = %q, %q, %v; want canonical writable -v %s", args, root, err, want)
 	}
 }
 

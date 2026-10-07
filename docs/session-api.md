@@ -35,6 +35,13 @@ repository code, and it is not worker configuration. Jobs run in the worker's ba
 what jobs need in the base image. A normal-mode job still provisions the repository's
 `.tool-versions` when its box starts.
 
+Before accepting filtered jobs, run [`coop net setup`](networking.md#fleet-workers-and-docker-in-docker)
+under the worker's OS user with the same Docker endpoint and network state directory. The session
+API requires current qualification; it never builds the networking images itself. Use
+`mode: "normal"` and `repository_read_only: true` for a filtered repository-knowledge job: the
+separate `readonly` execution mode does not support filtered networking. Docker being present or
+the worker accepting JobSpec version 2 does not prove filtered readiness.
+
 To check the local session service:
 
 ```bash

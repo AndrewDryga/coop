@@ -1013,6 +1013,25 @@ func TestFilteredTerminalCollectorCannotCertifySurvivingWorkload(t *testing.T) {
 	}
 }
 
+func TestFilteredMountsKeepReadOnlyRepositoryAndWritableOutput(t *testing.T) {
+	options := []string{"-v", "/host/repo:/workspace:ro", "-v", "/host/output:/workspace/.coop-output"}
+	actual := []runtime.DockerMount{
+		{Type: "bind", Source: "/host/repo", Destination: "/workspace", RW: false},
+		{Type: "bind", Source: "/host/output", Destination: "/workspace/.coop-output", RW: true},
+	}
+	if err := verifyNetworkMounts(actual, nil, options); err != nil {
+		t.Fatal("canonical session output mount was refused", err)
+	}
+	actual[1].RW = false
+	if err := verifyNetworkMounts(actual, nil, options); err == nil {
+		t.Fatal("read-only output accepted instead of writable output")
+	}
+	actual[1].RW, actual[0].RW = true, true
+	if err := verifyNetworkMounts(actual, nil, options); err == nil {
+		t.Fatal("writable repository accepted instead of read-only repository")
+	}
+}
+
 func TestFilteredMountsVerifyTmpfsConstraintsAndRejectAnonymousVolumes(t *testing.T) {
 	options := []string{"--tmpfs", "/private:rw,uid=65532,mode=0700"}
 	if err := verifyNetworkMounts(nil, map[string]string{"/private": "rw,uid=65532,mode=0700"}, options); err != nil {

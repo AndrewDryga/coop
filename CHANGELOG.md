@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Filtered networking works with Docker 27 workers.** Setup could pass its network checks but
+  fail to stop its helpers because Docker 27 calls the stop option `--time`, not `--timeout`.
+  Cleanup now uses the portable `-t` flag and still checks that the exact workload stopped.
+  Filtered repository-read-only worker jobs also keep their separate output mount writable without
+  an unsupported mount spelling. Worker docs explain CLI, Buildx and shared-path requirements.
+
 - **Filtered launches work after `coop up`.** A filtered box launched after `coop up` failed with
   "container … is not connected to the network …_filtered": Compose rebuilt the filtered services
   network and could not detach a service that `coop up` had moved off it. The launch now declares

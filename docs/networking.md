@@ -51,6 +51,25 @@ nothing about the checks after it. The output ends with `✗ this host is not re
 and `No setup was saved`. If images need building, the output says so up front, and Docker's build
 output follows.
 
+### Fleet workers and Docker-in-Docker
+
+The worker needs a Docker CLI with Buildx installed and working through `docker build`. A Buildx
+binary alone is not enough: Debian bookworm's Docker CLI 20.10 does not dispatch that command to
+the plugin. Ship the modern CLI and its matching Buildx plugin together. Docker CLI 27.5.1 with
+Buildx 0.20.1 is a supported pairing for a Docker 27.5.1 DinD sidecar.
+
+Filtered runs need a rootful Linux Docker daemon on amd64 or arm64, reached through a local Unix
+socket. Rootless and user-namespace-remapped daemons are refused. With DinD, share the worker's
+state and temporary directories with the daemon at the same absolute paths: Docker resolves
+every bind source in the daemon's filesystem, not the worker's. Keep the socket out of model
+mounts.
+
+Run `coop net setup` as the worker's OS user, with the same Docker endpoint and network state
+directory the supervised worker uses. A session API request does not build images or qualify a
+daemon. A failed setup leaves the worker unready; it must not retry the job with open networking.
+Qualification is specific to the daemon, runtime contract and immutable images, and admission
+checks that it is still current.
+
 ## Supported today
 
 | Rule | Meaning | Enforced by |

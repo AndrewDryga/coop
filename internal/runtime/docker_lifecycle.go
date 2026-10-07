@@ -389,7 +389,9 @@ func (d *Docker) StopContainer(ctx context.Context, ref DockerRef, graceSeconds 
 	if !value.State.Running && !value.State.Paused && !slices.Contains([]string{"restarting", "removing"}, value.State.Status) {
 		return nil
 	}
-	_, stopErr := d.output(ctx, 1024, "container", "stop", "--timeout", strconv.Itoa(graceSeconds), ref.ID)
+	// Docker 27 calls the long option --time, while newer clients call it
+	// --timeout. The short option is stable across supported worker clients.
+	_, stopErr := d.output(ctx, 1024, "container", "stop", "-t", strconv.Itoa(graceSeconds), ref.ID)
 	value, present, err = d.InspectContainer(ctx, ref)
 	if err == nil && (!present || !value.State.Running && !value.State.Paused && slices.Contains([]string{"exited", "dead"}, value.State.Status)) {
 		return nil

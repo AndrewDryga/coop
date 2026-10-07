@@ -2,7 +2,7 @@
 name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
-sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go]
+sources: [internal/cli/fork_cmd.go, internal/cli/fork_cmd_test.go, internal/box/filtered_test.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_test.go, internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go]
 updated: 2026-10-07
 ---
 
@@ -126,6 +126,16 @@ host's filtered setup on its next launch. The base build asks the runtime for it
 
 Traps:
 
+- Docker 27's `container stop` long flag is `--time`; Docker 29's is `--timeout`. Bound cleanup
+  uses the stable `-t` spelling (`runtime/docker_lifecycle.go`) and still confirms the exact
+  container's terminal state. A parser failure otherwise makes setup report unfinished cleanup,
+  even after packet checks pass. A Debian DinD worker also needs the modern CLI and Buildx
+  together, plus identical worker/daemon bind-source paths; installing Buildx beside CLI 20.10
+  does not make `docker build --builder` work.
+- A normal repository-read-only session has a writable, private `.coop-output` bind. Its trusted
+  emitter uses `source:target`, Docker's default RW form, not redundant `:rw`: both complete-plan
+  filtered parsers permit only that form or explicit `:ro`. The output's exact private-state
+  allowlist and inspected RW equality remain mandatory; do not relax parsing or repository RO.
 - A filtered run's box is the LOCKED client image, or that image plus the project's own layers.
   A project `.agent/Dockerfile` is explicitly built on the host with `COOP_BASE_IMAGE` set to the locked image,
   through the ordinary project build path, under its own tag `coop-<repo>-filtered:<hash of the
@@ -278,6 +288,9 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-10-07 — traced Docker 27 DinD setup's unconfirmed stop to the newer long flag, added the
+  portable cleanup spelling and strict success/rejected-stop regressions, and documented worker
+  preparation separately from protocol support. No fallback widens a filtered job's authority.
 - 2026-10-07 — the filtered services seed declares the existing network's subnet, so `coop up` then a
   filtered launch works and services keep their anonymous volumes; the container removal that
   7f80e02e used instead is gone (task 2026-10-07-filtered-launches-keep-services-anonymous-volume).
