@@ -44,7 +44,9 @@ running, seen as a marker file on the host), two cases taken in turns after one 
 `stopped` (`coop down` first, so the launch starts the services) and `running` (`coop up` first).
 It removes nothing itself; between samples it runs `coop up`/`coop down` in its own project, so it
 is safe beside other runs, and it stops rather than file samples under the wrong case when either
-fails. On 2026-10-07 (coop v10.1.2-107-g9bfb4478, a throwaway filtered project from `coop init` with
+fails. Every call pins `COOP_REPO` to that project and `COOP_AUTO_UP=1` (an explicit value beats
+`box.auto_up`), so the `stopped` case always times the launch that starts the services; a launch
+that hangs, or a Ctrl-C, is stopped and the services are still taken down. On 2026-10-07 (coop v10.1.2-107-g9bfb4478, a throwaway filtered project from `coop init` with
 Postgres 18 and Redis 8, images pulled, load 3.8-6.7 at sample start), 7 samples each:
 `stopped` p50 6.48 s (6.38-6.78), `running` p50 6.88 s (6.66-7.38). The page says 6.5 s, the
 `stopped` case. A start after `coop up` is the slower one in a filtered project: the launch stops
@@ -131,6 +133,8 @@ an approved project is unobtainable at acceptable cost — use the bare control 
 until 2026-09-20's paired A/B put a number against it. Both now state the number.
 
 ## Changelog
+- 2026-10-07 — services_bench pins its project and auto-up, spools launch output and always cleans
+  up (task 2026-10-07-services-bench-right-project-services-forced-on).
 - 2026-10-07 — failed-start launches are stopped and cleaned even when they outlive the case, and a
   cancelled sample hears its terminal before it waits (task
   2026-10-07-failed-start-and-cancelled-bench-samples-clean-u).

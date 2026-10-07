@@ -30,6 +30,7 @@ import shutil
 import signal
 import statistics
 import subprocess
+import tempfile
 import time
 
 MARK = ".coop-services-ready"
@@ -37,13 +38,37 @@ CASES = ("stopped", "running")
 TIMEOUT = 300
 
 
-def coop_step(coop: str, repo: str, *args: str) -> None:
+def coop_env(repo: str) -> dict:
+    """Every coop call works on the project the bench was given, whatever COOP_REPO the shell has, and
+    lets the launch start the services, whatever the project says: that start is what it times."""
+    return dict(os.environ, COOP_REPO=os.path.abspath(repo), COOP_AUTO_UP="1")
+
+
+def coop_step(coop: str, repo: str, *args: str, strict: bool = True) -> None:
     """Put the services in the state a case starts from. If that fails, every later sample would be
     filed under the wrong case, so the bench stops instead."""
-    done = subprocess.run([coop, *args], cwd=repo, capture_output=True, text=True, timeout=TIMEOUT, check=False)
-    if done.returncode != 0:
+    done = subprocess.run([coop, *args], cwd=repo, env=coop_env(repo), capture_output=True, text=True,
+                          timeout=TIMEOUT, check=False)
+    if strict and done.returncode != 0:
         raise SystemExit(f"services_bench: coop {' '.join(args)} exited {done.returncode}: "
                          f"{(done.stderr or done.stdout).strip()[-300:]}")
+
+
+def stop(process: subprocess.Popen) -> None:
+    """End a launch and everything in its session, escalating if it refuses, and reap it."""
+    for sig, grace in ((signal.SIGTERM, 10.0), (signal.SIGKILL, 5.0)):
+        if process.poll() is not None:
+            return
+        try:
+            os.killpg(process.pid, sig)
+        except (ProcessLookupError, PermissionError):
+            break
+        try:
+            process.wait(timeout=grace)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+    process.wait()
 
 
 def launch(coop: str, repo: str) -> dict:
@@ -52,22 +77,30 @@ def launch(coop: str, repo: str) -> dict:
     if os.path.exists(marker):
         os.remove(marker)
     load = os.getloadavg()[0]
-    started = time.time()
-    process = subprocess.Popen([coop, "run", "--", "sh", "-c", f": > ./{MARK}"], cwd=repo, stdout=subprocess.PIPE,
-                               stderr=subprocess.STDOUT, text=True, start_new_session=True)
-    ready = None
-    while time.time() < started + TIMEOUT:
-        if os.path.exists(marker):
-            ready = time.time()
-            break
-        if process.poll() is not None:
-            break
-        time.sleep(0.005)
-    if ready is None and process.poll() is None:
-        os.killpg(process.pid, signal.SIGTERM)  # its own session: the launch and whatever it started
-    output = process.communicate(timeout=TIMEOUT)[0]
-    if os.path.exists(marker):
-        os.remove(marker)
+    # its output goes to a file: an unread pipe would fill and stall a chatty launch before its marker
+    with tempfile.TemporaryFile("w+") as spool:
+        started = time.time()
+        process = subprocess.Popen([coop, "run", "--", "sh", "-c", f": > ./{MARK}"], cwd=repo, env=coop_env(repo),
+                                   stdout=spool, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+        ready = None
+        try:
+            while time.time() < started + TIMEOUT:
+                if os.path.exists(marker):
+                    ready = time.time()
+                    break
+                if process.poll() is not None:
+                    break
+                time.sleep(0.005)
+            try:
+                process.wait(timeout=TIMEOUT)
+            except subprocess.TimeoutExpired:
+                pass
+        finally:
+            stop(process)  # whatever happened: a launch that hangs after its marker, Ctrl-C
+            if os.path.exists(marker):
+                os.remove(marker)
+        spool.seek(0)
+        output = spool.read()
     return {"seconds": round(ready - started, 3) if ready else None, "exit": process.returncode, "load": round(load, 1),
             "tail": "" if ready else output[-300:]}
 
@@ -91,13 +124,15 @@ def main(argv: list[str] | None = None) -> dict:
     parser.add_argument("--out", required=True, help="directory for samples.json")
     parser.add_argument("--coop", default=shutil.which("coop") or "coop", help="the coop binary to measure")
     args = parser.parse_args(argv)
-    for case in CASES:
-        sample(args.coop, args.repo, case)  # warm-up, not counted
     samples: dict[str, list[dict]] = {case: [] for case in CASES}
-    for _ in range(args.samples):
+    try:
         for case in CASES:
-            samples[case].append(sample(args.coop, args.repo, case))
-    coop_step(args.coop, args.repo, "down")
+            sample(args.coop, args.repo, case)  # warm-up, not counted
+        for _ in range(args.samples):
+            for case in CASES:
+                samples[case].append(sample(args.coop, args.repo, case))
+    finally:
+        coop_step(args.coop, args.repo, "down", strict=False)  # leave the services stopped, however it ended
     summary = {case: summarize(rows) for case, rows in samples.items()}
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, "samples.json"), "w") as out:
