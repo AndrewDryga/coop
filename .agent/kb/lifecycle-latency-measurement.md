@@ -21,6 +21,15 @@ metadata is best-effort: an absent or timed-out runtime info query leaves `runti
 so metadata collection can still retain the samples. This does not relax the real cases' runtime
 requirements; `EnvironmentTest` covers the metadata failure paths separately.
 
+**It removes only what its own launch made.** The bench refuses to start while another run's coop
+containers or volumes exist (they would slow every sample, and they are not its to remove). After a
+sample it removes only leftovers whose `coop.host` label names the coop process it launched, or whose
+`coop.network.run` is the network run that launch printed (`coop net inspect <id>`) or its own box
+carries; anything else that appeared during the sample is reported and left alone. Until
+2026-10-07 the cleanup force-removed every coop-labelled container and volume that appeared during a
+sample, so a loop or editor session starting meanwhile would have lost its box and its service
+volumes. `OtherRunsTest` pins both rules.
+
 ## Pair the builds and alternate them; do not subtract a stored baseline
 
 A retained baseline is a reference, not a subtrahend. Build the old revision's binary, measure BOTH
@@ -101,6 +110,9 @@ an approved project is unobtainable at acceptable cost — use the bare control 
 until 2026-09-20's paired A/B put a number against it. Both now state the number.
 
 ## Changelog
+- 2026-10-07 — the bench refuses a busy runtime and removes only what its own launch made (task
+  2026-10-07-lifecycle-bench-cleanup-removes-other-runs-boxes); it used to force-remove any coop resource
+  that appeared during a sample.
 - 2026-10-07 — traced missing-Docker sampling test errors to the unguarded daemon metadata query;
   documented isolated sampling fixtures and best-effort metadata failure handling.
 - 2026-09-20 — the "healthy run reported failed" trap is fixed (classifyTerminal + confirmWorkloadExit

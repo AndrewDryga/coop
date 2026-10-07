@@ -142,6 +142,35 @@ def owned(runtime: str) -> set[str]:
     return owned_containers(runtime) | owned_volumes(runtime)
 
 
+# A filtered launch names its network run at the end of its output ("coop net inspect <id>").
+NETWORK_RUN = re.compile(r"coop net inspect ([0-9a-f]+)")
+
+
+def network_runs(output: str) -> set[str]:
+    return set(NETWORK_RUN.findall(output))
+
+
+def resource_labels(runtime: str, item: str) -> tuple[str, str]:
+    """A leftover's coop.host label (a box: v1:<scope>:<pid>:<token>) and coop.network.run label."""
+    kind, _, name = item.partition(":")
+    if kind == "c":
+        cmd = [runtime, "inspect", "--format", '{{index .Config.Labels "coop.host"}}\t{{index .Config.Labels "coop.network.run"}}', name]
+    else:
+        cmd = [runtime, "volume", "inspect", "--format", '\t{{index .Labels "coop.network.run"}}', name]
+    host, _, network = run(cmd, timeout=30).stdout.rstrip("\n").partition("\t")
+    return host, network.strip()
+
+
+def launched_by(runtime: str, leftovers: set[str], pid: int, runs: set[str]) -> set[str]:
+    """The leftovers this sample's own launch made, and nothing else: its boxes name its coop process
+    in coop.host, and its gateway's containers and volumes carry the network run it printed (or one
+    its boxes carry). A resource another run created during the sample is never touched."""
+    labels = {item: resource_labels(runtime, item) for item in leftovers}
+    mark = f":{pid}:"
+    runs = set(runs) | {network for host, network in labels.values() if mark in host and network}
+    return {item for item, (host, network) in labels.items() if mark in host or (network and network in runs)}
+
+
 def remove_owned(runtime: str, leftovers: set[str]) -> None:
     """Take back what an interrupted sample left. The tool's own wreckage must not be mistaken for
     the product's, and must not poison the next sample's before-set."""
@@ -231,17 +260,19 @@ def sample_run(coop: str, repo: str, runtime: str, extra: list[str], command: st
     before = owned(runtime)
     launched = time.time()
     process = launch(coop, repo, extra, command)
+    said = ""
     try:
         ready = await_marker(repo, process, CASE_TIMEOUT_SECONDS)
         if ready is None:
             out, err = process.communicate(timeout=CASE_TIMEOUT_SECONDS)
+            said = out + err
             return Sample("", False, detail=redact((err or out)[-400:]) or "the box never announced itself")
         if measure == "start":
-            process.communicate(timeout=CASE_TIMEOUT_SECONDS)
+            said = "".join(process.communicate(timeout=CASE_TIMEOUT_SECONDS))
             if not wait_until_gone(runtime, before, 60):
                 return Sample("", False, detail="a finished run left a resource behind")
             return Sample("", True, seconds=ready - launched)
-        process.communicate(timeout=CASE_TIMEOUT_SECONDS)
+        said = "".join(process.communicate(timeout=CASE_TIMEOUT_SECONDS))
         returned = time.time()
         if not wait_until_gone(runtime, before, 60):
             return Sample("", False, detail="an owned resource outlived the command by 60s")
@@ -254,7 +285,11 @@ def sample_run(coop: str, repo: str, runtime: str, extra: list[str], command: st
         clear_marker(repo)
         leftovers = owned(runtime) - before
         if leftovers:
-            remove_owned(runtime, leftovers)
+            mine = launched_by(runtime, leftovers, process.pid, network_runs(said))
+            remove_owned(runtime, mine)
+            if leftovers - mine:
+                print(f"lifecycle_bench: left {len(leftovers - mine)} resource(s) this sample did not create",
+                      file=sys.stderr)
 
 
 def case_start(coop: str, repo: str, runtime: str, extra: list[str]) -> Sample:
@@ -680,6 +715,14 @@ def main() -> int:
     unknown = [name for name in selected if name not in CASES]
     if unknown:
         print(f"lifecycle_bench: unknown case(s): {', '.join(unknown)}", file=sys.stderr)
+        return 2
+
+    # Measure on a quiet runtime: another run's boxes slow every sample, and what they own is
+    # theirs, which this tool must never remove.
+    busy = owned(runtime)
+    if busy:
+        print(f"lifecycle_bench: {len(busy)} coop container(s) or volume(s) from other runs are present; "
+              "stop those runs (coop doctor lists the boxes) and measure on a quiet runtime", file=sys.stderr)
         return 2
 
     results: list[CaseResult] = []

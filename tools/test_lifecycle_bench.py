@@ -6,8 +6,11 @@ artifact says about the machine it ran on, the parse that turns the box's own cl
 and the report that a later comparison reads back.
 """
 
+import io
 import json
 import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -164,6 +167,10 @@ class SamplingLoopTest(unittest.TestCase):
         })
         self.environment = environment.start()
         self.addCleanup(environment.stop)
+        # main() refuses a runtime with other runs' boxes; these tests need no runtime at all
+        quiet = patch.object(bench, "owned", return_value=set())
+        quiet.start()
+        self.addCleanup(quiet.stop)
 
     def _run(self, case_function, samples=2):
         import tempfile
@@ -267,13 +274,17 @@ class FakeRuntime:
     as good as what the question covers, so the question itself is what these tests pin.
     """
 
-    def __init__(self, containers=(), volumes=()):
+    def __init__(self, containers=(), volumes=(), labels=None):
         self.containers, self.volumes = list(containers), list(volumes)
+        self.labels = labels or {}  # name -> (coop.host, coop.network.run)
         self.commands: list[list[str]] = []
 
     def __call__(self, cmd, env=None, timeout=None, cwd=None):
         self.commands.append(cmd)
         label = cmd[cmd.index("--filter") + 1] if "--filter" in cmd else ""
+        if cmd[1] == "inspect" or cmd[1:3] == ["volume", "inspect"]:
+            host, network = self.labels.get(cmd[-1], ("", ""))
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"{host}\t{network}\n", stderr="")
         if cmd[1:3] == ["volume", "ls"]:
             names = [n for n, owner in self.volumes if owner == label]
         elif cmd[1] == "ps":
@@ -281,6 +292,47 @@ class FakeRuntime:
         else:
             names = []
         return subprocess.CompletedProcess(cmd, 0, stdout="\n".join(names), stderr="")
+
+
+class OtherRunsTest(unittest.TestCase):
+    """The bench removes what its own launch made and nothing else: another run's boxes and volumes
+    (a loop in another repository, an editor session) are theirs, data included."""
+
+    def setUp(self):
+        self.real_run = bench.run
+        self.addCleanup(lambda: setattr(bench, "run", self.real_run))
+
+    def test_cleanup_takes_only_its_own_launch(self):
+        bench.run = FakeRuntime(labels={
+            "mine": ("v1:ws:4242:t", ""), "theirs": ("v1:ws:999:t", ""),
+            "ipc": ("", "r1"), "their-db": ("", "r2"), "unknown": ("", ""),
+        })
+        leftovers = {"c:mine", "c:theirs", "v:ipc", "v:their-db", "v:unknown"}
+        self.assertEqual(bench.launched_by("docker", leftovers, 4242, {"r1"}), {"c:mine", "v:ipc"})
+
+    def test_its_box_claims_its_gateway_without_the_printed_run(self):
+        bench.run = FakeRuntime(labels={"mine": ("v1:ws:4242:t", "r1"), "guard": ("", "r1"), "other": ("", "r2")})
+        self.assertEqual(bench.launched_by("docker", {"c:mine", "c:guard", "c:other"}, 4242, set()), {"c:mine", "c:guard"})
+
+    def test_a_pid_inside_another_number_is_not_ours(self):
+        bench.run = FakeRuntime(labels={"theirs": ("v1:ws:14242:t", "")})
+        self.assertEqual(bench.launched_by("docker", {"c:theirs"}, 4242, set()), set())
+
+    def test_it_reads_the_network_run_a_launch_prints(self):
+        said = "Networking stats:\n  Allowed   no external connections\nFull details: coop net inspect 61727efd6e10631b31d8ae600cfa3a4d --json\n"
+        self.assertEqual(bench.network_runs(said), {"61727efd6e10631b31d8ae600cfa3a4d"})
+
+    def test_a_busy_runtime_is_refused_before_any_launch(self):
+        launched = []
+        real_owned, real_launch = bench.owned, bench.launch
+        self.addCleanup(lambda: (setattr(bench, "owned", real_owned), setattr(bench, "launch", real_launch)))
+        bench.owned = lambda runtime: {"c:a-loop-in-another-repo"}
+        bench.launch = lambda *args: launched.append(args)
+        with tempfile.TemporaryDirectory() as out, patch.object(sys, "argv", ["lifecycle_bench.py", "--out", out, "--coop", "/bin/sh", "--cases", "repeat_start"]), \
+                patch("sys.stderr", new_callable=io.StringIO) as err:
+            self.assertEqual(bench.main(), 2)
+        self.assertEqual(launched, [])
+        self.assertIn("from other runs are present", err.getvalue())
 
 
 class OwnershipTest(unittest.TestCase):
