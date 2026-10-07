@@ -683,15 +683,22 @@ PROOF_REPOS = (ROOT, ROOT.parent / "emisar", ROOT.parent / "responder")
 
 
 def proof_count():
-    """Commits on each product's published main branch that carry a Coop-Task trailer, minus 'none'."""
+    """Commits on each product's published main branch that carry a Coop-Task trailer (other than
+    'none'), each counted once: a squash commit carries several tasks' trailers but is one commit."""
     total = 0
     for repo in PROOF_REPOS:
         if not (repo / ".git").exists():
             sys.exit(f"the commit count needs every product checked out beside co:op; {repo} is missing")
-        log = subprocess.run(["git", "-C", str(repo), "log", "origin/main", "--format=%B"],
+        log = subprocess.run(["git", "-C", str(repo), "log", "origin/main", "--format=%B%x00"],
                              capture_output=True, text=True, check=True).stdout
-        total += sum(1 for l in log.splitlines() if l.startswith("Coop-Task:") and l.split(":", 1)[1].strip() != "none")
+        total += task_commits(log)
     return f"{total:,}"
+
+
+def task_commits(log):
+    """How many of the NUL-separated commit messages carry a Coop-Task trailer other than 'none'."""
+    return sum(1 for body in log.split("\0")
+               if any(line.startswith("Coop-Task:") and line.split(":", 1)[1].strip() != "none" for line in body.splitlines()))
 
 
 def published_count():

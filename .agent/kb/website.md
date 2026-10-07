@@ -12,7 +12,8 @@ every push to main. Two parts are generated and committed:
 - **`site/index.html`** is rendered by `tools/gen_site.py` from `tools/site/index.tpl.html` (icons,
   provider marks from `tools/site/logos/`, terminal scenes, the commands you copy). Never edit it by
   hand: `make tools-test` runs `gen_site.py --check` (`tools/test_site_content.py`) and fails on
-  drift. The task-commit count adds up the Coop-Task commits on `origin/main` of co:op, Emisar
+  drift. The task-commit count adds up the commits carrying a Coop-Task trailer (a squash commit with
+  several counts once) on `origin/main` of co:op, Emisar
   (`../emisar`) and Ryker (`../responder`) when you regenerate, so fetch all three first; a missing
   checkout stops the generator. `--check` reuses the count already in the page, so CI needs no
   history.

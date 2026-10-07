@@ -254,6 +254,15 @@ class SiteContentTest(unittest.TestCase):
         states = __import__("json").loads(timeline)["states"]
         self.assertEqual(len(states), 1 + len(re.findall(r'<li class="night-step">', page)), "one state for the hero and one per step")
 
+    def test_the_commit_count_counts_commits_not_trailers(self):
+        log = "\0".join([
+            "release 1.2\n\nCoop-Task: a\nCoop-Task: b\nCoop-Task: c\n",  # one squash commit, three tasks
+            "fix the parser\n\nCoop-Task: d\n",
+            "chore\n\nCoop-Task: none\n",
+            "a human's commit\n",
+        ]) + "\0"
+        self.assertEqual(gen_site.task_commits(log), 2)
+
     def test_built_pages_match_their_generator(self):
         generator = SITE.parent / "tools" / "gen_site.py"
         checked = subprocess.run([sys.executable, str(generator), "--check"], capture_output=True, text=True, check=False)
