@@ -7,9 +7,9 @@ No third-party Python deps — the stdlib plus two CLIs already on the box:
   • headless Google Chrome   rasterizes SVG/HTML crisply
   • ImageMagick (`magick`)   downscales the master renders and bundles favicon.ico
 
-The icons are drawn from the brand's mark, brand/assets/coop-flat.svg, and the social card is the
-homepage's own first screen, so neither can drift from the site. Re-run after changing the mark or
-the homepage's hero (regenerate site/index.html first: python3 tools/gen_site.py).
+The icons are drawn from the brand's mark, brand/assets/coop-flat.svg, and each landing page's social
+card is that page's own first screen, so none can drift from the site. Re-run after changing the mark
+or a landing page's hero (regenerate the pages first: python3 tools/gen_site.py).
 
   Outputs (all committed):
     favicon.svg              the mark, scalable — primary icon for modern browsers
@@ -18,11 +18,12 @@ the homepage's hero (regenerate site/index.html first: python3 tools/gen_site.py
     icon-192.png             192, manifest "any"
     icon-512.png             512, manifest "any"
     icon-maskable-512.png    512, full-bleed, glyph in the safe zone — Android adaptive
-    og-image.png             1200x630 — Open Graph + Twitter summary_large_image
+    og-image.png             1200x630 — the homepage's Open Graph + Twitter summary_large_image card
+    og-overnight.png         1200x630 — the same for the overnight page
 
 Usage:  python3 tools/gen_seo_assets.py            # regenerate everything
         python3 tools/gen_seo_assets.py icons      # just the favicon/app icons
-        python3 tools/gen_seo_assets.py og         # just the social card
+        python3 tools/gen_seo_assets.py og         # just the social cards
 
 Chrome path: $CHROME, else the macOS default, else chromium/google-chrome on PATH.
 """
@@ -147,18 +148,31 @@ def gen_icons(chrome, magick, tmp):
     resize(magick, mask, 512, IMG / "icon-maskable-512.png")
 
 
+# The overnight page's card: its first screen the same way, the board drawn at morning as it is
+# without the script ("120 tasks done. One decision for you."), the steps and all below left out.
+OVERNIGHT_OG_STYLE = """<style>
+  .nav-links { visibility: hidden; }
+  .actions, .night-steps, main > section:not(.night), footer { display: none; }
+  .night-lead { min-height: 0; padding-block: 72px 0; }
+  .night-stage { position: static; height: auto; padding-top: 40px; }
+</style>"""
+
+CARDS = (("index.html", OG_STYLE, "og-image.png"), ("overnight.html", OVERNIGHT_OG_STYLE, "og-overnight.png"))
+
+
 def gen_og(chrome, magick, tmp):
     site = ROOT / "site"
-    page = (site / "index.html").read_text()
-    page = page.replace("<head>", f'<head><base href="{site.as_uri()}/">', 1).replace("</head>", OG_STYLE + "</head>", 1)
-    page = re.sub(r"<script\b.*?</script>", "", page, flags=re.S)  # headless Chrome runs scripts regardless of flags
-    html = tmp / "og.html"
-    html.write_text(page)
-    master = tmp / "og_2x.png"
-    shoot(chrome, html.as_uri(), (1372, 720), str(master), scale=2, page=True)
-    out = IMG / "og-image.png"
-    subprocess.run([magick, str(master), "-resize", "1200x630!", "-strip", str(out)], check=True)
-    print(f"  → {out.relative_to(ROOT)}  (1200x630)")
+    for name, style, image in CARDS:
+        page = (site / name).read_text()
+        page = page.replace("<head>", f'<head><base href="{site.as_uri()}/">', 1).replace("</head>", style + "</head>", 1)
+        page = re.sub(r"<script\b.*?</script>", "", page, flags=re.S)  # headless Chrome runs scripts regardless of flags
+        html = tmp / f"og-{name}"
+        html.write_text(page)
+        master = tmp / f"og-{name}_2x.png"
+        shoot(chrome, html.as_uri(), (1372, 720), str(master), scale=2, page=True)
+        out = IMG / image
+        subprocess.run([magick, str(master), "-resize", "1200x630!", "-strip", str(out)], check=True)
+        print(f"  → {out.relative_to(ROOT)}  (1200x630)")
 
 
 def main():

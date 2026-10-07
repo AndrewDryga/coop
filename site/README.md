@@ -22,7 +22,7 @@ site/
     js/overnight.js     the overnight page's story: the night replayed on the board, the sandbox building itself
     js/analytics.js     Mixpanel: autocapture, page views, session replay and the copied setup commands
     fonts/              Inter (SIL Open Font License)
-    img/                favicon + app icons + og-image (see "SEO assets"), and zed-coop.png
+    img/                favicon + app icons + the two social cards (see "SEO assets"), and zed-coop.png
 ```
 
 ## Preview locally
@@ -78,8 +78,9 @@ You set it up once: in the repo, open Settings → Pages and set Source to "GitH
 The favicon, app icons and social card under `assets/img/` are generated, and the results
 are committed. `zed-coop.png` is the exception: it's a real Zed screenshot, cropped by hand (see
 `.agent/kb/website.md`). `tools/gen_seo_assets.py` makes them with headless Chrome and ImageMagick. It
-draws the icons from the brand's mark, `brand/assets/coop-flat.svg`. It renders the social
-card from the homepage's own first screen.
+draws the icons from the brand's mark, `brand/assets/coop-flat.svg`. It renders each landing page's
+social card from that page's own first screen: `og-image.png` for the homepage and
+`og-overnight.png` for the overnight page.
 
 ```bash
 python3 tools/gen_seo_assets.py          # regenerate everything

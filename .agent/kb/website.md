@@ -156,8 +156,9 @@ the visible figure's link (owner, 2026-10-07: "those links don't work"). Faded f
 `visibility: hidden`, timed with the fade. Anything stacked and faded that holds a link needs the
 same; the attack cases hold none, so they stay readable to screen readers.
 
-**The social card** (`tools/gen_seo_assets.py og`) is the homepage's own hero, rendered from a copy
-with every `<script>` stripped so the sandbox picture is finished. Headless Chrome runs scripts even
+**The social cards** (`tools/gen_seo_assets.py og`) are each landing page's own first screen,
+rendered from a copy with every `<script>` stripped: the homepage's sandbox picture finished
+(`og-image.png`), the overnight board at morning (`og-overnight.png`). Headless Chrome runs scripts even
 with `--disable-javascript`, and `--blink-settings=scriptEnabled=false` makes `--screenshot` write
 nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 
