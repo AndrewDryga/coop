@@ -107,18 +107,22 @@ class OwnProjectOnlyTest(unittest.TestCase):
         # Ctrl-C once the first launch is running. time.sleep is also what subprocess polls with, so
         # the interrupt comes once and every later sleep, the stop's own included, is a real one.
         real_sleep, started = time.sleep, Path(str(self.log) + ".pid")
-        interrupted = []
+        launched = []  # the launch's PID, once its file holds one (the shell creates it before writing)
         def sleep(seconds):
             real_sleep(seconds)
-            if started.exists() and not interrupted:
-                interrupted.append(True)
-                raise KeyboardInterrupt
+            if launched or not started.exists():
+                return
+            try:
+                launched.append(int(started.read_text()))
+            except ValueError:
+                return
+            raise KeyboardInterrupt
         with patch.dict(os.environ, {"STAND_IN_HANG": "1"}), patch.object(services_bench.time, "sleep", sleep), \
                 self.assertRaises(KeyboardInterrupt):
             self.bench(samples=1)
         self.assertEqual(self.calls()[-1][1], "down")
         with self.assertRaises(ProcessLookupError, msg="the interrupted launch was left running"):
-            os.kill(int(started.read_text()), 0)
+            os.kill(launched[0], 0)
 
     def test_a_failed_up_stops_the_bench_instead_of_mislabeling_samples(self):
         with patch.dict(os.environ, {"STAND_IN_UP_FAILS": "1"}), self.assertRaises(SystemExit) as stopped:
