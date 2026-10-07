@@ -45,8 +45,8 @@ must run on a linear clock with the easing on each keyframe (an expo-out effect 
 handoff into its first frames); the board's height animates with what moves inside it, or rows
 slide past its edge. Its sandbox replays the homepage's four layers once on view, with
 `.night-sandbox.armed:not(.sN)` copying the homepage's `.stage:not(.sN)` gates, and is zoomed to its
-column on narrow phones. Every page's menu lists Sandbox, Overnight, Features, Docs, GitHub and
-Install; phones keep Overnight, Docs and Install (tighter at 400 px, the mark alone at 340 px).
+column on narrow phones. Every page's menu lists Sandbox, Orchestrator (the overnight page; the owner named it on
+2026-10-07), Features, Docs, GitHub and Install; phones keep Orchestrator, Docs and Install (tighter at 400 px, the mark alone at 340 px).
 The agent picker rewrites `data-cmd` login, run and loop; a test holds every page's start
 commands to what site.js handles.
 
@@ -189,3 +189,5 @@ nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
   2026-10-07-measure-the-warm-start-with-services-for-the-ove).
 - 2026-10-07 — a copy change keeps the published commit count (task
   2026-10-07-overnight-page-tasks-come-from-any-acp-editor-no).
+- 2026-10-07 — the overnight page's menu item is Orchestrator (task
+  2026-10-07-the-overnight-page-s-menu-item-is-orchestrator).
