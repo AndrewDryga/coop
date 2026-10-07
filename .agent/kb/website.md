@@ -16,8 +16,9 @@ every push to main. Two parts are generated and committed:
   several counts once) on `origin/main` of co:op, Emisar
   (`../emisar`) and Ryker (`../responder`) when you regenerate, so fetch all three first; a missing
   checkout stops the generator. `--check` reuses the count already in the page, so CI needs no
-  history. A change that is not about the count (copy, layout) restores `site/index.html` after
-  regenerating: a new count is its own commit, made after fetching all three.
+  history. A copy/layout change regenerates `site/index.html` with `render(published_count())`,
+  preserving the published count and every template change. Plain `tools/gen_site.py` recounts;
+  a new count is its own commit, made after fetching all three.
 - **The docs' terminal windows** fill `site/docs.html` between `<!-- gen_site: NAME -->` and
   `<!-- /gen_site -->` (`DOCS_SCENES`: check-secrets, doctor, claude, loop, fork). The rest of
   docs.html is hand-written; `--check` catches an edited or stale region, not prose edits.
@@ -191,3 +192,5 @@ nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
   2026-10-07-overnight-page-tasks-come-from-any-acp-editor-no).
 - 2026-10-07 — the overnight page's menu item is Orchestrator (task
   2026-10-07-the-overnight-page-s-menu-item-is-orchestrator).
+- 2026-10-07 — copy/layout changes regenerate with the published count instead of restoring away
+  their homepage output (task 2026-10-07-website-kb-regenerate-with-the-published-count-d).
