@@ -1,8 +1,8 @@
 ---
 name: website
-description: site/ is static and partly generated; tools/gen_site.py owns index.html and the docs' terminal regions, which copy real CLI output; the code-block, cache-bust and social-card traps
+description: site/ is static and partly generated; tools/gen_site.py owns index.html, overnight.html and the docs' terminal regions, which copy real CLI output; the night board, code-block, cache-bust and social-card traps
 subsystem: website
-sources: [tools/gen_site.py, tools/site/index.tpl.html, site/index.html, site/docs.html, site/assets/css/site.css, site/assets/js/site.js, tools/gen_seo_assets.py, tools/test_site_content.py, tools/align-comments.py, internal/cli/help_test.go, internal/cli/eval_cmd_test.go]
+sources: [tools/gen_site.py, tools/site/index.tpl.html, tools/site/overnight.tpl.html, site/index.html, site/overnight.html, site/docs.html, site/assets/css/site.css, site/assets/css/overnight.css, site/assets/js/site.js, site/assets/js/overnight.js, tools/gen_seo_assets.py, tools/test_site_content.py, tools/align-comments.py, internal/cli/help_test.go, internal/cli/eval_cmd_test.go]
 updated: 2026-10-07
 ---
 
@@ -19,6 +19,33 @@ every push to main. Two parts are generated and committed:
 - **The docs' terminal windows** fill `site/docs.html` between `<!-- gen_site: NAME -->` and
   `<!-- /gen_site -->` (`DOCS_SCENES`: check-secrets, doctor, claude, loop, fork). The rest of
   docs.html is hand-written; `--check` catches an edited or stale region, not prose edits.
+
+**The overnight page** (`site/overnight.html`, from `tools/site/overnight.tpl.html`, with its own
+`overnight.css` and `overnight.js`) is the second landing, for people who want agents working
+through many tasks unattended; the homepage stays the sandbox story and the main one. A pinned
+`coop loop` board lives through one night, 22:00 to 07:00, beside its steps. `night_board()` in
+`gen_site.py` draws it at morning, so the page reads whole without the script; `NIGHT_TIMELINE`
+holds one state for the hero and one per step (a site test keeps the counts equal: add a state
+with a step). overnight.js plays a step forward in beats: the task in hand finishes in its card
+(the ring closes, the tick draws, the commit types out), the decision folds or opens (`ask`), the
+night time-lapses (clock, dots, counts), then the step's own event (the account handoff, the review
+turning a finished task back). Scrolling back, or reduced motion, jumps straight to the step, and a
+new scroll cancels the beats still to come. Owner rules from its rounds: its figures never repeat
+the homepage's and each is re-checked in its primary source; the decision is one line except on
+its own step and the morning; both accounts stay in view side by side; one row of dots, each three
+tasks; the phone board keeps one fixed height, so measure the natural heights at 360-414 px and on
+a tablet before adding content. Its Project services row waits for a warm-start-with-services figure
+measured on an idle machine (task 2026-10-07-measure-the-warm-start-with-services-for-the-ove).
+Traps: Chrome drops a row's computed style when it moves between lists, so CSS transitions never
+fire there and state changes are drawn with the Web Animations API; a multi-step keyframe sequence
+must run on a linear clock with the easing on each keyframe (an expo-out effect easing squeezed the
+handoff into its first frames); the board's height animates with what moves inside it, or rows
+slide past its edge. Its sandbox replays the homepage's four layers once on view, with
+`.night-sandbox.armed:not(.sN)` copying the homepage's `.stage:not(.sN)` gates, and is zoomed to its
+column on narrow phones. Every page's menu lists Sandbox, Overnight, Features, Docs, GitHub and
+Install; phones keep Overnight, Docs and Install (tighter at 400 px, the mark alone at 340 px).
+The agent picker rewrites `data-cmd` login, run and loop; a test holds every page's start
+commands to what site.js handles.
 
 **The scenes copy real CLI output**, and `TERMINAL_SOURCES` in `gen_site.py` says where each
 terminal's lines come from. A transcript block (doctor is `18a-doctor-all-passed.txt`) must use
@@ -114,9 +141,9 @@ subagents" and rejects retired config names; `internal/cli/eval_cmd_test.go` nee
 verbatim; `tools/test_site_content.py` needs the `#evals` section and `coop down --delete-volumes`.
 Run `go test ./internal/cli/` after a docs copy pass, not only `make tools-test`.
 
-**Cache-busting.** Both pages load `site.css`, `site.js` and `analytics.js` with `?v=<hash of the
-three>`, written by `tools/gen_site.py`, so `--check` fails after any CSS or JS edit until you
-regenerate. (A fixed date once left the owner looking at a stale stylesheet all afternoon.)
+**Cache-busting.** Every page loads its stylesheets and scripts with `?v=<hash of site.css,
+site.js, analytics.js, overnight.css and overnight.js>`, written by `tools/gen_site.py`, so `--check`
+fails after any CSS or JS edit until you regenerate. (A fixed date once left the owner looking at a stale stylesheet all afternoon.)
 
 **Links off the site** open in a new tab with `rel="nofollow noopener"`: `external_links()` in
 `gen_site.py` marks both pages on every run (the owner wants no search ranking passed to the pages
@@ -153,3 +180,4 @@ nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 - 2026-10-05 — setup labels above their commands, the worker terminal gone, Loops says normal work (task 2026-10-05-homepage-polish-setup-labels-above-the-commands).
 - 2026-10-06 — external links get target="_blank" and rel="nofollow noopener" from the generator (task 2026-10-06-external-links-on-the-website-open-in-a-new-tab).
 - 2026-10-07 — faded case figures are hidden too, so they stop taking the visible figure's clicks (task 2026-10-07-homepage-citation-links-do-nothing-on-desktop).
+- 2026-10-07 — the overnight page, its night board and the shared Overnight menu link (task 2026-10-07-second-landing-page-for-teams-that-keep-agents-w).

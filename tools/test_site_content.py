@@ -161,16 +161,16 @@ class SiteContentTest(unittest.TestCase):
                 self.assertTrue(any(problem.startswith(want) for problem in problems), "\n".join(problems))
 
     def test_pages_share_the_main_navigation(self):
-        for path, install in ((SITE / "index.html", "#start"), (SITE / "docs.html", "./#start")):
+        for path, install in ((SITE / "index.html", "#start"), (SITE / "overnight.html", "#start"), (SITE / "docs.html", "./#start")):
             with self.subTest(page=path.name):
                 page = Page(path)
-                for href in ("docs.html", "https://github.com/AndrewDryga/coop", install):
+                for href in ("overnight.html", "docs.html", "https://github.com/AndrewDryga/coop", install):
                     self.assertIn(href, page.main_nav)
                 self.assertTrue(any(tag == "a" and attrs.get("href") == "#main" for tag, attrs in page.elements), "missing skip link")
                 self.assertTrue(any(attrs.get("id") == "main" for _, attrs in page.elements), "missing #main")
 
     def test_links_off_the_site_open_in_a_new_tab_with_nofollow(self):
-        for path in (SITE / "index.html", SITE / "docs.html"):
+        for path in (SITE / "index.html", SITE / "overnight.html", SITE / "docs.html"):
             links = [attrs for tag, attrs in Page(path).elements if tag == "a" and attrs.get("href")]
             external = [a for a in links if re.match(r"https?://(?!coop\.dryga\.com[/:]|coop\.dryga\.com$)", a["href"])]
             with self.subTest(page=path.name):
@@ -210,6 +210,39 @@ class SiteContentTest(unittest.TestCase):
             '<a href="docs.html#loop">e</a> <a href="#main">f</a> <abbr title="https://x.org">g</abbr>',
         ])
         self.assertEqual(gen_site.external_links(marked), marked)
+
+    def test_sitemap_lists_every_page(self):
+        listed = set(re.findall(r"<loc>https://coop\.dryga\.com/([^<]*)</loc>", (SITE / "sitemap.xml").read_text()))
+        for path in sorted(SITE.glob("*.html")):
+            with self.subTest(page=path.name):
+                self.assertIn("" if path.name == "index.html" else path.name, listed)
+
+    def test_task_queue_leads_to_the_overnight_page(self):
+        page = (SITE / "index.html").read_text()
+        row = re.search(r"<h3>Task queue</h3>(?s:.*?)</li>", page)
+        self.assertIsNotNone(row, "the homepage lost its Task queue feature")
+        self.assertIn('href="overnight.html"', row.group(0))
+
+    def test_every_start_command_follows_the_agent_picker(self):
+        script = (SITE / "assets" / "js" / "site.js").read_text()
+        handled = set(re.findall(r'\["(\w+)", `coop', script))
+        for path in (SITE / "index.html", SITE / "overnight.html"):
+            with self.subTest(page=path.name):
+                used = {attrs["data-cmd"] for _, attrs in Page(path).elements if "data-cmd" in attrs}
+                self.assertTrue(used, "the page has no start commands")
+                self.assertLessEqual(used, handled)
+
+    def test_overnight_board_reads_whole_without_the_script(self):
+        page = (SITE / "overnight.html").read_text()
+        board = re.search(r'<div class="board"(?s:.*?)<template id="night-task">', page).group(0)
+        dots = re.findall(r'<li data-state="(\w+)"></li>', board)
+        self.assertEqual(len(dots), -(-gen_site.NIGHT_N // gen_site.NIGHT_PER_DOT))
+        self.assertEqual(dots.count("waiting"), 1, "the morning keeps the one decision in sight")
+        self.assertIn("120 tasks done. One decision for you.", board)
+        self.assertIn('data-open', re.search(r'<ol class="lane waiting">(?s:.*?)</ol>', board).group(0))
+        timeline = html.unescape(re.search(r'<script type="application/json" id="night-timeline">(.*?)</script>', page).group(1))
+        states = __import__("json").loads(timeline)["states"]
+        self.assertEqual(len(states), 1 + len(re.findall(r'<li class="night-step">', page)), "one state for the hero and one per step")
 
     def test_built_pages_match_their_generator(self):
         generator = SITE.parent / "tools" / "gen_site.py"

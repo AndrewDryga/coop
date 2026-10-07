@@ -671,6 +671,17 @@ main:focus { outline: none; }
   .footer { margin-top: 64px; }
   .feature-rows { gap: 80px; margin-top: 64px; }
 }
+/* the narrowest phones keep the whole menu (the other landing, the docs and Install) on one line */
+@media (max-width: 400px) {
+  .nav { gap: 10px; }
+  .nav-links { gap: 12px; }
+  .nav .button-small { padding: 0 12px; }
+  .brand { gap: 6px; }
+}
+/* the smallest phones show the mark alone, so the menu still fits */
+@media (max-width: 340px) {
+  .brand > span { display: none; }
+}
 
 @media (max-width: 374px) {
   .scene { --indent: 1rem; --pad: 14px; --step: 22px; --x0: 16px; --tail: 14px; }

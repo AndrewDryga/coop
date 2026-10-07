@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
 """
 Generate the co:op website's built parts: the homepage, site/index.html, from
-tools/site/index.tpl.html, and the terminal windows the docs show, in site/docs.html.
+tools/site/index.tpl.html; the overnight page, site/overnight.html, from tools/site/overnight.tpl.html;
+and the terminal windows the docs show, in site/docs.html.
 
 The site is plain static HTML; this script only saves hand-typing what repeats: the icons, the
 provider marks (tools/site/logos/), the terminal lines and the commands you copy. Edit the template
 or the scenes here, then regenerate; never edit site/index.html by hand. site/docs.html is written
 by hand, except between its <!-- gen_site: NAME --> and <!-- /gen_site --> markers, which this
-script fills with the scene NAME. On both pages it marks every link off the site to open in a new
+script fills with the scene NAME. On every page it marks every link off the site to open in a new
 tab with rel="nofollow noopener", so a link written without them fails --check until regenerated.
 
-Usage:  python3 tools/gen_site.py           # rewrite site/index.html and the docs' terminals
-        python3 tools/gen_site.py --check   # fail if either is out of date
+Usage:  python3 tools/gen_site.py           # rewrite both landing pages and the docs' terminals
+        python3 tools/gen_site.py --check   # fail if any of them is out of date
 """
 
 import hashlib
 import html
+import json
 import pathlib
 import re
 import subprocess
@@ -25,6 +27,7 @@ import urllib.parse
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "tools" / "site"
 OUT = ROOT / "site" / "index.html"
+OVERNIGHT = ROOT / "site" / "overnight.html"
 DOCS_PAGE = ROOT / "site" / "docs.html"
 MARK = "assets/img/favicon.svg"  # co:op's mark, as the nav and footer show it
 
@@ -555,6 +558,124 @@ INTEGRATIONS = ('<figure class="zed"><img class="zed-shot" src="assets/img/zed-c
                 'beside menus for the preset, account, model and effort"></figure>')
 
 
+# The overnight page (tools/site/overnight.tpl.html) tells one night of `coop loop` beside a pinned
+# board. The board is drawn here in its last state, the morning, so the page reads whole without
+# JavaScript; site/assets/js/overnight.js replays the night from the timeline embedded beside it.
+#
+# Tonight's queue: 121 tasks, 120 of them done by 07:00 and one left for your decision, as in the
+# owner's 120-task, 9-hour run the main page cites. Only the tasks the board ever shows need a title.
+NIGHT_N, NIGHT_WAITING, NIGHT_REOPENED = 121, 56, 119
+NIGHT_TITLES = {
+    0: "Make /checkout idempotent", 1: "Backfill parser tests", 2: "Cache the health probe",
+    3: "Document the config file", 4: "Bump the Postgres driver", 5: "Remove the old importer",
+    6: "Retry failed webhooks", 7: "Trim the Docker image",
+    38: "Fix the flaky login test", 39: "Split the billing module", 40: "Paginate the orders API",
+    41: "Index orders by customer", 42: "Add a dark mode toggle", 43: "Translate the signup form",
+    44: "Log slow queries", 45: "Validate upload sizes", 46: "Archive stale carts",
+    54: "Add a status page", 55: "Clean up feature flags", 56: "Choose session length",
+    57: "Fix the timezone bug", 58: "Sort the admin tables", 59: "Export orders as CSV",
+    60: "Upgrade to React 19", 61: "Cache the product pages", 62: "Compress API responses",
+    63: "Add a sitemap",
+    116: "Lazy-load the images", 117: "Tidy the error messages", 118: "Add search to the docs",
+    119: "Rate-limit the API", 120: "Speed up the test suite",
+}
+NIGHT_COMMITS = {i: hashlib.sha1(title.encode()).hexdigest()[:7] for i, title in NIGHT_TITLES.items()}
+NIGHT_MODEL = "Opus 5.5"
+# The decision a task leaves for you: its options, and the one the agent recommends.
+NIGHT_OPTIONS, NIGHT_RECOMMENDED = [("A", "1 day"), ("B", "7 days"), ("C", "30 days")], "B"
+
+# One state per story part: the hero, then each step. Only the first "queued" tasks exist yet (all of
+# them unless it says), and "tail" shows the newest of them, the ones just added. Tasks before "done"
+# in the queue are finished, except the one "waiting" for your answer and the one in hand ("now",
+# "reopened" when the final review sent it back); the rest wait their turn. "on" is the account the
+# task in hand runs on, "use" how much of each account's usage limit is spent; "handoff" marks the
+# step the next account took over; "last" is a task that finished after the ones behind it in the
+# queue; "ask" opens the decision in full, on the steps about it, where everywhere else it is one line.
+NIGHT_TIMELINE = [
+    {"clock": "22:00", "headline": "118 tasks queued for tonight", "done": 0, "queued": 118},
+    {"clock": "22:00", "headline": "121 tasks queued for tonight", "done": 0, "tail": True},
+    {"clock": "22:01", "done": 0, "now": 0, "on": "work", "use": {"work": 12, "home": 0}},
+    {"clock": "22:14", "done": 3, "now": 3, "on": "work", "use": {"work": 24, "home": 0}},
+    {"clock": "01:12", "done": 42, "now": 42, "on": "home", "use": {"work": 100, "home": 6}, "handoff": True},
+    {"clock": "02:31", "done": 59, "now": 59, "waiting": NIGHT_WAITING, "ask": True, "on": "home", "use": {"work": 100, "home": 31}},
+    {"clock": "05:44", "done": NIGHT_N, "now": NIGHT_REOPENED, "reopened": True, "waiting": NIGHT_WAITING, "on": "home",
+     "use": {"work": 100, "home": 74}, "review": "Final review of 120 tasks"},
+    {"clock": "07:00", "headline": "120 tasks done. One decision for you.", "done": NIGHT_N, "waiting": NIGHT_WAITING, "ask": True,
+     "last": NIGHT_REOPENED},
+]
+NIGHT_MORNING = NIGHT_TIMELINE[-1]
+
+
+def night_status(state, i):
+    if i >= state.get("queued", NIGHT_N):
+        return "none"
+    if i == state.get("waiting"):
+        return "waiting"
+    if i == state.get("now"):
+        return "reopened" if state.get("reopened") else "active"
+    return "done" if i < state["done"] else "todo"
+
+
+# The strip under the moon: one row of dots, each standing for a few tasks in queue order, so the
+# whole night fits in a glance. A dot shows the liveliest of its tasks: one coming back from the
+# review, the one in hand, the decision waiting, any still to do, else done (or, before a task is
+# queued, nothing yet).
+NIGHT_PER_DOT = 3
+NIGHT_RANK = ("none", "done", "todo", "waiting", "active", "reopened")
+
+
+def night_dot(state, k):
+    return max((night_status(state, i) for i in range(k * NIGHT_PER_DOT, min(NIGHT_N, (k + 1) * NIGHT_PER_DOT))), key=NIGHT_RANK.index)
+
+
+# A task's status as one icon: a ring that turns while an agent works, closes on a tick when done, asks
+# while it waits for you, and turns back the other way, arrow first, when the review reopens it.
+NIGHT_STATUS = ('<svg class="status" viewBox="0 0 24 24" aria-hidden="true"><circle class="track" cx="12" cy="12" r="9"/>'
+                '<g class="turn"><path class="arc" d="M12 3a9 9 0 1 1 0 18a9 9 0 1 1 0-18" pathLength="100"/><path class="head" d="M15 .2L12 3l3 2.8"/></g>'
+                '<path class="tick" d="M8 12.4l2.8 2.8 5.2-5.7" pathLength="100"/>'
+                '<path class="ask" d="M9.5 9.6a2.5 2.5 0 1 1 3.6 2.2c-.7.4-1.1.9-1.1 1.6v.3M12 16.5h.01"/></svg>')
+# The agent on the task in hand: its model, and the accounts it can run on, each filling as its usage does.
+NIGHT_AGENT = (f'<span class="agent">{mark("claude")}<span class="model">{NIGHT_MODEL}</span><span class="accounts"></span></span>'
+               '<span class="account"><i class="used"></i><span class="name"></span></span>')
+
+
+def night_row(i, state=""):
+    options = ""
+    if i == NIGHT_WAITING:
+        options = '<ol class="options">' + "".join(
+            f'<li{" class=\"pick\"" if key == NIGHT_RECOMMENDED else ""}><span class="key">{key}</span>{html.escape(text)}'
+            + ('<span class="rec">recommended</span>' if key == NIGHT_RECOMMENDED else "") + "</li>"
+            for key, text in NIGHT_OPTIONS) + "</ol>"
+    title = html.escape(NIGHT_TITLES[i]) if i is not None else ""
+    commit = NIGHT_COMMITS[i] if i is not None else ""
+    attrs = f' data-task="{i}" data-state="{state}"' if i is not None else ""
+    return (f'<li class="task"{attrs}{" data-open" if i == NIGHT_WAITING else ""}>{NIGHT_STATUS}'
+            f'<span class="title">{title}</span><code class="commit">{commit}</code>{options}</li>')
+
+
+def night_board():
+    """The morning, drawn whole for a reader without the script: the closing statement, the decision
+    waiting, the newest commits and the strip of the whole queue."""
+    morning = NIGHT_MORNING
+    assert sum(night_status(morning, i) == "done" for i in range(NIGHT_N)) == 120, "the morning headline counts 120 done"
+    done = [morning["last"]] + [i for i in reversed(range(NIGHT_N)) if night_status(morning, i) == "done" and i != morning["last"]]
+    dots = "".join(f'<li data-state="{night_dot(morning, k)}"></li>' for k in range(-(-NIGHT_N // NIGHT_PER_DOT)))
+    timeline = {"n": NIGHT_N, "per": NIGHT_PER_DOT, "titles": NIGHT_TITLES, "commits": NIGHT_COMMITS, "states": NIGHT_TIMELINE}
+    return ('<div class="board" data-day aria-hidden="true">'
+            '<p class="board-head"><span class="board-title">coop loop</span>'
+            f'<span class="clock"><time>{morning["clock"]}</time></span></p>'
+            '<div class="night-track" style="--night: 1"><span class="sky"></span></div>'
+            f'<ol class="cells">{dots}</ol>'
+            f'<div class="focus"><p class="headline">{html.escape(morning["headline"])}</p><ol class="lane now"></ol></div>'
+            f'<ol class="lane waiting">{night_row(NIGHT_WAITING, "waiting")}</ol>'
+            '<ol class="lane next"></ol>'
+            f'<ol class="lane done">{"".join(night_row(i, "done") for i in done[:3])}'
+            f'<li class="rest">… <span class="count">{len(done) - 3}</span> more</li></ol>'
+            "</div>"
+            f'<template id="night-task">{night_row(None)}</template><template id="night-agent">{NIGHT_AGENT}</template>'
+            f'<script type="application/json" id="night-timeline">{json.dumps(timeline)}</script>')
+
+
 # The homepage counts what agents wrote through task queues across Protectorate's products: co:op,
 # and Emisar and Ryker checked out beside it (Ryker's checkout is named responder).
 PROOF_REPOS = (ROOT, ROOT.parent / "emisar", ROOT.parent / "responder")
@@ -647,7 +768,32 @@ def render(count):
     return stamp_assets(external_links(typographic(page)))
 
 
-ASSETS = ("assets/css/site.css", "assets/js/site.js", "assets/js/analytics.js")
+def render_overnight():
+    blocks = {
+        "sprite": SPRITE,
+        "mark": MARK,
+        "providers": PROVIDERS,
+        "check": icon('<path d="M5 12.5l4.5 4.5L19 7.5"/>', "icon"),
+        "board": night_board(),
+        "scene": SCENE,
+        "services": SERVICES,
+        "team": TEAM,
+        "fork": FORK,
+        "integrations": INTEGRATIONS,
+        "install": command("Install", INSTALL_CMD, "install"),
+        "cmd_login": command("Sign in", '<span data-cmd="login">coop login claude</span>', "sign-in"),
+        "cmd_init": command("Set up", 'cd <span class="nowrap">your-project</span> &amp;&amp; coop init', "project setup"),
+        "cmd_loop": command("Start", '<span data-cmd="loop">coop loop claude</span>', "start"),
+    }
+    page = (SOURCE / "overnight.tpl.html").read_text()
+    for name, value in blocks.items():
+        page = page.replace("{{" + name + "}}", value)
+    left = re.findall(r"\{\{\w+\}\}", page)
+    assert not left, left
+    return stamp_assets(external_links(typographic(page)))
+
+
+ASSETS = ("assets/css/site.css", "assets/js/site.js", "assets/js/analytics.js", "assets/css/overnight.css", "assets/js/overnight.js")
 
 
 def asset_version():
@@ -676,8 +822,8 @@ def fill_docs(docs):
 
 def main():
     if sys.argv[1:] == ["--check"]:
-        stale = [path.relative_to(ROOT) for path, page in ((OUT, render(published_count())), (DOCS_PAGE, fill_docs(DOCS_PAGE.read_text())))
-                 if path.read_text() != page]
+        built = ((OUT, render(published_count())), (OVERNIGHT, render_overnight()), (DOCS_PAGE, fill_docs(DOCS_PAGE.read_text())))
+        stale = [path.relative_to(ROOT) for path, page in built if not path.exists() or path.read_text() != page]
         if stale:
             sys.exit(f"out of date: {', '.join(map(str, stale))}; edit tools/site/ or tools/gen_site.py and run python3 tools/gen_site.py")
         if drift := terminal_drift():
@@ -687,8 +833,9 @@ def main():
         sys.exit(__doc__)
     count = proof_count()
     OUT.write_text(render(count))
+    OVERNIGHT.write_text(render_overnight())
     DOCS_PAGE.write_text(fill_docs(DOCS_PAGE.read_text()))
-    print(f"wrote {OUT.relative_to(ROOT)} ({count} task commits) and the terminals in {DOCS_PAGE.relative_to(ROOT)}")
+    print(f"wrote {OUT.relative_to(ROOT)} ({count} task commits), {OVERNIGHT.relative_to(ROOT)} and the terminals in {DOCS_PAGE.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":

@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A second landing page: put your agents to work while you sleep.** `coop.dryga.com/overnight.html`
+  is for teams that want agents working through many tasks unattended; the homepage stays the
+  sandbox story. A pinned `coop loop` board lives through one night, 22:00 to 07:00, beside seven
+  steps: tasks queue up, each gets a fresh agent, is checked and committed, accounts rotate at
+  their limits, a question waits while the work goes on, a final review sends one task back, and
+  morning shows 120 done and one decision. Every page's menu links it as Overnight, and the
+  homepage's Task queue leads to it. Its figures are its own, each checked in its source.
+
 - **Final review counts only its own pending reviews.** `coop loop` refuses to load more than
   4,096 pending final-review records, and it counted every repository's records on the machine,
   not just the queues it was loading, so enough of them elsewhere would have stopped every final

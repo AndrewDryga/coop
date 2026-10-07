@@ -52,7 +52,8 @@ for (const button of document.querySelectorAll("[data-copy]")) {
   });
 }
 
-// The agent switcher rewrites the sign-in and start commands; without JavaScript they stay on Claude.
+// The agent switcher rewrites the sign-in and start commands (the overnight page starts a loop);
+// without JavaScript they stay on Claude.
 const agentButtons = [...document.querySelectorAll("[data-agent]")];
 const pick = (button) => {
   if (button.getAttribute("aria-checked") === "true") return;
@@ -61,8 +62,9 @@ const pick = (button) => {
     other.setAttribute("aria-checked", String(other === button));
     other.tabIndex = other === button ? 0 : -1;
   }
-  for (const [step, command] of [["login", `coop login ${agent}`], ["run", `coop ${agent}`]]) {
+  for (const [step, command] of [["login", `coop login ${agent}`], ["run", `coop ${agent}`], ["loop", `coop loop ${agent}`]]) {
     const cmd = document.querySelector(`[data-cmd="${step}"]`);
+    if (!cmd) continue;
     cmd.textContent = command;
     cmd.closest(".command").dispatchEvent(new Event("copy-reset"));
   }

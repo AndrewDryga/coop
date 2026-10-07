@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1014">
+  <title>co:op · Put your agents to work while you sleep</title>
+  <meta name="description" content="co:op works through your task queue overnight in a sandbox: a fresh agent for every task, your checks and a commit for each, accounts that rotate at usage limits, questions that wait for you, and a review before morning. Free and open source.">
+  <link rel="canonical" href="https://coop.dryga.com/overnight.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="co:op">
+  <meta property="og:url" content="https://coop.dryga.com/overnight.html">
+  <meta property="og:title" content="co:op · Put your agents to work while you sleep">
+  <meta property="og:description" content="co:op gives you a way to set up hundreds of tasks and get them done securely, without supervision.">
+  <meta name="twitter:card" content="summary">
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/img/favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="manifest" href="site.webmanifest">
+  <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/site.css?v=0">
+  <link rel="stylesheet" href="assets/css/overnight.css?v=0">
+  <script>{ const root = document.documentElement; if ("IntersectionObserver" in window) { const mode = matchMedia("(min-width: 1024px)").matches ? "night-story" : "night-deck"; root.classList.add(mode); setTimeout(() => root.classList.contains("night-ready") || root.classList.remove(mode), 3000); } }</script>
+  <script src="assets/js/site.js?v=0" defer></script>
+  <script src="assets/js/overnight.js?v=0" defer></script>
+  <script src="assets/js/analytics.js?v=0" defer></script>
+  <noscript><style>.copy, .agents { display: none; }</style></noscript>
+</head>
+<body>
+  {{sprite}}
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="wrap nav">
+    <a class="brand" href="./" aria-label="co:op home">
+      <img src="{{mark}}" width="32" height="32" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-optional" href="./#sandbox">Sandbox</a>
+      <a href="overnight.html" aria-current="page">Overnight</a>
+      <a class="nav-optional" href="#features">Features</a>
+      <a href="docs.html">Docs</a>
+      <a class="nav-optional" href="https://github.com/AndrewDryga/coop">GitHub</a>
+      <a class="button button-small" href="#start">Install</a>
+    </nav>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <section class="wrap night" aria-labelledby="hero-title">
+      <div class="night-lead">
+        <h1 id="hero-title">Put your agents to work while you sleep</h1>
+        <p class="hero-lead">co:op gives you a way to set up hundreds of tasks and get them done securely, without supervision.</p>
+        <div class="actions">
+          <a class="button button-primary" href="#start">Install co:op</a>
+          <a class="button" href="https://github.com/AndrewDryga/coop">View on GitHub</a>
+        </div>
+        {{providers}}
+      </div>
+      <figure class="night-stage" aria-label="A night of coop loop: 121 queued tasks worked one at a time from 22:00 to 07:00, each by a fresh agent; by morning 120 are done and one waits for your decision">
+        {{board}}
+      </figure>
+      <ol class="night-steps" id="night" role="list">
+        <li class="night-step">
+          <h2>Queue up the work</h2>
+          <p>Add tasks from your terminal or from Zed, or let your agents file what they find. Each task is a folder that says what to do and how to tell it's done.</p>
+          <p class="evidence"><strong>88%</strong> <span>of real requests to coding agents gave only the problem, with little else, against 7% of benchmark tasks, <a href="https://arxiv.org/abs/2608.27831">a 2026 study found</a>.</span></p>
+        </li>
+        <li class="night-step">
+          <h2>A fresh agent for every task</h2>
+          <p>The loop takes the queue one task at a time. Each task starts a fresh agent session, so it doesn't drag the last task's context along.</p>
+          <p class="evidence"><strong>39%</strong> <span>average drop when top models got a task over several turns instead of in one message, <a href="https://arxiv.org/abs/2505.06120">a 2025 study found</a>.</span></p>
+        </li>
+        <li class="night-step">
+          <h2>Checked and committed</h2>
+          <p>The agent runs your checks before it calls a task done, then commits the work: one commit per task.</p>
+          <p class="evidence"><strong>22.6%</strong> <span>of the failures found in 20,574 real coding-agent sessions were the agent claiming it was done too early, <a href="https://arxiv.org/abs/2605.29442">a 2026 study found</a>.</span></p>
+        </li>
+        <li class="night-step">
+          <h2>Accounts rotate when rate limited</h2>
+          <p>When an account reaches its usage limit, the loop carries on with the next one.</p>
+          <p class="evidence"><strong>20 hours</strong> <span>a week is how long the average Claude Code user now has it running, <a href="https://www.anthropic.com/research/claude-code-expertise">Anthropic found</a>.</span></p>
+        </li>
+        <li class="night-step">
+          <h2>Questions don't stop the work</h2>
+          <p>A task that needs your call is set aside with its options and a recommendation, and the loop moves on to the next.</p>
+          <p class="evidence"><strong>92.3%</strong> <span>of coding-agent session time went to waiting on the person, <a href="https://arxiv.org/abs/2606.30560">a 2026 study of 4,300 sessions found</a>.</span></p>
+        </li>
+        <li class="night-step">
+          <h2>Reviewed before you wake up</h2>
+          <p>A final review holds every task to what you asked for, and sends back anything that falls short.</p>
+          <p class="evidence"><strong>About half</strong> <span>of agent pull requests that passed the tests still wouldn't have been merged by the project's maintainers, <a href="https://metr.org/notes/2026-03-10-many-swe-bench-passing-prs-would-not-be-merged-into-main/">METR found</a>.</span></p>
+        </li>
+        <li class="night-step">
+          <h2>Good morning</h2>
+          <p>Review the commits, answer the waiting question, and queue tonight's work.</p>
+          <p class="evidence"><strong>1,300+</strong> <span>pull requests merged at Stripe each week are written start to finish by unattended agents and reviewed by people, <a href="https://stripe.dev/blog/minions-stripes-one-shot-end-to-end-coding-agents-part-2">Stripe reported</a>.</span></p>
+        </li>
+      </ol>
+    </section>
+
+    <section class="wrap section night-safe" aria-labelledby="safe-title">
+      <div class="night-safe-copy">
+        <h2 id="safe-title">Safe to leave running</h2>
+        <ul class="night-safe-list" role="list">
+          <li>{{check}}<span>Only your project is in reach.</span></li>
+          <li>{{check}}<span>Secrets read as empty files.</span></li>
+          <li>{{check}}<span>Restricted networking: only your AI provider and approved sites.</span></li>
+          <li>{{check}}<span>Only you can push.</span></li>
+        </ul>
+        <p class="evidence"><strong>42%</strong> <span>of reported coding-agent file mishaps reached outside the project, into system files, personal files and secrets, <a href="https://arxiv.org/abs/2604.13536">a 2026 study found</a>.</span></p>
+        <p class="more"><a href="./">How the sandbox works<span class="go" aria-hidden="true">→</span></a></p>
+      </div>
+      <figure class="night-sandbox" aria-label="The sandbox: only the project is inside, its secret reads as empty, and only the AI provider is reachable">
+        <div class="scene">{{scene}}</div>
+      </figure>
+    </section>
+
+    <section class="wrap section platform" id="features" aria-labelledby="features-title">
+      <h2 class="statement" id="features-title">The loop and the sandbox are just the start. <span>co:op gives you these too.</span></h2>
+      <ol class="feature-rows" role="list">
+        <li class="feature-row">
+          <div class="feature-copy">
+            <h3>Project services</h3>
+            <p>Postgres, Redis and the rest of your Compose file run beside the box, each in its own container.</p>
+            <p>A loop gets its own set for the whole run, apart from yours, and removes it when the run ends.</p>
+          </div>
+          {{services}}
+        </li>
+        <li class="feature-row">
+          <div class="feature-copy">
+            <h3>Presets</h3>
+            <p>A preset is a lead model and the roles it calls on: a thinker, a critic, and a fast one for the busywork.</p>
+            <p class="evidence"><strong>+18</strong> <span>points on competitive programming problems when Claude reviewed Codex's drafts, against +13 when Codex reviewed its own, <a href="https://arxiv.org/abs/2607.21656">a 2026 study found</a>.</span></p>
+          </div>
+          {{team}}
+        </li>
+        <li class="feature-row">
+          <div class="feature-copy">
+            <h3>Forks</h3>
+            <p>Run several loops at once, each in its own copy of your project, and every task is claimed exactly once. Review each fork like a pull request, then merge it.</p>
+            <p class="evidence"><strong>16</strong> <span>agents in their own copies, each task claimed by one, built a 100,000-line C compiler that builds Linux, <a href="https://www.anthropic.com/engineering/building-c-compiler">Anthropic reported</a>.</span></p>
+          </div>
+          {{fork}}
+        </li>
+        <li class="feature-row">
+          <div class="feature-copy">
+            <h3>Integrations</h3>
+            <p>Zed makes a great cockpit: plan with the sandboxed agent in its agent panel, and have it add the tasks to your queue for the loop.</p>
+            <p>Any editor that speaks ACP works too, with account rotation built in.</p>
+          </div>
+          {{integrations}}
+        </li>
+      </ol>
+    </section>
+
+    <section class="wrap section start" id="start" aria-labelledby="start-title">
+      <h2 id="start-title">Get started</h2>
+      <p class="start-lead">Free and open source. Runs on macOS and Linux with Docker.</p>
+      <div class="window setup">
+        <div class="window-bar setup-bar">
+          <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <div class="agents" role="radiogroup" aria-label="Your agent">
+            <button type="button" role="radio" data-agent="claude" aria-checked="true">Claude</button>
+            <button type="button" role="radio" data-agent="codex" aria-checked="false" tabindex="-1">Codex</button>
+            <button type="button" role="radio" data-agent="gemini" aria-checked="false" tabindex="-1">Gemini</button>
+            <button type="button" role="radio" data-agent="grok" aria-checked="false" tabindex="-1">Grok</button>
+          </div>
+        </div>
+        <div class="setup-commands">
+          {{install}}
+          {{cmd_login}}
+          {{cmd_init}}
+          {{cmd_loop}}
+        </div>
+      </div>
+      <p class="more"><a href="docs.html">Read the docs<span class="go" aria-hidden="true">→</span></a></p>
+    </section>
+  </main>
+
+  <footer class="wrap footer">
+    <a class="brand brand-small" href="./" aria-label="co:op home">
+      <img src="{{mark}}" width="24" height="24" alt="">
+      <span>co<span class="colon">:</span>op</span>
+    </a>
+    <nav aria-label="Footer">
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/AndrewDryga/coop">GitHub</a>
+      <a href="https://emisar.dev">Emisar</a>
+      <a href="https://github.com/AndrewDryga/responder">Ryker</a>
+    </nav>
+    <p>By <a href="https://github.com/ProtectorateHQ">Protectorate</a></p>
+  </footer>
+</body>
+</html>
