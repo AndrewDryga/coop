@@ -6,8 +6,10 @@ artifact says about the machine it ran on, the parse that turns the box's own cl
 and the report that a later comparison reads back.
 """
 
+import contextlib
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -271,21 +273,40 @@ class FakeRuntime:
     """A runtime that answers `ps`/`volume ls` from a fixed world and records what it was asked.
 
     Every stop number this tool publishes means "nothing the run owned is left". That claim is only
-    as good as what the question covers, so the question itself is what these tests pin.
+    as good as what the question covers, so the question itself is what these tests pin. `appear`
+    joins the world once the file `launched` exists (a stand-in coop creates it), and a removal takes
+    a resource out of it. Anything that is not a runtime command (a coop launch) really runs.
     """
 
-    def __init__(self, containers=(), volumes=(), labels=None):
+    def __init__(self, containers=(), volumes=(), labels=None, appear=((), ()), launched=None):
         self.containers, self.volumes = list(containers), list(volumes)
-        self.labels = labels or {}  # name -> (coop.host, coop.network.run)
+        self.labels = labels or {}  # name -> (coop.host, coop.network.run[, coop-bench.sample])
+        self.appear, self.launched = appear, launched
+        self.on_appear = None  # called with the launched file's text when the world appears
         self.commands: list[list[str]] = []
+        self.removed: set[str] = set()
+        self.real_run = bench.run
 
     def __call__(self, cmd, env=None, timeout=None, cwd=None):
+        if cmd[0] != "docker":
+            return self.real_run(cmd, env=env, timeout=timeout, cwd=cwd)
         self.commands.append(cmd)
+        if self.launched and os.path.exists(self.launched):
+            if self.on_appear:
+                self.on_appear(Path(self.launched).read_text())
+            self.containers += self.appear[0]
+            self.volumes += self.appear[1]
+            self.launched = None
         label = cmd[cmd.index("--filter") + 1] if "--filter" in cmd else ""
         if cmd[1] == "inspect" or cmd[1:3] == ["volume", "inspect"]:
-            host, network = self.labels.get(cmd[-1], ("", ""))
-            return subprocess.CompletedProcess(cmd, 0, stdout=f"{host}\t{network}\n", stderr="")
-        if cmd[1:3] == ["volume", "ls"]:
+            host, network, sample = (tuple(self.labels.get(cmd[-1], ())) + ("", "", ""))[:3]
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"{host}\t{network}\t{sample}\n", stderr="")
+        if cmd[1] == "rm" or cmd[1:3] == ["volume", "rm"]:
+            self.removed.add(cmd[-1])
+            self.containers = [c for c in self.containers if c[0] != cmd[-1]]
+            self.volumes = [v for v in self.volumes if v[0] != cmd[-1]]
+            names = []
+        elif cmd[1:3] == ["volume", "ls"]:
             names = [n for n, owner in self.volumes if owner == label]
         elif cmd[1] == "ps":
             names = [n for n, owner in self.containers if owner == label]
@@ -302,21 +323,61 @@ class OtherRunsTest(unittest.TestCase):
         self.real_run = bench.run
         self.addCleanup(lambda: setattr(bench, "run", self.real_run))
 
+    def ours(self, pid=4242, heard=""):
+        ours = bench.Ownership("docker", "tok", pid)
+        ours.heard(heard)
+        return ours
+
     def test_cleanup_takes_only_its_own_launch(self):
         bench.run = FakeRuntime(labels={
             "mine": ("v1:ws:4242:t", ""), "theirs": ("v1:ws:999:t", ""),
-            "ipc": ("", "r1"), "their-db": ("", "r2"), "unknown": ("", ""),
+            "ipc": ("", "1a"), "their-db": ("", "2b"), "unknown": ("", ""),
         })
         leftovers = {"c:mine", "c:theirs", "v:ipc", "v:their-db", "v:unknown"}
-        self.assertEqual(bench.launched_by("docker", leftovers, 4242, {"r1"}), {"c:mine", "v:ipc"})
+        self.assertEqual(self.ours(heard="coop net inspect 1a").mine(leftovers), {"c:mine", "v:ipc"})
 
     def test_its_box_claims_its_gateway_without_the_printed_run(self):
-        bench.run = FakeRuntime(labels={"mine": ("v1:ws:4242:t", "r1"), "guard": ("", "r1"), "other": ("", "r2")})
-        self.assertEqual(bench.launched_by("docker", {"c:mine", "c:guard", "c:other"}, 4242, set()), {"c:mine", "c:guard"})
+        bench.run = FakeRuntime(labels={"mine": ("v1:ws:4242:t", "1a"), "guard": ("", "1a"), "other": ("", "2b")})
+        self.assertEqual(self.ours().mine({"c:mine", "c:guard", "c:other"}), {"c:mine", "c:guard"})
 
     def test_a_pid_inside_another_number_is_not_ours(self):
         bench.run = FakeRuntime(labels={"theirs": ("v1:ws:14242:t", "")})
-        self.assertEqual(bench.launched_by("docker", {"c:theirs"}, 4242, set()), set())
+        self.assertEqual(self.ours().mine({"c:theirs"}), set())
+
+    def test_a_box_with_the_sample_label_is_ours_whichever_process_started_it(self):
+        # An editor session's boxes are started by its per-provider coop processes, not the one the
+        # bench launched; they carry the sample's label all the same, and claim their gateways.
+        bench.run = FakeRuntime(labels={"child-box": ("v1:ws:5151:t", "3c", "tok"), "its-ipc": ("", "3c"),
+                                        "other-box": ("v1:ws:6161:t", "4d", "another-sample"), "other-ipc": ("", "4d")})
+        self.assertEqual(self.ours().mine({"c:child-box", "v:its-ipc", "c:other-box", "v:other-ipc"}),
+                         {"c:child-box", "v:its-ipc"})
+
+    def test_a_box_seen_alive_still_claims_its_gateway_once_it_is_gone(self):
+        bench.run = FakeRuntime(labels={"mine": ("v1:ws:4242:t", "5e"), "ipc": ("", "5e")})
+        ours = self.ours()
+        self.assertEqual(ours.mine({"c:mine"}), {"c:mine"})
+        self.assertEqual(ours.mine({"v:ipc"}), {"v:ipc"})
+
+    def test_each_resource_is_inspected_once(self):
+        fake = bench.run = FakeRuntime(labels={"mine": ("v1:ws:4242:t", "")})
+        ours = self.ours()
+        for _ in range(3):
+            ours.mine({"c:mine"})
+        self.assertEqual(sum(1 for c in fake.commands if c[1] == "inspect"), 1)
+
+    def test_the_sample_label_rides_on_the_person_s_own_run_args(self):
+        with patch.dict(os.environ, {"COOP_RUN_ARGS": "-v /cache:/cache"}):
+            self.assertEqual(bench.tagged_run_args("tok"), "-v /cache:/cache --label coop-bench.sample=tok")
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(bench.tagged_env("tok")["COOP_RUN_ARGS"], "--label coop-bench.sample=tok")
+
+    def test_a_stopped_process_hands_back_what_it_printed_after_a_timeout(self):
+        # A sample whose coop outlives its timeout still names its network run on the way out.
+        process = subprocess.Popen(["sh", "-c", "echo 'coop net inspect 6f'; sleep 30"], stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True, start_new_session=True)
+        with self.assertRaises(subprocess.TimeoutExpired):
+            process.communicate(timeout=0.3)
+        self.assertEqual(bench.network_runs(bench.stop_process(process)), {"6f"})
 
     def test_it_reads_the_network_run_a_launch_prints(self):
         said = "Networking stats:\n  Allowed   no external connections\nFull details: coop net inspect 61727efd6e10631b31d8ae600cfa3a4d --json\n"
@@ -333,6 +394,87 @@ class OtherRunsTest(unittest.TestCase):
             self.assertEqual(bench.main(), 2)
         self.assertEqual(launched, [])
         self.assertIn("from other runs are present", err.getvalue())
+
+
+# A stand-in coop: it records the COOP_RUN_ARGS it was given, names its network run the way a
+# filtered launch does, and behaves just enough like `coop run` and `coop acp` for each case.
+STAND_IN_COOP = """#!/bin/sh
+printf '%s' "$COOP_RUN_ARGS" > "@LAUNCHED@"
+echo "Full details: coop net inspect 8b --json" >&2
+case "$1" in
+run)
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do shift; done
+    shift
+    [ -n "$COOP_IMAGE" ] && exit 1
+    exec "$@" ;;
+acp)
+    IFS= read -r line
+    [ -n "$COOP_ACP_TRACE" ] && exit 0
+    printf '%s\\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}'
+    exit 0 ;;
+esac
+"""
+
+
+class EveryCaseCleansOnlyItsOwnTest(unittest.TestCase):
+    """Whatever the case, cleanup removes what its own launch left (its labelled box, and the gateway
+    resources of the network run that box carries or the launch printed) and never another run's,
+    even one that started while the sample ran."""
+
+    BOX, GATEWAY = "label=coop=box", "label=coop.network.run"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        self.repo = root / "repo"
+        self.repo.mkdir()
+        launched = root / "launched"
+        self.coop = root / "coop"
+        self.coop.write_text(STAND_IN_COOP.replace("@LAUNCHED@", str(launched)))
+        self.coop.chmod(0o755)
+        self.fake = FakeRuntime(
+            appear=([("our-box", self.BOX), ("their-box", self.BOX)],
+                    [("our-ipc", self.GATEWAY), ("printed-ipc", self.GATEWAY), ("their-db", self.GATEWAY)]),
+            launched=str(launched),
+            labels={"our-ipc": ("", "7a"), "printed-ipc": ("", "8b"),
+                    "their-box": ("v1:ws:999:t", "9c", "another-sample"), "their-db": ("", "9c")})
+
+        def label_our_box(run_args):
+            # the box carries the sample's label only if the launch really passed it on
+            sample = run_args.rsplit("coop-bench.sample=", 1)[1] if "coop-bench.sample=" in run_args else ""
+            self.fake.labels["our-box"] = ("", "7a", sample)
+        self.fake.on_appear = label_our_box
+        for name, value in (("run", self.fake), ("sample_token", lambda: "tok"), ("GONE_TIMEOUT_SECONDS", 0.3)):
+            patcher = patch.object(bench, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def check(self, case):
+        with contextlib.redirect_stderr(io.StringIO()):
+            case(str(self.coop), str(self.repo), "docker", [])
+        self.assertEqual(self.fake.removed, {"our-box", "our-ipc", "printed-ipc"})
+
+    def test_start(self):
+        self.check(bench.case_start)
+
+    def test_stop(self):
+        self.check(bench.case_stop)
+
+    def test_failed_start_preflight(self):
+        self.check(bench.case_failed_start_preflight)
+
+    def test_failed_start_after_create(self):
+        self.check(bench.case_failed_start_after_create)
+
+    def test_cancelled_stop(self):
+        self.check(bench.case_cancelled_stop)
+
+    def test_acp_initialize(self):
+        self.check(bench.case_acp_initialize)
+
+    def test_acp_switch(self):
+        self.check(bench.case_acp_switch_cold)
 
 
 class OwnershipTest(unittest.TestCase):
@@ -362,19 +504,28 @@ class OwnershipTest(unittest.TestCase):
                              volumes=[("obs1", self.GATEWAY)]))
         self.assertEqual(bench.owned("docker"), {"c:box1", "c:ctrl1", "v:obs1"})
 
+    def ours(self):
+        ours = bench.Ownership("docker", "tok")
+        ours.heard("coop net inspect 1a")
+        return ours
+
     def test_a_surviving_volume_means_not_gone(self):
         # Containers clear immediately; the volume never does. A stop is not over until both are.
-        self.use(FakeRuntime(volumes=[("ipc1", self.GATEWAY)]))
-        self.assertFalse(bench.wait_until_gone("docker", set(), 0.2))
+        self.use(FakeRuntime(volumes=[("ipc1", self.GATEWAY)], labels={"ipc1": ("", "1a")}))
+        self.assertFalse(bench.wait_until_gone("docker", set(), 0.2, self.ours()))
 
     def test_gone_when_nothing_new_remains(self):
         self.use(FakeRuntime())
-        self.assertTrue(bench.wait_until_gone("docker", set(), 1.0))
+        self.assertTrue(bench.wait_until_gone("docker", set(), 1.0, self.ours()))
 
     def test_what_was_already_there_is_not_this_run_s_leftover(self):
         # Another project's stopped containers are not evidence against this run.
         self.use(FakeRuntime(containers=[("someone-elses", self.BOX)]))
-        self.assertTrue(bench.wait_until_gone("docker", {"c:someone-elses"}, 1.0))
+        self.assertTrue(bench.wait_until_gone("docker", {"c:someone-elses"}, 1.0, self.ours()))
+
+    def test_another_run_starting_meanwhile_is_not_waited_for(self):
+        self.use(FakeRuntime(containers=[("their-box", self.BOX)], labels={"their-box": ("v1:ws:999:t", "", "theirs")}))
+        self.assertTrue(bench.wait_until_gone("docker", set(), 1.0, self.ours()))
 
     def test_cleanup_removes_a_volume_as_a_volume(self):
         fake = self.use(FakeRuntime())

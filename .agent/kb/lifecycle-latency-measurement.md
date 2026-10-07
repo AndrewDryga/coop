@@ -22,13 +22,17 @@ so metadata collection can still retain the samples. This does not relax the rea
 requirements; `EnvironmentTest` covers the metadata failure paths separately.
 
 **It removes only what its own launch made.** The bench refuses to start while another run's coop
-containers or volumes exist (they would slow every sample, and they are not its to remove). After a
-sample it removes only leftovers whose `coop.host` label names the coop process it launched, or whose
-`coop.network.run` is the network run that launch printed (`coop net inspect <id>`) or its own box
-carries; anything else that appeared during the sample is reported and left alone. Until
-2026-10-07 the cleanup force-removed every coop-labelled container and volume that appeared during a
-sample, so a loop or editor session starting meanwhile would have lost its box and its service
-volumes. `OtherRunsTest` pins both rules.
+containers or volumes exist (they would slow every sample, and they are not its to remove). Every
+launch it makes carries a per-sample label (`coop-bench.sample`, added to `COOP_RUN_ARGS`, which an
+editor session's per-provider coop processes inherit too), and every case cleans up through one
+`Ownership`: boxes with that label or naming the launched coop process in `coop.host`, plus the
+gateway containers and volumes of a network run those boxes carry or the launch printed
+(`coop net inspect <id>`, kept even when a timed-out sample's output is drained on the way out).
+Waiting for a stop counts only those too; anything else that appeared during the sample is reported
+and left alone. Until 2026-10-07 the cleanup force-removed every coop-labelled container and volume
+that appeared during a sample, so a loop or editor session starting meanwhile would have lost its box
+and its service volumes. `OtherRunsTest` pins the rules; `EveryCaseCleansOnlyItsOwnTest` drives each
+case with a stand-in coop and another run's resources appearing mid-sample.
 
 ## Pair the builds and alternate them; do not subtract a stored baseline
 
@@ -110,6 +114,9 @@ an approved project is unobtainable at acceptable cost — use the bare control 
 until 2026-09-20's paired A/B put a number against it. Both now state the number.
 
 ## Changelog
+- 2026-10-07 — every case (failed starts, cancellation, ACP included) cleans up through the sample's
+  label and network runs, and a stop waits only for its own resources (task
+  2026-10-07-every-lifecycle-bench-case-cleans-up-only-its-ow).
 - 2026-10-07 — the bench refuses a busy runtime and removes only what its own launch made (task
   2026-10-07-lifecycle-bench-cleanup-removes-other-runs-boxes); it used to force-remove any coop resource
   that appeared during a sample.

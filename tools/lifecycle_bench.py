@@ -32,6 +32,7 @@ import os
 import platform
 import pty
 import re
+import secrets
 import select
 import shutil
 import signal
@@ -46,6 +47,7 @@ from pathlib import Path
 # A sample that takes longer than this is a wedged environment, not a slow one. Bounded so an
 # unattended run cannot hang the person who started it.
 CASE_TIMEOUT_SECONDS = 300
+GONE_TIMEOUT_SECONDS = 60  # how long a finished run's own resources may take to go
 
 # The box announces itself by creating a file in the mounted workspace, written relative to the
 # box's workdir: the host path and the in-box path are not the same string, and only one of them
@@ -150,25 +152,68 @@ def network_runs(output: str) -> set[str]:
     return set(NETWORK_RUN.findall(output))
 
 
-def resource_labels(runtime: str, item: str) -> tuple[str, str]:
-    """A leftover's coop.host label (a box: v1:<scope>:<pid>:<token>) and coop.network.run label."""
+# Every box a sample starts carries this label (through COOP_RUN_ARGS, which an editor session's
+# per-provider coop processes inherit too), so cleanup can tell the sample's boxes from another run's.
+SAMPLE_LABEL = "coop-bench.sample"
+
+
+def sample_token() -> str:
+    return secrets.token_hex(8)
+
+
+def tagged_run_args(token: str) -> str:
+    """COOP_RUN_ARGS for one sample: the person's own, plus the sample's label."""
+    return " ".join(part for part in (os.environ.get("COOP_RUN_ARGS", ""), f"--label {SAMPLE_LABEL}={token}") if part)
+
+
+def tagged_env(token: str, base: dict | None = None) -> dict:
+    return dict(os.environ if base is None else base, COOP_RUN_ARGS=tagged_run_args(token))
+
+
+def resource_labels(runtime: str, item: str) -> tuple[str, str, str]:
+    """A leftover's coop.host (a box: v1:<scope>:<pid>:<token>), coop.network.run and sample labels."""
     kind, _, name = item.partition(":")
     if kind == "c":
-        cmd = [runtime, "inspect", "--format", '{{index .Config.Labels "coop.host"}}\t{{index .Config.Labels "coop.network.run"}}', name]
+        cmd = [runtime, "inspect", "--format", '{{index .Config.Labels "coop.host"}}\t{{index .Config.Labels "coop.network.run"}}'
+               f'\t{{{{index .Config.Labels "{SAMPLE_LABEL}"}}}}', name]
     else:
-        cmd = [runtime, "volume", "inspect", "--format", '\t{{index .Labels "coop.network.run"}}', name]
-    host, _, network = run(cmd, timeout=30).stdout.rstrip("\n").partition("\t")
-    return host, network.strip()
+        cmd = [runtime, "volume", "inspect", "--format", '\t{{index .Labels "coop.network.run"}}\t', name]
+    host, network, sample = (run(cmd, timeout=30).stdout.rstrip("\n").split("\t") + ["", ""])[:3]
+    return host, network.strip(), sample.strip()
 
 
-def launched_by(runtime: str, leftovers: set[str], pid: int, runs: set[str]) -> set[str]:
-    """The leftovers this sample's own launch made, and nothing else: its boxes name its coop process
-    in coop.host, and its gateway's containers and volumes carry the network run it printed (or one
-    its boxes carry). A resource another run created during the sample is never touched."""
-    labels = {item: resource_labels(runtime, item) for item in leftovers}
-    mark = f":{pid}:"
-    runs = set(runs) | {network for host, network in labels.values() if mark in host and network}
-    return {item for item, (host, network) in labels.items() if mark in host or (network and network in runs)}
+class Ownership:
+    """What one sample's launch made, and nothing else: its boxes (they carry the sample's label, or
+    name the coop process it started in coop.host) and the gateway containers and volumes of a network
+    run those boxes carry or the launch printed. A resource another run created meanwhile is never
+    touched. Labels never change, so each resource is inspected once, and a box seen while it lived
+    still claims its gateway after it is gone."""
+
+    def __init__(self, runtime: str, token: str, pid: int | None = None):
+        self.runtime, self.token, self.pid = runtime, token, pid
+        self.runs: set[str] = set()
+        self.labels: dict[str, tuple[str, str, str]] = {}
+
+    def heard(self, output: str) -> None:
+        self.runs |= network_runs(output)
+
+    def mine(self, items: set[str]) -> set[str]:
+        for item in items - self.labels.keys():
+            self.labels[item] = resource_labels(self.runtime, item)
+        mark = f":{self.pid}:" if self.pid else None
+        boxes = {item for item in items if self.labels[item][2] == self.token or (mark and mark in self.labels[item][0])}
+        self.runs |= {self.labels[item][1] for item in boxes if self.labels[item][1]}
+        return boxes | {item for item in items if self.labels[item][1] in self.runs}
+
+
+def clean_up(runtime: str, before: set[str], ours: Ownership) -> set[str]:
+    """Remove what this sample's launch left behind, and only that; returns what it removed."""
+    leftovers = owned(runtime) - before
+    mine = ours.mine(leftovers)
+    remove_owned(runtime, mine)
+    if leftovers - mine:
+        print(f"lifecycle_bench: left {len(leftovers - mine)} resource(s) this sample did not create", file=sys.stderr)
+    return mine
 
 
 def remove_owned(runtime: str, leftovers: set[str]) -> None:
@@ -180,22 +225,23 @@ def remove_owned(runtime: str, leftovers: set[str]) -> None:
         run([runtime, *command], timeout=60)
 
 
-def wait_until_gone(runtime: str, before: set[str], timeout: float) -> bool:
+def wait_until_gone(runtime: str, before: set[str], timeout: float, ours: Ownership) -> bool:
     """Poll the containers, then confirm the volumes once.
 
     Every runtime query costs ~20 ms, and a stop interval here is a few hundred milliseconds, so
     asking four questions per iteration would measure this loop instead of the product. Volumes are
     created and destroyed with the gateway that owns them, so the cheap poll watches containers and
-    the volumes are checked when those are clear."""
+    the volumes are checked when those are clear. Only the sample's own resources count: one another
+    run created meanwhile is not this run's to wait for."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if not (owned_containers(runtime) - before):
+        if not ours.mine(owned_containers(runtime) - before):
             break
         time.sleep(0.01)
     else:
         return False
     while time.time() < deadline:
-        if not (owned_volumes(runtime) - before):
+        if not ours.mine(owned_volumes(runtime) - before):
             return True
         time.sleep(0.05)
     return False
@@ -204,11 +250,11 @@ def wait_until_gone(runtime: str, before: set[str], timeout: float) -> bool:
 # --- the cases -------------------------------------------------------------------------------
 
 
-def launch(coop: str, repo: str, extra: list[str], command: str) -> subprocess.Popen:
+def launch(coop: str, repo: str, extra: list[str], command: str, token: str) -> subprocess.Popen:
     """Start coop the way a script does, with its own session so a stop can reach the whole tree."""
     return subprocess.Popen([coop, "run", *extra, "--", "sh", "-c", command], cwd=repo,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                            start_new_session=True)
+                            start_new_session=True, env=tagged_env(token))
 
 
 def await_marker(repo: str, process: subprocess.Popen, timeout: float) -> float | None:
@@ -230,27 +276,38 @@ def clear_marker(repo: str) -> None:
         os.remove(marker)
 
 
-def stop_process(process: subprocess.Popen, drained: bool = False) -> None:
-    """End a sample's coop the way a person's terminal would, escalating only if it refuses.
+def stop_process(process: subprocess.Popen, drained: bool = False) -> str:
+    """End a sample's coop the way a person's terminal would, escalating only if it refuses, and
+    return its output: the line naming its network run may come last, and without it the run's own
+    gateway would look like another run's.
 
     SIGKILL first is how this tool used to lose a filtered launch's gateway containers and volumes:
     coop was killed mid-teardown and the resources it had not reached yet stayed. `drained` says a
     reader thread already owns the process's output, so this only waits instead of reading it too."""
+    def read(grace: float) -> str:
+        if drained:
+            process.wait(timeout=grace)
+            return ""
+        return "".join(part or "" for part in process.communicate(timeout=grace))
+
     if process.poll() is not None:
-        return
+        try:
+            return read(5.0)
+        except (subprocess.TimeoutExpired, ValueError):
+            return ""
     for signal_number, grace in ((signal.SIGINT, 20.0), (signal.SIGTERM, 10.0), (signal.SIGKILL, 5.0)):
         try:
             os.killpg(process.pid, signal_number)
         except (ProcessLookupError, PermissionError):
-            return
+            break
         try:
-            if drained:
-                process.wait(timeout=grace)
-            else:
-                process.communicate(timeout=grace)
-            return
+            return read(grace)
         except subprocess.TimeoutExpired:
             continue
+    try:
+        return read(1.0)
+    except (subprocess.TimeoutExpired, ValueError):
+        return ""
 
 
 def sample_run(coop: str, repo: str, runtime: str, extra: list[str], command: str,
@@ -258,38 +315,33 @@ def sample_run(coop: str, repo: str, runtime: str, extra: list[str], command: st
     """One launch, measured at `measure` ("start" or "stop"), and cleaned up whatever happens."""
     clear_marker(repo)
     before = owned(runtime)
+    ours = Ownership(runtime, sample_token())
     launched = time.time()
-    process = launch(coop, repo, extra, command)
-    said = ""
+    process = launch(coop, repo, extra, command, ours.token)
+    ours.pid = process.pid
     try:
         ready = await_marker(repo, process, CASE_TIMEOUT_SECONDS)
         if ready is None:
             out, err = process.communicate(timeout=CASE_TIMEOUT_SECONDS)
-            said = out + err
+            ours.heard(out + err)
             return Sample("", False, detail=redact((err or out)[-400:]) or "the box never announced itself")
         if measure == "start":
-            said = "".join(process.communicate(timeout=CASE_TIMEOUT_SECONDS))
-            if not wait_until_gone(runtime, before, 60):
+            ours.heard("".join(process.communicate(timeout=CASE_TIMEOUT_SECONDS)))
+            if not wait_until_gone(runtime, before, GONE_TIMEOUT_SECONDS, ours):
                 return Sample("", False, detail="a finished run left a resource behind")
             return Sample("", True, seconds=ready - launched)
-        said = "".join(process.communicate(timeout=CASE_TIMEOUT_SECONDS))
+        ours.heard("".join(process.communicate(timeout=CASE_TIMEOUT_SECONDS)))
         returned = time.time()
-        if not wait_until_gone(runtime, before, 60):
-            return Sample("", False, detail="an owned resource outlived the command by 60s")
+        if not wait_until_gone(runtime, before, GONE_TIMEOUT_SECONDS, ours):
+            return Sample("", False, detail=f"an owned resource outlived the command by {GONE_TIMEOUT_SECONDS}s")
         gone = time.time()
         return Sample("", True, seconds=gone - ready,
                       extra={"after_process_returned_s": round(gone - returned, 4),
                              "probe_resolution_s": PROBE_RESOLUTION_NOTE})
     finally:
-        stop_process(process)
+        ours.heard(stop_process(process))
         clear_marker(repo)
-        leftovers = owned(runtime) - before
-        if leftovers:
-            mine = launched_by(runtime, leftovers, process.pid, network_runs(said))
-            remove_owned(runtime, mine)
-            if leftovers - mine:
-                print(f"lifecycle_bench: left {len(leftovers - mine)} resource(s) this sample did not create",
-                      file=sys.stderr)
+        clean_up(runtime, before, ours)
 
 
 def case_start(coop: str, repo: str, runtime: str, extra: list[str]) -> Sample:
@@ -309,13 +361,16 @@ def case_failed_start_preflight(coop: str, repo: str, runtime: str, extra: list[
     """A launch refused before anything is created. Cheap by construction — the interesting number
     is how fast a person learns, not how much was cleaned up, because nothing was."""
     before = owned(runtime)
+    ours = Ownership(runtime, sample_token())
     started = time.time()
     result = run([coop, "run", *extra, "--", "sh", "-c", "true"], cwd=repo,
-                 env={"COOP_IMAGE": "coop-bench-no-such-image:absent"})
+                 env={"COOP_IMAGE": "coop-bench-no-such-image:absent", "COOP_RUN_ARGS": tagged_run_args(ours.token)})
     elapsed = time.time() - started
+    ours.heard(result.stdout + result.stderr)
     if result.returncode == 0:
+        clean_up(runtime, before, ours)
         return Sample("", False, detail="a missing image did not fail the launch")
-    if owned(runtime) - before:
+    if clean_up(runtime, before, ours):
         return Sample("", False, detail="a refused launch created a resource")
     return Sample("", True, seconds=elapsed)
 
@@ -325,15 +380,18 @@ def case_failed_start_after_create(coop: str, repo: str, runtime: str, extra: li
     command inside it does not exist. This is where cleanup work actually lives, which the
     preflight refusal never touches."""
     before = owned(runtime)
+    ours = Ownership(runtime, sample_token())
     started = time.time()
-    result = run([coop, "run", *extra, "--", "/no/such/binary"], cwd=repo)
+    result = run([coop, "run", *extra, "--", "/no/such/binary"], cwd=repo,
+                 env={"COOP_RUN_ARGS": tagged_run_args(ours.token)})
     elapsed = time.time() - started
+    ours.heard(result.stdout + result.stderr)
     if result.returncode == 0:
+        clean_up(runtime, before, ours)
         return Sample("", False, detail="a missing in-box command did not fail the run")
-    if not wait_until_gone(runtime, before, 60):
-        leftovers = owned(runtime) - before
-        remove_owned(runtime, leftovers)
-        return Sample("", False, detail=f"a failed run left {len(leftovers)} resource(s) behind")
+    if not wait_until_gone(runtime, before, GONE_TIMEOUT_SECONDS, ours):
+        left = clean_up(runtime, before, ours)
+        return Sample("", False, detail=f"a failed run left {len(left)} resource(s) behind")
     return Sample("", True, seconds=elapsed)
 
 
@@ -347,20 +405,24 @@ def case_cancelled_stop(coop: str, repo: str, runtime: str, extra: list[str]) ->
     happened at all, while a person pressing ^C gets an exit in a fraction of a second."""
     clear_marker(repo)
     before = owned(runtime)
+    ours = Ownership(runtime, sample_token())
+    env = tagged_env(ours.token)
     marker = os.path.join(repo, READY_FILE)
     pid, fd = pty.fork()
     if pid == 0:  # child: become coop on the far side of the terminal
         try:
             os.chdir(repo)
-            os.execv(coop, [coop, "run", *extra, "--", "sh", "-c", f"{READY_PROBE}; sleep 120"])
+            os.execve(coop, [coop, "run", *extra, "--", "sh", "-c", f"{READY_PROBE}; sleep 120"], env)
         finally:
             os._exit(127)
+    ours.pid = pid
+    said: list[bytes] = []
 
     def drain(timeout: float = 0.01) -> None:
         readable, _, _ = select.select([fd], [], [], timeout)
         if readable:
             try:
-                os.read(fd, 4096)
+                said.append(os.read(fd, 4096))
             except OSError:
                 pass
 
@@ -380,7 +442,7 @@ def case_cancelled_stop(coop: str, repo: str, runtime: str, extra: list[str]) ->
                 break
         if not exited:
             return Sample("", False, detail="coop did not exit within 90s of ^C")
-        if not wait_until_gone(runtime, before, 60):
+        if not wait_until_gone(runtime, before, GONE_TIMEOUT_SECONDS, ours):
             return Sample("", False, detail="a cancelled run left a resource behind")
         return Sample("", True, seconds=time.time() - signalled)
     finally:
@@ -394,9 +456,8 @@ def case_cancelled_stop(coop: str, repo: str, runtime: str, extra: list[str]) ->
             pass
         os.close(fd)  # hangs up the session; leaving it open leaked a descriptor per sample
         clear_marker(repo)
-        leftovers = owned(runtime) - before
-        if leftovers:
-            remove_owned(runtime, leftovers)
+        ours.heard(b"".join(said).decode(errors="replace"))
+        clean_up(runtime, before, ours)
 
 
 def case_acp_initialize(coop: str, repo: str, runtime: str, extra: list[str]) -> Sample:
@@ -408,6 +469,7 @@ def case_acp_initialize(coop: str, repo: str, runtime: str, extra: list[str]) ->
     inside the number: the proxy spawns the lead's box immediately, so this includes a real box and
     its ACP adapter, and the warm pool may be fanning other providers out concurrently."""
     before = owned(runtime)
+    ours = Ownership(runtime, sample_token())
     request = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize",
                           "params": {"protocolVersion": 1,
                                      "clientCapabilities": {"fs": {"readTextFile": False,
@@ -415,7 +477,8 @@ def case_acp_initialize(coop: str, repo: str, runtime: str, extra: list[str]) ->
     started = time.time()
     process = subprocess.Popen([coop, "acp", *extra], cwd=repo, stdin=subprocess.PIPE,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                               start_new_session=True)
+                               start_new_session=True, env=tagged_env(ours.token))
+    ours.pid = process.pid
     try:
         process.stdin.write(request + "\n")
         process.stdin.flush()
@@ -430,10 +493,8 @@ def case_acp_initialize(coop: str, repo: str, runtime: str, extra: list[str]) ->
                               extra={"agent": answer.get("agentInfo", answer.get("agent", {}))})
         return Sample("", False, detail="the ACP agent never answered initialize")
     finally:
-        stop_process(process)
-        leftovers = owned(runtime) - before
-        if leftovers:
-            remove_owned(runtime, leftovers)
+        ours.heard(stop_process(process))
+        clean_up(runtime, before, ours)
 
 
 def initialize_result(line: str) -> dict | None:
@@ -586,12 +647,14 @@ def case_acp_switch(coop: str, repo: str, runtime: str, extra: list[str], warm: 
     its own trace file, but turning tracing on also applies Coop's trace retention there: only the
     newest five acp-trace logs are kept."""
     before = owned(runtime)
-    env = dict(os.environ, COOP_ACP_TRACE="1")
+    ours = Ownership(runtime, sample_token())
+    env = tagged_env(ours.token, dict(os.environ, COOP_ACP_TRACE="1"))
     if not warm:
         env["COOP_ACP_WARM"] = "0"
     stderr = tempfile.TemporaryFile()
     process = subprocess.Popen([coop, "acp", *extra], cwd=repo, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                stderr=stderr, text=True, env=env, start_new_session=True)
+    ours.pid = process.pid
     trace = trace_path(process.pid)
     client = AcpClient(process)
     try:
@@ -648,10 +711,10 @@ def case_acp_switch(coop: str, repo: str, runtime: str, extra: list[str], warm: 
                 path.unlink()
             except OSError:
                 pass
+        stderr.seek(0)
+        ours.heard(stderr.read().decode(errors="replace"))
         stderr.close()
-        leftovers = owned(runtime) - before
-        if leftovers:
-            remove_owned(runtime, leftovers)
+        clean_up(runtime, before, ours)
 
 
 def case_acp_switch_cold(coop: str, repo: str, runtime: str, extra: list[str]) -> Sample:
