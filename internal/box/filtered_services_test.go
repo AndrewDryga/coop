@@ -453,53 +453,147 @@ func TestFilteredServiceStartUsesPrivateOwnershipBesideAnotherBox(t *testing.T) 
 	}
 }
 
-// `coop up` leaves the project's services on its plain network, and Compose cannot recreate a
-// container onto the filtered one, so a filtered launch takes the old containers of exactly the
-// granted services and their dependencies down before it creates its own.
-func TestFilteredLaunchRemovesTheServicesOldContainersFirst(t *testing.T) {
+// A filtered launch never removes service containers: a removed container's anonymous volumes are
+// orphaned and its replacement starts empty. Once the filtered network exists the seed declares the
+// subnet the final override pins, so Compose recreates only the containers (keeping their anonymous
+// volumes) instead of the network, whose disconnect fails for a service `coop up` moved off it.
+func TestFilteredLaunchSeedsOntoTheExistingSubnet(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		firstSeen  bool // the network does not exist until the seed creates it
+		seedSubnet bool
+	}{
+		{name: "network exists", seedSubnet: true},
+		{name: "first launch", firstSeen: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			compose := filepath.Join(repo, "compose.yml")
+			body := "services:\n  db:\n    image: app:1\n    depends_on: [cache]\n  cache:\n    image: redis:8\n    volumes: [\"/data\"]\n"
+			if err := os.WriteFile(compose, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			digests, err := composeServiceDigests(compose, repo, false, []string{"db"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := strings.Repeat("b", 64)
+			fixture := &filteredDaemonFixture{
+				networkMembers:  map[string]netip.Addr{id: netip.MustParseAddr("172.31.0.2")},
+				composeServices: map[string]string{"db": id},
+				extraNetworks: []runtime.DockerNetwork{{Name: ComposeProject(repo) + "_filtered", Internal: true,
+					Subnets: []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.31.0.1")}}},
+			}
+			var docker filteredDocker = fixture
+			if tc.firstSeen {
+				docker = &networkAfterSeed{filteredDaemonFixture: fixture}
+			}
+			recorder := filepath.Join(t.TempDir(), "runtime.log")
+			_, _, _, prepared, err := resolveServiceBindings(t.Context(), docker, overrideRecorderRuntime(t, recorder), RunSpec{Repo: repo}, compose,
+				&networkstate.Approval{Services: digests}, serviceGrants(servicePolicy(t, "db")), nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(prepared.cleanup)
+			data, err := os.ReadFile(recorder)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var creates []string
+			for _, call := range strings.Split(string(data), "CALL ")[1:] {
+				if strings.Contains(call, " rm ") {
+					t.Fatalf("a filtered launch removed service containers: %q", call)
+				}
+				if strings.Contains(call, " up --no-start ") {
+					creates = append(creates, call)
+				}
+			}
+			if len(creates) != 2 {
+				t.Fatalf("Compose creates = %d, want the seed and the final:\n%s", len(creates), data)
+			}
+			seed, final := creates[0], creates[1]
+			if got := strings.Contains(seed, "subnet: 172.31.0.0/16"); got != tc.seedSubnet || strings.Contains(seed, "ipv4_address") {
+				t.Fatalf("seed declares the subnet = %v, want %v, and no fixed address:\n%s", got, tc.seedSubnet, seed)
+			}
+			if !strings.Contains(final, "subnet: 172.31.0.0/16") || !strings.Contains(final, "ipv4_address") {
+				t.Fatalf("final override does not pin the subnet and the addresses:\n%s", final)
+			}
+		})
+	}
+}
+
+// networkAfterSeed is a daemon whose filtered network appears only once the seed has created it.
+type networkAfterSeed struct {
+	*filteredDaemonFixture
+	looked bool
+}
+
+func (d *networkAfterSeed) Networks(ctx context.Context) ([]runtime.DockerNetwork, error) {
+	networks, err := d.filteredDaemonFixture.Networks(ctx)
+	if d.looked || err != nil {
+		return networks, err
+	}
+	d.looked = true
+	return slices.DeleteFunc(networks, func(n runtime.DockerNetwork) bool { return strings.HasSuffix(n.Name, "_filtered") }), nil
+}
+
+// overrideRecorderRuntime records each Compose call after "CALL ", followed by the filtered-services
+// override files it was given: they are written and removed around the call.
+func overrideRecorderRuntime(t *testing.T, recorder string) runtime.Runtime {
+	t.Helper()
+	shim := filepath.Join(t.TempDir(), "rt")
+	script := "#!/bin/sh\n" +
+		"printf 'CALL %s\\n' \"$*\" >> " + strconv.Quote(recorder) + "\n" +
+		"prev=\n" +
+		"for arg in \"$@\"; do\n" +
+		"  case \"$prev:$arg\" in -f:*coop-filtered-services-*) cat \"$arg\" >> " + strconv.Quote(recorder) + " ;; esac\n" +
+		"  prev=$arg\n" +
+		"done\n" +
+		"case \"$*\" in *\"config --services\"*) printf '%s\\n' db ;; esac\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return runtime.Runtime{Name: shim}
+}
+
+// The last Compose step, starting the services, says why it failed too: an unhealthy service or a
+// taken port is otherwise only an exit status.
+func TestFilteredServicesStartNamesComposesReason(t *testing.T) {
 	repo := t.TempDir()
 	compose := filepath.Join(repo, "compose.yml")
-	body := "services:\n  db:\n    image: app:1\n    depends_on: [cache]\n  cache:\n    image: redis:8\n  admin:\n    image: admin:1\n"
-	if err := os.WriteFile(compose, []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(compose, []byte("services:\n  db:\n    image: app:1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	digests, err := composeServiceDigests(compose, repo, false, []string{"db"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := strings.Repeat("b", 64)
+	id := strings.Repeat("c", 64)
 	docker := &filteredDaemonFixture{
 		networkMembers:  map[string]netip.Addr{id: netip.MustParseAddr("172.31.0.2")},
 		composeServices: map[string]string{"db": id},
 		extraNetworks: []runtime.DockerNetwork{{Name: ComposeProject(repo) + "_filtered", Internal: true,
 			Subnets: []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.31.0.1")}}},
 	}
-	recorder := filepath.Join(t.TempDir(), "runtime.log")
-	_, _, _, prepared, err := resolveServiceBindings(t.Context(), docker, recorderRuntime(t, recorder), RunSpec{Repo: repo}, compose,
+	shim := filepath.Join(t.TempDir(), "rt")
+	script := "#!/bin/sh\n" +
+		"case \"$*\" in\n" +
+		"  *\"config --services\"*) printf '%s\\n' db ;;\n" +
+		"  *\"up -d --wait\"*) echo ' Container app-db-1 Starting' >&2; echo 'Error response from daemon: port 5432 is already allocated' >&2; exit 1 ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, prepared, err := resolveServiceBindings(t.Context(), docker, runtime.Runtime{Name: shim}, RunSpec{Repo: repo}, compose,
 		&networkstate.Approval{Services: digests}, serviceGrants(servicePolicy(t, "db")), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(prepared.cleanup)
-	data, err := os.ReadFile(recorder)
-	if err != nil {
-		t.Fatal(err)
-	}
-	removed, created := -1, -1
-	var removal string
-	for i, call := range strings.Split(string(data), "\n") {
-		if removed < 0 && strings.Contains(call, " rm --stop --force ") {
-			removed, removal = i, call
-		}
-		if created < 0 && strings.Contains(call, " up --no-start ") {
-			created = i
-		}
-	}
-	if removed < 0 || created < 0 || removed > created {
-		t.Fatalf("the old containers were not removed before the filtered ones were created:\n%s", data)
-	}
-	if !strings.HasSuffix(removal, " rm --stop --force cache db") || strings.Contains(removal, "admin") {
-		t.Fatalf("removal = %q, want exactly the granted service and its dependency", removal)
+	err = prepared.start(t.Context())
+	if err == nil || !strings.HasSuffix(err.Error(), "Error response from daemon: port 5432 is already allocated") ||
+		!strings.Contains(err.Error(), "starting them failed") {
+		t.Fatalf("start error = %v, want Compose's own reason", err)
 	}
 }
 

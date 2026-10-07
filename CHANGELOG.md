@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Filtered launches work after `coop up`.** A filtered box launched after `coop up` failed with
+  "container … is not connected to the network …_filtered": Compose rebuilt the filtered services
+  network and could not detach a service that `coop up` had moved off it. The launch now declares
+  that network as it already is, so Compose only recreates the containers, and services keep their
+  data, anonymous volumes included. A failed Compose step now ends with Compose's own reason.
+
 - **A second landing page: put your agents to work while you sleep.** `coop.dryga.com/overnight.html`
   is for teams that want agents working through many tasks unattended; the homepage stays the
   sandbox story. A pinned `coop loop` board lives through one night, 22:00 to 07:00, beside seven

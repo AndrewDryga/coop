@@ -110,8 +110,9 @@ func (s *preparedFilteredServices) start(ctx context.Context) error {
 	}
 	upArgs := append(append([]string(nil), args...), "up", "-d", "--wait")
 	upArgs = append(upArgs, s.selected...)
+	stderr.Reset()
 	if err := runCompose(s.runtime, io.Discard, &stderr, "up", upArgs); err != nil {
-		return fmt.Errorf("a filtered box needs this project's approved sidecars running, and starting them failed: %w", err)
+		return composeFailure("a filtered box needs this project's approved sidecars running, and starting them failed", err, stderr.String())
 	}
 	if s.sections != nil && s.sections.loop {
 		s.sections.services(s.names)
@@ -219,16 +220,29 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 		}
 	}()
 	network := ComposeProjectFor(spec.Repo, owner) + "_filtered"
-	// `coop up` starts these services on the project's plain network, and Compose cannot recreate
-	// such a container onto the filtered one ("container ... is not connected to the network
-	// ..._filtered"). Take the old containers down first: their named volumes, so their data, stay.
-	var composeErr bytes.Buffer
-	remove := append(append([]string(nil), args...), "rm", "--stop", "--force")
-	remove = append(remove, closure...)
-	if err := runCompose(rt, io.Discard, &composeErr, "rm", remove); err != nil {
-		return "", nil, nil, nil, composeFailure("prepare filtered services", err, composeErr.String())
+	serviceNetwork := func() (runtime.DockerNetwork, error) {
+		networks, err := docker.Networks(ctx)
+		if err != nil {
+			return runtime.DockerNetwork{}, err
+		}
+		for _, candidate := range networks {
+			if candidate.Name == network {
+				return candidate, nil
+			}
+		}
+		return runtime.DockerNetwork{}, nil
 	}
-	seed, err := filteredServiceOverride(network, closure, netip.Prefix{}, nil)
+	// Once the network exists, the seed declares the subnet the final override pins. Declared
+	// differently, Compose recreates the network and first disconnects the services from it, which
+	// fails for one `coop up` moved to the plain network ("container ... is not connected to the
+	// network ..._filtered"). Declared alike, Compose recreates only the containers, and a recreated
+	// container keeps its anonymous volumes. A first launch leaves the subnet to Docker.
+	existing, err := serviceNetwork()
+	if err != nil {
+		return "", nil, nil, nil, err
+	}
+	seedSubnet, _, _ := filteredServiceAddresses(existing, closure)
+	seed, err := filteredServiceOverride(network, closure, seedSubnet, nil)
 	if err != nil {
 		return "", nil, nil, nil, err
 	}
@@ -238,23 +252,17 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 	}
 	seedArgs := append(append([]string(nil), args...), "-f", seedPath, "up", "--no-start", "--force-recreate")
 	seedArgs = append(seedArgs, selected...)
+	var composeErr bytes.Buffer
 	err = runCompose(rt, io.Discard, &composeErr, "up --no-start", seedArgs)
 	cleanupSeed()
 	if err != nil {
 		return "", nil, nil, nil, composeFailure("prepare filtered services", err, composeErr.String())
 	}
-	networks, err := docker.Networks(ctx)
+	seeded, err := serviceNetwork()
 	if err != nil {
 		return "", nil, nil, nil, err
 	}
-	var serviceNetwork runtime.DockerNetwork
-	for _, candidate := range networks {
-		if candidate.Name == network {
-			serviceNetwork = candidate
-			break
-		}
-	}
-	subnet, addresses, err := filteredServiceAddresses(serviceNetwork, closure)
+	subnet, addresses, err := filteredServiceAddresses(seeded, closure)
 	if err != nil {
 		return "", nil, nil, nil, err
 	}
