@@ -250,11 +250,12 @@ def wait_until_gone(runtime: str, before: set[str], timeout: float, ours: Owners
 # --- the cases -------------------------------------------------------------------------------
 
 
-def launch(coop: str, repo: str, extra: list[str], command: str, token: str) -> subprocess.Popen:
+def launch(coop: str, repo: str, extra: list[str], command: list[str], token: str,
+           env: dict | None = None) -> subprocess.Popen:
     """Start coop the way a script does, with its own session so a stop can reach the whole tree."""
-    return subprocess.Popen([coop, "run", *extra, "--", "sh", "-c", command], cwd=repo,
+    return subprocess.Popen([coop, "run", *extra, "--", *command], cwd=repo,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                            start_new_session=True, env=tagged_env(token))
+                            start_new_session=True, env=tagged_env(token, env))
 
 
 def await_marker(repo: str, process: subprocess.Popen, timeout: float) -> float | None:
@@ -317,7 +318,7 @@ def sample_run(coop: str, repo: str, runtime: str, extra: list[str], command: st
     before = owned(runtime)
     ours = Ownership(runtime, sample_token())
     launched = time.time()
-    process = launch(coop, repo, extra, command, ours.token)
+    process = launch(coop, repo, extra, ["sh", "-c", command], ours.token)
     ours.pid = process.pid
     try:
         ready = await_marker(repo, process, CASE_TIMEOUT_SECONDS)
@@ -363,16 +364,21 @@ def case_failed_start_preflight(coop: str, repo: str, runtime: str, extra: list[
     before = owned(runtime)
     ours = Ownership(runtime, sample_token())
     started = time.time()
-    result = run([coop, "run", *extra, "--", "sh", "-c", "true"], cwd=repo,
-                 env={"COOP_IMAGE": "coop-bench-no-such-image:absent", "COOP_RUN_ARGS": tagged_run_args(ours.token)})
-    elapsed = time.time() - started
-    ours.heard(result.stdout + result.stderr)
-    if result.returncode == 0:
+    process = launch(coop, repo, extra, ["sh", "-c", "true"], ours.token,
+                     dict(os.environ, COOP_IMAGE="coop-bench-no-such-image:absent"))
+    ours.pid = process.pid
+    try:
+        ours.heard("".join(process.communicate(timeout=CASE_TIMEOUT_SECONDS)))
+        elapsed = time.time() - started
+        if process.returncode == 0:
+            return Sample("", False, detail="a missing image did not fail the launch")
+        if ours.mine(owned(runtime) - before):
+            return Sample("", False, detail="a refused launch created a resource")
+        return Sample("", True, seconds=elapsed)
+    finally:
+        # a launch that outlived the case, or a bench interrupted mid-launch, is stopped and cleaned too
+        ours.heard(stop_process(process))
         clean_up(runtime, before, ours)
-        return Sample("", False, detail="a missing image did not fail the launch")
-    if clean_up(runtime, before, ours):
-        return Sample("", False, detail="a refused launch created a resource")
-    return Sample("", True, seconds=elapsed)
 
 
 def case_failed_start_after_create(coop: str, repo: str, runtime: str, extra: list[str]) -> Sample:
@@ -382,17 +388,20 @@ def case_failed_start_after_create(coop: str, repo: str, runtime: str, extra: li
     before = owned(runtime)
     ours = Ownership(runtime, sample_token())
     started = time.time()
-    result = run([coop, "run", *extra, "--", "/no/such/binary"], cwd=repo,
-                 env={"COOP_RUN_ARGS": tagged_run_args(ours.token)})
-    elapsed = time.time() - started
-    ours.heard(result.stdout + result.stderr)
-    if result.returncode == 0:
+    process = launch(coop, repo, extra, ["/no/such/binary"], ours.token)
+    ours.pid = process.pid
+    try:
+        ours.heard("".join(process.communicate(timeout=CASE_TIMEOUT_SECONDS)))
+        elapsed = time.time() - started
+        if process.returncode == 0:
+            return Sample("", False, detail="a missing in-box command did not fail the run")
+        if not wait_until_gone(runtime, before, GONE_TIMEOUT_SECONDS, ours):
+            left = ours.mine(owned(runtime) - before)
+            return Sample("", False, detail=f"a failed run left {len(left)} resource(s) behind")
+        return Sample("", True, seconds=elapsed)
+    finally:
+        ours.heard(stop_process(process))
         clean_up(runtime, before, ours)
-        return Sample("", False, detail="a missing in-box command did not fail the run")
-    if not wait_until_gone(runtime, before, GONE_TIMEOUT_SECONDS, ours):
-        left = clean_up(runtime, before, ours)
-        return Sample("", False, detail=f"a failed run left {len(left)} resource(s) behind")
-    return Sample("", True, seconds=elapsed)
 
 
 def case_cancelled_stop(coop: str, repo: str, runtime: str, extra: list[str]) -> Sample:
@@ -418,13 +427,16 @@ def case_cancelled_stop(coop: str, repo: str, runtime: str, extra: list[str]) ->
     ours.pid = pid
     said: list[bytes] = []
 
-    def drain(timeout: float = 0.01) -> None:
+    def drain(timeout: float = 0.01) -> bool:
         readable, _, _ = select.select([fd], [], [], timeout)
         if readable:
             try:
-                said.append(os.read(fd, 4096))
+                chunk = os.read(fd, 4096)
             except OSError:
-                pass
+                return False
+            said.append(chunk)
+            return bool(chunk)
+        return False
 
     try:
         deadline = time.time() + CASE_TIMEOUT_SECONDS
@@ -442,6 +454,10 @@ def case_cancelled_stop(coop: str, repo: str, runtime: str, extra: list[str]) ->
                 break
         if not exited:
             return Sample("", False, detail="coop did not exit within 90s of ^C")
+        # its last lines name its network run: without them a gateway left behind is not its own
+        while drain(0.05):
+            pass
+        ours.heard(b"".join(said).decode(errors="replace"))
         if not wait_until_gone(runtime, before, GONE_TIMEOUT_SECONDS, ours):
             return Sample("", False, detail="a cancelled run left a resource behind")
         return Sample("", True, seconds=time.time() - signalled)

@@ -399,12 +399,14 @@ class OtherRunsTest(unittest.TestCase):
 # A stand-in coop: it records the COOP_RUN_ARGS it was given, names its network run the way a
 # filtered launch does, and behaves just enough like `coop run` and `coop acp` for each case.
 STAND_IN_COOP = """#!/bin/sh
+echo $$ > "@LAUNCHED@.pid"
 printf '%s' "$COOP_RUN_ARGS" > "@LAUNCHED@"
 echo "Full details: coop net inspect 8b --json" >&2
 case "$1" in
 run)
     while [ $# -gt 0 ] && [ "$1" != -- ]; do shift; done
     shift
+    [ -n "$STAND_IN_HANG" ] && exec sleep 30
     [ -n "$COOP_IMAGE" ] && exit 1
     exec "$@" ;;
 acp)
@@ -429,7 +431,7 @@ class EveryCaseCleansOnlyItsOwnTest(unittest.TestCase):
         root = Path(tmp.name)
         self.repo = root / "repo"
         self.repo.mkdir()
-        launched = root / "launched"
+        launched = self.launched = root / "launched"
         self.coop = root / "coop"
         self.coop.write_text(STAND_IN_COOP.replace("@LAUNCHED@", str(launched)))
         self.coop.chmod(0o755)
@@ -475,6 +477,32 @@ class EveryCaseCleansOnlyItsOwnTest(unittest.TestCase):
 
     def test_acp_switch(self):
         self.check(bench.case_acp_switch_cold)
+
+    def check_outlived(self, case):
+        # The launch hangs past the case's limit: it is stopped, and what it printed and made is
+        # still taken back, though the case itself fails with the timeout.
+        with patch.dict(os.environ, {"STAND_IN_HANG": "1"}), patch.object(bench, "CASE_TIMEOUT_SECONDS", 0.5), \
+                contextlib.redirect_stderr(io.StringIO()), self.assertRaises(subprocess.TimeoutExpired):
+            case(str(self.coop), str(self.repo), "docker", [])
+        self.assertEqual(self.fake.removed, {"our-box", "our-ipc", "printed-ipc"})
+        pid = int(Path(str(self.launched) + ".pid").read_text())
+        with self.assertRaises(ProcessLookupError, msg="the hung launch was left running"):
+            os.kill(pid, 0)
+
+    def test_a_refused_launch_that_outlives_the_case_is_stopped_and_cleaned(self):
+        self.check_outlived(bench.case_failed_start_preflight)
+
+    def test_a_failed_run_that_outlives_the_case_is_stopped_and_cleaned(self):
+        self.check_outlived(bench.case_failed_start_after_create)
+
+    def test_a_cancelled_run_that_leaves_its_gateway_fails(self):
+        # Its box is gone and its gateway volume is named only in what it printed to the terminal:
+        # still its own, so the sample fails and the volume is taken back.
+        self.fake.appear = ([], [("printed-ipc", self.GATEWAY)])
+        with contextlib.redirect_stderr(io.StringIO()):
+            sample = bench.case_cancelled_stop(str(self.coop), str(self.repo), "docker", [])
+        self.assertFalse(sample.ok, sample)
+        self.assertEqual(self.fake.removed, {"printed-ipc"})
 
 
 class OwnershipTest(unittest.TestCase):
