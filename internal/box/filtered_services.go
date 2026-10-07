@@ -106,7 +106,7 @@ func (s *preparedFilteredServices) start(ctx context.Context) error {
 	create := append(append([]string(nil), args...), "up", "--no-start", "--force-recreate")
 	create = append(create, s.selected...)
 	if err := runCompose(s.runtime, io.Discard, &stderr, "up --no-start", create); err != nil {
-		return fmt.Errorf("prepare filtered services at launch: %w", err)
+		return composeFailure("prepare filtered services at launch", err, stderr.String())
 	}
 	upArgs := append(append([]string(nil), args...), "up", "-d", "--wait")
 	upArgs = append(upArgs, s.selected...)
@@ -219,6 +219,15 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 		}
 	}()
 	network := ComposeProjectFor(spec.Repo, owner) + "_filtered"
+	// `coop up` starts these services on the project's plain network, and Compose cannot recreate
+	// such a container onto the filtered one ("container ... is not connected to the network
+	// ..._filtered"). Take the old containers down first: their named volumes, so their data, stay.
+	var composeErr bytes.Buffer
+	remove := append(append([]string(nil), args...), "rm", "--stop", "--force")
+	remove = append(remove, closure...)
+	if err := runCompose(rt, io.Discard, &composeErr, "rm", remove); err != nil {
+		return "", nil, nil, nil, composeFailure("prepare filtered services", err, composeErr.String())
+	}
 	seed, err := filteredServiceOverride(network, closure, netip.Prefix{}, nil)
 	if err != nil {
 		return "", nil, nil, nil, err
@@ -229,11 +238,10 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 	}
 	seedArgs := append(append([]string(nil), args...), "-f", seedPath, "up", "--no-start", "--force-recreate")
 	seedArgs = append(seedArgs, selected...)
-	var composeErr bytes.Buffer
 	err = runCompose(rt, io.Discard, &composeErr, "up --no-start", seedArgs)
 	cleanupSeed()
 	if err != nil {
-		return "", nil, nil, nil, fmt.Errorf("prepare filtered services: %w", err)
+		return "", nil, nil, nil, composeFailure("prepare filtered services", err, composeErr.String())
 	}
 	networks, err := docker.Networks(ctx)
 	if err != nil {
@@ -263,7 +271,7 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 	createArgs = append(createArgs, selected...)
 	if err := runCompose(rt, io.Discard, &composeErr, "up --no-start", createArgs); err != nil {
 		cleanupFinal()
-		return "", nil, nil, nil, fmt.Errorf("prepare filtered services: %w", err)
+		return "", nil, nil, nil, composeFailure("prepare filtered services", err, composeErr.String())
 	}
 	var bindings []networkgateway.ServiceBinding
 	for _, grant := range grants {
@@ -284,6 +292,15 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 		readOnly: spec.RepoReadOnly, override: finalPath, roots: slices.Clone(exposedRoots), selected: selected, names: selected, sections: sections, addresses: addresses,
 		cleanup: func() { cleanupFinal(); cleanupSnapshot() }}
 	return network, bindings, clients, prepared, nil
+}
+
+// composeFailure is a failed Compose step with Compose's own last lines: the exit status alone hides
+// why (a network it could not leave, a port already taken) from the person and from whoever fixes it.
+func composeFailure(what string, err error, stderr string) error {
+	if detail := strings.TrimSpace(lastLines(stderr, 2)); detail != "" {
+		return fmt.Errorf("%s: %w: %s", what, err, detail)
+	}
+	return fmt.Errorf("%s: %w", what, err)
 }
 
 func filteredServiceAddresses(network runtime.DockerNetwork, services []string) (netip.Prefix, map[string]netip.Addr, error) {

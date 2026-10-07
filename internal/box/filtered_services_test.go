@@ -2,6 +2,7 @@ package box
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/netip"
 	"os"
@@ -449,5 +450,68 @@ func TestFilteredServiceStartUsesPrivateOwnershipBesideAnotherBox(t *testing.T) 
 	data, readErr := os.ReadFile(recorder)
 	if readErr != nil || !strings.Contains(string(data), "compose -p "+ComposeProjectFor(repo, owner)) {
 		t.Fatalf("filtered launch did not use its private Compose project: %v\n%s", readErr, data)
+	}
+}
+
+// `coop up` leaves the project's services on its plain network, and Compose cannot recreate a
+// container onto the filtered one, so a filtered launch takes the old containers of exactly the
+// granted services and their dependencies down before it creates its own.
+func TestFilteredLaunchRemovesTheServicesOldContainersFirst(t *testing.T) {
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	body := "services:\n  db:\n    image: app:1\n    depends_on: [cache]\n  cache:\n    image: redis:8\n  admin:\n    image: admin:1\n"
+	if err := os.WriteFile(compose, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	digests, err := composeServiceDigests(compose, repo, false, []string{"db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := strings.Repeat("b", 64)
+	docker := &filteredDaemonFixture{
+		networkMembers:  map[string]netip.Addr{id: netip.MustParseAddr("172.31.0.2")},
+		composeServices: map[string]string{"db": id},
+		extraNetworks: []runtime.DockerNetwork{{Name: ComposeProject(repo) + "_filtered", Internal: true,
+			Subnets: []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.31.0.1")}}},
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	_, _, _, prepared, err := resolveServiceBindings(t.Context(), docker, recorderRuntime(t, recorder), RunSpec{Repo: repo}, compose,
+		&networkstate.Approval{Services: digests}, serviceGrants(servicePolicy(t, "db")), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(prepared.cleanup)
+	data, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed, created := -1, -1
+	var removal string
+	for i, call := range strings.Split(string(data), "\n") {
+		if removed < 0 && strings.Contains(call, " rm --stop --force ") {
+			removed, removal = i, call
+		}
+		if created < 0 && strings.Contains(call, " up --no-start ") {
+			created = i
+		}
+	}
+	if removed < 0 || created < 0 || removed > created {
+		t.Fatalf("the old containers were not removed before the filtered ones were created:\n%s", data)
+	}
+	if !strings.HasSuffix(removal, " rm --stop --force cache db") || strings.Contains(removal, "admin") {
+		t.Fatalf("removal = %q, want exactly the granted service and its dependency", removal)
+	}
+}
+
+func TestComposeFailureNamesComposesOwnReason(t *testing.T) {
+	err := composeFailure("prepare filtered services", errors.New("compose up --no-start exited with status 1"),
+		" Container app-db-1 Stopping\n Container app-db-1 Stopped\nError response from daemon: container 7dff is not connected to the network app_filtered\n")
+	want := "prepare filtered services: compose up --no-start exited with status 1: Container app-db-1 Stopped\n" +
+		"Error response from daemon: container 7dff is not connected to the network app_filtered"
+	if err == nil || err.Error() != want {
+		t.Fatalf("composeFailure = %q, want %q", err, want)
+	}
+	if err := composeFailure("prepare filtered services", errors.New("exited with status 1"), "  \n"); err.Error() != "prepare filtered services: exited with status 1" {
+		t.Fatalf("an empty stderr added noise: %q", err)
 	}
 }
