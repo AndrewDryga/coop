@@ -30,9 +30,11 @@
   const hue = (name) => getComputedStyle(root).getPropertyValue(`--${name}`).trim();
   const ring = { todo: ["0 100", hue("amber")], active: ["28 72", hue("amber")], reopened: ["28 72", hue("cyan")],
     done: ["100 0", hue("success")], waiting: ["100 0", hue("warning")] };
-  // each cell state's colour, read from the stylesheet once, so a cell can light from one to the next
-  const tone = {};
+  // each cell state's colour, read from the stylesheet once, so a cell can light from one to the next;
+  // the cell borrowed for it goes back to its morning state, which a short screen keeps for good
+  const tone = {}, morning = cells[0].dataset.state;
   for (const state of ["none", ...Object.keys(ring)]) { cells[0].dataset.state = state; tone[state] = getComputedStyle(cells[0]).backgroundColor; }
+  cells[0].dataset.state = morning;
 
   const status = (s, i) => i >= (s.queued ?? n) ? "none" : i === s.waiting ? "waiting" : i === s.now ? (s.reopened ? "reopened" : "active") : i < s.done ? "done" : "todo";
 
