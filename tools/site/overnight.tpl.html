@@ -126,8 +126,8 @@
         <li class="feature-row">
           <div class="feature-copy">
             <h3>Project services</h3>
-            <p>Postgres, Redis and the rest of your Compose file run beside the box, each in its own container.</p>
-            <p>A loop gets its own set for the whole run, apart from yours, and removes it when the run ends.</p>
+            <p>Postgres, Redis and anything else in your Compose file run beside the box, each in its own container.</p>
+            <p>They're isolated the same way: a private network with no direct internet, and your secrets hidden.</p>
             <p class="evidence"><strong>6.5 s</strong> <span>to start the box with Postgres and Redis beside it, once their images are pulled, <a href="https://github.com/AndrewDryga/coop/blob/main/tools/services_bench.py">we measured</a>.</span></p>
           </div>
           {{services}}
@@ -135,7 +135,8 @@
         <li class="feature-row">
           <div class="feature-copy">
             <h3>Presets</h3>
-            <p>A preset is a lead model and the roles it calls on: a thinker, a critic, and a fast one for the busywork.</p>
+            <p>A preset is a team of models: one lead, and as many roles as you need. The lead consults them or hands them work.</p>
+            <p><code>coop presets init</code> writes a starter team you can change.</p>
             <p class="evidence"><strong>+18</strong> <span>points on competitive programming problems when Claude reviewed Codex's drafts, against +13 when Codex reviewed its own, <a href="https://arxiv.org/abs/2607.21656">a 2026 study found</a>.</span></p>
           </div>
           {{team}}
@@ -143,7 +144,8 @@
         <li class="feature-row">
           <div class="feature-copy">
             <h3>Forks</h3>
-            <p>Run several loops at once, each in its own copy of your project, and every task is claimed exactly once. Review each fork like a pull request, then merge it.</p>
+            <p>Hand work to agents, each in its own copy of your project, and keep working in yours.</p>
+            <p>Review a fork like a pull request, then merge it. co:op rebases it onto your branch and runs your checks first.</p>
             <p class="evidence"><strong>16</strong> <span>agents in their own copies, each task claimed by one, built a 100,000-line C compiler that builds Linux, <a href="https://www.anthropic.com/engineering/building-c-compiler">Anthropic reported</a>.</span></p>
           </div>
           {{fork}}
