@@ -221,8 +221,10 @@ main:focus { outline: none; }
 .attack > .evidence strong { font-size: 2.25rem; }
 .case-figures { display: none; }
 .js-story .case-figures { display: grid; margin-top: 32px; }
-.js-story .case-figures > .evidence { grid-area: 1 / 1; display: flex; align-items: center; gap: 24px; max-width: 32rem; margin: 0; font-size: 1rem; line-height: 1.5; opacity: 0; }
-.js-story .case-figures > .is-active { opacity: 1; }
+/* The figures share one cell. A faded one must also be hidden: at opacity 0 alone, a later one still
+   took the clicks meant for the visible figure's link, and kept its link in the tab order. */
+.js-story .case-figures > .evidence { grid-area: 1 / 1; display: flex; align-items: center; gap: 24px; max-width: 32rem; margin: 0; font-size: 1rem; line-height: 1.5; opacity: 0; visibility: hidden; }
+.js-story .case-figures > .is-active { opacity: 1; visibility: visible; }
 .js-story .attack > .evidence { display: none; }
 .ticks, .beat { display: none; }
 .ticks span { width: 28px; height: 2px; border-radius: 1px; background: var(--line); }
@@ -550,7 +552,7 @@ main:focus { outline: none; }
   .js-deck .scene { transition: transform 700ms var(--ease); }
   .seat, .seat::before, .seat::after, .org-roles::before, .org-roles::after, .svc-dot { transition: background-color 300ms var(--ease), border-color 300ms var(--ease); }
   .attack.is-active { transition-delay: 150ms; }
-  .case-figures > .evidence { transition: opacity 250ms var(--ease); }
+  .case-figures > .evidence { transition: opacity 250ms var(--ease), visibility 0s linear 250ms; }
   .case-figures > .is-active { transition-delay: 150ms; }
   .ticks span { transition: background-color 300ms var(--ease); }
   .attack-rail::before { transition: scale 500ms var(--ease), height 450ms var(--ease); }

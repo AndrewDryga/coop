@@ -183,6 +183,16 @@ class SiteContentTest(unittest.TestCase):
                     if attrs not in external:
                         self.assertNotIn("target", attrs, attrs["href"])
 
+    def test_faded_case_figures_cannot_take_clicks(self):
+        # The story stacks a chapter's case figures in one cell and fades all but the current one. At
+        # opacity 0 alone, a later figure stayed on top and took the clicks meant for the visible
+        # figure's link, so a faded figure must be hidden as well.
+        css = (SITE / "assets" / "css" / "site.css").read_text(encoding="utf-8")
+        faded = re.search(r"\.js-story \.case-figures > \.evidence \{([^}]*)\}", css).group(1)
+        current = re.search(r"\.js-story \.case-figures > \.is-active \{([^}]*)\}", css).group(1)
+        self.assertIn("visibility: hidden", faded)
+        self.assertIn("visibility: visible", current)
+
     def test_external_link_marking_keeps_rel_and_settles(self):
         page = "\n".join([
             '<a href="https://github.com/x">a</a>',
