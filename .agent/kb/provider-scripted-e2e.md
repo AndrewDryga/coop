@@ -35,9 +35,10 @@ so the group listing never showed them; since then a deadline also lists the run
 left its group (`processTable.departed`), so the next such stall names any peer still alive.
 Separately, under heavy compile load the overflow cases of
 `TestProviderScriptedConsultTimeoutAndOverflowMatrix` outrun their 20 s budget; the run examined was
-a slow drain, not a hang — `bounded_capture` spawns about five processes per 64 KiB block. Size a
-loop-review budget by its launched attempts: about 3.4 s each under gate load, so the six-attempt
-subtests have 40 s (one failed its old 20 s at 20.16 s).
+a slow drain, not a hang — `bounded_capture` spawns about five processes per 64 KiB block. A loop-review
+run's hang guard is `loopReviewBudget`: 10 s per launched attempt, never under `wait.Deadline` (an
+attempt costs about 3-3.5 s under gate load, more beside a second gate; flat 20 s budgets failed at
+20.2 and 20.6 s with nothing hung).
 
 Fork coverage uses disposable parent and fork repositories to cross the external CLI/runtime
 boundary without a second emulator. It proves fresh, resume, and new sessions; all four native
@@ -154,6 +155,8 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-10-07 — every loop-review hang guard comes from loopReviewBudget (attempts x 10 s, at least
+  wait.Deadline).
 - 2026-10-07 — a deadline also lists descendants that left the run's group; recorded the consult
   failure-matrix stall.
 - 2026-10-07 — the two six-attempt loop-review subtests have 40 s, sized by launched attempts.

@@ -89,7 +89,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: signoff, Stage: "signoff", Result: "pass"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 20*time.Second)
+		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		if result.Err != nil || result.ExitCode != 0 ||
 			// The alert renders its reason indented, one line each, so match the lines rather
 			// than the format string that produced them.
@@ -133,7 +133,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: verify, Stage: "verify", Result: "background-drained-review"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 20*time.Second)
+		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		output := result.Stdout + result.Stderr
 		if result.Err != nil || result.ExitCode != 1 ||
 			!strings.Contains(output, "The final checks could not run") ||
@@ -171,7 +171,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: verify, Stage: "verify", Result: "malformed-review-corrected"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 20*time.Second)
+		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		output := result.Stdout + result.Stderr
 		if result.Err != nil || result.ExitCode != 1 ||
 			!strings.Contains(output, "The final checks could not be read") ||
@@ -351,7 +351,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: signoff, Stage: "signoff", Result: "malformed-review-corrected"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 20*time.Second)
+		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stderr, "review verdict invalid") {
 			t.Fatalf("double-malformed signoff = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
@@ -520,7 +520,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: signoff, Stage: "signoff", Result: "complete-extra"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 20*time.Second)
+		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		extraID := taskID + "-extra"
 		if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stderr, "completion rejected for unleased task(s) "+extraID) {
 			t.Fatalf("signoff unowned completion = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
@@ -556,7 +556,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: signoff, Stage: "signoff", Result: "pass-with-host"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 20*time.Second)
+		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		if result.Err != nil || result.ExitCode != 0 ||
 			!strings.Contains(result.Stderr, "Another session completed 1 task during this review.") ||
 			!strings.Contains(result.Stderr, "All tasks passed final review · 2/2 done") {
@@ -601,7 +601,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: verify, Stage: "verify", Result: "pass-with-host"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 20*time.Second)
+		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		if result.Err != nil || result.ExitCode != 0 ||
 			!strings.Contains(result.Stderr, "Another session completed 1 task during this review.") {
 			t.Fatalf("verify concurrent completion = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
@@ -640,7 +640,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: verify, Stage: "verify", Result: "pass-with-subject-and-host"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 20*time.Second)
+		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		output := result.Stdout + result.Stderr
 		if result.Err != nil || result.ExitCode != 0 ||
 			!strings.Contains(output, "The final checks could not run") ||
@@ -678,7 +678,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: signoff, Stage: "signoff", Result: "pass"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 20*time.Second)
+		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		visible := visibleProcessText(result.Stderr)
 		if result.Err != nil || result.ExitCode != 0 || !strings.Contains(visible, limited+" reached its usage limit, continuing with "+fallback) {
 			t.Fatalf("between rotation = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
@@ -709,7 +709,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: signoff, Stage: "signoff", Result: "pass"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 20*time.Second)
+		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		if result.Err != nil || result.ExitCode != 0 {
 			t.Fatalf("between reopen = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
@@ -864,7 +864,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, recloseAttempts))
 		recloseHead := loopProcessGit(t, suite, "rev-parse", "HEAD")
-		reclosed := runLoopReview(t, suite, work, 20*time.Second)
+		reclosed := runLoopReview(t, suite, work, loopReviewBudget(len(recloseAttempts)))
 		if reclosed.Err != nil || reclosed.ExitCode != 0 {
 			t.Fatalf("verification-only re-close after unblock = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
 				reclosed.ExitCode, reclosed.Err, reclosed.Stdout, reclosed.Stderr)
@@ -1041,7 +1041,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: signoff, Stage: "signoff", Result: "pass"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 20*time.Second)
+		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		if result.Err != nil || result.ExitCode != 0 {
 			t.Fatalf("verification-only re-close = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
 				result.ExitCode, result.Err, result.Stdout, result.Stderr)
@@ -1066,7 +1066,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		}
 		reuseAttempts := []loopProcessAttempt{{Target: work, Stage: "work", Result: "verify-only"}}
 		suite.reset(t, loopRecoveryScenario(taskID, reuseAttempts))
-		reuse := runLoopReview(t, suite, work, 20*time.Second)
+		reuse := runLoopReview(t, suite, work, loopReviewBudget(len(reuseAttempts)))
 		if reuse.Err != nil || reuse.ExitCode != 1 || !strings.Contains(reuse.Stderr, "new commit range") {
 			t.Fatalf("reused audit generation = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
 				reuse.ExitCode, reuse.Err, reuse.Stdout, reuse.Stderr)
@@ -1092,7 +1092,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: signoff, Stage: "signoff", Result: "pass"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 20*time.Second)
+		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		if result.Err != nil || result.ExitCode != 0 {
 			t.Fatalf("review finding injection = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
 				result.ExitCode, result.Err, result.Stdout, result.Stderr)
@@ -1123,7 +1123,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: signoff, Stage: "signoff", Result: "pass"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 20*time.Second)
+		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		if result.Err != nil || result.ExitCode != 0 {
 			t.Fatalf("repo-writable host reopen = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
@@ -1161,7 +1161,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: work, Stage: "work", Result: "second-binding"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 20*time.Second)
+		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		if result.Err != nil || result.ExitCode != 1 ||
 			!strings.Contains(result.Stderr, "host audit authority accepts a zero-commit") {
 			t.Fatalf("second binding = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
@@ -1208,7 +1208,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: work, Stage: "work", Result: "complete-forged-archive-binding"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 20*time.Second)
+		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		if result.Err != nil || result.ExitCode != 1 ||
 			!strings.Contains(result.Stderr, "Task completion rejected") ||
 			!strings.Contains(result.Stderr, "Coop cannot safely advance to another task") {
@@ -1244,9 +1244,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: signoff, Stage: "signoff", Result: "reopen"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		// Six launched attempts took 10.5 to 20.2 s under gate load on 2026-10-07 (about 3.4 s each), so a
-		// 20 s guard failed on noise. Like the nine-attempt case's 40 s, it only has to catch a hang.
-		result := runLoopReview(t, suite, work, 40*time.Second)
+		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		if result.Err != nil || result.ExitCode != 3 || !strings.Contains(result.Stderr, "Review limit reached") || !strings.Contains(result.Stderr, "after 3 rounds") {
 			t.Fatalf("signoff cap = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
@@ -1284,8 +1282,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: verify, Stage: "verify", Result: "pass"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		// Six launched attempts, sized like signoff round cap's (this one peaked at 16.5 s under gate load).
-		result := runLoopReview(t, suite, work, 40*time.Second)
+		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stderr, "Verification · 1 task needs more work") ||
 			!strings.Contains(result.Stderr, "Continuing the task queue") || !strings.Contains(result.Stderr, "All tasks passed final review") {
 			t.Fatalf("verify reopen = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
@@ -1321,7 +1318,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: verify, Stage: "verify", Result: "reopen"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 40*time.Second)
+		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		if result.Err != nil || result.ExitCode != 3 || !strings.Contains(result.Stderr, "Review limit reached") ||
 			!strings.Contains(result.Stderr, "Answer it: coop tasks decisions -i") {
 			t.Fatalf("verify reopen cap = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
@@ -1348,7 +1345,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: signoff, Stage: "signoff", Result: "reopen-authentication"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 20*time.Second)
+		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stderr, "authentication failed") {
 			t.Fatalf("failed review reopen = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
@@ -1381,7 +1378,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: healthy, Stage: "signoff", Result: "pass"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 30*time.Second)
+		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		output := result.Stdout + result.Stderr
 		if result.Err != nil || result.ExitCode != 0 ||
 			// The review stage says it is continuing the REVIEW on the next rung, which is what
@@ -1455,7 +1452,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			attempts = append(attempts, loopProcessAttempt{Target: signoff, Stage: "signoff", Result: "output-limit"})
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 30*time.Second)
+		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stderr, "review stage reached the model output limit 6 times") || strings.Contains(result.Stderr, "All tasks passed final review") {
 			t.Fatalf("signoff output cap = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
@@ -1606,6 +1603,15 @@ func runLoopReview(t *testing.T, suite *directProcessSuite, target string, timeo
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	return procharness.Run(ctx, loopReviewCommand(suite, target))
+}
+
+// loopReviewBudget is the hang guard for one scripted loop run. Like every fixture guard it never
+// drops below wait.Deadline, and it grows with the attempts the run launches: one cost about 3-3.5 s
+// under gate load on 2026-10-07 and more with a second gate beside it, so the flat 20 s these runs had
+// failed busy machines at 20.2 and 20.6 s with nothing hung. A refusal that must come before any
+// provider starts keeps its own short deadline.
+func loopReviewBudget(attempts int) time.Duration {
+	return max(wait.Deadline, time.Duration(attempts)*10*time.Second)
 }
 
 func runLoopReviewPTY(t *testing.T, suite *directProcessSuite, target string) procharness.Result {
