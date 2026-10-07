@@ -1152,3 +1152,35 @@ func TestPendingReviewCrashWindowEnrollsConcurrentCompletionBeforeRetiring(t *te
 		t.Fatalf("recovered pending cohort = %+v, %v", cohort, err)
 	}
 }
+
+func TestPendingReviewIgnoresAmbientHooks(t *testing.T) {
+	for _, source := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"} {
+		t.Run(source, func(t *testing.T) {
+			dir := t.TempDir()
+			hooks := filepath.Join(dir, "hooks")
+			if err := os.Mkdir(hooks, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(hooks, "prepare-commit-msg"),
+				[]byte("#!/bin/sh\nprintf '\nCoop-Task: ambient-hook\n' >> \"$1\"\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			cfg := filepath.Join(dir, "gitconfig")
+			if err := os.WriteFile(cfg, []byte("[core]\n hooksPath = "+filepath.ToSlash(hooks)+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+			t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+			t.Setenv("GIT_CONFIG_NOSYSTEM", "0")
+			t.Setenv(source, cfg)
+			repo, _, _, assignment, done, plan := pendingReviewTestCompletion(t)
+			message := gitOut(repo, "log", "-1", "--format=%B")
+			if strings.TrimSpace(message) != "implement review subject\n\nCoop-Task: review-me" {
+				t.Fatalf("fixture commit message changed: %q", message)
+			}
+			if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

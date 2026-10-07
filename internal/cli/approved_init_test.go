@@ -36,8 +36,8 @@ func settledProject(t *testing.T) (*app, func(string) string, string) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-	// gitrepo.New closes both git config doors, so a developer's core.hooksPath or commit
-	// template cannot change what init observes.
+	// Pin the process too: cmdInit runs Git outside gitrepo.New's fixture runner.
+	hermeticGit(t)
 	repo, _ := gitrepo.New(t)
 	a, normalize := initApp(t, repo)
 	dir := a.cfg.AgentProfileDir("codex", a.cfg.DefaultProfileOf("codex"))
@@ -613,4 +613,38 @@ func initializedProject(t *testing.T) string {
 		t.Fatalf("init = (%d, %v)", code, err)
 	}
 	return repo
+}
+
+func TestSettledProjectIgnoresAmbientHooks(t *testing.T) {
+	for _, source := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"} {
+		t.Run(source, func(t *testing.T) {
+			dir := t.TempDir()
+			hooks := filepath.Join(dir, "hooks")
+			if err := os.Mkdir(hooks, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(hooks, "prepare-commit-msg"),
+				[]byte("#!/bin/sh\nprintf '\nCoop-Task: ambient-hook\n' >> \"$1\"\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			cfg := filepath.Join(dir, "gitconfig")
+			if err := os.WriteFile(cfg, []byte("[core]\n hooksPath = "+filepath.ToSlash(hooks)+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+			t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+			t.Setenv("GIT_CONFIG_NOSYSTEM", "0")
+			t.Setenv(source, cfg)
+			a, normalize, _ := settledProject(t)
+			if code, err := a.cmdInit(nil); code != 0 || err != nil {
+				t.Fatalf("first init = (%d, %v)", code, err)
+			}
+			var code int
+			out := captureTerminal(t, func() { code, _ = a.cmdInit(nil) })
+			if code != 0 {
+				t.Fatalf("init = %d:\n%s", code, out)
+			}
+			assertApprovedOutput(t, "13f-reinit", normalize(out))
+		})
+	}
 }

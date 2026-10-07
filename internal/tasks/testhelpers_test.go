@@ -49,6 +49,9 @@ func gitRepo(t *testing.T) (string, func(...string)) { return gitrepo.New(t) }
 // resolves to one commit with no Coop-Task trailer.
 func initRepo(t *testing.T) string {
 	t.Helper()
+	// Later fixture commits and product Git queries inherit the process environment.
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	repo, run := gitRepo(t)
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hi\n"), 0o644); err != nil {
 		t.Fatal(err)
