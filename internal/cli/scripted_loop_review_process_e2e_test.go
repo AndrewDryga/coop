@@ -1244,7 +1244,9 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: signoff, Stage: "signoff", Result: "reopen"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 20*time.Second)
+		// Six launched attempts took 10.5 to 20.2 s under gate load on 2026-10-07 (about 3.4 s each), so a
+		// 20 s guard failed on noise. Like the nine-attempt case's 40 s, it only has to catch a hang.
+		result := runLoopReview(t, suite, work, 40*time.Second)
 		if result.Err != nil || result.ExitCode != 3 || !strings.Contains(result.Stderr, "Review limit reached") || !strings.Contains(result.Stderr, "after 3 rounds") {
 			t.Fatalf("signoff cap = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
@@ -1282,7 +1284,8 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: verify, Stage: "verify", Result: "pass"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 20*time.Second)
+		// Six launched attempts, sized like signoff round cap's (this one peaked at 16.5 s under gate load).
+		result := runLoopReview(t, suite, work, 40*time.Second)
 		if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stderr, "Verification · 1 task needs more work") ||
 			!strings.Contains(result.Stderr, "Continuing the task queue") || !strings.Contains(result.Stderr, "All tasks passed final review") {
 			t.Fatalf("verify reopen = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
