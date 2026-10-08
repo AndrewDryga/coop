@@ -108,6 +108,9 @@ func GitRefCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	full := append(append(append([]string{"-C", dir}, GitHardening...), gitViewHardening...), args...)
 	cmd := exec.CommandContext(ctx, "git", full...)
 	cmd.Env = withoutGitEnv(os.Environ())
+	if err := validateIsolatedGitAccess(dir); err != nil {
+		cmd.Err = err
+	}
 	return cmd
 }
 
@@ -150,6 +153,9 @@ func gitViewRoot() (string, error) {
 }
 
 func openGitView(ctx context.Context, workTree string) (*gitView, error) {
+	if err := validateIsolatedGitAccess(workTree); err != nil {
+		return nil, err
+	}
 	gitDir, commonDir, err := gitDirsOf(workTree)
 	if err != nil {
 		return nil, err

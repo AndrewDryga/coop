@@ -23,6 +23,10 @@ import (
 // capability, and a filtered run that quietly dropped it would enforce a policy
 // the operator never chose.
 func filteredExtraArgs(configured, spec []string) ([]string, error) {
+	return limitedExtraArgs(configured, spec, false)
+}
+
+func limitedExtraArgs(configured, spec []string, isolated bool) ([]string, error) {
 	all := append(append([]string{}, configured...), spec...)
 	var out []string
 	for i := 0; i < len(all); i++ {
@@ -41,6 +45,9 @@ func filteredExtraArgs(configured, spec []string) ([]string, error) {
 			// allowlist (validateMounts) already admits it; only this filter refused it.
 			want = "a KEY=VALUE label"
 		default:
+			if isolated {
+				return nil, fmt.Errorf("an isolated fork takes only mounts, KEY=VALUE environment and labels in runtime extras; %q is not supported — drop it, or use an ordinary fork", name)
+			}
 			return nil, fmt.Errorf("a filtered box takes only bind mounts, KEY=VALUE environment and labels in COOP_RUN_ARGS; %q is none of those — drop it, or run without --egress filtered", name)
 		}
 		value := inline

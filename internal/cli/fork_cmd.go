@@ -89,11 +89,16 @@ MANAGE
   rm <name>      delete a fork
 
 SESSION OPTIONS
+  --isolated      create independent Git storage and require reviewed publication
   -c, --continue  continue the last session (default when reopening)
   --new           start a new conversation in the existing fork
   --fresh         delete the fork and its service data, then recreate it
   -f, --force     with --fresh, stop active work and discard unmerged changes
   -y, --yes       with --fresh, skip confirmation
+
+  Isolation persists on re-entry, loops and ACP; existing ordinary forks are not
+  upgraded in place. Shared-checkout runs and ordinary forks stay the default.
+  Review isolated work with coop fork review; --force cannot bypass its policy.
 
 NETWORK OPTIONS
   --egress <mode>        internet access: filtered, open or none
@@ -216,6 +221,7 @@ type forkArgs struct {
 	agent       string
 	agentSet    bool // an agent was given explicitly (vs defaulted / remembered from the fork)
 	fresh       bool
+	isolated    bool // persisted host-owned boundary; never inferred from workspace configuration
 	force       bool // -f/--force: with --fresh, discard unmerged/dirty work when recreating
 	yes         bool // -y/--yes: with --fresh, skip the destructive confirmation
 	cont        bool // -c/--continue: force-resume the prior session (now the default on re-entry)
@@ -274,6 +280,8 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			fa.agent, fa.agentSet, fa.model, fa.effort, fa.credential = t.Provider, true, t.Model, t.Effort, acct
 		case x == "--fresh":
 			fa.fresh = true
+		case x == "--isolated":
+			fa.isolated = true
 		case x == "--force", x == "-f":
 			fa.force = true
 		case x == "--yes", x == "-y":
@@ -430,6 +438,10 @@ func (a *app) forkCreate(args []string) (int, error) {
 		}
 	}
 	ws := forkspace.Workspace(repo, fa.name)
+	fa.isolated, err = forkBoundaryMode(repo, fa.name, fa.isolated, fa.fresh)
+	if err != nil {
+		return 1, err
+	}
 	existed := pathExists(ws)
 	// Read provider memory before --fresh destroys it, and reject a brand-new provider-less fork
 	// before clone/image work. An explicit target or preset already set agentSet and always wins.
@@ -633,11 +645,11 @@ func (a *app) forkCreate(args []string) (int, error) {
 			}
 		}
 		printForkHeader("Creating fork", fa.name, ws, nil)
-		if _, err := forkspace.Setup(repo, fa.name); err != nil {
+		if err := setupForkBoundary(repo, fa.name, fa.isolated); err != nil {
 			unlock()
 			return -1, err
 		}
-		forkIdentity, err = forkspace.EnsureGenerationLocked(repo, fa.name)
+		forkIdentity, err = bindForkBoundary(repo, fa.name, fa.isolated)
 		if err != nil {
 			unlock()
 			return 1, fmt.Errorf("bind fork %s generation: %w", fa.name, err)
@@ -660,12 +672,12 @@ func (a *app) forkCreate(args []string) (int, error) {
 				return 1, fmt.Errorf("recover missing fork %q before creation: %w", fa.name, recoverErr)
 			}
 			printForkHeader("Creating fork", fa.name, ws, nil)
-			if _, err := forkspace.Setup(repo, fa.name); err != nil {
+			if err := setupForkBoundary(repo, fa.name, fa.isolated); err != nil {
 				unlock()
 				return -1, err
 			}
 		}
-		forkIdentity, err = forkspace.EnsureGenerationLocked(repo, fa.name)
+		forkIdentity, err = bindForkBoundary(repo, fa.name, fa.isolated)
 		if err == nil {
 			err = forkspace.RequireNoWorkspaceReservationLocked(repo, forkIdentity)
 		}

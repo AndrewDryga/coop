@@ -26,6 +26,13 @@ type VolumeExposure struct {
 	// ManagedParents are conservative exposure boundaries for daemon-private
 	// mountpoints that the host owner cannot traverse. Never inferred for binds.
 	ManagedParents []string
+	// PlainLocalVolumes records only inspected default local definitions with
+	// no driver options. This is storage provenance, never content/ownership proof.
+	PlainLocalVolumes map[string]PlainLocalVolume
+}
+
+type PlainLocalVolume struct {
+	Mountpoint, ExposureRoot, CreatedAt string
 }
 
 // ExistingNamedVolumeExposure never creates a volume. A positively observed
@@ -145,6 +152,12 @@ func (r volumeReader) named(ctx context.Context, names []string, prepare bool) (
 			roots[0] = mountpoint
 		}
 		exposure.Sources = append(exposure.Sources, roots...)
+		if len(definition.Options) == 0 {
+			if exposure.PlainLocalVolumes == nil {
+				exposure.PlainLocalVolumes = map[string]PlainLocalVolume{}
+			}
+			exposure.PlainLocalVolumes[name] = PlainLocalVolume{definition.Mountpoint, roots[0], definition.CreatedAt}
+		}
 		if len(roots) > 1 {
 			exposure.BindSources = append(exposure.BindSources, roots[1:]...)
 		}

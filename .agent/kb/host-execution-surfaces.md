@@ -2,11 +2,14 @@
 name: host-execution-surfaces
 description: which changed files count as "runs on your machine", the two tiers, and the two places coop surfaces them (fork review/merge, check-secrets)
 subsystem: hostsurface
-sources: [internal/hostsurface/hostsurface.go, internal/forkctl/merge.go, internal/forkctl/review.go, internal/cli/checksecrets.go]
-updated: 2026-09-11
+sources: [internal/hostsurface/hostsurface.go, internal/forkctl/merge.go, internal/forkctl/review.go, internal/forkctl/isolated_candidate.go, internal/cli/checksecrets.go]
+updated: 2026-10-08
 ---
 
-The box cannot run anything on the host, but a merged tree can: a hook fires on the reviewer's next
+Shared-write boxes can plant metadata that native host tools execute even before a merge,
+including new nested Git repositories. Coop hardens its own host Git, not arbitrary native tools.
+Optional isolated forks add controlled publication ([[isolated-fork-publication]]). A tree can
+carry host execution: a hook fires on the reviewer's next
 `git commit`, `.envrc` on `cd`, `.claude/settings.json` hooks on the next Claude session, an MCP
 config on the next editor start, `.agent/compose.yml` on the next box start, a CI workflow on push,
 the Makefile on `make`. `internal/hostsurface` is the ONE classifier for those paths; every place
@@ -32,6 +35,9 @@ somebody else's sentence. Change the wording here and every consumer follows; th
 only a NEW lifecycle script (`postinstall` etc.), so a version bump does not block a merge.
 A deletion (`D` status) never counts — removing a hook cannot run anything.
 
+Isolated publication scans every incoming immutable tree, not only the final diff. It retains
+these path/content risk checks, denies changed gitlinks/.gitmodules, and offers no force bypass.
+
 The two consumers:
 - `coop fork review` prints all findings; `coop fork merge` blocks on the automatic ones.
 - `coop check-secrets` reports the working tree's changed surfaces (staged, unstaged, untracked)
@@ -44,6 +50,8 @@ the board carries no acknowledgement marker. Old `flags.json` files are inert: n
 writes or deletes them. Review agent work at the fork boundary instead.
 
 ## Changelog
+- 2026-10-08: qualified isolated history scanning and corrected the shared-write host-execution
+  assumption; ordinary policy still allows explicit --force, isolated publication does not.
 - 2026-09-11: task-flags consumer removed with the feature; card is the classifier + its two
   remaining consumers.
 - 2026-09-11: reasons became one-sentence statements ("Runs during Git operations."); check-secrets

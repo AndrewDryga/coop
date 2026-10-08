@@ -184,6 +184,9 @@ func snapshotComposeArgsForStart(ctx context.Context, rt runtime.Runtime, worksp
 }
 
 func snapshotComposeArgsForStartPinned(ctx context.Context, rt runtime.Runtime, workspace, file, owner string, data []byte, allowOutsideData bool, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
+	if err := validateIsolatedServiceVolumes(ctx, rt, workspace, file, owner, data); err != nil {
+		return nil, nil, nil, err
+	}
 	args, cleanup, hidden, err = snapshotComposeArgsForStartData(workspace, file, owner, data, allowOutsideData, exposedRoots...)
 	if err != nil {
 		return nil, nil, nil, err

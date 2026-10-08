@@ -419,6 +419,9 @@ func ReviewServiceStart(workspace, file string, rt runtime.Runtime, terminal boo
 	if err != nil {
 		return nil, fmt.Errorf("inspect Docker before service review: %w", err)
 	}
+	if err := validateIsolatedServiceVolumes(context.Background(), bound, workspace, file, "", data); err != nil {
+		return nil, err
+	}
 	volumes, err := outsideServiceVolumeAccess(data)
 	if err != nil {
 		return nil, err

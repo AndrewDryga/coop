@@ -44,19 +44,20 @@ const (
 )
 
 type preparedFilteredServices struct {
-	runtime   runtime.Runtime
-	repo      string
-	file      string
-	data      []byte
-	owner     string
-	readOnly  bool
-	override  string
-	roots     []string
-	selected  []string
-	names     []string
-	sections  *launchSections
-	addresses map[string]netip.Addr
-	cleanup   func()
+	runtime        runtime.Runtime
+	repo           string
+	file           string
+	data           []byte
+	owner          string
+	isolatedParent string
+	readOnly       bool
+	override       string
+	roots          []string
+	selected       []string
+	names          []string
+	sections       *launchSections
+	addresses      map[string]netip.Addr
+	cleanup        func()
 }
 
 func (s *preparedFilteredServices) check(ctx context.Context, docker filteredDocker, network, project string) error {
@@ -83,6 +84,7 @@ func (s *preparedFilteredServices) start(ctx context.Context) error {
 	if s == nil {
 		return nil
 	}
+	ctx = context.WithValue(ctx, isolatedServiceParentKey{}, s.isolatedParent)
 	if err := refuseRunningServiceWriters(ctx, s.runtime, s.repo); err != nil {
 		return err
 	}
@@ -122,6 +124,7 @@ func (s *preparedFilteredServices) start(ctx context.Context) error {
 
 func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runtime.Runtime, spec RunSpec, composeFile string,
 	approval *networkstate.Approval, grants []egress.Grant, sections *launchSections, exposedRoots []string) (string, []networkgateway.ServiceBinding, []networkgateway.ServiceProxyClient, *preparedFilteredServices, error) {
+	ctx = context.WithValue(ctx, isolatedServiceParentKey{}, spec.IsolatedParent)
 	if sections != nil {
 		sections.servicesPreparing()
 	}
@@ -297,7 +300,8 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 	}
 	keepSnapshot = true
 	prepared := &preparedFilteredServices{runtime: rt, repo: spec.Repo, file: composeFile, data: data, owner: owner,
-		readOnly: spec.RepoReadOnly, override: finalPath, roots: slices.Clone(exposedRoots), selected: selected, names: selected, sections: sections, addresses: addresses,
+		isolatedParent: spec.IsolatedParent,
+		readOnly:       spec.RepoReadOnly, override: finalPath, roots: slices.Clone(exposedRoots), selected: selected, names: selected, sections: sections, addresses: addresses,
 		cleanup: func() { cleanupFinal(); cleanupSnapshot() }}
 	return network, bindings, clients, prepared, nil
 }

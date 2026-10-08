@@ -142,6 +142,11 @@ func (c *Control) ForkReview(args []string) (int, error) {
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s", name)
 	}
+	if identity, isolated, err := isolatedForkIdentity(repo, name); err != nil {
+		return 1, err
+	} else if isolated {
+		return c.forkReviewIsolated(repo, ws, name, identity, stat, tool, open, gate)
+	}
 	gateCommand, err := c.gateFor(repo)
 	if err != nil {
 		return -1, err
@@ -324,6 +329,10 @@ func (c *Control) runReviewCmd(repo, ws, name, ref string) (int, error) {
 // review through its narrative. It shares stdout with the diff that follows, so a redirected
 // review keeps the dossier attached to the patch it describes.
 func (c *Control) forkBrief(repo, _ /* legacy workspace argument */, name, ref string, gateOutcome forkReviewGateOutcome, gateConfigured bool) error {
+	return c.forkBriefAt(repo, repo, gitBranch(repo), name, ref, gateOutcome, gateConfigured)
+}
+
+func (c *Control) forkBriefAt(repo, authority, into, name, ref string, gateOutcome forkReviewGateOutcome, gateConfigured bool) error {
 	p := ui.For(os.Stdout)
 	say := func(format string, a ...any) { fmt.Printf(format+"\n", a...) }
 	ins, del := parseShortstat(gitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
@@ -333,7 +342,6 @@ func (c *Control) forkBrief(repo, _ /* legacy workspace argument */, name, ref s
 		nfiles = len(strings.Split(files, "\n"))
 	}
 	ahead, _ := strconv.Atoi(gitOut(repo, "rev-list", "--count", "HEAD.."+ref))
-	into := gitBranch(repo)
 	say("Changes in fork %s", name)
 	say("  Into: %s", into)
 	say("  %s · %s · +%d −%d", ui.Count(ahead, "commit"), ui.Count(nfiles, "file"), ins, del)
@@ -342,7 +350,7 @@ func (c *Control) forkBrief(repo, _ /* legacy workspace argument */, name, ref s
 		say("Commits")
 		say("%s", indent(log))
 	}
-	why, err := tasks.LatestForkTaskLog(repo, name, 12)
+	why, err := tasks.LatestForkTaskLog(authority, name, 12)
 	if err != nil {
 		return err
 	}

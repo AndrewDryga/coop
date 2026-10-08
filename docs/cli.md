@@ -1239,11 +1239,16 @@ MANAGE
   rm <name>      delete a fork
 
 SESSION OPTIONS
+  --isolated      create independent Git storage and require reviewed publication
   -c, --continue  continue the last session (default when reopening)
   --new           start a new conversation in the existing fork
   --fresh         delete the fork and its service data, then recreate it
   -f, --force     with --fresh, stop active work and discard unmerged changes
   -y, --yes       with --fresh, skip confirmation
+
+  Isolation persists on re-entry, loops and ACP; existing ordinary forks are not
+  upgraded in place. Shared-checkout runs and ordinary forks stay the default.
+  Review isolated work with coop fork review; --force cannot bypass its policy.
 
 NETWORK OPTIONS
   --egress <mode>        internet access: filtered, open or none
@@ -1327,6 +1332,10 @@ OPTIONS
   --gate leaves the fork and your working tree unchanged. It cannot be used
   with --open.
 
+  Isolated forks review private committed custody, even when your parent is dirty.
+  --open and COOP_REVIEW_CMD use a retained private preview, not the model workspace.
+  Preview edits never become merge input. Remove that preview when finished.
+
 EXAMPLES
   coop fork review myfork
   coop fork review myfork --stat --gate
@@ -1348,6 +1357,12 @@ OPTIONS
   Review the diff first. Your working tree must be clean and the fork stopped.
   Coop rebases the commits, runs configured project checks and merges the result.
   --force does not bypass those checks.
+
+  For isolated forks, --force cannot bypass risky-file or nested-Git policy.
+  Publication captures an exact candidate before changing your checkout. If it
+  is interrupted after starting, keep its journal/custody and rerun merge.
+  Partial or externally changed checkouts stop for reconciliation: do not reset,
+  stash, delete an uncertain index.lock, or recreate/remove the fork.
 
   After merging, Coop asks before deleting a clean fork. With --all, one prompt
   covers the batch and removal. Forks with uncommitted work are kept.

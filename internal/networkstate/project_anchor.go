@@ -119,6 +119,28 @@ func parseAnyProjectAnchorBody(body []byte) (string, string, error) {
 	return lines[1], lines[2], nil
 }
 
+// ProjectMarkerInfo proves only the pending or approved filesystem binding,
+// not a network grant. Mount admission uses it to recognize the one intentional
+// shared inode in a project without trusting a marker's name or writable bytes.
+func (s *Store) ProjectMarkerInfo(project string) (os.FileInfo, error) {
+	if err := s.intactAuthority(); err != nil {
+		return nil, err
+	}
+	id, err := s.projectID(project)
+	if err != nil {
+		return nil, err
+	}
+	body, err := fsidentity.ReadMarker(project, ProjectApprovalMarker)
+	if err != nil {
+		return nil, err
+	}
+	markerID, anchor, err := parseAnyProjectAnchorBody(body)
+	if err != nil || markerID != id {
+		return nil, errors.Join(errors.New("network marker is not bound to this project"), err)
+	}
+	return fsidentity.MarkerInfo(s.projectAnchorBinding(project, id, anchor))
+}
+
 func (s *Store) validateProjectAnchor(project string, approval *Approval) error {
 	if approval == nil || approval.Version != networkApprovalVersion || !projectAnchorRE.MatchString(approval.ProjectAnchor) {
 		return errors.New("network approval has no current project anchor")

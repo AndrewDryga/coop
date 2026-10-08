@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Optional isolated-write forks.** `coop fork <name> <target> --isolated` gives native Git its
+  own metadata/objects and fences parent checkout/Git stores from box and service mounts.
+  Review uses exact private committed custody; checks run on a separate clone. Publication
+  rejects unsafe intermediate history without a force bypass and retains a durable candidate
+  and forward-reconciliation journal after interruption. Shared-write defaults stay unchanged.
+
 - **Filtered networking works with Docker 27 workers.** Setup could pass its network checks but
   fail to stop its helpers because Docker 27 calls the stop option `--time`, not `--timeout`.
   Cleanup now uses the portable `-t` flag and still checks that the exact workload stopped.

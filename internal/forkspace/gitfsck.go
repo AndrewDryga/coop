@@ -28,6 +28,9 @@ func RunGitFsck(ctx context.Context, dir string, env []string, stdout, stderr io
 }
 
 func fsckGitView(ctx context.Context, workTree string) (_ *gitView, err error) {
+	if err := validateIsolatedGitAccess(workTree); err != nil {
+		return nil, err
+	}
 	gitDir, commonDir, err := gitDirsOf(workTree)
 	if err != nil {
 		return nil, err

@@ -1293,6 +1293,10 @@ OPTIONS
   --gate leaves the fork and your working tree unchanged. It cannot be used
   with --open.
 
+  Isolated forks review private committed custody, even when your parent is dirty.
+  --open and COOP_REVIEW_CMD use a retained private preview, not the model workspace.
+  Preview edits never become merge input. Remove that preview when finished.
+
 EXAMPLES
   coop fork review myfork
   coop fork review myfork --stat --gate
@@ -1312,6 +1316,12 @@ OPTIONS
   Review the diff first. Your working tree must be clean and the fork stopped.
   Coop rebases the commits, runs configured project checks and merges the result.
   --force does not bypass those checks.
+
+  For isolated forks, --force cannot bypass risky-file or nested-Git policy.
+  Publication captures an exact candidate before changing your checkout. If it
+  is interrupted after starting, keep its journal/custody and rerun merge.
+  Partial or externally changed checkouts stop for reconciliation: do not reset,
+  stash, delete an uncertain index.lock, or recreate/remove the fork.
 
   After merging, Coop asks before deleting a clean fork. With --all, one prompt
   covers the batch and removal. Forks with uncommitted work are kept.

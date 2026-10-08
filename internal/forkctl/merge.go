@@ -91,8 +91,12 @@ func gitBlobSize(repo, ref, path string) int64 {
 // automatically on `npm install`, so a fork can plant one to execute host code post-merge — or ""
 // when the change touches no such script (an ordinary dependency bump isn't flagged).
 func addedLifecycleScript(repo, ref, path, newContent string) string {
+	return changedLifecycleScript(gitOut(repo, "show", "HEAD:"+path), newContent)
+}
+
+func changedLifecycleScript(oldContent, newContent string) string {
 	newS := pkgScripts(newContent)
-	oldS := pkgScripts(gitOut(repo, "show", "HEAD:"+path)) // "" → nil when the file is new
+	oldS := pkgScripts(oldContent)
 	for _, k := range []string{"preinstall", "install", "postinstall", "prepare"} {
 		if v := newS[k]; v != "" && v != oldS[k] {
 			return k
@@ -261,6 +265,10 @@ func (c *Control) ReviewControllerJob(ctx context.Context, request sessionsvc.Re
 // against treeDir (the rebased candidate), so a red gate never touches the parent. A non-zero gate
 // is a normal red result; an error means the box never started.
 func (c *Control) runGateMode(gateRepo, treeDir, img string, review bool) (bool, error) {
+	return c.runGateBoundary(gateRepo, treeDir, img, review, "")
+}
+
+func (c *Control) runGateBoundary(gateRepo, treeDir, img string, review bool, isolatedParent string) (bool, error) {
 	gate, err := c.gateFor(gateRepo)
 	if err != nil {
 		return false, err
@@ -268,14 +276,26 @@ func (c *Control) runGateMode(gateRepo, treeDir, img string, review bool) (bool,
 	// Live progress: the checks are about to run against a temporary copy rebased onto the parent
 	// branch, so say which tree is being checked and with what, before anything can pass or fail.
 	if review {
-		ui.Note("Checking the changes after rebasing onto %s", gitBranch(gateRepo))
+		branch := "the captured parent"
+		if isolatedParent == "" {
+			branch = gitBranch(gateRepo)
+		}
+		ui.Note("Checking the changes after rebasing onto %s", branch)
 	} else {
 		ui.Note("Running project checks")
 	}
 	ui.Note("  Running: %s", strings.Join(gate, " "))
 	reviewBase := strings.TrimSpace(gitOut(treeDir, "rev-parse", "--verify", "refs/coop/session-parent^{commit}"))
 	if reviewBase == "" {
-		reviewBase = strings.TrimSpace(gitOut(gateRepo, "rev-parse", "--verify", "HEAD^{commit}"))
+		if isolatedParent == "" {
+			reviewBase = strings.TrimSpace(gitOut(gateRepo, "rev-parse", "--verify", "HEAD^{commit}"))
+		} else {
+			base, readErr := forkspace.ObserveGit(context.Background(), gateRepo, "rev-parse", "--verify", "HEAD^{commit}")
+			if readErr != nil {
+				return false, readErr
+			}
+			reviewBase = strings.TrimSpace(string(base))
+		}
 	}
 	if reviewBase == "" {
 		return false, errors.New("resolve trusted review base commit")
@@ -286,11 +306,11 @@ func (c *Control) runGateMode(gateRepo, treeDir, img string, review bool) (bool,
 	}
 	spec := box.RunSpec{
 		Image: img, Repo: treeDir, Cmd: gate, Batch: true,
-		PolicyRepo: gateRepo,
-		Review:     review,
-		Serve:      review,
-		ExtraArgs:  []string{"-e", "COOP_REVIEW_BASE=" + reviewBase},
-		Homes:      c.cfg.Homes, Network: c.cfg.Network, Cache: c.cfg.Cache,
+		PolicyRepo: gateRepo, IsolatedParent: isolatedParent,
+		Review:    review,
+		Serve:     review,
+		ExtraArgs: []string{"-e", "COOP_REVIEW_BASE=" + reviewBase},
+		Homes:     c.cfg.Homes, Network: c.cfg.Network, Cache: c.cfg.Cache,
 		ActivityRepo: gateRepo, ActivityKind: activityKind,
 	}
 	capture, err := box.AdmitNetwork(c.cfg, c.rt, spec, box.NetworkAdmission{})
@@ -404,6 +424,7 @@ type landedFork struct {
 	identity      forkspace.Identity
 	hasGeneration bool
 	head          string
+	publishedHead string // isolated land rewrites private history, never the model source
 }
 
 func (f *landedFork) close() {
@@ -431,14 +452,27 @@ func (f *landedFork) validateLand(repo, name string) error {
 	if exists != f.hasGeneration || identity != f.identity {
 		return errors.New("landed fork generation changed before removal")
 	}
-	head, err := gitOutErr(ws, "rev-parse", "--verify", "HEAD^{commit}")
+	var head string
+	if f.publishedHead != "" {
+		head, err = observed(ws, "rev-parse", "--verify", "HEAD^{commit}")
+	} else {
+		head, err = gitOutErr(ws, "rev-parse", "--verify", "HEAD^{commit}")
+	}
 	if err != nil {
 		return fmt.Errorf("inspect landed fork HEAD: %w", err)
 	}
 	if head != f.head {
 		return errors.New("landed fork HEAD changed before removal")
 	}
-	if _, err := gitOutErr(repo, "merge-base", "--is-ancestor", f.head, "HEAD"); err != nil {
+	publication := f.head
+	if f.publishedHead != "" {
+		publication = f.publishedHead
+		if _, err := observed(repo, "merge-base", "--is-ancestor", publication, "HEAD"); err != nil {
+			return fmt.Errorf("cannot confirm isolated publication in the parent: %w", err)
+		}
+		return nil
+	}
+	if _, err := gitOutErr(repo, "merge-base", "--is-ancestor", publication, "HEAD"); err != nil {
 		return fmt.Errorf("cannot confirm the parent contains the landed commit: %w", err)
 	}
 	return nil
@@ -447,6 +481,14 @@ func (f *landedFork) validateLand(repo, name string) error {
 func (f *landedFork) validateRemoval(repo, name string) error {
 	if err := f.validateLand(repo, name); err != nil {
 		return err
+	}
+	if f.publishedHead != "" {
+		ws := forkspace.Workspace(repo, name)
+		if _, err := captureIsolatedCheckout(ws, true, 0); err != nil {
+			return err
+		}
+		remaining := 1024
+		return isolatedSourceUntracked(ws, 0, &remaining)
 	}
 	return landedWorktreeClean(forkspace.Workspace(repo, name))
 }
@@ -563,7 +605,7 @@ func destroyLandedFork(rt runtime.Runtime, repo, name string, approval *landedFo
 		return err
 	}
 	if hasGeneration {
-		if _, pending, err := readLandIntent(repo, identity); err != nil {
+		if pending, err := ForkHasPendingLand(repo, identity); err != nil {
 			return err
 		} else if pending {
 			return errors.New("land finalization is still pending; rerun merge before destroying the fork")
@@ -615,6 +657,11 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 	defer unlock()
 	if !pathExists(ws) {
 		return mergeOutcome{}, fmt.Errorf("no such fork: %s", name)
+	}
+	if identity, isolated, err := isolatedForkIdentity(repo, name); err != nil {
+		return mergeOutcome{}, err
+	} else if isolated {
+		return c.mergeIsolatedLocked(repo, img, name, identity, force, skipEmpty, nil)
 	}
 	pin, info, err := forkspace.Pin(ws)
 	if err != nil {
@@ -941,6 +988,19 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 		}
 	} else if err := CheckWorkerStateFormat(repo, name); err != nil {
 		return 1, err
+	}
+	if all {
+		for _, n := range names {
+			if _, isolated, err := isolatedForkIdentity(repo, n); err != nil {
+				return 1, err
+			} else if isolated {
+				return c.forkMergeIsolatedBatch(repo, names, force, yes)
+			}
+		}
+	} else if identity, isolated, err := isolatedForkIdentity(repo, name); err != nil {
+		return 1, err
+	} else if isolated {
+		return c.forkMergeIsolatedCommand(repo, name, identity, force, yes, false)
 	}
 	if gitDirty(repo) {
 		return 1, errors.New("your working tree has uncommitted changes — commit or stash before merging")

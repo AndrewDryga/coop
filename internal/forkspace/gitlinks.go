@@ -17,12 +17,11 @@ func Gitlinks(ctx context.Context, repository, commit string) (map[string]string
 	if !validPinnedCommit(commit) {
 		return nil, errors.New("invalid gitlink tree commit")
 	}
-	command, err := GitCommandWithEnv(ctx, repository, []string{
-		"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_ALLOW_PROTOCOL=",
-	}, "ls-tree", "-r", "-z", commit)
+	command, cleanup, err := observationGitCommand(ctx, repository, "ls-tree", "-r", "-z", commit)
 	if err != nil {
 		return nil, err
 	}
+	defer cleanup()
 	output, err := command.StdoutPipe()
 	if err != nil {
 		return nil, err

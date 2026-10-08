@@ -12,6 +12,12 @@ OPTIONS
   Coop rebases the commits, runs configured project checks and merges the result.
   --force does not bypass those checks.
 
+  For isolated forks, --force cannot bypass risky-file or nested-Git policy.
+  Publication captures an exact candidate before changing your checkout. If it
+  is interrupted after starting, keep its journal/custody and rerun merge.
+  Partial or externally changed checkouts stop for reconciliation: do not reset,
+  stash, delete an uncertain index.lock, or recreate/remove the fork.
+
   After merging, Coop asks before deleting a clean fork. With --all, one prompt
   covers the batch and removal. Forks with uncommitted work are kept.
   Removing a fork also removes its service containers and Docker volumes.

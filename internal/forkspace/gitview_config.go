@@ -123,6 +123,65 @@ func listGitConfig(ctx context.Context, data []byte, scratchDir string) ([][2]st
 	return entries, nil
 }
 
+// Checkout views need the host's effective built-in conversion settings, but
+// must not acquire its executable drivers or external attribute files. Project
+// only these data values, in system/global/local precedence, into the private view.
+func includeTrustedCheckoutConfig(ctx context.Context, view *gitView) error {
+	var projected bytes.Buffer
+	for _, scope := range []string{"system", "global"} {
+		if scope == "system" {
+			switch strings.ToLower(os.Getenv("GIT_CONFIG_NOSYSTEM")) {
+			case "", "0", "false", "no", "off":
+			case "1", "true", "yes", "on":
+				continue
+			default:
+				return errors.New("invalid GIT_CONFIG_NOSYSTEM for native checkout conversion")
+			}
+		}
+		command := exec.CommandContext(ctx, "git", "-C", view.workTree, "config", "--"+scope,
+			"--includes", "--null", "--type=bool-or-str", "--get-regexp", `^core\.(autocrlf|eol|safecrlf)$`)
+		// Retain only the trusted host config locations, never repository locators
+		// or command-line config injected through ambient GIT_CONFIG_* variables.
+		for _, entry := range os.Environ() {
+			if !strings.HasPrefix(entry, "GIT_") || strings.HasPrefix(entry, "GIT_CONFIG_GLOBAL=") || strings.HasPrefix(entry, "GIT_CONFIG_SYSTEM=") {
+				command.Env = append(command.Env, entry)
+			}
+		}
+		output, err := command.Output()
+		if ctx.Err() != nil {
+			return errors.Join(ctx.Err(), err)
+		}
+		if err != nil {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+				continue // no matching settings, including an absent default file
+			}
+			return fmt.Errorf("read trusted %s checkout settings: %w", scope, err)
+		}
+		for _, record := range bytes.Split(output, []byte{0}) {
+			if len(record) == 0 {
+				continue
+			}
+			key, value, ok := bytes.Cut(record, []byte{'\n'})
+			name := strings.TrimPrefix(strings.ToLower(string(key)), "core.")
+			setting := strings.ToLower(string(value))
+			valid := name == "autocrlf" && (setting == "true" || setting == "false" || setting == "input") ||
+				name == "eol" && (setting == "lf" || setting == "crlf" || setting == "native") ||
+				name == "safecrlf" && (setting == "true" || setting == "false" || setting == "warn")
+			if !ok || !valid {
+				return fmt.Errorf("invalid trusted %s native checkout setting", scope)
+			}
+			fmt.Fprintf(&projected, "[core]\n\t%s = %s\n", name, quoteGitConfigValue(setting))
+		}
+	}
+	path := filepath.Join(view.dir, "config")
+	local, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(projected.Bytes(), local...), 0o600)
+}
+
 // splitGitConfigKey renders "section.subsection.name" as the INI header git expects
 // (`[section "subsection"]`) plus the variable name; the subsection keeps its case.
 func splitGitConfigKey(key string) (header, name string) {

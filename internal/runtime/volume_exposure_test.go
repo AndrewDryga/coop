@@ -128,6 +128,24 @@ func TestNamedVolumeExposurePreservesColdAndWarmLocalVolumes(t *testing.T) {
 	}
 }
 
+func TestNamedVolumePlainLocalMetadataDoesNotClaimSafeContents(t *testing.T) {
+	for _, options := range []map[string]string{nil, {"type": "tmpfs", "device": "tmpfs"}, {"type": "none", "device": "/outside/data", "o": "bind"}} {
+		definition := volumeDefinition{Name: "coop-cache", Driver: "local", Scope: "local", Mountpoint: "/runtime/cache", CreatedAt: "2026-10-08T00:00:00Z", Options: options}
+		rt, _ := volumeExposureRuntime(t, volumeExposureFixture{Kind: "docker", Present: true, Definition: definition})
+		exposure, err := rt.ExistingNamedVolumeExposure(t.Context(), []string{definition.Name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		proof, plain := exposure.PlainLocalVolumes[definition.Name]
+		if plain != (len(options) == 0) {
+			t.Fatalf("custom driver options received default-local provenance: %+v", exposure)
+		}
+		if plain && (proof.Mountpoint != definition.Mountpoint || proof.ExposureRoot != definition.Mountpoint || proof.CreatedAt != definition.CreatedAt) {
+			t.Fatal("inspected definition identity not preserved", proof)
+		}
+	}
+}
+
 func TestExistingNamedVolumeExposureNeverCreates(t *testing.T) {
 	for _, test := range []struct {
 		name, mode    string

@@ -366,6 +366,10 @@ func TestMergeOneDoesNotInferTaskCompletionFromTrailer(t *testing.T) {
 }
 
 func prepareForkTaskCandidate(t *testing.T, name string) (string, string, string, forkspace.Identity, *Control) {
+	return prepareForkTaskCandidateMode(t, name, false, true)
+}
+
+func prepareForkTaskCandidateMode(t *testing.T, name string, isolated, makeCommit bool) (string, string, string, forkspace.Identity, *Control) {
 	t.Helper()
 	repo := initRepo(t)
 	root := filepath.Join(repo, tasks.TasksRoot)
@@ -379,7 +383,17 @@ func prepareForkTaskCandidate(t *testing.T, name string) (string, string, string
 	if err := os.WriteFile(filepath.Join(taskDir, "task.md"), []byte("# Canonical task\n- [x] required checks passed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ws, err := forkspace.Setup(repo, name)
+	var ws string
+	var err error
+	if isolated {
+		base, observeErr := observed(repo, "rev-parse", "HEAD")
+		if observeErr != nil {
+			t.Fatal(observeErr)
+		}
+		ws, err = forkspace.SetupIsolatedContext(t.Context(), repo, name, base)
+	} else {
+		ws, err = forkspace.Setup(repo, name)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +401,12 @@ func prepareForkTaskCandidate(t *testing.T, name string) (string, string, string
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := forkspace.EnsureGenerationLocked(repo, name)
+	var identity forkspace.Identity
+	if isolated {
+		identity, err = forkspace.EnsureIsolatedGenerationLocked(repo, name)
+	} else {
+		identity, err = forkspace.EnsureGenerationLocked(repo, name)
+	}
 	unlock()
 	if err != nil {
 		t.Fatal(err)
@@ -403,11 +422,13 @@ func prepareForkTaskCandidate(t *testing.T, name string) (string, string, string
 	if err := assignment.Lease.Release(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("landed\n"), 0o644); err != nil {
-		t.Fatal(err)
+	if makeCommit {
+		if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("landed\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, ws, "add", "feature.txt")
+		git(t, ws, "commit", "-qm", "implement canonical task\n\nCoop-Task: canonical-task")
 	}
-	git(t, ws, "add", "feature.txt")
-	git(t, ws, "commit", "-qm", "implement canonical task\n\nCoop-Task: canonical-task")
 	projected, ok := mustCurrentTask(t, assignment.Owner.Projection, "canonical-task")
 	if !ok {
 		t.Fatal("projected task missing")

@@ -10,6 +10,12 @@ services](https://coop.dryga.com/docs.html#toolchain).
 
 ## Hiding secrets
 
+Normal writable runs are trusted shared-checkout collaboration: the agent can alter Git/editor
+metadata that your native host tools later execute, including metadata in a new child repository.
+Coop hardens its own host Git calls, not arbitrary commands you run. Use
+[`coop fork <name> <target> --isolated`](forks.md#isolated-write-forks) for independent Git storage
+and controlled committed publication, or `--readonly` when the work needs no repository writes.
+
 co:op shadows secret-looking files and directories, such as `.env`, `*.tfvars`, `*.pem`,
 `secrets/` and `.ssh`:
 

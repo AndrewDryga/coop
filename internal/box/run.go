@@ -79,6 +79,9 @@ type RunSpec struct {
 	Mode agents.ExecutionMode
 	// PolicyRepo is the trusted source for .agent/project.yaml box policy. Empty uses Repo.
 	PolicyRepo string
+	// IsolatedParent carries the trusted publication boundary into disposable gate
+	// clones, which have no persistent fork generation. Remote/model input cannot set it.
+	IsolatedParent string `json:"-"`
 	// ControllerJob suppresses repository-authored box settings for a Ryker-owned session.
 	// The host child sets this only from the daemon's session environment, never from a box.
 	ControllerJob bool `json:"-"`
@@ -556,6 +559,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// loop's second Ctrl-C landing between iterations) must never begin projecting a box it would
 	// only have to tear down.
 	if err := ctxStep(spec.Ctx, "filesystem projection"); err != nil {
+		return -1, err
+	}
+	if err := admitIsolatedOptions(cfg, spec); err != nil {
 		return -1, err
 	}
 	if id := spec.ExpectedImageID; id != "" {
@@ -1477,6 +1483,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			if lockErr != nil {
 				return finish(-1, fmt.Errorf("wait for a safe service launch: %w", lockErr))
 			}
+			serviceCtx = context.WithValue(serviceCtx, isolatedServiceParentKey{}, spec.IsolatedParent)
 			started, err := startServicesFileContext(serviceCtx, rt, spec.Repo, cf, serviceOwner, serviceNetwork, io.Discard, &composeStderr, spec.RepoReadOnly, !sections.loop, nil, nil, privateRoots...)
 			unlock()
 			sections.serviceSecrets(started.hidden, cf)

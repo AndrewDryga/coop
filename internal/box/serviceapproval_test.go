@@ -54,8 +54,13 @@ case "$*" in
 	if [ -n "$COOP_TEST_VOLUME_STATE" ] && [ ! -f "$COOP_TEST_VOLUME_STATE" ]; then exit 1; fi
     options='{}'
     if [ "$COOP_TEST_VOLUME_OPTS" = bind ]; then options='{"type":"none","o":"bind","device":"/"}'; fi
-    printf '{"Name":"%s","Driver":"local","Scope":"local","Mountpoint":"/var/lib/docker/volumes/%s/_data","CreatedAt":"%s","Options":%s}\n' "$last" "$last" "${COOP_TEST_VOLUME_CREATED:-2026-01-01T00:00:00Z}" "$options" ;;
-	*"volume ls"*) if [ -z "$COOP_TEST_VOLUME_STATE" ] || [ -f "$COOP_TEST_VOLUME_STATE" ]; then printf '"%s"\n' "$last"; fi ;;
+    mountpoint="${COOP_TEST_VOLUME_MOUNTPOINT:-/var/lib/docker/volumes/$last/_data}"
+    printf '{"Name":"%s","Driver":"local","Scope":"local","Mountpoint":"%s","CreatedAt":"%s","Options":%s}\n' "$last" "$mountpoint" "${COOP_TEST_VOLUME_CREATED:-2026-01-01T00:00:00Z}" "$options" ;;
+	*"volume ls"*)
+    for item; do case "$item" in name=*) selected="${item#name=}" ;; esac; done
+    if [ -z "$COOP_TEST_VOLUME_STATE" ] || [ -f "$COOP_TEST_VOLUME_STATE" ]; then
+      case "$*" in *"--quiet"*) printf '%s\n' "$selected" ;; *) printf '"%s"\n' "$selected" ;; esac
+    fi ;;
 	*"volume create"*) if [ -n "$COOP_TEST_VOLUME_STATE" ]; then printf '%s\n' "$last" > "$COOP_TEST_VOLUME_STATE"; fi; echo "$last" ;;
   *"config --services"*) echo db ;;
 esac

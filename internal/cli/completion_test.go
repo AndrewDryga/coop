@@ -47,6 +47,26 @@ func TestEvalCompletionFollowsTheWorkflow(t *testing.T) {
 	}
 }
 
+func TestIsolatedForkCompletionFollowsCreateParser(t *testing.T) {
+	a := &app{cfg: &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir()}}
+	for _, words := range [][]string{{"fork", "work"}, {"fork", "work", "claude"}, {"fork", "work", "--loop", "claude"}} {
+		if got := a.completionCandidates(words); !hasCand(got, "--isolated") {
+			t.Errorf("%v missing isolated option: %v", words, got)
+		}
+	}
+	for _, words := range [][]string{{"fork", "work", "--isolated"}, {"fork", "work", "--loop", "--isolated"}} {
+		got := a.completionCandidates(words)
+		if !hasCand(got, "claude") || hasCand(got, "--isolated") || hasCand(got, "acp") {
+			t.Errorf("%v invalid target/option candidates: %v", words, got)
+		}
+	}
+	for _, words := range [][]string{{"fork", "work", "claude", "--isolated"}, {"fork", "work", "acp", "claude"}, {"fork", "merge", "work"}, {"fork", "work", "--loop", "--tasks"}} {
+		if got := a.completionCandidates(words); hasCand(got, "--isolated") {
+			t.Errorf("%v offered duplicate or invalid isolated option: %v", words, got)
+		}
+	}
+}
+
 func hasCand(cands []string, want string) bool {
 	return candCount(cands, want) > 0
 }

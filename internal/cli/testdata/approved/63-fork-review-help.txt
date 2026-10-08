@@ -14,6 +14,10 @@ OPTIONS
   --gate leaves the fork and your working tree unchanged. It cannot be used
   with --open.
 
+  Isolated forks review private committed custody, even when your parent is dirty.
+  --open and COOP_REVIEW_CMD use a retained private preview, not the model workspace.
+  Preview edits never become merge input. Remove that preview when finished.
+
 EXAMPLES
   coop fork review myfork
   coop fork review myfork --stat --gate

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,64 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
+
+type lfsStagingEditReader struct {
+	reader io.Reader
+	edit   func()
+}
+
+func (r *lfsStagingEditReader) Read(p []byte) (int, error) {
+	if r.edit != nil {
+		r.edit()
+		r.edit = nil
+	}
+	return r.reader.Read(p)
+}
+
+func TestLFSPublicationPreservesEditsDuringPayloadStaging(t *testing.T) {
+	repository, commit, _ := lfsFixture(t)
+	root, err := os.OpenRoot(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	var pointer LFSPointer
+	if err := VisitLFSPointers(t.Context(), repository, commit, func(p LFSPointer) error {
+		if p.Path == "nested/large.bin" {
+			pointer = p
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := root.Lstat(pointer.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := root.Open(lfsObjectPath(pointer.OID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	ownerBytes := []byte("intervening owner work\n")
+	reader := &lfsStagingEditReader{reader: file, edit: func() {
+		if err := os.WriteFile(filepath.Join(repository, pointer.Path), ownerBytes, pointer.Mode); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	if err := writeLFSFile(t.Context(), root, pointer.Path, pointer.Mode, reader, pointer,
+		func() error { return requireLFSPointer(root, pointer, info) }); err == nil {
+		t.Fatal("staged payload overwrote intervening owner work")
+	}
+	got, err := os.ReadFile(filepath.Join(repository, pointer.Path))
+	if err != nil || !bytes.Equal(got, ownerBytes) {
+		t.Fatal("owner bytes lost", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(repository, "nested"))
+	if err != nil || len(entries) != 1 {
+		t.Fatal("failed staging did not clean its temporary payload", err)
+	}
+}
 
 func lfsFixture(t *testing.T) (string, string, map[string][]byte) {
 	t.Helper()

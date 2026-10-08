@@ -15,7 +15,7 @@ func Setup(repo, name string) (string, error) {
 }
 
 func SetupContext(ctx context.Context, repo, name string) (ws string, err error) {
-	return setupContext(ctx, repo, name, "")
+	return setupContext(ctx, repo, name, "", false)
 }
 
 // SetupPinnedContext creates a session workspace at an already-validated commit without using
@@ -24,10 +24,22 @@ func SetupPinnedContext(ctx context.Context, repo, name, commit string) (ws stri
 	if !validPinnedCommit(commit) {
 		return "", errors.New("invalid pinned commit")
 	}
-	return setupContext(ctx, repo, name, commit)
+	return setupContext(ctx, repo, name, commit, false)
 }
 
-func setupContext(ctx context.Context, repo, name, commit string) (ws string, err error) {
+// SetupIsolatedContext additionally materializes independently owned unchanged
+// submodules and LFS payloads, without running checkout drivers from host config.
+func SetupIsolatedContext(ctx context.Context, repo, name, commit string) (string, error) {
+	if err := QualifyDefaultLFSStorage(ctx, repo); err != nil {
+		return "", err
+	}
+	if !validPinnedCommit(commit) {
+		return "", errors.New("invalid isolated commit")
+	}
+	return setupContext(ctx, repo, name, commit, true)
+}
+
+func setupContext(ctx context.Context, repo, name, commit string, isolated bool) (ws string, err error) {
 	ws = Workspace(repo, name)
 	// Production callers hold the fork lifecycle lock. Refuse before cloning so an interrupted
 	// session discard cannot be hidden by a new, unanchored workspace at the same public name.
@@ -67,7 +79,9 @@ func setupContext(ctx context.Context, repo, name, commit string) (ws string, er
 		return ws, fmt.Errorf("confirm fork workspace creation: %w", err)
 	}
 	var checkoutErr error
-	if commit == "" {
+	if isolated {
+		checkoutErr = CheckoutIndependent(ctx, ws, commit, name)
+	} else if commit == "" {
 		checkoutErr = gitCheckoutNewBranchContext(ctx, ws, name)
 	} else if checkoutErr = GitRefCommand(ctx, ws, "update-ref", "refs/heads/"+name, commit).Run(); checkoutErr == nil {
 		checkoutErr = GitSwitchBranch(ctx, ws, name)
@@ -87,6 +101,17 @@ func setupContext(ctx context.Context, repo, name, commit string) (ws string, er
 	}
 	if err := propagateGitEnvContext(ctx, repo, ws); err != nil {
 		return ws, err
+	}
+	if isolated {
+		if checkoutErr != nil {
+			return ws, fmt.Errorf("isolated checkout: %w", checkoutErr)
+		}
+		if err := MaterializeIndependentTree(ctx, repo, ws, commit, commit); err != nil {
+			return ws, fmt.Errorf("isolated dependencies: %w", err)
+		}
+		if err := ValidateIndependentGit(ws); err != nil {
+			return ws, err
+		}
 	}
 	if err := Exclude(ws, ".coop/"); err != nil { // trusted setup only; never re-open agent-writable .git metadata later
 		return ws, fmt.Errorf("exclude fork bookkeeping: %w", err)
@@ -192,7 +217,20 @@ func appendFile(path string, data []byte) error {
 // teardown is driven by the fork's own compose file, so once the workspace is deleted there is
 // nothing left to drive it.
 func Destroy(repo, name string) error {
-	_ = GitRefCommand(context.Background(), repo, "branch", "-q", "-D", "review/"+name).Run() // a packed ref: the real git dir, never the view
+	identity, exists, err := ReadGeneration(repo, name)
+	if err != nil {
+		return err
+	}
+	isolated := false
+	if exists {
+		isolated, err = IsolatedGeneration(repo, identity)
+		if err != nil {
+			return err
+		}
+	}
+	if !isolated {
+		_ = GitRefCommand(context.Background(), repo, "branch", "-q", "-D", "review/"+name).Run() // ordinary forks own this parent ref; isolated forks do not
+	}
 	if err := os.RemoveAll(Workspace(repo, name)); err != nil {
 		return err
 	}

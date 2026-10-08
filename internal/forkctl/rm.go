@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
@@ -31,10 +33,15 @@ func RecoverOrphanedGenerationLocked(repo, name string, force bool) (bool, error
 	if forkspace.NeedsStop(repo, name) {
 		return false, errors.New("orphaned fork generation still has worker cleanup state")
 	}
-	if gitOut(repo, "show-ref", "--hash", "refs/heads/review/"+name) != "" {
+	_, refErr := observed(repo, "show-ref", "--verify", "--quiet", "refs/heads/review/"+name)
+	if refErr == nil {
 		return false, errors.New("missing fork workspace still has a review branch; recover or inspect that Git work before removing its generation")
 	}
-	if _, pending, err := readLandIntent(repo, identity); err != nil {
+	var exitErr *exec.ExitError
+	if !errors.As(refErr, &exitErr) || exitErr.ExitCode() != 1 {
+		return false, fmt.Errorf("inspect missing fork review ref: %w", refErr)
+	}
+	if pending, err := ForkHasPendingLand(repo, identity); err != nil {
 		return false, err
 	} else if pending {
 		return false, errors.New("missing fork workspace has an interrupted land journal")
@@ -193,11 +200,25 @@ func PrintForkDestroyPreview(heading, path string, p ForkDestroyPreview) {
 // ForkUnmerged reports whether the fork's branch tip is NOT yet an ancestor of the
 // parent repo's HEAD (unknown-to-parent counts as unmerged, which is the safe side).
 func ForkUnmerged(repo, ws string) bool {
-	sha := gitOut(ws, "rev-parse", "HEAD")
-	if sha == "" {
-		return false
+	identity, present, err := forkspace.ReadGeneration(repo, filepath.Base(ws))
+	if err != nil {
+		return true
 	}
-	return gitRun(repo, "merge-base", "--is-ancestor", sha, "HEAD") != nil
+	if present {
+		isolated, err := forkspace.IsolatedGeneration(repo, identity)
+		if err != nil {
+			return true
+		}
+		if isolated {
+			return !isolatedSourcePublished(repo, ws, identity)
+		}
+	}
+	sha, err := observed(ws, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil || sha == "" {
+		return true
+	}
+	_, err = observed(repo, "merge-base", "--is-ancestor", sha, "HEAD")
+	return err != nil
 }
 
 func (c *Control) ForkRm(args []string) (int, error) {
@@ -345,7 +366,7 @@ func (c *Control) ForkRm(args []string) (int, error) {
 		if !hasGeneration || identity != initialIdentity {
 			return 1, fmt.Errorf("fork %q generation changed while awaiting confirmation", name)
 		}
-		if _, pendingLand, err := readLandIntent(repo, identity); err != nil {
+		if pendingLand, err := ForkHasPendingLand(repo, identity); err != nil {
 			return 1, err
 		} else if pendingLand {
 			return 1, fmt.Errorf("fork %q has an interrupted land journal — rerun 'coop fork merge %s' before removal", name, name)
@@ -423,6 +444,12 @@ func (c *Control) ForkOpenEditor(args []string) (int, error) {
 	ws := forkspace.Workspace(repo, name)
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s", name)
+	}
+	if _, isolated, err := isolatedForkIdentity(repo, name); err != nil {
+		return 1, err
+	} else if isolated {
+		ui.Note("Opening the untrusted execution workspace on the host may run its Git/editor metadata.")
+		ui.Note("For committed custody review, use coop fork review %s --open instead.", name)
 	}
 	return c.openInEditor(ws)
 }

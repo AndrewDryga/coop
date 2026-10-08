@@ -131,6 +131,14 @@ func readLandIntent(repo string, identity forkspace.Identity) (landIntent, bool,
 // ForkHasPendingLand lets fresh/rm/session teardown refuse an exact generation whose Git/task
 // transaction must be replayed by merge rather than discarded.
 func ForkHasPendingLand(repo string, identity forkspace.Identity) (bool, error) {
+	isolated, err := forkspace.IsolatedGeneration(repo, identity)
+	if err != nil {
+		return false, err
+	}
+	if isolated {
+		_, ok, err := readIsolatedIntent(repo, identity)
+		return ok, err
+	}
 	_, ok, err := readLandIntent(repo, identity)
 	return ok, err
 }

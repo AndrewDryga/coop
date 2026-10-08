@@ -136,7 +136,7 @@ func Create(binding Binding) (*os.Root, error) {
 	if err := syncRoot(binding.AnchorRoot); err != nil {
 		return nil, cleanup(fmt.Errorf("sync private filesystem identity anchor: %w", err))
 	}
-	if err := validateOpen(root, rootInfo, stateInfo, binding); err != nil {
+	if _, err := validateOpen(root, rootInfo, stateInfo, binding); err != nil {
 		return nil, cleanup(err)
 	}
 	createdAnchor, createdMarker = false, false
@@ -148,23 +148,40 @@ func Create(binding Binding) (*os.Root, error) {
 // the exact directory that carried the marker. It never creates or repairs a
 // missing name.
 func Open(binding Binding) (*os.Root, error) {
+	root, _, err := openBinding(binding)
+	return root, err
+}
+
+func openBinding(binding Binding) (*os.Root, os.FileInfo, error) {
 	if err := binding.check(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	root, rootInfo, err := openPinnedRoot(binding.RootPath)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	stateInfo, err := pinnedRootInfo(binding.AnchorRoot)
 	if err != nil {
 		_ = root.Close()
-		return nil, err
+		return nil, nil, err
 	}
-	if err := validateOpen(root, rootInfo, stateInfo, binding); err != nil {
+	markerInfo, err := validateOpen(root, rootInfo, stateInfo, binding)
+	if err != nil {
 		_ = root.Close()
+		return nil, nil, err
+	}
+	return root, markerInfo, nil
+}
+
+// MarkerInfo returns the private anchor's live file identity after validating
+// the pair. A later public-name stat alone could observe a swapped-in file;
+// callers granting a shared-inode exception must compare against this identity.
+func MarkerInfo(binding Binding) (os.FileInfo, error) {
+	root, info, err := openBinding(binding)
+	if err != nil {
 		return nil, err
 	}
-	return root, nil
+	return info, root.Close()
 }
 
 // ReadMarker reads one prospective marker without following links. Callers use
@@ -260,15 +277,15 @@ func Retire(binding Binding) error {
 	return syncRoot(binding.AnchorRoot)
 }
 
-func validateOpen(root *os.Root, rootInfo, stateInfo os.FileInfo, binding Binding) error {
+func validateOpen(root *os.Root, rootInfo, stateInfo os.FileInfo, binding Binding) (os.FileInfo, error) {
 	marker, markerInfo, err := openRegular(root, binding.MarkerName)
 	if err != nil {
-		return fmt.Errorf("open filesystem identity marker: %w", err)
+		return nil, fmt.Errorf("open filesystem identity marker: %w", err)
 	}
 	defer marker.Close()
 	anchor, anchorInfo, err := openRegular(binding.AnchorRoot, binding.AnchorName)
 	if err != nil {
-		return fmt.Errorf("open private filesystem identity anchor: %w", err)
+		return nil, fmt.Errorf("open private filesystem identity anchor: %w", err)
 	}
 	defer anchor.Close()
 	markerLinks, markerOwner, ok := fileAuthority(markerInfo)
@@ -277,28 +294,28 @@ func validateOpen(root *os.Root, rootInfo, stateInfo os.FileInfo, binding Bindin
 		markerOwner != uint32(os.Getuid()) || anchorOwner != uint32(os.Getuid()) ||
 		markerInfo.Mode().Perm() != 0o600 || anchorInfo.Mode().Perm() != 0o600 ||
 		!os.SameFile(markerInfo, anchorInfo) {
-		return errors.New("filesystem identity marker no longer matches its private two-link anchor")
+		return nil, errors.New("filesystem identity marker no longer matches its private two-link anchor")
 	}
 	body, err := io.ReadAll(io.LimitReader(marker, maxAnchorBody+1))
 	if err != nil || !bytes.Equal(body, binding.Body) {
 		if err != nil {
-			return err
+			return nil, err
 		}
-		return errors.New("filesystem identity marker has unexpected contents")
+		return nil, errors.New("filesystem identity marker has unexpected contents")
 	}
 	if err := sameOpenName(root, binding.MarkerName, markerInfo); err != nil {
-		return err
+		return nil, err
 	}
 	if err := sameOpenName(binding.AnchorRoot, binding.AnchorName, anchorInfo); err != nil {
-		return err
+		return nil, err
 	}
 	if err := samePinnedRoot(binding.RootPath, rootInfo); err != nil {
-		return err
+		return nil, err
 	}
 	if err := samePinnedRoot(binding.AnchorRoot.Name(), stateInfo); err != nil {
-		return errors.New("private filesystem identity directory changed while validating")
+		return nil, errors.New("private filesystem identity directory changed while validating")
 	}
-	return nil
+	return anchorInfo, nil
 }
 
 func openPinnedRoot(path string) (*os.Root, os.FileInfo, error) {

@@ -2,7 +2,11 @@
 
 A fork is a throwaway local clone of your repo that an agent works in instead of your working tree. You review its work like a pull request, and you stay the only one who lands anything. The [forks guide](https://coop.dryga.com/docs.html#forks) shows the flow; this page has the details.
 
-The agent never touches your checkout, so a fork adds a layer of isolation. It's also the unit of parallelism: you can run several at once. A fork's `origin` is a local path, so the agent has nowhere to push. Gitignored secrets were never committed, so they don't come along.
+A fork keeps immediate edits out of your checkout. Ordinary forks are still trusted collaboration:
+their local clones can share Git object inodes, and opening model-written Git/editor metadata on
+the host can execute it. For independent storage and controlled publication, explicitly select
+[`--isolated`](#isolated-write-forks). Several forks can run at once. A fork's `origin` is a local
+path, not a configured upstream push destination. Gitignored secrets were never committed, so they don't come along.
 
 The lifecycle mirrors a contractor's pull request: open, work, review, land.
 
@@ -26,6 +30,75 @@ coop fork api codex --loop -d   # loops the repo's task queue(s); -d detaches â€
 ```
 
 [The loop](loop.md) explains how iterations work. [Parallel forks](loop.md#parallel-forks) shows how to run several at once.
+
+## Isolated-write forks
+
+```bash
+coop fork research codex --isolated
+coop fork research                 # the host remembers isolation
+coop fork review research --stat
+coop fork merge research --yes
+```
+
+This opt-in lane owns independent Git metadata and objects. The box cannot bind the parent
+checkout or its administrative/common Git stores through another path, service or inspected
+volume. Native commits, branches and rebase still work inside the fork. Direct shared-write
+runs and ordinary forks are unchanged; an existing ordinary fork cannot be upgraded in place.
+The mode persists for re-entry, detached loops and ACP.
+
+Initialized, unchanged local submodules are independently reconstructed from their exact commits;
+their raw metadata is never copied. Changed gitlinks or `.gitmodules` require a separate workflow
+and are refused here. Git LFS payloads are copied and verified offline from the native common
+directory's default cache. Missing/corrupt payloads or custom `lfs.storage` are refused precisely.
+Isolation does not promise lifetime independence from outside writers to host-selected shared
+homes, caches or service data. Those are trusted extensions; use private storage or read-only
+sources if you do not trust their writers.
+
+Operator/service binds and existing volumes must have inspectable contents. A daemon path that is
+absent or inaccessible on the host is unknown, not an empty volume; use an independent bind whose
+contents Coop can inspect. Exact Coop-created private volumes keep their scoped exception.
+Enabled Coop dependency/toolchain caches are a separate trusted shared extension: their exact
+local driver definition is inspected, but opaque daemon contents are not claimed safe or independent.
+Custom/bind-backed cache definitions are refused; other extra/service volumes receive no exception.
+
+Review captures committed source history into private custody, rebases it onto the captured
+parent commit and leaves both workspaces and parent refs unchanged. A dirty parent can be
+reviewed, but publication requires a clean attached branch, exact index and tracked bytes, with
+no hidden index flags or uncertain `index.lock`. Untracked and ignored parent files cannot be
+overwritten by incoming paths. Untracked source files, including new child Git metadata, are
+never published.
+
+If the private rebase fails, its diagnostic names the retained source and published source boundary.
+Rework only unpublished source commits after that boundary, preserving its ancestry; check your
+trusted signing settings when signing failed, then review again. Recovery commands printed by Git
+refer to a discarded private clone, not the retained source workspace.
+
+Every incoming commit is inspected, not just the terminal diff. Unsafe paths/modes, changed
+nested Git sources, automatic host-execution surfaces, new/changed npm install lifecycle
+scripts, possible credentials and oversized blobs are refused. `--force` cannot bypass this
+boundary. Explicitly invoked build files remain reviewable rather than blanket-blocked.
+Configured checks run on a separate disposable clone, with the original parent mount fence.
+
+`review --open` and `COOP_REVIEW_CMD` use a retained private committed preview. Its path is printed;
+remove it when the tool is finished. Custom review commands run in a separate retained private
+comparison at the captured parent, preserving `HEAD...$COOP_REVIEW_REF`; `$COOP_FORK_PATH` contains
+the proposed files. Both paths are printed for cleanup. Preview edits never become merge input. Your configured
+editor/difftool/review command is a trusted host extension. `coop fork open` instead opens the
+untrusted execution workspace and warns that its native Git/editor metadata may execute on the
+host; it is not custody review.
+
+Before publication starts, cancellation or refusal leaves parent source, index and refs
+unchanged. Publication is journaled roll-forward, not an atomic checkout. After its first
+material effect, interruption can leave a partial checkout. Keep the exact candidate and
+journal, then rerun `coop fork merge <name>`: only an exact original clean state or coherently
+published state can replay. Foreign edits, a partial checkout, changed branch or uncertain
+	`index.lock` stop for explicit reconciliation. Never reset, stash, delete an uncertain lock or
+remove/recreate the fork to bypass it.
+
+If the fork is kept after landing, its next publication starts after the exact original source
+commit already published, not the rebased parent SHA. Zero-change task candidates still finalize
+their exact assignments; `merge --all` skips only forks with no new commits and no active task
+bookkeeping. Task completion remains bound to the original reviewed source, not a commit trailer.
 
 ## Re-entry resumes the session
 
@@ -109,6 +182,10 @@ JetBrains, Meld, Beyond Compare, vimdiff and others work the same way. `git diff
 
 For full control, set `COOP_REVIEW_CMD`. co:op runs it with `sh -c` from the parent repo, with `$COOP_FORK_PATH`, `$COOP_FORK_NAME` and `$COOP_REVIEW_REF` in the environment. It can launch any tool, such as a TUI or a script:
 
+For isolated forks, the working directory is a private base comparison and `$COOP_FORK_PATH`
+is a separate committed preview, never the parent or model workspace. Remove both printed paths
+after an asynchronous tool finishes.
+
 ```bash
 export COOP_REVIEW_CMD='cd "$COOP_FORK_PATH" && lazygit'
 ```
@@ -126,7 +203,7 @@ Merging lands the work and then offers to delete the fork, so it asks first. A n
 | Flag | What it does |
 |---|---|
 | `--yes`, `-y` | Confirms landing and removal up front, which a non-interactive shell needs. In an interactive shell, it skips the prompts. |
-| `--force` | Overrides the policy check. It bypasses only the risky-file policy: the merge gate must still pass on the rebased tree. |
+| `--force` | Ordinary forks only: overrides risky-file policy, not the merge gate. Isolated forks have no policy bypass. |
 | `--all` | Lands all forks at once. See [parallel forks](loop.md#parallel-forks). |
 
 A fork loop schedules from the project's canonical queue, but it never mounts that whole queue into its sandbox. The host records an immutable fork generation and the exact task assignment, then projects only that task into the fork. The normal in-box lifecycle, artifacts, reviews and signoff work on that projection. In the canonical queue, the task stays `in_progress` while the fork is `reviewing` or `ready`.

@@ -76,7 +76,8 @@ func GitClonePinnedContext(ctx context.Context, src, dst, commit string) error {
 	if err != nil {
 		return err
 	}
-	args := append(append([]string{}, GitHardening...), "clone", "--quiet", "--template=", "--no-local", "--no-checkout", "--", view, dst)
+	defer os.RemoveAll(view.dir)
+	args := append(append([]string{}, GitHardening...), "clone", "--quiet", "--template=", "--no-local", "--no-checkout", "--", view.dir, dst)
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Env = env
 	if err := cmd.Run(); err != nil {
@@ -107,7 +108,8 @@ func GitFetchPinnedContext(ctx context.Context, src, dst, commit string) error {
 	if err != nil {
 		return err
 	}
-	command, err := GitCommandWithEnv(ctx, dst, pinnedTransferEnv(), "fetch", "--quiet", "--no-write-fetch-head", "--no-tags", "--recurse-submodules=no", "--", view, commit)
+	defer os.RemoveAll(view.dir)
+	command, err := GitCommandWithEnv(ctx, dst, pinnedTransferEnv(), "fetch", "--quiet", "--no-write-fetch-head", "--no-tags", "--recurse-submodules=no", "--", view.dir, commit)
 	if err != nil {
 		return err
 	}
@@ -119,16 +121,14 @@ func pinnedTransferEnv() []string {
 		"GIT_ALLOW_PROTOCOL=file", "GIT_NO_LAZY_FETCH=1", "GIT_TERMINAL_PROMPT=0", "GIT_LFS_SKIP_SMUDGE=1"}
 }
 
-func pinnedSourceView(ctx context.Context, repository string) (string, error) {
-	query, err := GitCommandWithEnv(ctx, repository, pinnedTransferEnv(), "rev-parse", "--absolute-git-dir")
+func pinnedSourceView(ctx context.Context, repository string) (*gitView, error) {
+	// A cached operational view may reconcile HEAD back to its source. A transport
+	// only observes that source, including when an interrupted rebase owns the cache.
+	view, err := fsckGitView(ctx, repository)
 	if err != nil {
-		return "", fmt.Errorf("open trusted source: %w", err)
+		return nil, fmt.Errorf("open trusted source snapshot: %w", err)
 	}
-	output, err := query.Output()
-	if err != nil {
-		return "", fmt.Errorf("locate trusted source: %w", err)
-	}
-	return strings.TrimSpace(string(output)), nil
+	return view, nil
 }
 
 // gitCheckoutNewBranchContext runs on the real git dir: `checkout -b` rewrites HEAD, which a view

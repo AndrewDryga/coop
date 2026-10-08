@@ -23,11 +23,16 @@ MANAGE
   rm <name>      delete a fork
 
 SESSION OPTIONS
+  --isolated      create independent Git storage and require reviewed publication
   -c, --continue  continue the last session (default when reopening)
   --new           start a new conversation in the existing fork
   --fresh         delete the fork and its service data, then recreate it
   -f, --force     with --fresh, stop active work and discard unmerged changes
   -y, --yes       with --fresh, skip confirmation
+
+  Isolation persists on re-entry, loops and ACP; existing ordinary forks are not
+  upgraded in place. Shared-checkout runs and ordinary forks stay the default.
+  Review isolated work with coop fork review; --force cannot bypass its policy.
 
 NETWORK OPTIONS
   --egress <mode>        internet access: filtered, open or none

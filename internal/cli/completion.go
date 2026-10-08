@@ -147,7 +147,7 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 			return nil
 		}
 		if len(prev) == 2 { // coop fork <name> <target|preset>
-			return appendCompletionCandidates(a.targetCandidates(cur, true, true), a.presetCandidates(), []string{"acp", "--loop"})
+			return appendCompletionCandidates(a.targetCandidates(cur, true, true), a.presetCandidates(), []string{"acp", "--loop", "--isolated"})
 		}
 		if len(prev) == 3 && prev[2] == "acp" { // coop fork <name> acp [<target>]
 			return appendCompletionCandidates(a.targetCandidates(cur, true, true), []string{"--peer"})
@@ -157,6 +157,20 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		}
 		if len(prev) >= 4 && prev[2] == "acp" {
 			return []string{"--peer"}
+		}
+		if len(prev) >= 3 {
+			fa, err := parseForkCreate(prev[1:])
+			if err != nil {
+				return nil
+			}
+			var flags []string
+			if !fa.isolated {
+				flags = []string{"--isolated"}
+			}
+			if !fa.agentSet && fa.preset == "" {
+				return appendCompletionCandidates(a.targetCandidates(cur, true, true), a.presetCandidates(), flags, []string{"--loop"})
+			}
+			return flags
 		}
 	case "tasks":
 		if len(prev) == 1 {
