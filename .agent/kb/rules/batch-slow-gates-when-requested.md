@@ -2,9 +2,9 @@
 name: batch-slow-gates-when-requested
 description: validation matches the changed surface; unrelated slow suites run only when the requested outcome needs them
 scope: agent-workflow
-sources: [AGENTS.md, .agent/skills/work/SKILL.md, .agent/skills/sweep/SKILL.md, Makefile]
+sources: [AGENTS.md, .agent/skills/work/SKILL.md, .agent/skills/sweep/SKILL.md, .agent/skills/review-board/SKILL.md, Makefile]
 check: none
-updated: 2026-10-01
+updated: 2026-10-08
 ---
 
 # Match validation to the changed surface and honor focused verification requests
@@ -33,6 +33,18 @@ An explicit instruction to stop review agents or broad reviews also controls exe
 workers and repair the demonstrated failures directly. Do not schedule another board or multi-role
 review under a different name. Existing product CI and missing publication authority stay explicit.
 
+Source review does not require a green slow gate. Review the implementation while checks run,
+or with their failures and missing evidence explicitly recorded. A failure may block readiness;
+it does not make review useless or require the human to perform qualification before review.
+
+For a new feature, prove its changed boundaries and concrete failure paths. Do not grow that into
+certifying every mode of an upstream client, a multi-day soak, or a production migration exercise
+unless the requested deliverable or a demonstrated risk requires that evidence. Unshipped internal
+designs need no compatibility layer; actual pre-existing user data still needs safe handling.
+Separate implementation readiness, upstream client-release qualification, and real-data activation.
+Reuse evidence for unchanged inputs and rerun the smallest affected checks after a fix. Do not turn
+unknown upstream behavior unrelated to the feature into an ever-expanding acceptance requirement.
+
 Keep a durable final-verification ledger before closing the first affected task. Record
 each task/commit, its focused evidence and its still-required slow or native checks.
 Task closure under this explicit direction means implementation is finished, not that
@@ -58,6 +70,11 @@ for the final stop condition. Batching never supplies missing access, review or 
 operation approval. Do not change CI or runtime acceptance checks to speed agent supervision.
 
 ## Changelog
+- 2026-10-08 — owner corrected multi-day validation blocking review of two new features. Swept
+  AGENTS.md, work/sweep/review-board skills, Makefile and both active task plans. Removed three
+  gate-before-review/each-step blanket constraints and superseded the auth plan's exhaustive
+  pre-implementation certification requirement. Existing CI, known safety failures, retained
+  histories and truthful gate results remain required; scope relevance remains a review judgment.
 - 2026-10-01 — recorded the explicit correction against repeated review-agent and unrelated-test
   scheduling. Stopped both active advisors; swept the current release repair plan and supervisor:
   only exact failing receipt, restricted-launch, pinned-summary and Gemini-smoke checks are run.
