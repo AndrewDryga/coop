@@ -16,7 +16,7 @@
   that network as it already is, so Compose only recreates the containers, and services keep their
   data, anonymous volumes included. A failed Compose step now ends with Compose's own reason.
 
-- **A second landing page: put your agents to work while you sleep.** `coop.dryga.com/overnight.html`
+- **A second landing page: put your agents to work while you sleep.** `coop.dryga.com/orchestrator.html`
   is for teams that want agents working through many tasks unattended; the homepage stays the
   sandbox story. A pinned `coop loop` board lives through one night, 22:00 to 07:00, beside seven
   steps: tasks queue up, each gets a fresh agent, is checked and committed, accounts rotate at

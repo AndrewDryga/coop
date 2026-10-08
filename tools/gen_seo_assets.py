@@ -19,7 +19,7 @@ or a landing page's hero (regenerate the pages first: python3 tools/gen_site.py)
     icon-512.png             512, manifest "any"
     icon-maskable-512.png    512, full-bleed, glyph in the safe zone — Android adaptive
     og-image.png             1200x630 — the homepage's Open Graph + Twitter summary_large_image card
-    og-overnight.png         1200x630 — the same for the overnight page
+    og-orchestrator.png      1200x630 — the same for the Orchestrator page
 
 Usage:  python3 tools/gen_seo_assets.py            # regenerate everything
         python3 tools/gen_seo_assets.py icons      # just the favicon/app icons
@@ -148,16 +148,16 @@ def gen_icons(chrome, magick, tmp):
     resize(magick, mask, 512, IMG / "icon-maskable-512.png")
 
 
-# The overnight page's card: its first screen the same way, the board drawn at morning as it is
+# The Orchestrator page's card: its first screen the same way, the board drawn at morning as it is
 # without the script ("120 tasks done. One decision for you."), the steps and all below left out.
-OVERNIGHT_OG_STYLE = """<style>
+ORCHESTRATOR_OG_STYLE = """<style>
   .nav-links { visibility: hidden; }
   .actions, .night-steps, main > section:not(.night), footer { display: none; }
   .night-lead { min-height: 0; padding-block: 72px 0; }
   .night-stage { position: static; height: auto; padding-top: 40px; }
 </style>"""
 
-CARDS = (("index.html", OG_STYLE, "og-image.png"), ("overnight.html", OVERNIGHT_OG_STYLE, "og-overnight.png"))
+CARDS = (("index.html", OG_STYLE, "og-image.png"), ("orchestrator.html", ORCHESTRATOR_OG_STYLE, "og-orchestrator.png"))
 
 
 def gen_og(chrome, magick, tmp):

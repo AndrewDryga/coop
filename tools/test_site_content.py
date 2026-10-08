@@ -10,6 +10,7 @@ from pathlib import Path
 SITE = Path(__file__).resolve().parents[1] / "site"
 sys.path.insert(0, str(SITE.parent / "tools"))
 import gen_site  # noqa: E402 — the generator owns the terminals and their sources
+import gen_seo_assets  # noqa: E402 — social cards follow the canonical landing pages
 
 
 class Page(HTMLParser):
@@ -161,16 +162,16 @@ class SiteContentTest(unittest.TestCase):
                 self.assertTrue(any(problem.startswith(want) for problem in problems), "\n".join(problems))
 
     def test_pages_share_the_main_navigation(self):
-        for path, install in ((SITE / "index.html", "#start"), (SITE / "overnight.html", "#start"), (SITE / "docs.html", "./#start")):
+        for path, install in ((SITE / "index.html", "#start"), (SITE / "orchestrator.html", "#start"), (SITE / "docs.html", "./#start")):
             with self.subTest(page=path.name):
                 page = Page(path)
-                for href in ("overnight.html", "docs.html", "https://github.com/AndrewDryga/coop", install):
+                for href in ("orchestrator.html", "docs.html", "https://github.com/AndrewDryga/coop", install):
                     self.assertIn(href, page.main_nav)
                 self.assertTrue(any(tag == "a" and attrs.get("href") == "#main" for tag, attrs in page.elements), "missing skip link")
                 self.assertTrue(any(attrs.get("id") == "main" for _, attrs in page.elements), "missing #main")
 
     def test_links_off_the_site_open_in_a_new_tab_with_nofollow(self):
-        for path in (SITE / "index.html", SITE / "overnight.html", SITE / "docs.html"):
+        for path in (SITE / "index.html", SITE / "orchestrator.html", SITE / "docs.html"):
             links = [attrs for tag, attrs in Page(path).elements if tag == "a" and attrs.get("href")]
             external = [a for a in links if re.match(r"https?://(?!coop\.dryga\.com[/:]|coop\.dryga\.com$)", a["href"])]
             with self.subTest(page=path.name):
@@ -221,23 +222,58 @@ class SiteContentTest(unittest.TestCase):
                 with self.subTest(line=node.lineno):
                     self.assertNotIn("\\", segment)
 
-    def test_sitemap_lists_every_page(self):
+    def test_sitemap_lists_every_canonical_page(self):
         listed = set(re.findall(r"<loc>https://coop\.dryga\.com/([^<]*)</loc>", (SITE / "sitemap.xml").read_text()))
+        self.assertNotIn("overnight.html", listed, "the redirect must not compete with the canonical landing page")
         for path in sorted(SITE.glob("*.html")):
+            if path.name == "overnight.html":
+                continue  # only this retired URL is a redirect, checked separately below
             with self.subTest(page=path.name):
                 self.assertIn("" if path.name == "index.html" else path.name, listed)
 
-    def test_task_queue_leads_to_the_overnight_page(self):
+    def test_task_queue_leads_to_the_orchestrator_page(self):
         page = (SITE / "index.html").read_text()
         row = re.search(r"<h3>Task queue</h3>(?s:.*?)</li>", page)
         self.assertIsNotNone(row, "the homepage lost its Task queue feature")
-        self.assertIn('href="overnight.html"', row.group(0))
+        self.assertIn('href="orchestrator.html"', row.group(0))
+
+    def test_orchestrator_metadata_and_assets_use_the_canonical_name(self):
+        page = Page(SITE / "orchestrator.html")
+        canonical = "https://coop.dryga.com/orchestrator.html"
+        self.assertIn(("link", {"rel": "canonical", "href": canonical}), page.elements)
+        self.assertIn(("meta", {"property": "og:url", "content": canonical}), page.elements)
+        self.assertIn(("meta", {"property": "og:image", "content": "https://coop.dryga.com/assets/img/og-orchestrator.png"}), page.elements)
+        self.assertTrue(any(tag == "a" and attrs.get("href") == "orchestrator.html" and attrs.get("aria-current") == "page"
+                            for tag, attrs in page.elements), "the Orchestrator menu item must mark the current page")
+        assets = {attrs.get("href", attrs.get("src", "")).split("?")[0] for _, attrs in page.elements}
+        self.assertTrue({"assets/css/orchestrator.css", "assets/js/orchestrator.js"} <= assets)
+        self.assertIn(("orchestrator.html", gen_seo_assets.ORCHESTRATOR_OG_STYLE, "og-orchestrator.png"), gen_seo_assets.CARDS)
+        for name, _, image in gen_seo_assets.CARDS:
+            self.assertTrue((SITE / name).is_file(), name)
+            self.assertTrue((SITE / "assets" / "img" / image).is_file(), image)
+        for path in (SITE / "index.html", SITE / "orchestrator.html", SITE / "docs.html"):
+            with self.subTest(page=path.name):
+                self.assertNotIn("overnight.html", path.read_text(), "active pages must link straight to the canonical URL")
+        for old in ("tools/site/overnight.tpl.html", "site/assets/css/overnight.css", "site/assets/js/overnight.js", "site/assets/img/og-overnight.png"):
+            self.assertFalse((SITE.parent / old).exists(), old)
+
+    def test_old_overnight_url_is_only_a_redirect(self):
+        page = Page(SITE / "overnight.html")
+        self.assertIn(("link", {"rel": "canonical", "href": "https://coop.dryga.com/orchestrator.html"}), page.elements)
+        self.assertIn(("meta", {"name": "robots", "content": "noindex"}), page.elements)
+        self.assertIn(("meta", {"http-equiv": "refresh", "content": "0; url=orchestrator.html"}), page.elements)
+        links = [attrs["href"] for tag, attrs in page.elements if tag == "a"]
+        self.assertEqual(links, ["orchestrator.html"], "a link remains when scripts or refresh are disabled")
+        script = re.findall(r"<script>(.*?)</script>", (SITE / "overnight.html").read_text())
+        self.assertEqual(script, ['location.replace("orchestrator.html" + location.search + location.hash);'])
+        self.assertFalse(page.main_nav, "the retired URL must not keep a second landing page")
+        self.assertFalse(any(attrs.get("class") == "board" for _, attrs in page.elements))
 
     def test_the_services_figure_links_the_tool_that_measured_it(self):
         # our own number: the reader can rerun the measurement, so the tool it links must exist
-        page = (SITE / "overnight.html").read_text()
+        page = (SITE / "orchestrator.html").read_text()
         row = re.search(r"<h3>Project services</h3>(?s:.*?)</li>", page)
-        self.assertIsNotNone(row, "the overnight page lost its Project services feature")
+        self.assertIsNotNone(row, "the Orchestrator page lost its Project services feature")
         figure = re.search(r'<p class="evidence"><strong>[^<]+</strong>(?s:.*?)</p>', row.group(0))
         self.assertIsNotNone(figure, "the Project services row has no figure")
         tool = re.search(r"github\.com/AndrewDryga/coop/blob/main/(tools/[\w.]+)", figure.group(0))
@@ -247,14 +283,14 @@ class SiteContentTest(unittest.TestCase):
     def test_every_start_command_follows_the_agent_picker(self):
         script = (SITE / "assets" / "js" / "site.js").read_text()
         handled = set(re.findall(r'\["(\w+)", `coop', script))
-        for path in (SITE / "index.html", SITE / "overnight.html"):
+        for path in (SITE / "index.html", SITE / "orchestrator.html"):
             with self.subTest(page=path.name):
                 used = {attrs["data-cmd"] for _, attrs in Page(path).elements if "data-cmd" in attrs}
                 self.assertTrue(used, "the page has no start commands")
                 self.assertLessEqual(used, handled)
 
-    def test_overnight_board_reads_whole_without_the_script(self):
-        page = (SITE / "overnight.html").read_text()
+    def test_orchestrator_board_reads_whole_without_the_script(self):
+        page = (SITE / "orchestrator.html").read_text()
         board = re.search(r'<div class="board"(?s:.*?)<template id="night-task">', page).group(0)
         dots = re.findall(r'<li data-state="(\w+)"></li>', board)
         self.assertEqual(len(dots), -(-gen_site.NIGHT_N // gen_site.NIGHT_PER_DOT))

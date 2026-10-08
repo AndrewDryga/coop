@@ -1,4 +1,4 @@
-// Draft: the night story. render.py embeds the timeline, one state per part of the story (the hero,
+// The night story. gen_site.py embeds the timeline, one state per part of the story (the hero,
 // then each step): the time, how far through the queue the loop is, the task in hand and the account
 // its agent runs on. The board keeps one row per task it shows and moves those rows between its places
 // (the task in hand, the decision waiting, the next few, the newest finished, each list ending in the

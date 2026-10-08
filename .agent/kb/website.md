@@ -1,9 +1,9 @@
 ---
 name: website
-description: site/ is static and partly generated; tools/gen_site.py owns index.html, overnight.html and the docs' terminal regions, which copy real CLI output; the night board, code-block, cache-bust and social-card traps
+description: site/ is static and partly generated; tools/gen_site.py owns index.html, orchestrator.html and the docs' terminal regions, which copy real CLI output; the night board, code-block, cache-bust and social-card traps
 subsystem: website
-sources: [tools/gen_site.py, tools/services_bench.py, tools/site/index.tpl.html, tools/site/overnight.tpl.html, site/index.html, site/overnight.html, site/docs.html, site/assets/css/site.css, site/assets/css/overnight.css, site/assets/js/site.js, site/assets/js/overnight.js, tools/gen_seo_assets.py, tools/test_site_content.py, tools/align-comments.py, internal/cli/help_test.go, internal/cli/eval_cmd_test.go]
-updated: 2026-10-07
+sources: [tools/gen_site.py, tools/services_bench.py, tools/site/index.tpl.html, tools/site/orchestrator.tpl.html, site/index.html, site/orchestrator.html, site/overnight.html, site/docs.html, site/assets/css/site.css, site/assets/css/orchestrator.css, site/assets/js/site.js, site/assets/js/orchestrator.js, tools/gen_seo_assets.py, tools/test_site_content.py, tools/align-comments.py, internal/cli/help_test.go, internal/cli/eval_cmd_test.go]
+updated: 2026-10-08
 ---
 
 The homepage and docs are static files in `site/`, published by `.github/workflows/pages.yml` on
@@ -23,13 +23,13 @@ every push to main. Two parts are generated and committed:
   `<!-- /gen_site -->` (`DOCS_SCENES`: check-secrets, doctor, claude, loop, fork). The rest of
   docs.html is hand-written; `--check` catches an edited or stale region, not prose edits.
 
-**The overnight page** (`site/overnight.html`, from `tools/site/overnight.tpl.html`, with its own
-`overnight.css` and `overnight.js`) is the second landing, for people who want agents working
+**The Orchestrator page** (`site/orchestrator.html`, from `tools/site/orchestrator.tpl.html`, with its own
+`orchestrator.css` and `orchestrator.js`) is the second landing, for people who want agents working
 through many tasks unattended; the homepage stays the sandbox story and the main one. A pinned
 `coop loop` board lives through one night, 22:00 to 07:00, beside its steps. `night_board()` in
 `gen_site.py` draws it at morning, so the page reads whole without the script; `NIGHT_TIMELINE`
 holds one state for the hero and one per step (a site test keeps the counts equal: add a state
-with a step). overnight.js plays a step forward in beats: the task in hand finishes in its card
+with a step). orchestrator.js plays a step forward in beats: the task in hand finishes in its card
 (the ring closes, the tick draws, the commit types out), the decision folds or opens (`ask`), the
 night time-lapses (clock, dots, counts), then the step's own event (the account handoff, the review
 turning a finished task back). Scrolling back, or reduced motion, jumps straight to the step, and a
@@ -46,10 +46,15 @@ must run on a linear clock with the easing on each keyframe (an expo-out effect 
 handoff into its first frames); the board's height animates with what moves inside it, or rows
 slide past its edge. Its sandbox replays the homepage's four layers once on view, with
 `.night-sandbox.armed:not(.sN)` copying the homepage's `.stage:not(.sN)` gates, and is zoomed to its
-column on narrow phones. Every page's menu lists Sandbox, Orchestrator (the overnight page; the owner named it on
+column on narrow phones. Every page's menu lists Sandbox, Orchestrator (the owner named it on
 2026-10-07), Features, Docs, GitHub and Install; phones keep Orchestrator, Docs and Install (tighter at 400 px, the mark alone at 340 px).
 The agent picker rewrites `data-cmd` login, run and loop; a test holds every page's start
 commands to what site.js handles.
+
+The old public `site/overnight.html` is only a noindex redirect to `orchestrator.html`, with a
+meta refresh and link fallback; JavaScript preserves the query/fragment using `location.replace`.
+Navigation, canonical/OG metadata and the sitemap use the new URL directly, and the old template
+and assets are gone. The redirect is hand-written, not generated or listed in the sitemap.
 
 **The scenes copy real CLI output**, and `TERMINAL_SOURCES` in `gen_site.py` says where each
 terminal's lines come from. A transcript block (doctor is `18a-doctor-all-passed.txt`) must use
@@ -146,7 +151,7 @@ verbatim; `tools/test_site_content.py` needs the `#evals` section and `coop down
 Run `go test ./internal/cli/` after a docs copy pass, not only `make tools-test`.
 
 **Cache-busting.** Every page loads its stylesheets and scripts with `?v=<hash of site.css,
-site.js, analytics.js, overnight.css and overnight.js>`, written by `tools/gen_site.py`, so `--check`
+site.js, analytics.js, orchestrator.css and orchestrator.js>`, written by `tools/gen_site.py`, so `--check`
 fails after any CSS or JS edit until you regenerate. (A fixed date once left the owner looking at a stale stylesheet all afternoon.)
 
 **Links off the site** open in a new tab with `rel="nofollow noopener"`: `external_links()` in
@@ -162,7 +167,7 @@ same; the attack cases hold none, so they stay readable to screen readers.
 
 **The social cards** (`tools/gen_seo_assets.py og`) are each landing page's own first screen,
 rendered from a copy with every `<script>` stripped: the homepage's sandbox picture finished
-(`og-image.png`), the overnight board at morning (`og-overnight.png`). Headless Chrome runs scripts even
+(`og-image.png`), the Orchestrator board at morning (`og-orchestrator.png`). Headless Chrome runs scripts even
 with `--disable-javascript`, and `--blink-settings=scriptEnabled=false` makes `--screenshot` write
 nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
 
@@ -194,3 +199,6 @@ nothing. The icons are drawn from `brand/assets/coop-flat.svg`.
   2026-10-07-the-overnight-page-s-menu-item-is-orchestrator).
 - 2026-10-07 — copy/layout changes regenerate with the published count instead of restoring away
   their homepage output (task 2026-10-07-website-kb-regenerate-with-the-published-count-d).
+- 2026-10-08 — renamed the canonical landing page, template, dedicated assets and generator
+  symbols to Orchestrator; the old URL is a redirect only. Reverified generation, metadata,
+  navigation, sitemap and social-card inputs (task 2026-10-08-rename-the-orchestrator-website-page-and-assets).

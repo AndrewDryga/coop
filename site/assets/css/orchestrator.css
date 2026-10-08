@@ -1,7 +1,7 @@
-/* Draft: the overnight landing. Everything not here comes from site.css.
+/* The Orchestrator landing. Everything not here comes from site.css.
 
    The story: a board pinned beside the text, the queue as coop loop works it through one night. Each
-   step moves the clock on and the tasks with it (overnight.js); without the script it shows morning. */
+   step moves the clock on and the tasks with it (orchestrator.js); without the script it shows morning. */
 .night { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 64px; }
 .night-lead { grid-column: 1; grid-row: 1; display: grid; align-content: center; min-height: calc(100vh - 76px); padding-block: 24px 64px; }
 .night-lead h1 { font-size: clamp(2.5rem, 1.4rem + 3.2vw, 3.75rem); }
@@ -155,7 +155,7 @@
   .night-safe { grid-template-columns: minmax(0, 1fr); }
   .night-sandbox { justify-items: start; }
   /* Small screens with the script: a compact board sticks to the top and the steps slide up under
-     it. overnight.js gives its lists only the rows the task in hand and the decision leave room for. */
+     it. orchestrator.js gives its lists only the rows the task in hand and the decision leave room for. */
   .night-deck .night-stage { position: sticky; top: 0; z-index: 2; margin-inline: calc(-1 * var(--gutter)); padding: 10px var(--gutter) 14px; background: var(--bg); }
   .night-deck .night-stage::after { content: ""; position: absolute; right: 0; bottom: -24px; left: 0; height: 24px; background: linear-gradient(var(--bg), transparent); pointer-events: none; }
   /* the options on one line, the recommended one starred */

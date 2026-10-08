@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Generate the co:op website's built parts: the homepage, site/index.html, from
-tools/site/index.tpl.html; the overnight page, site/overnight.html, from tools/site/overnight.tpl.html;
+tools/site/index.tpl.html; the Orchestrator page, site/orchestrator.html, from tools/site/orchestrator.tpl.html;
 and the terminal windows the docs show, in site/docs.html.
 
 The site is plain static HTML; this script only saves hand-typing what repeats: the icons, the
@@ -27,7 +27,7 @@ import urllib.parse
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "tools" / "site"
 OUT = ROOT / "site" / "index.html"
-OVERNIGHT = ROOT / "site" / "overnight.html"
+ORCHESTRATOR = ROOT / "site" / "orchestrator.html"
 DOCS_PAGE = ROOT / "site" / "docs.html"
 MARK = "assets/img/favicon.svg"  # co:op's mark, as the nav and footer show it
 
@@ -558,9 +558,9 @@ INTEGRATIONS = ('<figure class="zed"><img class="zed-shot" src="assets/img/zed-c
                 'beside menus for the preset, account, model and effort"></figure>')
 
 
-# The overnight page (tools/site/overnight.tpl.html) tells one night of `coop loop` beside a pinned
+# The Orchestrator page (tools/site/orchestrator.tpl.html) tells one night of `coop loop` beside a pinned
 # board. The board is drawn here in its last state, the morning, so the page reads whole without
-# JavaScript; site/assets/js/overnight.js replays the night from the timeline embedded beside it.
+# JavaScript; site/assets/js/orchestrator.js replays the night from the timeline embedded beside it.
 #
 # Tonight's queue: 121 tasks, 120 of them done by 07:00 and one left for your decision, as in the
 # owner's 120-task, 9-hour run the main page cites. Only the tasks the board ever shows need a title.
@@ -776,7 +776,7 @@ def render(count):
     return stamp_assets(external_links(typographic(page)))
 
 
-def render_overnight():
+def render_orchestrator():
     blocks = {
         "sprite": SPRITE,
         "mark": MARK,
@@ -793,7 +793,7 @@ def render_overnight():
         "cmd_init": command("Set up", 'cd <span class="nowrap">your-project</span> &amp;&amp; coop init', "project setup"),
         "cmd_loop": command("Start", '<span data-cmd="loop">coop loop claude</span>', "start"),
     }
-    page = (SOURCE / "overnight.tpl.html").read_text()
+    page = (SOURCE / "orchestrator.tpl.html").read_text()
     for name, value in blocks.items():
         page = page.replace("{{" + name + "}}", value)
     left = re.findall(r"\{\{\w+\}\}", page)
@@ -801,7 +801,7 @@ def render_overnight():
     return stamp_assets(external_links(typographic(page)))
 
 
-ASSETS = ("assets/css/site.css", "assets/js/site.js", "assets/js/analytics.js", "assets/css/overnight.css", "assets/js/overnight.js")
+ASSETS = ("assets/css/site.css", "assets/js/site.js", "assets/js/analytics.js", "assets/css/orchestrator.css", "assets/js/orchestrator.js")
 
 
 def asset_version():
@@ -830,7 +830,7 @@ def fill_docs(docs):
 
 def main():
     if sys.argv[1:] == ["--check"]:
-        built = ((OUT, render(published_count())), (OVERNIGHT, render_overnight()), (DOCS_PAGE, fill_docs(DOCS_PAGE.read_text())))
+        built = ((OUT, render(published_count())), (ORCHESTRATOR, render_orchestrator()), (DOCS_PAGE, fill_docs(DOCS_PAGE.read_text())))
         stale = [path.relative_to(ROOT) for path, page in built if not path.exists() or path.read_text() != page]
         if stale:
             sys.exit(f"out of date: {', '.join(map(str, stale))}; edit tools/site/ or tools/gen_site.py and run python3 tools/gen_site.py")
@@ -841,9 +841,9 @@ def main():
         sys.exit(__doc__)
     count = proof_count()
     OUT.write_text(render(count))
-    OVERNIGHT.write_text(render_overnight())
+    ORCHESTRATOR.write_text(render_orchestrator())
     DOCS_PAGE.write_text(fill_docs(DOCS_PAGE.read_text()))
-    print(f"wrote {OUT.relative_to(ROOT)} ({count} task commits), {OVERNIGHT.relative_to(ROOT)} and the terminals in {DOCS_PAGE.relative_to(ROOT)}")
+    print(f"wrote {OUT.relative_to(ROOT)} ({count} task commits), {ORCHESTRATOR.relative_to(ROOT)} and the terminals in {DOCS_PAGE.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":
