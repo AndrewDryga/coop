@@ -4,7 +4,7 @@ description: full implementation requests continue past verified slices through 
 scope: agent-workflow
 sources: [AGENTS.md, .agent/skills/work/SKILL.md, .agent/skills/spec/SKILL.md, .agent/skills/sweep/SKILL.md, internal/scaffold/templates/skills/work/SKILL.md, internal/scaffold/templates/skills/spec/SKILL.md, internal/scaffold/templates/skills/sweep/SKILL.md]
 check: none
-updated: 2026-09-22
+updated: 2026-10-08
 ---
 
 # Let the requested outcome control when work stops
@@ -19,6 +19,10 @@ sequence a first slice, but may not redefine that broader outcome as complete. I
 children, keep the broad parent open until every child and its final verification are complete. A
 completed child is not evidence that the umbrella is complete, and a later ledger with open required
 checks is direct evidence that it is not.
+
+An additive request during a full-queue campaign joins that outcome; it does not replace the queue's
+stop condition. Finish the added request, then continue the remaining authorized tasks without a
+final handoff. Only an explicit scope replacement or a genuine authority blocker changes that duty.
 
 On a continuation, reconcile the latest user direction with the task's state, log, claim and current
 worktree before deciding that someone else owns the assignment. A different or long-lived process ID
@@ -42,6 +46,11 @@ and authority boundaries: a genuine blocker requiring human input still warrants
 persistence never authorizes unrelated work, deployment, or destructive actions.
 
 ## Changelog
+- 2026-10-08 — the owner corrected a premature handoff after an added website rename while three
+  tasks remained: "I told to finish all tasks". Swept all seven listed instruction sources:
+  they already preserve full requested outcomes and independent authority boundaries, 0 conflicting
+  instructions. Clarified additive follow-ups here; a focused commit is a checkpoint, not permission
+  to stop the campaign. This stopping judgment remains review-enforced (`check: none`).
 - 2026-09-22 — after an audit continuation stopped on its own older process-bound claim, the human
   clarified "You are running the audit". Swept the six listed instruction sources and the embedded
   sweep copy: both sweep copies treated every in-progress task as a resumable prior attempt without
