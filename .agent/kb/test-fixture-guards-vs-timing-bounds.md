@@ -2,8 +2,8 @@
 name: test-fixture-guards-vs-timing-bounds
 description: a test wait that guards a broken fixture is generous (testutil/wait, 60 s); a tight wall-clock bound is reserved for timing that IS the behavior under test, and then attributes its phases
 subsystem: testing
-sources: [Makefile, internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/forkctl/supervise.go, internal/cli/acp_cmd.go, internal/cli/acp_execution_test.go, internal/acpproxy/scripted_matrix_e2e_test.go, internal/consult/instructions_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go]
-updated: 2026-10-04
+sources: [Makefile, internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/forkctl/supervise.go, internal/cli/acp_cmd.go, internal/cli/acp_execution_test.go, internal/acpproxy/scripted_matrix_e2e_test.go, internal/consult/instructions_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go, tools/test_lifecycle_bench.py]
+updated: 2026-10-08
 ---
 
 Two kinds of waits look alike in a test and fail alike on a loaded host, but mean opposite things.
@@ -76,7 +76,17 @@ failure before writing its diagnostic. Observing that terminal receipt does not 
 the capture (`TestSessionServiceLogsSanitizedOperationFailureWithCorrelationID`); a buffer mutex
 alone would still permit an empty-log assertion. Keep correlation and redaction assertions intact.
 
+The lifecycle benchmark's timeout-cleanup fixtures publish readiness only after their PID,
+sample label and printed network identity exist. Their injected launch waits for that marker
+before the unchanged 0.5 s case timeout starts. A controlled 0.75 s startup delay reproduces the
+old empty-cleanup failure and passes with the handshake; production cleanup and timeouts stay
+unchanged. A readiness failure still reaps the fixture process.
+
 ## Changelog
+- 2026-10-08 — reproduced the lifecycle-tool cleanup assertion failing with a controlled 0.75 s
+  child-start delay before its injected 0.5 s timeout. Synchronized readiness in the two shared
+  timeout-cleanup cases and retained exact owned-resource/PID assertions; delayed-start regression
+  and owning tool tests qualify the fix (task 2026-10-08-investigate-lifecycle-bench-timeout-cleanup-fixt).
 - 2026-10-04 — four load flakes from the 2026-10-02/04 gates, classified and fixed (task
   2026-10-02-stop-three-tests-timing-out-under-full-gate-load). forkctl and cli fork stop: the
   production reap's 3 s is a wedged-runtime guard, now 30 s. The ACP child reap test: the 5 s

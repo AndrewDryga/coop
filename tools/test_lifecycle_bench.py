@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -402,6 +403,7 @@ STAND_IN_COOP = """#!/bin/sh
 echo $$ > "@LAUNCHED@.pid"
 printf '%s' "$COOP_RUN_ARGS" > "@LAUNCHED@"
 echo "Full details: coop net inspect 8b --json" >&2
+: > "@LAUNCHED@.ready"
 case "$1" in
 run)
     while [ $# -gt 0 ] && [ "$1" != -- ]; do shift; done
@@ -481,7 +483,27 @@ class EveryCaseCleansOnlyItsOwnTest(unittest.TestCase):
     def check_outlived(self, case):
         # The launch hangs past the case's limit: it is stopped, and what it printed and made is
         # still taken back, though the case itself fails with the timeout.
+        launch = bench.launch
+
+        def ready_launch(*args, **kwargs):
+            process = launch(*args, **kwargs)
+            try:
+                deadline = time.monotonic() + 60
+                ready = Path(str(self.launched) + ".ready")
+                while not ready.is_file():
+                    if process.poll() is not None:
+                        self.fail("fixture exited before publishing launch readiness")
+                    if time.monotonic() >= deadline:
+                        self.fail("fixture did not publish launch readiness within 60 s")
+                    time.sleep(0.005)
+                return process
+            except BaseException:
+                bench.stop_process(process)
+                raise
+
+        # The case's timeout tests cleanup after creation, not real child-start scheduling.
         with patch.dict(os.environ, {"STAND_IN_HANG": "1"}), patch.object(bench, "CASE_TIMEOUT_SECONDS", 0.5), \
+                patch.object(bench, "launch", side_effect=ready_launch), \
                 contextlib.redirect_stderr(io.StringIO()), self.assertRaises(subprocess.TimeoutExpired):
             case(str(self.coop), str(self.repo), "docker", [])
         self.assertEqual(self.fake.removed, {"our-box", "our-ipc", "printed-ipc"})
@@ -493,6 +515,11 @@ class EveryCaseCleansOnlyItsOwnTest(unittest.TestCase):
         self.check_outlived(bench.case_failed_start_preflight)
 
     def test_a_failed_run_that_outlives_the_case_is_stopped_and_cleaned(self):
+        self.check_outlived(bench.case_failed_start_after_create)
+
+    def test_timeout_cleanup_waits_for_a_delayed_fixture_to_create_resources(self):
+        # A deterministic scheduling control: startup alone exceeds the unchanged case timeout.
+        self.coop.write_text(self.coop.read_text().replace("#!/bin/sh\n", "#!/bin/sh\nsleep 0.75\n", 1))
         self.check_outlived(bench.case_failed_start_after_create)
 
     def test_a_cancelled_run_that_leaves_its_gateway_fails(self):
