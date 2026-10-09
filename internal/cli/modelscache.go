@@ -40,7 +40,10 @@ const (
 	modelsRetryAfter     = time.Hour
 )
 
-// modelFetchTimeout bounds native-CLI probes and the ACP handshake, after normal host setup.
+// Native startup includes asynchronous filtered launch; a ready adapter gets a fresh catalog budget.
+const modelStartupTimeout = 60 * time.Second
+
+// modelFetchTimeout bounds native-CLI probes and the catalog request, not boxed startup.
 const modelFetchTimeout = 15 * time.Second
 
 // modelsCache retains the last good catalog separately from the most recent fetch
@@ -232,7 +235,7 @@ func (a *app) fetchACPModelCatalog(agent string) ([]agents.Model, error) {
 		return nil, modelProbeFailure(agent, err, stderr.String())
 	}
 	defer probe.acpCapture.Close()
-	ctx, cancel := context.WithTimeout(launchCtx, modelFetchTimeout)
+	ctx, cancel := context.WithCancel(launchCtx)
 	defer cancel()
 	child, err := probe.spawnBox(ctx, self, []string{"acp", agent}, superID, nil, target, "", true, stderr, forkspace.ExecutionRoleProbe)
 	if err != nil {
@@ -355,15 +358,24 @@ func safeModelProbeCause(agent, text string) string {
 // It still handles adapter-to-client requests so a provider cannot deadlock the probe waiting on a
 // capability the non-editor client does not implement.
 func acpModelHandshake(ctx context.Context, child *acpproxy.Child, cwd string) (json.RawMessage, error) {
+	return acpModelHandshakeWithin(ctx, child, cwd, modelStartupTimeout, modelFetchTimeout)
+}
+
+func acpModelHandshakeWithin(ctx context.Context, child *acpproxy.Child, cwd string, startup, catalog time.Duration) (json.RawMessage, error) {
 	r := bufio.NewReaderSize(child.Out, 1<<20)
 	initialize := map[string]any{
 		"protocolVersion":    1,
 		"clientCapabilities": map[string]any{},
 	}
-	if _, err := acpRoundTrip(ctx, child.In, r, 1, "initialize", initialize); err != nil {
+	startupCtx, startupCancel := context.WithTimeout(ctx, startup)
+	_, err := acpRoundTrip(startupCtx, child.In, r, 1, "initialize", initialize)
+	startupCancel()
+	if err != nil {
 		return nil, err
 	}
-	return acpRoundTrip(ctx, child.In, r, 2, "session/new", map[string]any{
+	catalogCtx, catalogCancel := context.WithTimeout(ctx, catalog)
+	defer catalogCancel()
+	return acpRoundTrip(catalogCtx, child.In, r, 2, "session/new", map[string]any{
 		"cwd": cwd, "mcpServers": []any{},
 	})
 }

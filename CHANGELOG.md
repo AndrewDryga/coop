@@ -26,6 +26,9 @@
   mounts now pass the same custody checks as other binds, preserving quoted paths and refusing
   missing sources or unsafe overlaps.
 
+- **Model discovery allows normal box startup.** Native account setup no longer consumes the
+  catalog request deadline. Both startup and catalog requests remain bounded and cancellable.
+
 ## 11.0.0
 
 - **Repository-local native history and host-only provider credentials.** Each project keeps its

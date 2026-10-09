@@ -75,7 +75,8 @@ admits separately on a cloned configuration, for its exact selected provider/acc
 (`cli/modelscache.go`, `admitModelProbe`). It follows the same project/remembered-policy ladder;
 it never admits the editor toolbar's alternatives or exports a default `open` to bypass project
 tightening. The child re-proves its capture and account binding normally. Host setup may run
-before the 15-second metadata handshake; cancellation still owns setup cleanup. Host-command
+before bounded adapter startup; its initialize reply starts a fresh 15-second catalog budget.
+Startup has a separate 60-second limit and cancellation still owns exact setup cleanup. Host-command
 catalogs do not launch a box. Exporting a mode alone grants no filtered authority.
 
 A withdrawal marker (`networkstate/approval_withdrawal.go`, written before the grant is cleared)
@@ -266,6 +267,9 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-10-09 — measured healthy native startup beyond the old combined15-second probe bound;
+  bounded initialize separately and retained the metadata budget after readiness, with hung-phase
+  and caller-cancellation regressions. No grant or provider timeout reset on notifications.
 - 2026-10-09 — traced actual native filtered launch refusal to emitted `--mount` syntax;
   reused custody, writable-parent and final-topology checks without accepting new runtime
   capabilities. Verified generated-helper replacement denial and quoted native-home emission.
