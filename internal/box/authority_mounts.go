@@ -756,6 +756,12 @@ func resolveAuthorityPath(path string) (string, error) {
 		if !errors.Is(err, os.ErrNotExist) {
 			return "", err
 		}
+		// Missing tails can be reconstructed, but an existing dangling alias is unknown custody.
+		if _, entryErr := os.Lstat(probe); entryErr == nil {
+			return "", errors.New("mount source cannot be resolved unambiguously")
+		} else if !errors.Is(entryErr, os.ErrNotExist) {
+			return "", entryErr
+		}
 		parent := filepath.Dir(probe)
 		if parent == probe {
 			return "", err

@@ -2,7 +2,7 @@
 name: native-credential-cutover
 description: existing native writer locks keep their inode during private normalization; uncertain legacy grants remain in custody
 subsystem: credentials
-sources: [internal/box/native_cutover.go, internal/box/account_authority.go, internal/box/native_writer_lock_test.go, internal/runtime/mounts.go, internal/runtime/mounts_test.go, internal/agent/grok.go, internal/agent/gemini.go]
+sources: [internal/box/native_cutover.go, internal/box/account_authority.go, internal/box/native_writer_lock_test.go, internal/box/authority_mounts.go, internal/box/native_mount_paths_test.go, internal/runtime/mounts.go, internal/runtime/mounts_test.go, internal/agent/grok.go, internal/agent/gemini.go]
 updated: 2026-10-09
 ---
 
@@ -29,8 +29,17 @@ failed commands or cancellation return no partial public inventory. Read-only an
 containers remain visible. `BindMount.Stopped` is true only when every observed user of a
 source is created/exited; any live observation prevents that conclusion across batches.
 
+An unrelated stopped container may name a removed temporary directory. Only confirmed
+created/exited sources may resolve missing tails from their nearest existing ancestor.
+`resolveAuthorityPath` refuses existing dangling aliases before ascending; native checks use
+inode-aware `authorityPathsOverlap`. Missing credential descendants still overlap. Unresolved
+live/paused/restarting/dead binds refuse: they can retain a deleted alias's inode. Unknown
+paths, permissions and symlink loops are never inferred harmless or dropped from inventory.
+
 ## Changelog
 - 2026-10-09 — traced the real Grok startup refusal to an owned 0644 PID lock; verified
   busy/replacement/link/type/ownership refusal and same-inode/byte normalization in tests.
 - 2026-10-09 — replaced serial container inspection with complete bounded batches and retained
   lifecycle evidence, including mixed-state duplicate sources and mid-pass daemon replacement.
+- 2026-10-09 — traced remaining native startup refusal to nine removed source paths; retained
+  stopped-only missing-tail comparison and live/alias/permission/credential overlap refusals.

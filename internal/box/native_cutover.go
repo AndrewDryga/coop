@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"syscall"
 	"time"
 
@@ -257,19 +256,9 @@ func checkLegacyMounts(ctx context.Context, cfg *config.Config, rt runtime.Runti
 func checkLegacyMountPaths(ctx context.Context, rt runtime.Runtime, writable bool, paths ...string) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	var sources []string
-	var err error
-	if writable {
-		sources, err = rt.WritableBindSourcesByLabels(ctx, nil, true)
-	} else {
-		sources, err = rt.BindSourcesByLabels(ctx, nil)
-	}
+	sources, err := rt.BindMountsByLabels(ctx, nil, true, writable)
 	if err != nil {
 		return errors.New("legacy writer inventory is unavailable; originals retained unchanged")
-	}
-	within := func(child, parent string) bool {
-		relative, err := filepath.Rel(parent, child)
-		return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 	}
 	for _, path := range paths {
 		canonical, err := filepath.EvalSymlinks(path)
@@ -280,11 +269,18 @@ func checkLegacyMountPaths(ctx context.Context, rt runtime.Runtime, writable boo
 			return err
 		}
 		for _, source := range sources {
-			source, err = filepath.EvalSymlinks(source)
+			resolved, err := filepath.EvalSymlinks(source.Source)
+			if errors.Is(err, os.ErrNotExist) && source.Stopped {
+				resolved, err = resolveAuthorityPath(source.Source)
+			}
 			if err != nil {
 				return errors.New("legacy writer mount cannot be resolved")
 			}
-			if within(canonical, source) || within(source, canonical) {
+			overlap, err := authorityPathsOverlap(canonical, resolved)
+			if err != nil {
+				return errors.New("legacy writer mount cannot be resolved")
+			}
+			if overlap {
 				return errors.New("legacy credential home is mounted by a running or restartable container; finish that session before retrying")
 			}
 		}

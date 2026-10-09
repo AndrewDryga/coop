@@ -18,6 +18,10 @@
   bounded batches while preserving daemon identity, read-only mounts and stopped-container
   safety checks; unavailable or incomplete observations still refuse startup.
 
+- **Retired test containers no longer block unrelated sign-ins.** Removed temporary bind paths
+  on stopped containers are compared safely; credential overlaps, unresolved live mounts and
+  ambiguous symlinks still prevent migration.
+
 ## 11.0.0
 
 - **Repository-local native history and host-only provider credentials.** Each project keeps its
