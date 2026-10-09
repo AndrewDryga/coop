@@ -3,7 +3,7 @@ name: test-fixture-guards-vs-timing-bounds
 description: a test wait that guards a broken fixture is generous (testutil/wait, 60 s); a tight wall-clock bound is reserved for timing that IS the behavior under test, and then attributes its phases
 subsystem: testing
 sources: [Makefile, internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/forkctl/supervise.go, internal/cli/acp_cmd.go, internal/cli/acp_execution_test.go, internal/acpproxy/scripted_matrix_e2e_test.go, internal/consult/instructions_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go, tools/test_lifecycle_bench.py]
-updated: 2026-10-08
+updated: 2026-10-09
 ---
 
 Two kinds of waits look alike in a test and fail alike on a loaded host, but mean opposite things.
@@ -70,6 +70,13 @@ foreground sleep may add the latter between listings, hiding an excluded leader 
 Publish one child's PID, keep the leader in builtin `wait`, and assert those known identities.
 Do not compare dynamic status/elapsed columns or loosen production cleanup assertions.
 
+**A child marker is not Docker inventory readiness.** Docker 28.0.4 starts the task before
+setting Running and checkpointing its query snapshot (Moby `daemon/start.go:222-235`);
+`docker ps` reads that snapshot. The signal-forwarding runtime test waits for both the child
+marker and exactly one matching running container before canceling. Query errors, duplicate
+matches and premature exit still fail; TERM receipt and zero containers after return stay
+strict. Its controlled initial-empty-inventory case fails the former one-shot assertion.
+
 **A persisted receipt is not a joined writer.** An asynchronous session operation records its
 failure before writing its diagnostic. Observing that terminal receipt does not make an injected
 `bytes.Buffer` safe to read or ensure the log exists yet. Stop and join the service before reading
@@ -83,6 +90,10 @@ old empty-cleanup failure and passes with the handshake; production cleanup and 
 unchanged. A readiness failure still reaps the fixture process.
 
 ## Changelog
+- 2026-10-09 — release CI observed child readiness then zero running matches. Confirmed the
+  invalid ordering assumption against the exact runner's Docker 28.0.4 source and reproduced
+  it by withholding the first inventory response. Added bounded readiness, retaining signal
+  and cleanup assertions; no production code or runtime deadline changed.
 - 2026-10-08 — reproduced the lifecycle-tool cleanup assertion failing with a controlled 0.75 s
   child-start delay before its injected 0.5 s timeout. Synchronized readiness in the two shared
   timeout-cleanup cases and retained exact owned-resource/PID assertions; delayed-start regression

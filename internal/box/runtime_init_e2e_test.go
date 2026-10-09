@@ -150,7 +150,33 @@ func TestRuntimeInitReapsKilledOrphan(t *testing.T) {
 }
 
 func TestRuntimeInitForwardsTerminationSignal(t *testing.T) {
+	for _, delayedInventory := range []bool{false, true} {
+		t.Run(fmt.Sprintf("delayed_inventory_%t", delayedInventory), func(t *testing.T) {
+			testRuntimeInitForwardsTerminationSignal(t, delayedInventory)
+		})
+	}
+}
+
+func testRuntimeInitForwardsTerminationSignal(t *testing.T, delayedInventory bool) {
 	rt := runtimeInitTestRuntime(t)
+	inventory := rt
+	if delayedInventory {
+		// Docker can start the child before publishing its running-container snapshot.
+		// Model that ordering by withholding the first inventory response only.
+		realRuntime, err := exec.LookPath(rt.Name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir := t.TempDir()
+		quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
+		seen := quote(filepath.Join(dir, "queried"))
+		shim := filepath.Join(dir, "docker")
+		script := "#!/bin/sh\nset -eu\nif [ \"$1\" = ps ] && [ ! -f " + seen + " ]; then\n  touch " + seen + "\n  exit 0\nfi\nexec " + quote(realRuntime) + " \"$@\"\n"
+		if err := os.WriteFile(shim, []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		inventory = runtime.Runtime{Name: shim}
+	}
 	helper := buildRuntimeInitProbe(t, rt)
 	repo := runtimeInitTestRepo(t)
 	ready := filepath.Join(repo, "ready")
@@ -164,7 +190,7 @@ func TestRuntimeInitForwardsTerminationSignal(t *testing.T) {
 		}
 	}
 	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
-	runID := fmt.Sprintf("runtime-init-%d", os.Getpid())
+	runID := fmt.Sprintf("runtime-init-%d-%d", os.Getpid(), time.Now().UnixNano())
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cleanupCancel()
@@ -176,7 +202,9 @@ func TestRuntimeInitForwardsTerminationSignal(t *testing.T) {
 		code int
 		err  error
 	}, 1)
+	finished := make(chan struct{})
 	go func() {
+		defer close(finished)
 		code, err := Run(cfg, rt, RunSpec{
 			Image: runtimeInitTestImage, Repo: repo, Workdir: "/workspace", Ctx: ctx,
 			Cmd:       []string{"/coop-init-probe", "signal", "/workspace/ready", "/workspace/received"},
@@ -190,11 +218,30 @@ func TestRuntimeInitForwardsTerminationSignal(t *testing.T) {
 			err  error
 		}{code: code, err: err}
 	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-finished:
+		case <-time.After(wait.Deadline):
+			t.Error("signal-probe runtime did not finish during cleanup")
+		}
+	})
 
 	awaitRuntimeInitMarker(t, ready, "ready\n")
-	if got := runtimeInitRunningCount(t, rt, LabelRun, runID); got != 1 {
-		t.Fatalf("running box count = %d, want 1", got)
-	}
+	// Child readiness precedes Docker's published running inventory. Wait for both
+	// before testing cancellation; runtime errors and unexpected exits still fail.
+	wait.For(t, "one running signal-probe container", func() bool {
+		select {
+		case got := <-result:
+			t.Fatalf("signal probe exited before cancellation: exit %d, err %v", got.code, got.err)
+		default:
+		}
+		got := runtimeInitRunningCount(t, inventory, LabelRun, runID)
+		if got > 1 {
+			t.Fatalf("running box count = %d, want 1", got)
+		}
+		return got == 1
+	})
 	cancel()
 	select {
 	case got := <-result:
