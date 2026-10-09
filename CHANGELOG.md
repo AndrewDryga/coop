@@ -11,6 +11,9 @@
 - **Grok models use your Coop account.** Catalog discovery no longer requires a separate host
   Grok login or host CLI; it asks the boxed client using the same selected account as a Grok run.
 
+- **Existing Grok sign-ins migrate safely.** Coop accepts normal native writer-lock permissions
+  while preserving the lock, excluding active writers and keeping credential storage private.
+
 ## 11.0.0
 
 - **Repository-local native history and host-only provider credentials.** Each project keeps its

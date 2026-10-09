@@ -161,6 +161,52 @@ func (f *legacyAccountFence) check() error {
 	return nil
 }
 
+func legacyWriterLockOwned(info os.FileInfo) bool {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && info.Mode().IsRegular() && stat.Uid == uint32(os.Geteuid()) && stat.Nlink == 1
+}
+
+func (f *legacyAccountFence) addWriter(name string) error {
+	fd, err := unix.Openat(int(f.root.Fd()), name, unix.O_RDWR|unix.O_CREAT|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0600)
+	if err != nil {
+		return err
+	}
+	lock := os.NewFile(uintptr(fd), name)
+	f.locks = append(f.locks, lock)
+	return f.lockWriter(lock)
+}
+
+func (f *legacyAccountFence) lockWriter(lock *os.File) error {
+	info, err := lock.Stat()
+	if err != nil {
+		return err
+	}
+	if !legacyWriterLockOwned(info) {
+		return errors.New("legacy credential writer lock must be an owned single-link regular file")
+	}
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		return errors.New("legacy native credential writer is busy; retry after it exits")
+	}
+	if err := f.check(); err != nil {
+		return err
+	}
+	info, err = lock.Stat()
+	if err != nil {
+		return err
+	}
+	if !legacyWriterLockOwned(info) {
+		return errors.New("legacy credential writer lock changed")
+	}
+	// Native clients may create public PID locks. Tighten the owned, exclusively fenced inode;
+	// replacing it would let a native writer keep using a different lock from our cutover.
+	if info.Mode().Perm() != 0o600 {
+		if err := lock.Chmod(0o600); err != nil {
+			return err
+		}
+	}
+	return privateAccountFile(lock)
+}
+
 func fenceLegacyAccount(ctx context.Context, cfg *config.Config, rt runtime.Runtime, ag agents.Agent, account string) (*legacyAccountFence, error) {
 	home := cfg.AgentProfileDir(ag.Name(), account)
 	lease, err := credentialUseLease(ctx, cfg, home, true)
@@ -180,20 +226,9 @@ func fenceLegacyAccount(ctx context.Context, cfg *config.Config, rt runtime.Runt
 	}
 	fence.root = root
 	for _, name := range ag.NativeCredentials().LegacyLocks {
-		fd, err := unix.Openat(int(root.Fd()), name, unix.O_RDWR|unix.O_CREAT|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0600)
-		if err != nil {
+		if err := fence.addWriter(name); err != nil {
 			release()
 			return nil, err
-		}
-		f := os.NewFile(uintptr(fd), name)
-		fence.locks = append(fence.locks, f)
-		if err := privateAccountFile(f); err != nil {
-			release()
-			return nil, err
-		}
-		if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
-			release()
-			return nil, errors.New("legacy native credential writer is busy; retry after it exits")
 		}
 	}
 	if err := checkLegacyMounts(ctx, cfg, rt, ag, account); err != nil {
