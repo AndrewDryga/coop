@@ -22,9 +22,10 @@ controller and state directory without `--token-file`. A saved identity can't be
 different controller.
 
 The default state directory is `~/.local/state/coop/sessions`. The internal Unix socket is
-`<state>/control.sock`. Run the command under a process supervisor. Ctrl-C stops the connection
-and any local service the command started. It doesn't stop an already-running service that it
-reused.
+`<state>/control.sock`. Each connection starts and owns its private local service; it refuses to
+reuse a live connection. Stop that connection before reconnecting, or choose a distinct `--state`
+directory for each concurrent worker. Run the command under a process supervisor. Ctrl-C stops
+the connection and the local service it started.
 
 A worker needs Git, Git LFS and a supported container runtime. The bundled worker image includes
 Git LFS. On a native worker, install `git-lfs` with your package manager.

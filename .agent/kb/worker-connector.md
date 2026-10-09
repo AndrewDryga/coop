@@ -3,7 +3,7 @@ name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, streams large API bodies under the same command identity, and never falls back to local execution
 subsystem: worker
 sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/first_download_waits.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go, internal/sessionsvc/activity.go, internal/workerconnector/activity_narration.go]
-updated: 2026-10-05
+updated: 2026-10-10
 ---
 
 `coop sessions connect --controller <https-url> --token-file <path>` connects this machine to a fleet controller. Its
@@ -14,6 +14,10 @@ product-specific commands. The connector never listens on TCP or accepts a shell
 
 The traps the code does not make obvious:
 
+- **One connection owns one private service.** `startLocalSessionService` refuses a live socket,
+  ready or unhealthy, rather than reusing another controller's service. Concurrent workers need
+  distinct state roots. Shutdown stops only the service this invocation started. A reconnect
+  retains its identity and journal but starts a new service after the previous connection stops.
 - **Capacity follows live runtime custody.** The daemon's `/v1/capacity` measures four shared
   active/warm slots; creation's Git concurrency is separate. Admission reserves before leasing a
   turn or starting its timeout. Warm expiry holds the session lock through teardown, and failed
@@ -125,6 +129,9 @@ The traps the code does not make obvious:
   survives durable delivery.
 
 ## Changelog
+- 2026-10-10 — actual private TLS enrollment, duplicate refusal, owned shutdown and identity-only
+  reconnect verified current service ownership; corrected public Connect guidance. The retired
+  2026-09-11 reuse description below is historical, not the current contract.
 - 2026-10-05 — the checkout root never reached the worker's narration; the daemon now writes
   `checkout_root` on narrated events (task 2026-10-05-check-whether-worker-activity-events-leak-the-ch).
 - 2026-10-04 — documented the first-download hold (d019c807) and its once-per-wait report
