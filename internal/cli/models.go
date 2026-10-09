@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -307,9 +308,8 @@ func (e modelFetchError) Error() string {
 
 func (e modelFetchError) Unwrap() error { return e.err }
 
-// modelFetchCause reduces a failed fetch to the few words that help — "" when nothing about the
-// error is actionable, because a menu that invents a reason is worse than one that admits the
-// list is old.
+// modelFetchCause renders only trusted causes; unknown failures still explain the failed request
+// without exposing provider output or guessing which account/network prerequisite was missing.
 func modelFetchCause(agent string, err error) string {
 	var named modelFetchError
 	var catalog agents.ModelCatalogError
@@ -322,8 +322,12 @@ func modelFetchCause(agent string, err error) string {
 		return titleName(agent) + " is unavailable on this host."
 	case errors.Is(err, context.DeadlineExceeded):
 		return "The model request timed out."
+	case errors.Is(err, context.Canceled):
+		return "The model request was cancelled."
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "The model probe closed before answering."
 	case errors.As(err, new(*json.SyntaxError)), errors.As(err, new(*json.UnmarshalTypeError)):
 		return "The agent returned a model list Coop could not read."
 	}
-	return ""
+	return "The model request failed."
 }

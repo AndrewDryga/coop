@@ -10,15 +10,21 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/acpproxy"
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // The three ages that drive `coop models`, kept apart on purpose:
@@ -34,8 +40,7 @@ const (
 	modelsRetryAfter     = time.Hour
 )
 
-// modelFetchTimeout bounds both native-CLI probes and the Claude/Gemini ACP handshake so a
-// catalog refresh can never hang the menu.
+// modelFetchTimeout bounds native-CLI probes and the ACP handshake, after normal host setup.
 const modelFetchTimeout = 15 * time.Second
 
 // modelsCache retains the last good catalog separately from the most recent fetch
@@ -221,13 +226,28 @@ func (a *app) fetchACPModelCatalog(agent string) ([]agents.Model, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), modelFetchTimeout)
-	defer cancel()
-	child, err := a.spawnBox(ctx, self, []string{"acp", agent}, superID, nil, agents.Target{Provider: agent}, "", true, io.Discard, forkspace.ExecutionRoleProbe)
+	launchCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	stderr := &tailBuffer{max: 16 << 10}
+	probe, target, err := a.admitModelProbe(launchCtx, agent, repo, stderr)
 	if err != nil {
-		return nil, err
+		return nil, modelProbeFailure(agent, err, stderr.String())
+	}
+	defer probe.acpCapture.Close()
+	ctx, cancel := context.WithTimeout(launchCtx, modelFetchTimeout)
+	defer cancel()
+	child, err := probe.spawnBox(ctx, self, []string{"acp", agent}, superID, nil, target, "", true, stderr, forkspace.ExecutionRoleProbe)
+	if err != nil {
+		return nil, modelProbeFailure(agent, err, stderr.String())
 	}
 	result, fetchErr := acpModelHandshake(ctx, child, repo)
+	if fetchErr != nil && child.WaitDone != nil {
+		// EOF can precede os/exec's stderr copy. An unresponsive child still has a bounded wait.
+		select {
+		case <-child.WaitDone:
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
 	child.Stop()
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), acpCleanupTimeout)
 	_, cleanupErr := a.rt.RemoveByLabel(cleanupCtx, box.LabelSupervisor, superID)
@@ -245,13 +265,82 @@ func (a *app) fetchACPModelCatalog(agent string) ([]agents.Model, error) {
 	// registry can momentarily see the other's record vanish mid-scan. Blaming a provider for
 	// that would be a lie, and a record left behind is swept by any later run.
 	if fetchErr != nil {
-		return nil, errors.Join(fetchErr, cleanupErr)
+		return nil, modelProbeFailure(agent, errors.Join(fetchErr, cleanupErr), stderr.String())
 	}
 	models := parseACPModelResult(agent, result)
 	if len(models) == 0 {
-		return nil, errors.Join(errors.New("ACP session advertised no models"), cleanupErr)
+		return nil, modelFetchError{cause: titleName(agent) + " advertised no models.", err: cleanupErr}
 	}
 	return models, nil
+}
+
+// Each catalog has its own account, config and capture: admission mutates the resolved posture,
+// and catalogs refresh concurrently. Unlike an editor, a probe never admits toolbar alternatives.
+func (a *app) admitModelProbe(ctx context.Context, agent, repo string, stderr io.Writer) (*app, agents.Target, error) {
+	probe := &app{cfg: a.cfg.Clone(), rt: a.rt, rtSet: true, network: a.network}
+	target := agents.Target{Provider: agent, Accounts: []string{probe.cfg.ActiveProfile(agent)}}
+	probe.acpNetworkTargets = []agents.Target{target}
+	var err error
+	probe.acpCapture, err = box.AdmitNetwork(probe.cfg, probe.rt, box.RunSpec{
+		Ctx: ctx, Repo: repo, Workdir: repo, Agent: agent, Peers: probe.acpNetworkTargets,
+		NetworkClient: egress.ClientACP, Homes: probe.cfg.Homes, Network: probe.cfg.Network,
+		Cache: probe.cfg.Cache, Stderr: &modelSetupOutput{Writer: stderr, agent: agent},
+	}, probe.network.admission())
+	return probe, target, err
+}
+
+// Admission writes only when it needs host qualification. Announce that stage once without
+// forwarding its raw build/runtime transcript into the catalog menu.
+type modelSetupOutput struct {
+	io.Writer
+	agent string
+	once  sync.Once
+}
+
+func (w *modelSetupOutput) Write(p []byte) (int, error) {
+	if len(p) > 0 {
+		w.once.Do(func() { ui.Note("Preparing filtered networking for %s model discovery…", titleName(w.agent)) })
+	}
+	return w.Writer.Write(p)
+}
+
+// Only fixed remedies leave the private stderr collector. Provider output and RPC payloads can
+// contain credentials, even when wrapped in an otherwise useful setup error.
+func modelProbeFailure(agent string, err error, stderr string) error {
+	cause := safeModelProbeCause(agent, err.Error()+"\n"+stderr)
+	if errors.Is(err, box.ErrNetworkSetupFailed) {
+		cause = "Filtered networking setup failed; run coop net setup for details."
+	} else if cause == "" {
+		cause = modelFetchCause(agent, err)
+	}
+	return modelFetchError{cause: cause, err: err}
+}
+
+func safeModelProbeCause(agent, text string) string {
+	text = strings.ToLower(text)
+	switch {
+	case strings.Contains(text, "review it: coop approve"):
+		return "Project access needs review: coop approve"
+	case strings.Contains(text, "not built") && strings.Contains(text, "coop build"):
+		return "The Coop box image is not built: coop build"
+	case strings.Contains(text, "coop build --egress filtered"):
+		return "The filtered project image needs rebuilding: coop build --egress filtered"
+	case strings.Contains(text, "coop net setup"):
+		return "Filtered networking needs host setup: coop net setup"
+	case strings.Contains(text, "restricted networking needs docker"):
+		return "Filtered networking requires Docker: set COOP_RUNTIME=docker"
+	case strings.Contains(text, "unset coop_image"):
+		return "Filtered networking requires Coop's image: unset COOP_IMAGE"
+	case strings.Contains(text, "no space left on device"):
+		return "The container runtime has no free storage."
+	case strings.Contains(text, "cannot connect to the docker daemon"), strings.Contains(text, "is the docker daemon running"):
+		return "Docker is unavailable."
+	case strings.Contains(text, "coop login"):
+		return signInToRefresh(agent)
+	case strings.Contains(text, "native route refused"):
+		return "The credential broker refused a provider request."
+	}
+	return ""
 }
 
 // acpModelHandshake drives only the setup needed to make adapters advertise their model catalog.
@@ -303,7 +392,7 @@ func acpRoundTrip(ctx context.Context, w io.Writer, r *bufio.Reader, id int, met
 			continue // notification or a response to the refused adapter request
 		}
 		if len(frame.Error) > 0 && string(bytes.TrimSpace(frame.Error)) != "null" {
-			return nil, fmt.Errorf("ACP %s failed: %s", method, frame.Error)
+			return nil, modelFetchError{cause: "The agent rejected the model discovery request.", err: fmt.Errorf("ACP %s failed", method)}
 		}
 		if len(frame.Result) == 0 {
 			return nil, fmt.Errorf("ACP %s returned no result", method)

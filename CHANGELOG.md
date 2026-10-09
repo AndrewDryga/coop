@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Model discovery respects project networking.** Claude and Gemini catalog refreshes now use
+  normal host admission for the selected account, including filtered projects. Failed refreshes
+  retain the last good list and explain setup failures without exposing provider diagnostics.
+
 ## 11.0.0
 
 - **Repository-local native history and host-only provider credentials.** Each project keeps its

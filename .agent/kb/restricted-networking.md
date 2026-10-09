@@ -3,7 +3,7 @@ name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
 sources: [internal/cli/fork_cmd.go, internal/cli/fork_cmd_test.go, internal/box/filtered_test.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_test.go, internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go]
-updated: 2026-10-07
+updated: 2026-10-09
 ---
 
 `coop <agent> --egress filtered` runs the box behind a per-run gateway. Five boring layers stand
@@ -70,12 +70,13 @@ transition later at the prompt boundary; it reuses the reviewed pair exactly or 
 and enrollment from crossing an active sandbox mount window.
 
 ACP supervision carries this explicit mode through `spawnBox` to initial, replacement and warm
-children, removing any conflicting ambient `COOP_EGRESS`. A standalone `coop models` catalog
-refresh is different: it is host-side provider metadata, not an admitted agent session (some
-providers deliberately use host CLIs). Its ACP-backed probes retain implicit project-overlay
-behavior; they must not export a default `open` that would suppress project tightening. This
-does not promise remembered agent-run policy for catalog refresh. Filtered child captures still
-require owner-store authentication; exporting a mode alone grants no filtered authority.
+children, removing any conflicting ambient `COOP_EGRESS`. Each ACP-backed `coop models` probe
+admits separately on a cloned configuration, for its exact selected provider/account only
+(`cli/modelscache.go`, `admitModelProbe`). It follows the same project/remembered-policy ladder;
+it never admits the editor toolbar's alternatives or exports a default `open` to bypass project
+tightening. The child re-proves its capture and account binding normally. Host setup may run
+before the 15-second metadata handshake; cancellation still owns setup cleanup. Host-command
+catalogs do not launch a box. Exporting a mode alone grants no filtered authority.
 
 A withdrawal marker (`networkstate/approval_withdrawal.go`, written before the grant is cleared)
 outranks the ladder below for an ordinary launch: with no approval it makes the project pending
@@ -220,56 +221,28 @@ Traps:
   (`networkstate/bundles.go:18`): changing a bundle without bumping the version is refused as
   integrity drift, so the version moves with the content (`2026-09-10.1` added the proxy). The
   rule is [[provider-bundles-carry-function-not-chatter]].
-- A filtered run brokers every API-key route its selected accounts declare — lead, peers, preset
-  roles (`credentialPlan`, `box/credential_broker.go`): Claude `ANTHROPIC_API_KEY`, Gemini
-  `GEMINI_API_KEY`, Codex `OPENAI_API_KEY`. A box holds one account per provider, so a plan has at
-  most one route per provider, and route i listens on `CredentialBrokerAddress(i)` (15580+i) with
-  its own substitute. The key leaves the one env file every process in the box inherits (lead,
-  peers, helpers, the ACP adapter), replaced by the substitute plus the route's loopback base URL;
-  Codex, whose built-in provider ignores `OPENAI_BASE_URL`, gets its adapter's
-  `/etc/codex/managed_config.toml` (`CredentialBrokerSpec.Config`), mounted read-only so every codex
-  process — consult/delegate arms and codex-acp too — uses the route. The capless guard alone
-  receives the exact read-only secret file; the privileged controller and agent never do. Its
-  helper-only resolver and typed controller lease keep the provider API out of agent policy, while
-  Envoy retains exact socket/byte attribution. Traps, each found live: a route must admit the
-  request line its pinned client really sends (Claude posts `/v1/messages?beta=true` —
-  `TestCredentialBrokerRoutesAdmitWhatThePinnedClientsSend` pins captured lines per client
-  version); whether a run is filtered is the CALLER's to say (`requireFiltered` in `box.Run`'s
-  unfiltered branch) — an ACP child's or a session's filtered authority arrives as a capture while
-  its own `cfg.Egress` may say open; a policy classifies every account it covers
-  (`brokeredProviders`, the accounts its bundles derive from), because one policy cannot grant a
-  provider's API to a sign-in and withhold it for a key — a loop or preset ladder mixing them is
-  refused, an editor session offers one kind per provider (`acpNetworkScope`). Grok's pinned
-  client has no qualified API base override, and every alternate API-key variable, a key only a
-  native credential file holds, and API-key runs with open/offline egress or bare mode refuse before
-  the runtime. Direct Claude readonly runs now compose with filtered and broker `ANTHROPIC_API_KEY`;
-  restricted remote-session policies still reject filtered. See [[restricted-execution-modes]].
-  Ordinary OAuth/access-token files keep their existing handling and are not called
-  broker-protected; restricted and session projections retain their existing access-only copies
-  — a remote session instead hands its child an API key in the private config's host-side vault or
-  env (`projectSessionKey`), removed after the turn and again by the session janitor. A sign-in box
-  classifies nothing (`brokeredProviders` returns early): it receives no key, and its sign-in
-  endpoints must stay granted.
+- Online coding runs broker the selected accounts, API-key and subscription alike. The canonical
+  host authority owns grants and renewal; repository-local native homes receive only public
+  selectors, never access/refresh tokens (`box/native_broker.go`, `planNativeAccounts`). Each
+  adapter's `NativeCredentials().Broker` declares exact routes, including Grok's model catalog.
+  The filtered guard reaches those protected origins through helper authority; the workload
+  receives no direct grant to them (`box/network_bundles.go`, `nativeNetworkBundle`). An open run
+  uses the same broker in a private inspected Docker namespace (`box/native_open.go`), so open
+  networking does not mean unprotected credentials. Online provider runs require Docker.
+  Offline and sign-in runs do not start this coding broker. Sign-in is a separate host workflow;
+  never import an old access-only projection to repair a revoked canonical account.
 - Bearer MCP servers ride the same broker, as `mcp`-kind routes after the provider routes (exact
   URL path, POST/GET/DELETE, no header timeout; 8 provider + 64 MCP routes, 15580–15651): the box
   gets `COOP_MCP_TOKEN_<i>` stand-ins and a rewritten snapshot, the operator's token variables never
   enter any filtered box, and each bearer server's host is withheld from the agent's own grants. A
   direct grant of such a host needs no refusal — the box never holds the token. Details and the
   session handoff: [[mcp-authority-projection]].
-- A normal filtered box renews its own OAuth login: it mounts the provider profile like an open box
-  (`box/run.go`, the `-v` of `cfg.AgentDir`), and every bundle carries the refresh host (Claude
-  `platform.claude.com`, Codex `auth.openai.com`, Grok `auth.x.ai`, whose token endpoint is
-  `/oauth2/token`). So `RequirePortable` — the access token must outlive
-  `RestrictedCredentialHorizon` by itself — applies only where nothing can renew it: Grok asks
-  for it just when its `auth.json` carries no refresh token (`grokCanRefresh`), as a session's
-  access-only projection does. It used to ask always, and Grok access tokens live six hours with
-  no host-side renewal, so a filtered Grok was refused in each token's last hour and forever once
-  it expired. Proved live on 2026-09-18: an expired login refreshed in the box through the gateway.
-  A remote session ADMITS on the host profile (refresh token → no horizon) but each turn mounts
-  the access-only projection, whose re-check in the child (`cli/acp_cmd.go`, NetworkProviderBundles)
-  applies the horizon. So the daemon renews Grok on the host first (`renewGrokCredential`, its
-  `Prepare`) and, for a filtered session as for a restricted one, projects for at least
-  `RestrictedCredentialHorizon` (`sessionsvc/acp.go`), not just the turn.
+- Host renewal happens before and throughout brokered runs. Private broker snapshots expire
+  closed when publication stops; remote children point to the same canonical host authority
+  (`sessionsvc/acp.go`), not a second refresh store. Uncertain renewal is a recovery result,
+  never a blind retry or permission to expose refresh authority. See
+  [[renew-before-access-only-projection]]. The pre-v11 box-owned renewal captures in older
+  changelog entries are historical evidence, not instructions for current launches.
 - A selected Compose service and its dependency closure use fixed prepared addresses on an internal
   network. The guard maps accepted proxy peers back to those exact service names. Approved and
   denied external TLS therefore carry `service` through the existing event, receipt, human view,
@@ -288,6 +261,10 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-10-09 — repaired unadmitted ACP catalog probes; verified private per-provider config,
+  exact selected-account scope, project tightening and pending-approval refusal in regression tests.
+  Replaced stale pre-v11 credential guidance against native broker planning, open namespace,
+  account renewal and remote authority handoff; historical captures remain historical.
 - 2026-10-07 — traced Docker 27 DinD setup's unconfirmed stop to the newer long flag, added the
   portable cleanup spelling and strict success/rejected-stop regressions, and documented worker
   preparation separately from protocol support. No fallback widens a filtered job's authority.

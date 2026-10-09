@@ -36,6 +36,8 @@ import (
 // Child is one run of the agent adapter (one container). The proxy writes ACP to In
 // and reads ACP from Out; Stop force-terminates it.
 type Child struct {
+	// WaitDone closes after a process-backed child exits and its stderr has been collected.
+	WaitDone  <-chan struct{}
 	In        io.WriteCloser
 	Out       io.Reader
 	Stop      func()

@@ -995,8 +995,7 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	}
 	env := append(cleanACPChildEnv(os.Environ()), "COOP_ACP_INNER=1", "COOP_ACP_SUPERVISOR="+superID,
 		"COOP_ACP_ACTIVITY_ROLE="+string(activityRole))
-	// Admission marks the mode explicit. Keep a standalone model probe's implicit default
-	// unset so its child can still apply project policy.
+	// Admission marks the resolved mode explicit; an unadmitted caller must not invent open.
 	if a.cfg.Explicit("COOP_EGRESS") {
 		env = append(env, "COOP_EGRESS="+a.cfg.Egress)
 	}
@@ -1090,7 +1089,11 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	inR.Close()  // the child holds the read end now
 	outW.Close() // ...and the write end; outR sees EOF when the child exits
 	pid := cmd.Process.Pid
-	go func() { _ = cmd.Wait() }()
+	waitDone := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(waitDone)
+	}()
 	activityRepo := ""
 	if currentRepo, resolveErr := box.ResolveRepo(a.cfg.RepoOverride); resolveErr == nil {
 		if canonical, _, bindingErr := forkspace.ResolveProjectBinding(currentRepo); bindingErr == nil {
@@ -1143,7 +1146,7 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 		}
 		_ = forkspace.UpdateExecutionRoleByPID(activityRepo, pid, role)
 	}
-	return &acpproxy.Child{In: inW, Out: outR, Stop: stop, SetActive: setActive, Provider: provider, Account: account}, nil
+	return &acpproxy.Child{In: inW, Out: outR, Stop: stop, SetActive: setActive, Provider: provider, Account: account, WaitDone: waitDone}, nil
 }
 
 // reapACPChildBoxes removes only containers carrying the execution IDs published by one stopped
