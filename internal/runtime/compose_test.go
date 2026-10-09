@@ -89,11 +89,12 @@ func TestFrozenComposeInventoriesWritersOnSameDaemon(t *testing.T) {
 	t.Setenv("DOCKER_HOST", endpoint)
 	recorder := filepath.Join(t.TempDir(), "commands")
 	path := filepath.Join(t.TempDir(), "docker")
+	id := strings.Repeat("a", 64)
 	script := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$*\" >> " + strconv.Quote(recorder) + "\n" +
 		"case \"$*\" in\n" +
-		"  *\"ps -q\"*) printf 'fixture-container\\n' ;;\n" +
-		"  *\"inspect --format\"*) printf '[{\"Type\":\"bind\",\"Source\":\"/fixture/source\",\"RW\":true}]\\n' ;;\n" +
+		"  *\"ps -q\"*) printf '%s\\n' '" + id + "' ;;\n" +
+		"  *\"inspect --type container --format\"*) printf '%s\\n' '{\"ID\":\"" + id + "\",\"Status\":\"running\",\"Mounts\":[{\"Type\":\"bind\",\"Source\":\"/fixture/source\",\"RW\":true}]}' ;;\n" +
 		"esac\n"
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatal(err)

@@ -14,6 +14,10 @@
 - **Existing Grok sign-ins migrate safely.** Coop accepts normal native writer-lock permissions
   while preserving the lock, excluding active writers and keeping credential storage private.
 
+- **Credential startup checks scale to busy Docker hosts.** Complete mount inventory uses
+  bounded batches while preserving daemon identity, read-only mounts and stopped-container
+  safety checks; unavailable or incomplete observations still refuse startup.
+
 ## 11.0.0
 
 - **Repository-local native history and host-only provider credentials.** Each project keeps its
