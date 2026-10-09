@@ -15,6 +15,33 @@ func TestModelCatalogDescriptors(t *testing.T) {
 		if !covered || !slices.Equal(spec.HostCommand, command) || (spec.ParseHost != nil) != (len(command) > 0) || (spec.ParseACP != nil) != (len(command) == 0) {
 			t.Errorf("%s catalog descriptor = %+v, covered=%v", name, spec, covered)
 		}
+		if (spec.ACPAuthMethod != nil) != (name == "grok") {
+			t.Errorf("%s unexpected broker bootstrap declaration", name)
+		}
+	}
+}
+
+func TestGrokCatalogRequiresAdvertisedExternalHelper(t *testing.T) {
+	for _, test := range []struct {
+		name, raw string
+		allowed   bool
+	}{
+		{"native broker", `{"authMethods":[{"id":"cached_token"},{"id":"grok.com","_meta":{"external_provider":true}}]}`, true},
+		{"no methods", `{}`, false},
+		{"device sign-in", `{"authMethods":[{"id":"grok.com","_meta":{"external_provider":false}}]}`, false},
+		{"missing marker", `{"authMethods":[{"id":"grok.com"}]}`, false},
+		{"wrong method", `{"authMethods":[{"id":"cached_token","_meta":{"external_provider":true}}]}`, false},
+		{"string marker", `{"authMethods":[{"id":"grok.com","_meta":{"external_provider":"true"}}]}`, false},
+		{"duplicate method", `{"authMethods":[{"id":"grok.com","_meta":{"external_provider":true}},{"id":"grok.com","_meta":{"external_provider":true}}]}`, false},
+		{"malformed metadata", `{"authMethods":[{"id":"grok.com","_meta":12}]}`, false},
+		{"malformed JSON", `{"authMethods":`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			method, err := grokCatalogAuthMethod(json.RawMessage(test.raw))
+			if (err == nil) != test.allowed || test.allowed && method != "grok.com" || !test.allowed && method != "" {
+				t.Fatalf("method=%q error=%v allowed=%v", method, err, test.allowed)
+			}
+		})
 	}
 }
 

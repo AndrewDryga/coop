@@ -1219,11 +1219,37 @@ func grokCanRefresh(profileDir string) bool {
 }
 
 func (grokAgent) ModelCatalog() ModelCatalogSpec {
-	return ModelCatalogSpec{ParseACP: func(raw json.RawMessage) []Model {
+	return ModelCatalogSpec{ACPAuthMethod: grokCatalogAuthMethod, ParseACP: func(raw json.RawMessage) []Model {
 		var doc acpModelCatalog
 		if json.Unmarshal(raw, &doc) != nil {
 			return nil
 		}
 		return ParseACPAvailableModels(doc.Models)
 	}}
+}
+
+func grokCatalogAuthMethod(raw json.RawMessage) (string, error) {
+	var initialized struct {
+		AuthMethods []struct {
+			ID   string `json:"id"`
+			Meta struct {
+				ExternalProvider bool `json:"external_provider"`
+			} `json:"_meta"`
+		} `json:"authMethods"`
+	}
+	const method = "grok.com"
+	count, external := 0, false
+	if json.Unmarshal(raw, &initialized) == nil {
+		for _, advertised := range initialized.AuthMethods {
+			if advertised.ID == method {
+				count++
+				external = advertised.Meta.ExternalProvider
+			}
+		}
+	}
+	// The same method can start device sign-in without this exact external-helper marker.
+	if count != 1 || !external {
+		return "", errors.New("grok's noninteractive credential broker is unavailable")
+	}
+	return method, nil
 }

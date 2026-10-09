@@ -29,6 +29,9 @@
 - **Model discovery allows normal box startup.** Native account setup no longer consumes the
   catalog request deadline. Both startup and catalog requests remain bounded and cancellable.
 
+- **Grok catalog refresh initializes its broker.** Discovery uses the native external helper
+  before requesting models, without device sign-in or exposing account tokens to the box.
+
 ## 11.0.0
 
 - **Repository-local native history and host-only provider credentials.** Each project keeps its

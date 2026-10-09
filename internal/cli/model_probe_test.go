@@ -133,7 +133,7 @@ func TestModelProbeChildExitCollectsLateStderr(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer child.Stop()
-	_, err = acpModelHandshake(t.Context(), child, repo)
+	_, err = acpModelHandshake(t.Context(), child, repo, agents.ModelCatalogSpec{})
 	if err == nil {
 		t.Fatal("closed child succeeded")
 	}
@@ -186,7 +186,7 @@ func TestModelProbeFilteredChildCarriesOnlySelectedAccount(t *testing.T) {
 func TestModelProbeRPCFailureNeverCachesPayload(t *testing.T) {
 	r := strings.NewReader("{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"message\":\"SECRET-CANARY\"}}\n")
 	child := &acpproxy.Child{In: nopWriteCloser{Writer: io.Discard}, Out: r}
-	_, err := acpModelHandshake(t.Context(), child, "/repo")
+	_, err := acpModelHandshake(t.Context(), child, "/repo", agents.ModelCatalogSpec{})
 	a := modelsApp(t)
 	if err := writeModelsCache(a.cfg, "claude", []agents.Model{{ID: "last-good"}}); err != nil {
 		t.Fatal(err)

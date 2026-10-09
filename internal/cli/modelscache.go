@@ -198,7 +198,7 @@ func (a *app) fetchModelCatalog(agent string) ([]agents.Model, error) {
 	if !box.ProfileAuthed(a.cfg, agent, a.cfg.ActiveProfile(agent)) {
 		return nil, modelFetchError{cause: signInToRefresh(agent)}
 	}
-	return a.fetchACPModelCatalog(agent)
+	return a.fetchACPModelCatalog(agent, spec)
 }
 
 // signInToRefresh is the one sentence a signed-out catalog gets: what is missing, and the exact
@@ -209,9 +209,9 @@ func signInToRefresh(agent string) string {
 
 // fetchACPModelCatalog launches one inner ACP box, asks for a fresh session's advertised models,
 // then tears down both its process group and any container generation carrying this exact
-// supervisor id. It bypasses the public supervisor: a two-request probe needs no warm pool,
+// supervisor id. It bypasses the public supervisor: a short-lived probe needs no warm pool,
 // restart replay, or editor control layer.
-func (a *app) fetchACPModelCatalog(agent string) ([]agents.Model, error) {
+func (a *app) fetchACPModelCatalog(agent string, catalog agents.ModelCatalogSpec) ([]agents.Model, error) {
 	if err := a.ensureRuntime(); err != nil {
 		return nil, err
 	}
@@ -241,7 +241,7 @@ func (a *app) fetchACPModelCatalog(agent string) ([]agents.Model, error) {
 	if err != nil {
 		return nil, modelProbeFailure(agent, err, stderr.String())
 	}
-	result, fetchErr := acpModelHandshake(ctx, child, repo)
+	result, fetchErr := acpModelHandshake(ctx, child, repo, catalog)
 	if fetchErr != nil && child.WaitDone != nil {
 		// EOF can precede os/exec's stderr copy. An unresponsive child still has a bounded wait.
 		select {
@@ -262,7 +262,7 @@ func (a *app) fetchACPModelCatalog(agent string) ([]agents.Model, error) {
 	}
 	// A failed probe reports the cleanup problem too — it may be the reason (errors.Join drops a
 	// nil). A probe that ANSWERED does not: it has a real catalog, and cleanup is coop's own
-	// housekeeping — the two ACP probes now run side by side, so one sweeping the execution
+	// housekeeping — ACP probes refresh concurrently, so one sweeping the execution
 	// registry can momentarily see the other's record vanish mid-scan. Blaming a provider for
 	// that would be a lie, and a record left behind is swept by any later run.
 	if fetchErr != nil {
@@ -357,25 +357,37 @@ func safeModelProbeCause(agent, text string) string {
 // acpModelHandshake drives only the setup needed to make adapters advertise their model catalog.
 // It still handles adapter-to-client requests so a provider cannot deadlock the probe waiting on a
 // capability the non-editor client does not implement.
-func acpModelHandshake(ctx context.Context, child *acpproxy.Child, cwd string) (json.RawMessage, error) {
-	return acpModelHandshakeWithin(ctx, child, cwd, modelStartupTimeout, modelFetchTimeout)
+func acpModelHandshake(ctx context.Context, child *acpproxy.Child, cwd string, catalog agents.ModelCatalogSpec) (json.RawMessage, error) {
+	return acpModelHandshakeWithin(ctx, child, cwd, catalog, modelStartupTimeout, modelFetchTimeout)
 }
 
-func acpModelHandshakeWithin(ctx context.Context, child *acpproxy.Child, cwd string, startup, catalog time.Duration) (json.RawMessage, error) {
+func acpModelHandshakeWithin(ctx context.Context, child *acpproxy.Child, cwd string, catalog agents.ModelCatalogSpec, startup, request time.Duration) (json.RawMessage, error) {
 	r := bufio.NewReaderSize(child.Out, 1<<20)
 	initialize := map[string]any{
 		"protocolVersion":    1,
 		"clientCapabilities": map[string]any{},
 	}
 	startupCtx, startupCancel := context.WithTimeout(ctx, startup)
-	_, err := acpRoundTrip(startupCtx, child.In, r, 1, "initialize", initialize)
-	startupCancel()
+	defer startupCancel()
+	initialized, err := acpRoundTrip(startupCtx, child.In, r, 1, "initialize", initialize)
 	if err != nil {
 		return nil, err
 	}
-	catalogCtx, catalogCancel := context.WithTimeout(ctx, catalog)
+	nextID := 2
+	if catalog.ACPAuthMethod != nil {
+		method, err := catalog.ACPAuthMethod(initialized)
+		if err != nil || method == "" {
+			return nil, modelFetchError{cause: "The noninteractive credential broker is unavailable.", err: err}
+		}
+		if _, err := acpRoundTrip(startupCtx, child.In, r, nextID, "authenticate", map[string]any{"methodId": method}); err != nil {
+			return nil, err
+		}
+		nextID++
+	}
+	startupCancel()
+	catalogCtx, catalogCancel := context.WithTimeout(ctx, request)
 	defer catalogCancel()
-	return acpRoundTrip(catalogCtx, child.In, r, 2, "session/new", map[string]any{
+	return acpRoundTrip(catalogCtx, child.In, r, nextID, "session/new", map[string]any{
 		"cwd": cwd, "mcpServers": []any{},
 	})
 }

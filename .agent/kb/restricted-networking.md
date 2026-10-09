@@ -75,7 +75,7 @@ admits separately on a cloned configuration, for its exact selected provider/acc
 (`cli/modelscache.go`, `admitModelProbe`). It follows the same project/remembered-policy ladder;
 it never admits the editor toolbar's alternatives or exports a default `open` to bypass project
 tightening. The child re-proves its capture and account binding normally. Host setup may run
-before bounded adapter startup; its initialize reply starts a fresh 15-second catalog budget.
+before bounded adapter startup; completed native bootstrap starts a fresh 15-second catalog budget.
 Startup has a separate 60-second limit and cancellation still owns exact setup cleanup. Host-command
 catalogs do not launch a box. Exporting a mode alone grants no filtered authority.
 
@@ -237,6 +237,10 @@ Traps:
   networking does not mean unprotected credentials. Online provider runs require Docker.
   Offline and sign-in runs do not start this coding broker. Sign-in is a separate host workflow;
   never import an old access-only projection to repair a revoked canonical account.
+- Grok's grantless external helper needs ACP `authenticate` before `session/new`. Its catalog
+  adapter selects only advertised `grok.com` with `_meta.external_provider == true`, never a
+  cached-token or device sign-in fallback. Initialization and helper bootstrap share one startup
+  bound; generic discovery starts its catalog budget afterward (`agent/grok.go`, `cli/modelscache.go`).
 - Bearer MCP servers ride the same broker, as `mcp`-kind routes after the provider routes (exact
   URL path, POST/GET/DELETE, no header timeout; 8 provider + 64 MCP routes, 15580–15651): the box
   gets `COOP_MCP_TOKEN_<i>` stand-ins and a rewritten snapshot, the operator's token variables never
@@ -267,6 +271,9 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-10-09 — actual Grok catalog returned auth-required despite a selected broker account.
+  Verified the retained exact1.0.44 external-helper ACP fixture and added guarded adapter-owned
+  bootstrap, with sequence, cache/canary and authentication deadline/cancellation tests.
 - 2026-10-09 — measured healthy native startup beyond the old combined15-second probe bound;
   bounded initialize separately and retained the metadata budget after readiness, with hung-phase
   and caller-cancellation regressions. No grant or provider timeout reset on notifications.

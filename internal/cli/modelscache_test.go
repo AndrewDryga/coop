@@ -206,7 +206,7 @@ func seedModelsCache(t *testing.T, cfg *config.Config, agent string, fetched, at
 	}
 }
 
-// TestACPModelHandshake proves the production probe sends initialize + session/new, refuses an
+// TestACPModelHandshake proves a probe without bootstrap sends initialize + session/new, refuses an
 // adapter-to-client request instead of deadlocking, and preserves each provider's raw result for
 // the existing parser.
 func TestACPModelHandshake(t *testing.T) {
@@ -236,7 +236,7 @@ func TestACPModelHandshake(t *testing.T) {
 		t.Run(tc.agent, func(t *testing.T) {
 			child, adapterDone := fakeACPModelChild(json.RawMessage(tc.result))
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			result, err := acpModelHandshake(ctx, child, "/repo")
+			result, err := acpModelHandshake(ctx, child, "/repo", agents.ModelCatalogSpec{})
 			cancel()
 			if err != nil {
 				child.Stop()
@@ -273,7 +273,7 @@ func TestACPModelHandshakeTimeout(t *testing.T) {
 		_ = json.NewDecoder(toAdapterR).Decode(&req) // consume initialize, then deliberately hang
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	_, err := acpModelHandshake(ctx, child, "/repo")
+	_, err := acpModelHandshake(ctx, child, "/repo", agents.ModelCatalogSpec{})
 	cancel()
 	child.Stop()
 	if !errors.Is(err, context.DeadlineExceeded) {

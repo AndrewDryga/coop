@@ -14,6 +14,8 @@ type ModelCatalogSpec struct {
 	HostCommand []string
 	ParseHost   func([]byte) ([]Model, error)
 	ParseACP    func(json.RawMessage) []Model
+	// ACPAuthMethod selects only a noninteractive broker bootstrap proven by initialize.
+	ACPAuthMethod func(json.RawMessage) (string, error)
 }
 
 // Preserve complete session-result decoding for forced discovery, including
