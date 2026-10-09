@@ -1219,44 +1219,11 @@ func grokCanRefresh(profileDir string) bool {
 }
 
 func (grokAgent) ModelCatalog() ModelCatalogSpec {
-	return ModelCatalogSpec{HostCommand: []string{"grok", "models"}, ParseHost: func(out []byte) ([]Model, error) {
-		// The host CLI's login is distinct from a Coop boxed profile.
-		if grokUnauthenticated(out) {
-			return nil, ModelCatalogError("The host grok CLI is not signed in.")
+	return ModelCatalogSpec{ParseACP: func(raw json.RawMessage) []Model {
+		var doc acpModelCatalog
+		if json.Unmarshal(raw, &doc) != nil {
+			return nil
 		}
-		return parseGrokModels(out), nil
+		return ParseACPAvailableModels(doc.Models)
 	}}
-}
-
-func grokUnauthenticated(out []byte) bool {
-	return bytes.Contains(out, []byte("not authenticated"))
-}
-
-// parseGrokModels reads `grok models` output — a bullet per model, the default marked:
-//
-//   - grok-4.5 (default)
-//   - grok-composer-2.5-fast
-//
-// It returns ids in listed order (name = id; grok prints no separate display name), skipping
-// blanks and duplicates.
-func parseGrokModels(out []byte) []Model {
-	var models []Model
-	seen := map[string]bool{}
-	for _, raw := range strings.Split(string(out), "\n") {
-		line := strings.TrimSpace(raw)
-		rest, ok := strings.CutPrefix(line, "* ")
-		if !ok {
-			rest, ok = strings.CutPrefix(line, "- ")
-		}
-		if !ok {
-			continue
-		}
-		fields := strings.Fields(rest) // the id, then an optional " (default)" marker
-		if len(fields) == 0 || seen[fields[0]] {
-			continue
-		}
-		seen[fields[0]] = true
-		models = append(models, Model{ID: fields[0], Name: fields[0]})
-	}
-	return models
 }

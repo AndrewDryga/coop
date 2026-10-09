@@ -258,7 +258,7 @@ func (a *app) refreshCatalog(agent string, blocked error) (string, bool) {
 	if err == nil {
 		models, err = a.fetchModelCatalog(agent)
 		if err == nil && len(models) == 0 {
-			err = modelFetchError{cause: titleName(agent) + " returned no models."}
+			err = modelFetchError{cause: titleName(agent) + " returned no usable model catalog."}
 		}
 	}
 	if err == nil {
@@ -312,12 +312,9 @@ func (e modelFetchError) Unwrap() error { return e.err }
 // without exposing provider output or guessing which account/network prerequisite was missing.
 func modelFetchCause(agent string, err error) string {
 	var named modelFetchError
-	var catalog agents.ModelCatalogError
 	switch {
 	case errors.As(err, &named):
 		return named.cause
-	case errors.As(err, &catalog):
-		return string(catalog)
 	case errors.Is(err, exec.ErrNotFound):
 		return titleName(agent) + " is unavailable on this host."
 	case errors.Is(err, context.DeadlineExceeded):

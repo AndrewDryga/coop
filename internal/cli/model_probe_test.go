@@ -79,6 +79,12 @@ func TestModelProbeFailuresAreSafeAndUseful(t *testing.T) {
 		{"run coop build --egress filtered " + secret, "The filtered project image needs rebuilding: coop build --egress filtered"},
 		{"run coop net setup " + secret, "Filtered networking needs host setup: coop net setup"},
 		{"no space left on device " + secret, "The container runtime has no free storage."},
+		{"legacy Gemini encrypted cache has no recorded storage identity " + secret, "The selected account needs host recovery; its legacy encrypted cache is preserved."},
+		{"legacy encrypted cache has no recorded storage identity " + secret, "The selected account needs host recovery; its legacy encrypted cache is preserved."},
+		{"legacy writer inventory is unavailable " + secret, "Docker could not verify existing credential mounts; retry when Docker is ready."},
+		{"canonical credential file must be owner-private with one link " + secret, "Credential storage failed a safety check; preserve it for host recovery."},
+		{"legacy native credential writer is busy " + secret, "An existing session is using this account; finish it before retrying."},
+		{"native account needs host sign-in or renewal " + secret, "Sign in to Claude to refresh its models: coop login claude"},
 		{secret + "\x1b[31m", "The model probe closed before answering."},
 	} {
 		cause := modelFetchCause("claude", modelProbeFailure("claude", io.EOF, tc.detail))

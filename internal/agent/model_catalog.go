@@ -16,11 +16,6 @@ type ModelCatalogSpec struct {
 	ParseACP    func(json.RawMessage) []Model
 }
 
-// ModelCatalogError is an adapter's actionable explanation of an invalid catalog.
-type ModelCatalogError string
-
-func (e ModelCatalogError) Error() string { return string(e) }
-
 // Preserve complete session-result decoding for forced discovery, including
 // malformed option metadata unrelated to the selected provider's catalog shape.
 type acpModelCatalog struct {

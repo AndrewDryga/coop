@@ -56,8 +56,7 @@ func TestModelsCacheRoundTrip(t *testing.T) {
 func TestModelCatalogHostDispatchAndFailure(t *testing.T) {
 	for _, tc := range []struct{ provider, args, output, id, cause string }{
 		{"codex", "debug models", `{"models":[{"slug":"native-codex","visibility":"list"}]}`, "native-codex", ""},
-		{"grok", "models", "  * native-grok (default)", "native-grok", ""},
-		{"grok", "models", "You are not authenticated.\n  * grok-build (default)", "", "The host grok CLI is not signed in."},
+		{"codex", "debug models", `{broken`, "", "The agent returned a model list Coop could not read."},
 	} {
 		t.Run(tc.provider+tc.id, func(t *testing.T) {
 			a := modelsApp(t)
@@ -93,6 +92,55 @@ func TestModelCatalogHostDispatchAndFailure(t *testing.T) {
 	}
 }
 
+func TestGrokModelDiscoveryNeverUsesHostLogin(t *testing.T) {
+	a := modelsApp(t)
+	dir := t.TempDir()
+	called := filepath.Join(dir, "host-called")
+	script := "#!/bin/sh\nprintf called > '" + called + "'\nprintf 'You are not authenticated.\\n'\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "grok"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	a.cfg.SetActiveProfile("grok", "work")
+	a.acpModels = func(provider string) ([]agents.Model, error) {
+		if provider != "grok" || a.cfg.ActiveProfile(provider) != "work" {
+			t.Fatalf("wrong account source: %s", provider)
+		}
+		return []agents.Model{{ID: "account-catalog"}}, nil
+	}
+	if cause, failed := a.refreshCatalog("grok", nil); failed || cause != "" {
+		t.Fatalf("refresh: %q, %v", cause, failed)
+	}
+	cache, _ := loadModelsCache(a.cfg, "grok")
+	if len(cache.Models) != 1 || cache.Models[0].ID != "account-catalog" {
+		t.Fatal(cache)
+	}
+	a.acpModels = nil
+	if _, err := a.fetchModelCatalog("grok"); modelFetchCause("grok", err) != signInToRefresh("grok") {
+		t.Fatalf("signed-out cause: %v", err)
+	}
+	if _, err := os.Stat(called); !os.IsNotExist(err) {
+		t.Fatal("host Grok was invoked")
+	}
+}
+
+func TestGrokMissingCatalogRetainsGoodCache(t *testing.T) {
+	a := modelsApp(t)
+	if err := writeModelsCache(a.cfg, "grok", []agents.Model{{ID: "last-good"}}); err != nil {
+		t.Fatal(err)
+	}
+	a.acpModels = func(string) ([]agents.Model, error) {
+		return parseACPModelResult("grok", json.RawMessage(`{"sessionId":"s","models":{"availableModels":[{"modelId":4}]}}`)), nil
+	}
+	if cause, failed := a.refreshCatalog("grok", nil); !failed || cause != "Grok returned no usable model catalog." {
+		t.Fatalf("refresh: %q, %v", cause, failed)
+	}
+	cache, _ := loadModelsCache(a.cfg, "grok")
+	if len(cache.Models) != 1 || cache.Models[0].ID != "last-good" || cache.AttemptError != "Grok returned no usable model catalog." {
+		t.Fatal(cache)
+	}
+}
+
 func TestModelCatalogNeedsBox(t *testing.T) {
 	a := modelsApp(t)
 	for _, seam := range []bool{false, true} {
@@ -101,7 +149,7 @@ func TestModelCatalogNeedsBox(t *testing.T) {
 			a.acpModels = func(string) ([]agents.Model, error) { return nil, nil }
 		}
 		for _, name := range agents.Names() {
-			want := !seam && (name == "claude" || name == "gemini")
+			want := !seam && (name == "claude" || name == "gemini" || name == "grok")
 			if got := a.fetchNeedsBox(name); got != want {
 				t.Errorf("%s seam=%v needs box=%v, want %v", name, seam, got, want)
 			}
@@ -177,6 +225,11 @@ func TestACPModelHandshake(t *testing.T) {
 			agent:  "gemini",
 			result: `{"sessionId":"g1","models":{"availableModels":[{"modelId":"gemini-live","name":"Live"}]}}`,
 			want:   "gemini-live",
+		},
+		{
+			agent:  "grok",
+			result: `{"sessionId":"x1","models":{"availableModels":[{"modelId":"grok-live","name":"Live"}]}}`,
+			want:   "grok-live",
 		},
 	}
 	for _, tc := range cases {
@@ -289,10 +342,10 @@ func fakeACPModelChild(sessionResult json.RawMessage) (*acpproxy.Child, <-chan e
 }
 
 // TestRefreshModelsUsesACPFetcher locks the command boundary: --refresh invokes the boxed fetcher
-// for Claude/Gemini and writes its result; failure preserves a prior cache; no --refresh never
-// touches the fetcher (and therefore stays runtime-free).
+// for account-scoped providers and writes its result; failure preserves a prior cache;
+// fresh caches avoid discovery without --refresh.
 func TestRefreshModelsUsesACPFetcher(t *testing.T) {
-	for _, agent := range []string{"claude", "gemini"} {
+	for _, agent := range []string{"claude", "gemini", "grok"} {
 		t.Run(agent+" success", func(t *testing.T) {
 			a := modelsApp(t)
 			calls := 0

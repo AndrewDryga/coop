@@ -7,7 +7,7 @@ import (
 )
 
 func TestModelCatalogDescriptors(t *testing.T) {
-	want := map[string][]string{"claude": nil, "gemini": nil, "codex": {"codex", "debug", "models"}, "grok": {"grok", "models"}}
+	want := map[string][]string{"claude": nil, "gemini": nil, "codex": {"codex", "debug", "models"}, "grok": nil}
 	for _, name := range Names() {
 		ag, _ := Get(name)
 		spec := ag.ModelCatalog()
@@ -23,7 +23,7 @@ func TestModelCatalogMalformedACPParity(t *testing.T) {
 	if got := ParseACPModelOption(json.RawMessage(mixed)); len(got) != 2 || got[0].ID != "opus" || got[1].ID != "sonnet" {
 		t.Fatalf("opportunistic partial decode lost valid entries: %v", got)
 	}
-	for _, provider := range []string{"claude", "gemini"} {
+	for _, provider := range []string{"claude", "gemini", "grok"} {
 		ag, _ := Get(provider)
 		for _, malformed := range []string{
 			`{"id":"other","options":[{"value":12}]}`,
@@ -38,44 +38,18 @@ func TestModelCatalogMalformedACPParity(t *testing.T) {
 	}
 }
 
-// TestParseGrokModels: `grok models` bullets → ids, the default's " (default)" marker stripped,
-// dupes and non-bullet lines ignored.
-func TestParseGrokModels(t *testing.T) {
-	out := `Available models:
-  * grok-4.5 (default)
-  - grok-composer-2.5-fast
-  - grok-4.5
-
-not a bullet line
-`
-	got := parseGrokModels([]byte(out))
-	want := []string{"grok-4.5", "grok-composer-2.5-fast"}
-	if len(got) != len(want) {
-		t.Fatalf("parseGrokModels = %v, want ids %v", got, want)
+// Grok 1.0.44's native session/new capture advertises the account catalog through models.
+func TestGrokACPModelCatalog(t *testing.T) {
+	ag, _ := Get("grok")
+	raw := json.RawMessage(`{"sessionId":"native","models":{"currentModelId":"grok-4.5","availableModels":[{"modelId":"grok-4.6","name":"Grok 4.6"},{"modelId":"grok-4.5","name":"Grok 4.5"}]}}`)
+	got := ag.ModelCatalog().ParseACP(raw)
+	if len(got) != 2 || got[0].ID != "grok-4.6" || got[0].Name != "Grok 4.6" || got[1].ID != "grok-4.5" {
+		t.Fatalf("native catalog = %v", got)
 	}
-	for i, id := range want {
-		if got[i].ID != id || got[i].Name != id {
-			t.Errorf("model %d = %+v, want id/name %q", i, got[i], id)
+	for _, invalid := range []string{`{}`, `{"models":{"availableModels":[{"modelId":5}]}}`, `not json`} {
+		if got := ag.ModelCatalog().ParseACP(json.RawMessage(invalid)); len(got) != 0 {
+			t.Fatalf("invalid result accepted: %v", got)
 		}
-	}
-	if grokUnauthenticated([]byte(out)) {
-		t.Error("a real catalog must not read as logged out")
-	}
-}
-
-// TestGrokUnauthenticated: a logged-out `grok models` still exits 0 and prints ONE placeholder
-// build. Taking that as a catalog would replace a good list with an id that is not a model, so it
-// has to read as a failed fetch. Recorded verbatim from a signed-out host CLI.
-func TestGrokUnauthenticated(t *testing.T) {
-	out := `You are not authenticated.
-
-Default model: grok-build
-
-Available models:
-  * grok-build (default)
-`
-	if !grokUnauthenticated([]byte(out)) {
-		t.Errorf("a logged-out grok answer should not be taken as a catalog:\n%s", out)
 	}
 }
 

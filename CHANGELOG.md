@@ -8,6 +8,9 @@
   normal host admission for the selected account, including filtered projects. Failed refreshes
   retain the last good list and explain setup failures without exposing provider diagnostics.
 
+- **Grok models use your Coop account.** Catalog discovery no longer requires a separate host
+  Grok login or host CLI; it asks the boxed client using the same selected account as a Grok run.
+
 ## 11.0.0
 
 - **Repository-local native history and host-only provider credentials.** Each project keeps its

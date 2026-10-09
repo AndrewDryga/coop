@@ -158,9 +158,7 @@ func storeModelsCache(cfg *config.Config, agent string, mc modelsCache) error {
 
 // runModelCLI runs an agent's list command on the host and returns its stdout, timeout-bounded. An
 // error (CLI not on PATH, non-zero exit, timeout) tells the caller to keep the cached/static list.
-// These two probes need no box because they ask the HOST's own CLI — which is also why each
-// fetcher has to judge the answer: codex prints its full catalog either way, grok answers a
-// logged-out CLI with a placeholder.
+// Account-independent catalogs can ask the host CLI; account-dependent catalogs use ACP.
 func runModelCLI(name string, args ...string) ([]byte, error) {
 	if _, err := exec.LookPath(name); err != nil {
 		return nil, err
@@ -269,7 +267,7 @@ func (a *app) fetchACPModelCatalog(agent string) ([]agents.Model, error) {
 	}
 	models := parseACPModelResult(agent, result)
 	if len(models) == 0 {
-		return nil, modelFetchError{cause: titleName(agent) + " advertised no models.", err: cleanupErr}
+		return nil, modelFetchError{cause: titleName(agent) + " returned no usable model catalog.", err: cleanupErr}
 	}
 	return models, nil
 }
@@ -335,6 +333,16 @@ func safeModelProbeCause(agent, text string) string {
 		return "The container runtime has no free storage."
 	case strings.Contains(text, "cannot connect to the docker daemon"), strings.Contains(text, "is the docker daemon running"):
 		return "Docker is unavailable."
+	case strings.Contains(text, "encrypted cache has no recorded storage identity"):
+		return "The selected account needs host recovery; its legacy encrypted cache is preserved."
+	case strings.Contains(text, "legacy writer inventory is unavailable"):
+		return "Docker could not verify existing credential mounts; retry when Docker is ready."
+	case strings.Contains(text, "credential file must be owner-private"), strings.Contains(text, "credential directory must be owner-private"):
+		return "Credential storage failed a safety check; preserve it for host recovery."
+	case strings.Contains(text, "legacy native credential writer is busy"), strings.Contains(text, "credential home is mounted by a running or restartable container"):
+		return "An existing session is using this account; finish it before retrying."
+	case strings.Contains(text, "needs host sign-in or renewal"):
+		return signInToRefresh(agent)
 	case strings.Contains(text, "coop login"):
 		return signInToRefresh(agent)
 	case strings.Contains(text, "native route refused"):
