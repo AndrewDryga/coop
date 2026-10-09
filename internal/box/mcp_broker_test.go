@@ -290,6 +290,24 @@ func TestSessionMCPHandoffCarriesOnlyStandInsForItsOwnRun(t *testing.T) {
 	}
 }
 
+func TestEditorMCPHandoffDoesNotChangeServiceOwnership(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "handoff.json")
+	spec := RunSpec{Agent: "claude", NetworkClient: egress.ClientACP,
+		ActivitySource: "editor-supervisor", MCPHandoffID: "acp-0123456789abcdef"}
+	if err := handOffSessionMCP(spec, path, "", mcpStandIns{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadSessionMCPHandoff(path, spec.MCPHandoffID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadSessionMCPHandoff(path, "another-generation"); err == nil {
+		t.Fatal("foreign editor generation accepted the handoff")
+	}
+	if owner := runServiceOwner(spec); owner != "editor-supervisor" {
+		t.Fatalf("tool handoff changed service ownership: %s", owner)
+	}
+}
+
 // An MCP route must admit what each pinned client really sends to a streamable-HTTP server — the
 // lines were captured offline from the locked clients against a local endpoint (recipe:
 // .agent/kb/provider-client-qualification.md): POST the messages, GET the server's stream, and a

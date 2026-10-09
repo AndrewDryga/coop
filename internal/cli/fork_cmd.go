@@ -1066,7 +1066,8 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 			return os.Getenv("COOP_ACP_SUPERVISOR")
 		}(),
 		RunID: sessionsvc.RunIDFromEnv(), CompanionRepositories: companionRepositories,
-		ExtraArgs: sessionOutputArgs, SessionOutputRoot: sessionOutputRoot,
+		MCPHandoffID: acpMCPIDFromEnv(),
+		ExtraArgs:    sessionOutputArgs, SessionOutputRoot: sessionOutputRoot,
 	}
 	if a.mode.Restricted() {
 		// The restricted profile registers no activity record (it starts no service and joins no

@@ -45,6 +45,9 @@ type Child struct {
 	Provider  string     // native session ids are scoped to this provider
 	Account   string     // successful authentication is scoped to this concrete credential too
 	Image     string     // the box image it started from, when known; a warm box is reused only on it
+	// MCPServers returns this child's final shared tool projection, after initialize. The caller
+	// owns credential rendering; the proxy adds it only to wire-bound session setup, never snapshots.
+	MCPServers func() ([]map[string]any, error)
 }
 
 // Factory starts one child. ctx is cancelled on shutdown or when its spawn attempt
@@ -906,7 +909,20 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 	}
 	rewriteTo := "" // the native id a cold load is forwarded under, when it differs from the editor's
 	p.mu.Lock()
+	projectionChild := p.child
+	p.mu.Unlock()
+	projected, err := projectSessionMCP(projectionChild, line)
+	if err != nil {
+		_, _ = p.out.Write(sessionMCPErrorResponse(h.ID, err))
+		return
+	}
+	p.mu.Lock()
 	if p.reloading.Load() && h.isRequest() {
+		p.mu.Unlock()
+		_, _ = p.out.Write(errorResponse(string(h.ID)))
+		return
+	}
+	if isSessionSetup(h.Method) && p.child != projectionChild {
 		p.mu.Unlock()
 		_, _ = p.out.Write(errorResponse(string(h.ID)))
 		return
@@ -1105,11 +1121,11 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 	}
 	// Translate the editor's session id to the box's, if this session was re-created under a new one
 	// (turn-less at a restart). Normal case: adapterID == sid, so no rewrite.
-	fwd := line
+	fwd := projected
 	if s := p.sessions[sid]; sid != "" && s != nil && s.adapterID != sid {
-		fwd = withSessionID(line, s.adapterID)
+		fwd = withSessionID(projected, s.adapterID)
 	} else if rewriteTo != "" {
-		fwd = withSessionID(line, rewriteTo)
+		fwd = withSessionID(projected, rewriteTo)
 	}
 	var writeChild *Child
 	writeGeneration := p.generation
@@ -2143,6 +2159,15 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 		if len(msgs) == 0 || childEOF {
 			return nil
 		}
+		projected := make([][]byte, 0, len(msgs))
+		for _, msg := range msgs {
+			line, err := projectSessionMCP(c, msg)
+			if err != nil {
+				return err
+			}
+			projected = append(projected, line)
+		}
+		msgs = projected
 		expect := map[string]bool{}
 		for _, msg := range msgs {
 			if h := parse(msg); h.isRequest() {
@@ -2159,6 +2184,11 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 			}
 		}()
 		err := process(expect)
+		if err != nil || childEOF {
+			// This candidate is not published. Release a blocked setup writer before joining it;
+			// otherwise a provider that stops reading defeats the replay response timeout.
+			_ = c.In.Close()
+		}
 		<-sent
 		return err
 	}
@@ -2184,17 +2214,14 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 	// session/new params (cwd, mcpServers). Serialized after the first writer, so no concurrent
 	// c.In writes; the shared processor remaps them and fires SessionRecreated.
 	if len(recreate) > 0 && !childEOF {
-		expect2 := map[string]bool{}
+		var recreateMsgs [][]byte
 		for _, eid := range recreate {
 			id := replayPrefix + "new-" + eid
 			if msg := newRequest(id, snapByEditor[eid].params); msg != nil {
-				if _, err := c.In.Write(msg); err != nil {
-					break
-				}
-				expect2[id] = true
+				recreateMsgs = append(recreateMsgs, msg)
 			}
 		}
-		if err := process(expect2); err != nil {
+		if err := sendPhase(recreateMsgs); err != nil {
 			return err
 		}
 	}

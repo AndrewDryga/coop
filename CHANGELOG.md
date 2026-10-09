@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Editor sessions load shared MCP tools.** The editor connection now receives the same
+  validated tool configuration as other Coop runs, including after a restart. Conflicting
+  editor and shared tool names produce a setup error instead of silently replacing a server.
+  Servers with no arguments, environment variables or headers are no longer silently dropped.
+
 - **Unsupported Haiku effort is caught before startup.** Haiku 4.5 has no reasoning-effort
   control; use `claude:haiku` without a suffix. Coop now explains this instead of silently
   dropping the requested level in the CLI or failing the editor's first message.

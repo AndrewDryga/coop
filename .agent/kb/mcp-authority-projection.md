@@ -2,8 +2,8 @@
 name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
-sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/box/mcp_broker.go, internal/box/open_broker.go, internal/box/restricted.go, internal/networkgateway/open_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
-updated: 2026-09-30
+sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/box/mcp_broker.go, internal/box/open_broker.go, internal/box/restricted.go, internal/networkgateway/open_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go, internal/cli/acp_cmd.go, internal/acpproxy/mcp.go, internal/acpproxy/proxy.go]
+updated: 2026-10-10
 ---
 
 `COOP_MCP_FILE` is one host authority, but a box has four different consumers. `box.Run` captures
@@ -14,6 +14,21 @@ any agent home. Generated native configs are immutable mounts; an outer ordinary
 through `ACPMCPServers` on `session/new` and `session/load` — codex-acp 1.7 needs them there as well as
 in `config.toml` and deduplicates the two routes itself (`internal/agent/codex.go`). These are projections of the same snapshot,
 not separate sources.
+
+Editor ACP children request the same final handoff as daemon children. Each editor generation owns
+a private path under the protected Coop runfiles root and MCPHandoffID, separate from runtime RunID
+so service ownership does not change. Never use system TMPDIR for this handoff: an older box may
+already have a broad bind of it.
+The proxy adds its child's final list only to wire-bound new/load/resume and replay/recreate requests;
+saved parameters remain the editor's originals. Replacement children therefore render new broker
+endpoints/stand-ins. Distinct editor servers survive, identical names deduplicate and conflicting
+definitions refuse setup. Missing/invalid/foreign handoffs fail visibly; catalog-only probes request
+no tool handoff. An outer supervisor must never render the list from raw host credentials.
+
+ACP SDK 1.5.1's v1 wire schema requires stdio `args`/`env` and remote `headers` arrays, including
+empty ones. Its session parser silently skips definitions missing these fields before the native
+adapter sees them. Testing the exported adapter directly bypasses this boundary; qualify the
+serialized definitions and the real editor connection instead.
 
 Every projection crosses the same host-file boundary before parsing. Shared and native config must
 be regular files opened with nonblocking, no-follow semantics; Coop validates and reads the same
@@ -190,6 +205,9 @@ adds ordinary `CommandArgs` must decide whether its nested commands need an equi
 mounting the raw snapshot for every scoped credential is not the fallback.
 
 ## Changelog
+- 2026-10-10 — actual editor session had no shared MCP tools: only daemon children requested the
+  final handoff. Reused it for editor/fork generations and child-bound proxy projection without
+  changing remote custody, service ownership, credential rendering or network grants.
 - 2026-09-30 — Gemini 0.62 ignored user-home system settings. Moved fixed login and effort
   settings into root-owned image files; offline actual-client login-layer probe blocks configured
   MCP, and low/high requests use their selected levels. Interactive authentication not repeated.

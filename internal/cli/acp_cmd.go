@@ -330,7 +330,8 @@ func (a *app) cmdACP(args []string) (int, error) {
 		// the box so build/update can restart it and the supervisor can kill exactly it.
 		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true, Agent: tool, Serve: true, NetworkClient: egress.ClientACP,
 		SupervisorID: os.Getenv("COOP_ACP_SUPERVISOR"), ShareACPSessions: true,
-		ConsultLead: lead, Peers: peers, Preset: a.preset, Quiet: true,
+		MCPHandoffID: acpMCPIDFromEnv(),
+		ConsultLead:  lead, Peers: peers, Preset: a.preset, Quiet: true,
 		ExtraArgs:    extra,
 		ActivityRepo: activityRepo, ActivityKind: forkspace.ExecutionACP,
 		ActivityRole:   forkspace.ExecutionRole(os.Getenv("COOP_ACP_ACTIVITY_ROLE")),
@@ -902,7 +903,7 @@ func cleanACPChildEnv(env []string) []string {
 		switch key {
 		// The network capture is minted per child by this supervisor. An inherited
 		// one names a snapshot this session never admitted, so it never rides in.
-		case "COOP_EGRESS", "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE", "COOP_ACP_ACTIVITY_ROLE", acpAccountBindingsEnv,
+		case "COOP_EGRESS", "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE", "COOP_ACP_ACTIVITY_ROLE", "COOP_ACP_MCP_ID", box.SessionMCPHandoffEnv, acpAccountBindingsEnv,
 			box.SessionNetworkCaptureEnv,
 			liveprocess.ControlFDEnv, liveprocess.ProcessDirEnv, liveprocess.CleanupIDEnv, liveprocess.RevokePathEnv:
 			continue
@@ -1070,6 +1071,30 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 			env = append(env, "COOP_ACP_CIDFILE="+cidPath)
 		}
 	}
+	mcpDir, mcpPath, mcpRunID := "", "", ""
+	if activityRole != forkspace.ExecutionRoleProbe {
+		id, err := newSupervisorID()
+		if err == nil {
+			var repo string
+			repo, err = box.ResolveRepo(a.cfg.RepoOverride)
+			if err == nil {
+				mcpDir, err = box.NewSessionMCPHandoffDir(a.cfg, repo)
+			}
+		}
+		if err != nil {
+			inR.Close()
+			inW.Close()
+			outR.Close()
+			outW.Close()
+			if cidDir != "" {
+				os.RemoveAll(cidDir)
+			}
+			return nil, fmt.Errorf("prepare this editor child's shared tools: %w", err)
+		}
+		mcpRunID = "acp-" + id
+		mcpPath = filepath.Join(mcpDir, "servers.json")
+		env = append(env, "COOP_ACP_MCP_ID="+mcpRunID, box.SessionMCPHandoffEnv+"="+mcpPath)
+	}
 	cmd := exec.Command(self, inner...)
 	cmd.Env = env
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, stderr
@@ -1083,6 +1108,9 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 		outW.Close()
 		if cidDir != "" {
 			os.RemoveAll(cidDir)
+		}
+		if mcpDir != "" {
+			os.RemoveAll(mcpDir)
 		}
 		return nil, err
 	}
@@ -1134,6 +1162,9 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 			if cidDir != "" {
 				os.RemoveAll(cidDir)
 			}
+			if mcpDir != "" {
+				os.RemoveAll(mcpDir)
+			}
 		})
 	}
 	setActive := func(active bool) {
@@ -1146,7 +1177,29 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 		}
 		_ = forkspace.UpdateExecutionRoleByPID(activityRepo, pid, role)
 	}
-	return &acpproxy.Child{In: inW, Out: outR, Stop: stop, SetActive: setActive, Provider: provider, Account: account, WaitDone: waitDone}, nil
+	child := &acpproxy.Child{In: inW, Out: outR, Stop: stop, SetActive: setActive, Provider: provider, Account: account, WaitDone: waitDone}
+	if mcpPath != "" {
+		var once sync.Once
+		var servers []map[string]any
+		var readErr error
+		child.MCPServers = func() ([]map[string]any, error) {
+			once.Do(func() { servers, readErr = box.ReadSessionMCPHandoff(mcpPath, mcpRunID) })
+			return servers, readErr
+		}
+	}
+	return child, nil
+}
+
+// The tool handoff identifies one editor child without changing runtime/service ownership
+// or selecting the remote-session custody semantics carried by COOP_SESSION_RUN_ID.
+func acpMCPIDFromEnv() string {
+	value := os.Getenv("COOP_ACP_MCP_ID")
+	if strings.HasPrefix(value, "acp-") && len(value) == len("acp-")+16 {
+		if _, err := hex.DecodeString(strings.TrimPrefix(value, "acp-")); err == nil {
+			return value
+		}
+	}
+	return ""
 }
 
 // reapACPChildBoxes removes only containers carrying the execution IDs published by one stopped

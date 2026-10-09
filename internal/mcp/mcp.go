@@ -277,10 +277,13 @@ func separateTOMLBlock(b *strings.Builder) {
 // ACPServers renders the shared servers as the list an ACP session/new (and the identical
 // session/load) carries in its "mcpServers" parameter. The adapter is the only consumer, and it
 // wants name/value PAIR LISTS where mcp.json has objects, so this is a translation, not a
-// passthrough (verified against @agentclientprotocol/claude-agent-acp 0.68.0):
+// passthrough (verified against @agentclientprotocol/claude-agent-acp 0.84.0 / SDK 1.5.1):
 //
 //	http/sse: {"type":"http"|"sse","name":…,"url":…,"headers":[{"name":…,"value":…}]}
 //	stdio:    {"name":…,"command":…,"args":[…],"env":[{"name":…,"value":…}]}
+//
+// These arrays are required even when empty: the v1 wire schema silently drops a server that
+// omits them, before it reaches the adapter.
 //
 // lookupEnv resolves bearer_token_env_var, which the adapter has no equivalent for — it accepts
 // inline headers only — so the token is read here and sent as Authorization. A server whose token
@@ -339,26 +342,19 @@ func acpServer(name string, s server, lookupEnv func(string) (string, bool)) map
 		if s.Type == "sse" {
 			transport = "sse"
 		}
-		rendered := map[string]any{"type": transport, "name": name, "url": s.URL}
-		if len(headers) > 0 {
-			rendered["headers"] = headers
-		}
-		return rendered
+		return map[string]any{"type": transport, "name": name, "url": s.URL, "headers": headers}
 	case s.Command != "":
 		// No "type" key: the adapter reads a stdio server by the ABSENCE of one, so declaring
 		// the "stdio" that mcp.json is entitled to write would drop the server silently.
-		rendered := map[string]any{"name": name, "command": s.Command}
-		if len(s.Args) > 0 {
-			rendered["args"] = s.Args
+		args := s.Args
+		if args == nil {
+			args = []string{}
 		}
 		env := make([]map[string]any, 0, len(s.Env))
 		for _, key := range sortedKeys(s.Env) {
 			env = append(env, map[string]any{"name": key, "value": envValueString(s.Env[key])})
 		}
-		if len(env) > 0 {
-			rendered["env"] = env
-		}
-		return rendered
+		return map[string]any{"name": name, "command": s.Command, "args": args, "env": env}
 	}
 	// No transport — skip this malformed/empty entry, as the native TOML writer does.
 	return nil

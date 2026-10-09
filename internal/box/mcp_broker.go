@@ -29,6 +29,17 @@ const maxProviderRoutes = 8
 // stand-ins its adapter must be handed.
 const SessionMCPHandoffEnv = "COOP_SESSION_MCP_HANDOFF"
 
+// NewSessionMCPHandoffDir keeps the child's rendered tools under the same protected control
+// home as other run artifacts, never where an older box's broad system-temp bind can reach them.
+func NewSessionMCPHandoffDir(cfg *config.Config, repo string) (string, error) {
+	base, err := privateRunArtifactRoot(cfg)
+	if err != nil {
+		return "", err
+	}
+	spec := RunSpec{Repo: repo}
+	return privateTempDirUnder(base, repo, "coop-acp-mcp-", compositionArtifactExposureRoots(cfg, spec)...)
+}
+
 // mcpRoute is one secret-bearing MCP server a run brokers: the upstream its literal URL names, the
 // header its secret rides (lower-case for the gateway, as spelled for the snapshot) after its
 // literal prefix, and the secret — read on the host from the variable the box would have carried it
@@ -318,7 +329,11 @@ func handOffSessionMCP(spec RunSpec, target, snapshotPath string, standIns mcpSt
 	if !ok {
 		return errors.New("a session's MCP handoff needs its lead agent")
 	}
-	return writeSessionMCPHandoff(target, spec.RunID, lead, snapshotPath, standIns)
+	identity := spec.RunID
+	if spec.MCPHandoffID != "" {
+		identity = spec.MCPHandoffID
+	}
+	return writeSessionMCPHandoff(target, identity, lead, snapshotPath, standIns)
 }
 
 // writeSessionMCPHandoff renders the lead adapter's ACP mcpServers from the box's own snapshot —

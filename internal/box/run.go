@@ -205,6 +205,9 @@ type RunSpec struct {
 	// claudeMCPFile is claude's own view of it, mounted for --mcp-config.
 	mcpSnapshot   []byte
 	claudeMCPFile string
+	// MCPHandoffID binds an editor's tool handoff to one child generation without changing
+	// RunID's runtime and service ownership. Remote sessions use their existing RunID instead.
+	MCPHandoffID string
 	// networkSmoke is the host preflight permit. Unexported on purpose: only the
 	// in-package setup workflow can drive a smoke through this same engine, so
 	// what it proves is exactly what a workload later gets.

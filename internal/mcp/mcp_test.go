@@ -926,6 +926,36 @@ func TestMCPConsumersRejectAmbiguousAuthorization(t *testing.T) {
 	}
 }
 
+func TestACPServersKeepRequiredEmptyArrays(t *testing.T) {
+	src := `{"mcpServers":{
+		"http":{"url":"https://plain.example/mcp"},
+		"sse":{"type":"sse","url":"https://plain.example/sse"},
+		"stdio":{"command":"x"},
+		"stdio-args":{"command":"x","args":["fixture"]},
+		"stdio-env":{"command":"x","env":{"PORT":"8080"}}
+	}}`
+	servers, err := ACPServers(writeTmp(t, "mcp.json", src), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(servers) != 5 {
+		t.Fatalf("rendered %d servers, want all 5", len(servers))
+	}
+	for _, server := range servers {
+		fields := []string{"headers"}
+		if server["command"] != nil {
+			fields = []string{"args", "env"}
+		}
+		for _, field := range fields {
+			value, present := server[field]
+			encoded, err := json.Marshal(value)
+			if !present || err != nil || len(encoded) == 0 || encoded[0] != '[' {
+				t.Errorf("server %s lacks required %s array: %s", server["name"], field, encoded)
+			}
+		}
+	}
+}
+
 // The ACP adapter reads a shape mcp.json does not have: name/value PAIR LISTS for headers and
 // env, "type" present on a remote server and ABSENT on a stdio one (it decides which arm to take
 // by that key alone, so a stdio server that declares "stdio" is dropped on the floor).
@@ -950,11 +980,11 @@ func TestACPServersRenderTheShapeTheClaudeAdapterReads(t *testing.T) {
 		},
 		"sse keeps its transport": {
 			`{"mcpServers":{"legacy":{"type":"sse","url":"https://legacy.example/sse"}}}`,
-			`[{"name":"legacy","type":"sse","url":"https://legacy.example/sse"}]`,
+			`[{"headers":[],"name":"legacy","type":"sse","url":"https://legacy.example/sse"}]`,
 		},
 		"a url without a declared type is http": {
 			`{"mcpServers":{"plain":{"url":"https://plain.example/mcp"}}}`,
-			`[{"name":"plain","type":"http","url":"https://plain.example/mcp"}]`,
+			`[{"headers":[],"name":"plain","type":"http","url":"https://plain.example/mcp"}]`,
 		},
 		"stdio carries command, args and a sorted env pair list": {
 			`{"mcpServers":{"ctx7":{"command":"npx","args":["-y","@upstash/context7-mcp"],"env":{"PORT":8080,"K":"v"}}}}`,
@@ -962,11 +992,11 @@ func TestACPServersRenderTheShapeTheClaudeAdapterReads(t *testing.T) {
 		},
 		"a stdio server that declares its type does not keep it": {
 			`{"mcpServers":{"s":{"type":"stdio","command":"x"}}}`,
-			`[{"command":"x","name":"s"}]`,
+			`[{"args":[],"command":"x","env":[],"name":"s"}]`,
 		},
 		"a server with no transport is skipped": {
 			`{"mcpServers":{"broken":{},"good":{"command":"x"}}}`,
-			`[{"command":"x","name":"good"}]`,
+			`[{"args":[],"command":"x","env":[],"name":"good"}]`,
 		},
 		"no servers is an empty list": {`{"mcpServers":{}}`, `[]`},
 	} {
@@ -1152,7 +1182,7 @@ func TestTaskToolsBindingRendersForEveryConsumer(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded, _ := json.Marshal(servers)
-	if !strings.Contains(string(encoded), `{"args":["STDIO","UNIX-CONNECT:/coop/tasks/mcp.sock"],"command":"socat","name":"coop-tasks"}`) {
+	if !strings.Contains(string(encoded), `{"args":["STDIO","UNIX-CONNECT:/coop/tasks/mcp.sock"],"command":"socat","env":[],"name":"coop-tasks"}`) {
 		t.Fatalf("ACP servers = %s", encoded)
 	}
 	// Both coop bindings coexist on one snapshot.
