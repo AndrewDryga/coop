@@ -780,7 +780,9 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 		sections.secrets(0) // nothing mounted, nothing to hide — said rather than skipped
 	}
 	sections.accounts(launchAccounts(cfg, spec, nil))
-	sections.internet(cfg, spec, nil)
+	if filtered == nil {
+		sections.internet(cfg, spec, nil)
+	}
 	sections.openMCP(open.servers(), openKept)
 	sections.legacyMCP(open.legacySSEServers())
 	if open != nil {
@@ -974,6 +976,7 @@ func launchRestrictedFiltered(filtered *filteredExecution, spec RunSpec, section
 	started *bool, interrupt *hostInterrupt, stopped *string) (int, error) {
 	spec.Image = filtered.image // the qualified client image, by digest, never a repo image
 	spec.Cmd = cmd
+	sections.internet(filtered.authorityConfig, spec, &filtered.policy)
 	sections.starting()
 	code, launchErr := filtered.launch(spec.Ctx, spec, options, stdin, stdout, stderr)
 	if *started = filtered.started(); *started {

@@ -129,6 +129,9 @@ a tool call. What the API half still does not do: register activity for a restri
 gemini or grok — each refuses by name until a live run proves its adapter's switch.
 
 ## Changelog
+- 2026-10-09 — real readonly filtered invocation exposed false Offline narration; the existing
+  filtered launch now renders its prepared snapshot. Composition regression pins that narration
+  alongside the actual created-container boundaries; enforcement and open/offline paths stay intact.
 - 2026-10-09 — reverified restricted launch composition: public seeds and run-local broker replace
   access-only projection; scoped fake-daemon tests inspect actual mounts and environment.
 - 2026-09-28 — replaced references to the deleted session-policy validator with current job
@@ -180,5 +183,8 @@ The first composition attempt exposed five traps, now handled by the implementat
 
 The composition tests pin both the option allowlist and scratch UID, and drive the filtered launch
 against its fake Docker daemon to inspect the created container's namespace and read-only root.
+The filtered launch handoff also narrates its prepared `filtered.policy`; the earlier restricted
+preparation point narrates only nonfiltered modes. Passing no snapshot there would falsely label
+a usable filtered run Offline. This display handoff does not read or widen network authority.
 They also inspect the actual brokered env file, not just a credential plan. These are local
 regressions, not live provider qualification. Preserve that distinction when extending the modes.

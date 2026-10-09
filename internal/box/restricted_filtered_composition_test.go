@@ -9,6 +9,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkgateway"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
@@ -138,13 +139,21 @@ func TestComposedRestrictedFilteredAdmission(t *testing.T) {
 func TestComposedLaunchCreatesABoxWithBothBoundaries(t *testing.T) {
 	f, d := filteredFixture(t)
 	cfg := &config.Config{HomeInBox: "/home/node", BaseImage: "coop-box:x", Egress: "filtered"}
+	f.authorityConfig = cfg
+	f.policy.Dependencies = []egress.Dependency{{Provider: "claude"}}
+	f.policy.Grants = []egress.Grant{grant("claude-api", "api.anthropic.com", egress.Origin{Kind: "provider", Provider: "claude"})}
 	options := restrictedFilesystemArgs(cfg, agents.ModeReadOnly)
-	sections := newLaunchSections(RunSpec{Quiet: true})
 
 	started, stopped := false, ""
-	spec := RunSpec{Repo: t.TempDir(), Workdir: "/workspace", Quiet: true, Ctx: context.Background()}
-	_, _ = launchRestrictedFiltered(f, spec, sections, options, []string{"true"},
-		nil, io.Discard, io.Discard, &started, nil, &stopped)
+	spec := RunSpec{Repo: t.TempDir(), Workdir: "/workspace", Agent: "claude", Ctx: context.Background()}
+	got := captureStderr(t, func() {
+		_, _ = launchRestrictedFiltered(f, spec, newLaunchSections(spec), options, []string{"true"},
+			nil, io.Discard, io.Discard, &started, nil, &stopped)
+	})
+	want := "Configuring network access\n  ✓ Anthropic endpoints allowed\n  ✓ Everything else blocked\n\nStarting Claude Code\n"
+	if got != want {
+		t.Errorf("composed launch narration = %q, want %q", got, want)
+	}
 
 	created, ok := d.containers[f.ref("agent").Name]
 	if !ok {
