@@ -3,7 +3,7 @@ name: provider-client-qualification
 description: locked clients, strict schema2 qualification requirements and Linux/amd64 live evidence
 subsystem: agent
 sources: [internal/agent/locked_clients.go, internal/agent/qualification.go, internal/agent/qualification_gate_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, tools/qualify/main.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/credentials.go]
-updated: 2026-10-01
+updated: 2026-10-09
 ---
 
 **One manifest.** `locked-clients/package.json` + `package-lock.json` (embedded) and each adapter's
@@ -55,13 +55,14 @@ invocation passed, or that macOS/Linux-arm64 live provider parity was exercised.
 account was configured per provider, so all four second-account recovery entries remain
 `not_configured`, not proved. A missing-file gate is dormant, not proof of compatibility.
 
-**Temporary exact-client gate policy.** The v10.1.2 gate policy hashes both the
-lock and every platform's complete client/native identity, and requires 10.1.2 to be the
-latest numbered changelog section. Reopening Unreleased permits ordinary main checks; the
-next release or any client/dependency change refuses. Release preflight independently binds
-the finalized first section to the actual event tag. No environment bypass exists. The
-validator and historical record are unchanged. Remove
-the temporary exception after this release; it is not live compatibility evidence.
+**Temporary exact-client gate policy.** The v11.0.0-only gate policy hashes the retained
+historical record, the lock and every platform's complete client/native identity, and requires
+11.0.0 to be the latest numbered changelog section. Reopening Unreleased permits ordinary main
+checks; earlier/later releases, altered evidence or any client/dependency/platform change refuse.
+Release preflight independently binds the finalized first section to the actual event tag.
+No environment bypass exists. The validator and historical record are unchanged; the gate
+reports UNQUALIFIED rather than claiming fresh compatibility evidence. Remove the temporary
+exception after this release.
 
 Live harnesses route brokered API keys through the host's filtered gateway automatically, using
 `BrokersKey`/`AnyBrokersKey` and `NetworkStateHome`; native sign-ins retain the open path except
@@ -239,6 +240,9 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-10-09 — renewed the explicitly approved exact-client policy for v11.0.0 only and bound
+  the unchanged historical record too. Release, dependency, every native/adapter identity,
+  platform and evidence denial tests preserve the boundary; no fresh qualification is claimed.
 - 2026-10-01 — documented the v10.1.2-only exact-client gate policy; release copy remains
   product-focused and decision history stays in local task records.
   Focused positive/changed-client/changed-release checks pass; historical evidence and the
