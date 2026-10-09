@@ -3,7 +3,7 @@ name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
 sources: [internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/gatewayimage/image.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/forkctl/host.go]
-updated: 2026-10-06
+updated: 2026-10-09
 ---
 
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
@@ -187,9 +187,11 @@ the exact path a workload gets, and it can never appear on a `RunSpec` a caller 
 
 The image is built from an embedded source tar plus a pinned Dockerfile, with no host compiler and
 no repository build context (`gatewayimage/image.go:43`). After ANY change to `cmd/coop-net`,
-`internal/egress`, `internal/networkgateway` or `internal/networkview`, run
+`internal/egress`, `internal/networkgateway`, `internal/networkview`, `internal/safefile`,
+root `go.mod`, `go.sum` or `LICENSE`, run
 `go generate ./internal/gatewayimage` — the canonical test compares every embedded byte against the
-checkout, so a stale tar is a red gate, and a filtered launch only ever runs the exact image pair a
+checkout. Makefile's early `gateway-sources-check` refuses stale bytes without regenerating during
+qualification, so a stale tar is a red gate, and a filtered launch only ever runs the exact image pair a
 [[restricted-networking]] qualification names.
 
 **Stop latency.** A run's teardown ends with the guard's terminal counters barrier
@@ -223,6 +225,9 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-10-09 — root module metadata is embedded too: v11 retry exposed a missed refresh after
+  a tidy classification change. Reverified generator file selection, added the missing inputs
+  above and an early nonmutating canonical freshness check; no networking logic changed.
 - 2026-10-06 — identity checks are a socket request, not a CLI process (task 2026-10-05-cut-the-filtered-start-below-3-s-fewer-serial-do).
 - 2026-09-25 — rechecked the owner-private launch configuration, nft rules and socket collector:
   the host now supplies the agent UID explicitly; zero and gateway UID 65532 are refused. Regenerated

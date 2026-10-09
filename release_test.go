@@ -262,7 +262,7 @@ func TestReleaseModuleHygiene(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "\ncheck: mod-check ") {
+	if !strings.Contains(text, "\ncheck: mod-check gateway-sources-check ") {
 		t.Error("canonical gate must check module hygiene before the slow suites")
 	}
 	if !strings.Contains(text, "\nmod-check: ## Verify module metadata is tidy without changing qualified sources\n\t@go mod tidy -diff\n") {
@@ -270,6 +270,10 @@ func TestReleaseModuleHygiene(t *testing.T) {
 	}
 	if !strings.Contains(text, "\n.PHONY: mod-check\n") {
 		t.Error("a same-named file must not skip module hygiene")
+	}
+	if !strings.Contains(text, "\t@go test ./internal/gatewayimage -run '^TestEmbeddedGatewaySourcesExactlyMatchCheckout$$' -count=1\n") ||
+		!strings.Contains(text, "\n.PHONY: gateway-sources-check\n") {
+		t.Error("canonical gate must verify embedded source freshness without regenerating during qualification")
 	}
 }
 

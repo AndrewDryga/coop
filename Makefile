@@ -35,6 +35,9 @@ cover: require-git-lfs ## Run unit tests with a coverage summary
 mod-check: ## Verify module metadata is tidy without changing qualified sources
 	@go mod tidy -diff
 
+gateway-sources-check: ## Verify embedded network helper sources match the checkout
+	@go test ./internal/gatewayimage -run '^TestEmbeddedGatewaySourcesExactlyMatchCheckout$$' -count=1
+
 lint: ## gofmt check + go vet + Staticcheck at the pinned version, for Linux and macOS alike
 	@gofmt -l . | (! grep .) || { echo "gofmt: files need formatting (run: gofmt -w .)"; exit 1; }
 # Coop ships Linux and macOS and CI runs Linux, while this gate often runs on a Mac, where a
@@ -142,7 +145,7 @@ race: require-git-lfs ## Full unit suite under the race detector (the slowest ga
 # CI-only by necessity: the doctor runtime matrix and the review-writes job need a real container
 # runtime, so they stay separate CI jobs and this target stays runtime-independent. Run them by
 # hand with 'make doctor', 'make box-runtime-e2e', and 'make review-writes-e2e'.
-check: mod-check lint shellcheck build-all vuln align docs-check tools-test rules-check test provider-scripted-e2e live-process-control race ## The gate, identical to CI's check job: lint + vulnerability scan + freshness + tests (plain, e2e, race) + build
+check: mod-check gateway-sources-check lint shellcheck build-all vuln align docs-check tools-test rules-check test provider-scripted-e2e live-process-control race ## The gate, identical to CI's check job: lint + vulnerability scan + freshness + tests (plain, e2e, race) + build
 
 provider-scripted-e2e: ## Deterministic all-provider process e2e (no runtime or credentials needed)
 	@go test ./internal/testutil/procharness ./internal/cli/testdata/providerfixture
@@ -260,3 +263,4 @@ help: ## List targets
 .PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all
 .PHONY: require-git-lfs
 .PHONY: mod-check
+.PHONY: gateway-sources-check
