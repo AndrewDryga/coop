@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 11.0.0
 
 - **Repository-local native history and host-only provider credentials.** Each project keeps its
   own complete provider home, including native resume, settings and history indexes. Older
