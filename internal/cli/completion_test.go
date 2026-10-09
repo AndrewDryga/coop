@@ -182,6 +182,7 @@ func TestCompletionCandidates(t *testing.T) {
 }
 
 func TestCompletionTargetsAccountsAndPresets(t *testing.T) {
+	t.Setenv("COOP_PRESETS_DIR", t.TempDir())
 	repo, cfg := t.TempDir(), &config.Config{ConfigDir: t.TempDir(), BoxHome: t.TempDir()}
 	cfg.RepoOverride = repo
 	if err := os.MkdirAll(cfg.AgentProfileDir("claude", "work"), 0o755); err != nil {
@@ -194,8 +195,26 @@ func TestCompletionTargetsAccountsAndPresets(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(presetDir, "preset.yaml"), []byte("broken: true\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	globalPreset := filepath.Join(cfg.GlobalPresetsDir(), "review")
+	if err := os.MkdirAll(globalPreset, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(globalPreset, "preset.yaml"), []byte("lead:\n  agent: claude:haiku\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	a := &app{cfg: cfg}
+	for _, want := range []string{"init", "frontier", "review"} {
+		if got := a.completionCandidates([]string{"presets"}); !hasCand(got, want) {
+			t.Errorf("preset inspection completion missing %q: %v", want, got)
+		}
+	}
+	if got := a.completionCandidates([]string{"presets", "frontier"}); len(got) != 0 {
+		t.Errorf("preset inspection takes no trailing argument: %v", got)
+	}
+	if got := captureCompletionOutput(t, func() { _, _ = a.cmdComplete([]string{"presets", "fr"}) }); got != "frontier\n" {
+		t.Errorf("preset inspection must filter the current word: %q", got)
+	}
 	got := a.completionCandidatesFor([]string{"loop"}, "claude:opus@")
 	for _, want := range []string{"claude:opus@work", "frontier"} {
 		if !hasCand(got, want) {

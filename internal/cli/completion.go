@@ -255,6 +255,10 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		if len(prev) == 1 {
 			return []string{"bash", "zsh"}
 		}
+	case "presets":
+		if len(prev) == 1 {
+			return appendCompletionCandidates([]string{"init"}, a.presetCandidates())
+		}
 	case "sessions":
 		if len(prev) == 1 {
 			return sessionCommands
@@ -368,8 +372,8 @@ func (a *app) targetCandidates(cur string, includeModels, includeAccounts bool) 
 	return out
 }
 
-// presetCandidates lists only names that can actually be loaded from this repo or the global
-// preset directory. Broken presets remain visible so completion never hides repairable config.
+// presetCandidates lists names from this repo and the global preset directory.
+// Broken presets remain visible so completion never hides repairable config.
 func (a *app) presetCandidates() []string {
 	repo, _ := box.ResolveRepo(a.cfg.RepoOverride)
 	return preset.List(repo, a.cfg.GlobalPresetsDir())
