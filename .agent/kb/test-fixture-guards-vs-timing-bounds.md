@@ -2,7 +2,7 @@
 name: test-fixture-guards-vs-timing-bounds
 description: a test wait that guards a broken fixture is generous (testutil/wait, 60 s); a tight wall-clock bound is reserved for timing that IS the behavior under test, and then attributes its phases
 subsystem: testing
-sources: [Makefile, internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/forkctl/supervise.go, internal/cli/acp_cmd.go, internal/cli/acp_execution_test.go, internal/acpproxy/scripted_matrix_e2e_test.go, internal/consult/instructions_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go, tools/test_lifecycle_bench.py]
+sources: [Makefile, internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/forkctl/supervise.go, internal/cli/acp_cmd.go, internal/cli/acp_execution_test.go, internal/acpproxy/scripted_matrix_e2e_test.go, internal/consult/instructions_test.go, internal/consult/capture_ownership_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go, tools/test_lifecycle_bench.py]
 updated: 2026-10-09
 ---
 
@@ -77,6 +77,12 @@ marker and exactly one matching running container before canceling. Query errors
 matches and premature exit still fail; TERM receipt and zero containers after return stay
 strict. Its controlled initial-empty-inventory case fails the former one-shot assertion.
 
+**A transient reader needs a barrier, not a longer poll.** The consult slow-drain fixture keeps
+its peer waiting until the host has frozen a capture reader. Only then does the peer produce its
+reply and publish a marker; the unchanged eight-second freeze starts after that marker. Without
+this ordering, a small reply can drain before the first process listing. Failure cleanup kills
+the exact group and joins the command's output writer before inspecting its capture.
+
 **A persisted receipt is not a joined writer.** An asynchronous session operation records its
 failure before writing its diagnostic. Observing that terminal receipt does not make an injected
 `bytes.Buffer` safe to read or ensure the log exists yet. Stop and join the service before reading
@@ -90,6 +96,9 @@ old empty-cleanup failure and passes with the handshake; production cleanup and 
 unchanged. A readiness failure still reaps the fixture process.
 
 ## Changelog
+- 2026-10-09 — race CI missed a consult reader after its immediate peer had already exited.
+  Added a release/produced handshake and joined cleanup, retaining the eight-second slow-drain
+  assertion and unchanged production budget.
 - 2026-10-09 — release CI observed child readiness then zero running matches. Confirmed the
   invalid ordering assumption against the exact runner's Docker 28.0.4 source and reproduced
   it by withholding the first inventory response. Added bounded readiness, retaining signal

@@ -91,8 +91,10 @@ func TestConsultWrapperSlowDrainKeepsTheReply(t *testing.T) {
 	const reply = "CAPTURE_SURVIVED_THE_FREEZE"
 	dir := consultStubDir(t)
 	writeStub(t, dir, "gemini",
-		`printf '{"type":"message","role":"assistant","content":"`+reply+`"}\n'
-printf '{"type":"result","status":"success"}\n'`)
+		`while [ ! -f peer-release ]; do sleep 0.01; done
+printf '{"type":"message","role":"assistant","content":"`+reply+`"}\n'
+printf '{"type":"result","status":"success"}\n'
+: >peer-produced`)
 
 	cmd := consultWrapperCommand(t, dir, "")
 	var output strings.Builder
@@ -101,19 +103,42 @@ printf '{"type":"result","status":"success"}\n'`)
 		t.Fatal(err)
 	}
 	group := cmd.Process.Pid
-	defer func() { _ = syscall.Kill(-group, syscall.SIGKILL) }()
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	waited := false
+	defer func() {
+		_ = syscall.Kill(-group, syscall.SIGKILL)
+		if !waited {
+			<-exited // Join the output writer even when a fixture assertion fails.
+		}
+	}()
 
+	// The peer must not finish before ps observes its capture readers.
 	frozen := freezeReaders(t, group)
 	if len(frozen) == 0 {
 		t.Fatalf("no reader to freeze:\n%s", groupSnapshot(t, group))
 	}
+	if err := os.WriteFile(filepath.Join(dir, "peer-release"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wait.ForFile(t, filepath.Join(dir, "peer-produced"))
 	// Longer than the budget that used to give up, so a reinstated five seconds fails here.
 	time.Sleep(8 * time.Second)
 	for _, pid := range frozen {
 		_ = syscall.Kill(pid, syscall.SIGCONT)
 	}
 
-	if err := cmd.Wait(); err != nil {
+	var err error
+	wait.For(t, "consult exit after its capture drains", func() bool {
+		select {
+		case err = <-exited:
+			waited = true
+			return true
+		default:
+			return false
+		}
+	})
+	if err != nil {
 		t.Fatalf("a consult whose drain was merely slow failed: %v\n%s", err, output.String())
 	}
 	if !strings.Contains(output.String(), reply) {
