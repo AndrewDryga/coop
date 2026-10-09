@@ -22,6 +22,10 @@
   on stopped containers are compared safely; credential overlaps, unresolved live mounts and
   ambiguous symlinks still prevent migration.
 
+- **Native accounts start in filtered projects.** Generated native-home and public broker-helper
+  mounts now pass the same custody checks as other binds, preserving quoted paths and refusing
+  missing sources or unsafe overlaps.
+
 ## 11.0.0
 
 - **Repository-local native history and host-only provider credentials.** Each project keeps its

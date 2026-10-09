@@ -3219,7 +3219,7 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 		scope := credentialScope(cfg, spec)
 		writables := mountedWritables(cfg, spec)
 		for _, m := range writables {
-			args = append(args, "--mount", "type=bind,source="+m.Host+",target="+m.Box)
+			args = append(args, "--mount", networkMount("bind", m.Host, m.Box, false))
 		}
 		// Synthesized skills: mounted READ-WRITE (a copy, so the host stays clean) so a CLI that
 		// installs system skills into its skills dir isn't broken by a :ro mount.

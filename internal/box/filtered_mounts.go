@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,31 +113,57 @@ func checkLabelAssignment(value string) error {
 // not two. Only type=bind is accepted: every other mount type is a different
 // qualification question.
 func bindMountShorthand(value string) (string, error) {
-	fields, err := csv.NewReader(strings.NewReader(value)).Read()
+	reader := csv.NewReader(strings.NewReader(value))
+	fields, err := reader.Read()
 	if err != nil {
 		return "", errors.New("--mount could not be read; it takes source=…,target=… fields separated by commas")
 	}
+	if _, err := reader.Read(); err != io.EOF {
+		return "", errors.New("--mount must contain one descriptor")
+	}
 	var source, target string
 	readonly := false
+	seen := map[string]bool{}
 	for _, field := range fields {
 		key, field, _ := strings.Cut(field, "=")
+		switch key {
+		case "src":
+			key = "source"
+		case "destination", "dst":
+			key = "target"
+		case "ro":
+			key = "readonly"
+		}
+		if seen[key] {
+			return "", errors.New("--mount repeats a descriptor field")
+		}
+		seen[key] = true
 		switch key {
 		case "type":
 			if field != "bind" {
 				return "", fmt.Errorf("a filtered box takes bind mounts only, so --mount type=%s is refused", field)
 			}
-		case "source", "src":
+		case "source":
 			source = field
-		case "target", "destination", "dst":
+		case "target":
 			target = field
-		case "readonly", "ro":
+		case "readonly":
+			if field != "" && field != "true" && field != "false" {
+				return "", errors.New("--mount readonly must be true or false")
+			}
 			readonly = field == "" || field == "true"
 		default:
 			return "", fmt.Errorf("--mount does not take the field %q here; use source=, target= and readonly=", key)
 		}
 	}
+	if !seen["type"] {
+		return "", errors.New("--mount requires type=bind")
+	}
 	if source == "" || target == "" {
 		return "", errors.New("--mount needs both source= and target=")
+	}
+	if strings.ContainsAny(source+target, ":\x00\r\n") {
+		return "", errors.New("--mount paths cannot contain shorthand delimiters or control bytes")
 	}
 	if readonly {
 		return source + ":" + target + ":ro", nil
@@ -197,7 +224,7 @@ func (f *filteredExecution) validateMountsContext(ctx context.Context, options, 
 				return errors.New("restricted workload security options cannot be overridden")
 			}
 			continue
-		case "-v", "--env-file":
+		case "-v", "--mount", "--env-file":
 		default:
 			return errors.New("unqualified restricted workload option")
 		}
@@ -207,10 +234,26 @@ func (f *filteredExecution) validateMountsContext(ctx context.Context, options, 
 			return errors.New("incomplete network workload mount")
 		}
 		source := options[i]
+		descriptor := kind == "--mount"
+		if descriptor {
+			var err error
+			source, err = bindMountShorthand(source)
+			if err != nil {
+				return err
+			}
+			kind = "-v"
+		}
 		if kind == "-v" {
 			parts := strings.Split(source, ":")
 			if len(parts) != 2 && len(parts) != 3 || len(parts) == 3 && parts[2] != "ro" || len(parts) > 1 && !filepath.IsAbs(parts[1]) {
 				return errors.New("ambiguous network workload mount")
+			}
+			if descriptor {
+				if !filepath.IsAbs(parts[0]) {
+					return errors.New("network bind descriptor source must be absolute")
+				}
+				// Retain --mount's refusal to create missing sources; normalize only its spelling.
+				options[i] = networkMount("bind", parts[0], parts[1], len(parts) == 3)
 			}
 			source = parts[0]
 			// A named volume has no host path here. Its backing source is a
@@ -254,8 +297,17 @@ func (f *filteredExecution) validateMountsContext(ctx context.Context, options, 
 			return errors.New("network workload mount source is not a regular file or directory")
 		}
 		parts := strings.Split(options[i], ":")
-		parts[0] = canonical
-		options[i] = strings.Join(parts, ":")
+		if descriptor {
+			shorthand, err := bindMountShorthand(options[i])
+			if err != nil {
+				return err
+			}
+			parts = strings.Split(shorthand, ":")
+			options[i] = networkMount("bind", canonical, parts[1], len(parts) == 3)
+		} else {
+			parts[0] = canonical
+			options[i] = strings.Join(parts, ":")
+		}
 		bindings[canonical] = info
 		exposed = append(exposed, canonical)
 		if info.IsDir() {

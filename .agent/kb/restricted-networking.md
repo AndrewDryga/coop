@@ -198,6 +198,11 @@ Traps:
   beneath its default `agents/` tree is an independent bind. The selected profile itself
   is writable by the agent; a second bind beneath it is refused (`box/filtered.go`,
   `box/filtered_mounts.go`).
+- Native homes and public broker helpers emit CSV `--mount` bind descriptors. Filtered
+  validation reduces those descriptors to the existing mount grammar for checks, but
+  retains `--mount` so a missing source is never created. Canonical CSV preserves quoted
+  paths and readonly state; duplicate fields, non-bind types and ambiguous delimiters
+  refuse. Generated helpers retain their exact inode binding like ordinary generated mounts.
 - The gateway captures every TLS port the policy grants (`Snapshot.TLSPorts`, `egress/snapshot.go:292`)
   plus DNS on 53; the upstream port comes from the kernel's redirect record (SO_ORIGINAL_DST),
   never from the client, and a dial straight at the guard listener is refused. A raw `tcp` grant
@@ -261,6 +266,9 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-10-09 — traced actual native filtered launch refusal to emitted `--mount` syntax;
+  reused custody, writable-parent and final-topology checks without accepting new runtime
+  capabilities. Verified generated-helper replacement denial and quoted native-home emission.
 - 2026-10-09 — repaired unadmitted ACP catalog probes; verified private per-provider config,
   exact selected-account scope, project tightening and pending-approval refusal in regression tests.
   Replaced stale pre-v11 credential guidance against native broker planning, open namespace,
