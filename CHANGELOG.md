@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 11.0.0
 
 - **Repository-local native history and host-only provider credentials.** Each project keeps its
