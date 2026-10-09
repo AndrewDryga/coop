@@ -23,6 +23,39 @@ func pinGitConfig(t *testing.T) {
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 }
 
+func TestCheckSecretsIgnoredWarningAgreement(t *testing.T) {
+	for _, n := range []int{1, 3} {
+		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			pinGitConfig(t)
+			repo, _ := gitrepo.New(t)
+			if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("ignored-*\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			for i := range n {
+				if err := os.WriteFile(filepath.Join(repo, fmt.Sprintf("ignored-%d", i)), []byte("ordinary visible data\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+			var code int
+			var runErr error
+			out := captureStderr(t, func() { code, runErr = a.cmdCheckSecrets(nil) })
+			if code != 0 || runErr != nil {
+				t.Fatalf("scan = (%d, %v): %s", code, runErr, out)
+			}
+			want := []string{"3 Git-ignored files were not checked", "The box can read them.", "Check them with coop check-secrets --include-ignored."}
+			if n == 1 {
+				want = []string{"1 Git-ignored file was not checked", "The box can read it.", "Check it with coop check-secrets --include-ignored."}
+			}
+			for _, text := range want {
+				if !strings.Contains(out, text) {
+					t.Errorf("warning missing %q: %s", text, out)
+				}
+			}
+		})
+	}
+}
+
 // joinScan renders a scan the way the old string-returning scanner did, so these tests keep
 // asserting on "which file, flagged how" rather than on the report's layout.
 func joinScan(scan treeScan) string {

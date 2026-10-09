@@ -111,10 +111,14 @@ func (a *app) cmdCheckSecrets(args []string) (int, error) {
 	// many such files --include-ignored would add, so the default's blind spot is visible.
 	if !includeIgnored {
 		if n := unscannedIgnoredCount(repo); n > 0 {
+			verb, object := "were", "them"
+			if n == 1 {
+				verb, object = "was", "it"
+			}
 			blankBefore(&said)
-			warnBlock(fmt.Sprintf("%s were not checked", ui.Count(n, "Git-ignored file")),
-				"The box can read them.",
-				"Check them with coop check-secrets --include-ignored.")
+			warnBlock(fmt.Sprintf("%s %s not checked", ui.Count(n, "Git-ignored file"), verb),
+				fmt.Sprintf("The box can read %s.", object),
+				fmt.Sprintf("Check %s with coop check-secrets --include-ignored.", object))
 		}
 	}
 	// Independent of secrets: which files changed since the last commit alter what runs on YOUR
