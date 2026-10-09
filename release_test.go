@@ -256,6 +256,23 @@ func TestReleaseTagIdentity(t *testing.T) {
 	}
 }
 
+func TestReleaseModuleHygiene(t *testing.T) {
+	data, err := os.ReadFile("Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "\ncheck: mod-check ") {
+		t.Error("canonical gate must check module hygiene before the slow suites")
+	}
+	if !strings.Contains(text, "\nmod-check: ## Verify module metadata is tidy without changing qualified sources\n\t@go mod tidy -diff\n") {
+		t.Error("module check must refuse drift without rewriting qualified sources")
+	}
+	if !strings.Contains(text, "\n.PHONY: mod-check\n") {
+		t.Error("a same-named file must not skip module hygiene")
+	}
+}
+
 func TestReleaseWorkflowQualification(t *testing.T) {
 	readWorkflow := func(path string) releaseWorkflow {
 		t.Helper()
