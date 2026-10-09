@@ -68,6 +68,24 @@ func TestParseTarget(t *testing.T) {
 	}
 }
 
+func TestClaudeHaikuEffortIsRefused(t *testing.T) {
+	for _, model := range []string{"haiku", "claude-haiku-4-5", "claude-haiku-4-5-20251001"} {
+		for _, effort := range []string{"low", "high"} {
+			if _, err := ParseTarget("claude:" + model + "/" + effort + "@personal"); err == nil || !strings.Contains(err.Error(), "without /"+effort) {
+				t.Errorf("%s/%s = %v, want actionable unsupported effort refusal", model, effort, err)
+			}
+		}
+		if _, err := ParseTarget("claude:" + model + "@personal"); err != nil {
+			t.Errorf("%s without effort was refused: %v", model, err)
+		}
+	}
+	for _, model := range []string{"opus", "sonnet", "claude-fable-5-1", "claude-haiku-9", "custom-haiku", "claude-haiku-4-5-custom"} {
+		if _, err := ParseTarget("claude:" + model + "/low@personal"); err != nil {
+			t.Errorf("supporting or unknown model %s was refused: %v", model, err)
+		}
+	}
+}
+
 // String round-trips the wire form so config/messages/tests share one rendering.
 func TestTargetString(t *testing.T) {
 	for _, s := range []string{"claude", "claude:opus-4.8", "claude@work", "claude:opus@work,personal", "claude:opus/xhigh", "codex/high", "codex:gpt-5.5/high@work"} {

@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Unsupported Haiku effort is caught before startup.** Haiku 4.5 has no reasoning-effort
+  control; use `claude:haiku` without a suffix. Coop now explains this instead of silently
+  dropping the requested level in the CLI or failing the editor's first message.
+
 - **Model discovery respects project networking.** Claude and Gemini catalog refreshes now use
   normal host admission for the selected account, including filtered projects. Failed refreshes
   retain the last good list and explain setup failures without exposing provider diagnostics.

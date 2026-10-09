@@ -2,8 +2,8 @@
 name: model-tiers-and-role-vs-lead
 description: ModelFor picks active>target>env per PROVIDER, so nothing but the lead's rotation may write a provider's active/target tier; a role's model rides its wrapper target
 subsystem: config
-sources: [internal/config/config.go, internal/cli/presetflag.go, internal/loop/rotation.go, internal/box/run.go, internal/preset/preset.go]
-updated: 2026-09-27
+sources: [internal/config/config.go, internal/cli/presetflag.go, internal/loop/rotation.go, internal/box/run.go, internal/preset/preset.go, internal/agent/claude.go, internal/agent/agent.go]
+updated: 2026-10-10
 ---
 
 `Config.ModelFor(agent)` resolves ONE model per PROVIDER through three tiers, most specific
@@ -33,7 +33,16 @@ Corollary: `spec.Peers` is populated only from `--peer`, never preset roles, so 
 `COOP_PEER_MODEL_<agent>` derives from `cfg.ModelFor` purely as a fallback — a role with an
 explicit model never depends on it.
 
+Native CLI acceptance is not proof an effort was applied. Pinned Claude SDK0.3.284 reports applied
+effort null for Haiku4.5; ACP0.84.0 exposes no effort option. Claude's existing EffortSpec.Validate
+refuses explicit effort for the three known alias/current IDs during target parsing and resolved box
+configuration validation, before a client starts. Haiku without effort remains valid; unknown future IDs stay delegated
+to the client. Do not ignore an ACP setting failure to hide an impossible target.
+
 ## Changelog
+- 2026-10-10 — real Haiku/low preset ACP prompt failed Unknown config option: effort. Inspected
+  pinned adapter/SDK and verified parser plus inherited config prelaunch refusal without changing
+  supported ACP settings, model-tier ownership or unknown-model pass-through.
 - 2026-09-27 — removed the never-populated standing-default maps after checking all callers.
   Preserved active/target ownership and the separate ordered target ladders used for real failover.
 - 2026-09-03 — re-verified the four model tiers and role isolation while presets were normalized to

@@ -2604,6 +2604,22 @@ func TestCheckEffortsRefusesWhatTheBoxCannotCarry(t *testing.T) {
 	}
 }
 
+func TestCheckClaudeHaikuEffortRefusesBeforeRuntime(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node"}
+	cfg.SetActiveModel("claude", "haiku")
+	cfg.SetActiveEffort("claude", "low")
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	code, err := runWithCompositionArtifacts(cfg, recorderRuntime(t, recorder), RunSpec{
+		Image: "i", Repo: t.TempDir(), Agent: "claude", Cmd: []string{"claude"}, Homes: true, Quiet: true, Batch: true,
+	}, defaultCompositionArtifactOps())
+	if code != -1 || err == nil || !strings.Contains(err.Error(), "without /low") {
+		t.Fatalf("resolved Haiku effort = %d, %v, want refusal before runtime", code, err)
+	}
+	if _, err := os.Stat(recorder); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("runtime launched with unsupported Haiku effort")
+	}
+}
+
 // TestLeadInstructionMount: a consult lead is ALWAYS excluded from instructionPlan, so it must
 // still receive its base instructions here even with NO named peer — otherwise it would run with
 // none (no box env note, no INSTRUCTIONS.md). With a peer NAMED, the second-opinion directive is

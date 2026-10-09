@@ -240,7 +240,8 @@ Reasoning effort is a sibling axis on the same target. Add `/effort` after the p
 optional model: `coop codex/high`, `coop codex:gpt-6-astra/high`, `coop claude:opus/xhigh`,
 `coop loop claude:opus/low`. The levels are `low`, `medium`, `high`, `xhigh` and `max`.
 
-co:op passes the level straight to the agent's CLI, so a bad level fails in the agent's own error:
+co:op passes the level to the agent's CLI, except for known unsupported model-and-effort combinations
+which it refuses before starting:
 
 | Agent | Where the level goes |
 | --- | --- |
@@ -248,6 +249,10 @@ co:op passes the level straight to the agent's CLI, so a bad level fails in the 
 | Codex | `model_reasoning_effort` |
 | Grok | `--reasoning-effort` |
 | Gemini | its thinking setting (`low` or `high` only) |
+
+Haiku 4.5 has no reasoning-effort control. Use `claude:haiku` without an effort suffix, or choose a
+supporting model such as `claude:opus/low`. The native CLI can silently drop Haiku's effort, while
+its editor adapter rejects the missing option; co:op catches the combination first.
 
 Gemini has no effort flag, so co:op sets its thinking instead and checks the level up front. It
 takes `low` or `high`, on the models co:op can map. Gemini 3 thinks at only those two levels, and

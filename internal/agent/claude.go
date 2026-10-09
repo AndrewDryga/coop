@@ -762,7 +762,21 @@ func (claudeAgent) ExampleModel() string { return "opus" }
 func (claudeAgent) ModelEnv() string { return "ANTHROPIC_MODEL" }
 
 // Effort: Claude Code takes --effort <level> (low/medium/high/xhigh/max) on its command.
-func (claudeAgent) Effort() EffortSpec { return EffortSpec{Flag: "--effort"} }
+func (claudeAgent) Effort() EffortSpec {
+	return EffortSpec{Flag: "--effort", Validate: validateClaudeEffort}
+}
+
+func validateClaudeEffort(model, effort string) error {
+	if effort != "" {
+		// The pinned SDK drops effort for Haiku 4.5, while ACP exposes no effort option.
+		// Refuse the impossible control instead of accepting a target the client cannot honor.
+		switch model {
+		case "haiku", "claude-haiku-4-5", "claude-haiku-4-5-20251001":
+			return fmt.Errorf("haiku 4.5 does not support reasoning effort; run %s without /%s or choose a supporting model", model, effort)
+		}
+	}
+	return nil
+}
 
 // EffortEnv: the claude-agent-acp adapter takes no flags, so its effort rides
 // CLAUDE_CODE_EFFORT_LEVEL — the effort analog of ANTHROPIC_MODEL, which box.Run exports.
