@@ -2,10 +2,6 @@
 
 ## Unreleased
 
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
-
-## 11.0.0
-
 - **Repository-local native history and host-only provider credentials.** Each project keeps its
   own complete provider home, including native resume, settings and history indexes. Older
   transcripts import only when their repository ownership is known; originals remain intact and
