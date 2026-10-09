@@ -3,7 +3,7 @@ name: acp-replay-publication
 description: ACP replacement sessions become authoritative as one generation before held editor work is released
 subsystem: acp
 sources: [internal/acpproxy/proxy.go, internal/acpproxy/proxy_test.go, internal/acpproxy/cancel.go, internal/acpproxy/cancel_test.go, internal/acpproxy/factory.go, internal/acpproxy/factory_test.go, internal/acpctl/cancel.go, internal/acpctl/cancel_test.go]
-updated: 2026-09-12
+updated: 2026-10-10
 ---
 
 Across SIGHUP, the proxy serializes exactly one initialize request plus explicit editor, adapter,
@@ -25,6 +25,11 @@ or the post-swap tail retires local state and sends a generation-checked lifecyc
 native update cannot resurrect the editor thread (`forwardClientControlled` and
 `writeLifecycleCleanup` in `internal/acpproxy/proxy.go`).
 
+A selector acknowledgement confirms selection, not replacement readiness. While the previous child
+is retired and `restarting` is true, setup requests are refused with switching/wait/retry guidance,
+not permanent thread-unavailability advice. The existing native binding remains intact; retrying
+`session/load` after replacement config publication uses that same binding.
+
 Cancellation shares the admission/publication control mutex. A prompt held for replay or target
 settings is locally completed as cancelled; a prompt admitted to the current child remains the
 adapter's responsibility. Reserved replay IDs are not wire-active prompts. The controller clears
@@ -45,6 +50,7 @@ Natural EOF retires those resources before entering the replacement factory, not
 quota wait. The launcher checks cancellation after quota waits and before launching a replacement process.
 
 ## Changelog
+- 2026-10-10 - reverified child retirement and binding publication; documented transient setup refusal, with failed-before/after regression and actual same-session selector recovery.
 - 2026-09-12 - documented presentation-only held-prompt notification; verified two-account quota, manual selection, cancellation, and provider-switch process regression
 - 2026-09-12 - documented cancellation ownership and interruptible factory waits; verified held/active cancellation, quota-switch scripts, and replacement-context barriers
 - 2026-09-03 - collapsed SIGHUP setup state to one initialize frame, made restored adapter/provider

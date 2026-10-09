@@ -786,6 +786,43 @@ func idStr(t *testing.T, line []byte) string {
 	return string(m.ID)
 }
 
+func TestProxySessionSetupDuringSwitchReportsTemporaryWait(t *testing.T) {
+	var output bytes.Buffer
+	session := &sess{adapterID: "N1", provider: "claude", turned: true}
+	p := &proxy{out: &output, restarting: true, sessions: map[string]*sess{"S1": session}, pending: map[string]bool{}}
+	line := []byte(`{"jsonrpc":"2.0","id":19,"method":"session/load","params":{"cwd":"/work","mcpServers":[],"sessionId":"S1"}}` + "\n")
+	p.forwardClient(line, originEditor)
+	response := parse(output.Bytes())
+	var rpcError struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(response.Error, &rpcError); err != nil {
+		t.Fatal(err)
+	}
+	if rpcError.Code != -32000 || !strings.Contains(strings.ToLower(rpcError.Message), "switch") || !strings.Contains(strings.ToLower(rpcError.Message), "retry") || strings.Contains(rpcError.Message, "new thread") {
+		t.Fatalf("switching setup lacks transient guidance: %s", output.Bytes())
+	}
+	if session.adapterID != "N1" || session.provider != "claude" || p.pending["19"] {
+		t.Fatal("switching refusal changed the binding or retained a pending request")
+	}
+	input := &recordingWriteCloser{}
+	p.child, p.restarting = &Child{In: input, Provider: "claude"}, false
+	p.forwardClient(line, originEditor)
+	if sessionID(parse(input.Bytes()).Params) != "N1" || p.sessionReqs["19"].provider != "claude" {
+		t.Fatal("ready replacement did not receive the original native binding")
+	}
+	output.Reset()
+	p.child = nil
+	p.forwardClient(line, originEditor)
+	if err := json.Unmarshal(parse(output.Bytes()).Error, &rpcError); err != nil {
+		t.Fatal(err)
+	}
+	if rpcError.Code != -32002 || !strings.Contains(rpcError.Message, "new thread") {
+		t.Fatalf("non-switching unavailable response changed: %s", output.Bytes())
+	}
+}
+
 // TestProxyResumePromptReinjectsAfterRestart: after a restart replays a session, a non-nil
 // ResumePrompt is fed through the client path — reaching the new box remapped + tracked — and its
 // response reaches the editor, completing the turn transparently (coop's rate-limit auto-resend).

@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Editor switches give useful retry guidance.** A request during an agent switch now asks you
+  to wait and retry instead of incorrectly suggesting that the thread is unavailable.
+
 - **Editor sessions load shared MCP tools.** The editor connection now receives the same
   validated tool configuration as other Coop runs, including after a restart. Conflicting
   editor and shared tool names produce a setup error instead of silently replacing a server.

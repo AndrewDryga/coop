@@ -1013,7 +1013,11 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 		if childMissing {
 			p.mu.Unlock()
 			if origin == originEditor {
-				p.writeControllerResponse(sessionUnavailableResponse(string(h.ID), sid, provider))
+				if restarting {
+					p.writeControllerResponse(switchPendingResponse(string(h.ID)))
+				} else {
+					p.writeControllerResponse(sessionUnavailableResponse(string(h.ID), sid, provider))
+				}
 			}
 			return
 		}
@@ -3020,6 +3024,10 @@ func loadRequest(id, sid string, params json.RawMessage) []byte {
 
 func errorResponse(id string) []byte {
 	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32000,"message":"The agent restarted — send your message again."}}` + "\n")
+}
+
+func switchPendingResponse(id string) []byte {
+	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32000,"message":"The agent is switching. Wait for the switch to finish, then retry this request."}}` + "\n")
 }
 
 func successResponse(id string) []byte {
