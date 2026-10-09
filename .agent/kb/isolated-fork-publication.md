@@ -2,14 +2,21 @@
 name: isolated-fork-publication
 description: optional independent execution, exact private review, semantic parent preconditions and durable forward-only publication
 subsystem: forkspace
-sources: [internal/cli/fork_isolated.go, internal/forkspace/generation.go, internal/forkspace/isolated.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_config.go, internal/forkspace/independent_tree.go, internal/forkspace/lfs.go, internal/forkspace/lfs_storage.go, internal/box/isolated_launch.go, internal/box/isolated_services.go, internal/forkctl/isolated_candidate.go, internal/forkctl/isolated_parent.go, internal/forkctl/isolated_land.go, internal/forkctl/isolated_commands.go]
-updated: 2026-10-08
+sources: [internal/cli/fork_isolated.go, internal/forkspace/generation.go, internal/forkspace/isolated.go, internal/forkspace/isolated_admission_test.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_config.go, internal/forkspace/independent_tree.go, internal/forkspace/lfs.go, internal/forkspace/lfs_storage.go, internal/box/isolated_launch.go, internal/box/isolated_services.go, internal/forkctl/isolated_candidate.go, internal/forkctl/isolated_parent.go, internal/forkctl/isolated_land.go, internal/forkctl/isolated_commands.go, internal/forkctl/testhelpers_test.go]
+updated: 2026-10-09
 ---
 
 `--isolated` is opt-in; ordinary shared-write behavior stays trusted collaboration. Host-private
 v4 generation/anchor names bind mode and initial base. Re-entry cannot downgrade or upgrade an
 ordinary generation. Strong host Git admission refuses missing/redirected/shared metadata before
 operational view recovery, including calls from nested directories.
+
+An enumerated optional metadata entry can disappear before its Info read when Git removes a
+maintenance lock. Admission retries the entire validation at most three times, never skips the
+entry or exempts lock files. Each attempt rechecks redirectors, required real roots and ownership.
+Root/traversal/permission failures are immediate; persistent churn refuses. A complete successful
+pass is not an atomic snapshot: callers still fence writers. Raw publication fixture commits
+disable automatic maintenance, as trusted production Git commands already do.
 
 Execution owns objects, initialized unchanged submodules and verified offline LFS payloads.
 Parent checkout/admin/common paths cannot enter through aliases, shared inodes, volume backing
@@ -56,6 +63,10 @@ Custom tools run at the captured base comparison while COOP_FORK_PATH points to 
 published tree, preserving HEAD...COOP_REVIEW_REF without handing over the model workspace.
 
 ## Changelog
+- 2026-10-09 — Git 2.55 release CI lost a detached maintenance lock between enumeration and Info.
+  Added bounded complete revalidation with disappearance, new-unsafe-metadata, required-root,
+  permission and persistent-churn regressions. Pinned fixture auto-maintenance; real Git trace
+  proves no maintenance child. One-pass admission and unpinned fixture negative controls fail.
 - 2026-10-08 — created from independent admission/publication implementation and failure tests.
 - 2026-10-08 — real custom-tool reproduction caught base files masquerading as the publication
   preview; separate independent retained copies now qualify proposed bytes and comparison identity.

@@ -2,6 +2,7 @@ package forkctl
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -52,12 +53,45 @@ func lastLines(s string, n int) string {
 // fork helpers under test read back.
 func git(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	// Fixture commits must not leave detached maintenance mutating metadata
+	// during the quiescent publication checks that follow.
+	cmd := exec.Command("git", append([]string{"-C", dir, "-c", "gc.auto=0", "-c", "maintenance.auto=false"}, args...)...)
 	cmd.Env = append(os.Environ(),
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
 		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+func TestGitFixtureDisablesAutomaticMaintenance(t *testing.T) {
+	repo := initRepo(t)
+	git(t, repo, "config", "gc.auto", "1")
+	git(t, repo, "config", "maintenance.auto", "true")
+	trace := filepath.Join(t.TempDir(), "git-trace.json")
+	t.Setenv("GIT_TRACE2_EVENT", trace)
+	writeTaskFile(t, filepath.Join(repo, "change.txt"), "fixture commit\n")
+	git(t, repo, "add", "change.txt")
+	git(t, repo, "commit", "-qm", "fixture change")
+	data, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var event struct {
+			Event string   `json:"event"`
+			Argv  []string `json:"argv"`
+		}
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatal("invalid Git trace", err)
+		}
+		if event.Event == "child_start" {
+			for _, arg := range event.Argv {
+				if arg == "maintenance" || arg == "gc" {
+					t.Fatalf("fixture launched automatic maintenance: %s", line)
+				}
+			}
+		}
 	}
 }
 

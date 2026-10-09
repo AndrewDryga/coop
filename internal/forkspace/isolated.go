@@ -132,13 +132,33 @@ func GitMetadataDirectories(workspace string) ([]string, error) {
 // owns a real .git and object store; a gitfile, alternate, hardlink or symlink cannot restore
 // write authority over the parent. Callers must also fence live sandbox writers before capture.
 func ValidateIndependentGit(workspace string) error {
+	return validateIndependentGit(workspace, filepath.WalkDir)
+}
+
+var errIndependentGitChanged = errors.New("isolated Git metadata changed during inspection")
+
+func validateIndependentGit(workspace string, walk func(string, fs.WalkDirFunc) error) error {
+	var err error
+	for range 3 {
+		err = validateIndependentGitOnce(workspace, walk)
+		if !errors.Is(err, errIndependentGitChanged) {
+			return err
+		}
+		// Git maintenance can unlink a listed lock before Info. Discard the
+		// partial pass, never exempt the path from independent-ownership checks.
+	}
+	return err
+}
+
+func validateIndependentGitOnce(workspace string, walk func(string, fs.WalkDirFunc) error) error {
 	metadata := filepath.Join(workspace, ".git")
+	objects := filepath.Join(metadata, "objects")
 	for _, path := range []string{"commondir", "objects/info/alternates", "objects/info/http-alternates"} {
 		if _, err := os.Lstat(filepath.Join(metadata, path)); !errors.Is(err, os.ErrNotExist) {
 			return errors.Join(fmt.Errorf("isolated Git cannot use %s", path), err)
 		}
 	}
-	for _, path := range []string{metadata, filepath.Join(metadata, "objects")} {
+	for _, path := range []string{metadata, objects} {
 		info, err := os.Lstat(path)
 		if err != nil {
 			return err
@@ -147,11 +167,14 @@ func ValidateIndependentGit(workspace string) error {
 			return fmt.Errorf("isolated Git requires its own real directory: %s", path)
 		}
 	}
-	return filepath.WalkDir(metadata, func(path string, entry fs.DirEntry, err error) error {
+	return walk(metadata, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		info, err := entry.Info()
+		if errors.Is(err, os.ErrNotExist) && path != metadata && path != objects {
+			return errors.Join(errIndependentGitChanged, err)
+		}
 		if err != nil {
 			return err
 		}
